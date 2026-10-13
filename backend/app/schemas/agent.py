@@ -1,5 +1,4 @@
 """Agent schemas."""
-from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 from app.utils import DateTimeUTC
 

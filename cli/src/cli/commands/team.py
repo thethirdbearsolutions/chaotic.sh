@@ -140,7 +140,7 @@ def register(cli):
     @_main().handle_error
     def team_accept_invite(token):
         """Accept a team invitation."""
-        result = _client().accept_invitation(token)
+        _client().accept_invitation(token)
         console.print(f"[green]Joined team successfully![/green]")
 
     @team.command("remove-member")

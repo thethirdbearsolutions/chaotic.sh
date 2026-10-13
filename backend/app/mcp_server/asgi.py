@@ -1,6 +1,7 @@
 """Wires the remote MCP Streamable HTTP transport onto the FastAPI app
 (CHT-1266). See ``mcp_server/__init__.py`` for the big picture, ``tools.py``
-for the tool definitions, ``auth.py`` for the two supported auth modes.
+for the binding of the shared toolset to this server's ``InProcessBackend``
+(``backend.py``), ``auth.py`` for the two supported auth modes.
 
 Two plain ``Route``s, not a Starlette ``Mount`` -- Mount compiles its
 path regex as ``"<prefix>/{path:path}"``, which requires a trailing
@@ -30,20 +31,26 @@ host/domain an operator picks (no fixed hostname to hardcode):
 """
 from __future__ import annotations
 
-import logging
 from urllib.parse import urlparse
 
 from fastapi import FastAPI
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.server import StreamableHTTPASGIApp
+from mcp.server.mcpserver import MCPServer
+from mcp.server.streamable_http_manager import StreamableHTTPASGIApp
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from app.config import get_settings
 from app.mcp_server.auth import BearerHeaderAuth, CapabilityPathRedaction, CapabilityURLAuth
-from app.mcp_server.tools import ALL_TOOLS
+from app.mcp_server.tools import ALL_TOOLS, preserve_root_logger
 
-_fastmcp: FastMCP | None = None
+_fastmcp: MCPServer | None = None
+
+# Hard cap on a single Streamable HTTP request body. mcp 2.x's session
+# manager rejects anything larger with a 413 before parsing it (1.x had
+# no such limit). The SDK's own default is also 4 MiB; pinned explicitly
+# here so a future SDK default change can't silently move the ceiling on
+# `doc_create`/`issue_comment` payloads, and so tests can reference it.
+MCP_MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
 
 
 def _transport_security() -> TransportSecuritySettings:
@@ -83,8 +90,8 @@ def _transport_security() -> TransportSecuritySettings:
     )
 
 
-def get_fastmcp() -> FastMCP:
-    """Build (once) the shared FastMCP instance backing /mcp.
+def get_fastmcp() -> MCPServer:
+    """Build (once) the shared MCPServer instance backing /mcp.
 
     Lazy so importing this module doesn't require an app to exist yet;
     tests that just want a toolset to inspect use ``tools.build_server()``
@@ -92,41 +99,34 @@ def get_fastmcp() -> FastMCP:
     """
     global _fastmcp
     if _fastmcp is None:
-        # FastMCP.__init__ unconditionally calls the SDK's
-        # configure_logging(), which logging.basicConfig()s a
-        # RichHandler onto the ROOT logger at INFO -- a global side
-        # effect that would hijack the whole backend's logging (every
-        # library's INFO chatter, rich-formatted, on stderr) just
-        # because app.main imports this module. Snapshot and restore
-        # the root logger around construction so building the MCP
-        # server changes MCP state and nothing else.
-        root = logging.getLogger()
-        prev_handlers = root.handlers[:]
-        prev_level = root.level
-        try:
-            _fastmcp = FastMCP(
+        # MCPServer.__init__ reconfigures the ROOT logger as a side effect;
+        # see preserve_root_logger for why that must not leak out of here.
+        with preserve_root_logger():
+            _fastmcp = MCPServer(
                 name="chaotic",
                 instructions=(
                     'Tools for the Chaotic issue tracker, scoped to the API key '
                     'used to authenticate this connection. If a call reports '
                     'multiple accessible teams/projects, pass `team` and/or '
                     '`project` explicitly to disambiguate. Every tool returns a '
-                    'JSON object; failures come back as {"error": "..."} rather '
-                    'than a protocol error.'
+                    'JSON object; failures come back as {"error": {"message": "...", '
+                    '"error_code": "..."}} rather than a protocol error -- switch on '
+                    'error_code, read message.'
                 ),
-                json_response=True,
-                stateless_http=True,
-                transport_security=_transport_security(),
             )
-        finally:
-            root.handlers[:] = prev_handlers
-            root.setLevel(prev_level)
         for tool_fn in ALL_TOOLS:
             _fastmcp.add_tool(tool_fn)
-        # streamable_http_app() is what lazily builds the session manager;
-        # its *returned* Starlette app is discarded -- we register our own
-        # Route objects below instead (see module docstring on Mount).
-        _fastmcp.streamable_http_app()
+        # streamable_http_app() is what builds the session manager, and in
+        # mcp 2.x it is also where the transport settings live (they were
+        # constructor arguments in 1.x). Its *returned* Starlette app is
+        # discarded -- we register our own Route objects below instead
+        # (see module docstring on Mount).
+        _fastmcp.streamable_http_app(
+            json_response=True,
+            stateless_http=True,
+            transport_security=_transport_security(),
+            max_request_body_size=MCP_MAX_REQUEST_BODY_BYTES,
+        )
     return _fastmcp
 
 

@@ -1,5 +1,6 @@
 """Application configuration."""
 import os
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -30,6 +31,16 @@ class Settings(BaseSettings):
     # self-claim lease, overridable per-call via `--lease`/`lease_seconds`.
     default_lease_minutes: int = 120  # 2 hours
 
+    # Stale-intent TTL (CHT-1326): an open claim/close intent whose
+    # initiating request failed (which is every open intent -- intents are
+    # only created when the transition is blocked) stops excluding OTHER
+    # principals after this many minutes, provided it has no unresolved
+    # GATE blockers (those are actionable in the admin inbox and may
+    # legitimately wait days for a human). A later claim/close by a
+    # different user then cancels the stale intent (INTENT_CANCELED) and
+    # opens a fresh one. 0 disables expiry (pre-CHT-1326 behavior).
+    intent_ttl_minutes: int = 15
+
     # CORS
     cors_origins: str = "*"
 
@@ -50,6 +61,15 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = "noreply@chaotic.sh"
+
+    # bcrypt work factor for password hashes. 12 is the production cost
+    # (~250 ms per hash); the test suite sets BCRYPT_ROUNDS=4 so its two
+    # fixture users per test do not dominate the run (CHT-1413). Hashes
+    # made at any cost verify at any cost, so changing this never
+    # invalidates stored passwords.
+    # Bounded so a bad value fails when Settings is built at import, not
+    # as a 500 on the first registration (bcrypt rejects < 4; 31 is hours).
+    bcrypt_rounds: int = Field(12, ge=4, le=31)
 
     model_config = SettingsConfigDict(env_file=".env")
 

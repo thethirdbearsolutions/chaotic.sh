@@ -140,7 +140,8 @@ export function getEstimateOptions(projectId) {
  * @returns {string} Formatted estimate
  */
 export function formatEstimate(value, projectId) {
-  if (!value) return 'No estimate';
+  // 0 is a real (zero-point) estimate, not "unset" (CHT-1397, CHT-1406).
+  if (value === null || value === undefined) return 'No estimate';
   const options = getEstimateOptions(projectId);
   const option = options.find((o) => o.value === value);
   return option ? option.label : `${value} points`;
@@ -153,7 +154,8 @@ export function formatEstimate(value, projectId) {
  * @returns {boolean} True if value is set but not in the scale
  */
 export function isOutOfScale(value, projectId) {
-  if (!value) return false;
+  // 0 is a zero-point estimate, never off-scale (mirrors chaotic_mcp_tools/estimates.py).
+  if (value === null || value === undefined || value === 0) return false;
   const options = getEstimateOptions(projectId);
   return !options.some((o) => o.value === value);
 }
@@ -764,6 +766,7 @@ export function renderRitualList(containerId, rituals, type) {
           ${!ritual.group_name && ritual.approval_mode === 'review' ? 'Requires human approval' : ''}
           ${!ritual.group_name && ritual.approval_mode === 'gate' ? 'Human only' : ''}
           ${ritual.note_required === false ? '<span class="badge badge-no-note">no note</span>' : ''}
+          ${ritual.artifact ? `<span class="badge badge-artifact">${escapeHtml(ritual.artifact)}</span>` : ''}
         </div>
       </div>
       <div class="ritual-item-actions">
@@ -825,6 +828,15 @@ export async function showCreateProjectRitualModal(triggerType) {
           Require note on attestation
         </label>
         <p class="form-help">When checked, agents must provide a note when attesting.</p>
+      </div>
+      <div class="form-group">
+        <label for="ritual-artifact">Artifact</label>
+        <select id="ritual-artifact">
+          <option value="" selected>None - the note is the attestation</option>
+          <option value="document" >Document - a Chaotic document the attester wrote for it</option>
+          <option value="url" >Link - a URL to the artifact (a PR review, a report)</option>
+        </select>
+        <p class="form-help">What an attestation must point at. A document must be the attester's own and written for this sprint or ticket.</p>
       </div>
       <div class="form-group">
         <label for="ritual-group">Group</label>
@@ -956,6 +968,7 @@ export async function handleCreateProjectRitual(event) {
     trigger: document.getElementById('ritual-trigger').value,
     approval_mode: document.getElementById('ritual-mode').value,
     note_required: document.getElementById('ritual-note-required').checked,
+    artifact: document.getElementById('ritual-artifact')?.value || null,
     conditions: conditions,
   };
 
@@ -1035,6 +1048,15 @@ export async function showEditProjectRitualModal(ritualId) {
         <p class="form-help">When checked, agents must provide a note when attesting.</p>
       </div>
       <div class="form-group">
+        <label for="ritual-artifact">Artifact</label>
+        <select id="ritual-artifact">
+          <option value="" ${!ritual.artifact ? 'selected' : ''}>None - the note is the attestation</option>
+          <option value="document" ${ritual.artifact === 'document' ? 'selected' : ''}>Document - a Chaotic document the attester wrote for it</option>
+          <option value="url" ${ritual.artifact === 'url' ? 'selected' : ''}>Link - a URL to the artifact (a PR review, a report)</option>
+        </select>
+        <p class="form-help">What an attestation must point at. A document must be the attester's own and written for this sprint or ticket.</p>
+      </div>
+      <div class="form-group">
         <label for="ritual-group">Group</label>
         <select id="ritual-group" data-action="ritual-group-change">
           <option value="">None (always required)</option>
@@ -1105,6 +1127,7 @@ export async function handleUpdateProjectRitual(event, ritualId) {
     trigger: document.getElementById('ritual-trigger').value,
     approval_mode: document.getElementById('ritual-mode').value,
     note_required: document.getElementById('ritual-note-required').checked,
+    artifact: document.getElementById('ritual-artifact')?.value || null,
     conditions: conditions,
     group_id: groupId || '',  // empty string removes from group
   };

@@ -1970,48 +1970,14 @@ async def test_delete_relation_wrong_issue(client, auth_headers, test_project, t
 # ============================================
 
 
-@pytest.mark.asyncio
-async def test_get_issue_documents(client, auth_headers, test_issue, test_document, db):
-    """Test getting documents linked to an issue."""
-
-    # Link document to issue via raw SQL
-    from oxyde import execute_raw
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
-    await execute_raw(
-        "INSERT INTO document_issues (document_id, issue_id, created_at) VALUES (?, ?, ?)",
-        [test_document.id, test_issue.id, now],
-    )
-
-    response = await client.get(
-        f"/api/issues/{test_issue.id}/documents",
-        headers=auth_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    # We linked exactly one document
-    assert len(data) == 1
-    assert data[0]["id"] == test_document.id
-
-
-@pytest.mark.asyncio
-async def test_get_issue_documents_not_found(client, auth_headers):
-    """Test getting documents for non-existent issue."""
-    response = await client.get(
-        "/api/issues/00000000-0000-0000-0000-000000000000/documents",
-        headers=auth_headers,
-    )
-    assert response.status_code == 404
-
-
 # ============================================
 # Issue Activities API Tests
 # ============================================
 
 
 @pytest.mark.asyncio
-async def test_list_issue_activities(client, auth_headers, test_issue, db, test_user):
-    """Test listing activities for an issue."""
+async def test_list_issue_activities_status_change_via_service(client, auth_headers, test_issue, db, test_user):
+    """A service-level status change produces exactly one status_changed activity."""
     from app.services.issue_service import IssueService
     from app.schemas.issue import IssueUpdate
     from app.enums import IssueStatus
@@ -2031,76 +1997,9 @@ async def test_list_issue_activities(client, auth_headers, test_issue, db, test_
     assert data[0]["activity_type"] == "status_changed"
 
 
-@pytest.mark.asyncio
-async def test_list_issue_activities_not_found(client, auth_headers):
-    """Test listing activities for non-existent issue."""
-    response = await client.get(
-        "/api/issues/00000000-0000-0000-0000-000000000000/activities",
-        headers=auth_headers,
-    )
-    assert response.status_code == 404
-
-
 # ============================================
 # List Issues Edge Cases
 # ============================================
-
-
-@pytest.mark.asyncio
-async def test_list_issues_by_team(client, auth_headers, test_team, test_project, test_user, db):
-    """Test listing issues by team."""
-    from app.oxyde_models.issue import OxydeIssue
-
-    issue = await OxydeIssue.objects.create(
-        project_id=test_project.id,
-        identifier=f"{test_project.key}-1500",
-        number=1500,
-        title="Team Issue",
-        creator_id=test_user.id,
-    )
-
-    response = await client.get(
-        f"/api/issues?team_id={test_team.id}",
-        headers=auth_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) >= 1
-
-
-@pytest.mark.asyncio
-async def test_list_issues_by_sprint_only(client, auth_headers, test_project, test_user, db):
-    """Test listing issues by sprint only (without project_id or team_id)."""
-    from app.oxyde_models.issue import OxydeIssue
-    from app.oxyde_models.sprint import OxydeSprint
-    from app.enums import SprintStatus
-
-    # Create sprint
-    sprint = await OxydeSprint.objects.create(
-        project_id=test_project.id,
-        name="Sprint Only Test",
-        status=SprintStatus.ACTIVE,
-    )
-
-    # Create issue in sprint
-    issue = await OxydeIssue.objects.create(
-        project_id=test_project.id,
-        sprint_id=sprint.id,
-        identifier=f"{test_project.key}-1600",
-        number=1600,
-        title="Sprint Only Issue",
-        creator_id=test_user.id,
-    )
-
-    response = await client.get(
-        f"/api/issues?sprint_id={sprint.id}",
-        headers=auth_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    # We created exactly one issue in this sprint
-    assert len(data) == 1
-    assert data[0]["title"] == "Sprint Only Issue"
 
 
 @pytest.mark.asyncio
@@ -2247,17 +2146,6 @@ async def test_batch_update_issues_add_labels(client, auth_headers, test_project
 # ============================================
 # Update Issue Edge Cases
 # ============================================
-
-
-@pytest.mark.asyncio
-async def test_update_issue_not_found(client, auth_headers):
-    """Test updating non-existent issue."""
-    response = await client.patch(
-        "/api/issues/00000000-0000-0000-0000-000000000000",
-        headers=auth_headers,
-        json={"title": "Updated"},
-    )
-    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2604,39 +2492,9 @@ async def test_delete_comment_not_author(client, auth_headers2, test_issue, db, 
 # ============================================
 
 
-@pytest.mark.asyncio
-async def test_get_issue_not_found(client, auth_headers):
-    """Test getting non-existent issue."""
-    response = await client.get(
-        "/api/issues/00000000-0000-0000-0000-000000000000",
-        headers=auth_headers,
-    )
-    assert response.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_get_issue_by_identifier_not_found(client, auth_headers):
-    """Test getting issue by non-existent identifier."""
-    response = await client.get(
-        "/api/issues/identifier/NONEXISTENT-999",
-        headers=auth_headers,
-    )
-    assert response.status_code == 404
-
-
 # ============================================
 # Delete Issue Edge Cases
 # ============================================
-
-
-@pytest.mark.asyncio
-async def test_delete_issue_not_found(client, auth_headers):
-    """Test deleting non-existent issue."""
-    response = await client.delete(
-        "/api/issues/00000000-0000-0000-0000-000000000000",
-        headers=auth_headers,
-    )
-    assert response.status_code == 404
 
 
 # ============================================
@@ -2770,7 +2628,9 @@ async def test_list_issues_by_sprint_only(client, auth_headers, test_sprint, tes
     )
     assert response.status_code == 200
     data = response.json()
-    assert len(data) >= 1
+    # Exactly the one issue we put in the sprint (the deleted shadowed twin
+    # of this test pinned the count; CHT-1373).
+    assert len(data) == 1
     assert any(i["id"] == test_issue.id for i in data)
 
 
@@ -2948,9 +2808,11 @@ async def test_get_issue_documents(client, auth_headers, test_issue, test_team, 
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
-    assert len(data) >= 1
-    assert any(d["id"] == doc.id for d in data)
-    assert any(d["title"] == "Linked Document" for d in data)
+    # Exactly the one document we linked (the deleted shadowed twin of this
+    # test pinned the count; CHT-1373).
+    assert len(data) == 1
+    assert data[0]["id"] == doc.id
+    assert data[0]["title"] == "Linked Document"
 
 
 @pytest.mark.asyncio
@@ -4261,3 +4123,209 @@ async def test_create_issue_with_refactor_type(client, auth_headers, test_projec
     r2 = await client.get(f"/api/issues/{iid}", headers=auth_headers)
     assert r2.status_code == 200
     assert r2.json()["issue_type"] == "refactor"
+
+
+async def test_issue_response_resolves_foreign_key_names(client, auth_headers, test_project, test_user, test_sprint, db):
+    """IssueResponse carries assignee_name / sprint_name / parent_identifier /
+    project_key alongside the UUIDs (CHT-1371), on single and list routes."""
+    parent = (await client.post(
+        f"/api/projects/{test_project.id}/issues", json={"title": "Parent"}, headers=auth_headers,
+    )).json()
+    created = (await client.post(
+        f"/api/projects/{test_project.id}/issues",
+        json={"title": "Child", "parent_id": parent["id"], "assignee_id": test_user.id,
+              "sprint_id": test_sprint.id},
+        headers=auth_headers,
+    )).json()
+    assert created["assignee_name"] == test_user.name
+    assert created["sprint_name"] == test_sprint.name
+    assert created["parent_identifier"] == parent["identifier"]
+    assert created["project_key"] == test_project.key
+    # Unset keys resolve to None, not an error.
+    assert parent["assignee_name"] is None and parent["parent_identifier"] is None
+
+    fetched = (await client.get(f"/api/issues/identifier/{created['identifier']}", headers=auth_headers)).json()
+    assert fetched["parent_identifier"] == parent["identifier"]
+    listed = (await client.get(f"/api/issues?project_id={test_project.id}", headers=auth_headers)).json()
+    row = next(i for i in listed if i["id"] == created["id"])
+    assert row["assignee_name"] == test_user.name and row["project_key"] == test_project.key
+
+
+
+# ============================================================================
+# Claim/close refusal payload carries attestation state (CHT-1360)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_claim_refusal_reports_attestation_state(client, auth_headers, test_project, test_issue, db):
+    """The 409 for pending claim rituals must let the caller tell "attest
+    this" from "attested, awaiting a human": rows are the PendingRitualResponse
+    shape (approval_mode + attestation), and `unattested` / `awaiting_approval`
+    plus the message say which is which (CHT-1360)."""
+    from app.enums import ApprovalMode, RitualTrigger
+    from app.oxyde_models.ritual import OxydeRitual
+
+    ritual = await OxydeRitual.objects.create(
+        project_id=test_project.id,
+        name="design-review",
+        prompt="Write the design.",
+        trigger=RitualTrigger.TICKET_CLAIM,
+        approval_mode=ApprovalMode.REVIEW,
+    )
+
+    # Non-interactive human (no X-Chaotic-Interactive header) is gated like an agent.
+    response = await client.patch(
+        f"/api/issues/{test_issue.id}", headers=auth_headers, json={"status": "in_progress"},
+    )
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "claim_rituals_pending"
+    (row,) = detail["pending_rituals"]
+    assert row["name"] == "design-review" and row["prompt"] == "Write the design."
+    assert row["approval_mode"] == "review" and row["trigger"] == "ticket_claim"
+    assert row["attestation"] is None
+    assert detail["unattested"] == ["design-review"] and detail["awaiting_approval"] == []
+    assert detail["gate"] == []
+    assert "1 unattested (design-review)" in detail["message"]
+    assert "Attest the unattested ones before claiming." in detail["message"]
+
+    # Attest (review mode records it and waits for a human)...
+    attest = await client.post(
+        f"/api/rituals/{ritual.id}/attest-issue/{test_issue.id}",
+        headers=auth_headers, json={"note": "Design written."},
+    )
+    assert attest.status_code == 200
+
+    # ...and the same claim is still refused, but the payload now says why.
+    response = await client.patch(
+        f"/api/issues/{test_issue.id}", headers=auth_headers, json={"status": "in_progress"},
+    )
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    (row,) = detail["pending_rituals"]
+    assert row["attestation"] is not None
+    assert row["attestation"]["note"] == "Design written."
+    assert row["attestation"]["approved_at"] is None
+    assert detail["unattested"] == [] and detail["awaiting_approval"] == ["design-review"]
+    assert "1 attested, awaiting human approval (design-review)" in detail["message"]
+    assert "Nothing more to attest; a human must approve the attested ones before claiming." in detail["message"]
+
+
+@pytest.mark.asyncio
+async def test_create_refusal_rows_carry_approval_mode(client, auth_headers, test_project, db):
+    """The create-as-in_progress refusal has no issue yet, so attestation is
+    None for every row, but approval_mode still travels (CHT-1360)."""
+    from app.enums import ApprovalMode, RitualTrigger
+    from app.oxyde_models.ritual import OxydeRitual
+
+    await OxydeRitual.objects.create(
+        project_id=test_project.id, name="claim-gate", prompt="Gate.",
+        trigger=RitualTrigger.TICKET_CLAIM, approval_mode=ApprovalMode.GATE,
+    )
+    response = await client.post(
+        f"/api/projects/{test_project.id}/issues", headers=auth_headers,
+        json={"title": "Straight to work", "status": "in_progress"},
+    )
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    (row,) = detail["pending_rituals"]
+    assert row["approval_mode"] == "gate" and row["attestation"] is None
+    # A GATE ritual is never "attest this": only a human can complete it.
+    assert detail["gate"] == ["claim-gate"]
+    assert detail["unattested"] == [] and detail["awaiting_approval"] == []
+    assert "1 gate ritual only a human can complete (claim-gate)" in detail["message"]
+    assert "a human must complete the gate ritual before claiming" in detail["message"]
+
+
+@pytest.mark.asyncio
+class TestBlockingCycleCheckIsAtomic:
+    """CHT-1311: the cycle check runs inside the insert's transaction,
+    behind SQLite's writer lock, so a concurrent writer's inverse BLOCKS
+    edge is waited for and then seen. The test database is a file, so a
+    second Oxyde pool on it is a genuine second connection."""
+
+    async def _issue(self, project, user, title):
+        from app.schemas.issue import IssueCreate
+        from app.services.issue_service import IssueService
+        return await IssueService().create(IssueCreate(title=title, project_id=project.id), project, user.id)
+
+    async def test_a_concurrent_inverse_edge_is_waited_for_and_refused(self, db, test_project, test_user):
+        """A rival connection holds the writer lock with "Y blocks X"
+        inserted but uncommitted. Our "X blocks Y" must block behind it,
+        then, once the rival commits, walk a graph that includes the
+        rival's edge and refuse; nothing of ours lands."""
+        import asyncio
+        import os
+        import uuid
+        from datetime import datetime, timezone
+        from oxyde import AsyncDatabase, PoolSettings, execute_raw
+        from oxyde.db.transaction import AsyncTransaction
+        from app.enums import IssueRelationType
+        from app.oxyde_models.issue import OxydeIssueRelation
+        from app.schemas.issue import IssueRelationCreate
+        from app.services.issue_service import IssueService, RelationCycleError
+
+        x = await self._issue(test_project, test_user, "x")
+        y = await self._issue(test_project, test_user, "y")
+        url = os.environ["DATABASE_URL"].replace("sqlite+aiosqlite:///", "sqlite:///")
+        rival = AsyncDatabase(url, name="rival", overwrite=True, settings=PoolSettings(max_connections=1))
+        await rival.connect()
+        try:
+            tx = AsyncTransaction(rival)
+            await tx.__aenter__()
+            await execute_raw("UPDATE issue_relations SET relation_type = relation_type WHERE 0", client=tx)
+            await execute_raw(
+                "INSERT INTO issue_relations (id, issue_id, related_issue_id, relation_type, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [str(uuid.uuid4()), y.id, x.id, IssueRelationType.BLOCKS.name, datetime.now(timezone.utc).isoformat()],
+                client=tx,
+            )
+            ours = asyncio.create_task(IssueService().create_relation(
+                x.id, IssueRelationCreate(related_issue_id=y.id, relation_type=IssueRelationType.BLOCKS),
+            ))
+            await asyncio.sleep(0.5)
+            assert not ours.done(), "our transaction must wait behind the rival's writer lock"
+            await tx.__aexit__(None, None, None)  # the rival commits
+            with pytest.raises(RelationCycleError, match="blocking cycle"):
+                await ours
+        finally:
+            await rival.disconnect()
+
+        assert len(await OxydeIssueRelation.objects.filter(issue_id=y.id, related_issue_id=x.id).all()) == 1
+        assert await OxydeIssueRelation.objects.filter(issue_id=x.id, related_issue_id=y.id).all() == []
+
+    async def test_a_duplicate_is_a_no_op_through_the_same_transaction(self, db, test_project, test_user):
+        from app.enums import IssueRelationType
+        from app.oxyde_models.issue import OxydeIssueRelation
+        from app.schemas.issue import IssueRelationCreate
+        from app.services.issue_service import IssueService
+
+        x = await self._issue(test_project, test_user, "x")
+        y = await self._issue(test_project, test_user, "y")
+        service = IssueService()
+        first = await service.create_relation(
+            x.id, IssueRelationCreate(related_issue_id=y.id, relation_type=IssueRelationType.BLOCKS),
+        )
+        again = await service.create_relation(
+            x.id, IssueRelationCreate(related_issue_id=y.id, relation_type=IssueRelationType.BLOCKS),
+        )
+        assert again.id == first.id
+        assert len(await OxydeIssueRelation.objects.filter(issue_id=x.id).all()) == 1
+
+    async def test_create_relation_refuses_to_run_inside_an_outer_transaction(self, db, test_project, test_user):
+        """Inside a transaction that has already read, the writer lock
+        cannot wait (SQLITE_BUSY_SNAPSHOT), so the precondition is
+        checked up front rather than surfacing as a sporadic 500."""
+        from oxyde import atomic
+        from app.enums import IssueRelationType
+        from app.schemas.issue import IssueRelationCreate
+        from app.services.issue_service import IssueService
+
+        x = await self._issue(test_project, test_user, "x")
+        y = await self._issue(test_project, test_user, "y")
+        with pytest.raises(RuntimeError, match="own transaction"):
+            async with atomic():
+                await IssueService().create_relation(
+                    x.id, IssueRelationCreate(related_issue_id=y.id, relation_type=IssueRelationType.BLOCKS),
+                )

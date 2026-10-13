@@ -27,7 +27,7 @@ from app.services.ritual_service import RitualService
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
-from app.enums import ApprovalMode, RitualTrigger, ActivityType, LimboType
+from app.enums import ApprovalMode, RitualTrigger, ActivityType
 from app.services.user_service import UserService
 from app.websocket import broadcast_attestation_event
 
@@ -48,17 +48,43 @@ async def _build_attestation_response(att) -> RitualAttestationResponse:
         attested_by_name=attester.name if attester else None,
         attested_at=att.attested_at,
         note=att.note,
+        artifact_ref=att.artifact_ref,
         approved_by=att.approved_by,
         approved_by_name=approver.name if approver else None,
         approved_at=att.approved_at,
     )
 
 
+async def pending_ritual_responses(issue_id: str | None, rituals) -> list[PendingRitualResponse]:
+    """One PendingRitualResponse per ritual, with its attestation state for
+    `issue_id` (None when the issue does not exist yet, e.g. a create
+    refused as in_progress/done). The same rows get_pending_ticket_rituals
+    returns; the claim/close refusal payloads in app/api/issues.py reuse
+    them so a caller can tell "attest this" from "attested, awaiting a
+    human" from the 409 alone (CHT-1360)."""
+    ritual_service = RitualService()
+    rows = []
+    for ritual in rituals:
+        att = await ritual_service.get_issue_attestation(ritual.id, issue_id) if issue_id else None
+        rows.append(PendingRitualResponse(
+            id=ritual.id,
+            name=ritual.name,
+            prompt=ritual.prompt,
+            trigger=ritual.trigger,
+            approval_mode=ritual.approval_mode,
+            note_required=ritual.note_required,
+            artifact=ritual.artifact,
+            conditions=ritual.conditions,
+            attestation=(await _build_attestation_response(att)) if att else None,
+        ))
+    return rows
+
+
 async def create_ritual(
     project_id: str,
     ritual_in: RitualCreate,
     current_user: CurrentUser,
-):
+) -> RitualResponse:
     """Create a new ritual for a project.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -83,7 +109,7 @@ async def create_ritual(
 
     try:
         ritual = await ritual_service.create(ritual_in, project_id)
-        return ritual
+        return RitualResponse.model_validate(ritual)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -97,7 +123,7 @@ async def list_rituals(
     include_inactive: bool = False,
     skip: int = 0,
     limit: int = 1000,
-):
+) -> list[RitualResponse]:
     """List rituals for a project.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -120,7 +146,7 @@ async def list_rituals(
         )
 
     rituals = await ritual_service.list_by_project(project_id, include_inactive=include_inactive)
-    return rituals[skip:skip + limit]
+    return [RitualResponse.model_validate(r) for r in rituals[skip:skip + limit]]
 
 
 @router.get("/history", response_model=list[RitualAttestationHistoryItem])
@@ -173,7 +199,7 @@ async def list_attestation_history(
 async def get_limbo_status(
     project_id: str,
     current_user: CurrentUser,
-):
+) -> LimboStatusResponse:
     """Check if project is in limbo and get pending rituals."""
     project_service = ProjectService()
     ritual_service = RitualService()
@@ -209,6 +235,7 @@ async def get_limbo_status(
             trigger=ritual.trigger,
             approval_mode=ritual.approval_mode,
             note_required=ritual.note_required,
+            artifact=ritual.artifact,
             conditions=ritual.conditions,
             attestation=attestation,
         ))
@@ -346,7 +373,7 @@ async def force_clear_ticket_limbo(
 ):
     """Force-clear ticket-level limbo for a specific issue (admin only)."""
     from app.oxyde_models.issue import (
-        OxydeIssue, OxydeTicketLimbo, OxydeTicketLimboBlocker,
+        OxydeTicketLimbo, OxydeTicketLimboBlocker,
     )
 
     issue_service = IssueService()
@@ -412,10 +439,7 @@ async def force_clear_ticket_limbo(
             # rather than firing the auto-transition. The user must
             # re-attempt the claim/close, but the await primitive can
             # wake on the cancel.
-            try:
-                limbo_type_value = LimboType[limbo.limbo_type].value
-            except KeyError:
-                limbo_type_value = limbo.limbo_type
+            limbo_type_value = limbo.limbo_type.value
             await OxydeIssueActivity.objects.create(
                 issue_id=issue_id,
                 user_id=current_user.id,
@@ -452,7 +476,7 @@ async def force_clear_ticket_limbo(
 async def get_pending_ticket_rituals(
     issue_id: str,
     current_user: CurrentUser,
-):
+) -> TicketRitualsStatusResponse:
     """Get pending ticket-level rituals (both close and claim) for an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -482,20 +506,7 @@ async def get_pending_ticket_rituals(
     claim_rituals = await ritual_service.get_pending_claim_rituals(issue.project_id, issue_id)
     pending = close_rituals + claim_rituals
 
-    # Build pending ritual responses with attestation status
-    pending_responses = []
-    for ritual in pending:
-        att = await ritual_service.get_issue_attestation(ritual.id, issue_id)
-        pending_responses.append(PendingRitualResponse(
-            id=ritual.id,
-            name=ritual.name,
-            prompt=ritual.prompt,
-            trigger=ritual.trigger,
-            approval_mode=ritual.approval_mode,
-            note_required=ritual.note_required,
-            conditions=ritual.conditions,
-            attestation=(await _build_attestation_response(att)) if att else None,
-        ))
+    pending_responses = await pending_ritual_responses(issue_id, pending)
 
     # Get completed rituals
     all_rituals = await ritual_service.list_by_project(issue.project_id)
@@ -534,7 +545,7 @@ async def attest_ritual_for_issue(
     issue_id: str,
     attestation_in: RitualAttestationCreate,
     current_user: CurrentUser,
-):
+) -> RitualAttestationResponse:
     """Attest to a ticket-close ritual for an issue."""
     ritual_service = RitualService()
     issue_service = IssueService()
@@ -602,6 +613,8 @@ async def attest_ritual_for_issue(
             issue_id=issue_id,
             user_id=current_user.id,
             note=attestation_in.note,
+            document_id=attestation_in.document_id,
+            url=attestation_in.url,
         )
     except ValueError as e:
         raise HTTPException(
@@ -609,7 +622,7 @@ async def attest_ritual_for_issue(
             detail=str(e),
         )
 
-    return attestation
+    return await _build_attestation_response(attestation)
 
 
 @router.post("/{ritual_id}/complete-issue/{issue_id}", response_model=RitualAttestationResponse)
@@ -618,7 +631,7 @@ async def complete_gate_ritual_for_issue(
     issue_id: str,
     attestation_in: RitualAttestationCreate,
     current_user: CurrentUser,
-):
+) -> RitualAttestationResponse:
     """Complete a GATE mode ticket-close ritual (human-only)."""
     ritual_service = RitualService()
     issue_service = IssueService()
@@ -683,6 +696,8 @@ async def complete_gate_ritual_for_issue(
             issue_id=issue_id,
             user_id=current_user.id,
             note=attestation_in.note,
+            document_id=attestation_in.document_id,
+            url=attestation_in.url,
         )
     except ValueError as e:
         raise HTTPException(
@@ -698,7 +713,7 @@ async def complete_gate_ritual_for_issue(
     except Exception:
         pass
 
-    return attestation
+    return await _build_attestation_response(attestation)
 
 
 @router.post("/{ritual_id}/approve-issue/{issue_id}", response_model=RitualAttestationResponse)
@@ -797,6 +812,14 @@ async def approve_issue_attestation(
 # ============================================================================
 
 
+def _group_response(group) -> RitualGroupResponse:
+    """RitualGroupResponse for a group row that carries its active members
+    (`group.rituals`, attached by the service's group loaders)."""
+    response = RitualGroupResponse.model_validate(group)
+    response.triggers = sorted({r.trigger.value for r in getattr(group, "rituals", None) or []})
+    return response
+
+
 @router.post("/groups", response_model=RitualGroupResponse, status_code=status.HTTP_201_CREATED)
 async def create_ritual_group(
     project_id: str,
@@ -823,7 +846,7 @@ async def create_ritual_group(
 
     try:
         group = await ritual_service.create_group(group_in, project_id)
-        return group
+        return _group_response(group)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -856,7 +879,7 @@ async def list_ritual_groups(
         )
 
     groups = await ritual_service.list_groups_by_project(project_id)
-    return groups[skip:skip + limit]
+    return [_group_response(g) for g in groups[skip:skip + limit]]
 
 
 @router.get("/groups/{group_id}", response_model=RitualGroupResponse)
@@ -888,7 +911,7 @@ async def get_ritual_group(
             detail="Not a member of this team",
         )
 
-    return group
+    return _group_response(group)
 
 
 @router.patch("/groups/{group_id}", response_model=RitualGroupResponse)
@@ -923,7 +946,7 @@ async def update_ritual_group(
         )
 
     group = await ritual_service.update_group(group, group_in)
-    return group
+    return _group_response(group)
 
 
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1080,7 +1103,7 @@ async def attest_ritual(
     attestation_in: RitualAttestationCreate,
     current_user: CurrentUser,
     project_id: str | None = None,
-):
+) -> RitualAttestationResponse:
     """Attest to a ritual for the current limbo sprint.
 
     ``project_id`` is optional (CHT-1223): the ritual-scoped variants of
@@ -1158,13 +1181,17 @@ async def attest_ritual(
             sprint_id=limbo_sprint.id,
             user_id=current_user.id,
             note=attestation_in.note,
+            document_id=attestation_in.document_id,
+            url=attestation_in.url,
         )
-        return attestation
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+    # Outside the try: pydantic's ValidationError is a ValueError, and a
+    # schema-construction failure is a server bug, not a 400.
+    return await _build_attestation_response(attestation)
 
 
 @router.post("/{ritual_id}/approve", response_model=RitualAttestationResponse)
@@ -1247,7 +1274,7 @@ async def complete_gate_ritual(
     attestation_in: RitualAttestationCreate,
     current_user: CurrentUser,
     project_id: str | None = None,
-):
+) -> RitualAttestationResponse:
     """Complete a GATE mode ritual (human-only).
 
     ``project_id`` is optional (CHT-1223) -- derived from the ritual when
@@ -1317,10 +1344,12 @@ async def complete_gate_ritual(
             sprint_id=limbo_sprint.id,
             user_id=current_user.id,
             note=attestation_in.note,
+            document_id=attestation_in.document_id,
+            url=attestation_in.url,
         )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-    return attestation
+    return await _build_attestation_response(attestation)

@@ -200,6 +200,28 @@ def test_unreadable_target_prints_notice_and_still_renames(mig, ctx, capsys):
     assert keys["bbbbbbbb-2222"] == "PROJ-dup-bbbbbbbb"
 
 
+def test_collect_pass_is_silent(mig, capsys):
+    """Oxyde drives upgrade() in a connection-less "collect" context right
+    after the real pass and again for every applied migration on every
+    later migrate, rollback, makemigrations and sqlmigrate; that used to
+    print the cannot-pre-scan caveat on all of them, indefinitely
+    (CHT-1402). Nothing to scan there, so nothing to say. This test is
+    also the pin on the private `_mode` attribute the guard reads."""
+    from oxyde.migrations.context import MigrationContext
+
+    mig.report_renames(MigrationContext(mode="collect"))
+    assert capsys.readouterr().out == ""
+
+
+def test_execute_pass_without_a_readable_target_still_warns(mig, capsys):
+    """The caveat is kept for the pass that matters: execute mode against a
+    target the pre-scan cannot open."""
+    from oxyde.migrations.context import MigrationContext
+
+    mig.report_renames(MigrationContext(mode="execute", dialect="sqlite"))
+    assert "[0008] cannot pre-scan" in capsys.readouterr().out
+
+
 def test_idempotent_rerun_of_dedupe(mig, ctx, capsys):
     """Running the dedupe portion twice doesn't double-suffix (already-
     suffixed rows no longer collide, so the second pass is a no-op)."""

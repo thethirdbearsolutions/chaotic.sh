@@ -16,12 +16,13 @@ class OxydeSprint(Model):
     description: str | None = Field(default=None)
     status: DbEnum(SprintStatus) = Field(default=SprintStatus.PLANNED)
 
-    start_date: DateTimeUTC | None = Field(default=None)
-    end_date: DateTimeUTC | None = Field(default=None)
+    # Outputs, not inputs (CHT-1366): a sprint has no scheduled dates. It is
+    # activated when the previous one closes and closed when its budget is
+    # spent, and these record when that turned out to happen.
+    activated_at: DateTimeUTC | None = Field(default=None)
+    closed_at: DateTimeUTC | None = Field(default=None)
     budget: int | None = Field(default=None)
     points_spent: int = Field(default=0)
-    token_budget: int | None = Field(default=None)
-    tokens_spent: int = Field(default=0)
     limbo: bool = Field(default=False)
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -39,20 +40,6 @@ class OxydeSprint(Model):
         if self.budget is None:
             return None
         return self.budget - self.points_spent
-
-    @property
-    def token_in_arrears(self) -> bool:
-        """Check if sprint is in token arrears."""
-        if self.token_budget is None:
-            return False
-        return self.tokens_spent > self.token_budget
-
-    @property
-    def remaining_token_budget(self) -> int | None:
-        """Get remaining token budget, or None if unlimited."""
-        if self.token_budget is None:
-            return None
-        return self.token_budget - self.tokens_spent
 
     class Meta:
         is_table = True

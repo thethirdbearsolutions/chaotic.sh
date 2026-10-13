@@ -1,0 +1,56 @@
+# Fast local guards, run before each commit.
+#
+# These are a convenience, not the gate: CI (.github/workflows/ci.yml)
+# runs the full pytest suites, which include every check below. A
+# contributor who never installs these hooks is still covered -- the
+# point here is to fail in two seconds instead of after a push.
+#
+#   pip install pre-commit && pre-commit install
+#
+repos:
+  - repo: local
+    hooks:
+      # The enum name/value contract (CHT-1345). A bug class recurred
+      # from CHT-974 through CHT-1333 because nothing pinned which of an
+      # enum's two string forms comes out where. Registry-derived, so it
+      # covers models added later without being edited; ~0.2s.
+      - id: dbenum-contract
+        name: DbEnum name/value contract
+        entry: backend/.venv/bin/python -m pytest backend/tests/test_dbenum_contract.py -q --no-cov -p no:cacheprovider
+        language: system
+        pass_filenames: false
+        # Includes app/schemas: the four _coerce_enum copies the contract
+        # test pins live there, so editing them must fire this hook.
+        files: ^backend/(app/(oxyde_models|schemas)/.*|app/enums\.py|tests/test_dbenum_contract\.py)$
+        types_or: [python]
+
+      # Both MCP transports must expose the same toolset (CHT-1266).
+      - id: mcp-toolset-sync
+        name: MCP toolset sync
+        entry: cli/.venv/bin/python -m pytest cli/tests/test_mcp_toolset_sync.py -q --no-cov -p no:cacheprovider
+        language: system
+        pass_filenames: false
+        files: ^(cli/src/(cli/mcp_server|cli/mcp_backend|chaotic_mcp_tools/.*)\.py|backend/app/mcp_server/.*\.py|docs/mcp-toolset-schema\.json)$
+        types_or: [python, json]
+
+      # Pyflakes-equivalent rules only (CHT-1362): undefined names, unused
+      # imports/variables, shadowed redefinitions. Same config CI runs
+      # (`ruff check .` in backend/, cli/ and e2e/, from each pyproject).
+      - id: ruff-backend
+        name: ruff (backend, F-rules)
+        entry: backend/.venv/bin/ruff check backend
+        language: system
+        pass_filenames: false
+        files: ^backend/(.*\.py|pyproject\.toml)$
+      - id: ruff-cli
+        name: ruff (cli, F-rules)
+        entry: cli/.venv/bin/ruff check cli
+        language: system
+        pass_filenames: false
+        files: ^cli/(.*\.py|pyproject\.toml)$
+      - id: ruff-e2e
+        name: ruff (e2e, F-rules)
+        entry: e2e/.venv/bin/ruff check e2e
+        language: system
+        pass_filenames: false
+        files: ^e2e/(.*\.py|pyproject\.toml)$

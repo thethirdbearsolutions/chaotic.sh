@@ -32,6 +32,53 @@ def sample_epic():
 class TestEpicCreate:
     """Tests for epic create command."""
 
+    def test_create_off_scale_estimate_warns_but_succeeds(self, cli_runner):
+        """CHT-1407: `epic create --estimate` warns on stderr like `issue create`
+        does when the value is off the project's declared scale; the epic is
+        still created and the command exits 0."""
+        from cli.main import cli, client
+
+        client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "CHT-200", "title": "E"})
+        client.get_project = MagicMock(return_value={"id": "proj-1", "estimate_scale": "powers_of_2"})
+
+        result = cli_runner.invoke(cli, ['epic', 'create', 'E', '--estimate', '5'])
+
+        assert result.exit_code == 0, result.output
+        assert client.create_issue.call_args[1]["estimate"] == 5
+        assert "Warning: Estimate 5 is not on this project's powers_of_2 scale" in result.stderr
+
+        client.create_issue.reset_mock()
+        result = cli_runner.invoke(cli, ['epic', 'create', 'E', '--estimate', '4'])
+        assert result.exit_code == 0, result.output
+        assert "Warning" not in result.output
+
+    def test_show_renders_a_zero_point_estimate_as_zero(self, cli_runner):
+        """CHT-1406: 0 is a real estimate, not "-"."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "e1", "identifier": "CHT-9", "title": "Zero", "status": "todo", "priority": "medium",
+            "issue_type": "epic", "estimate": 0, "description": "",
+        })
+        client.get_sub_issues = MagicMock(return_value=[
+            {"id": "s1", "identifier": "CHT-10", "title": "Sub", "status": "todo", "estimate": 0, "priority": "medium"},
+        ])
+        result = cli_runner.invoke(cli, ['epic', 'show', 'CHT-9'])
+        assert result.exit_code == 0, result.output
+        assert "Estimate: 0 points" in result.output
+        assert "- points" not in result.output
+        sub_row = next(line for line in result.output.splitlines() if "CHT-10" in line)
+        assert " 0 " in sub_row and " - " not in sub_row
+
+        client.get_issues = MagicMock(return_value=[{
+            "id": "e1", "identifier": "CHT-9", "title": "Zero", "status": "todo", "priority": "medium",
+            "issue_type": "epic", "estimate": 0,
+        }])
+        result = cli_runner.invoke(cli, ['epic', 'list'])
+        assert result.exit_code == 0, result.output
+        epic_row = next(line for line in result.output.splitlines() if "CHT-9" in line)
+        assert " 0 " in epic_row and " - " not in epic_row
+
     def test_create_basic(self, cli_runner):
         """epic create with title creates epic."""
         from cli.main import cli, client

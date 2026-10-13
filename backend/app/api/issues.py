@@ -1,6 +1,7 @@
 """Issue API routes."""
 import logging
-from datetime import datetime, timezone
+from typing import Annotated
+
 from fastapi import APIRouter, HTTPException, status, Query, Header
 from app.api.deps import CurrentUser, check_user_project_access, check_user_team_access
 from app.utils import ensure_utc
@@ -26,8 +27,10 @@ from app.schemas.issue import (
 )
 from app.schemas.document import DocumentResponse
 from app.services.document_service import DocumentService
+from app.api.rituals import pending_ritual_responses
 from app.services.issue_service import (
     IssueService,
+    RelationCycleError,
     SprintInArrearsError,
     SprintInLimboError,
     TicketRitualsError,
@@ -42,9 +45,9 @@ from app.services.team_service import TeamService
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
-from app.oxyde_models.issue import OxydeIssueRelation
-from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
-from app.enums import DocumentActivityType, IssueRelationType
+from app.oxyde_models.sprint import OxydeSprint
+from app.enums import ApprovalMode, IssueStatus, IssuePriority, IssueType, ActivityType
+from app.enums import DocumentActivityType
 
 
 def _activity_type_value(raw, enum_cls):
@@ -203,12 +206,116 @@ def issue_to_response(issue: Issue) -> IssueResponse:
     )
 
 
+async def issues_to_responses(issues) -> list[IssueResponse]:
+    """Build IssueResponses with the UUID foreign keys resolved to names
+    (CHT-1371): assignee_name, sprint_name, parent_identifier, project_key.
+
+    Four batched lookups for the whole list, however long it is, so
+    list_issues at limit=500 costs the same as one issue. Every tool
+    input on the MCP surface addresses assignees, sprints, parents and
+    projects by name/identifier, so this is what makes a row's output
+    usable as the next call's input.
+    """
+    issues = list(issues or [])
+    if not issues:
+        return []
+
+    async def _lookup(model, ids, attr):
+        ids = [i for i in ids if i]
+        if not ids:
+            return {}
+        # Two columns, not whole rows: the parent lookup would otherwise
+        # load every parent's description to read one identifier.
+        rows = await model.objects.filter(id__in=list(set(ids))).values("id", attr).all()
+        return {
+            (row["id"] if isinstance(row, dict) else row.id):
+            (row[attr] if isinstance(row, dict) else getattr(row, attr))
+            for row in rows
+        }
+
+    assignees = await _lookup(OxydeUser, {i.assignee_id for i in issues}, "name")
+    sprints = await _lookup(OxydeSprint, {i.sprint_id for i in issues}, "name")
+    parents = await _lookup(Issue, {i.parent_id for i in issues}, "identifier")
+    projects = await _lookup(OxydeProject, {i.project_id for i in issues}, "key")
+
+    return [
+        issue_to_response(issue).model_copy(update={
+            "assignee_name": assignees.get(issue.assignee_id),
+            "sprint_name": sprints.get(issue.sprint_id),
+            "parent_identifier": parents.get(issue.parent_id),
+            "project_key": projects.get(issue.project_id),
+        })
+        for issue in issues
+    ]
+
+
+async def issue_response(issue: Issue) -> IssueResponse:
+    """One issue, with companions resolved -- see issues_to_responses."""
+    return (await issues_to_responses([issue]))[0]
+
+
+async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> dict:
+    """The 409 detail for a claim/close refused by pending ticket rituals
+    (CHT-1360). Rows are the same PendingRitualResponse shape ritual_pending
+    returns -- approval_mode and attestation included -- and three name
+    lists plus the message separate what the caller can still do from what
+    only a human can:
+
+      * ``unattested``: AUTO/REVIEW rituals with no attestation -> attest.
+      * ``awaiting_approval``: attested, REVIEW -> a human approves.
+      * ``gate``: GATE rituals -> a human completes (attesting is refused).
+
+        "Ticket has pending claim rituals: 1 unattested (work-on-branch);
+         1 attested, awaiting human approval (design-review). Attest the
+         unattested ones before claiming."
+
+    Cost: one attestation lookup per ritual (plus two user lookups per
+    attested one) on top of the gating queries the service already ran;
+    fine at today's ritual counts, revisit if projects grow dozens.
+    """
+    rows = await pending_ritual_responses(e.issue_pk, e.rituals) if e.rituals else []
+    if rows:
+        gate = [r.name for r in rows if r.approval_mode == ApprovalMode.GATE and r.attestation is None]
+        awaiting = [r.name for r in rows if r.attestation is not None]
+        unattested = [r.name for r in rows if r.attestation is None and r.approval_mode != ApprovalMode.GATE]
+        pending = [r.model_dump(mode="json") for r in rows]
+    else:  # a raiser without rows: keep the minimal name/prompt list
+        unattested = [r.get("name", "unknown") for r in e.pending_rituals]
+        awaiting, gate = [], []
+        pending = e.pending_rituals
+    parts = []
+    if unattested:
+        parts.append(f"{len(unattested)} unattested ({', '.join(unattested)})")
+    if awaiting:
+        parts.append(f"{len(awaiting)} attested, awaiting human approval ({', '.join(awaiting)})")
+    if gate:
+        parts.append(f"{len(gate)} gate ritual{'s' if len(gate) != 1 else ''} only a human can complete ({', '.join(gate)})")
+    if unattested:
+        action = f"Attest the unattested ones before {verb}."
+    else:
+        human = []
+        if awaiting:
+            human.append("approve the attested ones")
+        if gate:
+            human.append(f"complete the gate ritual{'s' if len(gate) != 1 else ''}")
+        action = f"Nothing more to attest; a human must {' and '.join(human) or 'act'} before {verb}."
+    return {
+        "error_code": error_code,
+        "message": f"{lead}: {'; '.join(parts)}. {action}",
+        "issue_id": e.issue_id,
+        "pending_rituals": pending,
+        "unattested": unattested,
+        "awaiting_approval": awaiting,
+        "gate": gate,
+    }
+
+
 async def create_issue(
     project_id: str,
     issue_in: IssueCreate,
     current_user: CurrentUser,
-    x_chaotic_interactive: str | None = Header(default=None),
-):
+    x_chaotic_interactive: Annotated[str | None, Header()] = None,
+) -> IssueResponse:
     """Create a new issue.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -279,7 +386,7 @@ async def create_issue(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "error_code": "sprint_in_arrears",
-                "message": "Sprint is in arrears. Close the current sprint to continue.",
+                "message": "Sprint is in arrears. Close the current sprint to continue; a spent budget ends a sprint, not a date.",
                 "budget": e.budget,
                 "points_spent": e.points_spent,
                 "arrears_by": e.arrears_by,
@@ -288,22 +395,17 @@ async def create_issue(
     except TicketRitualsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "ticket_rituals_pending",
-                "message": "Cannot create issue as done - ticket has pending rituals.",
-                "issue_id": e.issue_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=await _ritual_refusal_detail(
+                e, "ticket_rituals_pending", "Cannot create issue as done - ticket has pending rituals", "closing",
+            ),
         )
     except ClaimRitualsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "claim_rituals_pending",
-                "message": "Cannot create issue as in_progress - ticket has pending claim rituals.",
-                "issue_id": e.issue_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=await _ritual_refusal_detail(
+                e, "claim_rituals_pending",
+                "Cannot create issue as in_progress - ticket has pending claim rituals", "claiming",
+            ),
         )
     except IntentInFlightError as e:
         raise HTTPException(
@@ -317,7 +419,7 @@ async def create_issue(
             },
         )
 
-    response = issue_to_response(issue)
+    response = await issue_response(issue)
 
     # Auto-link cross-referenced issues (CHT-133)
     try:
@@ -382,7 +484,7 @@ async def list_ready_issues(
         project_id=project_id, team_id=team_id,
         assignee_id=assignee_filter, limit=limit,
     )
-    return [issue_to_response(issue) for issue in issues]
+    return await issues_to_responses(issues)
 
 
 @router.get("", response_model=list[IssueResponse])
@@ -393,22 +495,26 @@ async def list_issues(
     assignee_id: str | None = None,
     team_id: str | None = None,
     parent_id: str | None = None,
-    statuses: list[IssueStatus] | None = Query(None, alias="status"),
-    priorities: list[IssuePriority] | None = Query(None, alias="priority"),
-    issue_type: IssueType | None = Query(None, alias="issue_type"),
-    labels: list[str] | None = Query(None, alias="label"),
-    label_match: str = Query("all", pattern="^(all|any)$"),
-    exclude_labels: list[str] | None = Query(None, alias="exclude_label"),
-    exclude_statuses: list[IssueStatus] | None = Query(None, alias="exclude_status"),
-    exclude_priorities: list[IssuePriority] | None = Query(None, alias="exclude_priority"),
-    exclude_issue_types: list[IssueType] | None = Query(None, alias="exclude_issue_type"),
-    exclude_assignee_ids: list[str] | None = Query(None, alias="exclude_assignee_id"),
-    search: str | None = Query(None, min_length=1, max_length=200),
-    sort_by: str | None = Query(None, pattern="^(created|updated|priority|status|title|estimate|random)$"),
-    order: str | None = Query(None, pattern="^(asc|desc)$"),
+    # Query metadata lives in Annotated so the Python default is a real
+    # value: this function is also called in-process (the MCP tools,
+    # ADR-0005) where a bare Query(None) default would be a live,
+    # truthy Query object instead of None (CHT-1375).
+    statuses: Annotated[list[IssueStatus] | None, Query(alias="status")] = None,
+    priorities: Annotated[list[IssuePriority] | None, Query(alias="priority")] = None,
+    issue_type: Annotated[IssueType | None, Query(alias="issue_type")] = None,
+    labels: Annotated[list[str] | None, Query(alias="label")] = None,
+    label_match: Annotated[str, Query(pattern="^(all|any)$")] = "all",
+    exclude_labels: Annotated[list[str] | None, Query(alias="exclude_label")] = None,
+    exclude_statuses: Annotated[list[IssueStatus] | None, Query(alias="exclude_status")] = None,
+    exclude_priorities: Annotated[list[IssuePriority] | None, Query(alias="exclude_priority")] = None,
+    exclude_issue_types: Annotated[list[IssueType] | None, Query(alias="exclude_issue_type")] = None,
+    exclude_assignee_ids: Annotated[list[str] | None, Query(alias="exclude_assignee_id")] = None,
+    search: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
+    sort_by: Annotated[str | None, Query(pattern="^(created|updated|priority|status|title|estimate|random)$")] = None,
+    order: Annotated[str | None, Query(pattern="^(asc|desc)$")] = None,
     skip: int = 0,
     limit: int = 1000,
-):
+) -> list[IssueResponse]:
     """List issues with filters. Pass multiple status/priority/label values to filter by multiple values.
 
     ``label_match`` controls multi-``label`` semantics: ``all`` (default —
@@ -540,14 +646,14 @@ async def list_issues(
             detail="Must provide project_id, team_id, sprint_id, or assignee_id",
         )
 
-    return [issue_to_response(issue) for issue in issues]
+    return await issues_to_responses(issues)
 
 
 @router.get("/search", response_model=list[IssueResponse])
 async def search_issues(
     team_id: str,
-    q: str = Query(..., min_length=1, max_length=200),
-    current_user: CurrentUser = None,
+    q: Annotated[str, Query(min_length=1, max_length=200)],
+    current_user: CurrentUser,
     project_id: str | None = None,
     issue_status: IssueStatus | None = None,
     skip: int = 0,
@@ -578,7 +684,7 @@ async def search_issues(
             )
 
     issues = await issue_service.search(team_id, q, skip, limit, project_id=project_id, status=issue_status.name if issue_status else None)
-    return [issue_to_response(issue) for issue in issues]
+    return await issues_to_responses(issues)
 
 
 @router.post("/batch-update", response_model=list[IssueResponse])
@@ -650,7 +756,7 @@ async def batch_update_issues(
             detail=str(e),
         )
 
-    responses = [issue_to_response(issue) for issue in updated]
+    responses = await issues_to_responses(updated)
     for resp in responses:
         await broadcast_issue_event(team_id, "updated", resp.model_dump(mode="json"))
         await broadcast_activity_event(team_id, "created", {"issue_id": resp.id})
@@ -665,7 +771,7 @@ async def list_team_activities(
     skip: int = 0,
     limit: int = 50,
     project_id: str | None = None,
-):
+) -> list[IssueActivityFeedResponse]:
     """List recent activities for a team (issues and documents), optionally filtered by project."""
     issue_service = IssueService()
     sprint_service = SprintService()
@@ -772,8 +878,8 @@ async def list_team_activities(
 async def list_team_comments(
     team_id: str,
     current_user: CurrentUser,
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, ge=1, le=200),
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ):
     """List recent comments for a team (both issue and document comments)."""
     issue_service = IssueService()
@@ -836,7 +942,7 @@ async def list_team_comments(
 @router.get("/identifier/{identifier}", response_model=IssueResponse)
 async def get_issue_by_identifier(
     identifier: str, current_user: CurrentUser
-):
+) -> IssueResponse:
     """Get issue by identifier (e.g., PRJ-123)."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -863,11 +969,11 @@ async def get_issue_by_identifier(
     # crashed agent's stale claim.
     issue = await issue_service.release_lease_if_expired(issue)
 
-    return issue_to_response(issue)
+    return await issue_response(issue)
 
 
 @router.get("/{issue_id}", response_model=IssueResponse)
-async def get_issue(issue_id: str, current_user: CurrentUser):
+async def get_issue(issue_id: str, current_user: CurrentUser) -> IssueResponse:
     """Get issue by ID."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -890,7 +996,7 @@ async def get_issue(issue_id: str, current_user: CurrentUser):
     # Lazy auto-release of an expired claim lease (CHT-1246).
     issue = await issue_service.release_lease_if_expired(issue)
 
-    return issue_to_response(issue)
+    return await issue_response(issue)
 
 
 @router.patch("/{issue_id}", response_model=IssueResponse)
@@ -898,8 +1004,8 @@ async def update_issue(
     issue_id: str,
     issue_in: IssueUpdate,
     current_user: CurrentUser,
-    x_chaotic_interactive: str | None = Header(default=None),
-):
+    x_chaotic_interactive: Annotated[str | None, Header()] = None,
+) -> IssueResponse:
     """Update an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -960,7 +1066,7 @@ async def update_issue(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "error_code": "sprint_in_arrears",
-                "message": "Sprint is in arrears. Close the current sprint to continue.",
+                "message": "Sprint is in arrears. Close the current sprint to continue; a spent budget ends a sprint, not a date.",
                 "budget": e.budget,
                 "points_spent": e.points_spent,
                 "arrears_by": e.arrears_by,
@@ -969,22 +1075,12 @@ async def update_issue(
     except TicketRitualsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "ticket_rituals_pending",
-                "message": "Ticket has pending rituals. Complete them before closing.",
-                "issue_id": e.issue_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=await _ritual_refusal_detail(e, "ticket_rituals_pending", "Ticket has pending rituals", "closing"),
         )
     except ClaimRitualsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "claim_rituals_pending",
-                "message": "Ticket has pending claim rituals. Complete them before claiming.",
-                "issue_id": e.issue_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=await _ritual_refusal_detail(e, "claim_rituals_pending", "Ticket has pending claim rituals", "claiming"),
         )
     except IntentInFlightError as e:
         raise HTTPException(
@@ -1011,7 +1107,7 @@ async def update_issue(
             },
         )
 
-    response = issue_to_response(issue)
+    response = await issue_response(issue)
 
     # Auto-link cross-referenced issues when description changes (CHT-133)
     if issue_in.description is not None:
@@ -1060,7 +1156,7 @@ async def add_label_to_issue(
     issue_id: str,
     body: AddLabelRequest,
     current_user: CurrentUser,
-):
+) -> IssueResponse:
     """Add a label to an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1093,7 +1189,7 @@ async def add_label_to_issue(
         )
 
     issue = await issue_service.add_label_to_issue(issue, label)
-    response = issue_to_response(issue)
+    response = await issue_response(issue)
     await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"))
     return response
 
@@ -1103,7 +1199,7 @@ async def remove_label_from_issue(
     issue_id: str,
     label_id: str,
     current_user: CurrentUser,
-):
+) -> IssueResponse:
     """Remove a label from an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1136,7 +1232,7 @@ async def remove_label_from_issue(
         )
 
     issue = await issue_service.remove_label_from_issue(issue, label)
-    response = issue_to_response(issue)
+    response = await issue_response(issue)
     await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"))
     return response
 
@@ -1248,7 +1344,7 @@ async def list_description_revisions(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[IssueDescriptionRevisionListItem]:
     """List description revisions for an issue, newest first."""
     limit = min(limit, 10000)
     await _get_issue_checked(issue_id, current_user)
@@ -1275,7 +1371,7 @@ async def get_description_revision(
     issue_id: str,
     version: int,
     current_user: CurrentUser,
-):
+) -> IssueDescriptionRevisionResponse:
     """Get a single description-revision snapshot by version number."""
     await _get_issue_checked(issue_id, current_user)
 
@@ -1304,7 +1400,7 @@ async def list_sub_issues(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[IssueResponse]:
     """List sub-issues for an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1325,7 +1421,7 @@ async def list_sub_issues(
         )
 
     sub_issues = await issue_service.list_sub_issues(issue_id, skip, limit)
-    return [issue_to_response(issue) for issue in sub_issues]
+    return await issues_to_responses(sub_issues)
 
 
 # Comments
@@ -1338,7 +1434,7 @@ async def create_comment(
     issue_id: str,
     comment_in: IssueCommentCreate,
     current_user: CurrentUser,
-):
+) -> IssueCommentResponse:
     """Create a comment on an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1386,7 +1482,7 @@ async def list_comments(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[IssueCommentResponse]:
     """List comments for an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1540,7 +1636,7 @@ async def create_relation(
     issue_id: str,
     relation_in: IssueRelationCreate,
     current_user: CurrentUser,
-):
+) -> IssueRelationResponse:
     """Create a relation between two issues."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1591,44 +1687,14 @@ async def create_relation(
             detail="An issue cannot have a relation to itself",
         )
 
-    # CHT-298: reject blocking cycles. A new "X blocks Y" edge closes a
-    # cycle iff Y already (transitively) blocks X — and any BLOCKS cycle
-    # is a permanent deadlock, because list_ready_issues treats an issue
-    # with a non-DONE incoming BLOCKS as never-ready, so no issue in the
-    # cycle can ever start. Walk the existing BLOCKS graph FORWARD from Y;
-    # if it reaches X, reject. Only BLOCKS affects readiness, so only
-    # BLOCKS is cycle-checked (self-relation above already covers every
-    # type). Visited-guarded + bounded so pre-existing corruption can't
-    # loop forever. relation_type is stored as the enum NAME, so compare
-    # via the name (IssueRelationType is a str-Enum, hence the explicit
-    # isinstance-against-the-enum branch, not `str`).
-    def _is_blocks(rt) -> bool:
-        name = rt.name if isinstance(rt, IssueRelationType) else str(rt)
-        return name.upper() == IssueRelationType.BLOCKS.name
-
-    if _is_blocks(relation_in.relation_type):
-        frontier = [relation_in.related_issue_id]
-        visited: set[str] = set()
-        while frontier:
-            if len(visited) > 5000:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Blocks graph too large to validate (possible pre-existing cycle)",
-                )
-            node = frontier.pop()
-            if node == issue_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot create relation: would close a blocking cycle",
-                )
-            if node in visited:
-                continue
-            visited.add(node)
-            for edge in await OxydeIssueRelation.objects.filter(issue_id=node).all():
-                if _is_blocks(edge.relation_type):
-                    frontier.append(edge.related_issue_id)
-
-    relation = await issue_service.create_relation(issue_id, relation_in)
+    # CHT-298: a BLOCKS edge that would close a cycle is refused. The
+    # check lives in the service, inside the insert's transaction and
+    # behind the writer lock, so two concurrent inverse edges cannot both
+    # pass it (CHT-1311).
+    try:
+        relation = await issue_service.create_relation(issue_id, relation_in)
+    except RelationCycleError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     await broadcast_relation_event(
         project.team_id,
         "created",
@@ -1655,7 +1721,7 @@ async def list_relations(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 1000,
-):
+) -> list[IssueRelationResponse]:
     """List all relations for an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1676,7 +1742,7 @@ async def list_relations(
         )
 
     relations = await issue_service.list_relations(issue_id, team_id=project.team_id)
-    return relations[skip:skip + limit]
+    return [IssueRelationResponse.model_validate(r) for r in relations[skip:skip + limit]]
 
 
 @router.delete(
@@ -1686,7 +1752,7 @@ async def delete_relation(
     issue_id: str,
     relation_id: str,
     current_user: CurrentUser,
-):
+) -> None:
     """Delete a relation."""
     issue_service = IssueService()
     project_service = ProjectService()

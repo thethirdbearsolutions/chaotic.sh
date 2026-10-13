@@ -3,8 +3,8 @@
 Streamable HTTP has no equivalent of the stdio server's single-process,
 single-profile assumption -- many callers, many API keys, concurrent
 requests. ``auth.py``'s ASGI wrapper resolves the caller's ``OxydeUser``
-once per request and stashes it here; tool functions (``tools.py``) read
-it back out. A ``contextvars.ContextVar`` is the right primitive: each
+once per request and stashes it here; the ``InProcessBackend`` adapter
+(``backend.py``) reads it back out on every call. A ``contextvars.ContextVar`` is the right primitive: each
 inbound HTTP request runs in its own asyncio Task (Starlette/uvicorn spawn
 one per connection), and contextvars are copied into child tasks at
 spawn time, so this stays correctly isolated per request even though the

@@ -8,7 +8,7 @@ from app.utils.datetimes import DateTimeUTC
 from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
-from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
+from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType, LimboType
 from app.oxyde_models.enums import DbEnum
 
 
@@ -26,7 +26,7 @@ class OxydeIssue(Model):
     issue_type: DbEnum(IssueType) = Field(default=IssueType.TASK)
     estimate: int | None = Field(default=None)
     assignee_id: str | None = Field(default=None)
-    creator: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
+    creator: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
     sprint_id: str | None = Field(default=None)
     parent_id: str | None = Field(default=None)
     due_date: DateTimeUTC | None = Field(default=None)
@@ -60,7 +60,7 @@ class OxydeIssueComment(Model):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     issue_id: str = Field()
-    author: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
+    author: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
     content: str = Field()
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -75,7 +75,7 @@ class OxydeIssueActivity(Model):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     issue: OxydeIssue | None = Field(default=None, db_on_delete="CASCADE")
-    user: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
+    user: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
     activity_type: DbEnum(ActivityType) = Field()
     field_name: str | None = Field(default=None)
     old_value: str | None = Field(default=None)
@@ -99,6 +99,11 @@ class OxydeIssueRelation(Model):
     class Meta:
         is_table = True
         table_name = "issue_relations"
+        indexes = [
+            # One relation row per pair (0001, raw SQL); declared here so the
+            # migration record keeps it (CHT-1410).
+            Index(("issue_id", "related_issue_id"), unique=True, name="uq_issue_relation"),
+        ]
 
 
 class OxydeIssueLabel(Model):
@@ -130,7 +135,11 @@ class OxydeTicketLimbo(Model):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     issue_id: str = Field(db_on_delete="CASCADE")
-    limbo_type: str = Field()
+    # DbEnum, not a bare str (CHT-1353): the column stores the NAME
+    # ("CLAIM"/"CLOSE") like every other enum column, reads back as a
+    # member, and serialises to the VALUE on the wire -- so no boundary
+    # has to translate it by hand, and test_dbenum_contract covers it.
+    limbo_type: DbEnum(LimboType) = Field()
     requested_by_id: str = Field(db_on_delete="CASCADE")
     requested_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     cleared_at: DateTimeUTC | None = Field(default=None)
@@ -139,6 +148,12 @@ class OxydeTicketLimbo(Model):
     class Meta:
         is_table = True
         table_name = "ticket_limbo"
+        indexes = [
+            # The exclusive intent lock: one open intent per (issue, type)
+            # (0004/0005, raw SQL); declared so the record keeps it (CHT-1410).
+            Index(("issue_id", "limbo_type"), unique=True, name="uq_ticket_limbo_open_intent",
+                  where="cleared_at IS NULL"),
+        ]
 
 
 class OxydeTicketLimboBlocker(Model):
@@ -166,6 +181,11 @@ class OxydeTicketLimboBlocker(Model):
     class Meta:
         is_table = True
         table_name = "ticket_limbo_blockers"
+        indexes = [
+            # One blocker per (intent, ritual) (0005, raw SQL); declared so the
+            # record keeps it (CHT-1410).
+            Index(("limbo_id", "ritual_id"), unique=True, name="uq_ticket_limbo_blocker"),
+        ]
 
 
 class OxydeIssueDescriptionRevision(Model):

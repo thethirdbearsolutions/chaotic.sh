@@ -14,7 +14,7 @@ class OxydeDocument(Model):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     team_id: str = Field()
-    author: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
+    author: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
     project_id: str | None = Field(default=None)
     sprint_id: str | None = Field(default=None)
     title: str = Field()
@@ -34,7 +34,7 @@ class OxydeDocumentComment(Model):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     document_id: str = Field()
-    author: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
+    author: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
     content: str = Field()
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -50,7 +50,7 @@ class OxydeDocumentActivity(Model):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     document: OxydeDocument | None = Field(default=None, db_on_delete="CASCADE")
     team_id: str = Field()
-    user: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
+    user: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
     activity_type: DbEnum(DocumentActivityType) = Field()
     document_title: str | None = Field(default=None)
     document_icon: str | None = Field(default=None)

@@ -3,11 +3,9 @@
 Tests cover: profile management, config loading/saving, settings getters/setters,
 web_url derivation, profile security, and profile ambiguity detection.
 """
-import json
 import os
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 class TestProfileManagement:

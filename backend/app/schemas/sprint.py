@@ -1,5 +1,4 @@
 """Sprint schemas."""
-from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.enums import SprintStatus
 from app.utils import DateTimeUTC
@@ -10,10 +9,7 @@ class SprintCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
-    start_date: datetime | None = None
-    end_date: datetime | None = None
     budget: int | None = Field(default=None, ge=1)  # null = use project default or unlimited
-    token_budget: int | None = Field(default=None, ge=1)  # null = unlimited
     explicit_unlimited: bool = False  # If True, ignore project default and create with unlimited budget
 
 
@@ -23,10 +19,7 @@ class SprintUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     status: SprintStatus | None = None
-    start_date: datetime | None = None
-    end_date: datetime | None = None
     budget: int | None = Field(default=None, ge=1)
-    token_budget: int | None = Field(default=None, ge=1)
 
 
 class SprintResponse(BaseModel):
@@ -37,12 +30,13 @@ class SprintResponse(BaseModel):
     name: str
     description: str | None
     status: SprintStatus
-    start_date: DateTimeUTC | None
-    end_date: DateTimeUTC | None
+    # When the sprint turned out to run (CHT-1366): set on activation and on
+    # close, never supplied. Sprints end when their budget is spent, not on
+    # a date, so there is no start_date/end_date to plan.
+    activated_at: DateTimeUTC | None
+    closed_at: DateTimeUTC | None
     budget: int | None
     points_spent: int
-    token_budget: int | None
-    tokens_spent: int
     limbo: bool
     created_at: DateTimeUTC
     updated_at: DateTimeUTC

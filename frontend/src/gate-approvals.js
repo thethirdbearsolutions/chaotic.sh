@@ -364,7 +364,8 @@ function renderGateApprovals() {
                                             ? `<button class="btn btn-small btn-primary sprint-complete-btn"
                                                 data-ritual-id="${escapeAttr(r.id)}"
                                                 data-project-id="${escapeAttr(project.id)}"
-                                                data-ritual-name="${escapeAttr(r.name)}">Complete</button>`
+                                                data-ritual-name="${escapeAttr(r.name)}"
+                                                data-ritual-artifact="${escapeAttr(r.artifact || '')}">Complete</button>`
                                             : '');
 
                                     return `
@@ -509,7 +510,7 @@ function renderGateApprovals() {
     });
     container.querySelectorAll('.sprint-complete-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-            completeGateRitual(btn.dataset.ritualId, btn.dataset.projectId, btn.dataset.ritualName);
+            completeGateRitual(btn.dataset.ritualId, btn.dataset.projectId, btn.dataset.ritualName, btn.dataset.ritualArtifact || '');
         });
     });
 }

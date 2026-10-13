@@ -62,6 +62,8 @@ import {
     renderRitualsView,
     approveRitual,
     completeGateRitual,
+    renderArtifactField,
+    readArtifactField,
     renderTicketRitualActions,
     showAttestTicketRitualModal,
     attestTicketRitual,
@@ -338,7 +340,7 @@ describe('rituals-view', () => {
 
             // Wait for async handler
             await vi.waitFor(() => {
-                expect(api.completeGateRitual).toHaveBeenCalledWith('r1', 'p1', 'All good');
+                expect(api.completeGateRitual).toHaveBeenCalledWith('r1', 'p1', 'All good', null);
                 expect(closeModal).toHaveBeenCalled();
                 expect(showToast).toHaveBeenCalledWith('Limbo cleared! Next sprint is now active.', 'success');
             });
@@ -408,6 +410,75 @@ describe('rituals-view', () => {
             expect(html).toContain('data-action="attest-ticket-ritual"');
             expect(html).toContain('Attest');
             expect(html).not.toContain('attest-ticket-ritual-modal');
+        });
+
+        it('routes a ritual with an artifact to the modal even without a note (CHT-1359)', () => {
+            const ritual = { id: 'r1', approval_mode: 'auto', name: 'Retro', artifact: 'document' };
+            const html = renderTicketRitualActions(ritual, 'issue-1');
+            expect(html).toContain('data-action="attest-ticket-ritual-modal"');
+            expect(html).toContain('data-ritual-artifact="document"');
+            expect(html).toContain('data-ritual-note-required=""');
+        });
+
+        it('carries the artifact on the gate Complete button', () => {
+            const ritual = { id: 'r1', approval_mode: 'gate', name: 'Review', artifact: 'url' };
+            expect(renderTicketRitualActions(ritual, 'issue-1')).toContain('data-ritual-artifact="url"');
+        });
+    });
+
+    // ========================================
+    // Artifact binding (CHT-1359)
+    // ========================================
+    describe('artifact field', () => {
+        beforeEach(() => {
+            document.body.innerHTML = `
+                <div id="modal-title"></div>
+                <div id="modal-content"></div>
+            `;
+        });
+
+        it('renders nothing for a ritual without an artifact', () => {
+            expect(renderArtifactField('')).toBe('');
+            expect(readArtifactField('')).toBeNull();
+        });
+
+        it('requires the document id and sends it as document_id', async () => {
+            showAttestTicketRitualModal('r1', 'issue-1', 'Retro', 'Write it', 'document', false);
+            expect(document.getElementById('modal-content').innerHTML).toContain('Note (optional)');
+            expect(document.getElementById('ritual-artifact-document')).not.toBeNull();
+
+            const form = document.getElementById('attest-ticket-ritual-form');
+            form.dispatchEvent(new Event('submit', { cancelable: true }));
+            await new Promise(r => setTimeout(r, 50));
+            expect(showToast).toHaveBeenCalledWith('This ritual requires the document you wrote for it.', 'error');
+            expect(api.attestTicketRitual).not.toHaveBeenCalled();
+
+            document.getElementById('ritual-artifact-document').value = ' doc-42 ';
+            form.dispatchEvent(new Event('submit', { cancelable: true }));
+            await new Promise(r => setTimeout(r, 50));
+            expect(api.attestTicketRitual).toHaveBeenCalledWith('r1', 'issue-1', null, { document_id: 'doc-42' });
+        });
+
+        it('requires the link for a url artifact on gate completion', async () => {
+            showCompleteTicketRitualModal('r1', 'issue-1', 'Review', 'url');
+            document.getElementById('ritual-artifact-url').value = 'https://example.com/pr/1#c';
+            document.getElementById('ticket-ritual-note').value = 'ok';
+            const form = document.getElementById('complete-ticket-ritual-form');
+            form.dispatchEvent(new Event('submit', { cancelable: true }));
+            await new Promise(r => setTimeout(r, 50));
+            expect(api.completeTicketGateRitual).toHaveBeenCalledWith(
+                'r1', 'issue-1', 'ok', { url: 'https://example.com/pr/1#c' },
+            );
+        });
+
+        it('binds the sprint gate completion the same way', async () => {
+            api.completeGateRitual.mockResolvedValue({});
+            await completeGateRitual('r1', 'p1', 'Retro', 'document');
+            document.getElementById('ritual-artifact-document').value = 'doc-7';
+            const form = document.getElementById('complete-gate-ritual-form');
+            form.dispatchEvent(new Event('submit', { cancelable: true }));
+            await new Promise(r => setTimeout(r, 50));
+            expect(api.completeGateRitual).toHaveBeenCalledWith('r1', 'p1', null, { document_id: 'doc-7' });
         });
     });
 
@@ -488,7 +559,7 @@ describe('rituals-view', () => {
             // Flush microtasks from the async handler
             await new Promise(r => setTimeout(r, 50));
 
-            expect(api.attestTicketRitual).toHaveBeenCalledWith('r1', 'issue-1', 'All good');
+            expect(api.attestTicketRitual).toHaveBeenCalledWith('r1', 'issue-1', 'All good', null);
             expect(showToast).toHaveBeenCalledWith('Ritual attested!', 'success');
             expect(closeModal).toHaveBeenCalled();
             expect(loadTicketRituals).toHaveBeenCalledWith('issue-1');
@@ -535,7 +606,7 @@ describe('rituals-view', () => {
             form.dispatchEvent(new Event('submit', { cancelable: true }));
 
             await vi.waitFor(() => {
-                expect(api.completeTicketGateRitual).toHaveBeenCalledWith('r1', 'issue-1', 'Deployed');
+                expect(api.completeTicketGateRitual).toHaveBeenCalledWith('r1', 'issue-1', 'Deployed', null);
             });
             expect(closeModal).toHaveBeenCalled();
             expect(loadTicketRituals).toHaveBeenCalledWith('issue-1');
@@ -549,7 +620,7 @@ describe('rituals-view', () => {
             form.dispatchEvent(new Event('submit', { cancelable: true }));
 
             await vi.waitFor(() => {
-                expect(api.completeTicketGateRitual).toHaveBeenCalledWith('r1', 'issue-1', null);
+                expect(api.completeTicketGateRitual).toHaveBeenCalledWith('r1', 'issue-1', null, null);
             });
         });
 

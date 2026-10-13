@@ -3,7 +3,7 @@ import os
 import json
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from click.testing import CliRunner
 
 
@@ -168,7 +168,7 @@ class TestCheckProfileAmbiguity:
 
     def test_no_error_with_single_profile(self, temp_chaotic_home):
         """No error when only one profile exists."""
-        from cli.config import check_profile_ambiguity, set_profile, ProfileAmbiguityError
+        from cli.config import check_profile_ambiguity, set_profile
 
         (temp_chaotic_home / "config.json").write_text('{}')
 

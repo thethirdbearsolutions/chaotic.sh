@@ -1,13 +1,13 @@
 """Ritual service for managing rituals and attestations."""
 import json
 import logging
-import random
 from datetime import datetime, timezone
 
 from oxyde import IntegrityError, atomic
 
 logger = logging.getLogger(__name__)
 from app.enums import (
+    RitualArtifact,
     ApprovalMode,
     RitualTrigger,
     SelectionMode,
@@ -15,11 +15,16 @@ from app.enums import (
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
 from app.enums import LimboType
 from app.schemas.ritual import RitualCreate, RitualUpdate, RitualGroupCreate, RitualGroupUpdate
+from app.services.ritual_selection import Selection, pointer_after_removal, select
 from app.services.sprint_service import SprintService
 from app.oxyde_models.sprint import OxydeSprint
+from urllib.parse import urlsplit
+
+from app.oxyde_models.document import OxydeDocument
+from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity
 from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup, OxydeRitualAttestation
-from app.oxyde_models.issue import OxydeTicketLimbo
+from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
 from app.oxyde_models.user import OxydeUser
 
 
@@ -62,6 +67,102 @@ class RitualService:
                 f"Agents cannot attest or complete GATE rituals."
             )
 
+    async def _validate_artifact(
+        self, ritual: "OxydeRitual", user_id: str, *,
+        document_id: str | None, url: str | None,
+        since: "datetime | None", since_label: str,
+        scope: tuple[str, str],
+    ) -> str | None:
+        """The reference an attestation records for the ritual's artifact,
+        once it is checked to be the real thing (CHT-1359).
+
+        Before this an attestation was a note: "wrote the retro" cleared
+        the ritual whether or not a retro existed. A ritual with
+        `artifact` set binds the attestation to it. A DOCUMENT must exist
+        in the ritual's team (a document elsewhere is "not found", so
+        neither its existence nor its title is confirmed across teams),
+        be by the attester, be created after `since` (the sprint's
+        activation, the ticket's creation) so a document from a previous
+        sprint cannot be attested twice, and not already be the artifact
+        of another attestation (`scope` names the attestation being made,
+        so an idempotent retry of the same one passes) so one document
+        cannot close every ticket of the sprint. A URL must have an http
+        or https scheme and a host; it is not checked for reuse, since
+        one PR legitimately closes several tickets. A ritual without
+        `artifact` records nothing, so `artifact_ref` is always verified.
+
+        This runs before the idempotent "already attested" return, like
+        the note check: a caller does not learn "already done" by sending
+        nothing.
+        """
+        if ritual.artifact is None:
+            return None
+        if ritual.artifact == RitualArtifact.DOCUMENT:
+            if not document_id:
+                raise ValueError(
+                    f"Ritual '{ritual.name}' requires a document: pass the id of the "
+                    f"document you wrote for it. Prompt: {ritual.prompt}"
+                )
+            document = await OxydeDocument.objects.get_or_none(id=document_id)
+            project = await OxydeProject.objects.get_or_none(id=ritual.project_id)
+            if document is None or project is None or document.team_id != project.team_id:
+                raise ValueError(
+                    f"Document '{document_id}' not found; ritual '{ritual.name}' "
+                    "requires the document you wrote for it."
+                )
+            if document.author_id != user_id:
+                raise ValueError(
+                    f"Document '{document.title}' is not yours; ritual '{ritual.name}' "
+                    "requires a document written by the attester."
+                )
+            if since is not None and document.created_at < since:
+                raise ValueError(
+                    f"Document '{document.title}' predates {since_label}; ritual "
+                    f"'{ritual.name}' requires one written for it."
+                )
+            await self._require_unused_artifact(document, ritual, scope)
+            return document.id
+        if ritual.artifact == RitualArtifact.URL:
+            parts = urlsplit((url or "").strip())
+            if parts.scheme not in ("http", "https") or not parts.netloc:
+                raise ValueError(
+                    f"Ritual '{ritual.name}' requires a URL (http:// or https://) to "
+                    f"the artifact. Prompt: {ritual.prompt}"
+                )
+            return url.strip()
+        raise ValueError(f"Ritual '{ritual.name}' has an unknown artifact kind")
+
+    async def _require_unused_artifact(
+        self, document: "OxydeDocument", ritual: "OxydeRitual", scope: tuple[str, str],
+    ) -> None:
+        """A document is the artifact of at most one attestation, the one
+        `scope` (("sprint_id", id) or ("issue_id", id)) names when it is
+        being retried."""
+        field, value = scope
+        for used in await OxydeRitualAttestation.objects.filter(artifact_ref=document.id).all():
+            if used.ritual_id == ritual.id and getattr(used, field) == value:
+                continue
+            raise ValueError(
+                f"Document '{document.title}' is already the artifact of another attestation; "
+                f"ritual '{ritual.name}' requires one written for it."
+            )
+
+    async def _sprint_artifact(
+        self, ritual: "OxydeRitual", sprint_id: str, user_id: str,
+        document_id: str | None, url: str | None,
+    ) -> str | None:
+        """`_validate_artifact` for a sprint ritual: the artifact must
+        postdate the sprint's activation (nothing is checked for a sprint
+        that predates activated_at, CHT-1366)."""
+        since = None
+        if ritual.artifact == RitualArtifact.DOCUMENT:
+            sprint = await OxydeSprint.objects.get_or_none(id=sprint_id)
+            since = sprint.activated_at if sprint is not None else None
+        return await self._validate_artifact(
+            ritual, user_id, document_id=document_id, url=url,
+            since=since, since_label="the sprint's activation", scope=("sprint_id", sprint_id),
+        )
+
     async def _validate_conditions_match(
         self, ritual: "OxydeRitual", issue: "OxydeIssue"
     ) -> None:
@@ -80,15 +181,17 @@ class RitualService:
     async def _validate_group_selection(
         self, ritual: "OxydeRitual", issue_id: str, issue: "OxydeIssue | None" = None,
     ) -> None:
-        """For RANDOM_ONE/ROUND_ROBIN groups, only the selected ritual
+        """For RANDOM_ONE / ROUND_ROBIN groups, only the selected ritual
         may be attested.
 
-        Mirrors the listing logic in `_apply_group_selection` exactly:
-        same set of siblings (`group=ritual.group_id`, `is_active=True`,
-        and — for the RANDOM_ONE path — the same `_evaluate_conditions`
-        filter the listing applies). Without this mirroring, the seeded
-        random pick can diverge between listing and validate, causing
-        the service to reject the very ritual the listing offered.
+        Builds the same input the ticket listings build -- the group's
+        active siblings with this ritual's trigger, filtered by
+        `_evaluate_conditions` against the issue, in `created_at` order --
+        and runs the same `_select_for_issue` (same seed, same pins), so
+        this can only ever accept what `get_pending_ticket_rituals` /
+        `get_pending_claim_rituals` offered. (An earlier version restated
+        the pointer arithmetic here over an unfiltered sibling set and
+        could reject the very ritual the listing offered.)
         """
         if not ritual.group_id:
             return
@@ -100,54 +203,48 @@ class RitualService:
             return
 
         siblings = await OxydeRitual.objects.filter(
-            group_id=group.id, is_active=True,
-        ).all()
+            group_id=group.id, is_active=True, trigger=ritual.trigger,
+        ).order_by("created_at").all()
+        if issue is None:
+            issue = await OxydeIssue.objects.prefetch("labels").filter(id=issue_id).first()
+        if issue is not None:
+            siblings = [s for s in siblings if self._evaluate_conditions(s, issue)]
         if not siblings:
+            # The listing would have offered nothing from this group;
+            # nothing to validate against, so do not reject.
             return
 
-        if group.selection_mode == SelectionMode.RANDOM_ONE:
-            # Listing filters by _evaluate_conditions. To match, fetch
-            # the issue (with labels prefetched, since conditions can
-            # reference labels) and apply the same filter here.
-            if issue is None:
-                issue = await OxydeIssue.objects.prefetch("labels").filter(
-                    id=issue_id,
-                ).first()
-            if issue is not None:
-                siblings = [s for s in siblings if self._evaluate_conditions(s, issue)]
-            if not siblings:
-                # Listing would have produced nothing — nothing to
-                # validate against. Allow the attestation through to
-                # avoid false rejection on a degenerate group.
-                return
-            picked = self._select_random_one(siblings, seed=issue_id)
-            if picked is not None and picked.id != ritual.id:
-                raise ValueError(
-                    f"Ritual '{ritual.name}' is not the selected ritual in "
-                    f"group '{group.name}' for this issue; choose '"
-                    f"{picked.name}' instead."
-                )
+        chosen = (await self._select_for_issue(siblings, issue_id, ritual.trigger)).chosen
+        if any(c.id == ritual.id for c in chosen):
             return
+        offered = chosen[0].name if chosen else "none"
+        raise ValueError(
+            f"Ritual '{ritual.name}' is not the selected ritual in "
+            f"group '{group.name}' for this issue; choose '{offered}' instead."
+        )
 
-        if group.selection_mode == SelectionMode.ROUND_ROBIN:
-            # Listing returns sorted_rituals[(i+1) % N] where i is the
-            # index of last_selected_ritual_id (or 0 if unset). Mirror
-            # that here so we accept the same ritual the listing
-            # presented. Without this match, once a single advance has
-            # fired (e.g. via a sprint-context call sharing the group),
-            # validate rejects the very ritual the listing offers.
-            sorted_rituals = sorted(siblings, key=lambda r: r.created_at)
-            current_index = 0
-            if group.last_selected_ritual_id:
-                for i, r in enumerate(sorted_rituals):
-                    if r.id == group.last_selected_ritual_id:
-                        current_index = (i + 1) % len(sorted_rituals)
-                        break
-            picked = sorted_rituals[current_index]
-            if picked.id != ritual.id:
+    async def _validate_group_trigger(
+        self, group: OxydeRitualGroup, trigger: RitualTrigger, *, exclude_ritual_id: str | None = None,
+    ) -> None:
+        """A group's members must share a trigger (CHT-1403).
+
+        A group is one selection over one event: the sprint rotation
+        advances a ROUND_ROBIN pointer over the group's EVERY_SPRINT
+        members, the ticket listings select over its TICKET_CLOSE or
+        TICKET_CLAIM members, and validation now filters by trigger too.
+        Mixing triggers gives one pointer two unrelated event streams, so
+        a new member (or a member changing trigger) must match the
+        active members already there.
+        """
+        others = await OxydeRitual.objects.filter(group_id=group.id, is_active=True).all()
+        for member in others:
+            if member.id == exclude_ritual_id:
+                continue
+            if member.trigger != trigger:
                 raise ValueError(
-                    f"Ritual '{ritual.name}' is not the selected ritual in "
-                    f"group '{group.name}'; choose '{picked.name}' instead."
+                    f"All rituals in a group must share a trigger: group '{group.name}' holds "
+                    f"{member.trigger.value} ritual '{member.name}', so a ritual with trigger "
+                    f"{trigger.value} cannot join it."
                 )
 
     async def create(self, ritual_in: RitualCreate, project_id: str) -> OxydeRitual:
@@ -183,18 +280,26 @@ class RitualService:
         if ritual_in.conditions is not None:
             conditions_json = json.dumps(ritual_in.conditions)
 
-        ritual = await OxydeRitual.objects.create(
-            project_id=project_id,
-            name=ritual_in.name,
-            prompt=ritual_in.prompt,
-            trigger=ritual_in.trigger,
-            approval_mode=ritual_in.approval_mode,
-            note_required=ritual_in.note_required,
-            conditions=conditions_json,
-            group_id=ritual_in.group_id,
-            weight=ritual_in.weight,
-            percentage=ritual_in.percentage,
-        )
+        # The shared-trigger check and the insert share a transaction: two
+        # joins racing on an empty group are serialised by SQLite, and the
+        # loser fails at its write rather than landing a mixed group
+        # (CHT-1403; the deferred-BEGIN caveat is CHT-1411).
+        async with atomic():
+            if ritual_in.group_id:
+                await self._validate_group_trigger(group, ritual_in.trigger)
+            ritual = await OxydeRitual.objects.create(
+                project_id=project_id,
+                name=ritual_in.name,
+                prompt=ritual_in.prompt,
+                trigger=ritual_in.trigger,
+                approval_mode=ritual_in.approval_mode,
+                note_required=ritual_in.note_required,
+                artifact=ritual_in.artifact,
+                conditions=conditions_json,
+                group_id=ritual_in.group_id,
+                weight=ritual_in.weight,
+                percentage=ritual_in.percentage,
+            )
         return ritual
 
     async def get_by_id(self, ritual_id: str, include_inactive: bool = False) -> OxydeRitual | None:
@@ -251,17 +356,41 @@ class RitualService:
                         f"Rituals in a {group.selection_mode.value} group must have weight > 0. "
                         f"Got: {new_weight}"
                     )
+            # Only a transition that can change the invariant is checked:
+            # joining a (different) group, changing trigger, or coming back
+            # to life among active siblings. A member of a group that
+            # already mixes triggers stays editable (prompt, weight, name);
+            # `chaotic ritual group list` flags such groups (CHT-1403).
+            if "trigger" in update_data and update_data["trigger"] is None:
+                raise ValueError("trigger cannot be null")
+            new_trigger = update_data.get("trigger", ritual.trigger)
+            joining = new_group_id != ritual.group_id
+            retriggering = new_trigger != ritual.trigger
+            reactivating = update_data.get("is_active") is True and not ritual.is_active
+            if joining or retriggering or reactivating:
+                await self._validate_group_trigger(group, new_trigger, exclude_ritual_id=ritual.id)
 
         # Serialize conditions to JSON if provided
         if "conditions" in update_data:
             if update_data["conditions"] is not None:
                 update_data["conditions"] = json.dumps(update_data["conditions"])
 
-        for field, value in update_data.items():
-            setattr(ritual, field, value)
-        ritual.updated_at = datetime.now(timezone.utc)
-        changed_fields = set(update_data.keys()) | {"updated_at"}
-        await ritual.save(update_fields=changed_fields)
+        # Leaving a group (regroup, ungroup) or going inactive through update
+        # moves the group's ROUND_ROBIN pointer off this ritual (CHT-1405).
+        # Evaluated against the pre-mutation row, and committed with the
+        # save: a repoint that outlived a failed save would leave the
+        # pointer on the predecessor of a member still in rotation.
+        leaving = bool(ritual.group_id) and new_group_id != ritual.group_id
+        deactivating = update_data.get("is_active") is False and ritual.is_active
+
+        async with atomic():
+            if leaving or deactivating:
+                await self._repoint_group_past(ritual)
+            for field, value in update_data.items():
+                setattr(ritual, field, value)
+            ritual.updated_at = datetime.now(timezone.utc)
+            changed_fields = set(update_data.keys()) | {"updated_at"}
+            await ritual.save(update_fields=changed_fields)
 
         # Reload to get fresh data
         return await self.get_by_id(ritual.id, include_inactive=True)
@@ -284,6 +413,7 @@ class RitualService:
         # orphan cleanup (which requires an approved attestation) can
         # never recover.
         async with atomic():
+            await self._repoint_group_past(ritual)
             ritual.is_active = False
             await ritual.save(update_fields={"is_active"})
 
@@ -386,116 +516,93 @@ class RitualService:
         await group.delete()
 
     # =========================================================================
-    # Group Selection Logic
+    # Group Selection (the computation is pure, in ritual_selection.py)
     # =========================================================================
 
-    async def _apply_group_selection(
-        self, rituals: list[OxydeRitual], sprint_id: str | None = None,
-        advance_round_robin: bool = False
-    ) -> list[OxydeRitual]:
-        """Apply group selection logic to filter rituals."""
-        if not rituals:
-            return []
+    async def _load_groups(self, rituals: list[OxydeRitual]) -> dict[str, OxydeRitualGroup]:
+        """Every group the rituals belong to, in one query."""
+        group_ids = sorted({r.group_id for r in rituals if r.group_id})
+        if not group_ids:
+            return {}
+        return {g.id: g for g in await OxydeRitualGroup.objects.filter(id__in=group_ids).all()}
 
-        ungrouped = [r for r in rituals if r.group_id is None]
-        grouped = [r for r in rituals if r.group_id is not None]
+    async def _select(self, rituals: list[OxydeRitual], seed: str | None) -> Selection:
+        """The selection for `seed` (a sprint id or an issue id). Reads
+        only; see record_sprint_rotation for the one write."""
+        return select(rituals, await self._load_groups(rituals), seed)
 
-        if not grouped:
-            return ungrouped
+    async def _select_for_issue(
+        self, rituals: list[OxydeRitual], issue_id: str, trigger: RitualTrigger,
+        *, intent_id: str | None = None,
+    ) -> Selection:
+        """The selection for a ticket: `select` seeded by the issue id,
+        except that a group whose member already blocks one of this
+        ticket's intents stays on that member (CHT-1405).
 
-        groups: dict[str, list[OxydeRitual]] = {}
-        for ritual in grouped:
-            if ritual.group_id not in groups:
-                groups[ritual.group_id] = []
-            groups[ritual.group_id].append(ritual)
+        A ROUND_ROBIN pointer moves whenever *another* ticket claims or
+        closes, so between the moment a ticket was offered `a` (an intent
+        opened with a blocker on `a`) and the moment `a` is attested, the
+        pure computation can already say `b`. The blocker row is the
+        record of what was offered; pinning to it keeps the listing, the
+        attest-time validation and the rotation this ticket records
+        on the same ritual. `intent_id` names an intent that has just
+        been cleared and is now being applied, which the open-intent
+        lookup would no longer see.
+        """
+        groups = await self._load_groups(rituals)
+        pins = await self._pinned_members(rituals, groups, issue_id, trigger, intent_id)
+        if not pins:
+            return select(rituals, groups, issue_id)
+        free = [r for r in rituals if r.group_id not in pins]
+        base = select(free, groups, issue_id)
+        pinned_ids = set(pins.values())
+        chosen = base.chosen + [r for r in rituals if r.id in pinned_ids]
+        advances = dict(base.round_robin_advances)
+        for group_id, ritual_id in pins.items():
+            group = groups[group_id]
+            if group.selection_mode == SelectionMode.ROUND_ROBIN and group.last_selected_ritual_id != ritual_id:
+                advances[group_id] = ritual_id
+        return Selection(chosen=chosen, round_robin_advances=advances)
 
-        selected_from_groups = []
-        for group_id, group_rituals in groups.items():
-            group = await self.get_group_by_id(group_id)
-            if not group:
-                selected_from_groups.extend(group_rituals)
-                continue
-
-            active_rituals = [r for r in group_rituals if r.is_active]
-            if not active_rituals:
-                continue
-
-            if group.selection_mode == SelectionMode.RANDOM_ONE:
-                selected = self._select_random_one(active_rituals, seed=sprint_id)
-                if selected:
-                    selected_from_groups.append(selected)
-
-            elif group.selection_mode == SelectionMode.ROUND_ROBIN:
-                selected = await self._select_round_robin(
-                    group, active_rituals, sprint_id, advance=advance_round_robin
-                )
-                if selected:
-                    selected_from_groups.append(selected)
-
-            elif group.selection_mode == SelectionMode.PERCENTAGE:
-                selected = self._select_by_percentage(active_rituals, seed=sprint_id)
-                selected_from_groups.extend(selected)
-
-        return ungrouped + selected_from_groups
-
-    def _select_random_one(self, rituals: list[OxydeRitual], seed: str | None = None) -> OxydeRitual | None:
-        """Select one ritual randomly, weighted by weight field."""
-        if not rituals:
-            return None
-
-        weights = [r.weight for r in rituals]
-        total_weight = sum(weights)
-        if total_weight <= 0:
-            return None
-
-        if seed:
-            rng = random.Random(seed)
-            selected = rng.choices(rituals, weights=weights, k=1)
+    async def _pinned_members(
+        self, rituals: list[OxydeRitual], groups: dict[str, OxydeRitualGroup],
+        issue_id: str, trigger: RitualTrigger, intent_id: str | None,
+    ) -> dict[str, str]:
+        """group id -> the member a blocker on one of this ticket's open
+        intents (plus `intent_id`) names, for the groups whose selection
+        is one member. A blocker whose ritual is no longer in `rituals`
+        (deleted, deactivated, conditions no longer matching) pins
+        nothing, and the group is selected afresh."""
+        if trigger == RitualTrigger.TICKET_CLAIM:
+            limbo_type = LimboType.CLAIM
+        elif trigger == RitualTrigger.TICKET_CLOSE:
+            limbo_type = LimboType.CLOSE
         else:
-            selected = random.choices(rituals, weights=weights, k=1)
-        return selected[0] if selected else None
-
-    async def _select_round_robin(
-        self, group: OxydeRitualGroup, rituals: list[OxydeRitual], sprint_id: str | None,
-        advance: bool = False
-    ) -> OxydeRitual | None:
-        """Select next ritual in round-robin order."""
-        if not rituals:
-            return None
-
-        sorted_rituals = sorted(rituals, key=lambda r: r.created_at)
-
-        current_index = 0
-        if group.last_selected_ritual_id:
-            for i, r in enumerate(sorted_rituals):
-                if r.id == group.last_selected_ritual_id:
-                    current_index = (i + 1) % len(sorted_rituals)
-                    break
-
-        selected = sorted_rituals[current_index]
-
-        if advance and group.last_selected_ritual_id != selected.id:
-            group.last_selected_ritual_id = selected.id
-            await group.save(update_fields={"last_selected_ritual_id"})
-
-        return selected
-
-    def _select_by_percentage(
-        self, rituals: list[OxydeRitual], seed: str | None = None
-    ) -> list[OxydeRitual]:
-        """Select rituals based on their percentage chance."""
-        selected = []
-        for ritual in rituals:
-            if ritual.percentage is not None and ritual.percentage > 0:
-                if seed:
-                    ritual_seed = f"{seed}:{ritual.id}"
-                    rng = random.Random(ritual_seed)
-                    if rng.random() * 100 < ritual.percentage:
-                        selected.append(ritual)
-                else:
-                    if random.random() * 100 < ritual.percentage:
-                        selected.append(ritual)
-        return selected
+            return {}
+        candidates = {
+            r.id: r for r in rituals
+            if r.group_id in groups and groups[r.group_id].selection_mode != SelectionMode.PERCENTAGE
+        }
+        if not candidates:
+            return {}
+        intent_ids = {
+            i.id for i in await OxydeTicketLimbo.objects.filter(
+                issue_id=issue_id, limbo_type=limbo_type, cleared_at=None,
+            ).all()
+        }
+        if intent_id:
+            intent_ids.add(intent_id)
+        if not intent_ids:
+            return {}
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id__in=sorted(intent_ids),
+        ).order_by("id").all()
+        pins: dict[str, str] = {}
+        for blocker in blockers:
+            ritual = candidates.get(blocker.ritual_id)
+            if ritual is not None:
+                pins.setdefault(ritual.group_id, ritual.id)
+        return pins
 
     def _is_ritual_pending(self, ritual: OxydeRitual, attestation: OxydeRitualAttestation | None) -> bool:
         """Check if a ritual is still pending based on its attestation state."""
@@ -507,6 +614,76 @@ class RitualService:
             return True
         return False
 
+    async def record_sprint_rotation(self, project_id: str, sprint_id: str) -> None:
+        """Advance every ROUND_ROBIN sprint group past the ritual that gated
+        `sprint_id`, so the next sprint's close selects its sibling
+        (CHT-1280).
+
+        Selection is pure while a sprint is open: get_pending_rituals
+        computes "the ritual after last_selected" without writing, so the
+        same ritual is offered by every listing, attestation and validation
+        until the sprint rotates. The pointer moves exactly once, here, when
+        the rotation actually happens (close_sprint's no-limbo path and
+        complete_limbo's winner), and lands on the ritual this sprint was
+        gated on, which is what the next selection advances from. Nothing
+        else may advance it, or listing and validation drift apart.
+        """
+        rituals = await self.list_by_project(project_id)
+        sprint_rituals = [r for r in rituals if r.trigger == RitualTrigger.EVERY_SPRINT]
+        await self._apply_advances(await self._select(sprint_rituals, sprint_id))
+
+    async def prepare_ticket_rotation(
+        self, project_id: str, issue_id: str, trigger: RitualTrigger, *, intent_id: str | None = None,
+    ) -> Selection:
+        """The selection a pending claim (TICKET_CLAIM) or close
+        (TICKET_CLOSE) of this ticket is gated on, for
+        `record_ticket_rotation` to commit once the transition has
+        happened (CHT-1405).
+
+        Same rule as the sprint rotation: selection is pure while the
+        transition is pending and the pointer moves exactly once, to the
+        ritual the ticket was gated on. IssueService.update calls this
+        *before* it writes the transition, over the same input the
+        listing used (the trigger's rituals whose conditions match the
+        pre-transition issue, seeded by the issue id, pinned to the
+        ticket's intent), and commits the result inside the transition's
+        transaction. Computing it after the write would evaluate a
+        `status` condition against the new status and could land on a
+        member the ticket was never offered. Empty when no ritual of the
+        trigger is grouped, so the common case costs one query.
+        """
+        rituals = await self._ticket_rituals(project_id, issue_id, trigger)
+        if not any(r.group_id for r in rituals):
+            return Selection()
+        return await self._select_for_issue(rituals, issue_id, trigger, intent_id=intent_id)
+
+    async def record_ticket_rotation(self, selection: Selection) -> None:
+        """Commit the pointer moves `prepare_ticket_rotation` computed.
+        Called by IssueService.update inside the transition's transaction,
+        after the status is saved."""
+        await self._apply_advances(selection)
+
+    async def _apply_advances(self, selection: Selection) -> None:
+        for group_id, ritual_id in selection.round_robin_advances.items():
+            await OxydeRitualGroup.objects.filter(id=group_id).update(last_selected_ritual_id=ritual_id)
+
+    async def _repoint_group_past(self, ritual: OxydeRitual) -> None:
+        """A member is leaving its group (deleted, deactivated, regrouped):
+        if the group's ROUND_ROBIN pointer names it, move the pointer to
+        the member before it so the rotation continues (CHT-1405). Runs
+        against the ritual's pre-mutation `group_id`. Siblings are the
+        members selection sees: active, same trigger."""
+        if not ritual.group_id:
+            return
+        group = await OxydeRitualGroup.objects.get_or_none(id=ritual.group_id)
+        if group is None or group.last_selected_ritual_id != ritual.id:
+            return
+        siblings = await OxydeRitual.objects.filter(
+            group_id=ritual.group_id, is_active=True, trigger=ritual.trigger,
+        ).all()
+        group.last_selected_ritual_id = pointer_after_removal(siblings, ritual)
+        await group.save(update_fields={"last_selected_ritual_id"})
+
     async def get_pending_rituals(
         self, project_id: str, sprint_id: str
     ) -> list[OxydeRitual]:
@@ -514,7 +691,7 @@ class RitualService:
         rituals = await self.list_by_project(project_id)
 
         sprint_rituals = [r for r in rituals if r.trigger == RitualTrigger.EVERY_SPRINT]
-        selected_rituals = await self._apply_group_selection(sprint_rituals, sprint_id)
+        selected_rituals = (await self._select(sprint_rituals, sprint_id)).chosen
 
         pending = []
         for ritual in selected_rituals:
@@ -610,61 +787,43 @@ class RitualService:
 
         return True
 
+    async def _ticket_rituals(
+        self, project_id: str, issue_id: str, trigger: RitualTrigger,
+    ) -> list[OxydeRitual]:
+        """The project's active rituals of `trigger` whose conditions
+        match the issue as it is now: the input of every ticket selection."""
+        issue = await OxydeIssue.objects.prefetch("labels").filter(id=issue_id).first()
+        if not issue:
+            return []
+        rituals = await self.list_by_project(project_id)
+        return [
+            r for r in rituals
+            if r.trigger == trigger and self._evaluate_conditions(r, issue)
+        ]
+
+    async def _pending_ticket_rituals(
+        self, project_id: str, issue_id: str, trigger: RitualTrigger,
+    ) -> list[OxydeRitual]:
+        rituals = await self._ticket_rituals(project_id, issue_id, trigger)
+        selected = (await self._select_for_issue(rituals, issue_id, trigger)).chosen
+        pending = []
+        for ritual in selected:
+            attestation = await self.get_issue_attestation(ritual.id, issue_id)
+            if self._is_ritual_pending(ritual, attestation):
+                pending.append(ritual)
+        return pending
+
     async def get_pending_ticket_rituals(
         self, project_id: str, issue_id: str
     ) -> list[OxydeRitual]:
         """Get TICKET_CLOSE rituals that haven't been completed for an issue."""
-        issue = await OxydeIssue.objects.prefetch("labels").filter(id=issue_id).first()
-        if not issue:
-            return []
-
-        rituals = await self.list_by_project(project_id)
-
-        ticket_rituals = []
-        for ritual in rituals:
-            if ritual.trigger != RitualTrigger.TICKET_CLOSE:
-                continue
-            if not self._evaluate_conditions(ritual, issue):
-                continue
-            ticket_rituals.append(ritual)
-
-        selected_rituals = await self._apply_group_selection(ticket_rituals, issue_id)
-
-        pending = []
-        for ritual in selected_rituals:
-            attestation = await self.get_issue_attestation(ritual.id, issue_id)
-            if self._is_ritual_pending(ritual, attestation):
-                pending.append(ritual)
-
-        return pending
+        return await self._pending_ticket_rituals(project_id, issue_id, RitualTrigger.TICKET_CLOSE)
 
     async def get_pending_claim_rituals(
         self, project_id: str, issue_id: str
     ) -> list[OxydeRitual]:
         """Get TICKET_CLAIM rituals that haven't been completed for an issue."""
-        issue = await OxydeIssue.objects.prefetch("labels").filter(id=issue_id).first()
-        if not issue:
-            return []
-
-        rituals = await self.list_by_project(project_id)
-
-        claim_rituals = []
-        for ritual in rituals:
-            if ritual.trigger != RitualTrigger.TICKET_CLAIM:
-                continue
-            if not self._evaluate_conditions(ritual, issue):
-                continue
-            claim_rituals.append(ritual)
-
-        selected_rituals = await self._apply_group_selection(claim_rituals, issue_id)
-
-        pending = []
-        for ritual in selected_rituals:
-            attestation = await self.get_issue_attestation(ritual.id, issue_id)
-            if self._is_ritual_pending(ritual, attestation):
-                pending.append(ritual)
-
-        return pending
+        return await self._pending_ticket_rituals(project_id, issue_id, RitualTrigger.TICKET_CLAIM)
 
     async def get_issue_attestation(
         self, ritual_id: str, issue_id: str
@@ -688,6 +847,9 @@ class RitualService:
         sprint_id: str,
         user_id: str,
         note: str | None = None,
+        *,
+        document_id: str | None = None,
+        url: str | None = None,
     ) -> OxydeRitualAttestation:
         """Attest to a ritual for a sprint."""
         if ritual.trigger != RitualTrigger.EVERY_SPRINT:
@@ -704,6 +866,7 @@ class RitualService:
                 "Use complete_gate_ritual to perform it."
             )
         self._validate_note(ritual, note)
+        artifact_ref = await self._sprint_artifact(ritual, sprint_id, user_id, document_id, url)
 
         ritual_id = ritual.id
 
@@ -716,6 +879,7 @@ class RitualService:
             sprint_id=sprint_id,
             attested_by=user_id,
             note=note,
+            artifact_ref=artifact_ref,
         )
 
         if ritual.approval_mode == ApprovalMode.AUTO:
@@ -777,6 +941,9 @@ class RitualService:
         issue_id: str,
         user_id: str,
         note: str | None = None,
+        *,
+        document_id: str | None = None,
+        url: str | None = None,
     ) -> OxydeRitualAttestation:
         """Attest to a ticket ritual for an issue."""
         allowed_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
@@ -814,7 +981,11 @@ class RitualService:
             )
         self._validate_note(ritual, note)
         await self._validate_conditions_match(ritual, issue)
-        await self._validate_group_selection(ritual, issue_id)
+        await self._validate_group_selection(ritual, issue_id, issue)
+        artifact_ref = await self._validate_artifact(
+            ritual, user_id, document_id=document_id, url=url,
+            since=issue.created_at, since_label="the ticket", scope=("issue_id", issue_id),
+        )
 
         ritual_id = ritual.id
         ritual_name = ritual.name
@@ -828,6 +999,7 @@ class RitualService:
             issue_id=issue_id,
             attested_by=user_id,
             note=note,
+            artifact_ref=artifact_ref,
         )
 
         if ritual.approval_mode == ApprovalMode.AUTO:
@@ -971,7 +1143,7 @@ class RitualService:
         async with atomic():
             existing_intent = await OxydeTicketLimbo.objects.filter(
                 issue_id=issue_id,
-                limbo_type=limbo_type.name,
+                limbo_type=limbo_type,
                 cleared_at=None,
             ).first()
 
@@ -1011,7 +1183,7 @@ class RitualService:
                 try:
                     audit_intent = await OxydeTicketLimbo.objects.create(
                         issue_id=issue_id,
-                        limbo_type=limbo_type.name,
+                        limbo_type=limbo_type,
                         requested_by_id=user_id,
                     )
                     audit_blocker = await OxydeTicketLimboBlocker.objects.create(
@@ -1032,7 +1204,7 @@ class RitualService:
                     # past a real intent and should fire.
                     rechecked = await OxydeTicketLimbo.objects.filter(
                         issue_id=issue_id,
-                        limbo_type=limbo_type.name,
+                        limbo_type=limbo_type,
                         cleared_at=None,
                     ).first()
                     if rechecked is not None:
@@ -1060,6 +1232,9 @@ class RitualService:
         issue_id: str,
         user_id: str,
         note: str | None = None,
+        *,
+        document_id: str | None = None,
+        url: str | None = None,
     ) -> OxydeRitualAttestation:
         """Complete a GATE mode ticket ritual — human-only."""
         allowed_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
@@ -1088,7 +1263,11 @@ class RitualService:
         await self._validate_not_agent_for_gate(ritual, user_id)
         self._validate_note(ritual, note)
         await self._validate_conditions_match(ritual, issue)
-        await self._validate_group_selection(ritual, issue_id)
+        await self._validate_group_selection(ritual, issue_id, issue)
+        artifact_ref = await self._validate_artifact(
+            ritual, user_id, document_id=document_id, url=url,
+            since=issue.created_at, since_label="the ticket", scope=("issue_id", issue_id),
+        )
 
         ritual_id = ritual.id
         ritual_name = ritual.name
@@ -1107,6 +1286,7 @@ class RitualService:
                 approved_by=user_id,
                 approved_at=now,
                 note=note,
+                artifact_ref=artifact_ref,
             )
             await OxydeIssueActivity.objects.create(
                 issue_id=issue_id,
@@ -1374,6 +1554,14 @@ class RitualService:
                 limbo_id=limbo_id, resolved_at=None,
             ).all()
             if remaining:
+                # Blocker progress renews the intent's freshness stamp:
+                # an initiator attesting a multi-ritual gate one call
+                # at a time must not lose the intent to the
+                # stale-intent TTL between attests (CHT-1326, PR #261
+                # review finding 2).
+                intent = intents_by_id[limbo_id]
+                intent.requested_at = now
+                await intent.save(update_fields={"requested_at"})
                 continue
             intent = intents_by_id[limbo_id]
             intent.cleared_at = now
@@ -1386,7 +1574,7 @@ class RitualService:
             from app.services.issue_service import IssueService
             try:
                 await IssueService().apply_intent_transition(
-                    issue_id, intent.limbo_type, cleared_by_id,
+                    issue_id, intent.limbo_type, cleared_by_id, intent_id=intent.id,
                 )
             except Exception:
                 logger.exception(
@@ -1474,6 +1662,9 @@ class RitualService:
         sprint_id: str,
         user_id: str,
         note: str | None = None,
+        *,
+        document_id: str | None = None,
+        url: str | None = None,
     ) -> OxydeRitualAttestation:
         """Complete a GATE mode ritual (human-only)."""
         if ritual.trigger != RitualTrigger.EVERY_SPRINT:
@@ -1489,6 +1680,7 @@ class RitualService:
             )
         await self._validate_not_agent_for_gate(ritual, user_id)
         self._validate_note(ritual, note)
+        artifact_ref = await self._sprint_artifact(ritual, sprint_id, user_id, document_id, url)
 
         ritual_id = ritual.id
 
@@ -1506,6 +1698,7 @@ class RitualService:
                 approved_by=user_id,
                 approved_at=now,
                 note=note,
+                artifact_ref=artifact_ref,
             )
         except IntegrityError:
             existing = await self.get_attestation(ritual_id, sprint_id)
@@ -1629,28 +1822,12 @@ class RitualService:
                 "ritual_name": ritual.name,
                 "ritual_prompt": ritual.prompt,
                 "trigger": ritual.trigger.value,
-                "limbo_type": self._resolve_limbo_type(limbo.limbo_type),
+                "limbo_type": limbo.limbo_type.value,
                 "requested_by_name": requested_by.name if requested_by else "Unknown",
                 "requested_at": limbo.requested_at.isoformat() if limbo.requested_at else None,
             })
 
         return list(issues_map.values())
-
-    @staticmethod
-    def _resolve_limbo_type(val) -> str | None:
-        """Convert limbo_type to its value string, handling enum/name/value inputs."""
-        if val is None:
-            return None
-        if isinstance(val, LimboType):
-            return val.value
-        # Try by name first (e.g. "CLOSE"), then by value (e.g. "close")
-        try:
-            return LimboType[val].value
-        except KeyError:
-            try:
-                return LimboType(val).value
-            except ValueError:
-                return str(val)
 
     async def _get_pending_gate_limbo_records(self, project_id: str):
         """Get uncleared limbo records for a project."""
@@ -1682,9 +1859,7 @@ class RitualService:
         active_rituals = {r.id: r for r in await OxydeRitual.objects.filter(
             project_id=project_id,
             is_active=True,
-            # DbEnum columns store .name; a raw enum member binds its
-            # .value ('gate') and matches nothing.
-            approval_mode=ApprovalMode.GATE.name,
+            approval_mode=ApprovalMode.GATE,
         ).all()}
 
         # Get uncleared limbo records and their unresolved blockers,
@@ -1758,7 +1933,7 @@ class RitualService:
                 "ritual_prompt": ritual.prompt,
                 "trigger": ritual.trigger.value,
                 "approval_mode": "gate",
-                "limbo_type": self._resolve_limbo_type(limbo.limbo_type),
+                "limbo_type": limbo.limbo_type.value,
                 "requested_by_name": requested_by.name if requested_by else "Unknown",
                 "requested_at": limbo.requested_at.isoformat() if limbo.requested_at else None,
                 "attestation_note": None,
@@ -1768,7 +1943,7 @@ class RitualService:
         done_statuses = {IssueStatus.DONE, IssueStatus.CANCELED}
         review_rituals = await OxydeRitual.objects.filter(
             project_id=project_id,
-            approval_mode=ApprovalMode.REVIEW.name,  # .name for filter
+            approval_mode=ApprovalMode.REVIEW,
             is_active=True,
         ).all()
 

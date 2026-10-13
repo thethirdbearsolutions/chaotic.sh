@@ -43,7 +43,6 @@ require-team/project checks with await's exit-code semantics.
 import json
 import os
 import random
-import re
 import signal
 import subprocess
 import sys
@@ -53,7 +52,7 @@ from datetime import datetime, timedelta, timezone
 import click
 import httpx
 
-from .shared import _client, console, parse_duration
+from .shared import _client, parse_duration
 from ..client import APIError
 
 
@@ -755,7 +754,7 @@ def _await_event(
             raise SystemExit(1) from exc
         if exclude_user_id is None:
             _stderr(
-                "await: current user has no id field in /users/me. "
+                "await: current user has no id field in /auth/me. "
                 "--include-self defaults OFF but cannot be enforced without "
                 "a principal id. Pass --include-self to opt in."
             )

@@ -104,8 +104,6 @@ class TestDocumentCRUD:
     ):
         """Test creating document with sprint from different project."""
         from app.oxyde_models.project import OxydeProject
-        from app.oxyde_models.sprint import OxydeSprint
-        from app.enums import SprintStatus
 
         # Create a second project
         project2 = await OxydeProject.objects.create(team_id=test_team.id, name="Other Project", key="OTH")

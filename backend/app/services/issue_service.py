@@ -7,6 +7,7 @@ import re
 import random
 from datetime import datetime, timedelta, timezone
 from oxyde import atomic, execute_raw, IntegrityError
+from oxyde.db.transaction import get_active_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ from app.oxyde_models.issue import (
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
-from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
+from app.enums import IssueStatus, ActivityType, IssueRelationType
 from app.enums import UnestimatedHandling
 from app.enums import LimboType
 from app.enums import ApprovalMode, RitualTrigger
@@ -60,7 +61,8 @@ class SprintInArrearsError(Exception):
         self.points_spent = points_spent
         self.arrears_by = points_spent - budget
         super().__init__(
-            f"Sprint is in arrears. Close the current sprint to continue. "
+            f"Sprint is in arrears. Close the current sprint to continue; sprints end "
+            f"a spent budget ends a sprint, not a date. "
             f"(budget: {budget}, spent: {points_spent}, arrears by: {self.arrears_by})"
         )
 
@@ -78,14 +80,27 @@ class SprintInLimboError(Exception):
 
 
 class TicketRitualsError(Exception):
-    """Raised when ticket has pending rituals and cannot be closed."""
+    """Raised when a ticket has pending rituals and cannot be closed.
 
-    def __init__(self, issue_id: str, pending_rituals: list[dict]):
+    Carries the pending ``OxydeRitual`` rows and (when the issue exists)
+    its id so the API layer can report each ritual's approval_mode and
+    attestation state (CHT-1360); ``pending_rituals`` is the derived
+    name/prompt list kept for compatibility. This message is the
+    service-level log line; the wire-form message, which says what is
+    attestable and what only a human can do, is built by the API layer.
+    """
+
+    def __init__(self, issue_id: str, pending_rituals: list[dict] | None = None, rituals=None, issue_pk: str | None = None):
         self.issue_id = issue_id
-        self.pending_rituals = pending_rituals
-        ritual_names = [r.get("name", "unknown") for r in pending_rituals]
+        self.rituals = list(rituals or [])
+        self.pending_rituals = pending_rituals if pending_rituals is not None else [
+            {"name": r.name, "prompt": r.prompt} for r in self.rituals
+        ]
+        self.issue_pk = issue_pk
+        ritual_names = [r.get("name", "unknown") for r in self.pending_rituals]
         super().__init__(
-            f"Ticket has pending rituals. Complete them before closing: {', '.join(ritual_names)}"
+            f"Ticket has pending rituals: {', '.join(ritual_names)} "
+            "(see the API error detail for each one's attestation state)."
         )
 
 
@@ -110,15 +125,33 @@ class IntentInFlightError(Exception):
 
 
 class ClaimRitualsError(Exception):
-    """Raised when ticket has pending claim rituals and cannot be claimed."""
+    """Raised when a ticket has pending claim rituals and cannot be claimed.
 
-    def __init__(self, issue_id: str, pending_rituals: list[dict]):
+    Carries the pending ``OxydeRitual`` rows and (when the issue exists)
+    its id so the API layer can report each ritual's approval_mode and
+    attestation state (CHT-1360); ``pending_rituals`` is the derived
+    name/prompt list kept for compatibility. This message is the
+    service-level log line; the wire-form message, which says what is
+    attestable and what only a human can do, is built by the API layer.
+    """
+
+    def __init__(self, issue_id: str, pending_rituals: list[dict] | None = None, rituals=None, issue_pk: str | None = None):
         self.issue_id = issue_id
-        self.pending_rituals = pending_rituals
-        ritual_names = [r.get("name", "unknown") for r in pending_rituals]
+        self.rituals = list(rituals or [])
+        self.pending_rituals = pending_rituals if pending_rituals is not None else [
+            {"name": r.name, "prompt": r.prompt} for r in self.rituals
+        ]
+        self.issue_pk = issue_pk
+        ritual_names = [r.get("name", "unknown") for r in self.pending_rituals]
         super().__init__(
-            f"Ticket has pending claim rituals. Complete them before claiming: {', '.join(ritual_names)}"
+            f"Ticket has pending claim rituals: {', '.join(ritual_names)} "
+            "(see the API error detail for each one's attestation state)."
         )
+
+
+class RelationCycleError(Exception):
+    """Creating the relation would close a BLOCKS cycle (CHT-298), or the
+    BLOCKS graph is too large to check (possible pre-existing cycle)."""
 
 
 class EstimateRequiredError(Exception):
@@ -221,32 +254,175 @@ class IssueService:
         if current_sprint.budget is not None and current_sprint.points_spent > current_sprint.budget:
             raise SprintInArrearsError(current_sprint.budget, current_sprint.points_spent)
 
+    async def _intent_is_stale(self, intent: "OxydeTicketLimbo") -> bool:
+        """Whether an open intent has outlived its TTL and can be taken
+        over by a different principal (CHT-1326).
+
+        Every open intent's initiating request failed by construction —
+        `_open_intent_with_limbo` only creates the row when the
+        transition is blocked, then raises. If the initiator then walked
+        away, the intent is abandoned and must not exclude other
+        principals forever. `requested_at` doubles as the freshness
+        stamp: same-principal re-attempts and blocker progress both bump
+        it (the lock is a renewable lease — PR #261 review finding 2),
+        so the TTL only expires intents with no initiator activity at
+        all. Exceptions:
+
+        * TTL disabled (`intent_ttl_minutes <= 0`) — never stale.
+        * Unresolved GATE blockers — the intent is actionable by a
+          human in the admin inbox and may legitimately wait days for
+          approval; it stays exclusive until force-cleared or approved.
+        * Unresolved blockers whose ritual is already attested and
+          awaiting REVIEW approval — the initiator DID come back and
+          attest; the wait is the admin's, not theirs (PR #261 review
+          finding 1). Same human-loop reasoning as GATE.
+        """
+        from app.oxyde_models.ritual import OxydeRitual, OxydeRitualAttestation
+
+        ttl_minutes = get_settings().intent_ttl_minutes
+        if ttl_minutes <= 0:
+            return False
+
+        requested_at = intent.requested_at
+        if requested_at is None:
+            # Not creatable via the ORM today (requested_at has a default),
+            # but reachable via manual inserts or a future migration bug.
+            # Fail closed: an undatable intent keeps its exclusivity rather
+            # than being stealable forever (PR #261 review finding 2).
+            return False
+        if requested_at.tzinfo is None:
+            requested_at = requested_at.replace(tzinfo=timezone.utc)
+        age = datetime.now(timezone.utc) - requested_at
+        if age < timedelta(minutes=ttl_minutes):
+            return False
+
+        unresolved = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id=intent.id, resolved_at=None,
+        ).all()
+        if unresolved:
+            ritual_ids = list({b.ritual_id for b in unresolved})
+            rituals = await OxydeRitual.objects.filter(id__in=ritual_ids).all()
+            if any(r.approval_mode == ApprovalMode.GATE for r in rituals):
+                return False
+            # Attested-but-unapproved (REVIEW pending) pins the intent
+            # too: that blocker is waiting on an admin, not the
+            # initiator.
+            attestations = await OxydeRitualAttestation.objects.filter(
+                ritual_id__in=ritual_ids, issue_id=intent.issue_id,
+            ).all()
+            if any(a.approved_at is None for a in attestations):
+                return False
+        return True
+
+    async def _touch_intent(self, intent: "OxydeTicketLimbo") -> None:
+        """Renew an open intent's freshness stamp (PR #261 review
+        finding 2). Called on same-principal re-attempts so an actively
+        working initiator never loses their intent to the TTL. Runs in
+        the caller's transaction."""
+        intent.requested_at = datetime.now(timezone.utc)
+        await intent.save(update_fields={"requested_at"})
+
+    async def _cancel_intent(
+        self, intent: "OxydeTicketLimbo", canceled_by_id: str,
+    ) -> None:
+        """Cancel an open intent: scrub its outstanding blockers,
+        stamp the parent cleared, and record INTENT_CANCELED activity.
+        Same scrub *state* semantics as the admin force-clear endpoint
+        (blockers resolved + intent cleared, all-or-nothing in the
+        caller's transaction); two deliberate differences (PR #261
+        review findings 3 and 4):
+
+        * the activity write is guarded so a failed audit row can never
+          fail the takeover itself (state transactional, observability
+          best-effort);
+        * scrubbed blockers keep `resolved_by_id` NULL — the taker
+          never satisfied those rituals, and force-clear's convention
+          of stamping the actor is reserved for admins. The parent's
+          `cleared_by_id` identifies the taker.
+
+        Runs inside the caller's `atomic()` — the matching WebSocket
+        broadcast must be emitted by the caller AFTER commit.
+        """
+        now = datetime.now(timezone.utc)
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id=intent.id, resolved_at=None,
+        ).all()
+        for blocker in blockers:
+            blocker.resolved_at = now
+            blocker.resolved_by_id = None
+            await blocker.save(update_fields={"resolved_at", "resolved_by_id"})
+        intent.cleared_at = now
+        intent.cleared_by_id = canceled_by_id
+        await intent.save(update_fields={"cleared_at", "cleared_by_id"})
+        limbo_type_value = intent.limbo_type.value
+        try:
+            await OxydeIssueActivity.objects.create(
+                issue_id=intent.issue_id,
+                user_id=canceled_by_id,
+                activity_type=ActivityType.INTENT_CANCELED,
+                # old_value carries the displaced initiator so a
+                # `chaotic await` consumer (or the feed) can tell WHOSE
+                # intent was canceled (PR #261 review finding 3).
+                old_value=intent.requested_by_id,
+                new_value=limbo_type_value,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to write INTENT_CANCELED activity for issue=%s",
+                intent.issue_id,
+            )
+
     async def _enforce_exclusive_intent_lock(
         self, issue_id: str, limbo_type: "LimboType", requesting_user_id: str,
-    ) -> "OxydeTicketLimbo | None":
+        allow_takeover: bool = True,
+    ) -> "tuple[OxydeTicketLimbo | None, OxydeTicketLimbo | None]":
         """Check whether an open intent of this type exists on the
-        ticket. Returns the canonical 'lock-holder' row if the requester
-        owns the existing intent (so they can be told to attest, same
-        as before). Raises IntentInFlightError if a different principal
-        owns the intent.
+        ticket. Returns `(owned_lock, canceled_stale_intent)`:
+
+        * `(intent, None)` — the requester owns the existing intent (so
+          they can be told to attest, same as before).
+        * `(None, None)` — no open intent.
+        * `(None, intent)` — a DIFFERENT principal's intent was stale
+          (see `_intent_is_stale`) and has been canceled in-transaction
+          (CHT-1326); the caller may open a fresh intent and must
+          broadcast INTENT_CANCELED after commit.
+
+        `allow_takeover=False` makes the check side-effect-free (no
+        cancel can occur) — used by the IntegrityError re-check, where
+        a takeover is unreachable anyway (the racing intent is seconds
+        old) and any cancel would be silently rolled back unbroadcast
+        (PR #261 review finding 5).
+
+        Raises IntentInFlightError if a different principal owns a
+        still-live intent.
         """
         existing = await OxydeTicketLimbo.objects.filter(
             issue_id=issue_id,
-            limbo_type=limbo_type.name,
+            limbo_type=limbo_type,
             cleared_at=None,
         ).all()
         if not existing:
-            return None
+            return None, None
         # All open rows of a given (issue, type) belong to one intent.
         # The requested_by_id of any row identifies the initiator.
-        initiator = existing[0].requested_by_id
-        if initiator != requesting_user_id:
+        intent = existing[0]
+        initiator = intent.requested_by_id
+        if initiator == requesting_user_id:
+            return intent, None
+        # Another principal owns the intent. A live intent stays an
+        # exclusive lock; a stale one (abandoned after its initiating
+        # request failed — the CHT-1326 stranding trap) is canceled so
+        # the new principal can proceed.
+        if not allow_takeover or not await self._intent_is_stale(intent):
             raise IntentInFlightError(
                 issue_id=issue_id,
-                intent_type=limbo_type.name,
+                # The wire form, like every other enum field (CHT-1353):
+                # clients used to receive "CLOSE" here and "close" everywhere else.
+                intent_type=limbo_type.value,
                 initiator_user_id=initiator,
             )
-        return existing[0]
+        await self._cancel_intent(intent, requesting_user_id)
+        return None, intent
 
     async def _open_intent_with_limbo(
         self,
@@ -289,8 +465,12 @@ class IssueService:
         # it commits, same deferral reasoning as broadcast_intent_opened.
         newly_blocked_rituals: list = []
 
+        # A stale intent canceled during the takeover path (CHT-1326):
+        # its INTENT_CANCELED broadcast is deferred until after commit.
+        canceled_stale_intent = None
+
         async with atomic():
-            existing_lock = await self._enforce_exclusive_intent_lock(
+            existing_lock, canceled_stale_intent = await self._enforce_exclusive_intent_lock(
                 issue.id, limbo_type, user_id,
             )
 
@@ -298,7 +478,7 @@ class IssueService:
                 try:
                     intent = await OxydeTicketLimbo.objects.create(
                         issue_id=issue.id,
-                        limbo_type=limbo_type.name,
+                        limbo_type=limbo_type,
                         requested_by_id=user_id,
                     )
                 except IntegrityError:
@@ -306,19 +486,19 @@ class IssueService:
                     # raise IntentInFlightError if it's a different
                     # principal — the canonical "second claimant"
                     # outcome. If it's us (idempotent re-issue), fall
-                    # through to the normal blocked path.
-                    intent = await self._enforce_exclusive_intent_lock(
-                        issue.id, limbo_type, user_id,
+                    # through to the normal blocked path. Takeover is
+                    # disabled for this re-check: the racer's intent was
+                    # created moments ago (never past the TTL), and a
+                    # cancel here would roll back unbroadcast with the
+                    # error raised below (PR #261 review findings 4/5).
+                    intent, _ = await self._enforce_exclusive_intent_lock(
+                        issue.id, limbo_type, user_id, allow_takeover=False,
                     )
                     if intent is None:
                         # Race resolved by the other writer clearing
                         # the intent before we re-checked. Treat as no
                         # active intent; nothing more to do here.
-                        pending_info = [
-                            {"name": r.name, "prompt": r.prompt}
-                            for r in pending_rituals
-                        ]
-                        raise error_class(issue.identifier, pending_info)
+                        raise error_class(issue.identifier, rituals=pending_rituals, issue_pk=issue.id)
                 else:
                     for ritual in pending_rituals:
                         await OxydeTicketLimboBlocker.objects.create(
@@ -339,6 +519,10 @@ class IssueService:
                 # would fire past them. INSERT OR IGNORE is idempotent
                 # against the UNIQUE(limbo_id, ritual_id).
                 intent = existing_lock
+                # Renew the lease: an initiator actively re-attempting
+                # must never lose their intent to the stale-intent TTL
+                # (PR #261 review finding 2).
+                await self._touch_intent(intent)
                 existing_blocker_rituals = {
                     b.ritual_id for b in await OxydeTicketLimboBlocker.objects.filter(
                         limbo_id=intent.id,
@@ -360,6 +544,13 @@ class IssueService:
                 # event.
 
         # Atomic block exited successfully — safe to broadcast.
+        if canceled_stale_intent is not None:
+            await self._broadcast_intent_event(
+                issue, user_id, limbo_type, ActivityType.INTENT_CANCELED,
+                extra={
+                    "intent_initiator_id": canceled_stale_intent.requested_by_id,
+                },
+            )
         if broadcast_intent_opened:
             await self._broadcast_intent_event(
                 issue, user_id, limbo_type, ActivityType.INTENT_OPENED,
@@ -374,8 +565,7 @@ class IssueService:
                     "Failed to fan out gate-pending inbox/email for issue=%s", issue.id,
                 )
 
-        pending_info = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
-        raise error_class(issue.identifier, pending_info)
+        raise error_class(issue.identifier, rituals=pending_rituals, issue_pk=issue.id)
 
     async def _notify_gate_pending(self, issue, requester_id: str, gate_rituals: list) -> None:
         """CHT-1250/CHT-1251: a GATE ritual just became blocking on
@@ -429,27 +619,34 @@ class IssueService:
 
     async def _broadcast_intent_event(
         self, issue, user_id: str, limbo_type: "LimboType",
-        activity_type: "ActivityType",
+        activity_type: "ActivityType", extra: dict | None = None,
     ) -> None:
         """Fire the WebSocket broadcast for an intent event. This is
         the non-transactional half — must run AFTER any surrounding
         `atomic()` block commits, otherwise subscribers receive
         events for state that hasn't been persisted (and may never be
         persisted if the transaction rolls back).
+
+        `extra` merges additional payload keys (e.g. the displaced
+        `intent_initiator_id` on a takeover INTENT_CANCELED, for parity
+        with the admin force-clear broadcast — PR #261 review finding 3).
         """
         try:
             from app.websocket import broadcast_activity_event
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project is not None:
+                payload = {
+                    "issue_id": issue.id,
+                    "issue_identifier": issue.identifier,
+                    "limbo_type": limbo_type.value,
+                    "user_id": user_id,
+                }
+                if extra:
+                    payload.update(extra)
                 await broadcast_activity_event(
                     project.team_id,
                     activity_type.value,
-                    {
-                        "issue_id": issue.id,
-                        "issue_identifier": issue.identifier,
-                        "limbo_type": limbo_type.value,
-                        "user_id": user_id,
-                    },
+                    payload,
                 )
         except Exception:
             logger.exception(
@@ -471,12 +668,14 @@ class IssueService:
 
     async def _check_ticket_rituals(
         self, issue, user_id: str, is_human_request: bool = False
-    ) -> None:
-        """Check if ticket has pending rituals; open intent + limbo + raise."""
+    ) -> bool:
+        """Check if ticket has pending rituals; open intent + limbo + raise.
+        Returns whether the gate was consulted at all: False when a human
+        bypasses it (`human_rituals_required` off)."""
         if is_human_request:
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project and not project.human_rituals_required:
-                return
+                return False
 
         ritual_service = RitualService()
         pending_rituals = await ritual_service.get_pending_ticket_rituals(
@@ -487,15 +686,17 @@ class IssueService:
             issue, user_id, is_human_request,
             pending_rituals, LimboType.CLOSE, TicketRitualsError,
         )
+        return True
 
     async def _check_claim_rituals(
         self, issue, user_id: str, is_human_request: bool = False
-    ) -> None:
-        """Check if ticket has pending claim rituals; open intent + limbo + raise."""
+    ) -> bool:
+        """Check if ticket has pending claim rituals; open intent + limbo + raise.
+        Returns whether the gate was consulted, as `_check_ticket_rituals`."""
         if is_human_request:
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project and not project.human_rituals_required:
-                return
+                return False
 
         ritual_service = RitualService()
         pending_rituals = await ritual_service.get_pending_claim_rituals(
@@ -506,6 +707,7 @@ class IssueService:
             issue, user_id, is_human_request,
             pending_rituals, LimboType.CLAIM, ClaimRitualsError,
         )
+        return True
 
     async def _deduct_from_sprint_budget(self, issue, user_id: str | None = None) -> None:
         """Deduct issue estimate from the current sprint's budget."""
@@ -572,7 +774,8 @@ class IssueService:
         )
 
     async def apply_intent_transition(
-        self, issue_id: str, limbo_type_name: str, user_id: str,
+        self, issue_id: str, limbo_type: "LimboType", user_id: str,
+        intent_id: str | None = None,
     ) -> None:
         """Fire the auto-transition for a fully-cleared intent.
 
@@ -593,10 +796,6 @@ class IssueService:
         issue = await OxydeIssue.objects.get_or_none(id=issue_id)
         if issue is None:
             return
-        try:
-            limbo_type = LimboType[limbo_type_name]
-        except KeyError:
-            return
 
         if limbo_type == LimboType.CLAIM:
             new_status = IssueStatus.IN_PROGRESS
@@ -614,6 +813,7 @@ class IssueService:
             user_id=user_id,
             is_human_request=False,
             skip_ritual_check=True,
+            gate_intent_id=intent_id,
         )
 
         await self._broadcast_issue_updated(updated_issue)
@@ -632,12 +832,12 @@ class IssueService:
         """
         try:
             from app.websocket import broadcast_issue_event
-            from app.api.issues import issue_to_response
+            from app.api.issues import issue_response
 
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project is None:
                 return
-            response = issue_to_response(issue)
+            response = await issue_response(issue)
             await broadcast_issue_event(
                 project.team_id, "updated", response.model_dump(mode="json"),
             )
@@ -678,16 +878,14 @@ class IssueService:
                 rituals = await ritual_service.list_by_project(project_id)
                 claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM and r.is_active]
                 if claim_rituals:
-                    pending_info = [{"name": r.name, "prompt": r.prompt} for r in claim_rituals]
-                    raise ClaimRitualsError("NEW", pending_info)
+                    raise ClaimRitualsError("NEW", rituals=claim_rituals)
 
         if issue_in.status == IssueStatus.DONE and not is_human_request:
             ritual_service = RitualService()
             rituals = await ritual_service.list_by_project(project_id)
             close_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLOSE and r.is_active]
             if close_rituals:
-                pending_info = [{"name": r.name, "prompt": r.prompt} for r in close_rituals]
-                raise TicketRitualsError("NEW", pending_info)
+                raise TicketRitualsError("NEW", rituals=close_rituals)
 
         max_retries = 5
         last_error = None
@@ -779,6 +977,7 @@ class IssueService:
         self, issue, issue_in: IssueUpdate, user_id: str | None = None,
         is_human_request: bool = True,
         skip_ritual_check: bool = False,
+        gate_intent_id: str | None = None,
     ) -> OxydeIssue:
         """Update an issue and log activity.
 
@@ -786,16 +985,23 @@ class IssueService:
         an intent's limbo has fully cleared (rituals satisfied by
         attestation/approval), the auto-transition fires by calling this
         method with skip_ritual_check=True. The ritual check is bypassed
-        because the gate has already been resolved by the limbo lifecycle.
+        because the gate has already been resolved by the limbo lifecycle;
+        gate_intent_id names that cleared intent so the ticket-scoped
+        ROUND_ROBIN rotation lands on the ritual it was blocked on
+        (CHT-1405).
         """
         update_data = issue_in.model_dump(exclude_unset=True, exclude={"label_ids", "lease_seconds"})
 
         # Decide upfront whether this update will snapshot the
-        # description. We capture this before mutating the issue object
-        # so the comparison reflects the true old vs new value.
+        # description, against the newest revision rather than the
+        # caller's in-memory row (CHT-1340): the column is written
+        # unconditionally below, so a stale object writing the value a
+        # concurrent edit had already moved away from would otherwise
+        # put the row back without a revision saying so. An issue with
+        # no history (created outside the service) falls back to the row.
         description_changed = (
             "description" in update_data
-            and update_data["description"] != issue.description
+            and update_data["description"] != await self._recorded_description(issue)
         )
 
         # Track changes for activity log
@@ -839,6 +1045,13 @@ class IssueService:
 
         # Check if status change requires limbo/arrears/ticket ritual checks
         needs_budget_deduction = False
+        # The ticket-scoped ROUND_ROBIN rotation this transition commits
+        # (CHT-1405): computed here, over the pre-transition issue and only
+        # when a ritual gate was actually consulted (the limbo
+        # auto-transition counts; a human bypass with
+        # human_rituals_required off does not, since nothing gated it),
+        # and written inside the transaction below once the status is saved.
+        rotation = None
         if issue_in.status is not None and "status" in update_data:
             new_status = issue_in.status
             old_status = issue.status
@@ -852,12 +1065,18 @@ class IssueService:
                         raise EstimateRequiredError(
                             "Estimate is required before claiming issues in this project"
                         )
-                if not skip_ritual_check:
-                    await self._check_claim_rituals(issue, user_id, is_human_request)
+                gated = skip_ritual_check or await self._check_claim_rituals(issue, user_id, is_human_request)
+                if gated:
+                    rotation = await RitualService().prepare_ticket_rotation(
+                        issue.project_id, issue.id, RitualTrigger.TICKET_CLAIM, intent_id=gate_intent_id,
+                    )
 
             if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
-                if not skip_ritual_check:
-                    await self._check_ticket_rituals(issue, user_id, is_human_request)
+                gated = skip_ritual_check or await self._check_ticket_rituals(issue, user_id, is_human_request)
+                if gated:
+                    rotation = await RitualService().prepare_ticket_rotation(
+                        issue.project_id, issue.id, RitualTrigger.TICKET_CLOSE, intent_id=gate_intent_id,
+                    )
 
             blocked_statuses = {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}
             if new_status in blocked_statuses and old_status != new_status:
@@ -944,6 +1163,13 @@ class IssueService:
                     )
             await issue.save(update_fields=set(update_data.keys()))
 
+            # The claim / close happened: ticket-scoped ROUND_ROBIN groups
+            # advance to the ritual that gated it, in this transaction
+            # (CHT-1405). Every status transition, the limbo auto-transition
+            # included, comes through here.
+            if rotation is not None:
+                await RitualService().record_ticket_rotation(rotation)
+
             # Handle labels via junction table
             if issue_in.label_ids is not None:
                 await OxydeIssueLabel.objects.filter(issue_id=issue.id).delete()
@@ -988,6 +1214,15 @@ class IssueService:
         await InboxService().notify_assignment(
             issue=issue, project=project, assignee_id=assignee_id, assigned_by=actor,
         )
+
+    async def _recorded_description(self, issue: OxydeIssue) -> str | None:
+        """The description the newest revision recorded, which the
+        revision invariant says is the stored one; the row's own value
+        when it has no revisions."""
+        newest = await OxydeIssueDescriptionRevision.objects.filter(
+            issue_id=issue.id,
+        ).order_by("-version").first()
+        return newest.description if newest is not None else issue.description
 
     async def _next_description_revision_version(self, issue_id: str) -> int:
         """Compute the next description-revision number for an issue.
@@ -1132,10 +1367,16 @@ class IssueService:
     async def delete(self, issue) -> None:
         """Delete an issue.
 
-        Schema cascades only fire under PRAGMA foreign_keys = ON, which
-        Oxyde defaults OFF — so every child table needs an explicit
-        delete here. (Open question on the broader codebase: do other
-        delete() methods have the same gap? Tracking as a follow-up.)
+        The child-table deletes below are defense in depth, not a
+        necessity: PRAGMA foreign_keys is ON on every connection Oxyde's
+        driver opens (measured on the runtime and test connections;
+        tests/test_infrastructure.py pins it, since nothing in this repo
+        sets it and a driver change could flip it), so the schema's ON
+        DELETE CASCADE rules fire and other services' delete() methods
+        rely on them with no gap (CHT-1341). They stay here because the
+        order is explicit and greppable, and because an issue's children
+        span nine tables that a future migration could add to without
+        a cascade.
         """
         from app.oxyde_models.ritual import OxydeRitualAttestation
 
@@ -1918,38 +2159,118 @@ class IssueService:
         ).order_by("name").offset(skip).limit(limit).all()
 
     # Issue Relations
+    BLOCKS_GRAPH_LIMIT = 5000
+
+    async def _take_relation_write_lock(self) -> None:
+        """Take SQLite's database-wide writer lock now, before reading.
+
+        Oxyde's atomic() begins a deferred transaction, so a transaction
+        that reads first only gets the writer lock at its first write; two
+        transactions can both read the same graph and both insert. A
+        zero-row UPDATE is a write statement, so it takes the lock (or
+        waits, up to the pool's busy_timeout, for the holder to commit)
+        without changing anything, and every read after it sees the
+        previous writer's commit (CHT-1311).
+
+        This only waits when it is the transaction's FIRST statement. A
+        transaction that has already read holds a snapshot, and SQLite
+        refuses to upgrade it once another writer has committed
+        (SQLITE_BUSY_SNAPSHOT, immediately, no wait: the CHT-1411 case),
+        so the caller must open the transaction itself, which
+        create_relation does and asserts.
+        """
+        await execute_raw("UPDATE issue_relations SET relation_type = relation_type WHERE 0")
+
+    async def _reject_blocking_cycle(self, issue_id: str, related_issue_id: str) -> None:
+        """A new "X blocks Y" edge closes a cycle iff Y already
+        (transitively) blocks X -- and any BLOCKS cycle is a permanent
+        deadlock, because list_ready_issues treats an issue with a
+        non-DONE incoming BLOCKS as never-ready, so no issue in the cycle
+        can ever start (CHT-298). Walk the existing BLOCKS graph forward
+        from Y; if it reaches X, refuse. Visited-guarded and bounded so
+        pre-existing corruption cannot loop forever.
+
+        The edge list is fetched in one query and walked in memory: this
+        runs under the database-wide writer lock (every other writer
+        waits behind it), so the walk must not cost a round trip per
+        node."""
+        rows = await execute_raw(
+            "SELECT issue_id, related_issue_id FROM issue_relations WHERE relation_type = ?",
+            [IssueRelationType.BLOCKS.name],
+        )
+        blocks: dict[str, list[str]] = {}
+        for row in rows:
+            blocks.setdefault(row["issue_id"], []).append(row["related_issue_id"])
+        frontier = [related_issue_id]
+        visited: set[str] = set()
+        while frontier:
+            if len(visited) > self.BLOCKS_GRAPH_LIMIT:
+                raise RelationCycleError(
+                    "Blocks graph too large to validate (possible pre-existing cycle)"
+                )
+            node = frontier.pop()
+            if node == issue_id:
+                raise RelationCycleError("Cannot create relation: would close a blocking cycle")
+            if node in visited:
+                continue
+            visited.add(node)
+            frontier.extend(blocks.get(node, ()))
+
     async def create_relation(
         self, issue_id: str, relation_in: IssueRelationCreate
     ) -> OxydeIssueRelation:
-        """Create a relationship between two issues, idempotently.
+        """Create a relationship between two issues, idempotently, refusing
+        a BLOCKS edge that would close a cycle.
 
         The (issue_id, related_issue_id) pair has a UNIQUE constraint, and
         common CLI flows (e.g. `issue update --blocked-by X` re-run against
         an issue already blocked by X) call this with duplicates. Treat a
         pre-existing pair as a no-op and return the existing row instead
         of surfacing an IntegrityError as a 500.
+
+        The cycle check and the insert are one transaction that takes the
+        writer lock before the check (CHT-1311): two concurrent inverse
+        BLOCKS edges used to both pass a check made against the same
+        snapshot and both land, closing exactly the cycle the check
+        exists to prevent. Now the second waits for the first to commit
+        and then sees its edge.
         """
-        existing = await OxydeIssueRelation.objects.filter(
-            issue_id=issue_id,
-            related_issue_id=relation_in.related_issue_id,
-        ).first()
-        if existing is not None:
-            return existing
-        try:
-            return await OxydeIssueRelation.objects.create(
-                issue_id=issue_id,
-                related_issue_id=relation_in.related_issue_id,
-                relation_type=relation_in.relation_type,
-            )
-        except IntegrityError:
-            # Lost a race with a concurrent insert of the same pair.
+        if get_active_transaction() is not None:
+            # See _take_relation_write_lock: inside a transaction that has
+            # already read, the lock cannot wait, it fails.
+            raise RuntimeError("create_relation must open its own transaction (CHT-1311)")
+        async with atomic():
+            await self._take_relation_write_lock()
+            # The duplicate check comes before the walk: a re-run of the
+            # same pair is a no-op without a walk, and without a cycle
+            # error for a pre-existing cycle elsewhere in the graph.
             existing = await OxydeIssueRelation.objects.filter(
                 issue_id=issue_id,
                 related_issue_id=relation_in.related_issue_id,
             ).first()
             if existing is not None:
                 return existing
-            raise
+            if relation_in.relation_type == IssueRelationType.BLOCKS:
+                await self._reject_blocking_cycle(issue_id, relation_in.related_issue_id)
+            try:
+                return await OxydeIssueRelation.objects.create(
+                    issue_id=issue_id,
+                    related_issue_id=relation_in.related_issue_id,
+                    relation_type=relation_in.relation_type,
+                )
+            except IntegrityError:
+                # Under the writer lock, after the check above, the unique
+                # pair cannot fail; Oxyde retries nothing. Any
+                # IntegrityError here is something else (NOT NULL, a
+                # foreign key) and propagates; the re-query is a defensive
+                # no-op kept so a duplicate would still read as one.
+                existing = await OxydeIssueRelation.objects.filter(
+                    issue_id=issue_id,
+                    related_issue_id=relation_in.related_issue_id,
+                ).first()
+                if existing is not None:
+                    return existing
+                raise
 
     async def get_relation_by_id(self, relation_id: str) -> OxydeIssueRelation | None:
         """Get relation by ID."""
@@ -2125,6 +2446,10 @@ class IssueService:
         team_id: str | None = None, user_id: str | None = None,
     ) -> list[OxydeIssue]:
         """Batch update multiple issues with safe fields only."""
+        if "description" in update_data:
+            # The body has revision history that only `update` writes
+            # (CHT-1340); this path saves columns without snapshotting.
+            raise ValueError("description cannot be batch-updated; use update per issue")
         issue_ids = [iss.id for iss in issues]
 
         # Validate labels

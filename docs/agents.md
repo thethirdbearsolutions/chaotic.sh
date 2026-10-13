@@ -185,28 +185,101 @@ the same command:
 
 ### Toolset
 
-Eleven tools, curated for quality over coverage:
+A toolset curated for quality over coverage (CHT-1247), grouped below;
+the canonical list is `docs/mcp-toolset-schema.json` -- every tool's
+description and input schema, regenerated from the code -- and
+`cli/tests/test_mcp_toolset_sync.py` fails if this section stops naming
+one of them (there is deliberately no count here to rot, CHT-1395):
 
-- `issue_list`, `issue_view`, `issue_create`, `issue_update`,
-  `issue_comment`, `issue_start`
-- `doc_list`, `doc_view`, `doc_create`
-- `activity_recent`
-- `project_list` (enumerate the team's projects -- every other tool
-  filters by project, this one tells you which projects exist)
+- **issues:** `issue_list`, `issue_view`, `issue_create`, `issue_update`,
+  `issue_comment`, `issue_start`, `issue_ready`, `issue_relations`,
+  `issue_block`, `issue_unblock`, `issue_label`, `issue_revisions`,
+  `issue_revision`
+- **docs:** `doc_list`, `doc_view`, `doc_create`, `doc_update`,
+  `doc_link`, `doc_unlink`, `doc_revisions`, `doc_revision` (every
+  title/content edit snapshots the previous text; the revision tools
+  are how you see what you are about to overwrite, CHT-1335)
+- **sprints:** `sprint_current`, `sprint_list`, `sprint_close`,
+  `sprint_transactions`, `sprint_add`, `sprint_remove`
+- **rituals:** `ritual_pending`, `ritual_list`, `ritual_attest`,
+  `ritual_complete`
+- **inbox:** `inbox_list`, `inbox_mark_read`, `inbox_mark_all_read` (what
+  is waiting on you: @mentions, assignments, gates and reviews awaiting
+  an admin -- the human-to-agent handoff channel, CHT-1338)
+- **other:** `label_list`, `activity_recent`, `project_list` (enumerate
+  the team's projects -- every other tool filters by project, this one
+  tells you which projects exist), `server_info` (which commit, version
+  and toolset the server is running -- the check to make when a field
+  looks stale or a tool is missing, CHT-1401)
+
+The sprint and ritual groups exist because governance state can block
+the rest of this surface: arrears stops ticket transitions project-wide
+and limbo stops a sprint rotating, and an agent that cannot see or clear
+either is stuck (CHT-1332/CHT-1333). `sprint_current` is the call to
+make when a write is refused with `sprint_in_arrears` or
+`sprint_in_limbo`. `sprint_close` is the remedy for arrears; when it
+enters limbo instead of rotating, its result carries `limbo_pending`
+(the same rows `ritual_pending` returns: name, prompt, approval mode,
+any attestation) and the not-yet-attested names in `unattested`, so the
+next step -- `ritual_attest`, or `ritual_complete` for gate rituals --
+needs no second lookup (CHT-1381).
+
+A ritual can declare an **artifact** (`ritual_list` shows it: `document`
+or `url`). Its attestation is bound to that artifact, not to the note:
+pass `document` (a document you wrote for it -- id, id prefix or exact
+title) or `url` (a link to the artifact, e.g. a PR review comment). The
+server verifies a document is yours and was written after the sprint
+activated or the ticket was created, so last sprint's retro cannot be
+attested again; a missing or borrowed artifact is refused with the
+ritual's prompt (CHT-1359).
 
 Every tool returns a JSON object. Failures come back as
-`{"error": "..."}` -- the same shape as the CLI's `--json` error
-contract -- rather than an MCP protocol-level error; a bad identifier
-or missing team/project context is something the agent reads and
-reacts to, not a crash.
+`{"error": {"message": "...", "error_code": "...", ...}}` rather than an
+MCP protocol-level error (ADR-0006): `message` is always a sentence you
+can show or reason over, `error_code` is present whenever the failure has
+a stable name (`sprint_in_arrears`, `claim_rituals_pending`,
+`tool_input`, `validation_error`, `unexpected`, ...), and governance
+errors keep their structure (`pending_rituals`, `arrears_by`, `override`
+hints) so you can act on them without parsing prose. A claim/close refused
+for pending ticket rituals lists each ritual with its `approval_mode` and
+any recorded `attestation` (the same rows `ritual_pending` returns), plus
+three name lists -- `unattested` (attest these), `awaiting_approval`
+(attested; a human approves) and `gate` (a human completes; attesting a
+gate ritual is refused) -- and its message says which you are looking at.
+Re-attesting something that is only waiting on a human is never the right
+move (CHT-1360). Both transports
+produce the identical envelope. Successful writes can carry advisory
+`warnings` (a list of sentences) next to the result: today `issue_create`
+and `issue_update` add one when the estimate is not on the project's
+declared `estimate_scale` (CHT-1365); the write still happened as given. (The CLI's own `--json` mode keeps its
+flat `{"error": "..."}` string -- that contract is for shells and exit
+codes, this one is for models.)
+
+**List tools return compact rows.** `issue_list`, `issue_ready`, `doc_list`
+and `project_list` return a projection of each row (for issues:
+identifier, title, status, priority, issue_type, estimate, assignee_name,
+sprint_name, parent_identifier, labels as names, updated_at), plus `count`
+and `truncated`. Foreign keys travel as names an agent can pass straight
+back into another tool; the UUIDs are still on the full rows
+(`detail: true`, `issue_view`) alongside `assignee_name`, `sprint_name`,
+`parent_identifier` and `project_key`. Against a backend older than
+those fields, the stdio server falls back to the UUIDs in the same
+compact slots rather than reporting everything as unassigned. `truncated: true` means `limit` cut the list -- narrow the
+filter rather than assume you saw everything. Pass `detail: true` for the
+full response-schema rows; use `issue_view`/`doc_view` for one record.
+`activity_recent` cuts `old_value`/`new_value` to a 200-character preview
+with an explicit `...(+N chars)` marker, and `issue_view` returns the
+newest 20 comments with `comment_count` plus compact sub-issue rows with
+`sub_issue_count`. The projection is part of the
+cross-transport contract (`_meta.response_shapes` in
+`docs/mcp-toolset-schema.json`), so both servers return identical shapes.
 
 No destructive tools (delete) are exposed. Destructive operations need
 a human in the loop for now; that may change behind an explicit opt-in
 flag in a future ticket. `issue_start` acquires a claim lease the same
-way the CLI does (CHT-1246), but doesn't yet expose a duration
-override. `issue_ready` (CHT-1245's open/unblocked/unclaimed work
-query, documented above) landed CLI-side but isn't wired up as an MCP
-tool yet -- a natural fast-follow ticket, not done here.
+way the CLI does (CHT-1246) and takes an optional `lease_seconds`
+override; `issue_ready` is the open/unblocked/unclaimed work query
+documented above.
 
 See `cli/README.md` § MCP server for the full tool list mapped to
 their CLI equivalents.
@@ -217,12 +290,46 @@ If you'd rather point a *hosted* client at your chaotic instance instead
 of running `chaotic mcp` as a local subprocess -- claude.ai's custom
 connectors, Claude Code web, or Claude Code CLI's `--transport http` --
 the backend also speaks MCP directly over Streamable HTTP at `/mcp`.
-Same 11 tools, same names (see Toolset below); six of them
-(`issue_list`, `issue_create`, `doc_list`, `doc_create`,
-`activity_recent`, `project_list`) additionally accept an optional
-`team` parameter,
-because a hosted server has no single active profile to inherit context
-from -- see "Auth and scoping" below.
+Same tools, same names, same behaviour: since CHT-1374 both servers
+register the one toolset defined in `chaotic_mcp_tools` (ADR-0007), each
+bound to its own data-access backend, so the two cannot drift. The one
+documented difference is that the team-scoped tools (listed under
+`_meta.team_scoped_tools` in `docs/mcp-toolset-schema.json`: `issue_list`,
+`issue_create`, `issue_ready`, `doc_list`, `doc_create`, `doc_update`,
+`label_list`, `project_list`, `activity_recent`, `inbox_list`,
+`inbox_mark_all_read`, the `sprint_*` tools except `sprint_remove`, and
+the `ritual_*` tools) additionally accept an
+optional `team` parameter here, because a hosted server has no single
+active profile to inherit context from -- see "Auth and scoping" below.
+
+**Clients cache the toolset; reconnect after a server upgrade.** MCP
+clients fetch `tools/list` when they connect and keep it. The toolset only
+changes when the server process restarts, and this transport is stateless
+by design (every request is its own session), so a restart is invisible to
+a connected client: a stateful client would hit an unknown-session error
+and re-initialize, but here its requests keep succeeding against the new
+server while it advertises the old tools, and there is no live session
+over which the server could send `notifications/tools/list_changed`
+(CHT-1364: an a18 deploy went from 11 to 30 tools and a live claude.ai
+connector still showed 11). After `chaotic system upgrade`, remove and
+re-add the connector (or restart the Claude Code session); the upgrade
+command reads `/api/version` before and after and says whether that is
+needed. To check a running server without reconnecting: call the
+`server_info` tool (or `GET /api/version` outside MCP), which reports
+`mcp_tool_count` and `mcp_toolset_fingerprint` beside the client's own
+count. The
+count is the one thing you can compare against a client's tool list; the
+fingerprint (SHA-256 over every tool definition as served on `/mcp`,
+`team` parameters included, so not the hash of the stdio snapshot
+`docs/mcp-toolset-schema.json`) also catches a same-count schema change,
+and is for comparing a server against itself across an upgrade.
+
+Protocol notes: the server is built on mcp 2.x, so it negotiates both
+the 2025-06-18 protocol revision and the 2026-07-28 "modern" era --
+any current client works, no version pinning needed. Request bodies are
+capped at 4 MiB per call (a 413 if exceeded); the only tools that can
+plausibly approach that are `doc_create`/`doc_update` with a very large
+`content`, so split enormous documents rather than sending one body.
 
 **Auth v1 is API-key only.** There's no OAuth flow yet (dynamic client
 registration + the paste-a-URL-and-authorize connector UX is tracked
@@ -297,7 +404,8 @@ there's no local profile to fall back on the way the stdio server has:
 - If the key's user belongs to more than one team, or a team has more
   than one project, pass `team` and/or `project` explicitly (id, key,
   or name all work) -- the tool call returns a clear
-  `{"error": "..."}` listing the options if you don't.
+  `{"error": {"message": "...", "error_code": "tool_input"}}` listing the
+  options if you don't.
 - An agent-scoped API key (`chaotic agent create`) is confined to its
   own project/team exactly like it is over REST; passing a `team`/
   `project` that doesn't match its scope is rejected the same way.
@@ -323,6 +431,34 @@ gated by the ritual's own conditions (e.g. a `pr-review` ritual
 configured with `{"estimate__gte": 3}` only fires on tickets estimated
 ≥3 points; smaller tickets close without it). If a ritual's conditions
 don't match the issue, it's skipped ("conditions do not match").
+
+**Supply attestation notes inline when closing non-interactively**
+(CHT-1326 / ADR-0004). A bare `issue_update {status: "done"}` on a
+ticket with note-required close rituals is *blocked* with
+`ticket_rituals_pending` — and before CHT-1326 it also stranded a CLOSE
+intent that locked everyone else out. The right call answers the
+rituals in the same step, one note per ritual:
+
+```
+chaotic issue close CHT-123 \
+  --attest 'close-gate:ADR written; oppo-reviewed; merged via PR #12' \
+  --attest 'doc-refresh:README data-model table updated'
+```
+
+MCP equivalent: `issue_update` takes an `attest` map —
+`{"close-gate": "…", "doc-refresh": "…"}` — applied before the status
+change. `issue update --status …`, `issue claim`, and `issue start`
+accept the same `--attest` flag (claims can be ritual-gated too).
+
+If an attempt does get blocked anyway, the open intent is durable for
+its initiator (retrying resumes it; attesting later auto-fires the
+transition) and its exclusivity is a *renewable lease*: retries and
+attest progress keep it fresh, but after `intent_ttl_minutes` (default
+15) with no initiator activity the next principal's attempt cancels the
+stale intent (`INTENT_CANCELED`, with the displaced initiator in the
+event payload) and proceeds. Intents blocked on GATE rituals — or on
+REVIEW rituals already attested and awaiting approval — never expire;
+those wait on a human, not the initiator.
 
 A typical `pr-review` ritual demands you worked on a branch, opened a
 PR, and had a **separate** oppositional-reviewer agent comment on it —

@@ -938,3 +938,54 @@ describe('showLimboDetailsModal', () => {
         expect(document.getElementById('modal-content').innerHTML).toContain('run-tests');
     });
 });
+
+
+describe('describeSprintSpan / renderSprintBurndown (CHT-1366)', () => {
+    let describeSprintSpan, renderSprintBurndown;
+    beforeEach(async () => {
+        ({ describeSprintSpan, renderSprintBurndown } = await import('./sprints.js'));
+    });
+
+    it('says nothing for a sprint that was never activated', () => {
+        expect(describeSprintSpan({ activated_at: null, closed_at: null })).toBe('');
+    });
+
+    it('describes a closed sprint by the span it turned out to run', () => {
+        const text = describeSprintSpan({ activated_at: '2026-09-01T10:00:00Z', closed_at: '2026-09-06T04:00:00Z' });
+        expect(text).toMatch(/^activated .*, closed .* \(5 days\)$/);
+    });
+
+    it('describes an open sprint as days so far, never fewer than one', () => {
+        const justNow = new Date(Date.now() - 60_000).toISOString();
+        expect(describeSprintSpan({ activated_at: justNow, closed_at: null })).toMatch(/1 day so far$/);
+    });
+
+    it('renders points against budget as a progress bar, not a chart', () => {
+        const html = renderSprintBurndown({ budget: 13, points_spent: 12, limbo: false, activated_at: null });
+        expect(html).not.toContain('<svg');
+        expect(html).toContain('role="progressbar"');
+        expect(html).toContain('aria-valuenow="12"');
+        expect(html).toContain('width: 92%');
+        expect(html).toContain('1 of 13 pts remaining');
+        expect(html).toContain('not yet activated');
+    });
+
+    it('caps the bar at 100% and names arrears', () => {
+        const html = renderSprintBurndown({ budget: 10, points_spent: 12, limbo: false });
+        expect(html).toContain('width: 100%');
+        expect(html).toContain('sprint-progress-fill arrears');
+        expect(html).toContain('in arrears by 2 pts');
+    });
+
+    it('shows limbo as closed-and-waiting', () => {
+        const html = renderSprintBurndown({ budget: 10, points_spent: 10, limbo: true });
+        expect(html).toContain('sprint-progress-fill limbo');
+        expect(html).toContain('waiting on sprint rituals');
+    });
+
+    it('asks for a budget when there is none', () => {
+        const html = renderSprintBurndown({ budget: null, points_spent: 0 });
+        expect(html).toContain('Set a sprint budget');
+        expect(html).not.toContain('progressbar');
+    });
+});

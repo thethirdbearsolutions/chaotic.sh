@@ -10,7 +10,7 @@ Tests that alias commands correctly delegate to their targets:
 - doc get -> doc show
 - doc read -> doc show
 """
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 import pytest
 
 
@@ -89,6 +89,7 @@ class TestIssueViewAlias:
             "pending_rituals": [], "completed_rituals": [],
         })
         client.get_sub_issues = MagicMock(return_value=[])
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
@@ -111,6 +112,7 @@ class TestIssueViewAlias:
             "pending_rituals": [], "completed_rituals": [],
         })
         client.get_sub_issues = MagicMock(return_value=[])
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
@@ -134,6 +136,7 @@ class TestIssueGetAlias:
             "pending_rituals": [], "completed_rituals": [],
         })
         client.get_sub_issues = MagicMock(return_value=[])
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):

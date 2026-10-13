@@ -1,11 +1,11 @@
 """Unit tests for app.mcp_server.asgi._transport_security (PR #219 review,
 finding 3): DNS-rebinding protection keyed to the operator's CORS_ORIGINS.
 
-Tested at the settings-builder level rather than through a live /mcp
-request: the SDK's TransportSecurityMiddleware behavior for a given
-TransportSecuritySettings is the SDK's contract to keep, and rebuilding
-the whole FastMCP instance per CORS configuration would re-test the SDK,
-not our derivation logic.
+Tested at the settings-builder level: the exhaustive derivation cases
+live here. One live /mcp round-trip per mode (protection on: 421 on a
+foreign Host, 200 on a matching one; protection off: any Host) lives in
+test_mcp_endpoint.py::TestTransportSecurity so the settings object is
+proven to actually reach the SDK's middleware in the mounted app.
 """
 import pytest
 

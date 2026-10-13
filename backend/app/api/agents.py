@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, check_user_team_access
 from app.schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentCreated
 from app.schemas.api_key import APIKeyCreated
-from app.services.agent_service import AgentService
+from app.services.agent_service import AgentHasAuthoredContentError, AgentService
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
 from app.services.project_service import ProjectService
@@ -295,7 +295,8 @@ async def delete_agent(
     agent_id: str,
     current_user: CurrentUser,
 ):
-    """Delete an agent (cascades to API keys)."""
+    """Delete an agent and its API keys. Refused (409) when the agent
+    authored anything (CHT-1427)."""
     agent_service = AgentService()
     agent = await agent_service.get_by_id(agent_id)
 
@@ -316,4 +317,7 @@ async def delete_agent(
             detail="Not authorized to delete this agent",
         )
 
-    await agent_service.delete(agent)
+    try:
+        await agent_service.delete(agent)
+    except AgentHasAuthoredContentError as refused:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refused)) from refused

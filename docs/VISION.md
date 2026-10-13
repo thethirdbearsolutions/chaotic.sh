@@ -48,6 +48,8 @@ Humans *can* use the CLI, but it's optimized for agents. The web UI is optimized
 
 ### 2. Sprint Budgets & Arrears
 
+Sprints are measured by work, not by time. A sprint is defined by the work that closes in it: it begins when the previous one closes and ends when it is closed, which a spent point budget forces, and it lasts however long that takes. Time is a dependent variable, the inverse of calendar-boxed agile where the two weeks are fixed and velocity is what you measure. A sprint records when it was activated and when it closed; nothing schedules it.
+
 Every sprint has a **budget** (points). When an agent completes any issue, the estimate is deducted from the current sprint's `points_spent`.
 
 When `points_spent > budget`, the sprint is **in arrears**. The agent cannot:
@@ -58,7 +60,7 @@ When `points_spent > budget`, the sprint is **in arrears**. The agent cannot:
 The CLI returns an error:
 ```
 Error: Sprint is in arrears (budget: 10, spent: 13, arrears by: 3).
-Close the current sprint to continue.
+Close the current sprint to continue; a spent budget ends a sprint, not a date.
 ```
 
 The agent must close the sprint. But closing isn't instant - it might require rituals.

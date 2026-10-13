@@ -1,5 +1,7 @@
 """Tests for ritual service and API endpoints."""
 import pytest
+
+from app.services.ritual_selection import select_by_percentage, select_random_one
 from datetime import datetime, timezone
 from pydantic import ValidationError
 
@@ -10,7 +12,6 @@ from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
 from app.enums import RitualTrigger, ApprovalMode, SprintStatus, LimboType
 from app.services.ritual_service import RitualService
-from app.services.project_service import ProjectService
 from app.schemas.ritual import RitualCreate, RitualUpdate
 
 
@@ -155,6 +156,92 @@ class TestRitualGroupServiceValidation:
         )
         with pytest.raises(ValueError, match="different project"):
             await service.create(ritual_in, test_project.id)
+
+    async def test_group_members_must_share_a_trigger(self, db, test_project):
+        """A group is one selection over one event (CHT-1403): a
+        TICKET_CLOSE ritual cannot join a group of EVERY_SPRINT rituals,
+        whether it is created into it, moved into it, or retriggered
+        while in it. A different group, or no group, is fine."""
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        from app.enums import SelectionMode
+        from app.schemas.ritual import RitualUpdate
+
+        group = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="sprint-rotation", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        service = RitualService()
+        await service.create(RitualCreate(
+            name="report", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, group_id=group.id,
+        ), test_project.id)
+
+        with pytest.raises(ValueError) as exc:
+            await service.create(RitualCreate(
+                name="close-gate", prompt="p", trigger=RitualTrigger.TICKET_CLOSE, group_id=group.id,
+            ), test_project.id)
+        msg = str(exc.value)
+        assert "must share a trigger" in msg and "'report'" in msg
+        assert "every_sprint" in msg and "ticket_close" in msg  # wire form, not names
+
+        loose = await service.create(RitualCreate(
+            name="close-gate", prompt="p", trigger=RitualTrigger.TICKET_CLOSE,
+        ), test_project.id)
+        with pytest.raises(ValueError, match="must share a trigger"):
+            await service.update(loose, RitualUpdate(group_id=group.id))
+
+        second = await service.create(RitualCreate(
+            name="review", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, group_id=group.id,
+        ), test_project.id)
+        with pytest.raises(ValueError, match="must share a trigger"):
+            await service.update(second, RitualUpdate(trigger=RitualTrigger.TICKET_CLAIM))
+        with pytest.raises(ValueError, match="trigger cannot be null"):
+            await service.update(second, RitualUpdate(trigger=None))
+
+        # Compatible moves are fine: a ticket group takes the loose ticket
+        # ritual, and the only member of a group may change trigger.
+        ticket_group = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="ticket-rotation", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        moved = await service.update(loose, RitualUpdate(group_id=ticket_group.id))
+        assert moved.group_id == ticket_group.id
+        alone = await service.update(moved, RitualUpdate(trigger=RitualTrigger.TICKET_CLAIM))
+        assert alone.trigger == RitualTrigger.TICKET_CLAIM
+
+        # Reactivating into a mismatch is refused: a soft-deleted ticket
+        # ritual cannot come back to life inside the sprint group.
+        ghost = await OxydeRitual.objects.create(
+            project_id=test_project.id, name="ghost", prompt="p", trigger=RitualTrigger.TICKET_CLOSE,
+            group_id=group.id, is_active=False,
+        )
+        with pytest.raises(ValueError, match="must share a trigger"):
+            await service.update(ghost, RitualUpdate(is_active=True))
+
+    async def test_a_legacy_mixed_group_stays_editable_and_is_reported(self, db, test_project):
+        """A group that mixed triggers before the rule (rows written
+        directly, as any pre-CHT-1403 database has) keeps working: editing a
+        member's prompt or weight is not a join and is allowed, and the
+        group reports both triggers so it can be found and split."""
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        from app.enums import SelectionMode
+        from app.schemas.ritual import RitualUpdate
+
+        group = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="legacy", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        a = await OxydeRitual.objects.create(
+            project_id=test_project.id, name="a", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, group_id=group.id,
+        )
+        await OxydeRitual.objects.create(
+            project_id=test_project.id, name="b", prompt="p", trigger=RitualTrigger.TICKET_CLOSE, group_id=group.id,
+        )
+        service = RitualService()
+
+        edited = await service.update(a, RitualUpdate(prompt="still mine", weight=2.0))
+        assert edited.prompt == "still mine" and edited.weight == 2.0
+        with pytest.raises(ValueError, match="must share a trigger"):
+            await service.update(edited, RitualUpdate(trigger=RitualTrigger.TICKET_CLAIM))
+
+        (reported,) = [g for g in await service.list_groups_by_project(test_project.id) if g.id == group.id]
+        assert sorted({r.trigger.value for r in reported.rituals}) == ["every_sprint", "ticket_close"]
 
     async def test_create_ritual_in_percentage_group_requires_percentage(self, db, test_project):
         """Test that rituals in PERCENTAGE groups must have percentage > 0."""
@@ -314,7 +401,7 @@ class TestRitualGroupSelectionLogic:
         )
 
         service = RitualService()
-        selected = await service._apply_group_selection([ritual1, ritual2], sprint_id="test-sprint")
+        selected = (await service._select([ritual1, ritual2], "test-sprint")).chosen
         assert len(selected) == 2
 
     async def test_random_one_selection_deterministic_with_seed(self, db, test_project):
@@ -342,14 +429,14 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
         # Same seed should give same result
-        result1 = await service._apply_group_selection(rituals, sprint_id="fixed-seed")
-        result2 = await service._apply_group_selection(rituals, sprint_id="fixed-seed")
+        result1 = (await service._select(rituals, "fixed-seed")).chosen
+        result2 = (await service._select(rituals, "fixed-seed")).chosen
         assert len(result1) == 1
         assert len(result2) == 1
         assert result1[0].id == result2[0].id
 
         # Different seed may give different result (probabilistic)
-        result3 = await service._apply_group_selection(rituals, sprint_id="different-seed")
+        result3 = (await service._select(rituals, "different-seed")).chosen
         assert len(result3) == 1
 
     async def test_random_one_selection_respects_weights(self, db, test_project):
@@ -385,14 +472,16 @@ class TestRitualGroupSelectionLogic:
         # Run multiple times - high weight should be selected more often
         high_count = 0
         for i in range(50):
-            result = await service._apply_group_selection([high_weight, low_weight], sprint_id=f"seed-{i}")
+            result = (await service._select([high_weight, low_weight], f"seed-{i}")).chosen
             if result[0].name == "high-weight":
                 high_count += 1
         # With 100:1 ratio, high weight should be selected ~99% of the time
         assert high_count > 40  # Allow some variance
 
-    async def test_round_robin_advances_on_flag(self, db, test_project):
-        """Test that ROUND_ROBIN advances state when advance flag is True."""
+    async def test_round_robin_advances_only_when_a_rotation_is_recorded(self, db, test_project):
+        """select() reports the advance; record_sprint_rotation is the one
+        place that writes it (CHT-1280/CHT-1408). Listing in between does
+        not move the pointer."""
         from app.oxyde_models.ritual import OxydeRitualGroup
         from app.enums import SelectionMode
 
@@ -416,16 +505,19 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
 
-        # First selection with advance
-        result1 = await service._apply_group_selection(rituals, sprint_id="s1", advance_round_robin=True)
-        assert len(result1) == 1
-        first_selected = result1[0].id
+        # Listing reports what a rotation would record, and writes nothing.
+        offered = await service._select(rituals, "s1")
+        assert len(offered.chosen) == 1
+        first_selected = offered.chosen[0].id
+        assert offered.round_robin_advances == {group.id: first_selected}
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id is None
 
-        group = await OxydeRitualGroup.objects.get(id=group.id)  # Re-fetch after mutation
-        assert group.last_selected_ritual_id == first_selected
+        # The rotation is the write.
+        await service.record_sprint_rotation(test_project.id, "s1")
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id == first_selected
 
-        # Second selection with advance should get next ritual
-        result2 = await service._apply_group_selection(rituals, sprint_id="s2", advance_round_robin=True)
+        # The next sprint is offered the next sibling.
+        result2 = (await service._select(rituals, "s2")).chosen
         assert len(result2) == 1
         assert result2[0].id != first_selected
 
@@ -451,8 +543,8 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
         # Same seed should give same result
-        result1 = await service._apply_group_selection([ritual], sprint_id="fixed-seed")
-        result2 = await service._apply_group_selection([ritual], sprint_id="fixed-seed")
+        result1 = (await service._select([ritual], "fixed-seed")).chosen
+        result2 = (await service._select([ritual], "fixed-seed")).chosen
         assert result1 == result2
 
     async def test_percentage_selection_respects_percentage(self, db, test_project):
@@ -478,7 +570,7 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
         for i in range(10):
-            result = await service._apply_group_selection([always_ritual], sprint_id=f"seed-{i}")
+            result = (await service._select([always_ritual], f"seed-{i}")).chosen
             assert len(result) == 1
 
     async def test_group_selection_skips_inactive_rituals(self, db, test_project):
@@ -512,7 +604,7 @@ class TestRitualGroupSelectionLogic:
         )
 
         service = RitualService()
-        result = await service._apply_group_selection([active, inactive], sprint_id="test")
+        result = (await service._select([active, inactive], "test")).chosen
         assert len(result) == 1
         assert result[0].name == "active"
 
@@ -549,13 +641,13 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
         # Should include all rituals from deleted group
-        result = await service._apply_group_selection([ritual1, ritual2], sprint_id="test")
+        result = (await service._select([ritual1, ritual2], "test")).chosen
         assert len(result) == 2
 
     async def test_select_random_one_empty_list(self, db, test_project):
         """Test _select_random_one with empty list returns None."""
         service = RitualService()
-        result = service._select_random_one([])
+        result = select_random_one([])
         assert result is None
 
     async def test_select_random_one_zero_total_weight(self, db, test_project):
@@ -568,7 +660,7 @@ class TestRitualGroupSelectionLogic:
         )
 
         service = RitualService()
-        result = service._select_random_one([ritual])
+        result = select_random_one([ritual])
         assert result is None
 
     async def test_select_by_percentage_zero_percentage(self, db, test_project):
@@ -582,7 +674,7 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
         for i in range(20):
-            result = service._select_by_percentage([ritual], seed=f"seed-{i}")
+            result = select_by_percentage([ritual], seed=f"seed-{i}")
             assert len(result) == 0
 
     async def test_select_by_percentage_null_percentage(self, db, test_project):
@@ -595,7 +687,7 @@ class TestRitualGroupSelectionLogic:
         )
 
         service = RitualService()
-        result = service._select_by_percentage([ritual], seed="test")
+        result = select_by_percentage([ritual], seed="test")
         assert len(result) == 0
 
 
@@ -1787,38 +1879,41 @@ class TestRitualNameValidation:
 
 
 @pytest.mark.asyncio
-class TestRitualAPIEndpoints:
-    """Tests for ritual API endpoints with edge cases."""
+class TestRitualAPIEndpointsNullProject:
+    """The ticket-ritual endpoints' "issue exists but its project does not"
+    404 branch.
+
+    These four tests were shadowed by the later TestRitualAPIEndpoints class
+    and never collected (CHT-1373). Revived, they failed: they created an
+    issue with a bogus project_id, which the schema's FOREIGN KEY constraint
+    now rejects, so the branch is unreachable through the database. The
+    branch still exists in app/api/rituals.py (each endpoint re-fetches the
+    project after the issue), so it is exercised by making the project
+    lookup come back empty instead.
+    """
+
+    @pytest.fixture
+    def project_lookup_returns_none(self, monkeypatch):
+        from app.services.project_service import ProjectService
+
+        async def _none(self, project_id):
+            return None
+
+        monkeypatch.setattr(ProjectService, "get_by_id", _none)
 
     async def test_get_pending_ticket_rituals_null_project(
-        self, client, auth_headers, db, test_team, test_user
+        self, client, auth_headers, test_issue, project_lookup_returns_none
     ):
-        """Test get_pending_ticket_rituals returns 404 when issue's project doesn't exist."""
-        # Create an issue with a non-existent project_id
-        # This simulates an orphaned issue scenario (e.g., race condition, data corruption)
-        orphaned_issue = await OxydeIssue.objects.create(
-            project_id="non-existent-project-id",
-            identifier="ORPHAN-1",
-            number=1,
-            title="Orphaned Issue",
-            status="backlog",
-            priority="no_priority",
-            creator_id=test_user.id,
-        )
-
-        # Call the endpoint - should get 404 for project not found
         response = await client.get(
-            f"/api/rituals/issue/{orphaned_issue.id}/pending",
+            f"/api/rituals/issue/{test_issue.id}/pending",
             headers=auth_headers,
         )
         assert response.status_code == 404
         assert "Project not found" in response.json()["detail"]
 
     async def test_attest_ritual_for_issue_null_project(
-        self, client, auth_headers, db, test_project, test_user
+        self, client, auth_headers, db, test_project, test_issue, project_lookup_returns_none
     ):
-        """Test attest_ritual_for_issue returns 404 when issue's project doesn't exist."""
-        # Create a ritual for a valid project
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="test-ritual",
@@ -1826,21 +1921,8 @@ class TestRitualAPIEndpoints:
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
         )
-
-        # Create an orphaned issue (references non-existent project)
-        orphaned_issue = await OxydeIssue.objects.create(
-            project_id="non-existent-project-id",
-            identifier="ORPHAN-2",
-            number=2,
-            title="Orphaned Issue",
-            status="backlog",
-            priority="no_priority",
-            creator_id=test_user.id,
-        )
-
-        # Try to attest - should get 404 for project not found
         response = await client.post(
-            f"/api/rituals/{ritual.id}/attest-issue/{orphaned_issue.id}",
+            f"/api/rituals/{ritual.id}/attest-issue/{test_issue.id}",
             headers=auth_headers,
             json={"note": "Test note"},
         )
@@ -1848,10 +1930,8 @@ class TestRitualAPIEndpoints:
         assert "Project not found" in response.json()["detail"]
 
     async def test_complete_gate_ritual_for_issue_null_project(
-        self, client, auth_headers, db, test_project, test_user
+        self, client, auth_headers, db, test_project, test_issue, project_lookup_returns_none
     ):
-        """Test complete_gate_ritual_for_issue returns 404 when issue's project doesn't exist."""
-        # Create a GATE mode ritual for a valid project
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="gate-ritual",
@@ -1859,21 +1939,8 @@ class TestRitualAPIEndpoints:
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.GATE,
         )
-
-        # Create an orphaned issue
-        orphaned_issue = await OxydeIssue.objects.create(
-            project_id="non-existent-project-id",
-            identifier="ORPHAN-3",
-            number=3,
-            title="Orphaned Issue",
-            status="backlog",
-            priority="no_priority",
-            creator_id=test_user.id,
-        )
-
-        # Try to complete - should get 404 for project not found
         response = await client.post(
-            f"/api/rituals/{ritual.id}/complete-issue/{orphaned_issue.id}",
+            f"/api/rituals/{ritual.id}/complete-issue/{test_issue.id}",
             headers=auth_headers,
             json={"note": "Test note"},
         )
@@ -1881,10 +1948,8 @@ class TestRitualAPIEndpoints:
         assert "Project not found" in response.json()["detail"]
 
     async def test_approve_issue_attestation_null_project(
-        self, client, auth_headers, db, test_project, test_user
+        self, client, auth_headers, db, test_project, test_issue, project_lookup_returns_none
     ):
-        """Test approve_issue_attestation returns 404 when issue's project doesn't exist."""
-        # Create a REVIEW mode ritual for a valid project
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="review-ritual",
@@ -1892,21 +1957,8 @@ class TestRitualAPIEndpoints:
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.REVIEW,
         )
-
-        # Create an orphaned issue
-        orphaned_issue = await OxydeIssue.objects.create(
-            project_id="non-existent-project-id",
-            identifier="ORPHAN-4",
-            number=4,
-            title="Orphaned Issue",
-            status="backlog",
-            priority="no_priority",
-            creator_id=test_user.id,
-        )
-
-        # Try to approve - should get 404 for project not found
         response = await client.post(
-            f"/api/rituals/{ritual.id}/approve-issue/{orphaned_issue.id}",
+            f"/api/rituals/{ritual.id}/approve-issue/{test_issue.id}",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -3082,7 +3134,7 @@ class TestTicketLimbo:
         ).all()
         assert len(limbo_records) == 1
         limbo = limbo_records[0]
-        assert limbo.limbo_type == LimboType.CLAIM.name
+        assert limbo.limbo_type == LimboType.CLAIM
         assert limbo.requested_by_id == test_user.id
         assert limbo.cleared_at is None
 
@@ -3132,7 +3184,7 @@ class TestTicketLimbo:
         ).all()
         assert len(limbo_records) == 1
         limbo = limbo_records[0]
-        assert limbo.limbo_type == LimboType.CLOSE.name
+        assert limbo.limbo_type == LimboType.CLOSE
         assert limbo.requested_by_id == test_user.id
         assert limbo.cleared_at is None
 
@@ -3143,7 +3195,6 @@ class TestTicketLimbo:
         from app.services.ritual_service import RitualService
         from app.oxyde_models.issue import OxydeTicketLimbo
         from app.enums import LimboType
-        from datetime import datetime, timezone
 
         # Create issue
         issue = await OxydeIssue.objects.create(
@@ -3279,7 +3330,7 @@ class TestTicketLimbo:
         ).all()
         assert len(limbo_records) == 1
         limbo = limbo_records[0]
-        assert limbo.limbo_type == LimboType.CLAIM.name
+        assert limbo.limbo_type == LimboType.CLAIM
         assert limbo.cleared_at is None
         blockers = await OxydeTicketLimboBlocker.objects.filter(
             limbo_id=limbo.id,
@@ -4097,6 +4148,40 @@ class TestPendingGatesAPI:
 @pytest.mark.asyncio
 class TestRitualGroupsAPI:
     """Tests for ritual groups API endpoints."""
+
+    async def test_group_responses_report_their_triggers(self, client, auth_headers, test_project, db):
+        """Every group route carries `triggers`: one entry is the invariant,
+        two is a legacy mixed group to split (CHT-1403)."""
+        from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup
+        from app.enums import SelectionMode
+
+        clean = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="clean", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        mixed = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="mixed", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        await OxydeRitual.objects.create(
+            project_id=test_project.id, name="s1", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, group_id=clean.id,
+        )
+        await OxydeRitual.objects.create(
+            project_id=test_project.id, name="s2", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, group_id=mixed.id,
+        )
+        await OxydeRitual.objects.create(
+            project_id=test_project.id, name="t1", prompt="p", trigger=RitualTrigger.TICKET_CLOSE, group_id=mixed.id,
+        )
+        await OxydeRitual.objects.create(  # inactive members do not count
+            project_id=test_project.id, name="t2", prompt="p", trigger=RitualTrigger.TICKET_CLAIM,
+            group_id=clean.id, is_active=False,
+        )
+
+        response = await client.get(f"/api/rituals/groups?project_id={test_project.id}", headers=auth_headers)
+        assert response.status_code == 200
+        by_name = {g["name"]: g["triggers"] for g in response.json()}
+        assert by_name == {"clean": ["every_sprint"], "mixed": ["every_sprint", "ticket_close"]}
+
+        one = await client.get(f"/api/rituals/groups/{mixed.id}", headers=auth_headers)
+        assert one.json()["triggers"] == ["every_sprint", "ticket_close"]
 
     async def test_create_ritual_group_api(self, client, auth_headers, test_project):
         """Test creating a ritual group via API."""
@@ -6359,3 +6444,446 @@ class TestRitualSchemaValidation:
         }
         resp = CompletedRitualResponse(**data)
         assert resp.conditions == {"labels__contains": "urgent"}
+
+
+@pytest.mark.asyncio
+class TestRoundRobinContinuity:
+    """CHT-1405: the rotation neither restarts when a member leaves nor
+    stalls for ticket-scoped groups."""
+
+    async def _rr_group(self, project_id, trigger, names):
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        from app.enums import SelectionMode
+
+        group = await OxydeRitualGroup.objects.create(
+            project_id=project_id, name=f"rr-{trigger.value}", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        members = []
+        for name in names:
+            members.append(await OxydeRitual.objects.create(
+                project_id=project_id, name=name, prompt="p", trigger=trigger, group_id=group.id,
+                approval_mode=ApprovalMode.AUTO, note_required=False,
+            ))
+        return group, members
+
+    async def test_deleting_the_pointed_member_continues_the_rotation(self, db, test_project):
+        """[a, b, c] with the pointer on b: deleting b used to restart at a;
+        now the pointer moves to a and the next sprint is gated on c."""
+        from app.oxyde_models.ritual import OxydeRitualGroup
+
+        group, (a, b, c) = await self._rr_group(test_project.id, RitualTrigger.EVERY_SPRINT, ["a", "b", "c"])
+        group.last_selected_ritual_id = b.id
+        await group.save(update_fields={"last_selected_ritual_id"})
+        service = RitualService()
+
+        await service.delete(b)
+
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id == a.id
+        offered = await service.get_pending_rituals(test_project.id, "sprint-x")
+        assert [r.name for r in offered] == ["c"]
+
+    async def test_regrouping_or_deactivating_the_pointed_member_repoints_too(self, db, test_project):
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        from app.schemas.ritual import RitualUpdate
+
+        group, (a, b, c) = await self._rr_group(test_project.id, RitualTrigger.EVERY_SPRINT, ["a", "b", "c"])
+        group.last_selected_ritual_id = c.id
+        await group.save(update_fields={"last_selected_ritual_id"})
+        service = RitualService()
+
+        await service.update(c, RitualUpdate(group_id=""))  # ungroup
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id == b.id
+
+        # Now b is pointed at; deactivating it through update repoints to a.
+        await service.update(b, RitualUpdate(is_active=False))
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id == a.id
+        # Deleting the first member clears the pointer: the next is the new first.
+        await service.delete(a)
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id is None
+
+    async def test_ticket_scoped_round_robin_advances_when_the_ticket_transitions(
+        self, db, test_project, test_user,
+    ):
+        """Two claim rituals in a ROUND_ROBIN group: the first ticket is
+        gated on `a`; once its claim actually happens the pointer moves,
+        and the next ticket is gated on `b`. Before CHT-1405 nothing
+        advanced ticket-scoped groups, so every ticket got `a`."""
+        from app.enums import IssueStatus
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        from app.schemas.issue import IssueCreate, IssueUpdate
+        from app.services.issue_service import IssueService
+
+        group, (a, b) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLAIM, ["a", "b"])
+        rituals, issues = RitualService(), IssueService()
+        first = await issues.create(IssueCreate(title="first", project_id=test_project.id), test_project, test_user.id)
+        second = await issues.create(IssueCreate(title="second", project_id=test_project.id), test_project, test_user.id)
+
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, first.id)] == ["a"]
+        await rituals.attest_for_issue(a, first.id, test_user.id, note="done")
+        claimed = await issues.update(
+            first, IssueUpdate(status=IssueStatus.IN_PROGRESS), user_id=test_user.id, is_human_request=False,
+        )
+        assert claimed.status == IssueStatus.IN_PROGRESS
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id == a.id
+
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, second.id)] == ["b"]
+        # The listing is a pre-transition gate: it is consulted when a ticket
+        # is about to be claimed, not afterwards. Re-listing the already
+        # claimed first ticket now reflects the moved pointer (`b`), which
+        # is only what it would be gated on if it were claimed again.
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, first.id)] == ["b"]
+
+    async def _issue(self, project, user, title, **fields):
+        from app.schemas.issue import IssueCreate
+        from app.services.issue_service import IssueService
+        return await IssueService().create(IssueCreate(title=title, project_id=project.id, **fields), project, user.id)
+
+    async def _pointer(self, group):
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        return (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id
+
+    async def test_close_rotation_is_computed_over_the_pre_transition_issue(
+        self, db, test_project, test_user,
+    ):
+        """Members conditioned on `status == todo` gate a todo ticket's
+        close. The rotation must be computed before the status flips to
+        done, or the conditions match nothing and the pointer never moves
+        (review finding on the first cut of CHT-1405)."""
+        from app.enums import IssueStatus
+        from app.schemas.issue import IssueUpdate
+        from app.services.issue_service import IssueService
+
+        group, (a, b) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLOSE, ["a", "b"])
+        for member in (a, b):
+            member.conditions = '{"status__eq": "todo"}'
+            await member.save(update_fields={"conditions"})
+        rituals, issues = RitualService(), IssueService()
+        first = await self._issue(test_project, test_user, "first", status=IssueStatus.TODO)
+        second = await self._issue(test_project, test_user, "second", status=IssueStatus.TODO)
+
+        assert [r.name for r in await rituals.get_pending_ticket_rituals(test_project.id, first.id)] == ["a"]
+        await rituals.attest_for_issue(a, first.id, test_user.id, note="done")
+        closed = await issues.update(
+            first, IssueUpdate(status=IssueStatus.DONE), user_id=test_user.id, is_human_request=False,
+        )
+        assert closed.status == IssueStatus.DONE
+        assert await self._pointer(group) == a.id
+        assert [r.name for r in await rituals.get_pending_ticket_rituals(test_project.id, second.id)] == ["b"]
+
+    async def test_a_blocked_claim_leaves_the_pointer_and_the_limbo_transition_moves_it(
+        self, db, test_project, test_user,
+    ):
+        """Nothing advances until the transition happens: a claim refused
+        by the gate leaves the pointer alone; the attestation that clears
+        the intent fires the auto-transition, which is what moves it."""
+        from app.enums import IssueStatus
+        from app.oxyde_models.issue import OxydeIssue
+        from app.schemas.issue import IssueUpdate
+        from app.services.issue_service import ClaimRitualsError, IssueService
+
+        group, (a, b) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLAIM, ["a", "b"])
+        rituals, issues = RitualService(), IssueService()
+        first = await self._issue(test_project, test_user, "first")
+
+        with pytest.raises(ClaimRitualsError):
+            await issues.update(
+                first, IssueUpdate(status=IssueStatus.IN_PROGRESS), user_id=test_user.id, is_human_request=False,
+            )
+        assert await self._pointer(group) is None
+
+        await rituals.attest_for_issue(a, first.id, test_user.id, note="done")
+        assert (await OxydeIssue.objects.get(id=first.id)).status == IssueStatus.IN_PROGRESS
+        assert await self._pointer(group) == a.id
+
+    async def test_concurrent_tickets_stay_pinned_to_the_member_they_were_offered(
+        self, db, test_project, test_user,
+    ):
+        """Two tickets are refused on `a` before either is attested. The
+        first attestation moves the pointer to `a`; the second ticket's
+        listing, validation and rotation still say `a` -- its intent
+        records what it was offered -- so `b` is refused for it and
+        nothing is orphaned. The third ticket is the one gated on `b`."""
+        from app.enums import IssueStatus
+        from app.oxyde_models.issue import OxydeIssue, OxydeTicketLimbo
+        from app.schemas.issue import IssueUpdate
+        from app.services.issue_service import ClaimRitualsError, IssueService
+
+        group, (a, b) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLAIM, ["a", "b"])
+        rituals, issues = RitualService(), IssueService()
+        x = await self._issue(test_project, test_user, "x")
+        y = await self._issue(test_project, test_user, "y")
+        z = await self._issue(test_project, test_user, "z")
+        for ticket in (x, y):
+            with pytest.raises(ClaimRitualsError):
+                await issues.update(
+                    ticket, IssueUpdate(status=IssueStatus.IN_PROGRESS), user_id=test_user.id, is_human_request=False,
+                )
+
+        await rituals.attest_for_issue(a, x.id, test_user.id, note="x")
+        assert await self._pointer(group) == a.id
+
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, y.id)] == ["a"]
+        with pytest.raises(ValueError, match="choose 'a' instead"):
+            await rituals.attest_for_issue(b, y.id, test_user.id, note="y")
+        await rituals.attest_for_issue(a, y.id, test_user.id, note="y")
+        assert (await OxydeIssue.objects.get(id=y.id)).status == IssueStatus.IN_PROGRESS
+        assert await OxydeTicketLimbo.objects.filter(issue_id=y.id, cleared_at=None).all() == []
+        assert await self._pointer(group) == a.id
+
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, z.id)] == ["b"]
+
+    async def test_a_human_bypassing_the_gate_does_not_advance(self, db, test_project, test_user):
+        """With human_rituals_required off (the default) a human claim
+        consults no gate, so no member gated it and the rotation stays."""
+        from app.enums import IssueStatus
+        from app.schemas.issue import IssueUpdate
+        from app.services.issue_service import IssueService
+
+        group, (a, b) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLAIM, ["a", "b"])
+        assert test_project.human_rituals_required is False
+        first = await self._issue(test_project, test_user, "first")
+
+        claimed = await IssueService().update(
+            first, IssueUpdate(status=IssueStatus.IN_PROGRESS), user_id=test_user.id, is_human_request=True,
+        )
+        assert claimed.status == IssueStatus.IN_PROGRESS
+        assert await self._pointer(group) is None
+
+
+@pytest.mark.asyncio
+class TestArtifactBinding:
+    """CHT-1359: a ritual with `artifact` set binds its attestation to a
+    real, verified artifact. Before this, "wrote the retro" cleared the
+    ritual whether or not a retro existed."""
+
+    async def _ritual(self, project_id, trigger, artifact, name="bound"):
+        return await OxydeRitual.objects.create(
+            project_id=project_id, name=name, prompt="p", trigger=trigger,
+            approval_mode=ApprovalMode.AUTO, note_required=False, artifact=artifact,
+        )
+
+    async def _document(self, team_id, author_id, created_at=None, title="retro"):
+        from app.oxyde_models.document import OxydeDocument
+        doc = await OxydeDocument.objects.create(team_id=team_id, author_id=author_id, title=title, content="c")
+        if created_at is not None:
+            doc.created_at = created_at
+            await doc.save(update_fields={"created_at"})
+        return doc
+
+    async def _activated(self, sprint, when):
+        sprint.activated_at = when
+        await sprint.save(update_fields={"activated_at"})
+        return sprint
+
+    async def test_a_document_ritual_needs_the_attesters_document_from_this_sprint(
+        self, db, test_project, test_team, test_user, test_user2, test_sprint,
+    ):
+        from datetime import timedelta
+        from app.enums import RitualArtifact
+
+        now = datetime.now(timezone.utc)
+        await self._activated(test_sprint, now - timedelta(hours=1))
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.DOCUMENT)
+        service = RitualService()
+
+        with pytest.raises(ValueError, match="requires a document"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="wrote it")
+        with pytest.raises(ValueError, match="not found"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="n", document_id="no-such-doc")
+        theirs = await self._document(test_team.id, test_user2.id)
+        with pytest.raises(ValueError, match="is not yours"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="n", document_id=theirs.id)
+        old = await self._document(test_team.id, test_user.id, created_at=now - timedelta(days=3), title="last sprint's")
+        with pytest.raises(ValueError, match="predates the sprint's activation"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="n", document_id=old.id)
+        assert await service.get_attestation(ritual.id, test_sprint.id) is None
+
+        mine = await self._document(test_team.id, test_user.id)
+        attestation = await service.attest(ritual, test_sprint.id, test_user.id, note="n", document_id=mine.id)
+        assert attestation.artifact_ref == mine.id
+        assert attestation.approved_at is not None
+
+    async def test_a_sprint_without_an_activation_time_only_checks_authorship(
+        self, db, test_project, test_team, test_user, test_sprint,
+    ):
+        """Sprints from before CHT-1366 carry no activated_at; the document
+        still has to be the attester's own."""
+        from datetime import timedelta
+        from app.enums import RitualArtifact
+
+        assert test_sprint.activated_at is None
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.DOCUMENT)
+        old = await self._document(
+            test_team.id, test_user.id, created_at=datetime.now(timezone.utc) - timedelta(days=30),
+        )
+        attestation = await RitualService().attest(ritual, test_sprint.id, test_user.id, document_id=old.id)
+        assert attestation.artifact_ref == old.id
+
+    async def test_a_url_ritual_needs_a_url(self, db, test_project, test_user, test_sprint):
+        from app.enums import RitualArtifact
+
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.URL)
+        service = RitualService()
+        with pytest.raises(ValueError, match="requires a URL"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="see PR")
+        with pytest.raises(ValueError, match="requires a URL"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="see PR", url="github.com/x/pull/1")
+        attestation = await service.attest(
+            ritual, test_sprint.id, test_user.id, note="see PR", url=" https://github.com/x/pull/1#issuecomment-2 ",
+        )
+        assert attestation.artifact_ref == "https://github.com/x/pull/1#issuecomment-2"
+
+    async def test_a_ticket_ritual_needs_a_document_written_after_the_ticket(
+        self, db, test_project, test_team, test_user, test_issue,
+    ):
+        from datetime import timedelta
+        from app.enums import RitualArtifact
+
+        ritual = await self._ritual(test_project.id, RitualTrigger.TICKET_CLOSE, RitualArtifact.DOCUMENT)
+        service = RitualService()
+        before = await self._document(
+            test_team.id, test_user.id, created_at=test_issue.created_at - timedelta(minutes=1),
+        )
+        with pytest.raises(ValueError, match="predates the ticket"):
+            await service.attest_for_issue(ritual, test_issue.id, test_user.id, document_id=before.id)
+        after = await self._document(test_team.id, test_user.id)
+        attestation = await service.attest_for_issue(ritual, test_issue.id, test_user.id, document_id=after.id)
+        assert attestation.artifact_ref == after.id
+
+    async def test_gate_completion_is_bound_the_same_way(
+        self, db, test_project, test_team, test_user, test_issue, test_sprint,
+    ):
+        from app.enums import RitualArtifact
+
+        ticket = await self._ritual(test_project.id, RitualTrigger.TICKET_CLOSE, RitualArtifact.URL, name="ticket-gate")
+        ticket.approval_mode = ApprovalMode.GATE
+        await ticket.save(update_fields={"approval_mode"})
+        sprint = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.DOCUMENT, name="sprint-gate")
+        sprint.approval_mode = ApprovalMode.GATE
+        await sprint.save(update_fields={"approval_mode"})
+        service = RitualService()
+
+        with pytest.raises(ValueError, match="requires a URL"):
+            await service.complete_gate_ritual_for_issue(ticket, test_issue.id, test_user.id, note="ok")
+        done = await service.complete_gate_ritual_for_issue(
+            ticket, test_issue.id, test_user.id, note="ok", url="https://example.com/review",
+        )
+        assert done.artifact_ref == "https://example.com/review"
+
+        with pytest.raises(ValueError, match="requires a document"):
+            await service.complete_gate_ritual(sprint, test_sprint.id, test_user.id, note="ok")
+        mine = await self._document(test_team.id, test_user.id)
+        done = await service.complete_gate_ritual(sprint, test_sprint.id, test_user.id, note="ok", document_id=mine.id)
+        assert done.artifact_ref == mine.id
+
+    async def test_an_unbound_ritual_records_no_artifact(self, db, test_project, test_user, test_sprint):
+        """artifact_ref is always a verified reference: a ritual without an
+        artifact stores nothing, whatever the caller offered."""
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, None)
+        attestation = await RitualService().attest(ritual, test_sprint.id, test_user.id, note="n", url="https://x/y")
+        assert attestation.artifact_ref is None
+
+    async def test_a_document_from_another_team_is_not_found(
+        self, db, test_project, test_user, test_sprint,
+    ):
+        """Neither existence nor title of another team's document is
+        confirmed: the error is the same as for an unknown id."""
+        from app.enums import RitualArtifact
+        from app.oxyde_models.team import OxydeTeam
+
+        other = await OxydeTeam.objects.create(name="Other", key="OTH")
+        theirs = await self._document(other.id, test_user.id, title="secret plan")
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.DOCUMENT)
+        with pytest.raises(ValueError, match="not found") as refused:
+            await RitualService().attest(ritual, test_sprint.id, test_user.id, document_id=theirs.id)
+        assert "secret plan" not in str(refused.value)
+
+    async def test_a_document_is_the_artifact_of_one_attestation_only(
+        self, db, test_project, test_team, test_user, test_issue,
+    ):
+        """One closing-notes document cannot close every ticket; retrying
+        the same attestation with the same document still passes."""
+        from app.enums import RitualArtifact
+        from app.schemas.issue import IssueCreate
+        from app.services.issue_service import IssueService
+
+        ritual = await self._ritual(test_project.id, RitualTrigger.TICKET_CLOSE, RitualArtifact.DOCUMENT)
+        other_ritual = await self._ritual(
+            test_project.id, RitualTrigger.TICKET_CLOSE, RitualArtifact.DOCUMENT, name="also-bound",
+        )
+        second = await IssueService().create(
+            IssueCreate(title="second", project_id=test_project.id), test_project, test_user.id,
+        )
+        notes = await self._document(test_team.id, test_user.id, title="closing notes")
+        service = RitualService()
+        first = await service.attest_for_issue(ritual, test_issue.id, test_user.id, document_id=notes.id)
+        assert first.artifact_ref == notes.id
+        again = await service.attest_for_issue(ritual, test_issue.id, test_user.id, document_id=notes.id)
+        assert again.id == first.id
+        with pytest.raises(ValueError, match="already the artifact of another attestation"):
+            await service.attest_for_issue(ritual, second.id, test_user.id, document_id=notes.id)
+        with pytest.raises(ValueError, match="already the artifact of another attestation"):
+            await service.attest_for_issue(other_ritual, test_issue.id, test_user.id, document_id=notes.id)
+
+    async def test_a_url_needs_a_scheme_and_a_host(self, db, test_project, test_user, test_sprint):
+        from app.enums import RitualArtifact
+
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.URL)
+        for bad in ("https://", "http://  ", "https://#", "ftp://host/x", "example.com/pr/1"):
+            with pytest.raises(ValueError, match="requires a URL"):
+                await RitualService().attest(ritual, test_sprint.id, test_user.id, url=bad)
+
+    async def test_an_explicit_null_unsets_the_artifact(self, client, auth_headers, db, test_project):
+        created = await client.post(
+            f"/api/projects/{test_project.id}/rituals", headers=auth_headers,
+            json={"name": "retro", "prompt": "write it", "artifact": "document"},
+        )
+        cleared = await client.patch(
+            f"/api/rituals/{created.json()['id']}", headers=auth_headers, json={"artifact": None},
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["artifact"] is None
+        untouched = await client.patch(
+            f"/api/rituals/{created.json()['id']}", headers=auth_headers, json={"name": "retro2"},
+        )
+        assert untouched.json()["artifact"] is None
+
+    async def test_the_api_carries_the_artifact_both_ways(
+        self, client, auth_headers, db, test_project, test_team, test_user, test_issue,
+    ):
+        """document_id in the request body reaches the service; artifact on
+        the ritual and artifact_ref on the attestation come back out."""
+        from app.enums import RitualArtifact
+
+        ritual = await self._ritual(test_project.id, RitualTrigger.TICKET_CLOSE, RitualArtifact.DOCUMENT)
+        listed = await client.get(f"/api/projects/{test_project.id}/rituals", headers=auth_headers)
+        assert [r["artifact"] for r in listed.json() if r["id"] == ritual.id] == ["document"]
+
+        refused = await client.post(
+            f"/api/rituals/{ritual.id}/attest-issue/{test_issue.id}", headers=auth_headers, json={"note": "n"},
+        )
+        assert refused.status_code == 400
+        assert "requires a document" in refused.json()["detail"]
+
+        mine = await self._document(test_team.id, test_user.id)
+        ok = await client.post(
+            f"/api/rituals/{ritual.id}/attest-issue/{test_issue.id}", headers=auth_headers,
+            json={"note": "n", "document_id": mine.id},
+        )
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["artifact_ref"] == mine.id
+
+    async def test_a_ritual_can_declare_its_artifact_through_the_api(
+        self, client, auth_headers, db, test_project,
+    ):
+        created = await client.post(
+            f"/api/projects/{test_project.id}/rituals", headers=auth_headers,
+            json={"name": "retro", "prompt": "write it", "artifact": "document"},
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["artifact"] == "document"
+        updated = await client.patch(
+            f"/api/rituals/{created.json()['id']}", headers=auth_headers, json={"artifact": "url"},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["artifact"] == "url"

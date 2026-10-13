@@ -223,7 +223,7 @@ function renderTooltip(issue) {
     const statusColor = STATUS_COLORS[issue.status] || '#6b7280';
     const priorityColor = PRIORITY_COLORS[issue.priority] || '#6b7280';
     const typeLabel = (issue.issue_type || 'task').replace(/_/g, ' ');
-    const estimateText = issue.estimate ? `${issue.estimate}pt` : '';
+    const estimateText = issue.estimate != null ? `${issue.estimate}pt` : '';
 
     tooltipEl.innerHTML = `
         <div class="issue-tooltip-header">

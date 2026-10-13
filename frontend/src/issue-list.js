@@ -451,7 +451,7 @@ export function renderIssueRow(issue) {
     const assignee = issue.assignee_id ? getAssigneeById(issue.assignee_id) : null;
     const assigneeName = assignee ? formatAssigneeName(assignee) : null;
     const createdDate = new Date(issue.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const estimateDisplay = issue.estimate ? formatEstimate(issue.estimate, issue.project_id) : '';
+    const estimateDisplay = issue.estimate != null ? formatEstimate(issue.estimate, issue.project_id) : '';
     const outOfScale = isOutOfScale(issue.estimate, issue.project_id);
     const sprintInfo = issue.sprint_id ? getSprintCache()[issue.sprint_id] : null;
     const sprintName = sprintInfo ? sprintInfo.name : null;

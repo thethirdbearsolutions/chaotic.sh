@@ -57,6 +57,15 @@ Use these priority levels:
 
 ## Sprint & Budget Model (read this before calling any of it a bug)
 
+**Sprints are measured by work, not by time.** A sprint is defined by the
+work that closes in it: it begins when the previous one closes and ends when
+it is closed, which a spent point budget forces (arrears blocks every further
+close until then). It has no scheduled length. Time is a *dependent*
+variable — a sprint takes however long its budget takes to spend. This is the
+inverse of calendar-boxed agile, where time is fixed and velocity is measured.
+Every rule below follows from it (CHT-1366): a sprint's `activated_at` and
+`closed_at` record when it turned out to run; nothing plans them.
+
 Chaotic has one deliberate, strictly-correct sprint philosophy. It is **not** a
 smell — treat the following as invariants:
 
@@ -82,6 +91,90 @@ smell — treat the following as invariants:
 
 If a budget number surprises you, reconcile it against *"points from tickets
 closed while this sprint was active (unestimated = 1)"* before suspecting a bug.
+
+## Enum Representation (read this before "fixing" a casing bug)
+
+Every enum here has **two** legitimate string forms, and they are not
+interchangeable:
+
+- **`.name`** — `"BACKLOG"`, `"TICKET_CLOSE"`. What the **database stores**,
+  and what `DbEnum` emits in python-mode `model_dump()` (Oxyde's write path).
+- **`.value`** — `"backlog"`, `"ticket_close"`. The **wire format**: what every
+  FastAPI `response_model` emits, and what the CLI and frontend parse.
+
+`DbEnum` (`backend/app/oxyde_models/enums.py`) picks by serialization mode —
+python mode gives `.name`, `mode="json"` gives `.value` — and coerces either
+form back to a member on read. So:
+
+- **Comparing in service code?** Compare members, never strings:
+  `sprint.status == SprintStatus.ACTIVE`.
+- **Producing output for anything outside this process?** Build the
+  response schema (`SprintResponse`, `RitualResponse`, …); do not dump the ORM
+  row. Since CHT-1348 the `app/api` functions do this themselves: every
+  function reachable in-process returns its response schema and says so in
+  its signature (ADR-0005; `tests/test_api_return_contract.py` enforces it).
+  So an in-process caller (the MCP `InProcessBackend` adapter in
+  `backend/app/mcp_server/backend.py`) just `.model_dump(mode="json")`s
+  what it was handed. If you add an API function, annotate its return type
+  and construct the schema in the body — the guard test will tell you.
+  The input side has the same rule (CHT-1375): keep `Query`/`Header`
+  metadata in `Annotated[T, Query(...)]` with a real Python default. A bare
+  `= Query(None)` default is a live, truthy sentinel object when the
+  function is called in-process, and the same guard test catches it.
+  This is not only about casing. `response_model` also **filters** to the
+  schema's fields, and an ORM row carries more: `OxydeIssue` has a `creator`
+  relation whose user row includes `hashed_password` and `is_superuser`, none
+  of which exist on `IssueResponse`. Since CHT-1345 a raw json dump has
+  correct-looking enums, so it no longer looks wrong while still being
+  unfiltered — `TestNoLeakedInternalFields` is what catches that.
+- **Never** `str(member)` or f-string a member: that yields a third form,
+  `"IssueStatus.BACKLOG"`, which nothing expects (the frontend's `cleanValue`
+  still strips that prefix as legacy defense).
+- **Filtering or `QuerySet.update()`?** Pass the member:
+  `.filter(status=SprintStatus.ACTIVE)`, `.update(status=SprintStatus.ACTIVE)`.
+  Neither path goes through pydantic; Oxyde serialises those values through
+  its own `TYPE_REGISTRY`, and `DbEnum` registers every enum class there so a
+  member means its stored `.name` on both (CHT-1398). Before that, a member
+  on those paths packed as its `.value`: a filter matched nothing and an
+  `.update()` would have stored `"active"`. That is why older code spells
+  `.filter(status=X.name)`; it still works and need not be rewritten, but do
+  not add a `.name` for a filter that "isn't matching": it is matching, and
+  the missing row is something else. The registration is per enum class,
+  not per column: a member passed for a plain `str` column (the activity
+  table's `old_value`/`new_value`) also becomes its `.name`, and those
+  columns store whatever was written (CHT-1347). Still hand-written
+  `.name`: `execute_raw` params, and a member inside an `F()` expression.
+
+This is guarded, not just documented: `backend/tests/test_dbenum_contract.py`
+pins the contract for every `DbEnum` field (registry-derived, so new models are
+covered automatically) and asserts Oxyde still persists via python mode;
+`TestOutputMatchesResponseSchema` checks tool output against the response
+schemas, and `TestNoLeakedEnumNames` sweeps for leaked names. Note what is
+*not* guarded: an enum column typed as a bare `str` rather than `DbEnum` is
+invisible to all of it (`OxydeTicketLimbo.limbo_type` was one until CHT-1353;
+a sweep found no other, so type every enum column `DbEnum(...)` and the
+contract test covers it for free). If you are about to add a `.lower()`, a `.upper()`, or a
+name↔value translation at some boundary — stop. That is how this bug class
+survived from CHT-974 to CHT-1333; the fix belongs at the serializer or the
+schema, not at a seventh boundary. Background: CHT-1345.
+
+## Running the backend tests
+
+```bash
+cd backend && uv run pytest -q          # sharded across cores (-n auto in pytest.ini)
+cd backend && uv run pytest -q -n 0     # serial: for -s/print debugging (worker stdout is
+                                        # not relayed) or ordering questions; --pdb already
+                                        # drops to serial on its own
+```
+
+The full backend suite takes about half a minute on four cores (CHT-1413):
+it was nine minutes serial until the test environment set `BCRYPT_ROUNDS=4`
+(both `backend/tests/conftest.py` and `e2e/conftest.py`), which made each
+fixture user cost ~1 ms instead of ~250 ms, and pytest-xdist spread the
+rest across cores. Coverage is combined across workers before the 90%
+gate. Run the full suite locally before every push -- CI should see a head
+only once. The cli suite is ~15 seconds, e2e about a minute, frontend
+under two.
 
 ## Project Structure
 
@@ -154,13 +247,41 @@ Using SQLite with Oxyde ORM and Oxyde migrations.
    oxyde migrate
    ```
 
-### For New Installations
+`makemigrations` never reads a database: it replays the migration chain
+in memory and diffs that against the models. Raw `ctx.execute(...)` SQL
+is invisible to the replay, and the extractor reports no index for
+`db_index=True` and no foreign key for a `str` column with
+`db_on_delete`, so by 0016 the record was 51 operations behind the
+models (CHT-1410; 0017 recorded the gap without executing anything).
+Rules that keep it closed, enforced by `tests/test_migration_state.py`:
 
-New databases are automatically created on first startup via `apply_migrations()` in the app lifespan.
+- Write the schema part of a migration with the declarative `ctx.*`
+  calls (they execute *and* record). Use `ctx.execute` only for what
+  they cannot express (data fixes, SQLite's table-rebuild dance), and
+  then also record the resulting schema in a `collect`-mode-only branch
+  the way `0017_record_hand_written_schema_state.py` does.
+- An index a migration creates by hand must also be declared in the
+  model's `Meta.indexes` with the same name. On SQLite a generated
+  column alter rebuilds the table from the *record's* indexes, so an
+  index missing from the record vanishes from production.
+- On SQLite `makemigrations` is usable for `create_table`,
+  `add_column` and `create_index`. Column alters and foreign-key
+  changes stay hand-written: Oxyde cannot ADD/DROP a FOREIGN KEY there,
+  and its table rebuild recreates indexes before the rename (an Oxyde
+  bug, ticketed)
+  and drops every foreign key on the table.
+- `oxyde sqlmigrate` cannot render a state-only migration (it has no
+  SQL); review those by reading them.
+
+### How a database comes to exist
+
+- **`chaotic system install` / `upgrade`** run `oxyde migrate` before starting the service; a hand-run `oxyde migrate` (above) does the same. These are the only paths that migrate an *existing* database.
+- **A brand-new, empty database** (no tables, or only an empty `oxyde_migrations` table left by an interrupted first start; e.g. uvicorn pointed at a fresh `DATABASE_URL`) gets the whole migration chain applied at startup by `bootstrap_if_empty()` in the app lifespan (CHT-1195). That is the one case where migrating at startup cannot lose anything. It is not serialised: start one process first, a second starter against the same empty file fails loudly rather than corrupting it.
+- **An existing database that is behind the code** is never migrated at startup: `verify_migrations_current()` refuses to serve it until an operator runs `oxyde migrate` (CHT-1318; the CHT-1317 incident is why). A database with tables but no `oxyde_migrations` table (hand-built, or the test harness) is served as is.
 
 ### Important Notes
 
-- **Always backup before migrations**: `cp ~/.chaotic/data/chaotic.db ~/.chaotic/data/chaotic.backup.db` (or use `chaotic system backup` against a managed install)
+- **Always backup before migrations**: `chaotic system backup` (WAL-safe: it snapshots through SQLite's online backup API, so it is consistent even against a running server). A bare `cp chaotic.db` is not — committed rows can still be in `chaotic.db-wal`; if you must copy by hand, use `sqlite3 chaotic.db ".backup chaotic.backup.db"` (CHT-1207).
 - Review generated migrations with `oxyde sqlmigrate <name>` before applying
 - Check migration status with `oxyde showmigrations`
 - When pointing Oxyde at a non-default DB (e.g. the production data dir), export `DATABASE_URL` first — `oxyde_config.py` honors it.

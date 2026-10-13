@@ -8,7 +8,7 @@ can never drift from the activity log / websocket feeds it's derived from.
 import uuid
 from datetime import datetime, timezone
 from app.utils.datetimes import DateTimeUTC
-from oxyde import Model, Field
+from oxyde import Model, Field, Index
 from app.enums import InboxEntryKind
 from app.oxyde_models.enums import DbEnum
 
@@ -38,3 +38,11 @@ class OxydeInboxEntry(Model):
     class Meta:
         is_table = True
         table_name = "inbox_entries"
+        indexes = [
+            # Every list/unread-count query filters by one of these. 0012
+            # created them by hand (makemigrations does not emit an index
+            # for db_index=True); declared here so the migration record
+            # keeps them across a table rebuild (CHT-1410).
+            Index(("recipient_user_id",), name="inbox_entries_recipient_user_id_idx"),
+            Index(("team_id",), name="inbox_entries_team_id_idx"),
+        ]

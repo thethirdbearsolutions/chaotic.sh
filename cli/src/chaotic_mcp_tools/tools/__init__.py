@@ -1,0 +1,81 @@
+"""The tool bodies, grouped by subject. Each is
+``async def name(backend: Backend, ...params) -> dict`` and is registered
+through ``registry.bind`` -- never directly.
+
+The toolset is curated for quality over coverage (CHT-1247). ``ALL_TOOLS``
+below is the list; the reviewed pin is ``expected.EXPECTED_TOOLS``, and
+the README table and docs/agents.md's grouped list are checked against
+it (CHT-1395), so this docstring carries no copy of the names.
+
+The sprint and ritual groups exist because governance state can BLOCK
+the rest of this surface: arrears stops ticket transitions project-wide
+and limbo stops a sprint rotating, and an agent that can't see or clear
+either is simply stuck (CHT-1332/CHT-1333).
+
+Deliberately NOT included: any delete tool (issue/doc/comment).
+Destructive operations need a human in the loop; a future ticket can
+add them behind an opt-in flag if that's ever warranted.
+
+Two deliberate deviations from the CLI's own defaults, both aimed at an
+LLM caller rather than a human at a terminal:
+  * `issue_list`'s CLI default sort is `random` (a human browsing UX
+    choice). An agent calling the same tool twice expects the same
+    answer, so this surface defaults to `updated`/`desc` instead.
+  * Filter parameters the CLI spells as comma-joined strings
+    (`--status a,b`) are plain JSON arrays here (`status: ["a", "b"]`)
+    -- structured input is the whole point of a typed MCP schema.
+"""
+from __future__ import annotations
+
+from .docs import (
+    doc_create,
+    doc_link,
+    doc_list,
+    doc_revision,
+    doc_revisions,
+    doc_unlink,
+    doc_update,
+    doc_view,
+)
+from .inbox import inbox_list, inbox_mark_all_read, inbox_mark_read
+from .issues import (
+    issue_block,
+    issue_comment,
+    issue_create,
+    issue_label,
+    issue_list,
+    issue_ready,
+    issue_relations,
+    issue_revision,
+    issue_revisions,
+    issue_start,
+    issue_unblock,
+    issue_update,
+    issue_view,
+    label_list,
+)
+from .misc import activity_recent, project_list, server_info
+from .rituals import ritual_attest, ritual_complete, ritual_list, ritual_pending
+from .sprints import (
+    sprint_add,
+    sprint_close,
+    sprint_current,
+    sprint_list,
+    sprint_remove,
+    sprint_transactions,
+)
+
+ALL_TOOLS = (
+    issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
+    issue_ready, issue_relations, issue_block, issue_unblock,
+    label_list, issue_label, issue_revisions, issue_revision,
+    doc_list, doc_view, doc_create, doc_update,
+    doc_link, doc_unlink, doc_revisions, doc_revision,
+    sprint_current, sprint_list, sprint_close, sprint_transactions,
+    sprint_add, sprint_remove,
+    ritual_pending, ritual_list, ritual_attest, ritual_complete,
+    inbox_list, inbox_mark_read, inbox_mark_all_read,
+    activity_recent, project_list, server_info,
+)
+
+__all__ = ["ALL_TOOLS"] + [t.__name__ for t in ALL_TOOLS]

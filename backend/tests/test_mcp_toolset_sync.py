@@ -1,40 +1,32 @@
-"""Cross-package toolset-sync guard (CHT-1266).
+"""Toolset-sync guard, HTTP half (CHT-1266, collapsed by CHT-1374).
 
-This backend package can't import cli.mcp_server directly (separate
-package, and the stdio server's tool bodies call back over HTTP into
-this same backend -- see app/mcp_server/tools.py's module docstring), so
-both sides assert their live toolset against the same checked-in
-snapshot instead: docs/mcp-toolset-schema.json, generated from the
-stdio server (cli/scripts/gen_mcp_toolset_schema.py). See
-cli/tests/test_mcp_toolset_sync.py for the stdio half, which requires an
-exact match; this file is looser in exactly one documented way: five
-tools (issue_list, issue_create, doc_list, doc_create, activity_recent)
-carry an additional optional `team` parameter the stdio version doesn't
-need (see tools.py's module docstring for why). Every other tool, and
-every other parameter on those five, must match byte-for-byte -- if this
-fails, either that list needs updating (a deliberate, reviewed schema
-change) or the two transports have drifted apart unintentionally.
+Both MCP servers register the ONE toolset in ``chaotic_mcp_tools``, so
+"the two transports agree" is true by construction. What is left to pin
+is that THIS server exposes that toolset -- against the checked-in
+snapshot docs/mcp-toolset-schema.json (generated from the stdio server
+by cli/scripts/gen_mcp_toolset_schema.py) -- and that the one documented
+difference is exactly what ``registry.bind`` produces: the team-scoped
+tools (``chaotic_mcp_tools.TEAM_SCOPED_TOOLS``, derived from the bodies)
+gain one optional ``team`` parameter here because InProcessBackend
+advertises ``Capabilities(team_param=True)``; nothing else differs.
 """
 import json
 from pathlib import Path
 
 import pytest
 
-from app.mcp_server.tools import ALL_TOOLS, build_server
+from chaotic_mcp_tools import RESPONSE_SHAPES, TEAM_SCOPED_TOOLS
+from chaotic_mcp_tools.expected import EDIT_THE_PIN, EXPECTED_TEAM_SCOPED, EXPECTED_TOOLS, REGENERATE_SNAPSHOT, toolset_diff
+
+from app.mcp_server.tools import ALL_TOOLS, BACKEND, build_server
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "mcp-toolset-schema.json"
-
-# Tools whose schema must match the stdio server exactly.
-_IDENTICAL_TOOLS = {"issue_view", "issue_update", "issue_comment", "issue_start", "doc_view"}
-# Tools that legitimately gain one additional optional `team` parameter
-# for HTTP's multi-team-per-API-key context resolution (scope.py).
-_ADDITIVE_TEAM_TOOLS = {"issue_list", "issue_create", "doc_list", "doc_create", "activity_recent", "project_list"}
 
 
 async def _live_toolset() -> dict:
     mcp = build_server()
     tools = await mcp.list_tools()
-    return {t.name: {"description": t.description, "inputSchema": t.inputSchema} for t in tools}
+    return {t.name: {"description": t.description, "inputSchema": t.input_schema} for t in tools}
 
 
 @pytest.fixture
@@ -45,43 +37,87 @@ def snapshot() -> dict:
     return json.loads(_SCHEMA_PATH.read_text())["tools"]
 
 
-def test_all_tools_registered():
-    assert {fn.__name__ for fn in ALL_TOOLS} == _IDENTICAL_TOOLS | _ADDITIVE_TEAM_TOOLS
+def test_response_shapes_match_snapshot():
+    """The compact-row projection and preview sizes (CHT-1370) are pinned in
+    the snapshot's `_meta`; there is one copy in chaotic_mcp_tools and this
+    server serves it."""
+    snapshot = json.loads(_SCHEMA_PATH.read_text())["_meta"]["response_shapes"]
+    assert RESPONSE_SHAPES == snapshot, (
+        "chaotic_mcp_tools.RESPONSE_SHAPES diverged from docs/mcp-toolset-schema.json "
+        "-- regenerate with cli/scripts/gen_mcp_toolset_schema.py"
+    )
 
 
-async def test_backend_covers_all_eleven_tools(snapshot):
+def test_backend_advertises_the_team_parameter():
+    assert BACKEND.capabilities.team_param is True
+
+
+def test_every_tool_is_async():
+    """mcp 2.x runs `def` handlers on worker threads with no event-loop
+    affinity; every tool here awaits the API layer, so a sync one would
+    trip `asyncio.get_running_loop()` off-loop. Pin that the objects handed
+    to add_tool are all coroutine functions and agree with the bodies they
+    wrap (CHT-1367)."""
+    import inspect
+    sync = [t.__name__ for t in ALL_TOOLS if not inspect.iscoroutinefunction(t)]
+    assert sync == [], f"backend tools must be `async def`: {sync}"
+    disagree = [
+        t.__name__ for t in ALL_TOOLS
+        if hasattr(t, "__wrapped__")
+        and inspect.iscoroutinefunction(t) != inspect.iscoroutinefunction(t.__wrapped__)
+    ]
+    assert disagree == [], f"wrapper/body async-ness disagree: {disagree}"
+
+
+def test_team_scoped_set_is_the_documented_one():
+    """TEAM_SCOPED_TOOLS is derived from the bodies; EXPECTED_TOOLS is the
+    reviewed intent. Adding `team` to a tool (or dropping it) must be a
+    visible change in chaotic_mcp_tools/expected.py, and the failure names
+    the tool."""
+    problem = toolset_diff(TEAM_SCOPED_TOOLS, "the team-scoped set", expected=EXPECTED_TEAM_SCOPED)
+    assert not problem, problem
+    non_team = {t.__name__ for t in ALL_TOOLS} - TEAM_SCOPED_TOOLS
+    problem = toolset_diff(non_team, "the non-team set", expected=set(EXPECTED_TOOLS) - EXPECTED_TEAM_SCOPED)
+    assert not problem, problem
+
+
+async def test_backend_covers_the_full_toolset(snapshot):
     live = await _live_toolset()
-    assert set(live.keys()) == set(snapshot.keys()) == _IDENTICAL_TOOLS | _ADDITIVE_TEAM_TOOLS
+    for where, names, hint in (
+        ("the HTTP server", list(live), "fix app.mcp_server.tools if a tool was dropped"),
+        ("the schema snapshot", list(snapshot), REGENERATE_SNAPSHOT),
+        ("ALL_TOOLS", [t.__name__ for t in ALL_TOOLS], EDIT_THE_PIN),
+    ):
+        problem = toolset_diff(names, where, hint=hint)
+        assert not problem, problem
 
 
-async def test_identical_tools_match_snapshot_exactly(snapshot):
+async def test_non_team_tools_match_snapshot_exactly(snapshot):
     live = await _live_toolset()
-    for name in _IDENTICAL_TOOLS:
+    for name in set(live) - TEAM_SCOPED_TOOLS:
         assert live[name] == snapshot[name], (
             f"'{name}' diverged from the stdio toolset (docs/mcp-toolset-schema.json) -- "
             "this tool isn't supposed to need any HTTP-only parameters."
         )
 
 
-async def test_additive_team_tools_match_except_for_team_param(snapshot):
+async def test_team_tools_match_except_for_team_param(snapshot):
     live = await _live_toolset()
-    for name in _ADDITIVE_TEAM_TOOLS:
+    for name in TEAM_SCOPED_TOOLS:
         live_schema = live[name]
         snap_schema = snapshot[name]
-        assert live_schema["description"] == snap_schema["description"], (
-            f"'{name}' description diverged from the stdio toolset"
-        )
+        assert live_schema["description"] == snap_schema["description"]
 
         live_props = dict(live_schema["inputSchema"]["properties"])
         snap_props = dict(snap_schema["inputSchema"]["properties"])
-        assert "team" in live_props, f"'{name}' is missing the documented additive `team` parameter"
+        assert "team" in live_props, f"'{name}' is missing the additive `team` parameter"
+        assert "team" not in snap_props, f"the stdio snapshot must not carry `team` on '{name}'"
         del live_props["team"]
         assert live_props == snap_props, (
             f"'{name}'s parameters (other than the additive `team`) diverged from the stdio toolset"
         )
 
-        # `team` must stay optional -- the required-param list (aside from
-        # `team` itself, which is never required) must match exactly.
+        # `team` must stay optional -- the required-param list must match.
         live_required = set(live_schema["inputSchema"].get("required") or []) - {"team"}
         snap_required = set(snap_schema["inputSchema"].get("required") or [])
-        assert live_required == snap_required, f"'{name}' required-parameter list diverged from the stdio toolset"
+        assert live_required == snap_required, f"'{name}' required-parameter list diverged"

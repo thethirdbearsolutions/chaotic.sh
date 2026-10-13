@@ -11,6 +11,7 @@ import json
 
 import pytest
 import pytest_asyncio
+from chaotic_mcp_tools.expected import toolset_diff
 
 from app.schemas.api_key import APIKeyCreate
 from app.services.api_key_service import APIKeyService
@@ -30,7 +31,7 @@ _LIVE_SESSION_MANAGER_CMS = []
 
 @pytest_asyncio.fixture(autouse=True)
 async def _fresh_mcp_session_manager():
-    """Each test gets its own FastMCP instance + session manager, entered
+    """Each test gets its own MCPServer instance + session manager, entered
     for exactly this test's lifetime.
 
     Two things force this: (1) StreamableHTTPSessionManager.run() can only
@@ -49,10 +50,19 @@ async def _fresh_mcp_session_manager():
     the same task it was entered in -- so pairing `session_manager.run()`
     with a yield-based teardown always raises "Attempted to exit cancel
     scope in a different task". Nothing to clean up anyway: each test
-    gets a brand-new FastMCP/session-manager instance (reset above), so
+    gets a brand-new MCPServer/session-manager instance (reset above), so
     the previous test's task group (with no pending requests left) is
     simply abandoned to the garbage collector along with that test's
     event loop.
+    """
+    await _remount_mcp()
+
+
+async def _remount_mcp():
+    """Throw away the process-wide MCPServer and rebuild + remount it
+    against the CURRENT settings. The autouse fixture calls this once per
+    test; TestTransportSecurity calls it again after changing CORS_ORIGINS,
+    since _transport_security() is read at build time.
     """
     import app.mcp_server.asgi as asgi_mod
     from app.main import app as fastapi_app
@@ -107,6 +117,72 @@ async def api_key(db, test_user):
 @pytest.fixture
 def bearer_headers(api_key):
     return {**_MCP_HEADERS, "Authorization": f"Bearer {api_key}"}
+
+
+class TestTransportSecurity:
+    """The two knobs asgi.py passes to streamable_http_app() actually take
+    effect in the mounted app (CHT-1367 / PR #269 review): DNS-rebinding
+    protection keyed to CORS_ORIGINS, and the request-body cap.
+    """
+
+    @pytest.fixture
+    async def rebinding_enabled(self, monkeypatch):
+        from app.config import get_settings
+
+        monkeypatch.setenv("CORS_ORIGINS", "https://tracker.example.com")
+        get_settings.cache_clear()
+        await _remount_mcp()
+        yield
+        get_settings.cache_clear()
+
+    async def test_explicit_origins_reject_foreign_host_with_421(self, client, bearer_headers, rebinding_enabled):
+        headers = {**bearer_headers, "Host": "evil.example.net"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 421
+
+    async def test_explicit_origins_accept_matching_host(self, client, bearer_headers, rebinding_enabled):
+        headers = {**bearer_headers, "Host": "tracker.example.com"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 200
+
+    async def test_explicit_origins_accept_matching_host_any_port(self, client, bearer_headers, rebinding_enabled):
+        headers = {**bearer_headers, "Host": "tracker.example.com:8443"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 200
+
+    async def test_explicit_origins_reject_foreign_origin_header(self, client, bearer_headers, rebinding_enabled):
+        headers = {**bearer_headers, "Host": "tracker.example.com", "Origin": "https://evil.example.net"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 403
+
+    async def test_auth_still_runs_before_host_check(self, client, rebinding_enabled):
+        """Auth wraps the transport, so an unauthenticated request against
+        a foreign Host is a 401, not a 421 -- no oracle for the allowlist."""
+        headers = {**_MCP_HEADERS, "Host": "evil.example.net"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 401
+
+    async def test_wildcard_default_accepts_any_host(self, client, bearer_headers):
+        """conftest leaves CORS_ORIGINS at its `*` default -> protection off."""
+        headers = {**bearer_headers, "Host": "whatever.example.net"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 200
+
+    async def test_oversized_body_is_413(self, client, bearer_headers):
+        from app.mcp_server.asgi import MCP_MAX_REQUEST_BODY_BYTES
+
+        body = b" " * (MCP_MAX_REQUEST_BODY_BYTES + 1)
+        resp = await client.post("/mcp", content=body, headers=bearer_headers)
+        assert resp.status_code == 413
+
+    async def test_body_at_cap_is_not_413(self, client, bearer_headers):
+        """Exactly-at-cap must pass the limiter (it then fails JSON parsing
+        downstream, which is a 400 from the transport, not a 413)."""
+        from app.mcp_server.asgi import MCP_MAX_REQUEST_BODY_BYTES
+
+        body = b" " * MCP_MAX_REQUEST_BODY_BYTES
+        resp = await client.post("/mcp", content=body, headers=bearer_headers)
+        assert resp.status_code != 413
 
 
 class TestAuth:
@@ -286,8 +362,10 @@ class TestCapabilityPathRedaction:
         async def _boom(*args, **kwargs):
             raise RuntimeError("forced for log test")
 
+        # mcp 2.x's StreamableHTTPASGIApp dispatches through the session
+        # manager's `asgi_app` (1.x went through `handle_request`).
         monkeypatch.setattr(
-            asgi_mod.get_fastmcp().session_manager, "handle_request", _boom
+            asgi_mod.get_fastmcp().session_manager, "asgi_app", _boom
         )
 
         ac, _recorder = recording_client
@@ -310,17 +388,15 @@ class TestCapabilityPathRedaction:
 
 
 class TestToolsList:
-    async def test_tools_list_returns_all_eleven(self, client, bearer_headers):
+    async def test_tools_list_returns_the_full_toolset(self, client, bearer_headers):
         resp = await client.post("/mcp", json=_rpc("tools/list"), headers=bearer_headers)
         assert resp.status_code == 200
         tools = resp.json()["result"]["tools"]
         names = {t["name"] for t in tools}
-        assert names == {
-            "issue_list", "issue_view", "issue_create", "issue_update",
-            "issue_comment", "issue_start",
-            "doc_list", "doc_view", "doc_create",
-            "activity_recent", "project_list",
-        }
+        problem = toolset_diff(
+            names, "the HTTP server's tools/list", hint="fix app.mcp_server.tools if a tool was dropped"
+        )
+        assert not problem, problem
 
 
 class TestToolsCall:
@@ -330,7 +406,7 @@ class TestToolsCall:
         result = resp.json()["result"]
         assert result.get("isError") is not True
         payload = json.loads(result["content"][0]["text"])
-        assert payload == {"issues": []}
+        assert payload == {"issues": [], "count": 0, "truncated": False}
 
     async def test_issue_create_and_view(self, client, bearer_headers, test_project):
         resp = await _tool_call(client, bearer_headers, "issue_create", {"title": "From MCP"})
@@ -413,6 +489,22 @@ class TestToolsCall:
         me = next(p for p in payload["projects"] if p["id"] == test_project.id)
         assert me["key"] == test_project.key and "issue_count" in me
 
+    async def test_server_info_reports_this_deploy(self, client, bearer_headers):
+        """server_info (CHT-1401) over the in-process adapter is the live
+        /api/version payload minus the asset hashes: the git sha this
+        process runs, and the toolset fingerprint and count it serves."""
+        from app.main import version_info
+        from chaotic_mcp_tools.tools import ALL_TOOLS
+
+        resp = await _tool_call(client, bearer_headers, "server_info")
+        assert resp.status_code == 200
+        payload = json.loads(resp.json()["result"]["content"][0]["text"])
+        live = await version_info()
+        assert payload["git_sha"] == live["git_sha"]
+        assert payload["mcp_toolset_fingerprint"] == live["mcp_toolset_fingerprint"]
+        assert payload["mcp_tool_count"] == len(ALL_TOOLS)
+        assert "bundle_hash" not in payload and "css_hash" not in payload
+
     async def test_multiple_teams_requires_disambiguation(self, client, bearer_headers, test_user, test_team):
         """A user on more than one team gets a clear error, not a silent
         wrong-team default (CHT-1266 scoping rules -- see scope.py).
@@ -426,7 +518,7 @@ class TestToolsCall:
         resp = await _tool_call(client, bearer_headers, "activity_recent")
         payload = json.loads(resp.json()["result"]["content"][0]["text"])
         assert "error" in payload
-        assert "team" in payload["error"].lower()
+        assert "team" in payload["error"]["message"].lower()
 
     async def test_team_param_disambiguates(self, client, bearer_headers, test_user, test_team, test_project):
         from app.oxyde_models.team import OxydeTeam, OxydeTeamMember

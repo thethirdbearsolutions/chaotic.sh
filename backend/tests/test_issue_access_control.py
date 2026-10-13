@@ -13,7 +13,7 @@ from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.user import OxydeUser
 from app.enums import IssueStatus, IssuePriority, SprintStatus, TeamRole
-from app.utils.security import get_password_hash, create_access_token
+from app.utils.security import get_password_hash
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -325,7 +325,6 @@ class TestLabelTeamValidation:
     @pytest_asyncio.fixture
     async def other_team_label(self, db, other_team):
         """Create a label on the other team."""
-        from app.oxyde_models.label import OxydeLabel
         label = await OxydeLabel.objects.create(team_id=other_team.id, name="Foreign", color="#ff0000")
         return label
 

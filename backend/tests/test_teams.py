@@ -119,7 +119,6 @@ async def test_delete_team(client, auth_headers, db):
     # Create a team to delete
     from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
     from app.enums import TeamRole
-    from app.services.user_service import UserService
 
     team = await OxydeTeam.objects.create(name="Delete Me", key="DELETE")
 

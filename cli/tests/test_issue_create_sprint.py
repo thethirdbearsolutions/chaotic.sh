@@ -1,6 +1,6 @@
 """Tests for 'issue create' command with --sprint option."""
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 @pytest.fixture
@@ -178,7 +178,6 @@ class TestIssueCreateSprintErrors:
     def test_create_issue_sprint_not_found(self, cli_runner, mock_config, mock_client):
         """Test error when specified sprint doesn't exist."""
         from cli.main import cli
-        import click
 
         # Setup mocks - empty sprint list
         mock_client.get_sprints.return_value = []

@@ -3,10 +3,19 @@ import sys
 
 import click
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console, parse_duration, print_ritual_prompt, resolve_content_value
+from .shared import (
+    _warn_off_scale_estimate,
+    _client,
+    apply_ritual_attestations,
+    console,
+    parse_duration,
+    print_ritual_prompt,
+    resolve_content_value,
+)
 
 
 def _main():
@@ -18,15 +27,8 @@ def _main():
 PRIORITY_LEVELS = ["no_priority", "low", "medium", "high", "urgent"]
 
 # Canonical issue types and aliases
-ISSUE_TYPES = ["task", "bug", "feature", "chore", "docs", "tech_debt", "refactor", "epic"]
-ISSUE_TYPE_ALIASES = {
-    "feat": "feature",
-    "improvement": "feature",
-    "doc": "docs",
-    "debt": "tech_debt",
-    "techdebt": "tech_debt",
-    "tech-debt": "tech_debt",
-}
+# One copy, shared with both MCP servers (CHT-1374).
+from chaotic_mcp_tools import ISSUE_TYPE_ALIASES, ISSUE_TYPES  # noqa: E402
 
 
 class IssueTypeChoice(click.ParamType):
@@ -53,6 +55,59 @@ class IssueTypeChoice(click.ParamType):
             f"  Aliases: {aliases_str}",
             param, ctx,
         )
+
+
+def _text(value, default="-"):
+    """A table-safe string for one relation field: never raises, escapes markup."""
+    if value is None or value == "":
+        return default
+    return escape(str(value))
+
+
+def _relation_row(r) -> tuple:
+    """One `issue relations` table row from an IssueRelationResponse dict.
+
+    The wire shape (backend/app/schemas/issue.py IssueRelationResponse) is
+    flat: ``related_issue_identifier`` / ``related_issue_title`` /
+    ``related_issue_status``, with ``relation_type`` already read from this
+    issue's side (incoming blocks arrive as ``blocked_by``). There is no
+    nested ``related_issue`` object; reading one is what crashed CHT-1431.
+    Every lookup tolerates a missing or wrong-typed field, so a malformed
+    row renders as "-" rather than a traceback.
+    """
+    if not isinstance(r, dict):
+        r = {}
+    rel_id = r.get("id")
+    rel_id = f"{rel_id[:8]}..." if isinstance(rel_id, str) and len(rel_id) > 8 else rel_id
+    rel_type = r.get("relation_type")
+    if rel_type == "duplicates" and r.get("direction") == "incoming":
+        # The server relabels only incoming blocks (as blocked_by); an
+        # incoming duplicates edge means the *other* issue duplicates this one.
+        rel_type = "duplicated_by"
+    rel_type = rel_type.replace("_", " ").title() if isinstance(rel_type, str) else rel_type
+    status = r.get("related_issue_status")
+    status = status.replace("_", " ").title() if isinstance(status, str) else status
+    return (
+        _text(rel_id),
+        _text(rel_type),
+        _text(r.get("related_issue_identifier") or r.get("related_issue_id")),
+        _text(r.get("related_issue_title"), default=""),
+        _text(status),
+        _text(r.get("direction")),
+    )
+
+
+def _relations_or_none(iss):
+    """The issue's relations, or None when the relations call failed.
+
+    Relations are not on the issue payload, so show/view fetch them
+    separately (CHT-1431). A failure is None, not [], so a --json consumer
+    checking for blockers cannot mistake an API error for "unblocked".
+    """
+    try:
+        return _client().get_relations(iss["id"]) or []
+    except _main().APIError:
+        return None
 
 
 def register(cli):
@@ -208,7 +263,7 @@ def register(cli):
                 i["status"].replace("_", " ").title(),
                 i["priority"].replace("_", " ").title(),
                 i.get("issue_type", "task").replace("_", " ").title(),
-                str(i.get("estimate") or "-"),
+                "-" if i.get("estimate") is None else str(i.get("estimate")),
                 sprint_names.get(i.get("sprint_id"), "-"),
             ])
             table.add_row(*row)
@@ -294,7 +349,7 @@ def register(cli):
                 i["status"].replace("_", " ").title(),
                 i["priority"].replace("_", " ").title(),
                 i.get("issue_type", "task").replace("_", " ").title(),
-                str(i.get("estimate") or "-"),
+                "-" if i.get("estimate") is None else str(i.get("estimate")),
                 sprint_names.get(i.get("sprint_id"), "-")
             )
 
@@ -375,7 +430,7 @@ def register(cli):
             row.extend([
                 i["priority"].replace("_", " ").title(),
                 i.get("issue_type", "task").replace("_", " ").title(),
-                str(i.get("estimate") or "-"),
+                "-" if i.get("estimate") is None else str(i.get("estimate")),
                 "Unassigned" if not i.get("assignee_id") else i.get("assignee_id")[:8] + "...",
             ])
             table.add_row(*row)
@@ -439,7 +494,7 @@ def register(cli):
     @click.option("--status", default="backlog", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done"], case_sensitive=False))
     @click.option("--priority", default="no_priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
     @click.option("--type", "issue_type", default="task", type=IssueTypeChoice(), help="Issue type")
-    @click.option("--estimate", "--points", type=int, help="Story point estimate")
+    @click.option("--estimate", "--points", type=int, help="Story point estimate (0 is a zero-point ticket: charges nothing on close)")
     @click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
     @click.option("--parent", help="Parent issue identifier (e.g., PRJ-123) to create a sub-issue")
     @click.option("--epic", help="Epic identifier (e.g., PRJ-123) - shorthand for --parent with an epic")
@@ -469,7 +524,7 @@ def register(cli):
                 )
 
         data = {"description": description or None, "status": status, "priority": priority, "issue_type": issue_type}
-        if estimate:
+        if estimate is not None:  # 0 is a real (zero-point) estimate, not "unset" (CHT-1397)
             data["estimate"] = estimate
         if parent and epic:
             raise click.UsageError("Cannot use both --parent and --epic")
@@ -498,6 +553,7 @@ def register(cli):
             else:
                 data["sprint_id"] = m.resolve_sprint_id(sprint, project_id)
         result = _client().create_issue(project_id, title, **data)
+        _warn_off_scale_estimate(project_id, data.get("estimate"))
 
         if parent:
             console.print(f"[green]Sub-issue created: {result['identifier']} - {result['title']} (parent: {parent})[/green]")
@@ -554,9 +610,12 @@ def register(cli):
                     iss['sub_issues'] = _client().get_sub_issues(iss["id"])
                 except m.APIError:
                     iss['sub_issues'] = []
+                iss['relations'] = _relations_or_none(iss)
                 m.output_json(iss)
             else:
                 issues = [_client().get_issue_by_identifier(i) for i in identifiers]
+                for iss in issues:
+                    iss['relations'] = _relations_or_none(iss)
                 m.output_json(issues)
             return
 
@@ -571,7 +630,7 @@ def register(cli):
                 f"[dim]Status:[/dim] {iss['status'].replace('_', ' ').title()}",
                 f"[dim]Priority:[/dim] {iss['priority'].replace('_', ' ').title()}",
                 f"[dim]Type:[/dim] {iss.get('issue_type', 'task').replace('_', ' ').title()}",
-                f"[dim]Estimate:[/dim] {iss.get('estimate') or '-'} points",
+                f"[dim]Estimate:[/dim] {'-' if iss.get('estimate') is None else iss['estimate']} points",
             ]
 
             # Show parent info if this is a sub-issue
@@ -616,6 +675,17 @@ def register(cli):
                     else:
                         console.print(f"  \u2022 [dim]{c.get('author_name', 'User')}:[/dim]")
                     console.print(Markdown(c.get('content', '')))
+
+            # Show relations (CHT-1431): blockers matter before claiming.
+            relations = _relations_or_none(iss)
+            if relations is None:
+                console.print("\n[dim](relations unavailable)[/dim]")
+            elif relations:
+                console.print("\n[bold]Relations:[/bold]")
+                for r in relations:
+                    _, rel_type, related, title, status, _ = _relation_row(r)
+                    suffix = f": {title}" if title else ""
+                    console.print(f"  • {rel_type} {related}{suffix} [dim]({status})[/dim]")
 
             # Show ritual attestation notes
             try:
@@ -665,7 +735,7 @@ def register(cli):
                     iss["status"].replace("_", " ").title(),
                     iss["priority"].replace("_", " ").title(),
                     iss.get("issue_type", "task").replace("_", " ").title(),
-                    str(iss.get("estimate") or "-")
+                    "-" if iss.get("estimate") is None else str(iss["estimate"]),
                 )
             except m.APIError as e:
                 table.add_row(identifier, f"[red]Error: {e}[/red]", "-", "-", "-", "-")
@@ -714,7 +784,7 @@ def register(cli):
     @click.option("--status", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done", "canceled"], case_sensitive=False))
     @click.option("--priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
     @click.option("--type", "issue_type", type=IssueTypeChoice(), help="Issue type")
-    @click.option("--estimate", "--points", type=int, help="Story point estimate")
+    @click.option("--estimate", "--points", type=int, help="Story point estimate (0 is a zero-point ticket: charges nothing on close)")
     @click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
     @click.option("--no-sprint", "clear_sprint", is_flag=True, help="Remove from sprint")
     @click.option("--parent", help="Set parent issue (e.g., CHT-123) to make this a sub-issue")
@@ -726,10 +796,16 @@ def register(cli):
     @click.option("--unceremoniously-attest-all-rituals", "unceremonious", is_flag=True,
                   help="Auto-attest all pending ticket rituals (requires --note)")
     @click.option("--note", help="Note for ritual attestations (required with --unceremoniously-attest-all-rituals)", callback=resolve_content_value)
+    @click.option("--attest", "attest_specs", multiple=True, metavar="RITUAL:NOTE",
+                  help="Attest a specific pending ticket ritual with its own note "
+                       "before applying the update (repeatable), e.g. "
+                       "--attest 'close-gate:ADR written'. Unlike "
+                       "--unceremoniously-attest-all-rituals this is per-ritual "
+                       "and deliberate (CHT-1326).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, clear_sprint, parent, clear_parent, add_labels, remove_labels, blocked_by, relates_to, unceremonious, note):
+    def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, clear_sprint, parent, clear_parent, add_labels, remove_labels, blocked_by, relates_to, unceremonious, note, attest_specs):
         """Update an issue."""
         m = _main()
         iss = _client().get_issue_by_identifier(identifier)
@@ -737,6 +813,11 @@ def register(cli):
         # Warn if --note used without --unceremoniously-attest-all-rituals
         if note and not unceremonious:
             console.print("[yellow]Note: --note has no effect without --unceremoniously-attest-all-rituals[/yellow]")
+
+        # Per-ritual attestations (CHT-1326) happen before any status
+        # change so a non-interactive `--status done` never opens an
+        # intent it cannot attest.
+        apply_ritual_attestations(iss, attest_specs)
 
         # Handle unceremonious ritual attestation
         if unceremonious:
@@ -848,11 +929,19 @@ def register(cli):
             relations_modified = True
 
         if not data and not labels_modified and not relations_modified:
+            if attest_specs:
+                # Attestation-only invocation (CHT-1326): the attests above
+                # already did the work (and may have fired the one-step
+                # auto-transition server-side).
+                if m.is_json_output():
+                    m.output_json(_client().get_issue_by_identifier(identifier))
+                return
             console.print("[yellow]No updates provided.[/yellow]")
             return
 
         if data:
             _client().update_issue(iss["id"], **data)
+            _warn_off_scale_estimate(iss.get("project_id"), data.get("estimate"))
         if m.is_json_output():
             updated = _client().get_issue_by_identifier(identifier)
             m.output_json(updated)
@@ -960,7 +1049,7 @@ def register(cli):
                 i["title"][:50] + ("..." if len(i["title"]) > 50 else ""),
                 i["status"].replace("_", " ").title(),
                 i["priority"].replace("_", " ").title(),
-                str(i.get("estimate") or "-")
+                "-" if i.get("estimate") is None else str(i["estimate"]),
             )
 
         console.print(table)
@@ -987,15 +1076,12 @@ def register(cli):
         table.add_column("Relation ID", style="dim")
         table.add_column("Type")
         table.add_column("Related Issue")
+        table.add_column("Title")
+        table.add_column("Status")
         table.add_column("Direction")
 
         for r in relations:
-            table.add_row(
-                r["id"][:8] + "...",
-                r["relation_type"].replace("_", " ").title(),
-                r["related_issue"]["identifier"],
-                r["direction"]
-            )
+            table.add_row(*_relation_row(r))
 
         console.print(table)
 
@@ -1187,25 +1273,35 @@ def register(cli):
 
     @issue.command("close")
     @click.argument("identifier")
+    @click.option("--attest", "attest_specs", multiple=True, metavar="RITUAL:NOTE",
+                  help="Attest a pending ticket ritual with a note before closing "
+                       "(repeatable), e.g. --attest 'close-gate:ADR written'. "
+                       "Lets non-interactive callers satisfy note-required close "
+                       "rituals instead of stranding a blocked intent (CHT-1326).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
     @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
-    def issue_close(identifier):
+    def issue_close(identifier, attest_specs):
         """Close an issue (move to done).
 
-        Shortcut for 'issue move IDENTIFIER done'.
+        Shortcut for 'issue move IDENTIFIER done'. Pending close rituals
+        can be attested inline with repeated --attest 'name:note'.
         """
         iss = _client().get_issue_by_identifier(identifier)
+        apply_ritual_attestations(iss, attest_specs)
         _client().update_issue(iss["id"], status="done")
         console.print(f"[green]Issue {identifier} closed.[/green]")
 
     @issue.command("complete")
     @click.argument("identifier")
+    @click.option("--attest", "attest_specs", multiple=True, metavar="RITUAL:NOTE",
+                  help="Attest a pending ticket ritual with a note before closing "
+                       "(repeatable). See 'issue close --help' (CHT-1326).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_complete(identifier):
+    def issue_complete(identifier, attest_specs):
         """Mark an issue as done.
 
         Alias for 'issue close IDENTIFIER'.
@@ -1214,8 +1310,10 @@ def register(cli):
         # close's own full decorator stack (including its json_result),
         # which already sees --json via the shared ctx.obj this command's
         # own @json_option just set. Adding a second json_result here
-        # would double-emit the JSON payload (CHT-1222).
-        issue_close.callback(identifier)
+        # would double-emit the JSON payload (CHT-1222). Keyword call so
+        # close's json_result build lambda (identifier, **_) still sees
+        # a single positional-free signature (same shape as issue_start).
+        issue_close.callback(identifier=identifier, attest_specs=attest_specs)
 
     @issue.command("wontfix")
     @click.argument("identifier")
@@ -1255,11 +1353,15 @@ def register(cli):
     @click.option("--lease", "lease_spec", default=None,
                   help="Claim lease duration override (e.g. 30m, 4h, 1h30m). "
                        "Default: server-configured (CHT-1246).")
+    @click.option("--attest", "attest_specs", multiple=True, metavar="RITUAL:NOTE",
+                  help="Attest a pending claim ritual with a note before claiming "
+                       "(repeatable), e.g. --attest 'claim-gate:branch cut'. "
+                       "See 'issue close --help' (CHT-1326).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
     @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
-    def issue_claim(identifier, lease_spec):
+    def issue_claim(identifier, lease_spec, attest_specs):
         """Assign an issue to yourself and move to in_progress.
 
         Shortcut for 'issue assign IDENTIFIER me' + 'issue move IDENTIFIER in_progress'.
@@ -1267,9 +1369,12 @@ def register(cli):
         a claim lease -- see 'chaotic issue ready' and CHT-1246. A lease
         that expires while still IN_PROGRESS is auto-released back to
         todo/unassigned the next time anyone reads or lists the issue.
+        Pending claim rituals can be attested inline with repeated
+        --attest 'name:note'.
         """
         lease_seconds = parse_duration(lease_spec, flag_name="--lease")
         iss = _client().get_issue_by_identifier(identifier)
+        apply_ritual_attestations(iss, attest_specs)
         user = _client().get_me()
         kwargs = {"assignee_id": user["id"], "status": "in_progress"}
         if lease_seconds is not None:
@@ -1282,10 +1387,13 @@ def register(cli):
     @click.option("--lease", "lease_spec", default=None,
                   help="Claim lease duration override (e.g. 30m, 4h, 1h30m). "
                        "Default: server-configured (CHT-1246).")
+    @click.option("--attest", "attest_specs", multiple=True, metavar="RITUAL:NOTE",
+                  help="Attest a pending claim ritual with a note before claiming "
+                       "(repeatable). See 'issue close --help' (CHT-1326).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_start(identifier, lease_spec):
+    def issue_start(identifier, lease_spec, attest_specs):
         """Start working on an issue.
 
         Alias for 'issue claim IDENTIFIER [--lease ...]'.
@@ -1296,7 +1404,9 @@ def register(cli):
         # **kwargs, and Click's own normal invocation always calls by
         # keyword too, so this matches that shape instead of overloading
         # positional args onto a 2-arg callback.
-        issue_claim.callback(identifier=identifier, lease_spec=lease_spec)
+        issue_claim.callback(
+            identifier=identifier, lease_spec=lease_spec, attest_specs=attest_specs,
+        )
 
     @issue.command("rituals")
     @click.argument("identifier")

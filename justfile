@@ -4,29 +4,52 @@
 default:
     @just --list
 
-# Sync all dependencies (including dev)
+# Sync all dependencies (including dev) for every project `just lint`/`test-*` touch.
+# --locked installs exactly the committed uv.lock and fails if it is stale
+# (CHT-1201); after changing any pyproject.toml (a chaotic-cli version bump
+# included: all three locks record it), run `just lock` and commit the result.
+# `chaotic system install`/`upgrade` run this recipe on the server.
 sync:
-    cd backend && uv sync --extra dev
-    cd cli && uv sync
+    cd backend && uv sync --locked --extra dev
+    cd cli && uv sync --locked --extra dev
+    cd e2e && uv sync --locked
+
+# Re-resolve every uv.lock after a pyproject.toml change (then commit them)
+lock:
+    cd backend && uv lock
+    cd cli && uv lock
+    cd e2e && uv lock
 
 # Sync backend dependencies
 sync-backend:
-    cd backend && uv sync --extra dev
+    cd backend && uv sync --locked --extra dev
 
 # Sync CLI dependencies
 sync-cli:
-    cd cli && uv sync
+    cd cli && uv sync --locked
 
 # Run the backend server (with hot reload)
 serve:
     cd backend && uv run uvicorn app.main:app --reload --port 24267
 
-# Run the backend server (production mode, supports PORT and DATABASE_URL env vars)
+# Run the backend server (production mode, supports PORT and DATABASE_URL env vars).
+# --frozen: run the env `just sync` built; never re-resolve or rewrite uv.lock (CHT-1201).
+# --timeout-graceful-shutdown 10 (CHT-1474): without it uvicorn waits forever for
+# open connections on SIGTERM, and /mcp streaming clients never close theirs, so a
+# stop sat until systemd's SIGKILL. 10s lets ordinary in-flight API requests (all
+# short) finish; MCP clients reconnect. It must stay under the unit's
+# TimeoutStopSec (SYSTEMD_TIMEOUT_STOP_SEC in cli/src/cli/system.py; a cli test pins both).
 serve-prod:
-    cd backend && uv run uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267}
+    cd backend && uv run --frozen uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267} --timeout-graceful-shutdown 10
 
 # Run all test suites (backend, frontend, CLI)
 test-all: test-backend test-frontend test-cli
+
+# Pyflakes-rule lint for backend, CLI and e2e (what CI runs; CHT-1362, CHT-1382)
+lint:
+    cd backend && uv run ruff check .
+    cd cli && uv run ruff check .
+    cd e2e && uv run ruff check .
 
 # Run backend tests
 test-backend:
@@ -48,7 +71,7 @@ cov-frontend:
 
 # Run CLI tests with coverage
 cov-cli:
-    cd cli && uv run pytest --cov=cli --cov-report=term-missing
+    cd cli && uv run pytest --cov=cli --cov=chaotic_mcp_tools --cov-report=term-missing
 
 # Run backend tests with coverage (alias)
 test-cov: cov-backend

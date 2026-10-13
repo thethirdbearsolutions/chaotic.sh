@@ -7,7 +7,8 @@ over HTTP into itself). Instead both sides assert their live toolset
 against the same checked-in snapshot, docs/mcp-toolset-schema.json --
 this is the stdio half of that guard. See
 backend/tests/test_mcp_toolset_sync.py for the HTTP half, which allows
-the documented additive ``team`` parameter on five tools; this file
+the documented additive ``team`` parameter on the team-scoped tools
+(``EXPECTED_TEAM_SCOPED`` in chaotic_mcp_tools/expected.py); this file
 requires an EXACT match, since the stdio toolset is the schema's source
 of truth (docs/mcp-toolset-schema.json's own ``_meta.generated_from``
 points at ``cli.mcp_server.build_server()``, and
@@ -20,8 +21,12 @@ than let the two transports silently diverge.
 """
 import asyncio
 import json
+import re
 from pathlib import Path
 
+import pytest
+
+from chaotic_mcp_tools.expected import EXPECTED_TEAM_SCOPED, REGENERATE_SNAPSHOT, toolset_diff
 from cli.mcp_server import build_server
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "mcp-toolset-schema.json"
@@ -31,15 +36,47 @@ def _live_toolset() -> dict:
     async def _collect():
         mcp = build_server()
         tools = await mcp.list_tools()
-        return {t.name: {"description": t.description, "inputSchema": t.inputSchema} for t in tools}
+        return {t.name: {"description": t.description, "inputSchema": t.input_schema} for t in tools}
 
     return asyncio.run(_collect())
+
+
+def test_every_tool_is_async():
+    """mcp 2.x runs `def` tool handlers on worker threads (no event-loop
+    affinity) and `async def` ones on the loop. Since CHT-1374 every tool
+    is a shared coroutine body bound to this server's RestBackend (which
+    offloads the blocking httpx client itself), so pin that the objects
+    handed to add_tool are ALL coroutine functions, and that the wrapper
+    agrees with the body it wraps (CHT-1367)."""
+    import inspect
+    from cli.mcp_server import ALL_TOOLS
+    sync = [t.__name__ for t in ALL_TOOLS if not inspect.iscoroutinefunction(t)]
+    assert sync == [], f"stdio tools must be `async def`: {sync}"
+    disagree = [
+        t.__name__ for t in ALL_TOOLS
+        if hasattr(t, "__wrapped__")
+        and inspect.iscoroutinefunction(t) != inspect.iscoroutinefunction(t.__wrapped__)
+    ]
+    assert disagree == [], f"wrapper/body async-ness disagree: {disagree}"
 
 
 def test_snapshot_file_exists():
     assert _SCHEMA_PATH.exists(), (
         f"{_SCHEMA_PATH} is missing -- regenerate with "
         "cli/scripts/gen_mcp_toolset_schema.py"
+    )
+
+
+def test_response_shapes_match_snapshot():
+    """The compact-row projection and preview sizes (CHT-1370) are part of
+    the cross-transport contract: the backend asserts the same thing
+    against the same file, so a change here that isn't regenerated into
+    the snapshot fails on both sides."""
+    from cli.mcp_server import RESPONSE_SHAPES
+    snapshot = json.loads(_SCHEMA_PATH.read_text())["_meta"]["response_shapes"]
+    assert RESPONSE_SHAPES == snapshot, (
+        "cli.mcp_server.RESPONSE_SHAPES no longer matches docs/mcp-toolset-schema.json "
+        "-- regenerate with scripts/gen_mcp_toolset_schema.py"
     )
 
 
@@ -55,11 +92,139 @@ def test_stdio_toolset_matches_snapshot_exactly():
     )
 
 
-def test_snapshot_covers_all_eleven_tools():
+def test_snapshot_covers_the_full_toolset():
     snapshot = json.loads(_SCHEMA_PATH.read_text())["tools"]
-    assert set(snapshot.keys()) == {
-        "issue_list", "issue_view", "issue_create", "issue_update",
-        "issue_comment", "issue_start",
-        "doc_list", "doc_view", "doc_create",
-        "activity_recent", "project_list",
-    }
+    problem = toolset_diff(
+        set(snapshot), "the schema snapshot (docs/mcp-toolset-schema.json)", hint=REGENERATE_SNAPSHOT
+    )
+    assert not problem, problem
+
+
+def test_snapshot_team_scoped_list_is_the_reviewed_one():
+    """`_meta.team_scoped_tools` is the published list of which tools take
+    `team` on the HTTP transport (docs/agents.md points readers at it).
+    The stdio schemas never carry `team`, so nothing else in this file
+    would notice it going stale: pin it to the reviewed table directly."""
+    meta = json.loads(_SCHEMA_PATH.read_text())["_meta"]
+    problem = toolset_diff(
+        meta["team_scoped_tools"], "_meta.team_scoped_tools", expected=EXPECTED_TEAM_SCOPED, hint=REGENERATE_SNAPSHOT
+    )
+    assert not problem, problem
+
+
+_REPO = _SCHEMA_PATH.parents[1]
+
+
+def _snapshot_tool_names() -> set[str]:
+    return set(json.loads(_SCHEMA_PATH.read_text())["tools"])
+
+
+def test_agents_doc_toolset_section_names_every_tool():
+    """docs/agents.md's "### Toolset" section said "Eleven tools" and listed a
+    stale subset for months after the surface grew to 30 (CHT-1378). Pin
+    it to the snapshot: it must name every tool, in the reviewed groups
+    and order, and state no count."""
+    from chaotic_mcp_tools.expected import GROUP_ORDER, group_of
+
+    text = (_REPO / "docs" / "agents.md").read_text(encoding="utf-8")
+    section = text.split("### Toolset\n", 1)[1].split("\n## ", 1)[0]
+    names = _snapshot_tool_names()
+
+    # No literal count anywhere in the section: it rotted once ("Eleven"
+    # at 34) and its only job was to be kept in step with this test
+    # (CHT-1395). This deliberately also refuses per-group counts ("the 6
+    # sprint tools"): every number here is one more thing to rot.
+    assert not re.search(r"\b\d+ tools\b", section), "docs/agents.md § Toolset states a tool count; drop it"
+
+    # Each `- **group:**` bullet names exactly the generator's group for
+    # that name, in registration order, so the README table and this list
+    # cannot drift apart (they are two views of one grouping).
+    gen = _tool_table_generator()
+    expected_groups = {g: [] for g in GROUP_ORDER}
+    for tool in gen.ALL_TOOLS:
+        expected_groups[group_of(tool.__name__)].append(tool.__name__)
+    # Only the grouped bullet list (a bullet and its indented continuation
+    # lines); the prose after it mentions tools by name too.
+    bullet_block = "\n".join(
+        line for line in section.splitlines() if line.startswith("- **") or line.startswith("  ")
+    )
+    bullets = re.findall(r"^- \*\*(\w+):\*\*(.*?)(?=^- \*\*|\Z)", bullet_block, re.M | re.S)
+    listed_groups = {group: re.findall(r"`([a-z_]+)`", body) for group, body in bullets}
+    assert listed_groups == expected_groups, (
+        "docs/agents.md § Toolset groups differ from the reviewed grouping "
+        f"(chaotic_mcp_tools/expected.py): {listed_groups} != {expected_groups}"
+    )
+
+    # Only the grouped bullet list counts: prose elsewhere in the section
+    # already mentions a dozen tools, so a name dropped from its group must
+    # not be covered by a later paragraph (PR #278 review).
+    bullet_block = "\n".join(
+        line for line in section.splitlines() if line.startswith("- **") or line.startswith("  ")
+    )
+    listed = set(re.findall(r"`([a-z_]+)`", bullet_block))
+    assert listed == names, (
+        f"docs/agents.md § Toolset groups: missing {sorted(names - listed)}, unknown {sorted(listed - names)}"
+    )
+
+
+def _tool_table_generator():
+    import importlib.util
+
+    path = _REPO / "cli" / "scripts" / "gen_mcp_tool_table.py"
+    spec = importlib.util.spec_from_file_location("gen_mcp_tool_table", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_cli_readme_tools_table_is_the_generated_one():
+    """cli/README.md § Tools is generated from ALL_TOOLS by
+    scripts/gen_mcp_tool_table.py (CHT-1395); the block between its
+    markers must be byte-for-byte what the generator renders now, so a
+    tool added without rerunning it (or without a CLI_EQUIVALENTS entry)
+    fails here by name."""
+    gen = _tool_table_generator()
+    text = (_REPO / "cli" / "README.md").read_text(encoding="utf-8")
+    assert gen.START in text and gen.END in text, "cli/README.md lost its mcp-tool-table markers"
+    start = text.index(gen.START)
+    end = text.index(gen.END, start) + len(gen.END)
+    assert text[start:end] == gen.render_table(), (
+        "cli/README.md tool table is stale -- regenerate with "
+        "`cd cli && uv run python scripts/gen_mcp_tool_table.py --write`"
+    )
+    section = text.split("### Tools\n", 1)[1].split("\n## ", 1)[0]
+    assert set(re.findall(r"^\| `([a-z_]+)` \|", section, re.M)) == _snapshot_tool_names()
+    assert not re.search(r"\b\d+ tools\b", section), "cli/README.md § Tools states a tool count; drop it"
+
+
+def test_tool_table_generator_refuses_an_unmapped_tool():
+    """Forgetting the CLI_EQUIVALENTS entry for a new tool must fail loudly,
+    naming the tool, not render a row with a blank column."""
+    gen = _tool_table_generator()
+
+    def newcomer():
+        ...
+    newcomer.__name__ = "issue_newcomer"
+
+    with pytest.raises(ValueError, match="no entry for \\['issue_newcomer'\\].*gen_mcp_tool_table.py --write"):
+        gen.render_table(tools=(*gen.ALL_TOOLS, newcomer))
+    with pytest.raises(ValueError, match="unknown tools \\['gone_tool'\\]"):
+        gen.render_table(equivalents={**gen.CLI_EQUIVALENTS, "gone_tool": "x"})
+
+
+def test_tool_table_generator_refuses_an_ungrouped_prefix_and_a_broken_readme():
+    """A tool with a new subject prefix is a grouping decision, not a row
+    under "other"; a README with duplicated or missing markers is
+    refused rather than half-rewritten."""
+    from chaotic_mcp_tools.expected import group_of
+
+    gen = _tool_table_generator()
+    with pytest.raises(ValueError, match="'template_list' has no group"):
+        group_of("template_list")
+    assert group_of("label_list") == "other" and group_of("doc_view") == "docs"
+    block = gen.render_table()
+    with pytest.raises(ValueError, match="exactly one"):
+        gen.splice(f"{gen.START}\n{gen.END}\n{gen.START}\n{gen.END}", block)
+    with pytest.raises(ValueError, match="exactly one"):
+        gen.splice(f"{gen.END}\n{gen.START}", block)
+    assert gen.splice(f"before\n{gen.START}\nold\n{gen.END}\nafter", block) == f"before\n{block}\nafter"

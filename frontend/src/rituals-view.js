@@ -181,7 +181,61 @@ export async function approveRitual(ritualId, projectId) {
     }
 }
 
-export async function completeGateRitual(ritualId, projectId, ritualName) {
+// ========================================
+// Artifact binding (CHT-1359)
+// ========================================
+
+/**
+ * The form field for a ritual's artifact: a document id or a URL the
+ * attestation is bound to. Empty string for a ritual without one.
+ */
+export function renderArtifactField(artifact) {
+    if (artifact === 'document') {
+        return `
+            <div class="form-group">
+                <label for="ritual-artifact-document">Document id (required)</label>
+                <input type="text" id="ritual-artifact-document" placeholder="The document you wrote for this ritual" required>
+                <p class="form-help">Must be yours and written for this sprint or ticket.</p>
+            </div>
+        `;
+    }
+    if (artifact === 'url') {
+        return `
+            <div class="form-group">
+                <label for="ritual-artifact-url">Link (required)</label>
+                <input type="url" id="ritual-artifact-url" placeholder="https://..." required>
+            </div>
+        `;
+    }
+    return '';
+}
+
+/**
+ * Read the artifact field back: `{ document_id }` / `{ url }`, null for a
+ * ritual without an artifact, or undefined (after a toast) when required
+ * and empty.
+ */
+export function readArtifactField(artifact) {
+    if (artifact === 'document') {
+        const value = (document.getElementById('ritual-artifact-document')?.value || '').trim();
+        if (!value) {
+            showToast('This ritual requires the document you wrote for it.', 'error');
+            return undefined;
+        }
+        return { document_id: value };
+    }
+    if (artifact === 'url') {
+        const value = (document.getElementById('ritual-artifact-url')?.value || '').trim();
+        if (!value) {
+            showToast('This ritual requires a link to the artifact.', 'error');
+            return undefined;
+        }
+        return { url: value };
+    }
+    return null;
+}
+
+export async function completeGateRitual(ritualId, projectId, ritualName, artifact = '') {
     document.getElementById('modal-title').textContent = `Complete: ${ritualName}`;
     document.getElementById('modal-content').innerHTML = `
         <form id="complete-gate-ritual-form">
@@ -189,22 +243,25 @@ export async function completeGateRitual(ritualId, projectId, ritualName) {
                 <label for="gate-note">Note (optional)</label>
                 <textarea id="gate-note" placeholder="Describe what was done..."></textarea>
             </div>
+            ${renderArtifactField(artifact)}
             <button type="submit" class="btn btn-primary">Complete Ritual</button>
         </form>
     `;
     // Attach event listener programmatically to avoid XSS via inline handlers (CHT-166)
     document.getElementById('complete-gate-ritual-form').addEventListener('submit', (event) => {
-        handleCompleteGateRitual(event, ritualId, projectId);
+        handleCompleteGateRitual(event, ritualId, projectId, artifact);
     });
     showModal();
 }
 
-async function handleCompleteGateRitual(event, ritualId, projectId) {
+async function handleCompleteGateRitual(event, ritualId, projectId, artifact = '') {
     event.preventDefault();
     const note = document.getElementById('gate-note').value;
+    const bound = readArtifactField(artifact);
+    if (bound === undefined) return false;
 
     try {
-        await api.completeGateRitual(ritualId, projectId, note || null);
+        await api.completeGateRitual(ritualId, projectId, note || null, bound);
         showToast('Ritual completed!', 'success');
         await loadLimboStatus();
 
@@ -242,45 +299,51 @@ export function renderTicketRitualActions(ritual, issueId) {
         `;
     }
 
+    const artifact = escapeAttr(ritual.artifact || '');
+
     // Not attested - GATE mode requires human completion
     if (ritual.approval_mode === 'gate') {
-        return `<button class="btn btn-small btn-primary" data-action="complete-ticket-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}">Complete</button>`;
+        return `<button class="btn btn-small btn-primary" data-action="complete-ticket-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}" data-ritual-artifact="${artifact}">Complete</button>`;
     }
 
-    // AUTO or REVIEW mode - agent can attest
-    if (ritual.note_required) {
-        return `<button class="btn btn-small btn-secondary" data-action="attest-ticket-ritual-modal" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}" data-ritual-prompt="${escapeAttr(ritual.prompt || '')}">Attest</button>`;
+    // AUTO or REVIEW mode - agent can attest. A note or an artifact needs
+    // the modal; without either, one click attests.
+    if (ritual.note_required || ritual.artifact) {
+        return `<button class="btn btn-small btn-secondary" data-action="attest-ticket-ritual-modal" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}" data-ritual-prompt="${escapeAttr(ritual.prompt || '')}" data-ritual-artifact="${artifact}" data-ritual-note-required="${ritual.note_required ? '1' : ''}">Attest</button>`;
     }
     return `<button class="btn btn-small btn-secondary" data-action="attest-ticket-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}">Attest</button>`;
 }
 
-export function showAttestTicketRitualModal(ritualId, issueId, ritualName, ritualPrompt) {
+export function showAttestTicketRitualModal(ritualId, issueId, ritualName, ritualPrompt, artifact = '', noteRequired = true) {
     document.getElementById('modal-title').textContent = `Attest: ${ritualName}`;
     document.getElementById('modal-content').innerHTML = `
         <form id="attest-ticket-ritual-form">
             ${ritualPrompt ? `<p class="ritual-prompt-hint">${escapeHtml(ritualPrompt)}</p>` : ''}
             <div class="form-group">
-                <label for="attest-ritual-note">Note (required)</label>
-                <textarea id="attest-ritual-note" placeholder="Describe what was done..." required></textarea>
+                <label for="attest-ritual-note">Note (${noteRequired ? 'required' : 'optional'})</label>
+                <textarea id="attest-ritual-note" placeholder="Describe what was done..." ${noteRequired ? 'required' : ''}></textarea>
             </div>
+            ${renderArtifactField(artifact)}
             <button type="submit" class="btn btn-primary">Attest</button>
         </form>
     `;
     document.getElementById('attest-ticket-ritual-form').addEventListener('submit', (event) => {
-        handleAttestTicketRitual(event, ritualId, issueId);
+        handleAttestTicketRitual(event, ritualId, issueId, artifact, noteRequired);
     });
     showModal();
 }
 
-async function handleAttestTicketRitual(event, ritualId, issueId) {
+async function handleAttestTicketRitual(event, ritualId, issueId, artifact = '', noteRequired = true) {
     event.preventDefault();
     const note = document.getElementById('attest-ritual-note').value.trim();
-    if (!note) {
+    if (noteRequired && !note) {
         showToast('A note is required for this attestation.', 'error');
         return false;
     }
+    const bound = readArtifactField(artifact);
+    if (bound === undefined) return false;
     try {
-        await api.attestTicketRitual(ritualId, issueId, note);
+        await api.attestTicketRitual(ritualId, issueId, note || null, bound);
         showToast('Ritual attested!', 'success');
         closeModal();
         await loadTicketRituals(issueId);
@@ -310,7 +373,7 @@ export async function approveTicketRitual(ritualId, issueId) {
     }
 }
 
-export function showCompleteTicketRitualModal(ritualId, issueId, ritualName) {
+export function showCompleteTicketRitualModal(ritualId, issueId, ritualName, artifact = '') {
     document.getElementById('modal-title').textContent = `Complete: ${ritualName}`;
     document.getElementById('modal-content').innerHTML = `
         <form id="complete-ticket-ritual-form">
@@ -318,22 +381,25 @@ export function showCompleteTicketRitualModal(ritualId, issueId, ritualName) {
                 <label for="ticket-ritual-note">Note (optional)</label>
                 <textarea id="ticket-ritual-note" placeholder="Describe what was done..."></textarea>
             </div>
+            ${renderArtifactField(artifact)}
             <button type="submit" class="btn btn-primary">Complete Ritual</button>
         </form>
     `;
     // Attach event listener programmatically to avoid XSS via inline handlers (CHT-166)
     document.getElementById('complete-ticket-ritual-form').addEventListener('submit', (event) => {
-        handleCompleteTicketRitual(event, ritualId, issueId);
+        handleCompleteTicketRitual(event, ritualId, issueId, artifact);
     });
     showModal();
 }
 
-async function handleCompleteTicketRitual(event, ritualId, issueId) {
+async function handleCompleteTicketRitual(event, ritualId, issueId, artifact = '') {
     event.preventDefault();
     const note = document.getElementById('ticket-ritual-note').value;
+    const bound = readArtifactField(artifact);
+    if (bound === undefined) return false;
 
     try {
-        await api.completeTicketGateRitual(ritualId, issueId, note || null);
+        await api.completeTicketGateRitual(ritualId, issueId, note || null, bound);
         showToast('Ritual completed!', 'success');
         closeModal();
         await loadTicketRituals(issueId);
@@ -352,10 +418,13 @@ registerActions({
         approveTicketRitual(data.ritualId, data.issueId);
     },
     'complete-ticket-ritual': (_event, data) => {
-        showCompleteTicketRitualModal(data.ritualId, data.issueId, data.ritualName);
+        showCompleteTicketRitualModal(data.ritualId, data.issueId, data.ritualName, data.ritualArtifact || '');
     },
     'attest-ticket-ritual-modal': (_event, data) => {
-        showAttestTicketRitualModal(data.ritualId, data.issueId, data.ritualName, data.ritualPrompt);
+        showAttestTicketRitualModal(
+            data.ritualId, data.issueId, data.ritualName, data.ritualPrompt,
+            data.ritualArtifact || '', data.ritualNoteRequired !== '',
+        );
     },
     'attest-ticket-ritual': (_event, data) => {
         attestTicketRitual(data.ritualId, data.issueId);

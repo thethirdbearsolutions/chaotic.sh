@@ -23,8 +23,8 @@ def mock_sprint():
         "status": "active",
         "budget": 20,
         "points_spent": 11,
-        "start_date": "2026-02-01T00:00:00",
-        "end_date": "2026-02-14T00:00:00",
+        "activated_at": "2026-02-01T00:00:00Z",
+        "closed_at": None,
         "limbo": False,
         "project_id": "test-project-123",
     }
@@ -176,15 +176,15 @@ class TestSprintList:
                 "id": "sprint-1",
                 "name": "Sprint 29",
                 "status": "completed",
-                "start_date": "2026-01-15T00:00:00",
-                "end_date": "2026-01-28T00:00:00",
+                "activated_at": "2026-01-15T00:00:00Z",
+                "closed_at": "2026-01-28T00:00:00Z",
             },
             {
                 "id": "sprint-2",
                 "name": "Sprint 30",
                 "status": "active",
-                "start_date": "2026-02-01T00:00:00",
-                "end_date": "2026-02-14T00:00:00",
+                "activated_at": "2026-02-01T00:00:00Z",
+                "closed_at": None,
             },
         ]
         client.get_sprints = MagicMock(return_value=sprints)
@@ -196,6 +196,9 @@ class TestSprintList:
         assert result.exit_code == 0
         assert 'Sprint 29' in result.output
         assert 'Sprint 30' in result.output
+        # The Activated/Closed columns are outputs, not plans (CHT-1366).
+        assert 'Activated' in result.output and 'Closed' in result.output
+        assert '2026-01-15' in result.output and '2026-01-28' in result.output
 
     def test_sprint_list_no_sprints(self, cli_runner):
         """sprint list with no sprints shows message."""
@@ -647,7 +650,7 @@ class TestSprintUpdate:
     def test_sprint_update_resolve_failure(self, cli_runner):
         """sprint update shows error when sprint ID resolution fails."""
         import click
-        from cli.main import cli, client
+        from cli.main import cli
 
         with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \

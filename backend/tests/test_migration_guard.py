@@ -42,7 +42,7 @@ async def test_raises_when_db_is_ahead():
 
 @pytest.mark.asyncio
 async def test_skips_when_no_migrations_table():
-    # A DB not built via migrations (test static schema / fresh) -> skip, don't fail.
+    # A DB not built via migrations (hand-built) -> skip, don't fail.
     with patch("oxyde.execute_raw", AsyncMock(side_effect=Exception("no such table: oxyde_migrations"))):
         await verify_migrations_current()  # must not raise
 

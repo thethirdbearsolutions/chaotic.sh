@@ -222,6 +222,11 @@ strong {
     padding: 6rem 2rem;
 }
 
+/* Keep anchor targets clear of the fixed header (about 72px tall). */
+section[id] {
+    scroll-margin-top: 72px;
+}
+
 .section-alt {
     background: var(--bg-secondary);
 }
@@ -1070,7 +1075,14 @@ strong {
 
 .footer-links {
     display: flex;
-    gap: 2rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem 2rem;
+}
+
+.footer-license {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
 }
 
 .footer-links a {
@@ -1087,7 +1099,356 @@ strong {
     font-size: 0.75rem;
 }
 
+/* Mobile nav toggle (CHT-238); js/nav.js drives aria-expanded and body.nav-open */
+.nav-toggle {
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    width: 40px;
+    height: 40px;
+    padding: 0 9px;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.nav-toggle-bar {
+    display: block;
+    height: 2px;
+    background: var(--text-primary);
+    border-radius: 1px;
+    transition: transform 0.2s, opacity 0.2s;
+}
+
+.nav-toggle[aria-expanded="true"] .nav-toggle-bar:nth-child(1) {
+    transform: translateY(7px) rotate(45deg);
+}
+
+.nav-toggle[aria-expanded="true"] .nav-toggle-bar:nth-child(2) {
+    opacity: 0;
+}
+
+.nav-toggle[aria-expanded="true"] .nav-toggle-bar:nth-child(3) {
+    transform: translateY(-7px) rotate(-45deg);
+}
+
+.nav-toggle:focus-visible,
+.nav a:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+.nav-link[aria-current="page"] {
+    color: var(--text-primary);
+}
+
+/* Shared section copy */
+.section-lead {
+    max-width: 720px;
+    margin: -2rem auto 2.5rem;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 1.125rem;
+    line-height: 1.7;
+}
+
+.subsection-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    text-align: center;
+    margin: 4rem 0 2.5rem;
+    letter-spacing: -0.01em;
+}
+
+.subsection-title + .section-lead {
+    margin-top: -1.5rem;
+}
+
+.section-footnote {
+    margin-top: 2.5rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.9375rem;
+}
+
+.section code,
+.install-note code {
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+    font-size: 0.875em;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 0.1em 0.35em;
+    white-space: nowrap;
+}
+
+/* Product screenshots (CHT-694) */
+.screenshot {
+    margin: 0;
+}
+
+.screenshot img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    background: var(--bg-secondary);
+}
+
+.screenshot figcaption {
+    margin-top: 0.875rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+.screenshot-hero {
+    margin-bottom: 3rem;
+}
+
+.screenshot-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    align-items: start;
+}
+
+/* Agents & MCP (CHT-1479) */
+.agents-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+}
+
+.agents-grid .feature-card {
+    background: var(--bg-primary);
+    min-width: 0;
+}
+
+.agents-grid .feature-card:hover {
+    transform: none;
+}
+
+.feature-title code,
+.code-block code {
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+.code-block code {
+    white-space: inherit;
+}
+
+.code-block {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+    font-size: 0.8125rem;
+    line-height: 1.7;
+    color: var(--text-primary);
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.tool-families {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+}
+
+.tool-family {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.5rem;
+}
+
+.tool-family h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--accent-color);
+    margin-bottom: 0.5rem;
+}
+
+.tool-family p {
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+    line-height: 1.6;
+}
+
+/* What's new (CHT-1481) */
+.release-list {
+    list-style: none;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.release {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 1.5rem;
+    padding: 1.5rem 0;
+    border-top: 1px solid var(--border-color);
+}
+
+.release:first-child {
+    border-top: none;
+    padding-top: 0;
+}
+
+.release-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.release-version {
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+    font-weight: 600;
+    color: var(--accent-color);
+}
+
+.release-meta time {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+.release-notes {
+    list-style: none;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.release-notes li {
+    position: relative;
+    padding-left: 1.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.release-notes li::before {
+    content: "\2192";
+    position: absolute;
+    left: 0;
+    color: var(--accent-color);
+}
+
+/* License (CHT-695) */
+.license-card {
+    max-width: 640px;
+    margin: 0 auto;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 2.5rem;
+    text-align: center;
+}
+
+.license-lead {
+    font-size: 1.125rem;
+    color: var(--text-primary);
+    line-height: 1.7;
+    margin-bottom: 1.5rem;
+}
+
+.license-points {
+    list-style: none;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+.license-points li {
+    padding: 0.25rem 0;
+}
+
+.license-card .feature-note {
+    margin-bottom: 1.5rem;
+}
+
+.install-note {
+    max-width: 560px;
+    margin: 0 auto 1rem;
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+    line-height: 1.7;
+}
+
+.install-note:last-of-type {
+    margin-bottom: 2rem;
+}
+
 /* Responsive */
+@media (max-width: 900px) {
+    /* The collapse needs js/nav.js. <html> starts as .no-js and an inline
+       script in <head> swaps it to .js, so without JS the links stay
+       visible, wrapped under the logo, and the header scrolls away. */
+    .no-js .header {
+        position: static;
+    }
+
+    .no-js .header-content {
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+
+    .no-js .nav {
+        width: 100%;
+        flex-wrap: wrap;
+        gap: 0.5rem 1.25rem;
+    }
+
+    .js .nav-toggle {
+        display: flex;
+    }
+
+    .js .nav {
+        display: none;
+    }
+
+    .js body.nav-open .nav {
+        display: flex;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0;
+        padding: 0.5rem 1rem 1rem;
+        background: var(--bg-primary);
+        border-bottom: 1px solid var(--border-color);
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4);
+        max-height: calc(100vh - 72px);
+        overflow-y: auto;
+    }
+
+    .js body.nav-open .nav .nav-link {
+        font-size: 1rem;
+        padding: 0.75rem 0.25rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .js body.nav-open .nav .btn {
+        margin-top: 1rem;
+        padding: 0.75rem 1rem;
+    }
+
+    .screenshot-pair,
+    .agents-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .tool-families {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
 @media (max-width: 1024px) {
     .problem-grid {
         grid-template-columns: 1fr;
@@ -1127,10 +1488,6 @@ strong {
         padding: 1rem;
     }
 
-    .nav {
-        display: none;
-    }
-
     .hero-title {
         font-size: 3rem;
     }
@@ -1163,6 +1520,34 @@ strong {
 
     .growth-features {
         grid-template-columns: 1fr;
+    }
+
+    .section-lead {
+        margin-top: -1.5rem;
+        font-size: 1rem;
+    }
+
+    .tool-families {
+        grid-template-columns: 1fr;
+    }
+
+    .release {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+    }
+
+    .release-meta {
+        flex-direction: row;
+        align-items: baseline;
+        gap: 0.75rem;
+    }
+
+    .license-card {
+        padding: 1.5rem;
+    }
+
+    .agents-grid .feature-card {
+        padding: 1.5rem;
     }
 }
 

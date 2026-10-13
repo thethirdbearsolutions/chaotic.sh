@@ -12,7 +12,7 @@ async def create_label(
     team_id: str,
     label_in: LabelCreate,
     current_user: CurrentUser,
-):
+) -> LabelResponse:
     """Create a new label.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -27,7 +27,7 @@ async def create_label(
         )
 
     label = await issue_service.create_label(label_in, team_id)
-    return label
+    return LabelResponse.model_validate(label)
 
 
 async def list_labels(
@@ -35,7 +35,7 @@ async def list_labels(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[LabelResponse]:
     """List labels for a team.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -50,11 +50,11 @@ async def list_labels(
         )
 
     labels = await issue_service.list_labels(team_id, skip, limit)
-    return labels
+    return [LabelResponse.model_validate(label) for label in labels]
 
 
 @router.get("/{label_id}", response_model=LabelResponse)
-async def get_label(label_id: str, current_user: CurrentUser):
+async def get_label(label_id: str, current_user: CurrentUser) -> LabelResponse:
     """Get label by ID."""
     issue_service = IssueService()
 
@@ -71,7 +71,7 @@ async def get_label(label_id: str, current_user: CurrentUser):
             detail="Not authorized to access this team",
         )
 
-    return label
+    return LabelResponse.model_validate(label)
 
 
 @router.patch("/{label_id}", response_model=LabelResponse)
@@ -79,7 +79,7 @@ async def update_label(
     label_id: str,
     label_in: LabelUpdate,
     current_user: CurrentUser,
-):
+) -> LabelResponse:
     """Update a label."""
     issue_service = IssueService()
 
@@ -97,11 +97,11 @@ async def update_label(
         )
 
     label = await issue_service.update_label(label, label_in)
-    return label
+    return LabelResponse.model_validate(label)
 
 
 @router.delete("/{label_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_label(label_id: str, current_user: CurrentUser):
+async def delete_label(label_id: str, current_user: CurrentUser) -> None:
     """Delete a label."""
     # Agents cannot delete labels — check before lookup to avoid info disclosure
     if current_user.is_agent:

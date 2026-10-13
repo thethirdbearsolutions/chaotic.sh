@@ -13,7 +13,7 @@ from app.oxyde_models.issue import (
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
-from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, SprintStatus
+from app.enums import IssueStatus, IssueType, IssueRelationType, SprintStatus
 from app.services.issue_service import IssueService
 
 

@@ -93,6 +93,13 @@ class ApprovalMode(str, Enum):
     GATE = "gate"        # Human must perform (agent cannot attest)
 
 
+class RitualArtifact(str, Enum):
+    """What an attestation must point at to count (CHT-1359). None means
+    the note alone is the evidence."""
+    DOCUMENT = "document"  # a Chaotic document the attester wrote for this ritual
+    URL = "url"            # a link (a PR review comment, a report) outside Chaotic
+
+
 class SelectionMode(str, Enum):
     """How rituals in a group are selected."""
     RANDOM_ONE = "random_one"      # Pick one ritual randomly (weighted)

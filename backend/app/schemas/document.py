@@ -1,6 +1,6 @@
 """Document schemas."""
-from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from app.schemas.authorship import name_deleted_author
 from app.schemas.issue import LabelResponse
 from app.utils import DateTimeUTC
 
@@ -30,7 +30,7 @@ class DocumentResponse(BaseModel):
 
     id: str
     team_id: str
-    author_id: str
+    author_id: str | None  # None: author deleted (CHT-1427)
     author_name: str | None = None
     project_id: str | None
     sprint_id: str | None = None
@@ -42,6 +42,10 @@ class DocumentResponse(BaseModel):
     labels: list[LabelResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def _name_deleted_author(self):
+        return name_deleted_author(self, "author_id", "author_name")
 
 
 class DocumentCommentCreate(BaseModel):
@@ -61,13 +65,17 @@ class DocumentCommentResponse(BaseModel):
 
     id: str
     document_id: str
-    author_id: str
+    author_id: str | None  # None: author deleted (CHT-1427)
     author_name: str | None = None
     content: str
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def _name_deleted_author(self):
+        return name_deleted_author(self, "author_id", "author_name")
 
 
 class DocumentLinkedResponse(BaseModel):

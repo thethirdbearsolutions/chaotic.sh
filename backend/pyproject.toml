@@ -22,7 +22,17 @@ dependencies = [
     "jinja2>=3.1.3",
     "itsdangerous>=2.1.2",
     "oxyde>=0.7.1,<0.8",
-    "mcp>=1.9.0",
+    # 2.x API surface (MCPServer) since CHT-1367; the <3 ceiling is
+    # load-bearing -- 2.0.0 broke fresh installs when 1.x was unbounded
+    # (CHT-1331), so a future major must be adopted deliberately.
+    "mcp>=2.1,<3",
+    # The shared MCP toolset (chaotic_mcp_tools, CHT-1374) ships inside the
+    # chaotic-cli distribution; the backend is only ever installed from this
+    # repo checkout with uv, so the path source below is how it gets it.
+    # NOTE: a plain `pip install` would resolve this from PyPI instead, and
+    # no published chaotic-cli wheel carries chaotic_mcp_tools yet -- add a
+    # version floor here with the first CLI release that does.
+    "chaotic-cli",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +40,35 @@ dev = [
     "pytest>=7.4.4",
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.23.3",
+    # Sharded runs (`-n auto` in pytest.ini, CHT-1413).
+    "pytest-xdist>=3.8,<4",
+    # Pinned to a compatible range so a `uv lock` refresh cannot adopt a
+    # new ruff release (and its F-rule changes) unreviewed. Bump deliberately.
+    "ruff>=0.16.6,<0.17",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+# Oldest uv verified to read the committed uv.lock (revision 3, CHT-1201).
+[tool.uv]
+required-version = ">=0.5.31"
+
+[tool.uv.sources]
+chaotic-cli = { path = "../cli", editable = true }
+
+# Pyflakes-equivalent checks only (CHT-1362): undefined names, unused
+# imports/variables, shadowed redefinitions. Not a style gate. Runs in CI
+# (`uv run ruff check .`) and as a pre-commit hook.
+[tool.ruff]
+# Oxyde's generated model stubs are not ours to lint.
+extend-exclude = ["app/oxyde_models/*.pyi", "migrations"]
+
+[tool.ruff.lint]
+select = ["F401", "F811", "F821", "F841"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests bind results they never read on purpose (`_ = await ...` would be
+# noise); F401/F811/F821 still apply -- F811 is how CHT-1373's ten
+# shadowed tests were found.
+"tests/*" = ["F841"]

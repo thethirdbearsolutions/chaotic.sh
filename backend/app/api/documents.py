@@ -1,7 +1,7 @@
 """Document API routes."""
 from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, check_user_team_access, check_user_project_access
-from app.api.issues import ensure_utc
+from app.api.issues import ensure_utc, issues_to_responses
 from app.schemas.document import (
     DocumentCreate,
     DocumentUpdate,
@@ -67,7 +67,7 @@ async def create_document(
     team_id: str,
     document_in: DocumentCreate,
     current_user: CurrentUser,
-):
+) -> DocumentResponse:
     """Create a new document.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -140,7 +140,7 @@ async def list_documents(
     search: str | None = None,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[DocumentResponse]:
     """List documents for a team.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -192,7 +192,7 @@ async def list_documents(
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
-async def get_document(document_id: str, current_user: CurrentUser):
+async def get_document(document_id: str, current_user: CurrentUser) -> DocumentResponse:
     """Get document by ID."""
     document_service = DocumentService()
 
@@ -225,7 +225,7 @@ async def update_document(
     document_id: str,
     document_in: DocumentUpdate,
     current_user: CurrentUser,
-):
+) -> DocumentResponse:
     """Update a document."""
     document_service = DocumentService()
 
@@ -318,7 +318,7 @@ async def delete_document(document_id: str, current_user: CurrentUser):
 
 
 @router.get("/{document_id}/issues", response_model=list[IssueResponse])
-async def get_document_issues(document_id: str, current_user: CurrentUser):
+async def get_document_issues(document_id: str, current_user: CurrentUser) -> list[IssueResponse]:
     """Get issues linked to a document."""
     document_service = DocumentService()
 
@@ -344,37 +344,16 @@ async def get_document_issues(document_id: str, current_user: CurrentUser):
             )
 
     issues = await document_service.get_linked_issues(document_id)
-    return [
-        IssueResponse(
-            id=issue.id,
-            project_id=issue.project_id,
-            identifier=issue.identifier,
-            number=issue.number,
-            title=issue.title,
-            description=issue.description,
-            status=issue.status,
-            priority=issue.priority,
-            issue_type=issue.issue_type,
-            estimate=issue.estimate,
-            assignee_id=issue.assignee_id,
-            creator_id=issue.creator_id,
-            creator_name=issue.creator.name if issue.creator else None,
-            sprint_id=issue.sprint_id,
-            parent_id=issue.parent_id,
-            due_date=ensure_utc(issue.due_date),
-            completed_at=ensure_utc(issue.completed_at),
-            created_at=ensure_utc(issue.created_at),
-            updated_at=ensure_utc(issue.updated_at),
-            labels=[LabelResponse(id=l.id, team_id=l.team_id, name=l.name, color=l.color, description=l.description, created_at=l.created_at) for l in issue.labels],
-        )
-        for issue in issues
-    ]
+    # Through the shared builder (CHT-1371): a hand-rolled IssueResponse
+    # here had already drifted (no lease_expires_at) and missed the
+    # resolved companions.
+    return await issues_to_responses(issues)
 
 
 @router.post("/{document_id}/issues/{issue_id}", response_model=DocumentLinkedResponse, status_code=status.HTTP_201_CREATED)
 async def link_document_to_issue(
     document_id: str, issue_id: str, current_user: CurrentUser
-):
+) -> DocumentLinkedResponse:
     """Link a document to an issue."""
     document_service = DocumentService()
     issue_service = IssueService()
@@ -425,13 +404,13 @@ async def link_document_to_issue(
         await document_service.link_issue(document_id, issue_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    return {"message": "Document linked to issue"}
+    return DocumentLinkedResponse(message="Document linked to issue")
 
 
 @router.delete("/{document_id}/issues/{issue_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def unlink_document_from_issue(
     document_id: str, issue_id: str, current_user: CurrentUser
-):
+) -> None:
     """Unlink a document from an issue."""
     document_service = DocumentService()
     issue_service = IssueService()
@@ -634,7 +613,7 @@ async def list_document_revisions(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[DocumentRevisionListItem]:
     """List revision history for a document, newest first."""
     limit = min(limit, 10000)
     document_service = DocumentService()
@@ -668,7 +647,7 @@ async def get_document_revision(
     document_id: str,
     version: int,
     current_user: CurrentUser,
-):
+) -> DocumentRevisionResponse:
     """Get a single revision snapshot by version number."""
     document_service = DocumentService()
 
@@ -763,7 +742,7 @@ async def list_comments(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[DocumentCommentResponse]:
     """List comments for a document."""
     document_service = DocumentService()
 

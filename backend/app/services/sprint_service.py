@@ -2,6 +2,8 @@
 
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
+from datetime import datetime, timezone
+
 from oxyde import atomic, execute_raw
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.project import OxydeProject
@@ -61,6 +63,7 @@ class SprintService:
                 name=f"Sprint {sprint_num}",
                 status=SprintStatus.ACTIVE,
                 budget=default_budget,
+                activated_at=datetime.now(timezone.utc),
             )
             await current.refresh()
 
@@ -109,6 +112,14 @@ class SprintService:
         2. Moves incomplete issues to Next sprint
         3. Next sprint becomes ACTIVE (new Current)
         4. Creates a new Next sprint
+
+        A caller holding a stale copy of the row (it read the sprint
+        ACTIVE, another close committed since) does not raise: the
+        transition is claimed with a conditional UPDATE and the loser
+        returns the row as the winner left it, having written nothing
+        (CHT-1404, the same contract as complete_limbo). The route
+        therefore broadcasts, and the CLI announces, a close the loser
+        did not perform; both are true of the database.
         """
         if sprint.status != SprintStatus.ACTIVE:
             raise ValueError("Can only close an active sprint")
@@ -126,6 +137,36 @@ class SprintService:
         has_rituals = bool(pending_rituals)
 
         async with atomic():
+            # Claim the transition first, with a conditional UPDATE ...
+            # RETURNING (the guard complete_limbo uses, CHT-1404). The
+            # ACTIVE/limbo=0 checks above ran on this caller's copy of the
+            # row, and get_pending_rituals ran outside this transaction, so
+            # a caller whose reads predate another close's commit gets here
+            # believing the sprint is still open. Only the caller whose
+            # UPDATE matched the row does any of the work below; the loser
+            # refreshes and returns the row as the winner left it, writing
+            # nothing (its next-sprint lookup would already see the
+            # post-rotation world and move spillover to the wrong sprint).
+            # Genuinely overlapping writers are a different case: SQLite
+            # serialises them and the second fails at its first write
+            # (deferred BEGIN, CHT-1411); this guard is for the
+            # serialised-but-stale interleaving, which is the realistic one.
+            if has_rituals:
+                # Enter limbo - sprint stays ACTIVE but blocked
+                won = await execute_raw(
+                    "UPDATE sprints SET limbo = 1 WHERE id = ? AND status = ? AND limbo = 0 RETURNING id",
+                    [sprint.id, SprintStatus.ACTIVE.name],
+                )
+            else:
+                # Full rotation - complete and activate next sprint
+                won = await execute_raw(
+                    "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND status = ? AND limbo = 0 RETURNING id",
+                    [SprintStatus.COMPLETED.name, sprint.id, SprintStatus.ACTIVE.name],
+                )
+            if not won:
+                await sprint.refresh()
+                return sprint
+
             # Get next sprint (or create if doesn't exist)
             next_sprint = await self.get_next_sprint(project_id)
             if not next_sprint:
@@ -153,15 +194,15 @@ class SprintService:
                 [next_sprint.id, sprint.id] + incomplete_statuses,
             )
 
-            if has_rituals:
-                # Enter limbo - sprint stays ACTIVE but blocked
-                sprint.limbo = True
-                await sprint.save(update_fields={"limbo"})
-            else:
-                # Full rotation - complete and activate next sprint
-                sprint.status = SprintStatus.COMPLETED
-                sprint.limbo = False
-                await sprint.save(update_fields={"status", "limbo"})
+            if not has_rituals:
+                # closed_at rides in the same transaction as the status
+                # flip (CHT-1366), saved through the ORM so the datetime
+                # is stored the way every other path stores it.
+                await sprint.refresh()
+                sprint.closed_at = datetime.now(timezone.utc)
+                await sprint.save(update_fields={"closed_at"})
+                # The sprint rotated: round-robin groups move on (CHT-1280).
+                await RitualService().record_sprint_rotation(project_id, sprint.id)
                 await self._activate_next_sprint(next_sprint)
 
         await sprint.refresh()
@@ -170,7 +211,8 @@ class SprintService:
     async def _activate_next_sprint(self, next_sprint: OxydeSprint) -> None:
         """Activate the next sprint and create a new next."""
         next_sprint.status = SprintStatus.ACTIVE
-        await next_sprint.save(update_fields={"status"})
+        next_sprint.activated_at = datetime.now(timezone.utc)
+        await next_sprint.save(update_fields={"status", "activated_at"})
 
         # Only create a new PLANNED sprint if one doesn't already exist
         existing_planned = await OxydeSprint.objects.filter(
@@ -215,16 +257,30 @@ class SprintService:
         # guard was dead code — after ANY caller's UPDATE landed, a
         # refresh showed limbo=0 for every racer, so all of them
         # proceeded to _activate_next_sprint (PR #223 review, CHT-1278).
-        result = await execute_raw(
-            "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND limbo = 1 RETURNING id",
-            [SprintStatus.COMPLETED.name, sprint.id],
-        )
+        # The winner also stamps the close time (CHT-1366): limbo is part
+        # of the sprint; it closes when the rotation actually happens. The
+        # stamp rides in the same transaction as the status flip so a crash
+        # between them cannot leave a COMPLETED sprint with no closed_at.
+        async with atomic():
+            result = await execute_raw(
+                "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND limbo = 1 RETURNING id",
+                [SprintStatus.COMPLETED.name, sprint.id],
+            )
+            if result:
+                await sprint.refresh()
+                sprint.closed_at = datetime.now(timezone.utc)
+                await sprint.save(update_fields={"closed_at"})
+                # The winner also moves round-robin groups past the ritual
+                # that gated this limbo (CHT-1280); until now the pointer was
+                # never advanced on any path, so the first sibling gated
+                # every sprint and the others were never selected.
+                from app.services.ritual_service import RitualService
+                await RitualService().record_sprint_rotation(sprint.project_id, sprint.id)
         if not result:
             # Lost the race (or sprint wasn't in limbo): another request
             # already cleared limbo and owns next-sprint activation.
             await sprint.refresh()
             return sprint
-        await sprint.refresh()
 
         # Get and activate the next sprint
         next_sprint = await self.get_next_sprint(sprint.project_id)
@@ -239,8 +295,22 @@ class SprintService:
         return await OxydeSprint.objects.get_or_none(id=sprint_id)
 
     async def update(self, sprint: OxydeSprint, sprint_in: SprintUpdate) -> OxydeSprint:
-        """Update a sprint."""
+        """Update a sprint.
+
+        A status change through PATCH is still a lifecycle transition, so it
+        stamps the same outputs close_sprint and complete_limbo do
+        (CHT-1366): activated_at the first time a sprint becomes ACTIVE,
+        closed_at the first time it becomes COMPLETED. Without this the
+        dates would be outputs of two code paths and a NULL on the third.
+        """
         update_data = sprint_in.model_dump(exclude_unset=True)
+        new_status = update_data.get("status")
+        if new_status is not None and new_status != sprint.status:
+            now = datetime.now(timezone.utc)
+            if new_status == SprintStatus.ACTIVE and sprint.activated_at is None:
+                update_data["activated_at"] = now
+            if new_status == SprintStatus.COMPLETED and sprint.closed_at is None:
+                update_data["closed_at"] = now
         for field, value in update_data.items():
             setattr(sprint, field, value)
         await sprint.save(update_fields=set(update_data.keys()))
@@ -261,6 +331,5 @@ class SprintService:
         """List sprints for a project."""
         qs = OxydeSprint.objects.filter(project_id=project_id)
         if status:
-            # .name for filter (bypasses model_dump, goes to msgpack raw)
-            qs = qs.filter(status=status.name if hasattr(status, 'name') else status)
+            qs = qs.filter(status=status)
         return await qs.order_by("-created_at").offset(skip).limit(limit).all()

@@ -326,6 +326,20 @@ describe('issue-list', () => {
     });
 
     describe('renderIssueRow', () => {
+        it('renders a zero-point estimate instead of hiding it (CHT-1406)', () => {
+            const issue = {
+                id: 'issue-0', title: 'Zero', identifier: 'TEST-0', status: 'todo', priority: 'medium',
+                issue_type: 'task', project_id: 'p1', created_at: '2024-01-15T10:00:00Z', estimate: 0,
+            };
+            formatEstimate.mockImplementation((e) => (e === null || e === undefined ? '' : `${e} points`));
+            expect(formatEstimate).not.toHaveBeenCalled();
+            expect(renderIssueRow(issue)).toContain('0 points');
+            expect(formatEstimate).toHaveBeenCalledWith(0, 'p1');
+            formatEstimate.mockClear();
+            expect(renderIssueRow({ ...issue, estimate: null })).not.toContain('0 points');
+            expect(formatEstimate).not.toHaveBeenCalled();
+        });
+
         it('renders issue with all basic fields', () => {
             const issue = {
                 id: 'issue-1',

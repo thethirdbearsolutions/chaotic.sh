@@ -616,7 +616,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                                     <span class="sub-issue-status">${getStatusIcon(subIssue.status)}</span>
                                     <span class="sub-issue-id">${subIssue.identifier}</span>
                                     <span class="sub-issue-title">${escapeHtml(subIssue.title)}</span>
-                                    ${subIssue.estimate ? `<span class="sub-issue-estimate">${subIssue.estimate}pts</span>` : ''}
+                                    ${subIssue.estimate != null ? `<span class="sub-issue-estimate">${subIssue.estimate}pts</span>` : ''}
                                 </a>
                             `).join('')}
                         </div>

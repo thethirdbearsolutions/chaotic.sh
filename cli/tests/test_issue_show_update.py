@@ -46,6 +46,20 @@ def mock_issue_2():
     }
 
 
+# GET /issues/{id}/relations wire shape (IssueRelationResponse).
+RELATION = {
+    "id": "rel-1-uuid-abcdef",
+    "issue_id": "issue-uuid-123",
+    "related_issue_id": "issue-uuid-7",
+    "relation_type": "blocks",
+    "created_at": "2026-09-13T13:57:58.332760Z",
+    "related_issue_identifier": "CHT-7",
+    "related_issue_title": "Upstream",
+    "related_issue_status": "in_progress",
+    "direction": "outgoing",
+}
+
+
 class TestIssueShowSingle:
     """Tests for issue show with a single identifier."""
 
@@ -58,6 +72,7 @@ class TestIssueShowSingle:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
@@ -87,6 +102,7 @@ class TestIssueShowSingle:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
@@ -113,6 +129,7 @@ class TestIssueShowSingle:
                 },
             ],
         })
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
@@ -166,6 +183,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
@@ -192,6 +210,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
@@ -209,6 +228,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
@@ -226,6 +246,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[
             {"title": "Design Doc", "icon": "📐"},
             {"title": "API Spec", "icon": None},
@@ -237,6 +258,67 @@ class TestIssueShowParentSubIssues:
         assert 'Linked Documents' in result.output
         assert 'Design Doc' in result.output
         assert 'API Spec' in result.output
+
+    def test_show_relations_section(self, cli_runner, mock_issue):
+        """CHT-1431: the detail view lists relations, blockers included."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_comments = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [], "completed_rituals": [],
+        })
+        client.get_relations = MagicMock(return_value=[
+            {**RELATION, "relation_type": "blocked_by", "direction": "incoming"},
+            {"id": "malformed"},
+        ])
+        client.get_issue_documents = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
+
+        assert result.exit_code == 0, result.output
+        assert 'Relations:' in result.output
+        assert 'Blocked By CHT-7: Upstream (In Progress)' in result.output
+
+    def test_show_relations_unavailable(self, cli_runner, mock_issue):
+        """Review #4: a failed relations call says so instead of looking like none."""
+        from cli.main import cli, client, APIError
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_comments = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [], "completed_rituals": [],
+        })
+        client.get_relations = MagicMock(side_effect=APIError("boom"))
+        client.get_issue_documents = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
+
+        assert result.exit_code == 0, result.output
+        assert '(relations unavailable)' in result.output
+        assert 'Relations:' not in result.output
+
+    def test_show_incoming_duplicate(self, cli_runner, mock_issue):
+        """Review #1: 'CHT-7 duplicates this' renders as Duplicated By, not Duplicates."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_comments = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [], "completed_rituals": [],
+        })
+        client.get_relations = MagicMock(return_value=[
+            {**RELATION, "relation_type": "duplicates", "direction": "incoming"},
+        ])
+        client.get_issue_documents = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
+
+        assert result.exit_code == 0, result.output
+        assert 'Duplicated By CHT-7: Upstream' in result.output
 
     def test_show_parent_api_failure_graceful(self, cli_runner, mock_issue):
         """issue show handles parent API failure gracefully."""
@@ -250,6 +332,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
@@ -267,6 +350,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
@@ -285,6 +369,7 @@ class TestIssueShowMulti:
         client.get_issue_by_identifier = MagicMock(
             side_effect=[mock_issue, mock_issue_2],
         )
+        client.get_relations = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', 'CHT-101'])
 
@@ -320,6 +405,7 @@ class TestIssueShowJson:
         client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
         client.get_comments = MagicMock(return_value=[])
         client.get_sub_issues = MagicMock(return_value=[{"id": "sub-1", "status": "done"}])
+        client.get_relations = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', '--json'])
 
@@ -329,6 +415,51 @@ class TestIssueShowJson:
         assert data['title'] == 'Fix the widget'
         assert data['sub_issues'] == [{"id": "sub-1", "status": "done"}]
 
+    def test_show_single_json_includes_relations(self, cli_runner, mock_issue):
+        """CHT-1431: view --json carries the issue's relations, as the API returns them."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_comments = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+        client.get_relations = MagicMock(return_value=[RELATION])
+
+        result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['relations'] == [RELATION]
+        client.get_relations.assert_called_once_with(mock_issue['id'])
+
+    def test_show_single_json_relations_api_error(self, cli_runner, mock_issue):
+        """A failing relations call leaves relations empty instead of failing the view."""
+        from cli.main import cli, client, APIError
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_comments = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+        client.get_relations = MagicMock(side_effect=APIError("boom"))
+
+        result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        # null, not []: an API error must not read as "no blockers" (review #2)
+        assert json.loads(result.stdout)['relations'] is None
+
+    def test_show_multi_json_includes_relations(self, cli_runner, mock_issue, mock_issue_2):
+        """Review #3: every --json shape of view carries relations."""
+        from cli.main import cli, client, APIError
+
+        client.get_issue_by_identifier = MagicMock(side_effect=[mock_issue, mock_issue_2])
+        client.get_relations = MagicMock(side_effect=[[RELATION], APIError("boom")])
+
+        result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100', 'CHT-101', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data[0]['relations'] == [RELATION]
+        assert data[1]['relations'] is None
+
     def test_show_multi_json(self, cli_runner, mock_issue, mock_issue_2):
         """issue show CHT-100 CHT-101 --json outputs JSON array."""
         from cli.main import cli, client
@@ -336,6 +467,7 @@ class TestIssueShowJson:
         client.get_issue_by_identifier = MagicMock(
             side_effect=[mock_issue, mock_issue_2],
         )
+        client.get_relations = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', 'CHT-101', '--json'])
 
@@ -830,3 +962,29 @@ class TestIssueUpdateJson:
         assert result.exit_code == 1
         data = json.loads(result.stdout)
         assert 'no-such-label' in data['error'].lower()
+
+
+
+class TestZeroEstimateDisplays:
+    """CHT-1406: 0 is a real estimate in every CLI display, not "-"."""
+
+    def test_issue_show_renders_a_zero_point_estimate(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+        client.get_issue_by_identifier = MagicMock(return_value={**mock_issue, "estimate": 0})
+        client.get_sub_issues = MagicMock(return_value=[
+            {**mock_issue, "id": "sub-1", "identifier": "CHT-2", "title": "Sub", "estimate": 0},
+        ])
+        result = cli_runner.invoke(cli, ["issue", "show", mock_issue["identifier"]])
+        assert result.exit_code == 0, result.output
+        assert "Estimate: 0 points" in result.output
+        assert "- points" not in result.output
+
+    def test_sprint_show_renders_a_zero_point_estimate(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+        client.get_sprints = MagicMock(return_value=[{"id": "s1", "name": "Sprint 1", "status": "active"}])
+        client.get_sprint = MagicMock(return_value={"id": "s1", "name": "Sprint 1", "status": "active", "budget": 10, "points_spent": 0})
+        client.get_issues = MagicMock(return_value=[{**mock_issue, "estimate": 0}])
+        result = cli_runner.invoke(cli, ["sprint", "show", "Sprint 1"])
+        assert result.exit_code == 0, result.output
+        row = next((line for line in result.output.splitlines() if mock_issue["identifier"] in line), "")
+        assert row and " 0 " in row and " - " not in row

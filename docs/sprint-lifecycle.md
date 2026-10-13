@@ -1,5 +1,17 @@
 # Sprint lifecycle
 
+**Sprints are measured by work, not by time.** A sprint is defined by the
+work that closes in it: it begins when the previous one closes and ends
+when it is closed, which a spent point budget forces (arrears blocks
+every further close until then; an under-budget sprint can be closed
+early by hand). It has no scheduled length, no time-box, no calendar. Time is a *dependent* variable -- a sprint takes
+however long its budget takes to spend -- which is the inverse of
+calendar-boxed agile, where time is fixed and velocity is measured.
+Everything below follows from that (CHT-1366). The only dates a sprint
+carries are `activated_at` and `closed_at`, stamped when it turned out
+to run, so "how long did Sprint 91 take" is a derived fact rather than
+a plan.
+
 This doc answers "how do sprints actually work" from the code, not from
 what a plausible-sounding API might look like. It exists because
 CHT-109 deleted a test written against `start_sprint`/`complete_sprint`
@@ -65,8 +77,14 @@ is no `complete_sprint` method — "close" is the one and only verb for
 retiring the active sprint. Calling it on a non-`ACTIVE` sprint raises
 `ValueError("Can only close an active sprint")`; calling it again while
 already in limbo raises `ValueError("Sprint is already in limbo...")`.
+Those checks run on the caller's copy of the row. A caller whose copy is
+stale (it read the sprint `ACTIVE`, another close committed since) does
+not raise: the transition is claimed with a conditional
+`UPDATE ... WHERE status = 'ACTIVE' AND limbo = 0 RETURNING id`, and the
+loser returns the row as the winner left it, having written nothing
+(CHT-1404, the same contract as `complete_limbo` below).
 
-`close_sprint` always does two things regardless of outcome:
+Once claimed, `close_sprint` does two things regardless of outcome:
 
 1. Gets (or creates) the `PLANNED` sprint to receive spillover.
 2. Moves every incomplete issue (`backlog`/`todo`/`in_progress`/`in_review`)
@@ -89,7 +107,25 @@ Limbo resolves via `SprintService.complete_limbo(sprint)`, called after
 all pending rituals are attested. It's the actual transition to
 `COMPLETED` + next-sprint activation for the limbo path — an atomic
 `UPDATE ... WHERE limbo = 1` guards against two racing callers both
-trying to activate the next sprint (CHT-1278).
+trying to activate the next sprint (CHT-1278). Both guards cover the
+serialised-but-stale interleaving (pre-checks run outside the
+transaction); two genuinely overlapping writers are serialised by SQLite
+itself and the second fails at its first write (CHT-1411).
+
+Both rotation paths (the immediate one in `close_sprint` and the
+winner of `complete_limbo`) also advance every ROUND_ROBIN sprint ritual
+group past the ritual that gated the closing sprint (CHT-1280), so the
+next sprint's close selects the sibling. A group's members must share a
+trigger (CHT-1403): the rotation advances one pointer over one event, so
+`ritual create` / `ritual update` refuse joining a group, changing
+trigger, or reactivating into a mismatch with the group's active members.
+A group that already mixed triggers before the rule keeps working (every
+selection path filters by trigger) and its members stay editable; the API
+reports each group's `triggers` and `chaotic ritual group list` flags one
+with more than one so it can be split. Selection is pure while a sprint
+is open, so listing and attestation keep offering the same ritual until
+the rotation. A force-cleared limbo rotates too, and counts as that
+ritual's turn: the skipped ritual is not re-offered next sprint.
 
 So: **`close_sprint` is the only advance mechanism**, and it either
 completes-and-rotates immediately, or parks the sprint in limbo until

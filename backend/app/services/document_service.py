@@ -53,6 +53,17 @@ class DocumentService:
             document_icon=document_icon,
         )
 
+    async def _recorded_body(self, document: OxydeDocument) -> tuple[str, str | None]:
+        """(title, content) as the newest revision recorded them, which
+        the revision invariant says is what is stored; the row's own
+        values when it has no revisions."""
+        newest = await OxydeDocumentRevision.objects.filter(
+            document_id=document.id,
+        ).order_by("-version").first()
+        if newest is None:
+            return document.title, document.content
+        return newest.title, newest.content
+
     async def _next_revision_version(self, document_id: str) -> int:
         """Compute the next revision number for a document.
 
@@ -156,12 +167,15 @@ class DocumentService:
         """Update a document."""
         update_data = document_in.model_dump(exclude_unset=True)
 
-        # Snapshot the pre-update title/content so we can decide
-        # whether this edit warrants a new revision row. Field updates
-        # like icon/project_id/sprint_id don't change document body and
-        # don't justify a new revision.
-        prev_title = document.title
-        prev_content = document.content
+        # The pre-update title/content, to decide whether this edit
+        # warrants a new revision row. Field updates like
+        # icon/project_id/sprint_id don't change document body and don't
+        # justify a new revision. Read from the newest revision, not the
+        # caller's in-memory row (CHT-1340): the columns are written
+        # unconditionally below, so a stale object writing the body a
+        # concurrent edit had already moved away from would otherwise put
+        # it back without a revision saying so.
+        prev_title, prev_content = await self._recorded_body(document)
 
         for field, value in update_data.items():
             setattr(document, field, value)

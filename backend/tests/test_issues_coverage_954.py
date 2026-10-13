@@ -9,14 +9,11 @@ import pytest
 import pytest_asyncio
 from unittest.mock import patch, AsyncMock
 from app.oxyde_models.issue import OxydeIssue
-from app.oxyde_models.ritual import OxydeRitual, OxydeRitualAttestation
-from app.oxyde_models.issue import OxydeTicketLimbo
+from app.oxyde_models.ritual import OxydeRitual
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.team import OxydeTeamMember
 from app.oxyde_models.project import OxydeProject
-from app.enums import IssueStatus, RitualTrigger, ApprovalMode, LimboType, TeamRole
-from app.oxyde_models.sprint import OxydeSprint
-from app.oxyde_models.label import OxydeLabel
+from app.enums import IssueStatus, RitualTrigger, ApprovalMode, TeamRole
 
 
 # === Helpers ===
@@ -52,7 +49,7 @@ async def second_issue(db, second_project, test_user):
 @pytest_asyncio.fixture
 async def agent_user(db, test_team):
     """Agent user scoped to test_team."""
-    from app.utils.security import get_password_hash, create_access_token
+    from app.utils.security import get_password_hash
     user = await OxydeUser.objects.create(
         email="agent@example.com",
         hashed_password=get_password_hash("agentpass"),

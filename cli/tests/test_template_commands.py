@@ -8,7 +8,7 @@ import json
 
 import pytest
 import yaml
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 
 @pytest.fixture(autouse=True)
