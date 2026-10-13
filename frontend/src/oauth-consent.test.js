@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { consentRequestId, renderConsent, readChoice, showConsent } from './oauth-consent.js';
+import { consentRequestId, renderConsent, readChoice, showConsent, isSafeRedirect } from './oauth-consent.js';
 import { api } from './api.js';
 
 vi.mock('./api.js', () => ({
@@ -7,6 +7,7 @@ vi.mock('./api.js', () => ({
         getOAuthRequest: vi.fn(),
         approveOAuthRequest: vi.fn(),
         denyOAuthRequest: vi.fn(),
+        logout: vi.fn(),
     },
 }));
 
@@ -29,7 +30,12 @@ function request(overrides = {}) {
             {
                 id: 't1', name: 'Team One', key: 'ONE',
                 projects: [{ id: 'p1', name: 'Proj', key: 'PR' }],
-                agents: [{ id: 'a1', name: 'Helper', agent_project_id: null }],
+                agents: [
+                    { id: 'a1', name: 'Helper', agent_project_id: null, owned_by_viewer: true, owner_name: 'Me',
+                      active_api_keys: 0 },
+                    { id: 'a2', name: 'Bot', agent_project_id: null, owned_by_viewer: false,
+                      owner_name: 'Ann <x>', active_api_keys: 2 },
+                ],
             },
             { id: 't2', name: 'Team Two', key: 'TWO', projects: [], agents: [] },
         ],
@@ -53,6 +59,23 @@ describe('consentRequestId', () => {
         expect(consentRequestId('/oauth/consent/abcdefghijklmnop/x')).toBeNull();
         expect(consentRequestId('/oauth/consent/<script>alert(1)</script>')).toBeNull();
         expect(consentRequestId(null)).toBeNull();
+    });
+});
+
+describe('isSafeRedirect', () => {
+    it.each([
+        'https://app.example/cb?code=x', 'http://127.0.0.1:4242/cb', 'http://localhost/cb',
+        'com.example.app:/cb?code=x', 'com.example.app://cb',
+    ])('allows %s', (url) => {
+        expect(isSafeRedirect(url)).toBe(true);
+    });
+    it.each([
+        'javascript:alert(1)//?code=x', 'JavaScript:alert(1)', 'JAVASCRIPT:alert(1)', ' javascript:alert(1)',
+        'java\tscript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'DATA:text/html,x',
+        'vbscript:msgbox(1)', 'file:///etc/passwd', 'blob:https://app.example/x', 'about:blank', 'myapp:/cb',
+        '/relative', '', null, undefined,
+    ])('refuses %s', (url) => {
+        expect(isSafeRedirect(url)).toBe(false);
     });
 });
 
@@ -126,6 +149,52 @@ describe('showConsent', () => {
         await flush();
         expect(api.approveOAuthRequest).toHaveBeenCalledWith('req_0123456789abcdef', expect.objectContaining({ team_id: 't1' }));
         expect(navigate).toHaveBeenCalledWith('https://app.example/cb?code=cac_x');
+    });
+
+    it.each([
+        'javascript:alert(document.domain)//?error=access_denied',
+        'JavaScript:alert(1)//?code=x',
+        'data:text/html,<script>alert(1)</script>',
+    ])('never navigates to %s, whatever the server returns', async (redirect) => {
+        api.getOAuthRequest.mockResolvedValue(request());
+        api.denyOAuthRequest.mockResolvedValue({ redirect });
+        api.approveOAuthRequest.mockResolvedValue({ redirect });
+        const navigate = vi.fn();
+        await showConsent('req_0123456789abcdef', navigate);
+        document.getElementById('oauth-deny').click();
+        await flush();
+        expect(navigate).not.toHaveBeenCalled();
+        expect(document.body.textContent).toContain("isn't one a browser should be sent to");
+    });
+
+    it('asks a CLI or old login to sign in again', async () => {
+        api.getOAuthRequest.mockRejectedValue(Object.assign(new Error('no'), {
+            status: 403, detail: { error_code: 'web_login_required' },
+        }));
+        const reload = vi.fn();
+        await showConsent('req_0123456789abcdef', vi.fn(), reload);
+        expect(document.body.textContent).toContain('Sign in again');
+        document.getElementById('oauth-sign-in-again').click();
+        expect(api.logout).toHaveBeenCalled();
+        expect(reload).toHaveBeenCalled();
+    });
+
+    it("says whose an existing agent is and that its keys stay live", async () => {
+        api.getOAuthRequest.mockResolvedValue(request());
+        await showConsent('req_0123456789abcdef', vi.fn());
+        const agent = document.getElementById('oauth-agent');
+        const info = document.getElementById('oauth-agent-info');
+        expect(info.classList.contains('hidden')).toBe(true);
+        expect(agent.options[2].textContent).toBe("Bot (Ann <x>'s)");
+        agent.value = 'a2';
+        agent.dispatchEvent(new Event('change'));
+        expect(info.classList.contains('hidden')).toBe(false);
+        expect(info.textContent).toContain("Ann <x>'s agent");
+        expect(info.innerHTML).not.toContain('<x>');
+        expect(info.textContent).toContain('2 active API keys');
+        agent.value = 'a1';
+        agent.dispatchEvent(new Event('change'));
+        expect(info.textContent).toBe('Your agent.');
     });
 
     it('denies', async () => {

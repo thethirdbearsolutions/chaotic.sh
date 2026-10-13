@@ -426,6 +426,7 @@ describe('ApiClient', () => {
             body: JSON.stringify({
               email: 'john@example.com',
               password: 'password123',
+              client: 'web',
             }),
           })
         );

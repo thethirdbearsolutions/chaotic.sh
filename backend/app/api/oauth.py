@@ -32,7 +32,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from app.api.deps import HumanUser
 from app.auth.access import reads, writes
 from app.config import get_settings
-from app.oauth.clients import canonical_resource, redirect_uri_matches
+from app.enums import OAuthClientRegistration
+from app.oauth import ratelimit
+from app.oauth.clients import canonical_resource, redirect_uri_matches, redirect_uri_problem
 from app.oauth.discovery import AUTHORIZE_PATH, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH, oauth_enabled
 from app.oauth.errors import FRAME_HEADERS, NO_STORE, OAuthHTTPError
 from app.schemas.oauth import (
@@ -45,7 +47,9 @@ from app.schemas.oauth import (
 from app.services.oauth_client_service import OAuthClientError, OAuthClientService, redirect_uris_of
 from app.services.oauth_grant_service import GrantError, OAuthGrantService, TokenRequest
 from app.services.oauth_consent_service import (
+    AVAILABLE_POLICIES,
     MAX_STATE_LENGTH,
+    POLICY_SCOPES,
     ConsentError,
     OAuthConsentService,
     normalize_requested_scope,
@@ -155,13 +159,13 @@ verified. If you were setting up a connector, check its URL and try again, or as
 </body></html>"""
 
 
-def _error_page(message: str) -> HTMLResponse:
+def _error_page(message: str, status_code: int = status.HTTP_400_BAD_REQUEST) -> HTMLResponse:
     """An invalid client or redirect_uri: an error page here, never a
     redirect, since nothing says where a redirect would be safe (I17)."""
     return HTMLResponse(
         _ERROR_PAGE.format(message=html.escape(message)),
-        status_code=status.HTTP_400_BAD_REQUEST,
-        headers={**NO_STORE, **FRAME_HEADERS},
+        status_code=status_code,
+        headers={**NO_STORE, **FRAME_HEADERS, "Referrer-Policy": "no-referrer"},
     )
 
 
@@ -191,18 +195,31 @@ async def authorize(request: Request) -> Response:
     """
     if not oauth_enabled():
         raise _not_found()
+    source_ip = request.client.host if request.client else None
+    if source_ip and not ratelimit.authorize_requests.allow(
+        ratelimit.address_bucket(source_ip), get_settings().oauth_authorize_max_per_ip_per_minute,
+    ):
+        # Before the client is known, so a page, not a redirect.
+        return _error_page("Too many authorization requests from your network; wait a minute and try again.", 429)
     params = request.query_params
     if any(len(params.getlist(name)) > 1 for name in ("client_id", "redirect_uri")):
         return _error_page("The request repeats client_id or redirect_uri.")
     try:
-        client = await OAuthClientService().resolve(params.get("client_id"))
+        client = await OAuthClientService().resolve(params.get("client_id"), source_ip=source_ip)
     except OAuthClientError as exc:
-        return _error_page(f"The app could not be identified: {exc.description}.")
+        return _error_page(f"The app could not be identified: {exc.description}.", exc.status_code)
     redirect_uri = params.get("redirect_uri")
     if not redirect_uri:
         return _error_page("The request has no redirect_uri.")
     if not redirect_uri_matches(redirect_uris_of(client), redirect_uri):
         return _error_page("The redirect_uri is not one this app registered.")
+    # Again here, not only at registration: a row stored before a rule
+    # tightened (a cached metadata document) is not re-validated, and
+    # this URI is where the browser will be sent (CHT-1519 review B1).
+    if redirect_uri_problem(
+        redirect_uri, allow_private_use=client.registration == OAuthClientRegistration.CIMD,
+    ):
+        return _error_page("The app's redirect_uri is not one this server will send a browser to.")
 
     state = params.get("state")
     iss = get_settings().oauth_issuer
@@ -235,6 +252,12 @@ async def authorize(request: Request) -> Response:
     scopes = normalize_requested_scope(params.get("scope"))
     if scopes is None:
         return fail("invalid_scope", "unknown scope requested")
+    if not any(POLICY_SCOPES.get(s) in AVAILABLE_POLICIES for s in scopes):
+        # Consent may grant less than asked, never more (review S2/Q1):
+        # an app asking only for a policy this server can't grant yet is
+        # told so, not shown a page that can't be approved.
+        available = " ".join(sorted(f"chaotic:{p}" for p in AVAILABLE_POLICIES))
+        return fail("invalid_scope", f"only {available} is available on this server")
 
     stored = await OAuthConsentService().create_request(
         client=client, redirect_uri=redirect_uri, state=state, code_challenge=challenge, scopes=scopes,

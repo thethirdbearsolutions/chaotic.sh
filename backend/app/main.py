@@ -199,8 +199,10 @@ def _render_index(request: Request):
         "git_sha_short": info["git_sha_short"],
     })
     # Never framed: the OAuth consent page is a route of this shell, and
-    # framing any of it invites clickjacking (CHT-1519, threat S4).
+    # framing any of it invites clickjacking (CHT-1519, threat S4). Its
+    # path carries the consent request id, so no path in Referers either.
     response.headers.update(FRAME_HEADERS)
+    response.headers["Referrer-Policy"] = "same-origin"
     return response
 
 
@@ -338,10 +340,14 @@ async def cli_auth(request: Request, callback: str = Query(...), state: str = Qu
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Callback URL must be localhost")
 
-    return templates.TemplateResponse(request, "cli-auth.html", {
+    response = templates.TemplateResponse(request, "cli-auth.html", {
         "callback": callback,
         "state": state
     })
+    # It mints an API key on a click: never framed (CHT-1519 review N6).
+    response.headers.update(FRAME_HEADERS)
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @app.get("/{full_path:path}", response_class=HTMLResponse)

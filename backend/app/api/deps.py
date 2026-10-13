@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.auth.credentials import CredentialError, CredentialKind, classify, rest_resolver
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
+from app.utils.security import is_web_login
 
 security = HTTPBearer(auto_error=False)
 
@@ -140,6 +141,11 @@ HUMAN_SESSION_REQUIRED = {
     "error_code": "human_session_required",
     "message": "Only a person signed in to the web app can review or approve an app's access.",
 }
+WEB_LOGIN_REQUIRED = {
+    "error_code": "web_login_required",
+    "message": "Sign in to the Chaotic web app again to review an app's access. "
+               "A login made by the command-line tool can't approve apps.",
+}
 
 
 async def require_human_session(
@@ -149,13 +155,18 @@ async def require_human_session(
     """The caller is a human using their web login (I18): not an agent,
     not an API key, not any OAuth token. Decided by the credential's
     class (``app.auth.credentials.classify``), so a token kind added later
-    is refused unless it is a session JWT."""
+    is refused unless it is a session JWT, and then by the web-login
+    claim (``app.utils.security.is_web_login``): the CLI holds session
+    JWTs too, on disk where an agent running as the human can read them,
+    and those must not approve an app (threat S13)."""
     if (
         user.is_agent
         or credentials is None
         or classify(credentials.credentials) is not CredentialKind.SESSION_JWT
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(HUMAN_SESSION_REQUIRED))
+    if not is_web_login(credentials.credentials):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(WEB_LOGIN_REQUIRED))
     return user
 
 

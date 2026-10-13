@@ -5,13 +5,14 @@ scope, policy, RFC 9207 iss, and the frame headers on the SPA shell.
 """
 import base64
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
 from app.config import get_settings
-from app.enums import AgentKind, HolderVia, TokenKind
+from app.enums import AgentKind, HolderVia, OAuthClientRegistration, TokenKind
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeOAuthAuthorizationRequest, OxydeOAuthClient
 from app.oxyde_models.project import OxydeProject
@@ -21,6 +22,8 @@ from app.schemas.api_key import APIKeyCreate
 from app.services.api_key_service import APIKeyService
 from app.services.token_service import TokenService, _reset_for_tests
 from app.services.oauth_consent_service import with_query
+from app.oauth import ratelimit
+from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
 
 BASE = "https://tracker.example.com"
 REDIRECT = "https://app.example/cb"
@@ -32,6 +35,24 @@ def _challenge(verifier=VERIFIER):
     return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
 
 
+def _web_login(user):
+    """The web app's login: a session JWT with the web-login claim."""
+    token = create_access_token(data={"sub": user.id, WEB_LOGIN_CLAIM: WEB_LOGIN})
+    return {"Authorization": f"Bearer {token}"}
+
+
+# Consent requires the web app's login (review S1); these override
+# conftest's, which mint a CLI-style session JWT. Both work everywhere else.
+@pytest.fixture
+async def auth_headers(test_user):
+    return _web_login(test_user)
+
+
+@pytest.fixture
+async def auth_headers2(test_user2):
+    return _web_login(test_user2)
+
+
 @pytest.fixture
 def oauth_on(monkeypatch):
     monkeypatch.setenv("OAUTH_ENABLED", "true")
@@ -39,9 +60,13 @@ def oauth_on(monkeypatch):
     monkeypatch.setenv("OAUTH_DCR_ENABLED", "true")
     get_settings.cache_clear()
     _reset_for_tests()
+    ratelimit.authorize_requests.clear()
+    ratelimit.cimd_fetches.clear()
     yield
     get_settings.cache_clear()
     _reset_for_tests()
+    ratelimit.authorize_requests.clear()
+    ratelimit.cimd_fetches.clear()
 
 
 @pytest.fixture
@@ -154,6 +179,12 @@ class TestAuthorizeValidation:
         # The wildcard is never a scope on the wire (CHT-1562).
         ({"scope": "*"}, "invalid_scope"),
         ({"scope": "chaotic:write *"}, "invalid_scope"),
+        # Only policies this server can't grant yet: refused here, never
+        # upgraded to write and never a consent page that can't be
+        # approved (review S2/Q1).
+        ({"scope": "chaotic:read"}, "invalid_scope"),
+        ({"scope": "chaotic:read offline_access"}, "invalid_scope"),
+        ({"scope": "chaotic:triage chaotic:read"}, "invalid_scope"),
     ])
     async def test_other_errors_redirect_to_the_validated_uri(self, client, oauth_client, overrides, error):
         response = await _authorize(client, oauth_client, **overrides)
@@ -188,7 +219,6 @@ class TestAuthorizeValidation:
         (None, "chaotic:write"),
         ("", "chaotic:write"),
         ("offline_access", "chaotic:write offline_access"),
-        ("chaotic:read", "chaotic:read"),
         ("chaotic:read chaotic:write chaotic:read", "chaotic:read chaotic:write"),
     ])
     async def test_scope_normalization(self, client, oauth_client, scope, stored):
@@ -202,6 +232,46 @@ class TestAuthorizeValidation:
         )
         new = await _request_id(client, oauth_client)
         assert {r.id for r in await OxydeOAuthAuthorizationRequest.objects.all()} == {new}
+
+    async def test_rate_limited_per_address(self, client, oauth_client, monkeypatch):
+        monkeypatch.setenv("OAUTH_AUTHORIZE_MAX_PER_IP_PER_MINUTE", "2")
+        get_settings.cache_clear()
+        for _ in range(2):
+            await _request_id(client, oauth_client)
+        refused = await _authorize(client, oauth_client)
+        assert refused.status_code == 429
+        assert "location" not in refused.headers
+        assert refused.headers["x-frame-options"] == "DENY"
+        assert await OxydeOAuthAuthorizationRequest.objects.count() == 2
+
+    @pytest.mark.parametrize("uri", [
+        "javascript:alert(document.domain)//", "JavaScript:alert(1)//", "JAVASCRIPT:alert(1)//",
+        "data:text/html,<script>alert(1)</script>", "vbscript:msgbox(1)", "http://app.example/cb",
+    ])
+    async def test_a_stored_dangerous_redirect_is_refused(self, client, oauth_on, db, uri):
+        """B1, layer 2: a client row stored before the registration rules
+        tightened (a cached metadata document) is checked again here."""
+        cid = "https://app.example/meta"
+        await OxydeOAuthClient.objects.create(
+            id=cid, registration=OAuthClientRegistration.CIMD, client_name="Old",
+            redirect_uris=json.dumps([uri]), token_endpoint_auth_method="none",
+            fetched_at=datetime.now(timezone.utc),
+            cache_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        response = await _authorize(client, cid, redirect_uri=uri)
+        assert response.status_code == 400
+        assert "location" not in response.headers
+        assert await OxydeOAuthAuthorizationRequest.objects.count() == 0
+
+    async def test_a_private_use_redirect_is_allowed_for_a_metadata_document(self, client, oauth_on, db):
+        cid = "https://app.example/meta"
+        await OxydeOAuthClient.objects.create(
+            id=cid, registration=OAuthClientRegistration.CIMD, client_name="Native",
+            redirect_uris=json.dumps(["com.example.app:/cb"]), token_endpoint_auth_method="none",
+            fetched_at=datetime.now(timezone.utc),
+            cache_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        await _request_id(client, cid, redirect_uri="com.example.app:/cb")
 
     async def test_existing_query_on_redirect_uri_is_kept(self):
         assert with_query("https://a.example/cb?x=1", {"code": "c", "state": None}) == "https://a.example/cb?x=1&code=c"
@@ -233,6 +303,33 @@ class TestWhoMayConsent:
             assert response.json()["detail"]["error_code"] == "human_session_required"
         # Nor did reading bind it.
         assert (await OxydeOAuthAuthorizationRequest.objects.get(id=pending)).bound_user_id is None
+
+    async def test_a_cli_login_is_refused(self, client, pending, test_user, test_team):
+        """S1/S13: the CLI's `auth login` keeps a session JWT on disk where
+        an agent running as the human can read it. It works for the rest
+        of the API but not for consent, and a refused read doesn't bind."""
+        cli = {"Authorization": f"Bearer {create_access_token(data={'sub': test_user.id})}"}
+        for method, path, body in [
+            ("GET", "", None), ("POST", "/approve", {"team_id": test_team.id}), ("POST", "/deny", None),
+        ]:
+            response = await client.request(method, f"/api/oauth/requests/{pending}{path}", json=body, headers=cli)
+            assert response.status_code == 403, response.text
+            assert response.json()["detail"]["error_code"] == "web_login_required"
+        assert (await OxydeOAuthAuthorizationRequest.objects.get(id=pending)).bound_user_id is None
+        assert (await client.get("/api/auth/me", headers=cli)).status_code == 200
+
+    async def test_only_the_web_login_carries_the_claim(self, client, oauth_on, test_user):
+        from app.utils.security import decode_token, is_web_login
+
+        password = {"email": test_user.email, "password": "testpassword123"}
+        cli = await client.post("/api/auth/login", json=password)
+        web = await client.post("/api/auth/login", json={**password, "client": "web"})
+        assert cli.status_code == web.status_code == 200, cli.text
+        assert not is_web_login(cli.json()["access_token"])
+        assert is_web_login(web.json()["access_token"])
+        assert decode_token(web.json()["access_token"])["sub"] == test_user.id
+        bogus = await client.post("/api/auth/login", json={**password, "client": "admin"})
+        assert bogus.status_code == 422
 
     async def test_a_humans_api_key_is_refused(self, client, pending, test_user, test_team):
         _key, raw = await APIKeyService().create(test_user.id, APIKeyCreate(name="cli"))
@@ -362,6 +459,16 @@ class TestApprove:
         validated = await TokenService().validate_access(issued.access_token, resource=BASE + "/mcp")
         assert validated.principal_user_id == agent.id and validated.via == HolderVia.OAUTH
 
+    async def test_dcr_external_ref_uses_this_requests_redirect_host(
+        self, client, oauth_client, auth_headers, test_team, test_user,
+    ):
+        """N2: the client registered app.example first, but this code goes
+        to localhost."""
+        request_id = await _request_id(client, oauth_client, redirect_uri=LOOPBACK)
+        response = await self._approve(client, request_id, auth_headers, team_id=test_team.id)
+        agent = await OxydeUser.objects.get(id=response.json()["agent_id"])
+        assert agent.external_ref == f"oauth:localhost:{test_user.id}"
+
     async def test_single_use(self, client, pending, auth_headers, test_team):
         assert (await self._approve(client, pending, auth_headers, team_id=test_team.id)).status_code == 200
         assert (await self._approve(client, pending, auth_headers, team_id=test_team.id)).status_code == 404
@@ -439,12 +546,16 @@ class TestApprove:
         assert response.json()["detail"]["error_code"] == "name_matches_member"
 
     @pytest.mark.parametrize("scope,policy,error_code", [
+        # /oauth/authorize refuses a request with no grantable policy
+        # (S2), so this one is written into the row directly: the service
+        # check stays as the backstop.
         ("chaotic:read", "write", "policy_not_requested"),
-        ("chaotic:read", "read", "policy_unavailable"),
+        ("chaotic:read chaotic:write", "read", "policy_unavailable"),
         ("chaotic:write", "admin", "unknown_policy"),
     ])
     async def test_policy(self, client, oauth_client, auth_headers, test_team, scope, policy, error_code):
-        request_id = await _request_id(client, oauth_client, scope=scope)
+        request_id = await _request_id(client, oauth_client)
+        await OxydeOAuthAuthorizationRequest.objects.filter(id=request_id).update(scope=scope)
         response = await self._approve(client, request_id, auth_headers, team_id=test_team.id, policy=policy)
         assert response.status_code == 422
         assert response.json()["detail"]["error_code"] == error_code
@@ -460,16 +571,17 @@ class TestApprove:
         code = _query(approved["redirect"])["code"]
         await TokenService().start_session_from(await TokenService().redeem_single_use(code, TokenKind.AUTH_CODE))
 
-        # A DCR client registers afresh each time; same name and redirect host.
-        again = await client.post("/oauth/register", json={"client_name": "Test App", "redirect_uris": [REDIRECT]})
-        request_id = await _request_id(client, again.json()["client_id"])
+        # The same client_id again: its last agent is pre-selected.
+        request_id = await _request_id(client, oauth_client)
         body = (await client.get(f"/api/oauth/requests/{request_id}", headers=auth_headers)).json()
         assert (body["suggested_team_id"], body["suggested_agent_id"]) == (test_team.id, approved["agent_id"])
-        # A differently named app gets no suggestion.
-        stranger = await client.post("/oauth/register", json={"client_name": "Other", "redirect_uris": [REDIRECT]})
-        request_id = await _request_id(client, stranger.json()["client_id"])
-        body = (await client.get(f"/api/oauth/requests/{request_id}", headers=auth_headers)).json()
-        assert body["suggested_agent_id"] is None
+        # A fresh registration copying the name and loopback/redirect host
+        # gets nothing: "new agent" stays the default (review N1/Q2).
+        for uris in ([REDIRECT], [LOOPBACK]):
+            copy = await client.post("/oauth/register", json={"client_name": "Test App", "redirect_uris": uris})
+            request_id = await _request_id(client, copy.json()["client_id"], redirect_uri=uris[0])
+            body = (await client.get(f"/api/oauth/requests/{request_id}", headers=auth_headers)).json()
+            assert (body["suggested_team_id"], body["suggested_agent_id"]) == (None, None)
 
     async def test_a_suggested_agent_no_longer_usable_is_dropped(self, client, oauth_client, auth_headers, test_team):
         first = await _request_id(client, oauth_client)
@@ -480,6 +592,65 @@ class TestApprove:
         request_id = await _request_id(client, oauth_client)
         body = (await client.get(f"/api/oauth/requests/{request_id}", headers=auth_headers)).json()
         assert body["suggested_agent_id"] is None and body["suggested_team_id"] == test_team.id
+
+
+class TestApproveIsAtomic:
+    async def test_a_failure_part_way_leaves_nothing_and_the_request_usable(
+        self, client, pending, auth_headers, test_team, monkeypatch,
+    ):
+        """S3: consume, create the agent, mark the client and mint the code
+        in one transaction."""
+        agents_before = await OxydeUser.objects.filter(is_agent=True).count()
+
+        async def broken(*args, **kwargs):
+            raise RuntimeError("mint failed")
+        monkeypatch.setattr(TokenService, "mint_single_use", broken)
+        with pytest.raises(RuntimeError):
+            await client.post(f"/api/oauth/requests/{pending}/approve", json={"team_id": test_team.id},
+                              headers=auth_headers)
+        row = await OxydeOAuthAuthorizationRequest.objects.get(id=pending)
+        assert row.consumed_at is None
+        assert await OxydeUser.objects.filter(is_agent=True).count() == agents_before
+        assert (await OxydeOAuthClient.objects.get(id=row.client_id)).last_authorized_at is None
+
+        monkeypatch.undo()
+        retry = await client.post(f"/api/oauth/requests/{pending}/approve", json={"team_id": test_team.id},
+                                  headers=auth_headers)
+        assert retry.status_code == 200, retry.text
+
+
+class TestExistingAgentDetails:
+    async def test_owner_and_live_keys_are_shown(
+        self, client, oauth_client, test_team, auth_headers, test_user, test_user2, auth_headers2,
+    ):
+        """Q2/N4: choosing an established agent is allowed, but the page
+        says whose it is and that its API keys stay live."""
+        from app.enums import TeamRole
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+        mine = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": "Mine"}, headers=auth_headers)
+        theirs = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": "Theirs"},
+                                   headers=auth_headers2)
+        assert mine.status_code == theirs.status_code == 201, mine.text
+        # One more live key, one revoked and one expired, on Mine.
+        mine_id = mine.json()["id"]
+        live, _ = await APIKeyService().create(mine_id, APIKeyCreate(name="extra"), holder_user_id=test_user.id)
+        dead, _ = await APIKeyService().create(mine_id, APIKeyCreate(name="dead"), holder_user_id=test_user.id)
+        await OxydeAPIKey.objects.filter(id=dead.id).update(is_active=False)
+        old, _ = await APIKeyService().create(mine_id, APIKeyCreate(name="old"), holder_user_id=test_user.id)
+        await OxydeAPIKey.objects.filter(id=old.id).update(expires_at=datetime.now(timezone.utc) - timedelta(days=1))
+        expected_live = await OxydeAPIKey.objects.filter(principal_user_id=mine_id, is_active=True).count() - 1
+
+        request_id = await _request_id(client, oauth_client)
+        body = (await client.get(f"/api/oauth/requests/{request_id}", headers=auth_headers)).json()
+        agents = {a["name"]: a for a in body["teams"][0]["agents"]}
+        assert agents["Mine"]["owned_by_viewer"] is True
+        assert agents["Mine"]["owner_name"] == test_user.name
+        assert agents["Mine"]["active_api_keys"] == expected_live >= 1
+        # The owner (an admin) sees another member's agent, labelled as theirs.
+        assert agents["Theirs"]["owned_by_viewer"] is False
+        assert agents["Theirs"]["owner_name"] == test_user2.name
+        # Still not pre-selected: "new agent" is the default.
+        assert body["suggested_agent_id"] is None
 
 
 class TestDeny:
@@ -502,6 +673,32 @@ class TestFraming:
             assert response.status_code == 200
             assert response.headers["x-frame-options"] == "DENY"
             assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+            # The consent request id is in the path (review N5).
+            assert response.headers["referrer-policy"] == "same-origin"
+
+    async def test_cli_auth_refuses_framing(self, client, db):
+        """It mints an API key on a click (review N6)."""
+        response = await client.get("/cli-auth", params={"callback": "http://localhost:9/cb", "state": "s"})
+        assert response.status_code == 200
+        assert response.headers["x-frame-options"] == "DENY"
+        assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+        assert response.headers["referrer-policy"] == "no-referrer"
+
+
+class TestDangerousStoredRequest:
+    @pytest.mark.parametrize("uri", ["javascript:alert(1)//", "JavaScript:alert(1)//", "data:text/html,x"])
+    async def test_approve_and_deny_never_return_one(
+        self, client, oauth_client, auth_headers, test_team, test_user, uri,
+    ):
+        """B1, layer 3 on the server: a request row whose redirect is not
+        one a browser should be sent to (written before the rules, or by
+        hand) is answered 404, so the SPA has nothing to navigate to."""
+        request_id = await _request_id(client, oauth_client)
+        await OxydeOAuthAuthorizationRequest.objects.filter(id=request_id).update(redirect_uri=uri)
+        for path, body in (("/deny", None), ("/approve", {"team_id": test_team.id})):
+            response = await client.post(f"/api/oauth/requests/{request_id}{path}", json=body, headers=auth_headers)
+            assert response.status_code == 404
+            assert "javascript" not in response.text.lower()
 
 
 class TestCIMDClientFlow:
