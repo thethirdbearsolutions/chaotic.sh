@@ -482,6 +482,18 @@ there's no local profile to fall back on the way the stdio server has:
 identifiers (`CHT-123`) are unique instance-wide, so there's nothing to
 disambiguate.
 
+### Server settings for OAuth (`chaotic system config`)
+
+On a server set up with `chaotic system install`, set `OAUTH_ENABLED`,
+`APP_BASE_URL` and the related settings with `chaotic system config set`
+(CHT-1592), not by editing the service unit: they are kept in
+`~/.chaotic/server.json` and survive `system reconfigure` and `system
+upgrade`. Set `APP_BASE_URL` (the exact public `https` origin, no
+trailing slash) before `OAUTH_ENABLED`, run `chaotic system config
+check`, then restart. The full steps are in
+`docs/self-hosting-security.md`, "Server settings on an installed
+server".
+
 ## Shelling out to the CLI directly
 
 Harnesses that would rather run the `chaotic` binary directly (no MCP

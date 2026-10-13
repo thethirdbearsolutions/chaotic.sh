@@ -180,6 +180,78 @@ out with wrong guesses.
    that's the reverse proxy's job (point 1). Without it, JWTs and API
    keys travel in the clear over Bearer headers.
 
+## Server settings on an installed server: `chaotic system config`
+
+A server set up with `chaotic system install` keeps its settings in
+`~/.chaotic/server.json` (under `$CHAOTIC_HOME` if you set it), and
+every command that writes the service file (systemd unit or launchd
+plist) writes them into it as environment variables: `install`,
+`reconfigure`, `upgrade`, and `system config` itself (CHT-1592). So a
+setting survives every rewrite of the file. An install with no settings
+gets exactly the service file it got before, and `upgrade` changes
+nothing about it.
+
+```bash
+chaotic system config list                 # every setting: its value, or the server default
+chaotic system config get APP_BASE_URL     # one value; exit 1 if not set
+chaotic system config set NAME VALUE       # validate, save, rewrite the service file
+chaotic system config unset NAME           # back to the server default
+chaotic system config check                # exit 1 on a setting the server would not start with
+chaotic system install --config NAME=VALUE ...   # the same, at install time
+```
+
+A change takes effect when the server restarts (`chaotic system stop`
+then `chaotic system start`); `set` says so. The names it knows are
+`OAUTH_ENABLED`, `APP_BASE_URL`, `FORWARDED_ALLOW_IPS`,
+`MCP_CAPABILITY_URL_ENABLED`, `OAUTH_DCR_ENABLED`, `CORS_ORIGINS` and
+`SMTP_HOST`/`PORT`/`USER`/`PASSWORD`/`FROM`. Each value is checked by the
+rules the server applies, so a typo fails at `set`, not at the next
+start. Any other name needs `--force`; `SECRET_KEY`, `HOST`, `PORT`,
+`DATABASE_URL`, `DATABASE_PATH` and `PATH` are never settings (use
+`reconfigure` for host and port). A value may not contain whitespace,
+quotes, a backslash or `%`, which a service file cannot carry as is. The
+value of `SMTP_PASSWORD`, and of any name set with `--force`, is never
+printed.
+
+`list` and `check` also say where something else disagrees with
+server.json: a variable added to the service file by hand, one set in a
+systemd drop-in (which overrides server.json), and one in
+`~/.chaotic/server/backend/.env` (which the service file's value
+overrides).
+
+**Turning OAuth on.** Behind a TLS-terminating reverse proxy at
+`https://chaotic.example.com`:
+
+```bash
+chaotic system config set APP_BASE_URL https://chaotic.example.com
+chaotic system config set OAUTH_ENABLED true
+chaotic system config set MCP_CAPABILITY_URL_ENABLED false   # once no connector uses /mcp/<key>
+chaotic system config check
+chaotic system stop && chaotic system start
+```
+
+`APP_BASE_URL` comes first: `set OAUTH_ENABLED true` refuses while it is
+missing, because the server would not start. It becomes the OAuth issuer
+and the base of every URL the discovery documents advertise, and clients
+compare it as an exact string, so it must be the public origin exactly
+as clients reach it: `https` (plain `http` only on a loopback host, which
+only a client on the same machine can use), the public host name in
+lower case, no path and no trailing slash (`set` drops a trailing
+slash), and no default port (`:443`). Set `FORWARDED_ALLOW_IPS` too if
+the proxy runs on another machine (see "Behind a reverse proxy" below).
+To check from outside: `curl
+https://chaotic.example.com/.well-known/oauth-authorization-server`
+returns JSON whose `issuer` is exactly `APP_BASE_URL`.
+
+**Lines added to the unit by hand.** Before this, the only way to set
+these was an `Environment=` line added to the unit, which `reconfigure`
+dropped and which made every later `upgrade` report "Service file not
+updated" and leave the unit alone. `chaotic system config list` names
+such lines. Run `chaotic system config set` for each, with the value it
+has there; once server.json has them all, the next `set` rewrites the
+unit and upgrades update it again. Until then `set` saves the value and
+exits non-zero, saying what is in the way.
+
 ## CORS and browser-based MCP clients
 
 `CORS_ORIGINS` (default `*`) sets the app-wide CORS policy. A list of
