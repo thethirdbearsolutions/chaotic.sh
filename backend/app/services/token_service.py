@@ -127,7 +127,7 @@ class ValidatedToken:
     via: HolderVia
     principal_user_id: str
     holder_user_id: str
-    team_id: str
+    team_id: str | None  # None only for an account-wide (WEB_LOGIN) session
     scope_project_ids: tuple[str, ...] | None  # None: the whole team
     scopes: tuple[str, ...]
     policy_name: str
@@ -375,7 +375,12 @@ class TokenService:
         the redemption that returned `redeemed`, not revoked, and has not
         started a session yet; the link (`auth_tokens.holder_session_id`
         on the code) is set in the same transaction, so a code starts at
-        most one session and a reuse can always find it."""
+        most one session and a reuse can always find it.
+
+        Not re-checked here: the code's expiry and whether its client is
+        still active. Redemption checked expiry, and the only work between
+        the two calls is the caller's own check of the client's proof
+        (PKCE for a code)."""
         _require_enabled()
         if redeemed.kind == TokenKind.AUTH_CODE:
             via = HolderVia.OAUTH
@@ -410,7 +415,6 @@ class TokenService:
                 code is None
                 or any(getattr(code, f) != getattr(redeemed, f) for f in bound)
                 or code.used_at is None
-                or code.used_at != redeemed.used_at
                 or code.revoked_at is not None
                 or code.holder_session_id is not None
             ):
@@ -604,7 +608,10 @@ class TokenService:
         _prune_grace_pairs(now)
         _grace_pairs[digest] = (issued, session.id, now + REFRESH_GRACE)
         # A revocation that committed just after this rotation has already
-        # revoked the new tokens; make sure it did not miss the pair.
+        # revoked the new tokens; make sure it did not miss the pair. One
+        # that commits after this re-read means the caller gets a pair that
+        # is already revoked. That is harmless (validation refuses it) and
+        # is the price of not holding a lock across revocations.
         current = await OxydeHolderSession.objects.get_or_none(id=session.id)
         if current is None or current.revoked_at is not None:
             _forget_grace_pairs(session.id)
@@ -612,28 +619,39 @@ class TokenService:
         return issued
 
     async def _grace_replay(self, row: OxydeAuthToken, digest: str, now: datetime) -> IssuedTokens | None:
-        """The successor pair for a replay of the immediately previous
-        refresh token, or None if this is reuse (the caller revokes).
+        """What a replay of a spent refresh token gets. Returns None when
+        it is reuse (the caller revokes the session), returns the
+        successor pair for a grace replay, and raises a plain refusal
+        otherwise.
 
         Grace is for the concurrent burst a hosted client really sends
-        (design §2.4, S11), not a way to keep pace with the client: it
-        applies only within REFRESH_GRACE of the rotation, while neither
-        the successor refresh token nor the successor access token has
-        been used, and only once per rotation. A replay inside the window
-        with no pair to hand back (already replayed once, or this process
-        restarted) is refused without revoking: nothing shows a second
-        holder yet."""
+        (design §2.4, S11):
+
+        * Past REFRESH_GRACE after the rotation, a replay is reuse.
+        * Inside it, the pair is handed back once, and only while neither
+          successor token (access or refresh) has been used. That is the
+          straggler of a burst, which needs the pair.
+        * Anything else inside it is refused without revoking: a second
+          replay, a replay after the client has started using the
+          successor (a straggler that lost the race to the client's own
+          first call), or a replay with no pair to hand back (this process
+          restarted). A thief gets no tokens from any of these, and one
+          who replays after the window is caught as reuse; a legitimate
+          straggler is not logged out.
+        """
         _prune_grace_pairs(now)
         if row.used_at is None or now - row.used_at > REFRESH_GRACE:
             return None
+        refusal = TokenError("invalid_grant", "this refresh token was just used; use the tokens it returned")
         successors = await OxydeAuthToken.objects.filter(replaces_id=row.id).all()
-        refresh = [t for t in successors if t.kind == TokenKind.REFRESH]
-        access = [t for t in successors if t.kind == TokenKind.ACCESS]
-        if not refresh or any(t.used_at is not None or t.revoked_at is not None for t in refresh + access):
-            return None
+        if not any(t.kind == TokenKind.REFRESH for t in successors) or any(
+            t.used_at is not None or t.revoked_at is not None for t in successors
+        ):
+            _grace_pairs.pop(digest, None)  # no replay can have it any more
+            raise refusal
         cached = _grace_pairs.pop(digest, None)
         if cached is None:
-            raise TokenError("invalid_grant", "this refresh token was just used; use the tokens it returned")
+            raise refusal
         return cached[0]
 
     async def _notify_reuse(self, session: OxydeHolderSession) -> None:
@@ -700,12 +718,19 @@ class TokenService:
         session = await OxydeHolderSession.objects.get_or_none(id=row.holder_session_id)
         if session is None or session.revoked_at is not None or session.absolute_expires_at <= now:
             raise TokenError("invalid_token", "the access token's connection has been revoked or has expired")
-        if row.used_at is None:
-            # First use: from now on a replay of the refresh token that
-            # issued this one is no longer a grace replay (_grace_replay).
-            await OxydeAuthToken.objects.filter(id=row.id, used_at__isnull=True).update(used_at=now)
-        if session.last_used_at is None or now - session.last_used_at >= LAST_USED_WRITE_INTERVAL:
-            await OxydeHolderSession.objects.filter(id=session.id).update(last_used_at=now)
+        # Two bookkeeping writes on the authentication path, both best
+        # effort: under write contention they can wait out the busy
+        # timeout, and that must not turn a valid token into a 500. If the
+        # `used_at` mark fails, the worst case is one more grace replay.
+        try:
+            if row.used_at is None:
+                # First use: from now on a replay of the refresh token that
+                # issued this one is no longer a grace replay.
+                await OxydeAuthToken.objects.filter(id=row.id, used_at__isnull=True).update(used_at=now)
+            if session.last_used_at is None or now - session.last_used_at >= LAST_USED_WRITE_INTERVAL:
+                await OxydeHolderSession.objects.filter(id=session.id).update(last_used_at=now)
+        except Exception:
+            logger.warning("could not record use of access token %s", row.id, exc_info=True)
         validated = ValidatedToken(
             token_id=row.id,
             holder_session_id=session.id,

@@ -26,6 +26,67 @@ MCP = BASE + "/mcp"
 CLIENT = "https://claude.ai/oauth/claude-client-metadata"
 
 
+@pytest_asyncio.fixture
+async def db(tmp_path, schema_template):
+    """This module's own `db`: the conftest one with a pool of 4 instead of
+    1. With one connection a second transaction waits for the connection
+    and never reaches SQLite's write lock, so the races below would not
+    exercise what the service's ordering comments rely on in production.
+    Same template copy and the same create re-fetch as conftest."""
+    import os
+
+    from oxyde import AsyncDatabase, PoolSettings, disconnect_all
+    from oxyde.queries.manager import QueryManager
+
+    from .conftest import _assert_revision_history_current, _copy_database
+
+    db_path = str(tmp_path / "test.db")
+    _copy_database(schema_template, db_path)
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
+    get_settings.cache_clear()
+    database = AsyncDatabase(f"sqlite:///{db_path}", overwrite=True, settings=PoolSettings(max_connections=4))
+    await database.connect()
+    import app.oxyde_models  # noqa: F401
+
+    original_create = QueryManager.create
+
+    async def create_and_refetch(self, **kwargs):
+        obj = await original_create(self, **kwargs)
+        return await self.get(id=obj.id) if getattr(obj, "id", None) is not None else obj
+
+    QueryManager.create = create_and_refetch
+    yield None
+    QueryManager.create = original_create
+    try:
+        await _assert_revision_history_current()
+    finally:
+        await disconnect_all()
+        os.environ.pop("DATABASE_URL", None)
+        get_settings.cache_clear()
+
+
+async def test_the_pool_has_more_than_one_connection(db):
+    """Guards the fixture above: two transactions are open at once."""
+    from oxyde import atomic
+
+    inside = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold():
+        async with atomic():
+            await OxydeRevocationEvent.objects.filter(id="none").count()
+            inside.set()
+            await release.wait()
+
+    async def other():
+        await inside.wait()
+        async with atomic():
+            await OxydeRevocationEvent.objects.filter(id="none").count()
+        release.set()
+
+    await asyncio.wait_for(asyncio.gather(hold(), other()), timeout=5)
+
+
 @pytest.fixture(autouse=True)
 def oauth_on(monkeypatch):
     monkeypatch.setenv("OAUTH_ENABLED", "true")
@@ -259,13 +320,31 @@ async def _assert_revoked_for_reuse(session_id, holder_id):
     assert len(notices) == 1 and "revoked" in notices[0].title
 
 
+async def _assert_live_and_quiet(session_id, holder_id):
+    session = await OxydeHolderSession.objects.get(id=session_id)
+    assert session.revoked_at is None
+    assert await OxydeInboxEntry.objects.filter(recipient_user_id=holder_id).count() == 0
+
+
+async def _age_past_grace(raw_refresh):
+    await OxydeAuthToken.objects.filter(token_hash=ts.token_digest(raw_refresh)).update(
+        used_at=datetime.now(timezone.utc) - ts.REFRESH_GRACE - timedelta(seconds=1),
+    )
+
+
 async def test_reuse_after_the_successor_was_used_revokes_the_session(connection, test_user):
+    """Inside the window a replay after the successor was rotated is only
+    refused; after it, the same replay is reuse."""
     service = TokenService()
     second = await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
     third = await service.refresh(second.refresh_token, oauth_client_id=CLIENT)
     with pytest.raises(TokenError) as e:
         await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
     assert e.value.error == "invalid_grant"
+    await _assert_live_and_quiet(connection.holder_session_id, test_user.id)
+    await _age_past_grace(connection.refresh_token)
+    with pytest.raises(TokenError):
+        await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
     await _assert_revoked_for_reuse(connection.holder_session_id, test_user.id)
     with pytest.raises(TokenError):
         await service.validate_access(third.access_token, resource=MCP)
@@ -306,15 +385,37 @@ async def test_grace_is_one_replay_per_rotation(connection):
     await service.validate_access(first.access_token, resource=MCP)
 
 
-async def test_no_grace_once_the_successor_access_token_is_used(connection, test_user):
-    """The keep-pace attack: the legitimate client already uses the new
-    access token, so a replay of the old refresh token is a second holder."""
+async def test_a_straggler_after_the_successor_is_used_is_refused_not_revoked(connection, test_user):
+    """A hosted client's concurrent burst: worker 1 rotates and calls /mcp
+    with the new access token at once; worker 2's refresh of the same
+    token lands 100 ms later. It gets nothing, and nobody is logged out."""
     service = TokenService()
     first = await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
     await service.validate_access(first.access_token, resource=MCP)
+    with pytest.raises(TokenError) as e:
+        await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
+    assert e.value.error == "invalid_grant"
+    await _assert_live_and_quiet(connection.holder_session_id, test_user.id)
+    await service.validate_access(first.access_token, resource=MCP)
+
+
+async def test_keep_pace_gets_no_tokens_and_a_late_replay_is_caught(connection, test_user):
+    """A thief holding R1 who replays after the client started using the
+    successor gets nothing; replaying after the window revokes."""
+    service = TokenService()
+    first = await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
+    await service.validate_access(first.access_token, resource=MCP)
+    for _ in range(3):
+        with pytest.raises(TokenError):
+            await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
+    # The pair is gone from memory: no later replay can have it.
+    assert not ts._grace_pairs
+    await _age_past_grace(connection.refresh_token)
     with pytest.raises(TokenError):
         await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
     await _assert_revoked_for_reuse(connection.holder_session_id, test_user.id)
+    with pytest.raises(TokenError):
+        await service.validate_access(first.access_token, resource=MCP)
 
 
 async def test_concurrent_refreshes_hand_out_one_pair(connection):
