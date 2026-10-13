@@ -1,5 +1,6 @@
 """Label API routes."""
 from fastapi import APIRouter, HTTPException, status
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_team_access
 from app.schemas.issue import LabelCreate, LabelUpdate, LabelResponse
 from app.services.issue_service import IssueService
@@ -8,6 +9,7 @@ from app.services.team_service import TeamService
 router = APIRouter()
 
 
+@writes
 async def create_label(
     team_id: str,
     label_in: LabelCreate,
@@ -30,6 +32,7 @@ async def create_label(
     return LabelResponse.model_validate(label)
 
 
+@reads
 async def list_labels(
     team_id: str,
     current_user: CurrentUser,
@@ -54,6 +57,7 @@ async def list_labels(
 
 
 @router.get("/{label_id}", response_model=LabelResponse)
+@reads
 async def get_label(label_id: str, current_user: CurrentUser) -> LabelResponse:
     """Get label by ID."""
     issue_service = IssueService()
@@ -75,6 +79,7 @@ async def get_label(label_id: str, current_user: CurrentUser) -> LabelResponse:
 
 
 @router.patch("/{label_id}", response_model=LabelResponse)
+@writes
 async def update_label(
     label_id: str,
     label_in: LabelUpdate,
@@ -101,6 +106,7 @@ async def update_label(
 
 
 @router.delete("/{label_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def delete_label(label_id: str, current_user: CurrentUser) -> None:
     """Delete a label."""
     # Agents cannot delete labels — check before lookup to avoid info disclosure

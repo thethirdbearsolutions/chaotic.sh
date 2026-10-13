@@ -11,6 +11,7 @@ is admin-only everywhere else.
 """
 from fastapi import APIRouter, HTTPException, status
 
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_team_access
 from app.schemas.template import (
     TemplateApplyReport,
@@ -49,6 +50,7 @@ async def _get_template_or_404(template_id: str):
     response_model=TemplateResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@writes
 async def create_template(
     team_id: str,
     template_in: TemplateCreate,
@@ -70,6 +72,7 @@ async def create_template(
     response_model=TemplateResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@writes
 async def create_template_from_project(
     team_id: str,
     snapshot_in: TemplateSnapshotRequest,
@@ -104,6 +107,7 @@ async def create_template_from_project(
 
 
 @router.get("/teams/{team_id}/templates", response_model=list[TemplateResponse])
+@reads
 async def list_templates(team_id: str, current_user: CurrentUser):
     """List a team's templates."""
     if not await check_user_team_access(current_user, team_id):
@@ -115,6 +119,7 @@ async def list_templates(team_id: str, current_user: CurrentUser):
 
 
 @router.get("/templates/{template_id}", response_model=TemplateResponse)
+@reads
 async def get_template(template_id: str, current_user: CurrentUser):
     """Get a template by ID."""
     template = await _get_template_or_404(template_id)
@@ -127,6 +132,7 @@ async def get_template(template_id: str, current_user: CurrentUser):
 
 
 @router.delete("/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def delete_template(template_id: str, current_user: CurrentUser):
     """Delete a template. Projects it was applied to are untouched."""
     template = await _get_template_or_404(template_id)
@@ -135,6 +141,7 @@ async def delete_template(template_id: str, current_user: CurrentUser):
 
 
 @router.post("/templates/{template_id}/apply", response_model=TemplateApplyReport)
+@writes
 async def apply_template(
     template_id: str,
     apply_in: TemplateApplyRequest,

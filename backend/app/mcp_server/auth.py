@@ -7,9 +7,9 @@ UX is an explicit, separate follow-up):
 
 1. ``Authorization: Bearer ck_...`` on /mcp -- works for Claude Code's
    ``--transport http`` and anything else that lets you set a header.
-   Reuses ``app.api.deps._authenticate_with_api_key`` verbatim: same key
-   hash/expiry/active checks the REST API uses, same agent-vs-human
-   resolution.
+   Resolved by ``app.auth.credentials.mcp_resolver`` (CHT-1560), the
+   same resolver the REST API uses: same key hash/expiry/active checks,
+   same agent-vs-human resolution. /mcp accepts API keys only.
 2. ``/mcp/<api-key>`` -- a capability URL, for connector UIs that only
    take a URL and can't set custom headers (true of claude.ai's web
    custom-connector UI as of when this was written -- see docs/agents.md).
@@ -46,12 +46,11 @@ Either way, the resolved user is stashed in
 """
 from __future__ import annotations
 
-from fastapi import HTTPException
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.api.deps import _authenticate_with_api_key
+from app.auth.credentials import CredentialError, CredentialFailure, CredentialKind, mcp_resolver
 from app.mcp_server.context import current_mcp_user
 from app.oauth.discovery import www_authenticate_challenge
 from app.services.token_service import ALL_SECRET_PREFIXES
@@ -137,30 +136,37 @@ async def _resolve(
     challenge: dict[str, str] = _WWW_AUTHENTICATE,
     invalid_token_challenge: dict[str, str] | None = None,
 ):
-    """Validate `api_key` exactly the way the REST API's `ck_...` bearer
-    path does. Returns (user, None) on success or (None, error_response).
+    """Resolve the presented credential with the shared resolver
+    (``app.auth.credentials``, CHT-1560), the one the REST API uses.
+    Returns (user, None) on success or (None, error_response).
 
     ``challenge`` is the WWW-Authenticate header when no token was sent,
-    ``invalid_token_challenge`` (default: the same) when some non-``ck_``
-    token was; a failed ``ck_`` key always gets the bare one.
+    ``invalid_token_challenge`` (default: the same) when a token of any
+    kind but an API key failed (picked by ``CredentialError.kind``); a
+    failed ``ck_`` key always gets the bare one.
     """
-    if not api_key:
-        return None, JSONResponse(
-            {"error": "Missing API key. Send `Authorization: Bearer ck_...`, or use the /mcp/<key> capability URL."},
-            status_code=401,
-            headers=challenge,
-        )
-    if not api_key.startswith("ck_"):
-        return None, JSONResponse(
-            {"error": "Not a chaotic API key (expected a `ck_...` token)."},
-            status_code=401,
-            headers=invalid_token_challenge or challenge,
-        )
     try:
-        user = await _authenticate_with_api_key(api_key)
-    except HTTPException as exc:
-        return None, JSONResponse({"error": exc.detail}, status_code=exc.status_code, headers=_WWW_AUTHENTICATE)
-    return user, None
+        principal = await mcp_resolver.resolve(api_key)
+    except CredentialError as exc:
+        if exc.failure is CredentialFailure.MISSING:
+            return None, JSONResponse(
+                {"error": "Missing API key. Send `Authorization: Bearer ck_...`, or use the /mcp/<key> capability URL."},
+                status_code=401,
+                headers=challenge,
+            )
+        if exc.kind is CredentialKind.API_KEY:
+            # An API-key user: the OAuth hint would only mislead them.
+            return None, JSONResponse({"error": exc.detail}, status_code=exc.status_code, headers=_WWW_AUTHENTICATE)
+        # Any other kind: today a JWT, which /mcp does not accept; from
+        # CHT-1520 also an OAuth access token that failed verification.
+        message = (
+            "Not a chaotic API key (expected a `ck_...` token)."
+            if exc.failure is CredentialFailure.UNSUPPORTED else exc.detail
+        )
+        return None, JSONResponse(
+            {"error": message}, status_code=exc.status_code, headers=invalid_token_challenge or challenge,
+        )
+    return principal.user, None
 
 
 class _AuthWrapperBase:

@@ -53,6 +53,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, status, Header
 
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser
 from app.schemas.project import ProjectCreate, ProjectResponse
 from app.schemas.issue import IssueCreate, IssueResponse, LabelCreate, LabelResponse
@@ -77,36 +78,42 @@ router = APIRouter()
 
 
 @router.post("/teams/{team_id}/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+@writes
 async def create_team_project(team_id: str, project_in: ProjectCreate, current_user: CurrentUser):
     """Create a project (CHT-1223). Replaces ``POST /projects?team_id=...``."""
     return await _projects.create_project(team_id=team_id, project_in=project_in, current_user=current_user)
 
 
 @router.get("/teams/{team_id}/projects", response_model=list[ProjectResponse])
+@reads
 async def list_team_projects(team_id: str, current_user: CurrentUser, skip: int = 0, limit: int = 100):
     """List a team's projects (CHT-1223). Replaces ``GET /projects?team_id=...``."""
     return await _projects.list_projects(team_id=team_id, current_user=current_user, skip=skip, limit=limit)
 
 
 @router.post("/teams/{team_id}/labels", response_model=LabelResponse, status_code=status.HTTP_201_CREATED)
+@writes
 async def create_team_label(team_id: str, label_in: LabelCreate, current_user: CurrentUser):
     """Create a label (CHT-1223). Replaces ``POST /labels?team_id=...``."""
     return await _labels.create_label(team_id=team_id, label_in=label_in, current_user=current_user)
 
 
 @router.get("/teams/{team_id}/labels", response_model=list[LabelResponse])
+@reads
 async def list_team_labels(team_id: str, current_user: CurrentUser, skip: int = 0, limit: int = 100):
     """List a team's labels (CHT-1223). Replaces ``GET /labels?team_id=...``."""
     return await _labels.list_labels(team_id=team_id, current_user=current_user, skip=skip, limit=limit)
 
 
 @router.post("/teams/{team_id}/documents", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+@writes
 async def create_team_document(team_id: str, document_in: DocumentCreate, current_user: CurrentUser):
     """Create a document (CHT-1223). Replaces ``POST /documents?team_id=...``."""
     return await _documents.create_document(team_id=team_id, document_in=document_in, current_user=current_user)
 
 
 @router.get("/teams/{team_id}/documents", response_model=list[DocumentResponse])
+@reads
 async def list_team_documents(
     team_id: str,
     current_user: CurrentUser,
@@ -138,6 +145,7 @@ async def list_team_documents(
 
 
 @router.post("/projects/{project_id}/issues", response_model=IssueResponse, status_code=status.HTTP_201_CREATED)
+@writes
 async def create_project_issue(
     project_id: str,
     issue_in: IssueCreate,
@@ -160,6 +168,7 @@ async def create_project_issue(
 
 
 @router.get("/projects/{project_id}/issues/ready", response_model=list[IssueResponse])
+@reads
 async def list_project_ready_issues(
     project_id: str,
     current_user: CurrentUser,
@@ -177,6 +186,7 @@ async def list_project_ready_issues(
 
 
 @router.get("/teams/{team_id}/issues/ready", response_model=list[IssueResponse])
+@reads
 async def list_team_ready_issues(
     team_id: str,
     current_user: CurrentUser,
@@ -192,6 +202,7 @@ async def list_team_ready_issues(
 
 
 @router.post("/projects/{project_id}/sprints", response_model=SprintResponse, status_code=status.HTTP_200_OK)
+@writes
 async def create_project_sprint(
     project_id: str,
     current_user: CurrentUser,
@@ -202,6 +213,7 @@ async def create_project_sprint(
 
 
 @router.get("/projects/{project_id}/sprints", response_model=list[SprintResponse])
+@reads
 async def list_project_sprints(
     project_id: str,
     current_user: CurrentUser,
@@ -222,12 +234,14 @@ async def list_project_sprints(
 
 
 @router.post("/projects/{project_id}/rituals", response_model=RitualResponse, status_code=status.HTTP_201_CREATED)
+@writes
 async def create_project_ritual(project_id: str, ritual_in: RitualCreate, current_user: CurrentUser):
     """Create a ritual (CHT-1223). Replaces ``POST /rituals?project_id=...``."""
     return await _rituals.create_ritual(project_id=project_id, ritual_in=ritual_in, current_user=current_user)
 
 
 @router.get("/projects/{project_id}/rituals", response_model=list[RitualResponse])
+@reads
 async def list_project_rituals(
     project_id: str,
     current_user: CurrentUser,

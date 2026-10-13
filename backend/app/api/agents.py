@@ -2,8 +2,9 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from app.auth.access import reads, registers, writes
 from app.api.deps import (
-    CurrentUser, can_manage_agent, check_user_team_access, get_api_key_record, registrar_may_call,
+    CurrentUser, can_manage_agent, check_user_team_access, get_api_key_record,
 )
 from app.enums import AgentKind
 from app.schemas.agent import (
@@ -76,6 +77,7 @@ def agent_response(agent, *, show_ref: bool = True) -> AgentResponse:
     response_model=AgentCreated,
     status_code=status.HTTP_201_CREATED,
 )
+@writes
 async def create_team_agent(
     team_id: str,
     agent_in: AgentCreate,
@@ -132,6 +134,7 @@ async def create_team_agent(
     response_model=AgentCreated,
     status_code=status.HTTP_201_CREATED,
 )
+@writes
 async def create_project_agent(
     project_id: str,
     agent_in: AgentCreate,
@@ -185,6 +188,7 @@ async def create_project_agent(
 
 
 @router.get("/teams/{team_id}/agents", response_model=list[AgentResponse])
+@reads
 async def list_team_agents(
     team_id: str,
     current_user: CurrentUser,
@@ -218,6 +222,7 @@ async def list_team_agents(
 
 
 @router.get("/agents/{agent_id}", response_model=AgentResponse)
+@reads
 async def get_agent(
     agent_id: str,
     current_user: CurrentUser,
@@ -244,6 +249,7 @@ async def get_agent(
 
 
 @router.patch("/agents/{agent_id}", response_model=AgentResponse)
+@writes
 async def update_agent(
     agent_id: str,
     agent_in: AgentUpdate,
@@ -291,6 +297,7 @@ async def update_agent(
     response_model=APIKeyCreated,
     status_code=status.HTTP_201_CREATED,
 )
+@writes
 async def create_agent_key(
     agent_id: str,
     current_user: CurrentUser,
@@ -336,6 +343,7 @@ async def create_agent_key(
 
 
 @router.get("/agents/{agent_id}/keys", response_model=list[AgentKeyResponse])
+@reads
 async def list_agent_keys(
     agent_id: str,
     current_user: CurrentUser,
@@ -385,6 +393,7 @@ async def list_agent_keys(
 
 
 @router.post("/agents/{agent_id}/deactivate", response_model=AgentResponse)
+@writes
 async def deactivate_agent(
     agent_id: str,
     current_user: CurrentUser,
@@ -399,6 +408,7 @@ async def deactivate_agent(
 
 
 @router.post("/agents/{agent_id}/reactivate", response_model=AgentResponse)
+@writes
 async def reactivate_agent(
     agent_id: str,
     current_user: CurrentUser,
@@ -444,6 +454,7 @@ async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> Age
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def delete_agent(
     agent_id: str,
     current_user: CurrentUser,
@@ -477,7 +488,7 @@ async def delete_agent(
     status_code=status.HTTP_201_CREATED,
     responses={200: {"model": AgentRegistered, "description": "An existing identity, with a fresh key"}},
 )
-@registrar_may_call
+@registers
 async def register_agent(
     req: AgentRegister,
     current_user: CurrentUser,

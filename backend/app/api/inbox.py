@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser
 from app.schemas.inbox import InboxEntryResponse, MarkAllReadResponse, UnreadCountResponse
 from app.oxyde_models.inbox import OxydeInboxEntry
@@ -54,6 +55,7 @@ async def _build_response(entry: OxydeInboxEntry) -> InboxEntryResponse:
 
 
 @router.get("", response_model=list[InboxEntryResponse])
+@reads
 async def list_inbox(
     current_user: CurrentUser,
     team_id: str | None = None,
@@ -69,6 +71,7 @@ async def list_inbox(
 
 
 @router.get("/unread-count", response_model=UnreadCountResponse)
+@reads
 async def get_unread_count(current_user: CurrentUser, team_id: str | None = None):
     """Unread count for the current user (sidebar badge)."""
     count = await InboxService().unread_count(current_user.id, team_id=team_id)
@@ -76,6 +79,7 @@ async def get_unread_count(current_user: CurrentUser, team_id: str | None = None
 
 
 @router.post("/{entry_id}/read", response_model=InboxEntryResponse)
+@writes
 async def mark_inbox_read(entry_id: str, current_user: CurrentUser) -> InboxEntryResponse:
     """Mark a single inbox entry as read."""
     inbox_service = InboxService()
@@ -102,6 +106,7 @@ async def mark_inbox_read(entry_id: str, current_user: CurrentUser) -> InboxEntr
 
 
 @router.post("/{entry_id}/archive", response_model=InboxEntryResponse)
+@writes
 async def archive_inbox_entry(entry_id: str, current_user: CurrentUser):
     """Archive a single inbox entry (CHT-1316): it leaves the list + badge.
 
@@ -129,6 +134,7 @@ async def archive_inbox_entry(entry_id: str, current_user: CurrentUser):
 
 
 @router.post("/mark-all-read", response_model=MarkAllReadResponse)
+@writes
 async def mark_all_inbox_read(current_user: CurrentUser, team_id: str | None = None) -> MarkAllReadResponse:
     """Mark every unread inbox entry for the current user as read."""
     marked = await InboxService().mark_all_read(current_user.id, team_id=team_id)
