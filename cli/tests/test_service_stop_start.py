@@ -124,6 +124,7 @@ def _upgrade(args=("--no-backup",), **overrides):
         "validate_git_ref": dict(return_value=True),
         "run_command": dict(return_value=MagicMock(returncode=0, stdout="")),
         "wait_for_service_settled": dict(return_value="active"),
+        "service_state": dict(return_value="active"),
         "is_service_running": dict(return_value=True),
         "stop_service": dict(return_value=True),
         "wait_for_service_stop": dict(return_value=True),
@@ -259,7 +260,7 @@ class TestUpgradeFromStopped:
     whatever state it found it in."""
 
     def test_already_stopped_server_is_started_and_verified(self):
-        result, m = _upgrade(is_service_running=dict(return_value=False))
+        result, m = _upgrade(is_service_running=dict(return_value=False), service_state=dict(return_value="inactive"))
 
         assert result.exit_code == 0, result.output
         out = _flat(result.output)
@@ -275,6 +276,7 @@ class TestUpgradeFromStopped:
     def test_already_stopped_server_that_fails_health_is_rolled_back_and_reported(self):
         result, m = _upgrade(
             is_service_running=dict(return_value=False),
+            service_state=dict(return_value="inactive"),
             health_check=dict(return_value=False),
         )
 
@@ -289,6 +291,7 @@ class TestUpgradeFromStopped:
     def test_already_stopped_server_that_will_not_start_is_rolled_back(self):
         result, m = _upgrade(
             is_service_running=dict(return_value=False),
+            service_state=dict(return_value="inactive"),
             start_service=dict(return_value=False),
         )
 
@@ -302,6 +305,7 @@ class TestUpgradeFromStopped:
     def test_failed_migration_reports_server_state(self):
         result, _ = _upgrade(
             is_service_running=dict(return_value=False),
+            service_state=dict(return_value="inactive"),
             run_migrations=dict(return_value=(False, "boom")),
         )
 
@@ -326,6 +330,7 @@ class TestUpgradeCancelled:
             "validate_git_ref": dict(return_value=True),
             "run_command": dict(return_value=MagicMock(returncode=0, stdout="")),
             "wait_for_service_settled": dict(return_value="active"),
+            "service_state": dict(return_value="active"),
             "is_service_running": dict(return_value=True),
             "stop_service": dict(return_value=True),
             "wait_for_service_stop": dict(return_value=True),
@@ -348,7 +353,7 @@ class TestUpgradeCancelled:
         out = _flat(result.output)
         assert "Cancelled" in out and "Server is RUNNING" in out
         m["start_service"].assert_called_once()
-        m["health_check"].assert_called_once()
+        assert m["health_check"].call_count >= 1  # the restart, then the final state line
         m["checkout_version"].assert_not_called()
 
     def test_cancel_whose_restart_fails_says_down(self):
@@ -362,12 +367,13 @@ class TestUpgradeCancelled:
 
 
 class TestSystemStopTimeout:
-    def _stop(self, running):
+    def _stop(self, running, state="inactive"):
         states = iter(running)
         with patch("cli.system.is_server_installed", return_value=True), \
              patch("cli.system.is_service_running", side_effect=lambda: next(states)), \
              patch("cli.system.stop_service", return_value=False), \
-             patch("cli.system.wait_for_service_settled", return_value="inactive"), \
+             patch("cli.system.wait_for_service_settled", return_value=state), \
+             patch("cli.system.service_state", return_value=state), \
              patch("cli.system.load_server_json", return_value={}), \
              patch("cli.system.start_service") as start:
             result = CliRunner().invoke(system.system, ["stop"])
@@ -379,7 +385,171 @@ class TestSystemStopTimeout:
         assert result.exit_code == 0
         assert "The server is DOWN: the stop completed after the CLI stopped waiting" in _flat(result.output)
 
+    def test_stop_ending_in_failed_state_is_down(self):
+        """SIGKILL at TimeoutStopSec leaves the unit "failed": stopped."""
+        result = self._stop([True, False], state="failed")
+        assert result.exit_code == 0
+
     def test_stop_that_did_not_take_is_reported_as_running(self):
-        result = self._stop([True, True])
+        result = self._stop([True, True], state="active")
         assert result.exit_code == 1
         assert "The server is still RUNNING" in _flat(result.output)
+
+    def test_unreadable_state_is_not_reported_as_stopped(self):
+        """Review finding 6: "not active" because systemctl could not answer
+        is not a stop; exit non-zero and say the state is unconfirmed."""
+        result = self._stop([True, False], state="unknown")
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "Could not confirm the server stopped" in out and "'unknown'" in out
+        assert "is DOWN" not in out
+
+
+class TestStopServiceToleratesNonZeroExit:
+    """Review finding 4. systemd finishes a stop job as done once the unit
+    is inactive OR failed (src/core/unit.c, unit_process_job), so
+    `systemctl stop` exits 0 even after a SIGKILL. Should one exit non-zero
+    anyway, judge by the settled state."""
+
+    def _stop(self, settled):
+        err = subprocess.CalledProcessError(1, ["systemctl"])
+        with patch("cli.system.get_os", return_value="linux"), \
+             patch("cli.system.run_command", side_effect=err), \
+             patch("cli.system.wait_for_service_settled", return_value=settled):
+            return stop_service()
+
+    def test_settled_failed_is_stopped(self):
+        assert self._stop("failed") is True
+
+    def test_settled_inactive_is_stopped(self):
+        assert self._stop("inactive") is True
+
+    def test_still_active_is_a_failure(self):
+        assert self._stop("active") is False
+
+    def test_still_deactivating_is_a_failure(self):
+        assert self._stop("deactivating") is False
+
+
+class TestServiceStateTimeout:
+    @patch("cli.system.get_os", return_value="linux")
+    def test_is_active_gets_a_short_timeout(self, _os):
+        """Review finding 5: each poll must not be able to hang for 60s."""
+        with patch("cli.system.run_command", return_value=MagicMock(stdout="active\n")) as run:
+            assert system.service_state() == "active"
+        assert run.call_args.kwargs["timeout"] == 5
+
+
+class TestPrintServiceState:
+    """Review finding 2: an active unit is not a serving app."""
+
+    def _say(self, running, healthy):
+        with patch("cli.system.is_service_running", return_value=running), \
+             patch("cli.system.health_check", return_value=healthy) as hc, \
+             patch("cli.system.console") as console:
+            system._print_service_state(24267, "127.0.0.1")
+        return " ".join(str(c.args[0]) for c in console.print.call_args_list), hc
+
+    def test_active_and_healthy_is_running(self):
+        out, hc = self._say(True, True)
+        assert "RUNNING and answering /health" in out
+        hc.assert_called_once_with(24267, timeout=10, host="127.0.0.1")
+
+    def test_active_but_not_answering_is_not_serving(self):
+        out, _ = self._say(True, False)
+        assert "NOT SERVING" in out and "RUNNING" not in out
+
+    def test_inactive_is_down(self):
+        out, hc = self._say(False, True)
+        assert "DOWN" in out
+        hc.assert_not_called()
+
+
+class TestRollBackRestoreGuard:
+    """Review finding 1: _roll_back must not copy a backup over a database a
+    still-dying process may hold. A stop in progress reads as not active and
+    uvicorn has already closed its port, so only a successful stop that
+    settled to inactive/failed makes the restore safe."""
+
+    def _roll_back(self, tmp_path, *, stopped, settled, port_in_use=False):
+        backup = tmp_path / "chaotic.db.backup-20261013-000000"
+        backup.write_bytes(b"")
+        with patch("cli.system.stop_service", return_value=stopped), \
+             patch("cli.system.wait_for_service_settled", return_value=settled), \
+             patch("cli.system.checkout_version", return_value=(True, None)) as checkout, \
+             patch("cli.system.is_service_running", return_value=False), \
+             patch("cli.system.is_port_in_use", return_value=port_in_use), \
+             patch("cli.system.restore_backup", return_value=True) as restore, \
+             patch("cli.system.start_service", return_value=True), \
+             patch("cli.system.health_check", return_value=True), \
+             patch("cli.system.console") as console:
+            system._roll_back("19ae385deployed", backup, port=24267, host="127.0.0.1")
+        out = " ".join(str(c.args[0]) for c in console.print.call_args_list)
+        checkout.assert_called_once_with("19ae385deployed", force=True)
+        return restore, _flat(out), backup
+
+    def test_stop_still_in_progress_with_port_free_does_not_restore(self, tmp_path):
+        restore, out, backup = self._roll_back(tmp_path, stopped=True, settled="deactivating")
+        restore.assert_not_called()
+        assert "NOT restoring the database backup: the server did not stop cleanly" in out
+        assert "'deactivating'" in out
+        assert f"--restore {backup.name}" in out
+
+    def test_failed_stop_does_not_restore(self, tmp_path):
+        restore, out, _ = self._roll_back(tmp_path, stopped=False, settled="inactive")
+        restore.assert_not_called()
+        assert "did not stop cleanly" in out
+
+    def test_clean_stop_restores(self, tmp_path):
+        restore, out, backup = self._roll_back(tmp_path, stopped=True, settled="inactive")
+        restore.assert_called_once_with(backup, port=24267, host="127.0.0.1")
+
+    def test_stop_ending_failed_after_sigkill_restores(self, tmp_path):
+        restore, _, _ = self._roll_back(tmp_path, stopped=True, settled="failed")
+        restore.assert_called_once()
+
+
+class TestCrashLoopingUnitIsStopped:
+    """Review finding 3: a unit in auto-restart reads "activating", not
+    running. It must still be stopped before the backup, or systemd keeps
+    relaunching the old code through checkout and migrate."""
+
+    def test_activating_unit_is_stopped_then_started_at_the_end(self):
+        result, m = _upgrade(
+            is_service_running=dict(return_value=False),
+            service_state=dict(return_value="activating"),
+        )
+        assert result.exit_code == 0, result.output
+        out = _flat(result.output)
+        assert "Stopping server (service state 'activating')" in out
+        m["stop_service"].assert_called_once()
+        m["start_service"].assert_called_once()
+        m["get_remote_version"].assert_called_once()  # only after; nothing served before
+
+    def test_failed_unit_is_not_stopped(self):
+        result, m = _upgrade(
+            is_service_running=dict(return_value=False),
+            service_state=dict(return_value="failed"),
+        )
+        assert result.exit_code == 0, result.output
+        m["stop_service"].assert_not_called()
+        m["start_service"].assert_called_once()
+
+
+class TestRollbackFromStoppedSaysSo:
+    """Review finding 7."""
+
+    def test_rollback_after_a_from_stopped_upgrade_names_the_old_version_start(self):
+        result, _ = _upgrade(
+            is_service_running=dict(return_value=False),
+            service_state=dict(return_value="inactive"),
+            health_check=dict(return_value=False),
+        )
+        assert result.exit_code == 1
+        assert ("The server was not running before this upgrade; starting the previous version anyway"
+                in _flat(result.output))
+
+    def test_rollback_after_a_running_upgrade_does_not(self):
+        result, _ = _upgrade(health_check=dict(return_value=False))
+        assert result.exit_code == 1
+        assert "was not running before this upgrade" not in _flat(result.output)

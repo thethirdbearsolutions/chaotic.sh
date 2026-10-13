@@ -414,7 +414,14 @@ def stop_service() -> bool:
     """Stop the server service. Returns True on success, False on any
     failure, including the CLI's own wait running out (CHT-1474); it never
     raises. A False does not say whether the server is up: the stop may be
-    half done. Callers report that with _handle_failed_stop()."""
+    half done. Callers report that with _handle_failed_stop().
+
+    A stop that systemd ends with SIGKILL at TimeoutStopSec leaves the unit
+    "failed", and the stop job still finishes as done, so systemctl exits 0
+    (systemd src/core/unit.c, unit_process_job: JOB_STOP finishes JOB_DONE
+    on UNIT_IS_INACTIVE_OR_FAILED). Should some systemd exit non-zero
+    anyway, a unit that settled to inactive or failed is stopped all the
+    same, and is reported as such."""
     os_type = get_os()
     try:
         if os_type == "linux":
@@ -425,12 +432,16 @@ def stop_service() -> bool:
         else:
             return False
         return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+    except subprocess.CalledProcessError:
+        return os_type == "linux" and wait_for_service_settled() in _STOPPED_STATES
+    except (subprocess.TimeoutExpired, OSError):
         return False
 
 
 # systemd states a unit passes through on its way somewhere else.
 _TRANSITIONAL_STATES = frozenset({"activating", "deactivating", "reloading", "refreshing"})
+# States in which no process of the unit is running.
+_STOPPED_STATES = frozenset({"inactive", "failed"})
 
 
 def service_state() -> str:
@@ -440,7 +451,7 @@ def service_state() -> str:
     if get_os() != "linux":
         return "active" if is_service_running() else "inactive"
     try:
-        result = run_command(["systemctl", "--user", "is-active", SYSTEMD_SERVICE], check=False)
+        result = run_command(["systemctl", "--user", "is-active", SYSTEMD_SERVICE], check=False, timeout=5)
     except (subprocess.TimeoutExpired, OSError):
         return "unknown"
     return (result.stdout or "").strip() or "unknown"
@@ -463,12 +474,18 @@ def _handle_failed_stop(port: int, host: str, restart: bool = True) -> bool:
     down; if it is down and `restart`, start it again and verify /health.
     Returns True when the server is up on return."""
     console.print("[red]Failed to stop server.[/red]")
-    wait_for_service_settled()
+    state = wait_for_service_settled()
     if is_service_running():
         console.print("[yellow]The server is still RUNNING; it was not stopped.[/yellow]")
         return True
     if not restart:
-        console.print("[yellow]The server is DOWN: the stop completed after the CLI stopped waiting.[/yellow]")
+        if state in _STOPPED_STATES:
+            console.print("[yellow]The server is DOWN: the stop completed after the CLI stopped waiting.[/yellow]")
+        else:
+            console.print(
+                f"[red]Could not confirm the server stopped: the service manager reports '{state}'. "
+                "Check 'chaotic system status'.[/red]"
+            )
         return False
     console.print("[yellow]The server is DOWN (the stop half finished). Starting it again...[/yellow]")
     if start_service() and health_check(port, host=host):
@@ -481,12 +498,21 @@ def _handle_failed_stop(port: int, host: str, restart: bool = True) -> bool:
     return False
 
 
-def _print_service_state() -> None:
-    """End a failed upgrade with one plain line about the server (CHT-1475)."""
-    if is_service_running():
-        console.print("Server is RUNNING. Check 'chaotic system status' for the version it serves.")
-    else:
+def _print_service_state(port: int | None, host: str = "127.0.0.1") -> None:
+    """End a failed upgrade with one plain line about the server (CHT-1475).
+    An active unit is not a serving app: a server that refuses to start
+    (e.g. verify_migrations_current) is relaunched by Restart=on-failure and
+    can read as active between crashes. Say RUNNING only when /health
+    answers too."""
+    if not is_service_running():
         console.print("[red]Server is DOWN. Start it with 'chaotic system start'.[/red]")
+    elif health_check(port if port is not None else DEFAULT_PORT, timeout=10, host=host):
+        console.print("Server is RUNNING and answering /health. Check 'chaotic system status' for its version.")
+    else:
+        console.print(
+            "[red]Server is NOT SERVING: the service is up but /health does not answer "
+            "(it may be crash-looping). Check 'chaotic system logs -n 50'.[/red]"
+        )
 
 
 def is_service_running() -> bool:
@@ -1413,7 +1439,9 @@ def system_stop():
         up = _handle_failed_stop(
             server_info.get("port", DEFAULT_PORT), server_info.get("host", "127.0.0.1"), restart=False,
         )
-        if up:
+        # Exit 0 only when the server is confirmed stopped, not merely
+        # "not reported as running" (an unreadable state is not a stop).
+        if up or service_state() not in _STOPPED_STATES:
             raise SystemExit(1)
 
 
@@ -1598,7 +1626,7 @@ def _print_commit_list(rev_range: str, heading: str) -> None:
 
 def _roll_back(
     current_commit: str | None, backup_path: Path | None,
-    port: int | None = None, host: str = "127.0.0.1",
+    port: int | None = None, host: str = "127.0.0.1", was_running: bool = True,
 ) -> None:
     """Undo a failed upgrade: stop whatever is running, restore the previous
     checkout and (if one was taken) the database backup, restart.
@@ -1608,8 +1636,12 @@ def _roll_back(
     (a process the service unit does not own), and copying a backup over a
     file that process has open would lose the restore or corrupt the file.
     """
-    stop_service()
-    wait_for_service_stop(timeout=10)
+    # A stop still in progress reads as "not active" and uvicorn closes its
+    # listener on SIGTERM, so neither database_in_use() nor the port proves
+    # the dying process has let go of the database. Restore only after a
+    # stop that succeeded AND settled to a state with no process.
+    stopped = stop_service()
+    state = wait_for_service_settled()
     if current_commit:
         checkout_version(current_commit, force=True)
     if backup_path:
@@ -1619,13 +1651,24 @@ def _roll_back(
                 f"{f' (port {port} is in use)' if port is not None else ''}. "
                 f"Stop it, then restore by hand: chaotic system backup --restore {backup_path.name}[/red]"
             )
+        elif not (stopped and state in _STOPPED_STATES):
+            console.print(
+                f"[red]NOT restoring the database backup: the server did not stop cleanly "
+                f"(service state '{state}'), so it may still have the database open. "
+                f"Stop it, then restore by hand: chaotic system backup --restore {backup_path.name}[/red]"
+            )
         elif not restore_backup(backup_path, port=port, host=host):
             console.print(f"[red]Database restore failed. Backup is at {backup_path}[/red]")
+    if not was_running:
+        console.print(
+            "[yellow]The server was not running before this upgrade; starting the previous "
+            "version anyway so it is not left down.[/yellow]"
+        )
     if not start_service():
         console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
     else:
         console.print("[yellow]Rolled back to previous version.[/yellow]")
-    _print_service_state()
+    _print_service_state(port, host)
 
 
 @system.command("upgrade")
@@ -1747,10 +1790,12 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         raise SystemExit(0)
 
     # Stop server FIRST (before backup to ensure consistent db state).
-    # A unit caught mid-stop or mid-start reads as not running; let it
-    # settle first so was_running means something (CHT-1474).
-    wait_for_service_settled()
+    # Stop anything that is not settled-stopped (CHT-1474): a crash-looping
+    # unit sits in "activating" (auto-restart) and is not "running", but
+    # systemd keeps relaunching it through the backup, checkout and migrate.
+    state = service_state()
     was_running = is_service_running()
+    must_stop = was_running or state not in _STOPPED_STATES
     server_info = load_server_json()
     port = server_info.get("port", DEFAULT_PORT)
     host = server_info.get("host", "127.0.0.1")
@@ -1758,8 +1803,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     # message can say definitively whether MCP clients must reconnect.
     version_before = get_remote_version(port, host=host) if was_running else None
     version_after = None
-    if was_running:
-        console.print("Stopping server...")
+    if must_stop:
+        console.print("Stopping server..." if was_running else f"Stopping server (service state '{state}')...")
         if not stop_service():
             # CHT-1474: nothing has been changed yet; make sure the server
             # is back up (or say plainly that it is not) before giving up.
@@ -1781,9 +1826,9 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                 console.print("Starting server again...")
                 if not (start_service() and health_check(port, host=host)):
                     console.print("[red]The server did not come back up.[/red]")
-                    _print_service_state()
+                    _print_service_state(port, host)
                     raise SystemExit(1)
-            _print_service_state()
+            _print_service_state(port, host)
             raise SystemExit(0)
 
     console.print()
@@ -1799,7 +1844,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             console.print("Nothing was changed. Fix the backup problem or pass --no-backup deliberately.")
             if was_running:
                 start_service()
-            _print_service_state()
+            _print_service_state(port, host)
             raise SystemExit(1)
         if backup_path:
             console.print(f"  [dim]{backup_path}[/dim]")
@@ -1824,7 +1869,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             if was_running:
                 if not start_service():
                     console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
-            _print_service_state()
+            _print_service_state(port, host)
             raise SystemExit(1)
 
     # Sync dependencies and run database migrations
@@ -1838,7 +1883,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             console.print("Restarting server on new code...")
             if not start_service():
                 console.print("[red]Failed to restart server. Run 'chaotic system start' manually.[/red]")
-        _print_service_state()
+        _print_service_state(port, host)
         raise SystemExit(1)
 
     # Rebuild frontend bundle so it matches the updated src/. Non-fatal: the
@@ -1862,7 +1907,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     if not start_service():
         console.print("[red]Failed to start server.[/red]")
         console.print("Rolling back...")
-        _roll_back(current_commit, backup_path, port=port, host=host)
+        _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running)
         raise SystemExit(1)
 
     # Health check
@@ -1870,7 +1915,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     if not health_check(port, host=host):
         console.print("[red]FAILED[/red]")
         console.print("\nHealth check failed. Rolling back...")
-        _roll_back(current_commit, backup_path, port=port, host=host)
+        _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running)
         raise SystemExit(1)
     console.print("[green]OK[/green]")
 
@@ -1889,7 +1934,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                 f"\nPort {port} is answering, but with {served}, not "
                 f"{new_commit[:7]}: the new process did not take over. Rolling back..."
             )
-            _roll_back(current_commit, backup_path, port=port, host=host)
+            _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running)
             raise SystemExit(1)
         if matched is None:
             # A server too old to report git_sha (before 4a9db89) or a
