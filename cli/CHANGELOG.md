@@ -5,6 +5,47 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
+## [0.1.0a20] - 2026-10-13
+
+Server and CLI changes merged since a19 (PRs #303-#309). This release
+carries two database migrations: run `chaotic system upgrade`, which backs
+up and migrates before restarting, rather than restarting the service by
+hand.
+
+_The a18 and a19 entries were never written; their contents are in the
+`v0.1.0a18` and `v0.1.0a19` tag history (CHT-1463)._
+
+### Added
+
+- **Ritual artifacts** — a ritual can declare an `artifact` (a document or
+  a URL) that an attestation must point at. A document must exist, belong to
+  the attester's team, be theirs, be newer than the sprint or ticket, and back
+  only one attestation. `chaotic ritual create/update --artifact`
+  (CHT-1359; migration 0018).
+- **Every API route is reachable from the CLI client**, and every paginated
+  list method takes `skip`/`limit`, so REST callers are no longer stuck on the
+  first page (CHT-1383).
+
+### Fixed
+
+- **Zero-point estimates** show as `0` everywhere (issue, sprint and epic
+  views, the web UI) instead of "No estimate", and `epic create --estimate`
+  warns on off-scale values like `issue create` does (CHT-1406, CHT-1407).
+- **Blocking cycles under concurrency** — the cycle check runs inside the
+  insert's transaction behind SQLite's writer lock, so two racing inverse
+  `blocks` edges can no longer both land (CHT-1311).
+- `get_pending_gates` requires `project_id`, matching the route (CHT-1383).
+
+### Internal
+
+- Migration 0017 records the schema that hand-written migrations 0005-0016
+  produced, so `oxyde makemigrations` works again; it executes nothing
+  (CHT-1410, CHT-1412).
+- Rolling SQLite backup script: ten slots across minute, hour, daily and
+  weekly tiers, with a disk guard and a lock (CHT-1418).
+- ADR-0002 amended: access control is enforced above the service layer, and
+  `foreign_keys` is ON (CHT-1457).
+
 ## [0.1.0a17] - 2026-07-11
 
 Keyboard-navigation wave for the web UI. No CLI changes since a16 — this
