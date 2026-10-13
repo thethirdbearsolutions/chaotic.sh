@@ -144,12 +144,11 @@ class TestLinuxRewrites:
     @pytest.mark.parametrize("old", [
         _unit_before_cht_1474(), _unit_3769dba(), _unit_40b994d(),
         _unit_before_cht_1474().replace("\n", "\r\n"),
-        "# managed by chaotic\n" + _unit_before_cht_1474().replace("[Service]\n", "[Service]\n; local note\n"),
         # One Environment= line may carry several assignments.
         _unit_before_cht_1474().replace(
             f"Environment=PORT={PORT}\nEnvironment=SECRET_KEY={SECRET}",
             f"Environment=PORT={PORT} SECRET_KEY={SECRET}"),
-    ], ids=["before-cht-1474", "3769dba", "40b994d-initial", "crlf", "comments", "multi-assignment"])
+    ], ids=["before-cht-1474", "3769dba", "40b994d-initial", "crlf", "multi-assignment"])
     def test_historical_units_are_rewritten(self, env, old):
         path = env.install(old)
         result = reconcile_service_file(PORT, HOST, SECRET)
@@ -201,8 +200,17 @@ class TestLinuxBlockers:
         (_unit_before_cht_1474().replace("Restart=on-failure", "Restart=always"), "Restart"),
         (_unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nTimeoutStopSec=90\n"), "TimeoutStopSec"),
         (_unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nEnvironment=\n"), "empty Environment="),
+        # Re-review: a comment can hold an old secret; dropping it silently
+        # and printing it in the diff were both wrong.
+        (_unit_before_cht_1474().replace(
+            "RestartSec=5\n", "RestartSec=5\n# old: Environment=SMTP_PASSWORD=hunter2\n"),
+         "the rewrite would drop comments"),
+        ("; hunter2 was here\n" + _unit_before_cht_1474(), "the rewrite would drop comments"),
+        (_unit_before_cht_1474().replace("[Install]", "  # indented hunter2\n[Install]"),
+         "the rewrite would drop comments"),
     ], ids=["extra-env", "extra-env-multi", "changed-env", "environmentfile", "execstart",
-            "execstartpre", "nice", "restart", "own-timeout", "env-reset"])
+            "execstartpre", "nice", "restart", "own-timeout", "env-reset",
+            "secret-comment", "semicolon-comment", "indented-comment"])
     def test_settings_the_rewrite_would_lose_block_it(self, env, old, reason):
         path = env.install(old)
         result = reconcile_service_file(PORT, HOST, SECRET)
@@ -369,7 +377,13 @@ class TestMacOS:
          "UserName"),
         (_plist_before_cht_1474().replace("<string>serve-prod</string>", "<string>serve-hunter2</string>"),
          "ProgramArguments"),
-    ], ids=["secret", "extra-env", "extra-key", "program"])
+        (_plist_before_cht_1474().replace(
+            "<dict>\n    <key>Label</key>", "<dict>\n    <!-- SMTP_PASSWORD=hunter2 -->\n    <key>Label</key>"),
+         "the rewrite would drop comments"),
+        (_plist_before_cht_1474().replace(
+            "<dict>\n    <key>Label</key>", "<dict>\n    <!--\n      hunter2\n    -->\n    <key>Label</key>"),
+         "the rewrite would drop comments"),
+    ], ids=["secret", "extra-env", "extra-key", "program", "comment", "multiline-comment"])
     def test_plist_blockers(self, env, old, reason):
         path = env.install(old, os_type="darwin")
         result = reconcile_service_file(PORT, HOST, SECRET)
@@ -380,6 +394,25 @@ class TestMacOS:
         path = env.install("<plist><dict><key>broken", os_type="darwin")
         _assert_skipped_untouched(env, path, "<plist><dict><key>broken",
                                   reconcile_service_file(PORT, HOST, SECRET), "could not parse")
+
+
+class TestRedaction:
+    """Defence in depth: comment text never reaches a diff, even though a
+    file with comments is never rewritten."""
+
+    def test_systemd_comments_are_redacted(self):
+        lines = system._redact_service_text(
+            "[Service]\n# old: Environment=SMTP_PASSWORD=hunter2\n  ; hunter2\nRestartSec=5\n", "linux", SECRET)
+        assert lines == ["[Service]", "# <comment redacted>", "  # <comment redacted>", "RestartSec=5"]
+
+    def test_plist_comments_are_redacted(self):
+        lines = system._redact_service_text(
+            "<dict>\n  <!-- hunter2 -->\n  <!--\n  hunter2\n  -->\n  <key>Label</key>\n</dict>\n", "darwin", SECRET)
+        assert "hunter2" not in "\n".join(lines)
+        assert lines[-2:] == ["  <key>Label</key>", "</dict>"]
+
+    def test_unterminated_plist_comment_is_unparseable(self):
+        assert system._parse_launchd_plist("<plist><!-- open") is None
 
 
 def test_unsupported_os_is_skipped():

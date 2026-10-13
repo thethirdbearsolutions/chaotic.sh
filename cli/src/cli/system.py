@@ -418,6 +418,7 @@ class _ParsedService:
         self.env: dict[str, str] = {}
         self.env_counts: dict[str, int] = {}
         self.quoted_env: set[str] = set()
+        self.comments: list[str] = []
         self.unsafe: list[str] = []
 
     def workdirs(self) -> list:
@@ -452,7 +453,10 @@ def _parse_systemd_unit(content: str) -> _ParsedService | None:
     section = ""
     for raw in content.replace("\r\n", "\n").split("\n"):
         line = raw.strip()
-        if not line or line[0] in "#;":
+        if not line:
+            continue
+        if line[0] in "#;":
+            unit.comments.append(line)
             continue
         if line.endswith("\\"):
             return None  # line continuation: not worth guessing at
@@ -491,6 +495,10 @@ def _parse_launchd_plist(content: str) -> _ParsedService | None:
     if not isinstance(data, dict):
         return None
     unit = _ParsedService()
+    # plistlib drops XML comments; record that there were some.
+    unit.comments.extend(m.group(0) for m in re.finditer(r"<!--.*?-->", content, re.DOTALL))
+    if "<!--" in content and not unit.comments:
+        return None  # unterminated comment
     for key, value in data.items():
         if key != "EnvironmentVariables":
             unit.directives[("", key)] = [value]
@@ -515,6 +523,10 @@ def _rewrite_blockers(have: _ParsedService, want: _ParsedService) -> list[str]:
     naming settings but never their values. Empty means the rewrite only
     adds settings and changes none the file already makes."""
     reasons = list(have.unsafe)
+    # A comment may hold anything (an old secret, a note the owner needs),
+    # and the regenerated file has none: never drop one.
+    if any(c not in want.comments for c in have.comments):
+        reasons.append("the rewrite would drop comments")
     risky = sorted(k for k in _IDENTITY_ENV_KEYS
                    if have.env_counts.get(k, 0) > 1 or k in have.quoted_env)
     if len(have.workdirs()) > 1:
@@ -576,12 +588,17 @@ def _redact_service_text(content: str, os_type: str, secret_key: str) -> list[st
     """The file's lines with every environment value replaced, so a diff of
     them can go to a terminal or a deploy log."""
     out = []
-    in_env = False
+    in_env = in_comment = False
     for line in content.splitlines():
         stripped = line.strip()
-        if os_type == "linux" and stripped.startswith("Environment="):
+        indent = line[: len(line) - len(line.lstrip())]
+        if os_type == "linux" and stripped[:1] in ("#", ";"):
+            line = f"{indent}# <comment redacted>"
+        elif os_type == "darwin" and (in_comment or "<!--" in stripped):
+            in_comment = "-->" not in stripped.split("<!--")[-1]
+            line = f"{indent}<!-- <comment redacted> -->"
+        elif os_type == "linux" and stripped.startswith("Environment="):
             pairs = _split_environment(stripped.partition("=")[2])
-            indent = line[: len(line) - len(line.lstrip())]
             names = " ".join(f"{k}=<redacted>" for k, _ in pairs) if pairs else "<redacted>"
             line = f"{indent}Environment={names}"
         elif os_type == "darwin":
