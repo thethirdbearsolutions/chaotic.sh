@@ -65,6 +65,13 @@ class ConsentAgent(BaseModel):
     id: str
     name: str
     agent_project_id: str | None = None
+    # Whose agent it is: a team admin may choose another member's agent
+    # (review N4/Q2), so the page says so.
+    owner_name: str | None = None
+    owned_by_viewer: bool = True
+    # Live API keys the agent also has: connecting doesn't revoke them,
+    # and revoking the connection won't either (review Q2).
+    active_api_keys: int = 0
 
 
 class ConsentTeam(BaseModel):

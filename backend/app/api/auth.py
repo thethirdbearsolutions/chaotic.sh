@@ -4,7 +4,7 @@ from app.auth.access import reads, writes
 from app.api.deps import CurrentUser
 from app.schemas.user import UserCreate, UserLogin, UserResponse, Token
 from app.services.user_service import UserService
-from app.utils.security import create_access_token
+from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
 
 router = APIRouter()
 
@@ -40,7 +40,10 @@ async def login(user_in: UserLogin):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token = create_access_token(data={"sub": user.id})
+    claims = {"sub": user.id}
+    if user_in.client == "web":
+        claims[WEB_LOGIN_CLAIM] = WEB_LOGIN
+    access_token = create_access_token(data=claims)
     return Token(access_token=access_token)
 
 

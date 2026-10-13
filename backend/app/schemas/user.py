@@ -1,4 +1,5 @@
 """User schemas."""
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from app.enums import AgentKind
 from app.utils import DateTimeUTC
@@ -46,6 +47,9 @@ class UserLogin(BaseModel):
 
     email: EmailStr
     password: str
+    # "web": the web app's own login form. Its JWT carries the web-login
+    # claim that OAuth consent requires (CHT-1519); the CLI never sends it.
+    client: Literal["web"] | None = None
 
 
 class Token(BaseModel):

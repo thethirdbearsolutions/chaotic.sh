@@ -31,11 +31,11 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import status
-from oxyde import IntegrityError, execute_raw
+from oxyde import IntegrityError, atomic, execute_raw
 
 from app.config import get_settings
 from app.enums import AgentKind, HolderVia, OAuthClientRegistration, TokenKind
-from app.oauth.clients import is_loopback_redirect, redirect_host
+from app.oauth.clients import is_loopback_redirect, redirect_host, redirect_uri_problem
 from app.oauth.discovery import RESOURCE_SCOPES
 from app.oxyde_models.oauth import OxydeHolderSession, OxydeOAuthAuthorizationRequest, OxydeOAuthClient
 from app.oxyde_models.project import OxydeProject
@@ -51,7 +51,7 @@ from app.schemas.oauth import (
     ConsentTeam,
 )
 from app.services.agent_service import AgentService
-from app.services.oauth_client_service import OAuthClientService, redirect_uris_of
+from app.services.oauth_client_service import OAuthClientService
 from app.services.registration_service import member_named, name_matches_member_detail
 from app.services.team_service import TeamService
 from app.services.token_service import TokenService, issuer, mcp_resource
@@ -66,9 +66,6 @@ POLICY_SCOPES: dict[str, str] = {scope: scope.split(":", 1)[1] for scope in RESO
 AVAILABLE_POLICIES = frozenset({"write"})
 DEFAULT_SCOPE = "chaotic:write"
 MAX_STATE_LENGTH = 1024
-# How many of the viewer's past OAuth connections to search for the agent
-# to pre-select.
-_SUGGESTION_LOOKBACK = 50
 
 
 class ConsentError(Exception):
@@ -116,14 +113,13 @@ def normalize_requested_scope(scope: str | None) -> list[str] | None:
     return scopes
 
 
-def oauth_external_ref(client: OxydeOAuthClient, user_id: str) -> str:
+def oauth_external_ref(client: OxydeOAuthClient, user_id: str, redirect_uri: str) -> str:
     """``oauth:<client host>:<user id>`` (design §3.2): the CIMD host, or
-    for a DCR client the host its codes go to."""
+    for a DCR client the host this request's code goes to."""
     if client.registration == OAuthClientRegistration.CIMD:
         host = redirect_host(client.id)
     else:
-        uris = redirect_uris_of(client)
-        host = redirect_host(uris[0]) if uris else "unknown"
+        host = redirect_host(redirect_uri)
     return f"oauth:{host}:{user_id}"
 
 
@@ -171,6 +167,9 @@ class OAuthConsentService:
             or request.bound_user_id != user.id
             or request.consumed_at is not None
             or request.expires_at <= _now()
+            # Checked at /oauth/authorize already; again here because the
+            # SPA navigates to whatever approve/deny return (review B1).
+            or redirect_uri_problem(request.redirect_uri, allow_private_use=True)
         ):
             raise _gone()
         return request
@@ -189,7 +188,7 @@ class OAuthConsentService:
         settings = get_settings()
         teams = await self._teams(user)
         team_ids = {t.id for t in teams}
-        suggested_team, suggested_agent = await self._suggestion(client, user, request.redirect_uri)
+        suggested_team, suggested_agent = await self._suggestion(client, user)
         if suggested_agent and not any(
             a.id == suggested_agent for t in teams if t.id == suggested_team for a in t.agents
         ):
@@ -241,9 +240,29 @@ class OAuthConsentService:
                 name=team.name,
                 key=team.key,
                 projects=[ConsentProject(id=p.id, name=p.name, key=p.key) for p in projects],
-                agents=[ConsentAgent(id=a.id, name=a.name, agent_project_id=a.agent_project_id) for a in agents],
+                agents=[await self._consent_agent(a, user) for a in agents],
             ))
         return out
+
+    @staticmethod
+    async def _consent_agent(agent: OxydeUser, viewer: OxydeUser) -> ConsentAgent:
+        owner = None
+        if agent.parent_user_id and agent.parent_user_id != viewer.id:
+            owner = await OxydeUser.objects.get_or_none(id=agent.parent_user_id)
+        # Raw SQL: no range lookups on DateTimeUTC fields in Oxyde.
+        rows = await execute_raw(
+            "SELECT COUNT(*) AS n FROM api_keys WHERE principal_user_id = ? AND is_active = 1 "
+            "AND (expires_at IS NULL OR expires_at > ?)",
+            [agent.id, _now()],
+        )
+        return ConsentAgent(
+            id=agent.id,
+            name=agent.name,
+            agent_project_id=agent.agent_project_id,
+            owner_name=viewer.name if agent.parent_user_id == viewer.id else (owner.name if owner else None),
+            owned_by_viewer=agent.parent_user_id == viewer.id,
+            active_api_keys=rows[0]["n"],
+        )
 
     @staticmethod
     async def _may_connect_as(user: OxydeUser, agent: OxydeUser) -> bool:
@@ -257,34 +276,18 @@ class OAuthConsentService:
             and await AgentService().can_manage(user, agent)
         )
 
-    async def _suggestion(
-        self, client: OxydeOAuthClient, user: OxydeUser, redirect_uri: str,
-    ) -> tuple[str | None, str | None]:
+    async def _suggestion(self, client: OxydeOAuthClient, user: OxydeUser) -> tuple[str | None, str | None]:
         """(team, agent) of the viewer's newest OAuth connection to this
-        client: the same client_id for CIMD; for DCR, which mints a new
-        client_id per registration, a DCR client of the same name that
-        registered this request's redirect host. Advisory only: it
-        pre-selects, the human still chooses."""
+        same client_id, else (None, None): "new agent" stays the default
+        (threat S7). Never matched by name or redirect host: a DCR client
+        gets a fresh client_id per registration, and any self-registered
+        app can copy another's name and loopback host (review N1/Q2).
+        Advisory only: it pre-selects, the human still chooses."""
         sessions = await OxydeHolderSession.objects.filter(
-            holder_user_id=user.id, via=HolderVia.OAUTH,
-        ).order_by("-created_at").limit(_SUGGESTION_LOOKBACK).all()
-        if client.registration == OAuthClientRegistration.CIMD:
-            for session in sessions:
-                if session.oauth_client_id == client.id:
-                    return session.team_id, session.principal_user_id
-            return None, None
-        host = redirect_host(redirect_uri)
-        other_ids = list({s.oauth_client_id for s in sessions if s.oauth_client_id})
-        others = {c.id: c for c in await OxydeOAuthClient.objects.filter(id__in=other_ids).all()} if other_ids else {}
-        for session in sessions:
-            other = others.get(session.oauth_client_id)
-            if (
-                other is not None
-                and other.registration == OAuthClientRegistration.DCR
-                and other.client_name == client.client_name
-                and host in {redirect_host(u) for u in redirect_uris_of(other)}
-            ):
-                return session.team_id, session.principal_user_id
+            holder_user_id=user.id, via=HolderVia.OAUTH, oauth_client_id=client.id,
+        ).order_by("-created_at").limit(1).all()
+        if sessions:
+            return sessions[0].team_id, sessions[0].principal_user_id
         return None, None
 
     # --- 3. decisions --------------------------------------------------------------
@@ -341,31 +344,36 @@ class OAuthConsentService:
             if await member_named(choice.team_id, new_name):
                 raise ConsentError(422, name_matches_member_detail(new_name))
 
-        # Consume: of a concurrent approve and deny, exactly one wins.
-        consumed = await OxydeOAuthAuthorizationRequest.objects.filter(
-            id=request.id, bound_user_id=user.id, consumed_at__isnull=True,
-        ).update(consumed_at=_now())
-        if consumed != 1:
-            raise _gone()
+        # One transaction (review S3): consume, create the agent, mark the
+        # client used and mint the code, or none of it. A failure part way
+        # leaves no orphan agent and doesn't burn the request, so the
+        # human can try again.
+        async with atomic():
+            # Consume: of a concurrent approve and deny, exactly one wins.
+            consumed = await OxydeOAuthAuthorizationRequest.objects.filter(
+                id=request.id, bound_user_id=user.id, consumed_at__isnull=True,
+            ).update(consumed_at=_now())
+            if consumed != 1:
+                raise _gone()
 
-        if agent is None:
-            agent = await self._create_agent(new_name, user, choice.team_id, client)
-        await OAuthClientService().mark_authorized(client.id)
-        granted = [scope] + ([OFFLINE_ACCESS] if OFFLINE_ACCESS in scopes else [])
-        _row, code = await TokenService().mint_single_use(
-            TokenKind.AUTH_CODE,
-            team_id=choice.team_id,
-            principal_user_id=agent.id,
-            holder_user_id=user.id,
-            resource=request.resource or mcp_resource(),
-            scopes=granted,
-            policy_name=choice.policy,
-            scope_project_ids=project_ids,
-            oauth_client_id=client.id,
-            code_challenge=request.code_challenge,
-            redirect_uri=request.redirect_uri,
-            auth_request_id=request.id,
-        )
+            if agent is None:
+                agent = await self._create_agent(new_name, user, choice.team_id, client, request.redirect_uri)
+            await OAuthClientService().mark_authorized(client.id)
+            granted = [scope] + ([OFFLINE_ACCESS] if OFFLINE_ACCESS in scopes else [])
+            _row, code = await TokenService().mint_single_use(
+                TokenKind.AUTH_CODE,
+                team_id=choice.team_id,
+                principal_user_id=agent.id,
+                holder_user_id=user.id,
+                resource=request.resource or mcp_resource(),
+                scopes=granted,
+                policy_name=choice.policy,
+                scope_project_ids=project_ids,
+                oauth_client_id=client.id,
+                code_challenge=request.code_challenge,
+                redirect_uri=request.redirect_uri,
+                auth_request_id=request.id,
+            )
         redirect = with_query(request.redirect_uri, {"code": code, "state": request.state, "iss": issuer()})
         return redirect, agent.id
 
@@ -395,12 +403,14 @@ class OAuthConsentService:
             })
         return wanted
 
-    async def _create_agent(self, name: str, user: OxydeUser, team_id: str, client: OxydeOAuthClient) -> OxydeUser:
+    async def _create_agent(
+        self, name: str, user: OxydeUser, team_id: str, client: OxydeOAuthClient, redirect_uri: str,
+    ) -> OxydeUser:
         """A new agent the human owns, with no key: it acts only through
         this connection's tokens. ``external_ref`` is
         ``oauth:<host>:<user>``, suffixed ``:<n>`` when that is taken
         (another connection of the same client in this team)."""
-        base = oauth_external_ref(client, user.id)
+        base = oauth_external_ref(client, user.id, redirect_uri)
         taken = {
             u.external_ref for u in await OxydeUser.objects.filter(
                 agent_team_id=team_id, external_ref__startswith=base,

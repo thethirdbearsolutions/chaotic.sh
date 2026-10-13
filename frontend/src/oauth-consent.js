@@ -18,7 +18,9 @@
  *
  * Approve and Deny POST with the login in the Authorization header (never
  * a cookie, so a cross-site form can't forge them) and then navigate to
- * the redirect the server returns.
+ * the redirect the server returns, but only to an https, http or
+ * reverse-domain native-app URL: never javascript:, data: or the like,
+ * whatever the server said (defence in depth; review B1).
  */
 
 import { api } from './api.js';
@@ -35,6 +37,26 @@ export function consentRequestId(pathname) {
     if (!pathname || !pathname.startsWith(CONSENT_PREFIX)) return null;
     const id = pathname.slice(CONSENT_PREFIX.length);
     return /^[A-Za-z0-9_-]{16,64}$/.test(id) ? id : null;
+}
+
+/**
+ * May the browser be sent to ``url`` as an OAuth redirect? https, http
+ * (the server allows it only for loopback hosts) and RFC 8252 private-use
+ * schemes, which are reverse domain names and so contain a period.
+ * Everything else, javascript:, data:, vbscript:, file:, blob: in any
+ * case among them, is refused.
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isSafeRedirect(url) {
+    let protocol;
+    try {
+        protocol = new URL(url).protocol;
+    } catch {
+        return false;
+    }
+    if (protocol === 'https:' || protocol === 'http:') return true;
+    return /^[a-z][a-z0-9+-]*(\.[a-z0-9+-]+)+:$/.test(protocol);
 }
 
 function screen() {
@@ -71,11 +93,23 @@ function teamOptions(request, selected) {
     ).join('');
 }
 
+function agentInfo(team, agentId) {
+    const agent = team && agentId ? team.agents.find((a) => a.id === agentId) : null;
+    if (!agent) return '';
+    const owner = agent.owned_by_viewer ? 'Your agent' : `${escapeHtml(agent.owner_name || 'Another member')}'s agent`;
+    const keys = agent.active_api_keys
+        ? ` It also has ${agent.active_api_keys} active API key${agent.active_api_keys === 1 ? '' : 's'}:
+             disconnecting this app won't revoke them, and revoking them won't disconnect the app.`
+        : '';
+    return `${owner}.${keys}`;
+}
+
 function agentOptions(team, selectedAgentId) {
     const options = ['<option value="">Create a new agent</option>'];
     for (const agent of (team ? team.agents : [])) {
         const sel = agent.id === selectedAgentId ? ' selected' : '';
-        options.push(`<option value="${escapeAttr(agent.id)}"${sel}>${escapeHtml(agent.name)}</option>`);
+        const owner = agent.owned_by_viewer || !agent.owner_name ? '' : ` (${agent.owner_name}'s)`;
+        options.push(`<option value="${escapeAttr(agent.id)}"${sel}>${escapeHtml(agent.name + owner)}</option>`);
     }
     return options.join('');
 }
@@ -139,6 +173,7 @@ export function renderConsent(el, request) {
                     <select id="oauth-agent">${agentOptions(team, request.suggested_agent_id)}</select>
                     <input id="oauth-agent-name" type="text" maxlength="255"
                         value="${escapeAttr(request.default_agent_name)}" aria-label="New agent name">
+                    <p id="oauth-agent-info" class="oauth-note hidden"></p>
                     <p class="oauth-muted">The app works as this agent, not as you. A new agent is yours
                         and can be disconnected on its own.</p>
                 </fieldset>
@@ -160,13 +195,20 @@ export function renderConsent(el, request) {
                 </div>
             </form>
         </div>`;
-    syncAgentName(el);
+    syncAgentName(el, request);
 }
 
-function syncAgentName(el) {
+function syncAgentName(el, request) {
     const agent = el.querySelector('#oauth-agent');
     const name = el.querySelector('#oauth-agent-name');
     if (agent && name) name.classList.toggle('hidden', agent.value !== '');
+    const info = el.querySelector('#oauth-agent-info');
+    if (info && agent && request) {
+        const teamId = el.querySelector('#oauth-team')?.value;
+        const html = agentInfo(request.teams.find((t) => t.id === teamId), agent.value);
+        info.innerHTML = html;
+        info.classList.toggle('hidden', html === '');
+    }
 }
 
 /**
@@ -206,15 +248,35 @@ function renderGone(el, message) {
         </div>`;
 }
 
+/**
+ * The stored login predates the web-login marker (or came from the CLI):
+ * sign out and back in on this same consent URL.
+ */
+function renderSignInAgain(el, reload) {
+    el.innerHTML = `
+        <div class="oauth-consent">
+            <h1>Sign in again to continue</h1>
+            <p>To approve an app, sign in to Chaotic in this browser. A login made by the command-line tool
+                can't approve apps.</p>
+            <div class="oauth-actions">
+                <button type="button" id="oauth-sign-in-again" class="btn btn-primary">Sign in again</button>
+            </div>
+        </div>`;
+    el.querySelector('#oauth-sign-in-again').addEventListener('click', () => {
+        api.logout();
+        reload();
+    });
+}
+
 function wire(el, requestId, request, navigate) {
     const teamSelect = el.querySelector('#oauth-team');
     teamSelect?.addEventListener('change', () => {
         const team = request.teams.find((t) => t.id === teamSelect.value);
         el.querySelector('#oauth-agent').innerHTML = agentOptions(team, null);
         el.querySelector('#oauth-projects').innerHTML = projectChecks(team);
-        syncAgentName(el);
+        syncAgentName(el, request);
     });
-    el.querySelector('#oauth-agent')?.addEventListener('change', () => syncAgentName(el));
+    el.querySelector('#oauth-agent')?.addEventListener('change', () => syncAgentName(el, request));
 
     let busy = false;
     const decide = async (approve) => {
@@ -224,6 +286,10 @@ function wire(el, requestId, request, navigate) {
             const result = approve
                 ? await api.approveOAuthRequest(requestId, readChoice(el))
                 : await api.denyOAuthRequest(requestId);
+            if (!isSafeRedirect(result.redirect)) {
+                renderGone(el, "The app's return address isn't one a browser should be sent to.");
+                return;
+            }
             navigate(result.redirect);
         } catch (e) {
             busy = false;
@@ -245,8 +311,13 @@ function wire(el, requestId, request, navigate) {
  * Take over the page for a consent request. Call only when signed in.
  * @param {string} requestId
  * @param {(url: string) => void} [navigate] - where to send the browser
+ * @param {() => void} [reload] - reloads the page (after signing out)
  */
-export async function showConsent(requestId, navigate = (url) => window.location.assign(url)) {
+export async function showConsent(
+    requestId,
+    navigate = (url) => window.location.assign(url),
+    reload = () => window.location.reload(),
+) {
     const el = screen();
     showOnly(el);
     el.innerHTML = '<div class="oauth-consent"><p>Loading…</p></div>';
@@ -256,6 +327,8 @@ export async function showConsent(requestId, navigate = (url) => window.location
     } catch (e) {
         if (e && e.status === 404) {
             renderGone(el, 'It has expired, was already answered, or belongs to someone else.');
+        } else if (e && e.status === 403 && e.detail && e.detail.error_code === 'web_login_required') {
+            renderSignInAgain(el, reload);
         } else if (e && e.status === 403) {
             renderGone(el, 'Only a person signed in to Chaotic can approve an app.');
         } else {
