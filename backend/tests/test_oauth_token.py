@@ -345,14 +345,39 @@ class TestRefresh:
         assert narrowed.status_code == 200 and narrowed.json()["scope"] == "offline_access"
         assert narrowed.json()["refresh_token"].startswith("crt_")
 
-    async def test_narrowing_away_offline_access_issues_no_refresh_token(self, client, public_client, tokens):
-        """The response must match the scope it reports (PR #345 review)."""
+    async def test_a_narrowed_refresh_still_rotates_and_the_connection_lives_on(
+        self, client, public_client, tokens, monkeypatch,
+    ):
+        """PR #345 re-review, A. offline_access is not an access-token
+        scope: a refresh asking for scope=chaotic:write gets an access token
+        with that scope (which is what `scope` reports) and, as every
+        refresh does, a new refresh token carrying the original grant. The
+        client refreshes again past the 30 s grace window: the connection
+        stays alive and nobody is told their token was stolen."""
+        notices = []
+
+        async def notice(self, session):
+            notices.append(session.id)
+
+        monkeypatch.setattr(TokenService, "_notify_reuse", notice)
         response = await _token(client, _refresh(public_client, tokens["refresh_token"], scope="chaotic:write"))
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["scope"] == "chaotic:write"
-        assert "refresh_token" not in body
-        await TokenService().validate_access(body["access_token"], resource=MCP)
+        assert body["refresh_token"].startswith("crt_") and body["refresh_token"] != tokens["refresh_token"]
+        validated = await TokenService().validate_access(body["access_token"], resource=MCP)
+        assert validated.scopes == ("chaotic:write",)
+
+        # Eleven minutes on: the grace window is long gone.
+        await OxydeAuthToken.objects.filter(token_hash=ts.token_digest(tokens["refresh_token"])).update(
+            used_at=datetime.now(timezone.utc) - timedelta(minutes=11),
+        )
+        again = await _token(client, _refresh(public_client, body["refresh_token"]))
+        assert again.status_code == 200, again.text
+        assert again.json()["scope"] == "chaotic:write offline_access"  # the grant, not the narrowing
+        session = await OxydeHolderSession.objects.get(id=tokens["chaotic"]["holder_session_id"])
+        assert session.revoked_at is None
+        assert notices == []
 
     async def test_empty_scope_is_no_scope(self, client, public_client, tokens):
         body = (await _token(client, _refresh(public_client, tokens["refresh_token"], scope=""))).json()

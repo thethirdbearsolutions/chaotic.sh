@@ -1036,11 +1036,27 @@ class TestNoAmbientAuth:
         can come out of it."""
         from app.api import oauth as api_oauth
 
-        source = textwrap.dedent(inspect.getsource(api_oauth._refuse_basic_auth))
-        tree = ast.parse(source)
-        returns = [n for n in ast.walk(tree) if isinstance(n, ast.Return)]
-        assert all(r.value is None for r in returns)
-        assert '.split(" ", 1)[0]' in source
+        def body(source):
+            function = ast.parse(textwrap.dedent(source)).body[0]
+            statements = function.body
+            if statements and isinstance(statements[0], ast.Expr) and isinstance(statements[0].value, ast.Constant):
+                statements = statements[1:]  # the docstring may change freely
+            return [ast.dump(s) for s in statements]
+
+        # The helper's exact code, docstring aside. Any edit, such as
+        # decoding the credentials or branching on them, fails here and has
+        # to be made deliberately in this test too (PR #345 re-review, B).
+        pinned = """
+def _refuse_basic_auth(request):
+    scheme = request.headers.get("Authorization", "").split(" ", 1)[0]
+    if scheme.lower() == "basic":
+        raise OAuthHTTPError(
+            400, "invalid_request",
+            "HTTP Basic client authentication is not supported; send client_id and client_secret "
+            "in the form body (client_secret_post)",
+        )
+"""
+        assert body(inspect.getsource(api_oauth._refuse_basic_auth)) == body(pinned)
 
     def test_public_oauth_post_handlers_read_no_cookie_or_authorization(self):
         """Source-level: a handler taking a raw ``Request`` has no

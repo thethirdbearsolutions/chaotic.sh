@@ -330,7 +330,10 @@ class TokenService:
         can (the client's redirect_uri and PKCE verifier for a code).
 
         ``client_id`` is the client presenting it, already authenticated
-        by the caller (None for a claim ticket, which has no client).
+        by the caller: required for a code (without it a replay could
+        never be recognised as the code's own client's, so reuse would
+        silently stop revoking), and None for a claim ticket, which has
+        no client.
 
         A second redemption fails. When it comes from the code's own
         client while the code is still live, it is the replay OAuth 2.1
@@ -343,6 +346,8 @@ class TokenService:
         histories and logs, and a stale or foreign copy must not be a kill
         switch for the connection (CHT-1516, PR #345 review)."""
         _require_enabled()
+        if kind == TokenKind.AUTH_CODE and not client_id:
+            raise ValueError("redeeming an authorization code needs the presenting client_id")
         if kind not in (TokenKind.AUTH_CODE, TokenKind.CLAIM_TICKET) or kind_of(raw) != kind:
             raise TokenError("invalid_grant", "not a valid code")
         row = await OxydeAuthToken.objects.get_or_none(token_hash=token_digest(raw))
@@ -626,11 +631,18 @@ class TokenService:
             )
             if live != 1:
                 raise TokenError("invalid_grant", "this connection has been revoked")
-            # An OAuth refresh that narrows away offline_access gets no
-            # new refresh token, so the response matches the scope it
-            # reports (PR #345 review). Claim sessions always refresh.
-            offline = session.via != HolderVia.OAUTH or "offline_access" in granted
-            issued = await self._issue(session, scopes=granted, offline=offline, replaces_id=row.id, now=now)
+            # A refresh always rotates: it spends this refresh token, so it
+            # must always hand back a successor. `offline_access` decides
+            # only whether the code exchange issues a refresh token at all;
+            # it is not an access-token scope. A `scope` narrowing narrows
+            # the access token, and the scope reported is the access
+            # token's; the new refresh token keeps the session's grant
+            # (see `_issue`). Withholding the successor when the narrowed
+            # scope omits offline_access would leave a spec-following client
+            # (RFC 6749 §6: keep using the old token) replaying a spent
+            # token, which past the grace window is reuse: the connection
+            # revoked and a false theft notice (PR #345 re-review, A).
+            issued = await self._issue(session, scopes=granted, offline=True, replaces_id=row.id, now=now)
         # Held in memory only, for REFRESH_GRACE: the raw values are never
         # stored, so a restart inside the window ends the grace.
         _prune_grace_pairs(now)

@@ -453,7 +453,7 @@ class TestApprove:
         assert (await OxydeOAuthClient.objects.get(id=oauth_client)).last_authorized_at is not None
 
         # The code starts a session for that agent (the CHT-1520 exchange).
-        redeemed = await TokenService().redeem_single_use(code, TokenKind.AUTH_CODE)
+        redeemed = await TokenService().redeem_single_use(code, TokenKind.AUTH_CODE, client_id=oauth_client)
         issued = await TokenService().start_session_from(redeemed)
         assert issued.refresh_token is not None
         validated = await TokenService().validate_access(issued.access_token, resource=BASE + "/mcp")
@@ -569,7 +569,7 @@ class TestApprove:
         first = await _request_id(client, oauth_client)
         approved = (await self._approve(client, first, auth_headers, team_id=test_team.id)).json()
         code = _query(approved["redirect"])["code"]
-        await TokenService().start_session_from(await TokenService().redeem_single_use(code, TokenKind.AUTH_CODE))
+        await TokenService().start_session_from(await TokenService().redeem_single_use(code, TokenKind.AUTH_CODE, client_id=oauth_client))
 
         # The same client_id again: its last agent is pre-selected.
         request_id = await _request_id(client, oauth_client)
@@ -587,7 +587,7 @@ class TestApprove:
         first = await _request_id(client, oauth_client)
         approved = (await self._approve(client, first, auth_headers, team_id=test_team.id)).json()
         code = _query(approved["redirect"])["code"]
-        await TokenService().start_session_from(await TokenService().redeem_single_use(code, TokenKind.AUTH_CODE))
+        await TokenService().start_session_from(await TokenService().redeem_single_use(code, TokenKind.AUTH_CODE, client_id=oauth_client))
         await OxydeUser.objects.filter(id=approved["agent_id"]).update(is_active=False)
         request_id = await _request_id(client, oauth_client)
         body = (await client.get(f"/api/oauth/requests/{request_id}", headers=auth_headers)).json()
