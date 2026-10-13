@@ -8,7 +8,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, iter_route_contexts
 
 from app.api.deps import get_current_user
 from app.config import get_settings
@@ -24,6 +24,26 @@ REF = "claude-code:session:2b1f0000-aaaa-bbbb-cccc-000000000001"
 
 def _bearer(key):
     return {"Authorization": f"Bearer {key}"}
+
+
+def _api_routes():
+    """(methods, full path, endpoint, dependant) for every APIRoute the app
+    serves. FastAPI 0.143 keeps an included router as one entry in
+    ``app.routes``, so iterating that list alone finds none of /api
+    (CHT-1561)."""
+    from app.main import app
+
+    routes = [
+        (rc.methods, rc.path, rc.endpoint, rc.original_route.dependant)
+        for rc in iter_route_contexts(app.routes)
+        if isinstance(rc.original_route, APIRoute)
+    ]
+    assert len(routes) > 100, len(routes)
+    return routes
+
+
+def _depends_on_current_user(dependant):
+    return any(d.call is get_current_user or _depends_on_current_user(d) for d in dependant.dependencies)
 
 
 async def _make_user(email, name):
@@ -431,12 +451,17 @@ class TestRegisterOnly:
 
     def test_every_mcp_backend_method_is_classified(self):
         """A backend method that is not a read must refuse registrars. The
-        wrapper decides by name; this pins that every public coroutine is
-        either a resolver (reads only) or wrapped, and lists the reads so
-        a new write can't hide behind a get_/list_ name unnoticed."""
+        wrapper judges a method by the API function it names, with the
+        same @reads/@writes marker as that function's REST route
+        (CHT-1561). This pins that every public coroutine is either a
+        resolver (reads only) or wrapped, that each wrapped method really
+        calls the function it names, and the split itself, so a new
+        write can't hide behind a read's marker unnoticed."""
         import inspect
+        import re
 
-        from app.mcp_server.backend import InProcessBackend, is_read_method
+        from app.auth.access import Access
+        from app.mcp_server.backend import InProcessBackend
 
         resolvers = {
             "resolve_team", "resolve_project", "optional_project", "team_for_project",
@@ -447,25 +472,90 @@ class TestRegisterOnly:
             if name.startswith("_") or name in resolvers:
                 continue
             assert hasattr(fn, "__wrapped__"), f"{name} is not behind _translated, so no registrar check"
-            (reads if is_read_method(name) else writes).add(name)
+            if fn.api_fn is not None:
+                body = inspect.getsource(fn.__wrapped__)
+                module = fn.api_fn.__module__.rsplit(".", 1)[-1]
+                called = set(re.findall(rf"\b{module}_api\.(\w+)\(", body))
+                assert called == {fn.api_fn.__name__}, f"{name} names {fn.api_fn.__name__} but calls {called}"
+            (reads if fn.api_access is Access.READ else writes).add(name)
         assert {"create_issue", "update_issue", "create_comment", "close_sprint", "mark_inbox_read"} <= writes
-        assert all(n.startswith(("get_", "list_")) or n == "server_info" for n in reads)
+        assert reads == {
+            "get_current_sprint", "get_document", "get_document_revision", "get_issue",
+            "get_issue_description_revision", "get_limbo_status", "get_pending_issue_rituals",
+            "get_project", "get_sprint", "list_activities", "list_comments", "list_document_comments",
+            "list_document_issues", "list_document_revisions", "list_documents", "list_inbox",
+            "list_issue_description_revisions", "list_issues", "list_labels", "list_projects",
+            "list_ready_issues", "list_relations", "list_rituals", "list_sprints", "list_sub_issues",
+            "list_transactions", "server_info",
+        }
+
+    def test_every_authenticated_route_is_classified(self):
+        """REST judges a registrar by the route's marker, not its HTTP
+        method (CHT-1561). An unmarked route would be refused (fail
+        closed), so require a marker; a read must be a GET and a GET a
+        read, so a write can't be let through by a wrong marker; and only
+        /agents/register is a write a registrar may call."""
+        from app.auth.access import Access, access_of
+
+        routes = [
+            (methods, path, access_of(endpoint))
+            for methods, path, endpoint, dependant in _api_routes()
+            if _depends_on_current_user(dependant)
+        ]
+        assert len(routes) > 100, len(routes)
+        assert [(sorted(m), p) for m, p, a in routes if a is None] == []
+        # A read must be a GET, and a GET must be a read: the marker
+        # agrees with the HTTP method everywhere today, so a disagreement
+        # is a mislabel until someone decides otherwise here.
+        assert [(sorted(m), p) for m, p, a in routes if (a is Access.READ) != (m == {"GET"})] == []
+        assert [(sorted(m), p) for m, p, a in routes if a is Access.REGISTER] == [(["POST"], "/api/agents/register")]
+
+    def test_an_unclassified_endpoint_is_refused_to_a_registrar(self):
+        from fastapi import HTTPException
+
+        from app.auth.access import refuse_registrar_write
+
+        class _Registrar:
+            is_agent = True
+            can_register = True
+
+        async def unmarked():  # pragma: no cover -- never called
+            pass
+
+        with pytest.raises(HTTPException) as refused:
+            refuse_registrar_write(_Registrar(), unmarked)
+        assert refused.value.status_code == 403
+        with pytest.raises(HTTPException):
+            refuse_registrar_write(_Registrar(), None)
+
+    def test_mcp_refuses_to_wrap_an_unclassified_api_function(self):
+        from app.mcp_server.backend import _translated
+
+        async def unmarked():  # pragma: no cover -- never called
+            pass
+
+        with pytest.raises(TypeError, match="no @reads/@writes"):
+            _translated(unmarked)
+
+    def test_a_function_cannot_be_classified_twice_differently(self):
+        from app.auth.access import reads, writes
+
+        def fn():  # pragma: no cover -- never called
+            pass
+
+        reads(fn)
+        reads(fn)  # idempotent
+        with pytest.raises(TypeError, match="already classified read"):
+            writes(fn)
 
     def test_every_rest_write_route_authenticates_through_get_current_user(self):
         """The REST rule lives in get_current_user, so a write route that
         authenticates some other way would escape it."""
-        from app.main import app
-
-        def depends_on_current_user(dependant):
-            return any(
-                d.call is get_current_user or depends_on_current_user(d) for d in dependant.dependencies
-            )
-
         unauthenticated = {"/api/auth/signup", "/api/auth/login", "/api/teams/invitations/{token}/accept"}
         escaped = [
-            (sorted(r.methods), r.path) for r in app.routes
-            if isinstance(r, APIRoute) and r.methods - {"GET", "HEAD", "OPTIONS"}
-            and not depends_on_current_user(r.dependant) and r.path not in unauthenticated
+            (sorted(methods), path) for methods, path, _endpoint, dependant in _api_routes()
+            if methods - {"GET", "HEAD", "OPTIONS"}
+            and not _depends_on_current_user(dependant) and path not in unauthenticated
         ]
         assert escaped == []
 

@@ -1,5 +1,6 @@
 """Document API routes."""
 from fastapi import APIRouter, HTTPException, status
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_team_access, check_user_project_access
 from app.api.issues import ensure_utc, issues_to_responses
 from app.schemas.document import (
@@ -64,6 +65,7 @@ def build_document_response(doc, author_name: str | None = None) -> DocumentResp
     )
 
 
+@writes
 async def create_document(
     team_id: str,
     document_in: DocumentCreate,
@@ -133,6 +135,7 @@ async def create_document(
     return response
 
 
+@reads
 async def list_documents(
     team_id: str,
     current_user: CurrentUser,
@@ -193,6 +196,7 @@ async def list_documents(
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
+@reads
 async def get_document(document_id: str, current_user: CurrentUser) -> DocumentResponse:
     """Get document by ID."""
     document_service = DocumentService()
@@ -222,6 +226,7 @@ async def get_document(document_id: str, current_user: CurrentUser) -> DocumentR
 
 
 @router.patch("/{document_id}", response_model=DocumentResponse)
+@writes
 async def update_document(
     document_id: str,
     document_in: DocumentUpdate,
@@ -284,6 +289,7 @@ async def update_document(
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def delete_document(document_id: str, current_user: CurrentUser):
     """Delete a document."""
     document_service = DocumentService()
@@ -319,6 +325,7 @@ async def delete_document(document_id: str, current_user: CurrentUser):
 
 
 @router.get("/{document_id}/issues", response_model=list[IssueResponse])
+@reads
 async def get_document_issues(document_id: str, current_user: CurrentUser) -> list[IssueResponse]:
     """Get issues linked to a document."""
     document_service = DocumentService()
@@ -352,6 +359,7 @@ async def get_document_issues(document_id: str, current_user: CurrentUser) -> li
 
 
 @router.post("/{document_id}/issues/{issue_id}", response_model=DocumentLinkedResponse, status_code=status.HTTP_201_CREATED)
+@writes
 async def link_document_to_issue(
     document_id: str, issue_id: str, current_user: CurrentUser
 ) -> DocumentLinkedResponse:
@@ -409,6 +417,7 @@ async def link_document_to_issue(
 
 
 @router.delete("/{document_id}/issues/{issue_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def unlink_document_from_issue(
     document_id: str, issue_id: str, current_user: CurrentUser
 ) -> None:
@@ -467,6 +476,7 @@ async def unlink_document_from_issue(
 
 
 @router.get("/{document_id}/labels", response_model=list[LabelResponse])
+@reads
 async def get_document_labels(document_id: str, current_user: CurrentUser):
     """Get labels for a document."""
     document_service = DocumentService()
@@ -506,6 +516,7 @@ async def get_document_labels(document_id: str, current_user: CurrentUser):
 
 
 @router.post("/{document_id}/labels/{label_id}", response_model=LabelAddedResponse, status_code=status.HTTP_201_CREATED)
+@writes
 async def add_label_to_document(
     document_id: str, label_id: str, current_user: CurrentUser
 ):
@@ -552,6 +563,7 @@ async def add_label_to_document(
 
 
 @router.delete("/{document_id}/labels/{label_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def remove_label_from_document(
     document_id: str, label_id: str, current_user: CurrentUser
 ):
@@ -609,6 +621,7 @@ def _revision_author_name(rev) -> str | None:
 
 
 @router.get("/{document_id}/revisions", response_model=list[DocumentRevisionListItem])
+@reads
 async def list_document_revisions(
     document_id: str,
     current_user: CurrentUser,
@@ -644,6 +657,7 @@ async def list_document_revisions(
 
 
 @router.get("/{document_id}/revisions/{version}", response_model=DocumentRevisionResponse)
+@reads
 async def get_document_revision(
     document_id: str,
     version: int,
@@ -699,6 +713,7 @@ def build_comment_response(comment, author_name: str | None = None) -> DocumentC
 
 
 @router.post("/{document_id}/comments", response_model=DocumentCommentResponse, status_code=status.HTTP_201_CREATED)
+@writes
 async def create_comment(
     document_id: str,
     comment_in: DocumentCommentCreate,
@@ -738,6 +753,7 @@ async def create_comment(
 
 
 @router.get("/{document_id}/comments", response_model=list[DocumentCommentResponse])
+@reads
 async def list_comments(
     document_id: str,
     current_user: CurrentUser,
@@ -773,6 +789,7 @@ async def list_comments(
 
 
 @router.patch("/{document_id}/comments/{comment_id}", response_model=DocumentCommentResponse)
+@writes
 async def update_comment(
     document_id: str,
     comment_id: str,
@@ -827,6 +844,7 @@ async def update_comment(
 
 
 @router.delete("/{document_id}/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def delete_comment(
     document_id: str,
     comment_id: str,
