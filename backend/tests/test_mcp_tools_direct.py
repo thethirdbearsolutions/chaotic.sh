@@ -84,6 +84,88 @@ class TestIssueCreateParent:
         assert child["parent_id"] == parent["id"]
 
 
+class TestIssueUpdateParent:
+    """CHT-1460: re-parenting an existing issue over MCP, end to end."""
+
+    async def test_set_move_and_clear_parent(self, test_project):
+        epic = await tools.issue_create(title="Epic")
+        other = await tools.issue_create(title="Other epic")
+        child = await tools.issue_create(title="Existing issue")
+        assert child["parent_id"] is None
+
+        result = await tools.issue_update(child["identifier"], parent=epic["identifier"])
+        assert result["parent_id"] == epic["id"]
+        assert result["parent_identifier"] == epic["identifier"]
+        listed = await tools.issue_list(epic=epic["identifier"])
+        assert [i["identifier"] for i in listed["issues"]] == [child["identifier"]]
+
+        result = await tools.issue_update(child["identifier"], parent=other["identifier"])
+        assert result["parent_id"] == other["id"]
+
+        result = await tools.issue_update(child["identifier"], no_parent=True)
+        assert result["parent_id"] is None
+        assert result["parent_identifier"] is None
+
+    async def test_cycle_is_refused_by_the_api(self, test_project):
+        parent = await tools.issue_create(title="Parent")
+        child = await tools.issue_create(title="Child", parent=parent["identifier"])
+        result = await tools.issue_update(parent["identifier"], parent=child["identifier"])
+        assert result["error"]["error_code"] == "tool_input"
+        assert "cycle" in result["error"]["message"]
+        assert (await tools.issue_view(parent["identifier"]))["parent_id"] is None
+
+    async def test_deep_cycle_is_refused(self, test_project):
+        top = await tools.issue_create(title="Top")
+        mid = await tools.issue_create(title="Mid", parent=top["identifier"])
+        leaf = await tools.issue_create(title="Leaf", parent=mid["identifier"])
+        result = await tools.issue_update(top["identifier"], parent=leaf["identifier"])
+        assert result["error"]["error_code"] == "tool_input"
+        assert "cycle" in result["error"]["message"]
+
+    async def test_cycle_with_attest_records_nothing(self, test_project, make_ritual):
+        """A refused re-parent must not leave the attestation behind: the
+        attest is what can fire a close, so it has to wait for validation."""
+        from app.enums import ApprovalMode, RitualTrigger
+
+        await make_ritual(
+            name="close-gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+            note_required=True,
+        )
+        parent = await tools.issue_create(title="Parent")
+        child = await tools.issue_create(title="Child", parent=parent["identifier"])
+        result = await tools.issue_update(
+            parent["identifier"], parent=child["identifier"], status="done",
+            attest={"close-gate": "verified"},
+        )
+        assert result["error"]["error_code"] == "tool_input"
+        assert (await tools.issue_view(parent["identifier"]))["status"] != "done"
+        # Still unattested: a bare close is blocked by the pending ritual.
+        assert "error" in await tools.issue_update(parent["identifier"], status="done")
+
+    async def test_unknown_parent_names_the_parent(self, test_issue):
+        result = await tools.issue_update(test_issue.identifier, parent="PROJ-9999")
+        assert result["error"]["error_code"] == "tool_input"
+        assert result["error"]["message"] == "Parent issue PROJ-9999 not found."
+
+    async def test_cross_project_parent_is_error(self, test_project, test_team, test_user):
+        from app.oxyde_models.project import OxydeProject
+
+        other = await OxydeProject.objects.create(
+            team_id=test_team.id, name="Other", key="OTH", description=None,
+        )
+        foreign = await tools.issue_create(title="Foreign", project=other.id)
+        child = await tools.issue_create(title="Local", project=test_project.id)
+        result = await tools.issue_update(child["identifier"], parent=foreign["identifier"])
+        assert result["error"]["error_code"] == "tool_input"
+        assert (await tools.issue_view(child["identifier"]))["parent_id"] is None
+
+    async def test_parent_and_no_parent_together_is_error(self, test_issue):
+        result = await tools.issue_update(test_issue.identifier, parent="CHT-1", no_parent=True)
+        assert result["error"]["error_code"] == "tool_input"
+
+
 class TestIssueUpdateBranches:
     async def test_update_all_fields(self, test_issue, test_user2, test_team):
         from app.oxyde_models.team import OxydeTeamMember

@@ -126,7 +126,9 @@ class Backend(Protocol):
     async def update_issue(self, issue_id: str, **fields) -> dict:
         """Only the passed ``fields`` change. Wire-form values (status/
         priority as strings, ``sprint_id=None`` to unschedule,
-        ``assignee_id=None`` to unassign)."""
+        ``assignee_id=None`` to unassign, ``parent_id=None`` to detach
+        from a parent). An explicit None must reach the API as a set
+        field, not be dropped as "unset"."""
 
     async def create_comment(self, issue_id: str, content: str) -> dict: ...
 
