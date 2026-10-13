@@ -73,8 +73,13 @@ class Settings(BaseSettings):
     # Dynamic client registration (RFC 7591) at /oauth/register, the
     # fallback for MCP clients without CIMD support. On by default (design
     # decision D5); while on, the AS metadata advertises the endpoint.
-    # CHT-1518 implements the endpoint and its rate limits.
     oauth_dcr_enabled: bool = True
+    # DCR abuse limits (CHT-1518, threat S6): registrations per source IP
+    # per rolling hour, and how many registered-but-never-authorized
+    # clients may exist at once. A client never used for a successful
+    # authorization is deleted 24 hours after it registered.
+    oauth_dcr_max_per_ip_per_hour: int = Field(10, ge=1)
+    oauth_dcr_max_pending_clients: int = Field(500, ge=1)
     # Token lifetimes (CHT-1516; design doc §2.5, decision D4). An access
     # token lives 10 minutes. A refresh token is single use; its session
     # stays refreshable while used at least once per idle window, up to the

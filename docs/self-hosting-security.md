@@ -224,6 +224,31 @@ Inspector](https://github.com/modelcontextprotocol/inspector):
   list only origins you trust, and remove it when you are done. With the
   default `CORS_ORIGINS=*` direct mode needs no change.
 
+## OAuth client registration
+
+With `OAUTH_ENABLED` on, MCP clients register in one of two ways
+(CHT-1518):
+
+- **Client ID Metadata Documents** (claude.ai, Claude Code, ChatGPT): the
+  client's `client_id` is an `https` URL, and the server fetches the JSON
+  document behind it. Because an unauthenticated caller picks that URL,
+  the fetch connects only to public addresses (never loopback, private,
+  link-local or CGNAT ones, checked after DNS resolution), follows no
+  redirects, and gives up after 3 seconds or 16 KB. It also ignores
+  `HTTPS_PROXY`, since a proxy would resolve the name again, so the server
+  needs direct outbound HTTPS to the client's host. Documents are cached
+  for their `Cache-Control: max-age`, between 5 minutes and 24 hours.
+- **Dynamic client registration** (`POST /oauth/register`, RFC 7591), for
+  older clients. It is unauthenticated by design, so it is limited:
+  `OAUTH_DCR_MAX_PER_IP_PER_HOUR` (default 10) registrations per source
+  address, and at most `OAUTH_DCR_MAX_PENDING_CLIENTS` (default 500)
+  clients that have never been used to authorize. Those are deleted 24
+  hours after they register. Behind a reverse proxy every request has the
+  proxy's address, so the per-address limit becomes a server-wide one
+  unless uvicorn is run with `--proxy-headers` and `--forwarded-allow-ips`.
+  Set `OAUTH_DCR_ENABLED=false` to turn registration off; clients that
+  use metadata documents don't need it.
+
 ## Firewall example (ufw)
 
 If you're running the server on a VPS/box with a public IP and you've
