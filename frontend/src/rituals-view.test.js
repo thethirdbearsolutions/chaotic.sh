@@ -430,6 +430,21 @@ describe('rituals-view', () => {
             expect(html).toContain('data-ritual-note-required=""');
         });
 
+        it('offers Reject beside Complete on a gate (PR #353 review finding 6)', () => {
+            const ritual = { id: 'r1', approval_mode: 'gate', name: 'Deploy' };
+            const html = renderTicketRitualActions(ritual, 'issue-1');
+            expect(html).toContain('data-action="complete-ticket-ritual"');
+            expect(html).toContain('data-action="reject-ticket-ritual"');
+            expect(html).toContain('data-ritual-name="Deploy"');
+        });
+
+        it('offers no Reject on a gate already rejected and not asked again', () => {
+            const rejected = { id: 'r1', approval_mode: 'gate', last_rejection: { note: 'no', superseded_at: null } };
+            expect(renderTicketRitualActions(rejected, 'issue-1')).not.toContain('reject-ticket-ritual');
+            const askedAgain = { id: 'r1', approval_mode: 'gate', last_rejection: { note: 'no', superseded_at: '2026-10-13' } };
+            expect(renderTicketRitualActions(askedAgain, 'issue-1')).toContain('reject-ticket-ritual');
+        });
+
         it('carries the artifact on the gate Complete button', () => {
             const ritual = { id: 'r1', approval_mode: 'gate', name: 'Review', artifact: 'url' };
             expect(renderTicketRitualActions(ritual, 'issue-1')).toContain('data-ritual-artifact="url"');

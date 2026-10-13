@@ -304,7 +304,14 @@ export function renderTicketRitualActions(ritual, issueId) {
 
     // Not attested - GATE mode requires human completion
     if (ritual.approval_mode === 'gate') {
-        return `<button class="btn btn-small btn-primary" data-action="complete-ticket-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}" data-ritual-artifact="${artifact}">Complete</button>`;
+        const complete = `<button class="btn btn-small btn-primary" data-action="complete-ticket-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}" data-ritual-artifact="${artifact}">Complete</button>`;
+        // CHT-1606: a gate request can be sent back too, unless it already
+        // was and the requester has not asked again (the server refuses a
+        // reject when nobody is waiting on the gate, and says so).
+        const outstanding = ritual.last_rejection && !ritual.last_rejection.superseded_at;
+        if (outstanding) return complete;
+        return `${complete}
+            <button class="btn btn-small btn-secondary" data-action="reject-ticket-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}" title="Send the gate request back with a reason">Reject</button>`;
     }
 
     // AUTO or REVIEW mode - agent can attest. A note or an artifact needs
