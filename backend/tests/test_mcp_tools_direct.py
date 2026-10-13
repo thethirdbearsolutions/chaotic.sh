@@ -110,8 +110,44 @@ class TestIssueUpdateParent:
         parent = await tools.issue_create(title="Parent")
         child = await tools.issue_create(title="Child", parent=parent["identifier"])
         result = await tools.issue_update(parent["identifier"], parent=child["identifier"])
-        assert "error" in result
+        assert result["error"]["error_code"] == "tool_input"
+        assert "cycle" in result["error"]["message"]
         assert (await tools.issue_view(parent["identifier"]))["parent_id"] is None
+
+    async def test_deep_cycle_is_refused(self, test_project):
+        top = await tools.issue_create(title="Top")
+        mid = await tools.issue_create(title="Mid", parent=top["identifier"])
+        leaf = await tools.issue_create(title="Leaf", parent=mid["identifier"])
+        result = await tools.issue_update(top["identifier"], parent=leaf["identifier"])
+        assert result["error"]["error_code"] == "tool_input"
+        assert "cycle" in result["error"]["message"]
+
+    async def test_cycle_with_attest_records_nothing(self, test_project, make_ritual):
+        """A refused re-parent must not leave the attestation behind: the
+        attest is what can fire a close, so it has to wait for validation."""
+        from app.enums import ApprovalMode, RitualTrigger
+
+        await make_ritual(
+            name="close-gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+            note_required=True,
+        )
+        parent = await tools.issue_create(title="Parent")
+        child = await tools.issue_create(title="Child", parent=parent["identifier"])
+        result = await tools.issue_update(
+            parent["identifier"], parent=child["identifier"], status="done",
+            attest={"close-gate": "verified"},
+        )
+        assert result["error"]["error_code"] == "tool_input"
+        assert (await tools.issue_view(parent["identifier"]))["status"] != "done"
+        # Still unattested: a bare close is blocked by the pending ritual.
+        assert "error" in await tools.issue_update(parent["identifier"], status="done")
+
+    async def test_unknown_parent_names_the_parent(self, test_issue):
+        result = await tools.issue_update(test_issue.identifier, parent="PROJ-9999")
+        assert result["error"]["error_code"] == "tool_input"
+        assert result["error"]["message"] == "Parent issue PROJ-9999 not found."
 
     async def test_cross_project_parent_is_error(self, test_project, test_team, test_user):
         from app.oxyde_models.project import OxydeProject

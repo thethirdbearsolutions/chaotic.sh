@@ -313,6 +313,62 @@ async def _with_estimate_warning(backend: Backend, result: dict, project_id: str
     return {**result, "warnings": [*result.get("warnings", []), warning]}
 
 
+PARENT_WALK_LIMIT = 50
+
+
+async def _validate_new_parent(backend: Backend, iss: dict, identifier: str, parent: str) -> str:
+    """Resolve `parent` to an id, refusing (as ToolInputError) an unknown
+    parent, the issue itself, a parent in another project, and a parent
+    that descends from the issue (a cycle). CHT-1460."""
+    try:
+        parent_row = await backend.get_issue(parent)
+    except BackendError as e:
+        if e.http_status == 404:
+            raise ToolInputError(f"Parent issue {parent} not found.") from e
+        raise
+    parent_id = parent_row["id"]
+    if parent_id == iss["id"]:
+        raise ToolInputError("An issue cannot be its own parent.")
+
+    own_project, parent_project = iss.get("project_id"), parent_row.get("project_id")
+    if not own_project or not parent_project:
+        # Both transports always return project_id; a row without one
+        # can't be checked, so refuse rather than treat None == None as
+        # "same project".
+        raise ToolInputError(
+            f"Could not determine the projects of {identifier} and {parent} "
+            "to check they match."
+        )
+    if own_project != parent_project:
+        raise ToolInputError(
+            f"Parent issue {parent} is in a different project; a parent "
+            f"must be in the same project as {identifier}."
+        )
+
+    # Walk up from the new parent: meeting this issue means the link
+    # would close a loop. Bounded; past the bound (or on a row the walk
+    # can't follow) the API's own walk still decides.
+    row = parent_row
+    for _ in range(PARENT_WALK_LIMIT):
+        ancestor_id = row.get("parent_id")
+        if not ancestor_id:
+            break
+        if ancestor_id == iss["id"]:
+            raise ToolInputError(
+                f"Cannot make {parent} the parent of {identifier}: {parent} "
+                f"is already beneath {identifier}, so this would create a "
+                "cycle in the issue hierarchy."
+            )
+        ancestor_identifier = row.get("parent_identifier")
+        if not ancestor_identifier:
+            break
+        try:
+            row = await backend.get_issue(ancestor_identifier)
+        except BackendError:
+            break
+    return parent_id
+
+
 async def issue_update(
     backend: Backend,
     identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
@@ -370,23 +426,14 @@ async def issue_update(
 
     iss = await backend.get_issue(identifier)
 
-    # Resolve the parent before any write (attestations included), so a
-    # bad identifier fails the whole call rather than half of it.
+    # Resolve and validate the parent before any write (attestations
+    # included), so a refused parent fails the whole call rather than
+    # half of it: attesting the last pending ritual can fire a
+    # server-side auto-transition that a later 400 would not undo. The
+    # API repeats every check below; these exist only to fail first.
     parent_id = None
     if parent is not None:
-        parent_row = await backend.get_issue(parent.strip())
-        parent_id = parent_row["id"]
-        if parent_id == iss["id"]:
-            raise ToolInputError("An issue cannot be its own parent.")
-        # The API refuses this too, but only after any `attest` notes
-        # above would already have been recorded. (A cycle is likewise
-        # refused by the API; detecting it here would need the ancestor
-        # walk the API already does.)
-        if parent_row.get("project_id") != iss.get("project_id"):
-            raise ToolInputError(
-                f"{parent.strip()} is in a different project; a parent must "
-                f"be in the same project as {identifier}."
-            )
+        parent_id = await _validate_new_parent(backend, iss, identifier, parent.strip())
 
     # Per-ritual attestations first (CHT-1326), so a gated status change
     # finds its rituals satisfied instead of opening a blocked intent
