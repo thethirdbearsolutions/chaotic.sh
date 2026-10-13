@@ -10,9 +10,10 @@ class ConnectionManager:
         # Map of team_id -> set of WebSocket connections
         self.active_connections: Dict[str, Set[WebSocket]] = {}
 
-    async def connect(self, websocket: WebSocket, team_id: str):
-        """Accept a new WebSocket connection."""
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, team_id: str, subprotocol: str | None = None):
+        """Accept a new WebSocket connection, selecting ``subprotocol``
+        (``chaotic`` when the client offered it, CHT-1603)."""
+        await websocket.accept(subprotocol=subprotocol)
         if team_id not in self.active_connections:
             self.active_connections[team_id] = set()
         self.active_connections[team_id].add(websocket)

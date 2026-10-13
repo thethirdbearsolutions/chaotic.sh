@@ -135,6 +135,11 @@ class Settings(BaseSettings):
     oauth_code_ttl_seconds: int = Field(60, ge=10)
     claim_ticket_ttl_seconds: int = Field(300, ge=10)
 
+    # How often an open /ws connection re-checks its credential and team
+    # membership (CHT-1603): a revoked, expired or deactivated credential,
+    # or a member removed from the team, is closed at the next check.
+    ws_auth_recheck_seconds: float = Field(30, gt=0)
+
     # Email (SMTP) -- CHT-1251. Empty smtp_host means "unconfigured": the
     # mutating paths that would send email (gate-pending, invitations) log
     # and skip rather than erroring. See EmailService.is_configured().

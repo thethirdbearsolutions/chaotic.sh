@@ -213,18 +213,33 @@ class TestKeyAuthChecksTheOwnersMembership:
         await OxydeTeamMember.objects.create(team_id=w["team"].id, user_id=w["bob"].id, role=TeamRole.MEMBER)
         assert (await client.get("/api/auth/me", headers=_bearer(w["k1"]))).status_code == 200
 
-    async def test_websocket_takes_no_api_keys_at_all(self, world):
-        """The websocket authenticates with a JWT only, so an agent key
-        (removed creator's or not) is refused before any team check."""
+    async def test_websocket(self, world):
+        """/ws takes API keys through the shared resolver (CHT-1603), so an
+        agent key dies there with its holder's membership too, before any
+        team check, and comes back if they rejoin."""
         from unittest.mock import AsyncMock
+
+        from app.ws_auth import WsRefused, authenticate
+
+        w = world
+        await authenticate(w["k1"], w["team"].id)
+        await OxydeTeamMember.objects.filter(team_id=w["team"].id, user_id=w["bob"].id).delete()
+        with pytest.raises(WsRefused) as refused:
+            await authenticate(w["k1"], w["team"].id)
+        assert refused.value.code == 4001
+        await authenticate(w["k2"], w["team"].id)
 
         from app.main import websocket_endpoint
 
-        w = world
         ws = AsyncMock()
+        ws.headers = {}
+        ws.scope = {}
         await websocket_endpoint(ws, token=w["k1"], team_id=w["team"].id)
         ws.close.assert_awaited_once_with(code=4001)
         ws.accept.assert_not_awaited()
+
+        await OxydeTeamMember.objects.create(team_id=w["team"].id, user_id=w["bob"].id, role=TeamRole.MEMBER)
+        await authenticate(w["k1"], w["team"].id)
 
 
 @pytest.mark.asyncio

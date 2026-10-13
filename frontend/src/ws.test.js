@@ -31,7 +31,7 @@ vi.mock('./api.js', () => ({
 import { api } from './api.js';
 import { getWebsocket, setWebsocket, getCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
-import { connectWebSocket, dispatch, subscribe, getReconnectDelay, resetWsState } from './ws.js';
+import { connectWebSocket, dispatch, subscribe, getReconnectDelay, resetWsState, wsProtocols, WS_SUBPROTOCOL } from './ws.js';
 
 describe('ws.js', () => {
     beforeEach(() => {
@@ -71,8 +71,39 @@ describe('ws.js', () => {
             connectWebSocket('team-1');
             expect(MockWebSocket).toHaveBeenCalledTimes(1);
             const url = MockWebSocket.mock.calls[0][0];
-            expect(url).toContain('ws?token=test-token&team_id=team-1');
+            expect(url).toMatch(/\/ws\?team_id=team-1$/);
             expect(url).toMatch(/^wss?:\/\//);
+        });
+
+        // CHT-1603: the credential never goes in the URL (access and proxy
+        // logs); it is offered as a subprotocol entry beside 'chaotic'.
+        it('sends the token as a subprotocol, not in the URL', () => {
+            connectWebSocket('team-1');
+            const [url, protocols] = MockWebSocket.mock.calls[0];
+            expect(url).not.toContain('test-token');
+            expect(url).not.toContain('token=');
+            expect(protocols).toEqual(['chaotic', 'chaotic.bearer.test-token']);
+            expect(wsProtocols('abc')).toEqual([WS_SUBPROTOCOL, 'chaotic.bearer.abc']);
+        });
+
+        it('reconnects after the server closes it, with the current token', () => {
+            // CHT-1603: the server closes a socket whose credential was
+            // revoked or expired (4001); the reconnect reads the token
+            // afresh rather than replaying the old one.
+            vi.useFakeTimers();
+            try {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                api.getToken.mockReturnValue('fresh-token');
+                ws.onclose({ code: 4001 });
+                vi.advanceTimersByTime(1500);
+                expect(MockWebSocket).toHaveBeenCalledTimes(2);
+                const [url, protocols] = MockWebSocket.mock.calls[1];
+                expect(url).toMatch(/\/ws\?team_id=team-1$/);
+                expect(protocols).toEqual(['chaotic', 'chaotic.bearer.fresh-token']);
+            } finally {
+                vi.useRealTimers();
+            }
         });
 
         it('stores the WebSocket via setWebsocket', () => {

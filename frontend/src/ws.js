@@ -67,6 +67,20 @@ export function getReconnectDelay(failCount) {
     return Math.max(500, Math.round(base + jitter));
 }
 
+/** The subprotocol the server selects (CHT-1603). */
+export const WS_SUBPROTOCOL = 'chaotic';
+const WS_BEARER_PREFIX = 'chaotic.bearer.';
+
+/**
+ * Subprotocols to offer: 'chaotic', and the credential as a
+ * 'chaotic.bearer.<token>' entry (CHT-1603).
+ * @param {string} token
+ * @returns {string[]}
+ */
+export function wsProtocols(token) {
+    return [WS_SUBPROTOCOL, WS_BEARER_PREFIX + token];
+}
+
 /**
  * Connect to the WebSocket for real-time updates.
  * Handles reconnection with exponential backoff on disconnect (CHT-1038).
@@ -114,10 +128,14 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
     const generation = ++wsGeneration;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}&team_id=${encodeURIComponent(teamId)}`;
+    // CHT-1603: the credential travels in the Sec-WebSocket-Protocol header
+    // (the one header a browser WebSocket can set), never in the URL, which
+    // reaches access and proxy logs. The server selects 'chaotic' and never
+    // echoes the bearer entry. Read fresh on every (re)connect.
+    const wsUrl = `${protocol}//${window.location.host}/ws?team_id=${encodeURIComponent(teamId)}`;
 
     try {
-        const ws = new WebSocket(wsUrl);
+        const ws = new WebSocket(wsUrl, wsProtocols(token));
         setWebsocket(ws);
 
         ws.onopen = () => {

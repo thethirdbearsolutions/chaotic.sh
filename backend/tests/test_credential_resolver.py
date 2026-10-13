@@ -315,15 +315,27 @@ async def test_wrong_audience_leaves_nothing_written(client, connector):
 
 
 @pytest.mark.asyncio
-async def test_ws_refuses_an_oauth_token(connector, test_team):
-    """/ws checks a login JWT itself (CHT-1567); an OAuth token never
-    decodes as one, so it closes with 4001. When /ws moves onto the
-    resolver, decide whether it is an OAuth audience."""
+async def test_ws_refuses_agent_oauth_tokens(monkeypatch, agent, test_team, test_user, connector):
+    """/ws is on the resolver (CHT-1567, CHT-1603) as the REST resource:
+    a connector token is refused by its audience, and a whole-server
+    token acting as an agent by the /ws adapter. Both close 4001."""
     from unittest.mock import AsyncMock
 
     from app.main import websocket_endpoint
+    from app.ws_auth import WsRefused, authenticate
+
+    assert credentials.ws_resolver.accepts == credentials.REST_KINDS
+    assert credentials.ws_resolver.audience is ts.issuer
+    claim, _key = await server_token(agent, test_team, test_user, scopes=("chaotic:read",))
+    await rest_resolver.resolve(claim.access_token)  # good on REST
+    for issued in (connector, claim):
+        with pytest.raises(WsRefused) as refused:
+            await authenticate(issued.access_token, test_team.id)
+        assert refused.value.code == 4001
 
     ws = AsyncMock()
+    ws.headers = {}
+    ws.scope = {}
     await websocket_endpoint(ws, token=connector.access_token, team_id=test_team.id)
     ws.close.assert_awaited_once_with(code=4001)
 

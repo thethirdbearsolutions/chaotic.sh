@@ -89,8 +89,17 @@ Everything else under `/api/*` goes through `get_current_user` in
 either a JWT (`decode_token`) or an API key (`ck_...`, validated via
 `APIKeyService`) — a 401 if missing, a 403 if the resolved user is
 inactive. The credential itself is resolved by
-`backend/app/auth/credentials.py`, which `/mcp` shares (CHT-1560). The `/ws` WebSocket endpoint requires a valid token query param
-and checks team membership before accepting. The `/mcp` mount
+`backend/app/auth/credentials.py`, which `/mcp` shares (CHT-1560). The `/ws` WebSocket endpoint
+goes through the same resolver (`backend/app/ws_auth.py`, CHT-1603) and
+checks team membership before accepting. It takes the credential from an
+`Authorization: Bearer` header on the upgrade request, or from a
+`chaotic.bearer.<token>` entry in `Sec-WebSocket-Protocol` (the web app's
+way, offered beside `chaotic`), so it stays out of the URL. The old
+`?token=` query parameter still works but is deprecated, and logs a
+warning. An OAuth token acting as an agent is refused there. While the
+socket is open the check is repeated every `WS_AUTH_RECHECK_SECONDS`
+(default 30): a revoked or expired credential, a deactivated user, or a
+member removed from the team is closed at the next check. The `/mcp` mount
 (`backend/app/mcp_server/asgi.py`) requires either a `Bearer` header or a
 capability-URL API key path segment — no anonymous MCP access.
 
