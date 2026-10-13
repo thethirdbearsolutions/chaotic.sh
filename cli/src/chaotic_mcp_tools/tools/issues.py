@@ -313,6 +313,62 @@ async def _with_estimate_warning(backend: Backend, result: dict, project_id: str
     return {**result, "warnings": [*result.get("warnings", []), warning]}
 
 
+PARENT_WALK_LIMIT = 50
+
+
+async def _validate_new_parent(backend: Backend, iss: dict, identifier: str, parent: str) -> str:
+    """Resolve `parent` to an id, refusing (as ToolInputError) an unknown
+    parent, the issue itself, a parent in another project, and a parent
+    that descends from the issue (a cycle). CHT-1460."""
+    try:
+        parent_row = await backend.get_issue(parent)
+    except BackendError as e:
+        if e.http_status == 404:
+            raise ToolInputError(f"Parent issue {parent} not found.") from e
+        raise
+    parent_id = parent_row["id"]
+    if parent_id == iss["id"]:
+        raise ToolInputError("An issue cannot be its own parent.")
+
+    own_project, parent_project = iss.get("project_id"), parent_row.get("project_id")
+    if not own_project or not parent_project:
+        # Both transports always return project_id; a row without one
+        # can't be checked, so refuse rather than treat None == None as
+        # "same project".
+        raise ToolInputError(
+            f"Could not determine the projects of {identifier} and {parent} "
+            "to check they match."
+        )
+    if own_project != parent_project:
+        raise ToolInputError(
+            f"Parent issue {parent} is in a different project; a parent "
+            f"must be in the same project as {identifier}."
+        )
+
+    # Walk up from the new parent: meeting this issue means the link
+    # would close a loop. Bounded; past the bound (or on a row the walk
+    # can't follow) the API's own walk still decides.
+    row = parent_row
+    for _ in range(PARENT_WALK_LIMIT):
+        ancestor_id = row.get("parent_id")
+        if not ancestor_id:
+            break
+        if ancestor_id == iss["id"]:
+            raise ToolInputError(
+                f"Cannot make {parent} the parent of {identifier}: {parent} "
+                f"is already beneath {identifier}, so this would create a "
+                "cycle in the issue hierarchy."
+            )
+        ancestor_identifier = row.get("parent_identifier")
+        if not ancestor_identifier:
+            break
+        try:
+            row = await backend.get_issue(ancestor_identifier)
+        except BackendError:
+            break
+    return parent_id
+
+
 async def issue_update(
     backend: Backend,
     identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
@@ -325,6 +381,18 @@ async def issue_update(
     ] = None,
     title: Annotated[str | None, Field(description="New title.")] = None,
     description: Annotated[str | None, Field(description="New description (markdown).")] = None,
+    parent: Annotated[
+        str | None,
+        Field(description=(
+            "Parent issue identifier (e.g. CHT-12): moves this issue under "
+            "it as a sub-issue, replacing any current parent. Works on "
+            "existing issues, not only at creation."
+        ))
+    ] = None,
+    no_parent: Annotated[
+        bool,
+        Field(description="Detach this issue from its parent. Cannot be combined with `parent`.")
+    ] = False,
     attest: Annotated[
         dict[str, str] | None,
         Field(description=(
@@ -337,7 +405,13 @@ async def issue_update(
         )),
     ] = None,
 ) -> dict:
-    """Update an issue's status, priority, estimate, assignee, title, and/or description.
+    """Update an issue's status, priority, estimate, assignee, title, description, and/or parent.
+
+    `parent` re-parents an existing issue (or makes it a sub-issue);
+    `no_parent` detaches it. Labels go through issue_label, relations
+    through issue_block/issue_unblock, and sprint membership through
+    sprint_add/sprint_remove. Changing the issue type has no MCP tool
+    yet; the CLI does it with `chaotic issue update ID --type TYPE`.
 
     An `estimate` off the project's declared estimate_scale is stored as
     given and reported back in `warnings` (absent otherwise).
@@ -345,7 +419,21 @@ async def issue_update(
     Only fields explicitly passed are changed. Returns the updated issue.
     Pass `attest` to satisfy pending close/claim rituals in the same call.
     """
+    if parent is not None and no_parent:
+        raise ToolInputError("Pass either `parent` or `no_parent`, not both.")
+    if parent is not None and not parent.strip():
+        raise ToolInputError("`parent` must be an issue identifier; use `no_parent` to detach.")
+
     iss = await backend.get_issue(identifier)
+
+    # Resolve and validate the parent before any write (attestations
+    # included), so a refused parent fails the whole call rather than
+    # half of it: attesting the last pending ritual can fire a
+    # server-side auto-transition that a later 400 would not undo. The
+    # API repeats every check below; these exist only to fail first.
+    parent_id = None
+    if parent is not None:
+        parent_id = await _validate_new_parent(backend, iss, identifier, parent.strip())
 
     # Per-ritual attestations first (CHT-1326), so a gated status change
     # finds its rituals satisfied instead of opening a blocked intent
@@ -372,6 +460,10 @@ async def issue_update(
         else:
             team_id = await backend.team_for_project(iss.get("project_id"))
             fields["assignee_id"] = await backend.resolve_assignee(assignee, team_id)
+    if parent_id is not None:
+        fields["parent_id"] = parent_id
+    if no_parent:
+        fields["parent_id"] = None
 
     if not fields and not attest:
         raise ToolInputError("No fields provided to update.")
@@ -565,6 +657,11 @@ async def issue_block(
     holding the other up, and it's the second one that stops showing up
     in issue_ready.
 
+    For closing a duplicate there is no single MCP tool: the CLI's
+    `chaotic issue duplicate DUP ORIGINAL` does it in one step. Over MCP,
+    relate with relation_type='duplicates', then issue_comment, then
+    issue_update status='canceled'.
+
     Re-relating an already-related pair is a no-op that returns the
     EXISTING relation -- including when you pass a different
     relation_type, which is silently not applied. To change the type,
@@ -657,9 +754,10 @@ async def issue_label(
 
     Additive and subtractive rather than replacing the whole set, so
     labelling an issue never silently drops someone else's label. Labels
-    must already exist -- this does not create them. Use label_list to
-    see them, or pass a label id directly if your key is project-scoped
-    (label_list is team-scoped and needs a team-scoped key).
+    must already exist -- this does not create them, and no MCP tool
+    does: create one with the CLI, `chaotic label create NAME`. Use
+    label_list to see them, or pass a label id directly if your key is
+    project-scoped (label_list is team-scoped and needs a team-scoped key).
 
     Adding a label the issue already has, or removing one it doesn't
     have, is a no-op rather than an error, so the same call is safe to

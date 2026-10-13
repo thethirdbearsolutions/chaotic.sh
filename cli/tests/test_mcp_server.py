@@ -578,6 +578,52 @@ class TestIssueUpdate:
 
         client.update_issue.assert_called_once_with("issue-uuid-1", assignee_id=None)
 
+    async def test_update_parent_resolves_and_patches(self, mcp_mod, mock_issue):
+        """CHT-1460: stdio transport re-parents like `issue update --parent`."""
+        from cli.main import client
+        parent = dict(mock_issue, id="parent-uuid", identifier="CHT-7")
+        client.get_issue_by_identifier = MagicMock(
+            side_effect=lambda ident: parent if ident == "CHT-7" else dict(mock_issue))
+        client.update_issue = MagicMock(return_value=dict(mock_issue, parent_id="parent-uuid"))
+
+        await mcp_mod.issue_update(identifier="CHT-100", parent="CHT-7")
+
+        client.update_issue.assert_called_once_with("issue-uuid-1", parent_id="parent-uuid")
+
+    async def test_update_no_parent_patches_explicit_null(self, mcp_mod, mock_issue):
+        """`no_parent` must send parent_id=None (like `--no-parent`), not omit it."""
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
+        client.update_issue = MagicMock(return_value=dict(mock_issue, parent_id=None))
+
+        await mcp_mod.issue_update(identifier="CHT-100", no_parent=True)
+
+        client.update_issue.assert_called_once_with("issue-uuid-1", parent_id=None)
+
+    async def test_no_parent_puts_explicit_null_on_the_wire(self, mcp_mod, mock_issue, monkeypatch):
+        """Below the client mock: the real APIClient must PATCH
+        {"parent_id": null}, not drop the None (CHT-1460 review)."""
+        import httpx
+        import cli.client as client_mod
+        from cli.main import client
+
+        seen = []
+
+        def handler(request):
+            seen.append((request.method, request.url.path, json.loads(request.content)))
+            return httpx.Response(200, json=dict(mock_issue, parent_id=None))
+
+        real_client = httpx.Client
+        monkeypatch.setattr(client_mod.httpx, "Client",
+                            lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+        monkeypatch.setattr(client_mod, "get_api_url", lambda: "http://chaotic.test/api")
+        monkeypatch.setattr(client, "get_issue_by_identifier", MagicMock(return_value=dict(mock_issue)))
+        monkeypatch.setattr(client, "update_issue", type(client).update_issue.__get__(client))
+
+        await mcp_mod.issue_update(identifier="CHT-100", no_parent=True)
+
+        assert seen == [("PATCH", "/api/issues/issue-uuid-1", {"parent_id": None})]
+
     async def test_update_no_fields_is_an_error(self, mcp_mod, mock_issue):
         from cli.main import client
         client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
