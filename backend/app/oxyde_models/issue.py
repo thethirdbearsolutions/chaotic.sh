@@ -26,7 +26,7 @@ class OxydeIssue(Model):
     issue_type: DbEnum(IssueType) = Field(default=IssueType.TASK)
     estimate: int | None = Field(default=None)
     assignee_id: str | None = Field(default=None)
-    creator: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
+    creator: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
     sprint_id: str | None = Field(default=None)
     parent_id: str | None = Field(default=None)
     due_date: DateTimeUTC | None = Field(default=None)
@@ -60,7 +60,7 @@ class OxydeIssueComment(Model):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     issue_id: str = Field()
-    author: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
+    author: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
     content: str = Field()
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -75,7 +75,7 @@ class OxydeIssueActivity(Model):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     issue: OxydeIssue | None = Field(default=None, db_on_delete="CASCADE")
-    user: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
+    user: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
     activity_type: DbEnum(ActivityType) = Field()
     field_name: str | None = Field(default=None)
     old_value: str | None = Field(default=None)
