@@ -7076,6 +7076,33 @@ input[type="checkbox"] {
     min-width: 0;
 }
 
+/* The row's expand/collapse toggle: a real <button> styled as plain row
+   content (CHT-1320, PR #260 review finding 2). */
+.inbox-row-toggle {
+    display: block;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.inbox-row-toggle:focus {
+    outline: none;
+}
+.inbox-row-toggle:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+.inbox-row-title,
+.inbox-row-body {
+    display: block;
+}
+
 .inbox-row-header {
     display: flex;
     align-items: center;
@@ -7145,6 +7172,67 @@ input[type="checkbox"] {
 .inbox-row-archive:hover {
     background: var(--bg-hover, rgba(255,255,255,0.08));
     color: var(--text-primary);
+}
+
+/* Expanded reading pane + action bar (CHT-1320) */
+.inbox-row-expanded {
+    background: var(--bg-hover, rgba(255,255,255,0.04));
+}
+
+.inbox-row-expanded-panel {
+    margin-top: 8px;
+}
+
+.inbox-expanded-source {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.inbox-expanded-body {
+    font-size: var(--font-sm);
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-bottom: 10px;
+}
+
+.inbox-action-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.inbox-action-btn {
+    border: 1px solid var(--border-color, rgba(255,255,255,0.15));
+    background: transparent;
+    color: var(--text-primary);
+    font-size: var(--font-sm);
+    line-height: 1;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 4px;
+    transition: background 0.1s, border-color 0.1s;
+}
+.inbox-action-btn:hover {
+    background: var(--bg-hover, rgba(255,255,255,0.08));
+    border-color: var(--accent-color);
+}
+.inbox-action-btn[aria-disabled="true"] {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+/* Touch: 44px targets for the inbox's own buttons (PR #260 review 11). */
+@media (pointer: coarse) {
+    .inbox-action-btn,
+    .inbox-row-archive {
+        min-height: 44px;
+        min-width: 44px;
+    }
+    .inbox-row-archive {
+        opacity: 1;
+    }
 }
 
 .badge-inbox-gate_pending {
