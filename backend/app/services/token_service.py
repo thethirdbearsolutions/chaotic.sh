@@ -322,15 +322,26 @@ class TokenService:
         )
         return row, raw
 
-    async def redeem_single_use(self, raw: str, kind: TokenKind) -> OxydeAuthToken:
+    async def redeem_single_use(
+        self, raw: str, kind: TokenKind, *, client_id: str | None = None,
+    ) -> OxydeAuthToken:
         """Spend a code or claim ticket, exactly once. Returns its row, to
         pass to ``start_session_from`` after checking what only the caller
         can (the client's redirect_uri and PKCE verifier for a code).
 
-        A second redemption fails, revokes the code, and revokes the
-        session the first one started (OAuth 2.1 §4.1.3). Whichever order
-        that lands in relative to ``start_session_from``, the outcome is
-        the same: before, the session is refused; after, it is revoked."""
+        ``client_id`` is the client presenting it, already authenticated
+        by the caller (None for a claim ticket, which has no client).
+
+        A second redemption fails. When it comes from the code's own
+        client while the code is still live, it is the replay OAuth 2.1
+        §4.1.3 means: the code is revoked, and so is the session the first
+        redemption started. Whichever order that lands in relative to
+        ``start_session_from``, the outcome is the same: before, the
+        session is refused; after, it is revoked. Any other replay (a
+        different client, or after the code expired) is refused and
+        revokes nothing: codes travel in redirect URLs and end up in
+        histories and logs, and a stale or foreign copy must not be a kill
+        switch for the connection (CHT-1516, PR #345 review)."""
         _require_enabled()
         if kind not in (TokenKind.AUTH_CODE, TokenKind.CLAIM_TICKET) or kind_of(raw) != kind:
             raise TokenError("invalid_grant", "not a valid code")
@@ -338,9 +349,11 @@ class TokenService:
         if row is None or row.kind != kind or row.revoked_at is not None:
             raise TokenError("invalid_grant", "not a valid code")
         now = _now()
+        reuse = TokenError("invalid_grant", "this code was already used")
         if row.used_at is not None:
-            await self._revoke_code(row.id)
-            raise TokenError("invalid_grant", "this code was already used")
+            if self._replay_revokes(row, client_id, now):
+                await self._revoke_code(row.id)
+            raise reuse
         if row.expires_at <= now:
             raise TokenError("invalid_grant", "this code has expired")
         spent = await OxydeAuthToken.objects.filter(
@@ -348,10 +361,17 @@ class TokenService:
         ).update(used_at=now)
         if spent != 1:
             # A concurrent redemption won: the same as reuse.
-            await self._revoke_code(row.id)
-            raise TokenError("invalid_grant", "this code was already used")
+            if self._replay_revokes(row, client_id, now):
+                await self._revoke_code(row.id)
+            raise reuse
         row.used_at = now
         return row
+
+    @staticmethod
+    def _replay_revokes(row: OxydeAuthToken, client_id: str | None, now: datetime) -> bool:
+        """Does a replay of spent code `row` by `client_id` revoke it? Only
+        from its own client (None for a ticket) inside its lifetime."""
+        return (row.oauth_client_id or None) == (client_id or None) and row.expires_at > now
 
     async def _revoke_code(self, code_id: str) -> None:
         """Mark a code or ticket revoked, and revoke the session it started
@@ -559,7 +579,9 @@ class TokenService:
         if row is None or row.kind != TokenKind.REFRESH or row.holder_session_id is None:
             raise TokenError("invalid_grant", "not a valid refresh token")
         if (row.oauth_client_id or None) != (oauth_client_id or None):
-            raise TokenError("invalid_grant", "this refresh token was issued to another client")
+            # The same answer as an unknown token: a stranger's live token
+            # is none of this client's business (PR #345 review).
+            raise TokenError("invalid_grant", "not a valid refresh token")
         session = await OxydeHolderSession.objects.get_or_none(id=row.holder_session_id)
         now = _now()
         if session is None or session.revoked_at is not None or row.revoked_at is not None:
@@ -604,7 +626,11 @@ class TokenService:
             )
             if live != 1:
                 raise TokenError("invalid_grant", "this connection has been revoked")
-            issued = await self._issue(session, scopes=granted, offline=True, replaces_id=row.id, now=now)
+            # An OAuth refresh that narrows away offline_access gets no
+            # new refresh token, so the response matches the scope it
+            # reports (PR #345 review). Claim sessions always refresh.
+            offline = session.via != HolderVia.OAUTH or "offline_access" in granted
+            issued = await self._issue(session, scopes=granted, offline=offline, replaces_id=row.id, now=now)
         # Held in memory only, for REFRESH_GRACE: the raw values are never
         # stored, so a restart inside the window ends the grace.
         _prune_grace_pairs(now)

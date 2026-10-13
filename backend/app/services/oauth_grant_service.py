@@ -13,8 +13,10 @@ form-encoded body and hand the parameters here. This module:
   spent first, then the client, the exact ``redirect_uri``, the PKCE S256
   verifier and the RFC 8707 resource are checked against what it was
   minted with. A failed check leaves the code spent and starts nothing,
-  so an intercepted code is worth one guess. A second redemption revokes
-  the session the first one started (``TokenService.redeem_single_use``);
+  so an intercepted code is worth one guess. A second redemption by the
+  same client within the code's lifetime revokes the session the first
+  one started (``TokenService.redeem_single_use``); any other replay is
+  just refused;
 * rotates a refresh token (``refresh_token``) through
   ``TokenService.refresh``: single use, reuse revokes the session, a
   30 s grace replay, and the scope may only narrow;
@@ -109,15 +111,19 @@ class TokenRequest:
 class OAuthGrantService:
     # --- client authentication ---------------------------------------------------
 
-    async def authenticate_client(self, client_id: str | None, client_secret: str | None) -> OxydeOAuthClient:
+    async def authenticate_client(
+        self, client_id: str | None, client_secret: str | None, *, allow_disabled: bool = False,
+    ) -> OxydeOAuthClient:
         """The client, authenticated by its registered method. Raises
         ``invalid_client`` (401). A public client that sends a secret is
         refused rather than silently accepted: it is misconfigured, and a
-        confidential client must never fall back to no authentication."""
+        confidential client must never fall back to no authentication.
+        ``allow_disabled``: a client an admin disabled still authenticates
+        (revocation only: it may always end its own connections)."""
         if not client_id:
             raise _invalid_client("client_id is required")
         client = await OxydeOAuthClient.objects.get_or_none(id=client_id)
-        if client is None or not client.is_active:
+        if client is None or (not client.is_active and not allow_disabled):
             raise _invalid_client("unknown or disabled client")
         method = client.token_endpoint_auth_method
         if method == "none":
@@ -159,7 +165,7 @@ class OAuthGrantService:
         service = TokenService()
         try:
             # Spent first: whatever is wrong below, this code is used up.
-            redeemed = await service.redeem_single_use(request.code, TokenKind.AUTH_CODE)
+            redeemed = await service.redeem_single_use(request.code, TokenKind.AUTH_CODE, client_id=client.id)
         except TokenError as exc:
             raise _from_token_error(exc) from None
         # One description for every binding mismatch: which one failed is
@@ -255,7 +261,9 @@ class OAuthGrantService:
         nothing about which."""
         if not token:
             raise GrantError("invalid_request", "token is required")
-        client = await self.authenticate_client(client_id, client_secret)
+        # A disabled client may still end its own connections: revoking
+        # only takes access away (PR #345 review).
+        client = await self.authenticate_client(client_id, client_secret, allow_disabled=True)
         if kind_of(token) not in (TokenKind.ACCESS, TokenKind.REFRESH):
             return
         row = await OxydeAuthToken.objects.get_or_none(token_hash=token_digest(token))

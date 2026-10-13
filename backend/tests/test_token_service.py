@@ -468,12 +468,16 @@ async def test_refresh_is_bound_to_its_client_and_may_only_narrow(connection):
     with pytest.raises(TokenError) as e:
         await service.refresh(connection.refresh_token, oauth_client_id=CLIENT, scopes="chaotic:write chaotic:admin")
     assert e.value.error == "invalid_scope"
-    narrowed = await service.refresh(connection.refresh_token, oauth_client_id=CLIENT, scopes="chaotic:write")
-    assert narrowed.scopes == ("chaotic:write",)
-    assert (await service.validate_access(narrowed.access_token, resource=MCP)).scopes == ("chaotic:write",)
-    # The refresh token keeps the session's full grant.
+    narrowed = await service.refresh(connection.refresh_token, oauth_client_id=CLIENT, scopes="offline_access")
+    assert narrowed.scopes == ("offline_access",)
+    assert (await service.validate_access(narrowed.access_token, resource=MCP)).scopes == ("offline_access",)
+    # The refresh token keeps the session's full grant (RFC 6749 §6 allows it).
     wider = await service.refresh(narrowed.refresh_token, oauth_client_id=CLIENT)
     assert wider.scopes == ("chaotic:write", "offline_access")
+    # Narrowing away offline_access: an access token, and no refresh
+    # token, so the response matches its scope (PR #345 review).
+    last = await service.refresh(wider.refresh_token, oauth_client_id=CLIENT, scopes="chaotic:write")
+    assert last.scopes == ("chaotic:write",) and last.refresh_token is None
 
 
 async def test_expired_refresh_token_is_invalid_grant(connection):
@@ -489,6 +493,22 @@ async def test_expired_refresh_token_is_invalid_grant(connection):
 # --- single-use codes and tickets ----------------------------------------------
 
 
+async def test_a_stale_or_foreign_replay_revokes_nothing(agent, test_team, test_user, client_row):
+    """Reuse revokes only when the code's own client replays it inside the
+    code's lifetime (CHT-1516, PR #345 review)."""
+    service = TokenService()
+    _row, code = await _mint_code(agent, test_team, test_user)
+    issued = await service.start_session_from(await service.redeem_single_use(code, TokenKind.AUTH_CODE, client_id=CLIENT))
+    for client_id in (None, "https://evil.example/client"):
+        with pytest.raises(TokenError):
+            await service.redeem_single_use(code, TokenKind.AUTH_CODE, client_id=client_id)
+    assert (await _session(issued)).revoked_at is None
+    await OxydeAuthToken.objects.filter(id=_row.id).update(expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+    with pytest.raises(TokenError):
+        await service.redeem_single_use(code, TokenKind.AUTH_CODE, client_id=CLIENT)
+    assert (await _session(issued)).revoked_at is None
+
+
 async def test_a_code_is_single_use_and_reuse_revokes_what_it_started(agent, test_team, test_user, client_row):
     service = TokenService()
     _row, code = await _mint_code(agent, test_team, test_user, scopes=["chaotic:write"])
@@ -498,7 +518,7 @@ async def test_a_code_is_single_use_and_reuse_revokes_what_it_started(agent, tes
     assert issued.refresh_token is None  # no offline_access granted
     assert (await OxydeAuthToken.objects.get(id=redeemed.id)).holder_session_id == issued.holder_session_id
     with pytest.raises(TokenError) as e:
-        await service.redeem_single_use(code, TokenKind.AUTH_CODE)
+        await service.redeem_single_use(code, TokenKind.AUTH_CODE, client_id=CLIENT)
     assert e.value.error == "invalid_grant"
     session = await _session(issued)
     assert session.revoked_reason == ts.REASON_CODE_REUSE
@@ -514,9 +534,9 @@ async def test_reuse_before_the_session_starts_still_kills_it(agent, test_team, 
     start_session_from: the code is revoked, so the session is refused."""
     service = TokenService()
     _row, code = await _mint_code(agent, test_team, test_user)
-    redeemed = await service.redeem_single_use(code, TokenKind.AUTH_CODE)
+    redeemed = await service.redeem_single_use(code, TokenKind.AUTH_CODE, client_id=CLIENT)
     with pytest.raises(TokenError):
-        await service.redeem_single_use(code, TokenKind.AUTH_CODE)
+        await service.redeem_single_use(code, TokenKind.AUTH_CODE, client_id=CLIENT)
     with pytest.raises(TokenError) as e:
         await service.start_session_from(redeemed)
     assert e.value.error == "invalid_grant"
@@ -549,7 +569,8 @@ async def test_concurrent_redemptions_spend_a_code_once(agent, test_team, test_u
     service = TokenService()
     _row, code = await _mint_code(agent, test_team, test_user)
     results = await asyncio.gather(
-        *(service.redeem_single_use(code, TokenKind.AUTH_CODE) for _ in range(5)), return_exceptions=True,
+        *(service.redeem_single_use(code, TokenKind.AUTH_CODE, client_id=CLIENT) for _ in range(5)),
+        return_exceptions=True,
     )
     winners = [r for r in results if isinstance(r, OxydeAuthToken)]
     assert len(winners) == 1

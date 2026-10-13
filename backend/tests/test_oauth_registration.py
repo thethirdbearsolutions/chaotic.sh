@@ -987,6 +987,11 @@ class TestGarbageCollection:
 # --- CHT-1564: no cookie or session auth on the public OAuth endpoints ----
 
 
+# Helpers the source-level guard below does not descend into, each pinned
+# by its own test.
+_SCHEME_ONLY_HELPERS = {"_refuse_basic_auth"}
+
+
 class TestNoAmbientAuth:
     def _public_post_routes(self):
         from fastapi.routing import APIRoute, iter_route_contexts
@@ -1023,6 +1028,20 @@ class TestNoAmbientAuth:
                 assert dep.call not in (get_current_user, get_auth_method), route.path
                 assert not isinstance(dep.call, SecurityBase), route.path
 
+    def test_basic_scheme_helper_reads_only_the_scheme(self):
+        """The one allowed look at the Authorization header (CHT-1520,
+        PR #345 review): the token and revoke endpoints refuse an HTTP
+        Basic attempt with a pointer to client_secret_post. The helper
+        reads the scheme word only and returns nothing, so no credential
+        can come out of it."""
+        from app.api import oauth as api_oauth
+
+        source = textwrap.dedent(inspect.getsource(api_oauth._refuse_basic_auth))
+        tree = ast.parse(source)
+        returns = [n for n in ast.walk(tree) if isinstance(n, ast.Return)]
+        assert all(r.value is None for r in returns)
+        assert '.split(" ", 1)[0]' in source
+
     def test_public_oauth_post_handlers_read_no_cookie_or_authorization(self):
         """Source-level: a handler taking a raw ``Request`` has no
         dependency to inspect, so read its code (and the module helpers
@@ -1038,6 +1057,8 @@ class TestNoAmbientAuth:
             todo, seen = [endpoint.__name__], set()
             while todo:
                 name = todo.pop()
+                if name in _SCHEME_ONLY_HELPERS:
+                    continue  # pinned by test_basic_scheme_helper_reads_only_the_scheme
                 if name in seen or name not in functions:
                     continue
                 seen.add(name)

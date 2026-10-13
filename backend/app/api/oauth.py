@@ -72,11 +72,14 @@ def _from_client_error(exc: OAuthClientError) -> OAuthHTTPError:
     return OAuthHTTPError(exc.status_code, exc.error, exc.description)
 
 
-async def _bounded_body(request: Request, limit: int) -> bytes:
-    """The request body, refused (400) without reading past ``limit``
-    bytes: by its declared Content-Length when there is one, and by
-    counting while streaming otherwise (chunked bodies)."""
-    too_large = OAuthHTTPError(400, "invalid_client_metadata", "the registration request is too large")
+async def _bounded_body(
+    request: Request, limit: int, *, error: str = "invalid_client_metadata",
+    description: str = "the registration request is too large",
+) -> bytes:
+    """The request body, refused (400 ``error``) without reading past
+    ``limit`` bytes: by its declared Content-Length when there is one, and
+    by counting while streaming otherwise (chunked bodies)."""
+    too_large = OAuthHTTPError(400, error, description)
     declared = request.headers.get("content-length")
     if declared is not None:
         declared = declared.strip()
@@ -293,9 +296,8 @@ async def _form(request: Request, names: tuple[str, ...]) -> dict[str, str]:
     media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if media_type != FORM_CONTENT_TYPE:
         raise OAuthHTTPError(400, "invalid_request", f"the request body must be {FORM_CONTENT_TYPE}")
-    raw = await request.body()
-    if len(raw) > MAX_FORM_BYTES:
-        raise OAuthHTTPError(400, "invalid_request", "the request is too large")
+    _refuse_basic_auth(request)
+    raw = await _bounded_body(request, MAX_FORM_BYTES, error="invalid_request", description="the request is too large")
     try:
         pairs = parse_qsl(raw.decode("utf-8"), keep_blank_values=True, max_num_fields=_MAX_FORM_FIELDS)
     except (UnicodeDecodeError, ValueError):
@@ -311,6 +313,22 @@ async def _form(request: Request, names: tuple[str, ...]) -> dict[str, str]:
         if value != "":
             form[name] = value
     return form
+
+
+def _refuse_basic_auth(request: Request) -> None:
+    """A client that tried HTTP Basic (client_secret_basic, which the
+    metadata does not advertise) is told to use client_secret_post: 400
+    rather than a 401 challenge for a scheme that would be refused anyway
+    (PR #345 review). Only the scheme word is looked at; the credentials
+    in the header are never read (CHT-1564). The source-level guard in
+    tests/test_oauth_registration.py allows this one helper by name."""
+    scheme = request.headers.get("Authorization", "").split(" ", 1)[0]
+    if scheme.lower() == "basic":
+        raise OAuthHTTPError(
+            400, "invalid_request",
+            "HTTP Basic client authentication is not supported; send client_id and client_secret "
+            "in the form body (client_secret_post)",
+        )
 
 
 def _from_grant_error(exc: GrantError) -> OAuthHTTPError:

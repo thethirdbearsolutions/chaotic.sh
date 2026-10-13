@@ -249,6 +249,35 @@ class TestCodeExchange:
         monkeypatch.setattr(TokenService, "start_session_from", refused)
         _assert_error(await _token(client, _exchange(public_client, code)), 400, "invalid_grant")
 
+    async def test_replay_by_another_client_revokes_nothing(self, client, public_client, auth_headers, test_team):
+        """Reuse revokes only for the code's own client (PR #345 review):
+        a copy from a log or history replayed under a throwaway client is
+        just refused."""
+        code = await _code(client, public_client, auth_headers, test_team.id)
+        first = (await _token(client, _exchange(public_client, code))).json()
+        attacker = (await _register(client, client_name="Attacker"))["client_id"]
+        _assert_error(await _token(client, _exchange(attacker, code)), 400, "invalid_grant")
+        session = await OxydeHolderSession.objects.get(id=first["chaotic"]["holder_session_id"])
+        assert session.revoked_at is None
+        await TokenService().validate_access(first["access_token"], resource=MCP)
+
+    async def test_replay_after_expiry_revokes_nothing(self, client, public_client, auth_headers, test_team):
+        """The reviewer's repro: a spent code, long expired, replayed by
+        another client with a wrong redirect and verifier; and the same
+        stale code from its own client. Neither ends the connection."""
+        code = await _code(client, public_client, auth_headers, test_team.id)
+        first = (await _token(client, _exchange(public_client, code))).json()
+        await OxydeAuthToken.objects.filter(token_hash=ts.token_digest(code)).update(
+            expires_at=datetime.now(timezone.utc) - timedelta(days=30),
+        )
+        attacker = (await _register(client, client_name="Attacker"))["client_id"]
+        _assert_error(await _token(client, _exchange(
+            attacker, code, redirect_uri="https://evil.example/cb", code_verifier="x" * 43,
+        )), 400, "invalid_grant")
+        _assert_error(await _token(client, _exchange(public_client, code)), 400, "invalid_grant")
+        session = await OxydeHolderSession.objects.get(id=first["chaotic"]["holder_session_id"])
+        assert session.revoked_at is None
+
     async def test_expired_code(self, client, public_client, auth_headers, test_team):
         code = await _code(client, public_client, auth_headers, test_team.id)
         await OxydeAuthToken.objects.filter(kind=TokenKind.AUTH_CODE).update(
@@ -309,11 +338,21 @@ class TestRefresh:
         assert again["access_token"] == first["access_token"]
 
     async def test_scope_may_only_narrow(self, client, public_client, tokens):
-        narrowed = await _token(client, _refresh(public_client, tokens["refresh_token"], scope="chaotic:write"))
-        assert narrowed.status_code == 200 and narrowed.json()["scope"] == "chaotic:write"
         _assert_error(await _token(client, _refresh(
-            public_client, narrowed.json()["refresh_token"], scope="chaotic:write chaotic:read",
+            public_client, tokens["refresh_token"], scope="chaotic:write chaotic:read",
         )), 400, "invalid_scope")
+        narrowed = await _token(client, _refresh(public_client, tokens["refresh_token"], scope="offline_access"))
+        assert narrowed.status_code == 200 and narrowed.json()["scope"] == "offline_access"
+        assert narrowed.json()["refresh_token"].startswith("crt_")
+
+    async def test_narrowing_away_offline_access_issues_no_refresh_token(self, client, public_client, tokens):
+        """The response must match the scope it reports (PR #345 review)."""
+        response = await _token(client, _refresh(public_client, tokens["refresh_token"], scope="chaotic:write"))
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["scope"] == "chaotic:write"
+        assert "refresh_token" not in body
+        await TokenService().validate_access(body["access_token"], resource=MCP)
 
     async def test_empty_scope_is_no_scope(self, client, public_client, tokens):
         body = (await _token(client, _refresh(public_client, tokens["refresh_token"], scope=""))).json()
@@ -321,7 +360,11 @@ class TestRefresh:
 
     async def test_another_clients_refresh_token(self, client, public_client, tokens):
         other = (await _register(client, client_name="Other"))["client_id"]
-        _assert_error(await _token(client, _refresh(other, tokens["refresh_token"])), 400, "invalid_grant")
+        live = await _token(client, _refresh(other, tokens["refresh_token"]))
+        _assert_error(live, 400, "invalid_grant")
+        # Indistinguishable from a dead token (PR #345 review).
+        dead = await _token(client, _refresh(other, "crt_" + "0" * 64))
+        assert live.json() == dead.json()
         # Not spent by the stranger.
         assert (await _token(client, _refresh(public_client, tokens["refresh_token"]))).status_code == 200
 
@@ -363,15 +406,28 @@ class TestClientAuthentication:
         _assert_error(await _token(client, _exchange(public_client, code, client_secret="anything")),
                       401, "invalid_client")
 
-    async def test_basic_auth_is_not_read(self, client, confidential_client, auth_headers, test_team):
-        """client_secret_basic is not supported and the Authorization
-        header is never read (CHT-1564)."""
+    async def test_basic_auth_is_refused_with_a_pointer(self, client, confidential_client, auth_headers, test_team):
+        """client_secret_basic is not supported: a client that tries it is
+        told to use client_secret_post (400, no 401 challenge for a scheme
+        that would be refused). The header's credentials are never read
+        (CHT-1564), and the code is not spent."""
         cid, secret = confidential_client
         code = await _code(client, cid, auth_headers, test_team.id)
         basic = base64.b64encode(f"{cid}:{secret}".encode()).decode()
-        data = _exchange(cid, code)
-        del data["client_id"]
-        _assert_error(await _token(client, data, headers={"Authorization": f"Basic {basic}"}), 401, "invalid_client")
+        for data in (_exchange(cid, code), {k: v for k, v in _exchange(cid, code).items() if k != "client_id"}):
+            response = await _token(client, data, headers={"Authorization": f"Basic {basic}"})
+            _assert_error(response, 400, "invalid_request")
+            assert "client_secret_post" in response.json()["error_description"]
+            assert "www-authenticate" not in response.headers
+        revoke = await client.post("/oauth/revoke", data={"token": "x", "client_id": cid},
+                                   headers={**FORM, "Authorization": f"Basic {basic}"})
+        _assert_error(revoke, 400, "invalid_request")
+        assert (await _token(client, _exchange(cid, code, client_secret=secret))).status_code == 200
+
+    async def test_metadata_advertises_only_supported_methods(self, client, oauth_on):
+        metadata = (await client.get("/.well-known/oauth-authorization-server")).json()
+        assert metadata["token_endpoint_auth_methods_supported"] == ["none", "client_secret_post"]
+        assert metadata["revocation_endpoint_auth_methods_supported"] == ["none", "client_secret_post"]
 
     async def test_unknown_or_disabled_client(self, client, public_client, auth_headers, test_team):
         _assert_error(await _token(client, _exchange("dcr_nope", "cac_x")), 401, "invalid_client")
@@ -436,6 +492,41 @@ class TestRequestShape:
         _assert_error(await client.post("/oauth/token", content=b"grant_type=\xff\xfe", headers=FORM),
                       400, "invalid_request")
 
+    async def test_body_size_is_checked_before_it_is_read(self):
+        """PR #345 review: a declared Content-Length over the limit is
+        refused before any of the body is read, and a chunked body is cut
+        off at the limit, not buffered whole."""
+        from starlette.requests import Request
+
+        from app.api import oauth as api_oauth
+        from app.oauth.errors import OAuthHTTPError
+
+        def request(declared):
+            consumed = 0
+            chunks = 160  # 10 MiB
+
+            async def receive():
+                nonlocal consumed, chunks
+                chunks -= 1
+                consumed += 65536
+                return {"type": "http.request", "body": b"a" * 65536, "more_body": chunks > 0}
+
+            headers = [(b"content-type", b"application/x-www-form-urlencoded")]
+            if declared:
+                headers.append((b"content-length", str(160 * 65536).encode()))
+            scope = {"type": "http", "method": "POST", "path": "/oauth/token", "query_string": b"",
+                     "headers": headers}
+            return Request(scope, receive), lambda: consumed
+
+        for declared in (True, False):
+            req, consumed = request(declared)
+            with pytest.raises(OAuthHTTPError) as raised:
+                await api_oauth._form(req, api_oauth._TOKEN_PARAMS)
+            assert raised.value.error == "invalid_request"
+            assert consumed() <= api_oauth.MAX_FORM_BYTES + 65536, declared
+            if declared:
+                assert consumed() == 0
+
     async def test_form_with_charset(self, client, public_client, tokens):
         response = await client.post(
             "/oauth/token", data=_refresh(public_client, tokens["refresh_token"]),
@@ -492,6 +583,15 @@ class TestRevoke:
         ok = await _revoke(client, {"token": body["refresh_token"], "client_id": cid, "client_secret": secret})
         assert ok.status_code == 200
         assert (await OxydeHolderSession.objects.get(id=body["chaotic"]["holder_session_id"])).revoked_at is not None
+
+    async def test_a_disabled_client_may_still_revoke(self, client, public_client, tokens):
+        await OxydeOAuthClient.objects.filter(id=public_client).update(is_active=False)
+        response = await _revoke(client, {"token": tokens["refresh_token"], "client_id": public_client})
+        assert response.status_code == 200
+        session = await OxydeHolderSession.objects.get(id=tokens["chaotic"]["holder_session_id"])
+        assert session.revoked_reason == "client_revoked"
+        # It still can't get tokens.
+        _assert_error(await _token(client, _refresh(public_client, tokens["refresh_token"])), 401, "invalid_client")
 
     async def test_malformed(self, client, public_client):
         _assert_error(await _revoke(client, {"client_id": public_client}), 400, "invalid_request")
