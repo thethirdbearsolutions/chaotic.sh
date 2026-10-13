@@ -54,6 +54,7 @@ import httpx
 
 from .shared import _client, parse_duration
 from ..client import APIError
+from ..principals import principal_label
 
 
 def _main():
@@ -357,7 +358,7 @@ def _render_event_line(event: dict) -> str:
     even on a partial event — never crashes on a missing key.
     """
     ts = _format_event_ts(event.get("created_at"))
-    actor = event.get("user_name") or event.get("user_id") or "?"
+    actor = principal_label(event.get("user"), event.get("user_name") or event.get("user_id") or "?")
     activity = event.get("activity_type") or "?"
     target = (
         event.get("issue_identifier")

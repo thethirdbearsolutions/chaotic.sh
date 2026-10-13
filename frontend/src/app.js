@@ -39,7 +39,7 @@ import { loadGateApprovals } from './gate-approvals.js';
 import { loadInbox, toggleInboxEntryElementExpand, collapseInboxExpand, archiveInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive } from './keyboard.js';
 import { showInlineDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import './revisions.js';
 import {
@@ -610,14 +610,9 @@ async function viewDocumentByPath(docId) {
 // getMemberHandle, setupMentionAutocomplete moved to mention-autocomplete.js (CHT-1044)
 
 
-// CHT-1215 (review finding 1): detail views hide the list via CSS but leave
-// currentView and the list DOM intact, so list/board nav handlers need an
-// explicit "a detail view is overlaying me" disengage check.
-const isAnyDetailViewActive = () =>
-    ['issue-detail-view', 'epic-detail-view', 'document-detail-view', 'sprint-detail-view'].some((id) => {
-        const el = document.getElementById(id);
-        return el && !el.classList.contains('hidden');
-    });
+// isAnyDetailViewActive (keyboard.js): detail views hide the list via CSS
+// but leave currentView and the list DOM intact, so the list/board/inbox nav
+// handlers need an explicit "a detail view is overlaying me" check (CHT-1215).
 
 // List navigation handlers registered BEFORE global shortcuts so
 // stopImmediatePropagation can block conflicts (e.g. 'p' = priority, not projects)
@@ -675,6 +670,9 @@ document.addEventListener('keydown', createInboxNavigationHandler({
         }),
     isModalOpen,
     isCommandPaletteOpen,
+    // CHT-1513: "Open" shows the issue/document detail over the inbox
+    // without changing currentView; the handler must go quiet behind it.
+    isDetailViewActive: isAnyDetailViewActive,
 }));
 
 // ArrowUp/Down/Home/End roving focus through the sidebar nav links (CHT-1289).

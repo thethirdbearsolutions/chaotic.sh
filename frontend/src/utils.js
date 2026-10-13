@@ -273,8 +273,21 @@ export function renderAvatar(assignee, sizeClass = 'avatar-small') {
 /**
  * Small inline badge marking an actor as an AI agent, vs. a human (CHT-1304).
  * @param {boolean} isAgent
+ * @param {string|null} [ownerName] - the agent's owner, shown on hover (CHT-1500)
  * @returns {string} HTML string, or '' when isAgent is falsy
  */
-export function renderAgentBadge(isAgent) {
-    return isAgent ? '<span class="badge badge-agent" title="AI agent">agent</span>' : '';
+export function renderAgentBadge(isAgent, ownerName = null) {
+    if (!isAgent) return '';
+    const title = ownerName ? `AI agent of ${ownerName}` : 'AI agent';
+    return `<span class="badge badge-agent" title="${escapeAttr(title)}">agent</span>`;
+}
+
+/**
+ * The agent badge for a principal summary ({id, name, is_agent, owner_id,
+ * owner_name}) as API responses embed it next to each *_name (CHT-1500).
+ * @param {Object|null} principal
+ * @returns {string} HTML string, or '' for a person or a missing summary
+ */
+export function renderPrincipalBadge(principal) {
+    return renderAgentBadge(principal?.is_agent, principal?.owner_name);
 }

@@ -1,9 +1,10 @@
 """Issue schemas."""
 from datetime import datetime
-from typing import Literal
+from typing import ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
 from app.schemas.authorship import name_deleted_author
+from app.schemas.principal import HasPrincipals, PrincipalSummary
 from app.utils import DateTimeUTC
 
 
@@ -57,8 +58,10 @@ class IssueUpdate(BaseModel):
     lease_seconds: int | None = Field(default=None, ge=1)
 
 
-class IssueResponse(BaseModel):
+class IssueResponse(HasPrincipals, BaseModel):
     """Schema for issue response."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"creator": "creator_id", "assignee": "assignee_id"}
 
     id: str
     project_id: str
@@ -83,6 +86,9 @@ class IssueResponse(BaseModel):
     sprint_name: str | None = None
     parent_identifier: str | None = None
     project_key: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    creator: PrincipalSummary | None = None
+    assignee: PrincipalSummary | None = None
     due_date: DateTimeUTC | None
     completed_at: DateTimeUTC | None
     lease_expires_at: DateTimeUTC | None = None
@@ -124,13 +130,17 @@ class IssueCommentUpdate(BaseModel):
     content: str = Field(min_length=1)
 
 
-class IssueCommentResponse(BaseModel):
+class IssueCommentResponse(HasPrincipals, BaseModel):
     """Schema for comment response."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"author": "author_id"}
 
     id: str
     issue_id: str
     author_id: str | None  # None: author deleted (CHT-1427)
     author_name: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    author: PrincipalSummary | None = None
     content: str
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
@@ -171,21 +181,27 @@ class LabelResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class IssueDescriptionRevisionListItem(BaseModel):
+class IssueDescriptionRevisionListItem(HasPrincipals, BaseModel):
     """Lightweight description-revision entry for the history list (no body)."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"author": "author_id"}
 
     id: str
     issue_id: str
     version: int
     author_id: str | None = None
     author_name: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    author: PrincipalSummary | None = None
     created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class IssueDescriptionRevisionResponse(BaseModel):
+class IssueDescriptionRevisionResponse(HasPrincipals, BaseModel):
     """Full description-revision snapshot."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"author": "author_id"}
 
     id: str
     issue_id: str
@@ -193,19 +209,25 @@ class IssueDescriptionRevisionResponse(BaseModel):
     description: str | None = None
     author_id: str | None = None
     author_name: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    author: PrincipalSummary | None = None
     created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class IssueActivityResponse(BaseModel):
+class IssueActivityResponse(HasPrincipals, BaseModel):
     """Schema for activity response."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"user": "user_id"}
 
     id: str
     issue_id: str
     user_id: str | None  # None: author deleted (CHT-1427)
     user_name: str | None = None
     user_email: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    user: PrincipalSummary | None = None
     activity_type: ActivityType
     field_name: str | None
     old_value: str | None
@@ -225,13 +247,15 @@ class IssueActivityResponse(BaseModel):
         return name_deleted_author(self, "user_id", "user_name")
 
 
-class IssueActivityFeedResponse(BaseModel):
+class IssueActivityFeedResponse(HasPrincipals, BaseModel):
     """Schema for team activity feed response.
 
     Supports both issue activities and document activities (CHT-639).
     For issue activities: issue_id, issue_identifier, issue_title are set.
     For document activities: document_id, document_title, document_icon are set.
     """
+
+    principal_fields: ClassVar[dict[str, str]] = {"user": "user_id"}
 
     id: str
     # Issue-specific fields (optional for document activities)
@@ -246,6 +270,8 @@ class IssueActivityFeedResponse(BaseModel):
     user_id: str | None  # None: author deleted (CHT-1427)
     user_name: str | None = None
     user_email: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    user: PrincipalSummary | None = None
     activity_type: str  # Changed to str to support both ActivityType and DocumentActivityType
     field_name: str | None = None
     old_value: str | None = None
@@ -260,8 +286,10 @@ class IssueActivityFeedResponse(BaseModel):
         return name_deleted_author(self, "user_id", "user_name")
 
 
-class TeamCommentResponse(BaseModel):
+class TeamCommentResponse(HasPrincipals, BaseModel):
     """Unified schema for team-wide comments (both issue and document comments)."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"author": "author_id"}
 
     id: str
     # Source type: "issue" or "document"
@@ -277,6 +305,8 @@ class TeamCommentResponse(BaseModel):
     # Common fields
     author_id: str | None  # None: author deleted (CHT-1427)
     author_name: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    author: PrincipalSummary | None = None
     content: str
     created_at: DateTimeUTC
     updated_at: DateTimeUTC

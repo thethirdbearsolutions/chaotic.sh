@@ -443,6 +443,18 @@ export function createDocListNavigationHandler(actions) {
 }
 
 /**
+ * True while a detail view (issue, epic, document, sprint) is on screen. They
+ * hide the list views via CSS but leave currentView and the list DOM intact,
+ * so the list handlers check this to go quiet behind them (CHT-1215).
+ */
+export function isAnyDetailViewActive() {
+    return ['issue-detail-view', 'epic-detail-view', 'document-detail-view', 'sprint-detail-view'].some((id) => {
+        const el = document.getElementById(id);
+        return !!el && !el.classList.contains('hidden');
+    });
+}
+
+/**
  * Creates a handler for j/k (or arrow keys)/Enter/e/Escape list navigation in
  * the inbox view (CHT-1250). Enter expands the selected entry in place
  * (CHT-1320); the expanded row's "Open" button is the navigate-away path.
@@ -464,12 +476,21 @@ export function createDocListNavigationHandler(actions) {
  *   header dropdown); the handler then leaves Escape to the global handler
  * @param {Function} actions.isModalOpen - Returns true if a modal is open
  * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @param {Function} [actions.isDetailViewActive] - Returns true if a detail
+ *   view is shown over the inbox; the handler then ignores every key
  * @returns {Function} The keydown event handler
  */
 export function createInboxNavigationHandler(actions) {
     const selector = '#inbox-list .inbox-row';
     return function handleInboxNavigation(e) {
         if (actions.getCurrentView() !== 'inbox') return;
+        // CHT-1513: "Open" in an expanded row shows the issue or document
+        // detail over the inbox but leaves currentView === 'inbox' and the
+        // rows in the DOM. Without this the handler stayed live behind the
+        // detail page: `e` archived the hidden selected entry (and the
+        // detail view's own `e` opened the estimate field), j/k moved the
+        // hidden cursor. Same check as the issues-list handler (CHT-1215).
+        if (actions.isDetailViewActive?.()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
         // Yield to the sidebar's own roving-focus handler while a nav link is
         // focused — these list handlers register earlier and would otherwise

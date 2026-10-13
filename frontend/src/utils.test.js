@@ -11,6 +11,7 @@ import {
   debounce,
   getPriorityIcon,
   getStatusIcon,
+  renderPrincipalBadge,
 } from './utils.js';
 
 describe('formatStatus', () => {
@@ -690,5 +691,23 @@ describe('getStatusIcon', () => {
     expect(getStatusIcon('unknown')).toContain('status-backlog');
     expect(getStatusIcon(null)).toContain('status-backlog');
     expect(getStatusIcon(undefined)).toContain('status-backlog');
+  });
+});
+
+describe('renderPrincipalBadge (CHT-1500)', () => {
+  it('badges an agent and names its owner on hover', () => {
+    const html = renderPrincipalBadge({ id: 'a', name: 'Bot', is_agent: true, owner_id: 'u', owner_name: 'Ada <3' });
+    expect(html).toContain('badge-agent');
+    expect(html).toContain('title="AI agent of Ada &lt;3"');
+  });
+
+  it('says only "AI agent" when the agent has no owner', () => {
+    expect(renderPrincipalBadge({ id: 'a', name: 'Bot', is_agent: true })).toContain('title="AI agent"');
+  });
+
+  it('renders nothing for a person or a missing summary', () => {
+    expect(renderPrincipalBadge({ id: 'u', name: 'Ada', is_agent: false })).toBe('');
+    expect(renderPrincipalBadge(null)).toBe('');
+    expect(renderPrincipalBadge(undefined)).toBe('');
   });
 });

@@ -13,7 +13,7 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml, formatTimeAgo } from './utils.js';
+import { escapeHtml, formatTimeAgo, renderPrincipalBadge } from './utils.js';
 import { showModal, showApiError, closeModal } from './ui.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { registerActions } from './event-delegation.js';
@@ -144,7 +144,7 @@ function renderRevisionList() {
       >
         <div class="revision-version">v${rev.version}${compareTag}</div>
         <div class="revision-meta">
-          <span class="revision-author">${escapeHtml(rev.author_name || 'Unknown')}</span>
+          <span class="revision-author">${escapeHtml(rev.author_name || 'Unknown')} ${renderPrincipalBadge(rev.author)}</span>
           <span class="revision-time">${formatTimeAgo(rev.created_at)}</span>
         </div>
       </button>

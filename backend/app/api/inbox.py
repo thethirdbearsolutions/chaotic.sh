@@ -7,6 +7,7 @@ from app.api.deps import CurrentUser
 from app.schemas.inbox import InboxEntryResponse, MarkAllReadResponse, UnreadCountResponse
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.inbox_service import InboxService
+from app.services.principals import load_principals
 from app.websocket import broadcast_inbox_event
 
 router = APIRouter()
@@ -14,15 +15,17 @@ router = APIRouter()
 
 async def _build_responses(entries: list[OxydeInboxEntry]) -> list[InboxEntryResponse]:
     """Fill in display fields (issue identifier, document title, source
-    user name) that aren't stored on the entry itself. Three queries for
-    the whole page, not several per entry: InboxService resolves the
-    referents in bulk (CHT-1399)."""
-    issues, documents, users = await InboxService().resolve_display_fields(entries)
+    user) that aren't stored on the entry itself. A fixed number of
+    queries for the whole page, not several per entry: InboxService
+    resolves the referents in bulk (CHT-1399), and the source users are
+    principal summaries loaded in one batch (CHT-1500)."""
+    issues, documents = await InboxService().resolve_display_fields(entries)
+    principals = await load_principals(e.source_user_id for e in entries)
 
     def one(entry: OxydeInboxEntry) -> InboxEntryResponse:
         issue = issues.get(entry.issue_id) if entry.issue_id else None
         document = documents.get(entry.document_id) if entry.document_id else None
-        source_user = users.get(entry.source_user_id) if entry.source_user_id else None
+        source_user = principals.get(entry.source_user_id) if entry.source_user_id else None
         return InboxEntryResponse(
             id=entry.id,
             recipient_user_id=entry.recipient_user_id,
@@ -36,6 +39,7 @@ async def _build_responses(entries: list[OxydeInboxEntry]) -> list[InboxEntryRes
             ritual_id=entry.ritual_id,
             source_user_id=entry.source_user_id,
             source_user_name=source_user.name if source_user else None,
+            source_user=source_user,
             title=entry.title,
             body=entry.body,
             created_at=entry.created_at,

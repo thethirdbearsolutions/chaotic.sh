@@ -36,7 +36,10 @@ one. The schema also FILTERS, and this does not:
                                              sub-object carries
                                              hashed_password and
                                              is_superuser
-    IssueResponse                        ->  has no `creator` at all
+    IssueResponse                        ->  its `creator` is a principal
+                                             summary (CHT-1500): id, name,
+                                             is_agent, owner -- nothing
+                                             else of the user row
 
 Before this change a raw dump announced itself with "BACKLOG"; now it
 reads as plausible. Removing that tell is the cost of fixing the casing,
