@@ -113,6 +113,18 @@ class TestIssueUpdateParent:
         assert "error" in result
         assert (await tools.issue_view(parent["identifier"]))["parent_id"] is None
 
+    async def test_cross_project_parent_is_error(self, test_project, test_team, test_user):
+        from app.oxyde_models.project import OxydeProject
+
+        other = await OxydeProject.objects.create(
+            team_id=test_team.id, name="Other", key="OTH", description=None,
+        )
+        foreign = await tools.issue_create(title="Foreign", project=other.id)
+        child = await tools.issue_create(title="Local", project=test_project.id)
+        result = await tools.issue_update(child["identifier"], parent=foreign["identifier"])
+        assert result["error"]["error_code"] == "tool_input"
+        assert (await tools.issue_view(child["identifier"]))["parent_id"] is None
+
     async def test_parent_and_no_parent_together_is_error(self, test_issue):
         result = await tools.issue_update(test_issue.identifier, parent="CHT-1", no_parent=True)
         assert result["error"]["error_code"] == "tool_input"

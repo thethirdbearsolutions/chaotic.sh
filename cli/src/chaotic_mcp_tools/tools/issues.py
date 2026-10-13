@@ -374,9 +374,19 @@ async def issue_update(
     # bad identifier fails the whole call rather than half of it.
     parent_id = None
     if parent is not None:
-        parent_id = (await backend.get_issue(parent.strip()))["id"]
+        parent_row = await backend.get_issue(parent.strip())
+        parent_id = parent_row["id"]
         if parent_id == iss["id"]:
             raise ToolInputError("An issue cannot be its own parent.")
+        # The API refuses this too, but only after any `attest` notes
+        # above would already have been recorded. (A cycle is likewise
+        # refused by the API; detecting it here would need the ancestor
+        # walk the API already does.)
+        if parent_row.get("project_id") != iss.get("project_id"):
+            raise ToolInputError(
+                f"{parent.strip()} is in a different project; a parent must "
+                f"be in the same project as {identifier}."
+            )
 
     # Per-ritual attestations first (CHT-1326), so a gated status change
     # finds its rituals satisfied instead of opening a blocked intent
@@ -698,9 +708,9 @@ async def issue_label(
     Additive and subtractive rather than replacing the whole set, so
     labelling an issue never silently drops someone else's label. Labels
     must already exist -- this does not create them, and no MCP tool
-    does: create one with the CLI, `chaotic label create NAME`. Use label_list to
-    see them, or pass a label id directly if your key is project-scoped
-    (label_list is team-scoped and needs a team-scoped key).
+    does: create one with the CLI, `chaotic label create NAME`. Use
+    label_list to see them, or pass a label id directly if your key is
+    project-scoped (label_list is team-scoped and needs a team-scoped key).
 
     Adding a label the issue already has, or removing one it doesn't
     have, is a no-op rather than an error, so the same call is safe to

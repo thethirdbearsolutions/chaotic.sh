@@ -690,6 +690,16 @@ class TestIssueUpdateBody:
         assert result["error"]["error_code"] == "tool_input"
         assert fake.calls_to("update_issue") == []
 
+    async def test_cross_project_parent_fails_before_attesting(self, fake):
+        fake.issues["CHT-9"] = {"id": "i9", "identifier": "OTH-9", "project_id": "proj-2"}
+        fake.pending_issue_rituals = {"pending_rituals": [
+            {"id": "r-ticket", "name": "close-gate", "approval_mode": "auto"}], "completed_rituals": []}
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="CHT-9", attest={"close-gate": "x"})
+        assert result["error"]["error_code"] == "tool_input"
+        assert "different project" in result["error"]["message"]
+        assert fake.calls_to("attest_ritual_for_issue") == []
+        assert fake.calls_to("update_issue") == []
+
     async def test_unknown_parent_fails_before_any_write(self, fake):
         fake.pending_issue_rituals = {"pending_rituals": [
             {"id": "r-ticket", "name": "close-gate", "approval_mode": "auto"}], "completed_rituals": []}

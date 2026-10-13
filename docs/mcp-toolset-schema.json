@@ -650,7 +650,7 @@
       }
     },
     "issue_label": {
-      "description": "Add and/or remove labels on an issue.\n\n    Additive and subtractive rather than replacing the whole set, so\n    labelling an issue never silently drops someone else's label. Labels\n    must already exist -- this does not create them, and no MCP tool\n    does: create one with the CLI, `chaotic label create NAME`. Use label_list to\n    see them, or pass a label id directly if your key is project-scoped\n    (label_list is team-scoped and needs a team-scoped key).\n\n    Adding a label the issue already has, or removing one it doesn't\n    have, is a no-op rather than an error, so the same call is safe to\n    repeat.\n    ",
+      "description": "Add and/or remove labels on an issue.\n\n    Additive and subtractive rather than replacing the whole set, so\n    labelling an issue never silently drops someone else's label. Labels\n    must already exist -- this does not create them, and no MCP tool\n    does: create one with the CLI, `chaotic label create NAME`. Use\n    label_list to see them, or pass a label id directly if your key is\n    project-scoped (label_list is team-scoped and needs a team-scoped key).\n\n    Adding a label the issue already has, or removing one it doesn't\n    have, is a no-op rather than an error, so the same call is safe to\n    repeat.\n    ",
       "inputSchema": {
         "properties": {
           "add": {
