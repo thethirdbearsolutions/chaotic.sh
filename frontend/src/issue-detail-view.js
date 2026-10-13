@@ -10,7 +10,7 @@ import { showToast, showModal, closeModal, showApiError } from './ui.js';
 import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate, isOutOfScale } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
-import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar, renderAgentBadge } from './utils.js';
+import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar, renderAgentBadge, renderPrincipalBadge } from './utils.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
@@ -579,6 +579,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
             .map(r => ({
                 id: `attestation-${r.attestation.id}`,
                 author_name: r.attestation.attested_by_name || 'Unknown',
+                author: r.attestation.attester || null,
                 content: r.attestation.note,
                 created_at: r.attestation.attested_at,
                 is_attestation: true,
@@ -819,7 +820,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                                     <div class="comment-body">
                                         <div class="comment-header">
                                             <span class="comment-author">${escapeHtml(comment.author_name || 'User')}</span>
-                                            ${renderAgentBadge(getAssigneeById(comment.author_id)?.is_agent)}
+                                            ${comment.author ? renderPrincipalBadge(comment.author) : renderAgentBadge(getAssigneeById(comment.author_id)?.is_agent)}
                                             ${comment.is_attestation ? `<span class="comment-ritual-badge">${comment.is_pending ? 'Pending approval — ' : ''}Ritual: ${escapeHtml(comment.ritual_name)}</span>` : ''}
                                             <span class="comment-date">${formatTimeAgo(comment.created_at)}</span>
                                         </div>
@@ -849,7 +850,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                                     <div class="activity-icon">${getActivityIcon(activity.activity_type)}</div>
                                     <div class="activity-content">
                                         <span class="activity-text">${formatActivityText(activity)}</span>
-                                        <span class="activity-actor">by ${escapeHtml(formatActivityActor(activity))}</span>
+                                        <span class="activity-actor">by ${escapeHtml(formatActivityActor(activity))} ${renderPrincipalBadge(activity.user)}</span>
                                         <span class="activity-time">${formatTimeAgo(activity.created_at)}</span>
                                     </div>
                                 </div>
@@ -942,7 +943,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
 
                         <div class="property-row">
                             <span class="property-label">Created by</span>
-                            <span class="property-value-static">${escapeHtml(issue.creator_name || 'Unknown')}</span>
+                            <span class="property-value-static">${escapeHtml(issue.creator_name || 'Unknown')} ${renderPrincipalBadge(issue.creator)}</span>
                         </div>
 
                         <div class="property-row">

@@ -1,7 +1,9 @@
 """Ritual schemas."""
+from typing import ClassVar
 import json
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.enums import RitualTrigger, ApprovalMode, RitualArtifact, SelectionMode
+from app.schemas.principal import HasPrincipals, PrincipalSummary
 from app.utils import DateTimeUTC
 import re
 
@@ -239,8 +241,10 @@ class RitualAttestationCreate(BaseModel):
     url: str | None = None
 
 
-class RitualAttestationResponse(BaseModel):
+class RitualAttestationResponse(HasPrincipals, BaseModel):
     """Schema for ritual attestation response."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"attester": "attested_by", "approver": "approved_by"}
 
     id: str
     ritual_id: str
@@ -254,6 +258,9 @@ class RitualAttestationResponse(BaseModel):
     approved_by: str | None
     approved_by_name: str | None = None  # Approver's display name
     approved_at: DateTimeUTC | None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    attester: PrincipalSummary | None = None
+    approver: PrincipalSummary | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -351,8 +358,10 @@ class TicketRitualsStatusResponse(BaseModel):
     completed_rituals: list[CompletedRitualResponse]
 
 
-class RitualAttestationHistoryItem(BaseModel):
+class RitualAttestationHistoryItem(HasPrincipals, BaseModel):
     """Schema for attestation history response."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"attester": "attested_by", "approver": "approved_by"}
 
     id: str
     ritual_name: str
@@ -367,6 +376,11 @@ class RitualAttestationHistoryItem(BaseModel):
     note: str | None = None
     approved_by_name: str | None = None
     approved_at: DateTimeUTC | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    attested_by: str | None = None
+    approved_by: str | None = None
+    attester: PrincipalSummary | None = None
+    approver: PrincipalSummary | None = None
 
 
 class PendingGateRitualInfo(BaseModel):

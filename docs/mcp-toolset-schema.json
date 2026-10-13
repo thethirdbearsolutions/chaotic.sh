@@ -10,6 +10,7 @@
         "project_id",
         "sprint_id",
         "author_name",
+        "author",
         "labels",
         "updated_at"
       ],
@@ -20,6 +21,7 @@
         "issue_identifier",
         "document_title",
         "source_user_name",
+        "source_user",
         "created_at",
         "read_at"
       ],
@@ -31,6 +33,7 @@
         "issue_type",
         "estimate",
         "assignee_name",
+        "assignee",
         "sprint_name",
         "parent_identifier",
         "labels",
@@ -216,7 +219,7 @@
           },
           "detail": {
             "default": false,
-            "description": "Return every field of each document (including content) instead of the compact row. Compact rows carry: id, title, icon, project_id, sprint_id, author_name, labels (names), updated_at. Use doc_view for one document.",
+            "description": "Return every field of each document (including content) instead of the compact row. Compact rows carry: id, title, icon, project_id, sprint_id, author_name, author, labels (names), updated_at. Use doc_view for one document.",
             "title": "Detail",
             "type": "boolean"
           },
@@ -723,7 +726,7 @@
           },
           "detail": {
             "default": false,
-            "description": "Return every field of each issue (including description) instead of the compact row. Compact rows carry: identifier, title, status, priority, issue_type, estimate, assignee_name, sprint_name, parent_identifier, labels (names), updated_at. Use issue_view for one issue's full detail.",
+            "description": "Return every field of each issue (including description) instead of the compact row. Compact rows carry: identifier, title, status, priority, issue_type, estimate, assignee_name, assignee, sprint_name, parent_identifier, labels (names), updated_at. Use issue_view for one issue's full detail.",
             "title": "Detail",
             "type": "boolean"
           },
@@ -888,7 +891,7 @@
           },
           "detail": {
             "default": false,
-            "description": "Return every field of each issue (including description) instead of the compact row. Compact rows carry: identifier, title, status, priority, issue_type, estimate, assignee_name, sprint_name, parent_identifier, labels (names), updated_at. Use issue_view for one issue's full detail.",
+            "description": "Return every field of each issue (including description) instead of the compact row. Compact rows carry: identifier, title, status, priority, issue_type, estimate, assignee_name, assignee, sprint_name, parent_identifier, labels (names), updated_at. Use issue_view for one issue's full detail.",
             "title": "Detail",
             "type": "boolean"
           },

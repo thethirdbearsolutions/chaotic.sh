@@ -28,17 +28,18 @@ from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
 from app.enums import ApprovalMode, RitualTrigger, ActivityType
-from app.services.user_service import UserService
+from app.services.principals import fill_principals, load_principals
 from app.websocket import broadcast_attestation_event
 
 router = APIRouter()
 
 
 async def _build_attestation_response(att) -> RitualAttestationResponse:
-    """Build attestation response with user names loaded."""
-    user_service = UserService()
-    attester = await user_service.get_by_id(att.attested_by) if att.attested_by else None
-    approver = await user_service.get_by_id(att.approved_by) if att.approved_by else None
+    """Build attestation response with its principals loaded (CHT-1500):
+    two queries for attester and approver together."""
+    principals = await load_principals((att.attested_by, att.approved_by))
+    attester = principals.get(att.attested_by) if att.attested_by else None
+    approver = principals.get(att.approved_by) if att.approved_by else None
     return RitualAttestationResponse(
         id=att.id,
         ritual_id=att.ritual_id,
@@ -52,6 +53,8 @@ async def _build_attestation_response(att) -> RitualAttestationResponse:
         approved_by=att.approved_by,
         approved_by_name=approver.name if approver else None,
         approved_at=att.approved_at,
+        attester=attester,
+        approver=approver,
     )
 
 
@@ -175,7 +178,7 @@ async def list_attestation_history(
 
     attestations = await ritual_service.list_attestation_history(project_id, skip, limit)
 
-    return [
+    return await fill_principals([
         RitualAttestationHistoryItem(
             id=att.id,
             ritual_name=att.ritual.name if att.ritual else "Unknown",
@@ -190,9 +193,11 @@ async def list_attestation_history(
             note=att.note,
             approved_by_name=att.approver.name if att.approver else None,
             approved_at=att.approved_at,
+            attested_by=att.attested_by,
+            approved_by=att.approved_by,
         )
         for att in attestations
-    ]
+    ])
 
 
 @router.get("/limbo", response_model=LimboStatusResponse)

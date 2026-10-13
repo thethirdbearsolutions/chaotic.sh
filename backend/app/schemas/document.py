@@ -1,6 +1,8 @@
 """Document schemas."""
+from typing import ClassVar
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.schemas.authorship import name_deleted_author
+from app.schemas.principal import HasPrincipals, PrincipalSummary
 from app.schemas.issue import LabelResponse
 from app.utils import DateTimeUTC
 
@@ -25,13 +27,17 @@ class DocumentUpdate(BaseModel):
     sprint_id: str | None = None
 
 
-class DocumentResponse(BaseModel):
+class DocumentResponse(HasPrincipals, BaseModel):
     """Schema for document response."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"author": "author_id"}
 
     id: str
     team_id: str
     author_id: str | None  # None: author deleted (CHT-1427)
     author_name: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    author: PrincipalSummary | None = None
     project_id: str | None
     sprint_id: str | None = None
     title: str
@@ -60,13 +66,17 @@ class DocumentCommentUpdate(BaseModel):
     content: str = Field(min_length=1)
 
 
-class DocumentCommentResponse(BaseModel):
+class DocumentCommentResponse(HasPrincipals, BaseModel):
     """Schema for document comment response."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"author": "author_id"}
 
     id: str
     document_id: str
     author_id: str | None  # None: author deleted (CHT-1427)
     author_name: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    author: PrincipalSummary | None = None
     content: str
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
@@ -97,8 +107,10 @@ class LabelAddedResponse(BaseModel):
     message: str
 
 
-class DocumentRevisionListItem(BaseModel):
+class DocumentRevisionListItem(HasPrincipals, BaseModel):
     """Lightweight revision entry for the history list (no body)."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"author": "author_id"}
 
     id: str
     document_id: str
@@ -106,13 +118,17 @@ class DocumentRevisionListItem(BaseModel):
     title: str
     author_id: str | None = None
     author_name: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    author: PrincipalSummary | None = None
     created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class DocumentRevisionResponse(BaseModel):
+class DocumentRevisionResponse(HasPrincipals, BaseModel):
     """Full revision snapshot."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"author": "author_id"}
 
     id: str
     document_id: str
@@ -121,6 +137,8 @@ class DocumentRevisionResponse(BaseModel):
     content: str | None = None
     author_id: str | None = None
     author_name: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    author: PrincipalSummary | None = None
     created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)

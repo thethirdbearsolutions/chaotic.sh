@@ -843,7 +843,7 @@ class TestInboxTools:
         assert result["count"] == 2 and result["truncated"] is False and result["unread_only"] is False
         assert set(result["entries"][0]) == {
             "id", "kind", "title", "issue_identifier", "document_title", "source_user_name",
-            "created_at", "read_at",
+            "source_user", "created_at", "read_at",
         }
         assert "body" not in result["entries"][0]
         assert fake.calls_to("list_inbox") == [((None,), {"unread": False, "limit": 21})]

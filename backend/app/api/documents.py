@@ -16,6 +16,7 @@ from app.schemas.document import (
 )
 from app.schemas.issue import IssueResponse, LabelResponse
 from app.services.document_service import DocumentService
+from app.services.principals import fill_principals
 from app.websocket import broadcast_comment_event, broadcast_document_event
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
@@ -127,7 +128,7 @@ async def create_document(
             )
 
     document = await document_service.create(document_in, team_id, current_user.id)
-    response = build_document_response(document, author_name=current_user.name)
+    response = await fill_principals(build_document_response(document, author_name=current_user.name))
     await broadcast_document_event(team_id, "created", response.model_dump(mode="json"))
     return response
 
@@ -188,7 +189,7 @@ async def list_documents(
         limit=limit,
     )
 
-    return [build_document_response(doc) for doc in documents]
+    return await fill_principals([build_document_response(doc) for doc in documents])
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
@@ -217,7 +218,7 @@ async def get_document(document_id: str, current_user: CurrentUser) -> DocumentR
                 detail="Not a member of this team",
             )
 
-    return build_document_response(document)
+    return await fill_principals(build_document_response(document))
 
 
 @router.patch("/{document_id}", response_model=DocumentResponse)
@@ -277,7 +278,7 @@ async def update_document(
             )
 
     document = await document_service.update(document, document_in, current_user.id)
-    response = build_document_response(document)
+    response = await fill_principals(build_document_response(document))
     await broadcast_document_event(document.team_id, "updated", response.model_dump(mode="json"))
     return response
 
@@ -628,7 +629,7 @@ async def list_document_revisions(
     await _check_document_access(document, current_user)
 
     revisions = await document_service.list_revisions(document_id, skip, limit)
-    return [
+    return await fill_principals([
         DocumentRevisionListItem(
             id=rev.id,
             document_id=rev.document_id,
@@ -639,7 +640,7 @@ async def list_document_revisions(
             created_at=ensure_utc(rev.created_at),
         )
         for rev in revisions
-    ]
+    ])
 
 
 @router.get("/{document_id}/revisions/{version}", response_model=DocumentRevisionResponse)
@@ -667,7 +668,7 @@ async def get_document_revision(
             detail="Revision not found",
         )
 
-    return DocumentRevisionResponse(
+    return await fill_principals(DocumentRevisionResponse(
         id=rev.id,
         document_id=rev.document_id,
         version=rev.version,
@@ -676,7 +677,7 @@ async def get_document_revision(
         author_id=rev.author_id,
         author_name=_revision_author_name(rev),
         created_at=ensure_utc(rev.created_at),
-    )
+    ))
 
 
 # ============================================================================
@@ -728,7 +729,7 @@ async def create_comment(
             )
 
     comment = await document_service.create_comment(document_id, comment_in, current_user.id)
-    response = build_comment_response(comment, author_name=current_user.name)
+    response = await fill_principals(build_comment_response(comment, author_name=current_user.name))
 
     # Broadcast real-time update
     await broadcast_comment_event(document.team_id, "created", response.model_dump(mode="json"))
@@ -768,7 +769,7 @@ async def list_comments(
             )
 
     comments = await document_service.list_comments(document_id, skip, limit)
-    return [build_comment_response(comment) for comment in comments]
+    return await fill_principals([build_comment_response(comment) for comment in comments])
 
 
 @router.patch("/{document_id}/comments/{comment_id}", response_model=DocumentCommentResponse)
@@ -817,7 +818,7 @@ async def update_comment(
         )
 
     comment = await document_service.update_comment(comment, comment_in)
-    response = build_comment_response(comment)
+    response = await fill_principals(build_comment_response(comment))
 
     # Broadcast real-time update
     await broadcast_comment_event(document.team_id, "updated", response.model_dump(mode="json"))

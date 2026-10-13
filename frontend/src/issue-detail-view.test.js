@@ -61,6 +61,9 @@ vi.mock('./utils.js', () => ({
     renderAgentBadge: vi.fn((isAgent) =>
         isAgent ? '<span class="badge badge-agent" title="AI agent">agent</span>' : ''
     ),
+    renderPrincipalBadge: vi.fn((p) =>
+        p?.is_agent ? `<span class="badge badge-agent" title="AI agent of ${p.owner_name}">agent</span>` : ''
+    ),
 }));
 
 vi.mock('./issue-list.js', () => ({
@@ -1278,6 +1281,23 @@ describe('issue-detail-view', () => {
                 await viewIssue('issue-1');
 
                 expect(document.getElementById('issue-detail-view').innerHTML).not.toContain('badge-agent');
+            });
+
+            it('reads the embedded author summary, not the assignee cache (CHT-1500)', async () => {
+                // An agent that is not in the team's assignee list (another
+                // team's, or a session identity) still gets its badge and owner.
+                api.getComments.mockResolvedValue([
+                    {
+                        id: 'c3', author_id: 'agent-9', author_name: 'Builder', content: 'hi',
+                        created_at: '2024-01-16T10:00:00Z',
+                        author: { id: 'agent-9', name: 'Builder', is_agent: true, owner_id: 'u1', owner_name: 'Ada' },
+                    },
+                ]);
+                getAssigneeById.mockImplementation(() => null);
+
+                await viewIssue('issue-1');
+
+                expect(document.getElementById('issue-detail-view').innerHTML).toContain('AI agent of Ada');
             });
         });
     });

@@ -6,6 +6,7 @@ import click
 from rich.panel import Panel
 from rich.table import Table
 
+from ..principals import principal_label
 from .shared import _client, console, format_ritual_line, print_ritual_prompt, resolve_content_value, resolve_document_id
 
 
@@ -788,7 +789,7 @@ def register(cli):
                 if approval_mode == "auto":
                     status_str = "[green]Auto[/green]"
                 else:
-                    approver = entry.get("approved_by_name", "")
+                    approver = principal_label(entry.get("approver"), entry.get("approved_by_name", ""))
                     status_str = f"[green]Approved[/green] by {approver}"
             else:
                 status_str = "[yellow]Pending[/yellow]"
@@ -800,7 +801,7 @@ def register(cli):
                 entry.get("ritual_name", "?"),
                 type_display,
                 context,
-                entry.get("attested_by_name", "?"),
+                principal_label(entry.get("attester"), entry.get("attested_by_name", "?")),
                 status_str,
                 note,
             )

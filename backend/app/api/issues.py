@@ -39,6 +39,7 @@ from app.services.issue_service import (
     EstimateRequiredError,
     IssueAlreadyClaimedError,
 )
+from app.services.principals import fill_principals, load_principals
 from app.services.project_service import ProjectService
 from app.services.sprint_service import SprintService
 from app.services.team_service import TeamService
@@ -233,20 +234,31 @@ async def issues_to_responses(issues) -> list[IssueResponse]:
             for row in rows
         }
 
-    assignees = await _lookup(OxydeUser, {i.assignee_id for i in issues}, "name")
+    # Creators and assignees as principal summaries (CHT-1500): two
+    # queries for both roles, and the assignee name is read off them.
+    principals = await load_principals(
+        {i.assignee_id for i in issues} | {i.creator_id for i in issues}
+    )
     sprints = await _lookup(OxydeSprint, {i.sprint_id for i in issues}, "name")
     parents = await _lookup(Issue, {i.parent_id for i in issues}, "identifier")
     projects = await _lookup(OxydeProject, {i.project_id for i in issues}, "key")
 
     return [
         issue_to_response(issue).model_copy(update={
-            "assignee_name": assignees.get(issue.assignee_id),
+            "assignee_name": _principal_name(principals, issue.assignee_id),
+            "creator": principals.get(issue.creator_id) if issue.creator_id else None,
+            "assignee": principals.get(issue.assignee_id) if issue.assignee_id else None,
             "sprint_name": sprints.get(issue.sprint_id),
             "parent_identifier": parents.get(issue.parent_id),
             "project_key": projects.get(issue.project_id),
         })
         for issue in issues
     ]
+
+
+def _principal_name(principals, user_id):
+    principal = principals.get(user_id) if user_id else None
+    return principal.name if principal else None
 
 
 async def issue_response(issue: Issue) -> IssueResponse:
@@ -871,7 +883,7 @@ async def list_team_activities(
     all_activities.sort(key=lambda x: x.created_at, reverse=True)
 
     # Apply pagination
-    return all_activities[skip:skip + limit]
+    return await fill_principals(all_activities[skip:skip + limit])
 
 
 @router.get("/comments", response_model=list[TeamCommentResponse])
@@ -936,7 +948,7 @@ async def list_team_comments(
     all_comments.sort(key=lambda x: x.created_at, reverse=True)
 
     # Apply pagination
-    return all_comments[skip:skip + limit]
+    return await fill_principals(all_comments[skip:skip + limit])
 
 
 @router.get("/identifier/{identifier}", response_model=IssueResponse)
@@ -1291,7 +1303,7 @@ async def list_activities(
             return sprint_names.get(activity.old_value)
         return None
 
-    return [
+    return await fill_principals([
         IssueActivityResponse(
             id=a.id,
             issue_id=a.issue_id,
@@ -1306,7 +1318,7 @@ async def list_activities(
             created_at=ensure_utc(a.created_at),
         )
         for a in activities
-    ]
+    ])
 
 
 def _description_revision_author_name(rev) -> str | None:
@@ -1350,7 +1362,7 @@ async def list_description_revisions(
     await _get_issue_checked(issue_id, current_user)
 
     revisions = await IssueService().list_description_revisions(issue_id, skip, limit)
-    return [
+    return await fill_principals([
         IssueDescriptionRevisionListItem(
             id=rev.id,
             issue_id=rev.issue_id,
@@ -1360,7 +1372,7 @@ async def list_description_revisions(
             created_at=ensure_utc(rev.created_at),
         )
         for rev in revisions
-    ]
+    ])
 
 
 @router.get(
@@ -1382,7 +1394,7 @@ async def get_description_revision(
             detail="Revision not found",
         )
 
-    return IssueDescriptionRevisionResponse(
+    return await fill_principals(IssueDescriptionRevisionResponse(
         id=rev.id,
         issue_id=rev.issue_id,
         version=rev.version,
@@ -1390,7 +1402,7 @@ async def get_description_revision(
         author_id=rev.author_id,
         author_name=_description_revision_author_name(rev),
         created_at=ensure_utc(rev.created_at),
-    )
+    ))
 
 
 # Sub-issues
@@ -1471,6 +1483,7 @@ async def create_comment(
         created_at=ensure_utc(comment.created_at),
         updated_at=ensure_utc(comment.updated_at),
     )
+    await fill_principals(response)
     await broadcast_comment_event(project.team_id, "created", response.model_dump(mode="json"))
     await broadcast_activity_event(project.team_id, "created", {"issue_id": comment.issue_id})
     return response
@@ -1503,7 +1516,7 @@ async def list_comments(
         )
 
     comments = await issue_service.list_comments(issue_id, skip, limit)
-    return [
+    return await fill_principals([
         IssueCommentResponse(
             id=c.id,
             issue_id=c.issue_id,
@@ -1514,7 +1527,7 @@ async def list_comments(
             updated_at=ensure_utc(c.updated_at),
         )
         for c in comments
-    ]
+    ])
 
 
 @router.patch("/{issue_id}/comments/{comment_id}", response_model=IssueCommentResponse)
@@ -1571,6 +1584,7 @@ async def update_comment(
         created_at=ensure_utc(comment.created_at),
         updated_at=ensure_utc(comment.updated_at),
     )
+    await fill_principals(response)
     project = await project_service.get_by_id(issue.project_id)
     if project:
         await broadcast_comment_event(project.team_id, "updated", response.model_dump(mode="json"))
@@ -1814,7 +1828,7 @@ async def get_issue_documents(issue_id: str, current_user: CurrentUser):
         )
 
     documents = await document_service.get_linked_documents_for_issue(issue_id)
-    return [
+    return await fill_principals([
         DocumentResponse(
             id=doc.id,
             team_id=doc.team_id,
@@ -1829,4 +1843,4 @@ async def get_issue_documents(issue_id: str, current_user: CurrentUser):
             updated_at=ensure_utc(doc.updated_at),
         )
         for doc in documents
-    ]
+    ])
