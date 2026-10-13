@@ -374,6 +374,9 @@ class TestAgentKeysListRevoke:
         {"id": "key-bbbb-2", "name": "self", "key_prefix": "ck_bbbb", "owner_id": "agent-uuid-123",
          "owner_name": "claude-bot", "legacy_self_minted": True, "is_active": False,
          "created_at": "2026-10-02T00:00:00Z", "last_used_at": "2026-10-03T00:00:00Z"},
+        {"id": "key-cccc-3", "name": "new", "key_prefix": "ck_cccc1234", "owner_id": "u1",
+         "owner_name": "Carol", "legacy_self_minted": False, "is_active": True,
+         "created_at": "2026-10-04T00:00:00Z", "last_used_at": None},
     ]
 
     def _setup(self):
@@ -402,7 +405,7 @@ class TestAgentKeysListRevoke:
         result = cli_runner.invoke(cli, ['--json', 'agent', 'keys', 'list', 'claude-bot'])
 
         assert result.exit_code == 0, result.output
-        assert [k["id"] for k in json.loads(result.output)] == ["key-aaaa-1", "key-bbbb-2"]
+        assert [k["id"] for k in json.loads(result.output)] == ["key-aaaa-1", "key-bbbb-2", "key-cccc-3"]
 
     def test_list_empty(self, cli_runner):
         from cli.main import cli, client
@@ -419,10 +422,49 @@ class TestAgentKeysListRevoke:
 
         client = self._setup()
         with patch('cli.main.confirm_action', return_value=True):
-            result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', 'key-bbbb'])
+            result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', 'key-cccc'])
 
         assert result.exit_code == 0, result.output
-        client.revoke_api_key.assert_called_once_with('key-bbbb-2')
+        client.revoke_api_key.assert_called_once_with('key-cccc-3')
+
+    def test_revoke_skips_revoked_keys(self, cli_runner):
+        """PR #326 third review, finding 4: a revoked key is no candidate,
+        and does not make an active key's prefix ambiguous."""
+        from cli.main import cli
+
+        client = self._setup()
+        result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', 'key-bbbb'])
+        assert result.exit_code != 0
+        assert 'no active key' in result.output
+
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', 'ck_'])
+        assert 'Ambiguous' in result.output  # two active keys, not three
+        client.revoke_api_key.assert_not_called()
+
+    def test_revoke_by_pasted_full_key(self, cli_runner):
+        from cli.main import cli
+
+        client = self._setup()
+        secret = 'ck_cccc1234' + 'f' * 56
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', secret])
+
+        assert result.exit_code == 0, result.output
+        client.revoke_api_key.assert_called_once_with('key-cccc-3')
+        assert secret not in result.output
+
+    def test_an_unknown_pasted_secret_is_not_echoed(self, cli_runner):
+        from cli.main import cli
+
+        client = self._setup()
+        secret = 'ck_99999999' + 'e' * 56
+        result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', secret])
+
+        assert result.exit_code != 0
+        assert 'no active key' in result.output
+        assert secret not in result.output and 'e' * 20 not in result.output
+        client.revoke_api_key.assert_not_called()
 
     def test_revoke_by_display_prefix(self, cli_runner):
         """The ck_ prefix `keys list` shows works too (PR #326 re-review, finding 7)."""
@@ -449,7 +491,7 @@ class TestAgentKeysListRevoke:
         from cli.main import cli
 
         client = self._setup()
-        for ref, expected in (('key-', 'Ambiguous'), ('nope', 'has no key'), ('  ', 'must not be empty')):
+        for ref, expected in (('key-', 'Ambiguous'), ('nope', 'has no active key'), ('  ', 'must not be empty')):
             result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', ref])
             assert result.exit_code != 0
             assert expected in result.output

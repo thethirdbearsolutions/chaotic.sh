@@ -1,10 +1,12 @@
 """API Key routes."""
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
+from oxyde import atomic
 from app.api.deps import CurrentUser, can_manage_agent, get_api_key_record
 from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated
 from app.services.agent_service import AgentService
 from app.services.api_key_service import APIKeyService
+from app.services.team_service import TeamService
 
 router = APIRouter()
 
@@ -20,19 +22,36 @@ async def create_api_key(
     An agent minting a key for itself gets one linked to it whose holder
     is the human behind the key it called with (CHT-1508): whoever holds
     the calling key holds the new one too, so leaving the team ends both.
-    With no human on record (a key from before holders were recorded),
-    the key falls back to the agent's creator at sign-in.
+    A calling key from before holders were recorded is vouched for by the
+    agent's creator, and so is the key minted with it. The holder's
+    membership is re-checked in the same transaction as the insert, so a
+    removal that commits first cannot leave behind a key its sweep
+    missed. An agent with no calling key on record is refused rather than
+    given a key nobody holds.
     """
     api_key_service = APIKeyService()
-    if current_user.is_agent:
-        holder_id = current_user.id
-        if calling_key is not None and calling_key.user_id != current_user.id:
-            holder_id = calling_key.user_id
-        api_key, full_key = await api_key_service.create(
-            holder_id, api_key_in, agent_user_id=current_user.id,
-        )
-    else:
+    if not current_user.is_agent:
         api_key, full_key = await api_key_service.create(current_user.id, api_key_in)
+    else:
+        if calling_key is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="An agent can only mint a key with one of its own API keys",
+            )
+        holder_id = calling_key.user_id
+        vouching_id = holder_id if holder_id != current_user.id else current_user.parent_user_id
+        async with atomic():
+            if not vouching_id or await TeamService().get_member(
+                current_user.agent_team_id, vouching_id,
+            ) is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid API key",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            api_key, full_key = await api_key_service.create(
+                holder_id, api_key_in, agent_user_id=current_user.id,
+            )
 
     return APIKeyCreated(
         id=api_key.id,

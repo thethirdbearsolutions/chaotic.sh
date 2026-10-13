@@ -444,3 +444,111 @@ class TestReleaseWithNoNewOwner:
         [(agent, revoked, reassigned)] = released
         assert agent.id == w["agent_id"] and revoked == 2 and reassigned is False
         assert (await OxydeUser.objects.get(id=w["agent_id"])).parent_user_id == w["bob"].id
+
+
+@pytest.mark.asyncio
+class TestSelfMintGuards:
+    """PR #326 third review, findings 2, 3 and the agent-on-agent revoke gap."""
+
+    async def test_a_removal_between_sign_in_and_insert_mints_nothing(self, client, world):
+        """The holder is re-checked inside the insert's transaction, so a
+        removal that lands after sign-in cannot leave an unswept key."""
+        from typing import Annotated
+
+        from fastapi import Depends
+        from fastapi.security import HTTPAuthorizationCredentials
+
+        from app.api.deps import get_api_key_record, security
+        from app.main import app
+
+        w = world
+
+        async def removal_lands_now(
+            credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+        ):
+            record = await get_api_key_record(credentials)
+            await OxydeTeamMember.objects.filter(team_id=w["team"].id, user_id=w["bob"].id).delete()
+            return record
+
+        before = await OxydeAPIKey.objects.filter(agent_user_id=w["agent_id"]).count()
+        app.dependency_overrides[get_api_key_record] = removal_lands_now
+        try:
+            response = await client.post("/api/api-keys", json={"name": "race"}, headers=_bearer(w["k1"]))
+        finally:
+            app.dependency_overrides.pop(get_api_key_record, None)
+
+        assert response.status_code == 401, response.text
+        assert await OxydeAPIKey.objects.filter(agent_user_id=w["agent_id"]).count() == before
+
+    async def test_an_agent_without_a_calling_key_is_refused(self, client, world):
+        """No path gives an agent a JWT today; if one ever does, it gets no
+        key nobody holds."""
+        before = await OxydeAPIKey.objects.filter(agent_user_id=world["agent_id"]).count()
+
+        response = await client.post(
+            "/api/api-keys", json={"name": "jwt"},
+            headers={"Authorization": f"Bearer {create_access_token(data={'sub': world['agent_id']})}"},
+        )
+
+        assert response.status_code == 403, response.text
+        assert await OxydeAPIKey.objects.filter(agent_user_id=world["agent_id"]).count() == before
+
+    async def test_a_legacy_calling_key_mints_a_key_vouched_for_by_the_creator(self, client, world):
+        w = world
+        _, legacy = await _legacy_self_minted_key(w["agent_id"])
+
+        minted = await client.post("/api/api-keys", json={"name": "from legacy"}, headers=_bearer(legacy))
+
+        assert minted.status_code == 201, minted.text
+        row = await OxydeAPIKey.objects.get(id=minted.json()["id"])
+        assert (row.user_id, row.agent_user_id) == (w["agent_id"], w["agent_id"])
+        await OxydeTeamMember.objects.filter(team_id=w["team"].id, user_id=w["bob"].id).delete()
+        assert (await client.get("/api/auth/me", headers=_bearer(minted.json()["key"]))).status_code == 401
+
+    async def test_an_agent_cannot_revoke_another_agents_key(self, client, world):
+        w = world
+        other = await client.post(
+            f"/api/teams/{w['team'].id}/agents", json={"name": "otherbot"}, headers=w["owner_headers"],
+        )
+
+        response = await client.delete(f"/api/api-keys/{other.json()['api_key_id']}", headers=_bearer(w["k1"]))
+
+        assert response.status_code == 403
+        assert await _is_active(other.json()["api_key_id"]) is True
+
+
+@pytest.mark.asyncio
+class TestPreReleaseAdminMintedKeys:
+    """Baseline for an accepted gap (PR #326 third review, finding 1).
+
+    Before this release, a key an admin minted for someone else's agent
+    was recorded as held by the agent's creator. Those rows cannot be
+    told apart from the creator's own, so removing the admin who really
+    holds one does not revoke it, and a key the agent self-mints with it
+    is recorded as the creator's too. docs/agents.md tells admins to
+    rotate such keys; CHT-1529 tracks a bulk rotate/revoke. If that
+    lands, flip these assertions."""
+
+    async def test_removing_the_admin_who_holds_it_leaves_it_working(self, client, world):
+        from app.schemas.api_key import APIKeyCreate
+        from app.services.api_key_service import APIKeyService
+
+        w = world
+        # Exactly the row main's create_key wrote when Carol minted for bobbot.
+        _, carols_old_key = await APIKeyService().create(
+            w["bob"].id, APIKeyCreate(name="Key for bobbot"), agent_user_id=w["agent_id"],
+        )
+        selfm = await client.post("/api/api-keys", json={"name": "s"}, headers=_bearer(carols_old_key))
+        assert selfm.status_code == 201
+
+        removed = await client.delete(
+            f"/api/teams/{w['team'].id}/members/{w['carol'].id}", headers=w["owner_headers"],
+        )
+
+        assert removed.status_code == 204
+        assert (await client.get("/api/auth/me", headers=_bearer(carols_old_key))).status_code == 200
+        assert (await client.get("/api/auth/me", headers=_bearer(selfm.json()["key"]))).status_code == 200
+        rows = {r["id"]: r for r in (await client.get(
+            f"/api/agents/{w['agent_id']}/keys", headers=w["owner_headers"],
+        )).json()}
+        assert rows[selfm.json()["id"]]["owner_name"] == "Test User 2"  # recorded as the creator's

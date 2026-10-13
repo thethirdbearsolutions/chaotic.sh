@@ -429,13 +429,25 @@ there's no local profile to fall back on the way the stdio server has:
   it; `chaotic agent keys revoke <agent> <key>` revokes one by its ID
   prefix or its `ck_...` prefix. Both are for team admins and the
   agent's creator.
-- **Changed for existing keys:** before this, every key minted for an
-  agent was recorded as its creator's, even one a team admin minted, and
-  a key an agent minted for itself recorded no human at all (it shows as
-  `(creator, legacy)` in `keys list`). Those keys now stand or fall with
-  the agent's creator, so when the creator leaves the team, an admin's
-  bot running on such a key stops too. Mint it a fresh key (the new one
-  is the admin's own) and the problem cannot recur.
+- **Changed for existing keys:** before this release, every key minted
+  for an agent was recorded as its creator's, even one a team admin
+  minted, and a key an agent minted for itself recorded no human at all
+  (it shows as `(creator, legacy)` in `keys list`). Existing rows cannot
+  tell an admin's mint from the creator's, so all of those keys stand or
+  fall with the agent's creator. That cuts both ways:
+  - When the creator leaves, an admin's bot running on such a key stops.
+  - When the **admin** who actually holds such a key leaves, nothing
+    revokes it: it is recorded as the creator's, `keys list` shows the
+    creator as its holder, and a key the agent mints with it is recorded
+    as the creator's too. For an agent the team owner created, that key
+    never expires on its own.
+
+  **Admins: rotate any agent key that someone other than the agent's
+  creator minted before this release** (`chaotic agent keys create`,
+  move the bot over, then `chaotic agent keys revoke` the old one). A
+  key minted from now on is recorded as its minter's, so neither problem
+  recurs. A bulk rotate/revoke of pre-release keys is tracked as
+  CHT-1529.
 - **Leaving a team ends the agent keys you hold for it.** When a member
   is removed from a team, or leaves it, every key they hold for that
   team's agents is revoked in the same step: keys they minted, keys an
@@ -450,6 +462,9 @@ there's no local profile to fall back on the way the stdio server has:
   creator) is no longer in the agent's team does not sign in. The removed creator also loses every right over the agent
   (update, delete, deactivate/reactivate, listing, minting or revoking
   its keys). Rejoining does not bring back revoked keys or ownership.
+  The sign-in check is separate from revocation, though: a key that was
+  never revoked, such as one whose holder left before this release, signs
+  in again once that holder is back in the team.
 
 `issue_view`/`issue_update`/`issue_comment`/`issue_start` don't take a
 `team`/`project` parameter at all in either transport -- issue
