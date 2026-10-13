@@ -455,6 +455,23 @@ tokens and client secrets therefore never appear in a URL, and so never
 in uvicorn's access log or a reverse proxy's. Responses are sent with
 `Cache-Control: no-store`.
 
+For a client that puts a credential in a URL anyway, the server scrubs
+the request lines uvicorn logs: HTTP requests on `uvicorn.access` and
+WebSocket handshakes on `uvicorn.error` (CHT-1590, CHT-1597). The value
+of a query parameter named `token`, `access_token`, `refresh_token`,
+`key`, `api_key`, `client_secret`, `code`, `code_verifier`, `password`,
+`secret`, `jwt` or `id_token` (any case) is logged as `[redacted]`. This includes the login token the web app
+sends as `/ws?token=`. Any key, token or client secret this server
+issues (`ck_`, `cat_`, `crt_`, `cac_`, `cct_`, `ccs_` followed by 64 hex
+characters) is shortened to its prefix and last four characters, such as
+`ck_...19a0`, wherever it appears in the path or query, percent-encoded
+or not. Only the log line changes: the app still receives the real
+request. A path or query longer than 8 KB is logged only as its size,
+for example `?[60000-byte query omitted]`, so a crafted URL cannot make
+the scrub expensive. The app installs this filter itself, so every way of
+starting it is covered. Logs written outside this process, such as a reverse
+proxy's or a CDN's, are not scrubbed.
+
 ## Connected apps and revocation
 
 Each person sees the OAuth connections they approved under **Settings >

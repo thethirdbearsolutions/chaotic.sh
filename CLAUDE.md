@@ -187,7 +187,7 @@ under two.
 Backend server:
 ```bash
 cd backend && source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 24267
+uvicorn app.main:app --reload --host 0.0.0.0 --port 24267 --no-proxy-headers
 ```
 
 CLI:

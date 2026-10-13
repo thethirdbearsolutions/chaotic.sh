@@ -54,6 +54,7 @@ from app.oauth.clients import (
     redirect_host,
 )
 from app.oxyde_models.oauth import OxydeOAuthClient
+from app.services.token_service import CLIENT_SECRET_PREFIX, mint_secret
 
 KNOWN_CLIENT_IDS = frozenset(cid for known in KNOWN_CLIENTS for cid in known.client_ids)
 DCR_PREFIX = "dcr_"
@@ -65,7 +66,6 @@ DCR_GC_GRACE = timedelta(minutes=15)
 DCR_RATE_WINDOW = timedelta(hours=1)
 # Longer than an authorization request lives (10 minutes, CHT-1519).
 CIMD_GC_CACHE_GRACE = timedelta(minutes=15)
-CLIENT_SECRET_PREFIX = "ccs_"
 DCR_GRANT_TYPES = ("authorization_code", "refresh_token")
 DCR_AUTH_METHODS = ("none", "client_secret_post")
 
@@ -257,7 +257,7 @@ class OAuthClientService:
         ip_hash = hash_ip(source_ip)
         secret = None
         if clean["token_endpoint_auth_method"] == "client_secret_post":
-            secret = CLIENT_SECRET_PREFIX + secrets.token_hex(32)
+            secret = mint_secret(CLIENT_SECRET_PREFIX)
         # Insert, then count, in one transaction (module docstring).
         async with atomic():
             row = await OxydeOAuthClient.objects.create(

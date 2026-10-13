@@ -25,9 +25,15 @@ from app.oauth.discovery import router as oauth_discovery_router
 from app.api.oauth import public_router as oauth_router
 from app.oauth.errors import FRAME_HEADERS, OAuthHTTPError, oauth_error_handler
 from app.version import get_version_info
+from app import log_redaction
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+# CHT-1590/CHT-1597: scrub credentials out of uvicorn's request log lines.
+# At import, which every way of serving app.main:app goes through, and
+# again at startup (below), after any logging config a runner applies.
+log_redaction.install()
 
 # The known insecure default secret key
 INSECURE_DEFAULT_KEY = "change-me-in-production-use-openssl-rand-hex-32"
@@ -37,6 +43,7 @@ INSECURE_DEFAULT_KEY = "change-me-in-production-use-openssl-rand-hex-32"
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
+    log_redaction.install()
     # Check for insecure default SECRET_KEY
     if settings.secret_key == INSECURE_DEFAULT_KEY:
         if settings.debug:
