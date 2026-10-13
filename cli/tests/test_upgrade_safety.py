@@ -48,7 +48,8 @@ class TestUpgradeDirection:
 @pytest.fixture
 def upgrade_patches():
     """Everything the upgrade command touches except the git-direction and
-    identity helpers under test. Server not running: the simplest path."""
+    identity helpers under test. Server not running: the simplest path,
+    which since CHT-1475 still ends by starting and verifying it."""
     with patch("cli.system.is_server_installed", return_value=True), \
          patch("cli.system.get_current_version", return_value="v0.1.0a18"), \
          patch("cli.system.fetch_updates", return_value=True), \
@@ -60,7 +61,11 @@ def upgrade_patches():
          patch("cli.system.load_server_json", return_value={}), \
          patch("cli.system.checkout_version", return_value=(True, None)) as checkout, \
          patch("cli.system.run_migrations", return_value=(True, "ok")), \
-         patch("cli.system.rebuild_frontend", return_value=(True, "built")):
+         patch("cli.system.rebuild_frontend", return_value=(True, "built")), \
+         patch("cli.system.start_service", return_value=True), \
+         patch("cli.system.health_check", return_value=True), \
+         patch("cli.system.verify_deployed_commit", return_value=(True, "6a0ec2c")), \
+         patch("cli.system.get_remote_version", return_value=None):
         yield checkout
 
 

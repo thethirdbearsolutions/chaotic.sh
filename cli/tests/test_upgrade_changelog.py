@@ -170,10 +170,14 @@ class TestUpgradeMcpReconnectNote:
         return result.output, remote
 
     def test_server_not_running_prints_the_general_reminder(self, cli_runner, base_patches):
-        output, remote = self._run(cli_runner, running=False)
+        # Nothing to read before (the server was down); since CHT-1475 the
+        # upgrade starts it, so the version is read once, afterwards. One
+        # side of the comparison is still missing: the general reminder.
+        after = {"mcp_toolset_fingerprint": "b" * 64, "mcp_tool_count": 31}
+        output, remote = self._run(cli_runner, running=False, versions=[after])
         assert "MCP clients cache the toolset" in output
         assert "mcp_toolset_fingerprint" in output
-        assert remote.call_count == 0
+        assert remote.call_count == 1
 
     def test_changed_toolset_is_reported_with_counts(self, cli_runner, base_patches):
         before = {"mcp_toolset_fingerprint": "a" * 64, "mcp_tool_count": 30}

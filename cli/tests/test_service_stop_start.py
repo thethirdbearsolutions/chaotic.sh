@@ -1,0 +1,333 @@
+"""Stopping and starting the server service around `chaotic system upgrade`.
+
+CHT-1474: `systemctl --user stop` outlasted the CLI's 60s subprocess timeout
+(uvicorn waiting forever on /mcp streams, systemd waiting 90s to SIGKILL),
+so the upgrade died on a raw TimeoutExpired traceback and left prod down.
+
+CHT-1475: an upgrade that found the service already stopped checked out,
+migrated, and printed "Upgraded to ..." without ever starting it.
+"""
+import re
+import subprocess
+from contextlib import ExitStack
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from click.testing import CliRunner
+
+from cli import system
+from cli.system import (
+    SERVICE_STOP_TIMEOUT,
+    SYSTEMD_DEFAULT_TIMEOUT_STOP_SEC,
+    SYSTEMD_TIMEOUT_STOP_SEC,
+    UVICORN_GRACEFUL_SHUTDOWN_SEC,
+    generate_launchd_plist,
+    generate_systemd_service,
+    stop_service,
+    wait_for_service_settled,
+)
+
+JUSTFILE = Path(__file__).resolve().parents[2] / "justfile"
+
+
+def _flat(output: str) -> str:
+    return " ".join(output.split())
+
+
+class TestShutdownBudget:
+    """Each layer has to outlast the one inside it."""
+
+    def test_layers_are_ordered(self):
+        assert UVICORN_GRACEFUL_SHUTDOWN_SEC < SYSTEMD_TIMEOUT_STOP_SEC
+        assert SYSTEMD_TIMEOUT_STOP_SEC <= SYSTEMD_DEFAULT_TIMEOUT_STOP_SEC
+        # Units written before CHT-1474 have no TimeoutStopSec line, so the
+        # CLI must outwait systemd's default too, not just ours.
+        assert SERVICE_STOP_TIMEOUT > SYSTEMD_DEFAULT_TIMEOUT_STOP_SEC
+
+    def test_serve_prod_bounds_graceful_shutdown(self):
+        recipe = JUSTFILE.read_text().split("\nserve-prod:\n", 1)[1].split("\n\n", 1)[0]
+        match = re.search(r"--timeout-graceful-shutdown (\d+)", recipe)
+        assert match, recipe
+        assert int(match.group(1)) == UVICORN_GRACEFUL_SHUTDOWN_SEC
+
+    def test_systemd_unit_sets_timeout_stop_sec(self):
+        unit = generate_systemd_service(24267, "k")
+        assert f"TimeoutStopSec={SYSTEMD_TIMEOUT_STOP_SEC}\n" in unit
+
+    def test_launchd_plist_sets_exit_timeout(self):
+        plist = generate_launchd_plist(24267, "k")
+        assert f"<key>ExitTimeOut</key>\n    <integer>{SYSTEMD_TIMEOUT_STOP_SEC}</integer>" in plist
+
+
+class TestStopService:
+    @patch("cli.system.get_os", return_value="linux")
+    def test_waits_longer_than_systemd_will(self, _os):
+        with patch("cli.system.run_command") as run:
+            assert stop_service() is True
+        assert run.call_args.kwargs["timeout"] == SERVICE_STOP_TIMEOUT
+
+    @patch("cli.system.get_os", return_value="linux")
+    def test_timeout_is_a_failure_not_a_traceback(self, _os):
+        timeout = subprocess.TimeoutExpired(["systemctl"], SERVICE_STOP_TIMEOUT)
+        with patch("cli.system.run_command", side_effect=timeout):
+            assert stop_service() is False
+
+    @patch("cli.system.get_os", return_value="linux")
+    def test_missing_binary_is_a_failure_not_a_traceback(self, _os):
+        with patch("cli.system.run_command", side_effect=FileNotFoundError("systemctl")):
+            assert stop_service() is False
+
+    @patch("cli.system.get_os", return_value="linux")
+    def test_start_timeout_is_a_failure_not_a_traceback(self, _os):
+        def run(cmd, **kwargs):
+            if cmd[:3] == ["systemctl", "--user", "start"]:
+                raise subprocess.TimeoutExpired(cmd, SERVICE_STOP_TIMEOUT)
+            return MagicMock(returncode=0, stdout="")
+        with patch("cli.system.run_command", side_effect=run):
+            assert system.start_service() is False
+
+
+class TestWaitForServiceSettled:
+    @patch("cli.system.get_os", return_value="linux")
+    def test_waits_out_a_stop_in_progress(self, _os):
+        states = iter(["deactivating\n", "deactivating\n", "inactive\n"])
+        with patch("cli.system.run_command", side_effect=lambda *a, **k: MagicMock(stdout=next(states))), \
+             patch("cli.system.time.sleep") as sleep:
+            assert wait_for_service_settled() == "inactive"
+        assert sleep.call_count == 2
+
+    @patch("cli.system.get_os", return_value="linux")
+    def test_gives_up_at_its_deadline(self, _os):
+        with patch("cli.system.run_command", return_value=MagicMock(stdout="deactivating\n")), \
+             patch("cli.system.time.sleep"), \
+             patch("cli.system.time.time", side_effect=[0, 0, 5, 10]):
+            assert wait_for_service_settled(timeout=10) == "deactivating"
+
+
+# --- upgrade ---------------------------------------------------------------
+
+_COMMITS = ("19ae385deployed", "ab71cd5newer")
+
+
+def _upgrade(args=("--no-backup",), **overrides):
+    """Run `system upgrade --yes` with every collaborator mocked. Default:
+    a forward upgrade of a running server where everything succeeds."""
+    commits = iter(_COMMITS)
+    patches = {
+        "is_server_installed": dict(return_value=True),
+        "get_current_version": dict(return_value="v0.1.0a19"),
+        "get_current_commit": dict(side_effect=lambda: next(commits, _COMMITS[-1])),
+        "fetch_updates": dict(return_value=True),
+        "get_latest_version": dict(return_value="v0.1.0a20"),
+        "resolve_commit": dict(return_value=_COMMITS[1]),
+        "is_ancestor": dict(side_effect=lambda older, newer: (older, newer) == _COMMITS),
+        "validate_git_ref": dict(return_value=True),
+        "run_command": dict(return_value=MagicMock(returncode=0, stdout="")),
+        "wait_for_service_settled": dict(return_value="active"),
+        "is_service_running": dict(return_value=True),
+        "stop_service": dict(return_value=True),
+        "wait_for_service_stop": dict(return_value=True),
+        "start_service": dict(return_value=True),
+        "health_check": dict(return_value=True),
+        "load_server_json": dict(return_value={"port": 24267}),
+        "get_remote_version": dict(return_value=None),
+        "verify_deployed_commit": dict(return_value=(True, "ab71cd5")),
+        "checkout_version": dict(return_value=(True, None)),
+        "restore_backup": dict(return_value=True),
+        "run_migrations": dict(return_value=(True, "ok")),
+        "rebuild_frontend": dict(return_value=(True, "built")),
+    }
+    patches.update(overrides)
+    with ExitStack() as stack:
+        mocks = {name: stack.enter_context(patch(f"cli.system.{name}", **kw)) for name, kw in patches.items()}
+        result = CliRunner().invoke(system.system, ["upgrade", "--yes", *args])
+    return result, mocks
+
+
+class TestUpgradeWhenStopFails:
+    """CHT-1474: a failed stop happens before anything is changed. The
+    operator must be told whether the server is up, and it must be up."""
+
+    def test_the_prod_incident_stop_times_out_and_server_ends_down(self):
+        """The real sequence: `systemctl stop` outlasts the CLI's wait, the
+        unit then finishes stopping. The CLI restarts it and verifies /health
+        instead of dying on a traceback with the server down."""
+        running = iter([True, False, True])  # was_running, after settle, final state
+        result, m = _upgrade(
+            stop_service=dict(return_value=False),
+            is_service_running=dict(side_effect=lambda: next(running)),
+        )
+
+        assert result.exit_code == 1
+        assert not isinstance(result.exception, subprocess.TimeoutExpired)
+        out = _flat(result.output)
+        assert "Failed to stop server" in out
+        assert "The server is DOWN (the stop half finished). Starting it again" in out
+        assert "The server is back UP and answering /health" in out
+        assert "Nothing was changed" in out
+        m["start_service"].assert_called_once()
+        m["health_check"].assert_called_once_with(24267, host="127.0.0.1")
+        m["checkout_version"].assert_not_called()
+        m["run_migrations"].assert_not_called()
+        assert "Upgraded to" not in out
+
+    def test_real_stop_service_timeout_never_escapes(self):
+        """Same incident without mocking stop_service: run_command raises
+        TimeoutExpired for the stop, exactly as subprocess.run did."""
+        def run(cmd, **kwargs):
+            if cmd[:3] == ["systemctl", "--user", "stop"]:
+                raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+            return MagicMock(returncode=0, stdout="")
+        running = iter([True, False])
+        overrides = dict(
+            run_command=dict(side_effect=run),
+            is_service_running=dict(side_effect=lambda: next(running, True)),
+            get_os=dict(return_value="linux"),
+        )
+        commits = iter(_COMMITS)
+        patches = {
+            "is_server_installed": dict(return_value=True),
+            "get_current_version": dict(return_value="v0.1.0a19"),
+            "get_current_commit": dict(side_effect=lambda: next(commits, _COMMITS[-1])),
+            "fetch_updates": dict(return_value=True),
+            "get_latest_version": dict(return_value="v0.1.0a20"),
+            "resolve_commit": dict(return_value=_COMMITS[1]),
+            "is_ancestor": dict(side_effect=lambda older, newer: (older, newer) == _COMMITS),
+            "validate_git_ref": dict(return_value=True),
+            "wait_for_service_settled": dict(return_value="inactive"),
+            "health_check": dict(return_value=True),
+            "load_server_json": dict(return_value={"port": 24267}),
+            "get_remote_version": dict(return_value=None),
+            "checkout_version": dict(return_value=(True, None)),
+            **overrides,
+        }
+        with ExitStack() as stack:
+            mocks = {n: stack.enter_context(patch(f"cli.system.{n}", **kw)) for n, kw in patches.items()}
+            result = CliRunner().invoke(system.system, ["upgrade", "--yes", "--no-backup"])
+
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        out = _flat(result.output)
+        assert "Traceback" not in result.output
+        assert "Starting it again" in out and "back UP" in out
+        started = [c.args[0] for c in mocks["run_command"].call_args_list
+                   if c.args[0][:3] == ["systemctl", "--user", "start"]]
+        assert started, "the server was left down"
+        mocks["checkout_version"].assert_not_called()
+
+    def test_stop_failed_but_server_still_running(self):
+        result, m = _upgrade(
+            stop_service=dict(return_value=False),
+            is_service_running=dict(return_value=True),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "The server is still RUNNING; it was not stopped" in out
+        assert "Nothing was changed" in out
+        m["start_service"].assert_not_called()
+        m["checkout_version"].assert_not_called()
+
+    def test_restart_after_failed_stop_also_fails_says_down_loudly(self):
+        running = iter([True, False])
+        result, m = _upgrade(
+            stop_service=dict(return_value=False),
+            is_service_running=dict(side_effect=lambda: next(running, False)),
+            start_service=dict(return_value=False),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "CRITICAL: the server is DOWN and could not be restarted" in out
+        assert "chaotic system start" in out
+        assert "back UP" not in out
+
+    def test_restart_comes_up_but_never_answers_health(self):
+        running = iter([True, False])
+        result, _ = _upgrade(
+            stop_service=dict(return_value=False),
+            is_service_running=dict(side_effect=lambda: next(running, False)),
+            health_check=dict(return_value=False),
+        )
+
+        assert result.exit_code == 1
+        assert "CRITICAL: the server is DOWN" in _flat(result.output)
+
+
+class TestUpgradeFromStopped:
+    """CHT-1475: the upgrade ends with the server running and verified,
+    whatever state it found it in."""
+
+    def test_already_stopped_server_is_started_and_verified(self):
+        result, m = _upgrade(is_service_running=dict(return_value=False))
+
+        assert result.exit_code == 0, result.output
+        out = _flat(result.output)
+        assert "Starting server (it was not running before the upgrade)" in out
+        assert "Waiting for health check... OK" in out
+        assert "Verifying the new process took over... OK" in out
+        assert "Upgraded to" in out
+        m["stop_service"].assert_not_called()
+        m["start_service"].assert_called_once()
+        m["health_check"].assert_called_once_with(24267, host="127.0.0.1")
+        m["verify_deployed_commit"].assert_called_once_with(24267, _COMMITS[1], host="127.0.0.1")
+
+    def test_already_stopped_server_that_fails_health_is_rolled_back_and_reported(self):
+        result, m = _upgrade(
+            is_service_running=dict(return_value=False),
+            health_check=dict(return_value=False),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "Health check failed. Rolling back" in out
+        assert "Upgraded to" not in out
+        assert "Server is DOWN" in out  # the final plain statement
+        assert m["checkout_version"].call_args_list[-1].args == (_COMMITS[0],)
+        assert m["start_service"].call_count == 2  # new code, then rollback
+
+    def test_already_stopped_server_that_will_not_start_is_rolled_back(self):
+        result, m = _upgrade(
+            is_service_running=dict(return_value=False),
+            start_service=dict(return_value=False),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "Failed to start server" in out
+        assert "CRITICAL: Failed to restart server after rollback" in out
+        assert "Server is DOWN" in out
+        assert "Upgraded to" not in out
+
+    def test_failed_migration_reports_server_state(self):
+        result, _ = _upgrade(
+            is_service_running=dict(return_value=False),
+            run_migrations=dict(return_value=(False, "boom")),
+        )
+
+        assert result.exit_code == 1
+        assert "Server is DOWN. Start it with 'chaotic system start'" in _flat(result.output)
+
+
+class TestSystemStopTimeout:
+    def _stop(self, running):
+        states = iter(running)
+        with patch("cli.system.is_server_installed", return_value=True), \
+             patch("cli.system.is_service_running", side_effect=lambda: next(states)), \
+             patch("cli.system.stop_service", return_value=False), \
+             patch("cli.system.wait_for_service_settled", return_value="inactive"), \
+             patch("cli.system.load_server_json", return_value={}), \
+             patch("cli.system.start_service") as start:
+            result = CliRunner().invoke(system.system, ["stop"])
+        start.assert_not_called()  # the operator asked for it stopped
+        return result
+
+    def test_stop_that_completed_late_is_reported_as_down(self):
+        result = self._stop([True, False])
+        assert result.exit_code == 0
+        assert "The server is DOWN: the stop completed after the CLI stopped waiting" in _flat(result.output)
+
+    def test_stop_that_did_not_take_is_reported_as_running(self):
+        result = self._stop([True, True])
+        assert result.exit_code == 1
+        assert "The server is still RUNNING" in _flat(result.output)

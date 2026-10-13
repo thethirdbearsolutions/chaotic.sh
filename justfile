@@ -34,8 +34,13 @@ serve:
 
 # Run the backend server (production mode, supports PORT and DATABASE_URL env vars).
 # --frozen: run the env `just sync` built; never re-resolve or rewrite uv.lock (CHT-1201).
+# --timeout-graceful-shutdown 10 (CHT-1474): without it uvicorn waits forever for
+# open connections on SIGTERM, and /mcp streaming clients never close theirs, so a
+# stop sat until systemd's SIGKILL. 10s lets ordinary in-flight API requests (all
+# short) finish; MCP clients reconnect. It must stay under the unit's
+# TimeoutStopSec (SYSTEMD_TIMEOUT_STOP_SEC in cli/src/cli/system.py; a cli test pins both).
 serve-prod:
-    cd backend && uv run --frozen uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267}
+    cd backend && uv run --frozen uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267} --timeout-graceful-shutdown 10
 
 # Run all test suites (backend, frontend, CLI)
 test-all: test-backend test-frontend test-cli
