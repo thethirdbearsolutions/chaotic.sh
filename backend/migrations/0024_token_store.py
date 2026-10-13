@@ -1064,7 +1064,7 @@ def upgrade(ctx):
                 'name': 'team_id',
                 'python_type': 'str',
                 'db_type': None,
-                'nullable': False,
+                'nullable': True,
                 'primary_key': False,
                 'unique': False,
                 'default': None,
