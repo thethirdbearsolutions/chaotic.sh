@@ -55,11 +55,22 @@ class Access(str, enum.Enum):
 
 _ATTR = "chaotic_access"
 
+class _AllScopes:
+    """The wildcard scope's type. Not a string, so no scope string parsed
+    off the wire (``scope=*``, say) can ever equal it (CHT-1562 review,
+    S1); only code that means it can hand it out."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "ALL"
+
+
 # The wildcard scope: every scope there is. What an API key or a session
 # JWT carries (``app.auth.credentials``). A narrower credential lists its
-# scopes instead.
-ALL = "*"
-ALL_SCOPES: frozenset[str] = frozenset({ALL})
+# scopes, as strings, instead.
+ALL = _AllScopes()
+ALL_SCOPES: frozenset = frozenset({ALL})
 
 
 def _mark(access: Access):
@@ -86,6 +97,11 @@ registers = _mark(Access.REGISTER)
 #     and its blockers cleared;
 #   sprint materialization (CHT-1557): a project's first current/next
 #     sprints are created.
+# The list covers ``app.api`` functions only. One MCP resolver does the
+# same outside ``app.api``: ``app.mcp_server.scope.resolve_sprint``
+# materializes on ``current``/``next``, as ``get_current_sprint`` does.
+# It is checked as a read (``InProcessBackend.resolve_sprint``) and is
+# under the same policy below. ``MCP_READS_WITH_BOOKKEEPING`` lists it.
 #
 # Policy (CHT-1568): any principal that may read the row may trigger its
 # reconciliation, a read-scoped OAuth token and a registrar included
@@ -120,6 +136,11 @@ READS_WITH_BOOKKEEPING: dict[str, str] = {
     "app.api.rituals.get_issues_with_pending_gates": "orphaned ticket-limbo cleanup",
     "app.api.rituals.get_issues_with_pending_approvals": "orphaned ticket-limbo cleanup",
     "app.api.sprints.get_current_sprint": "sprint materialization (CHT-1557)",
+}
+
+# The same, for MCP helpers outside app.api (see above).
+MCP_READS_WITH_BOOKKEEPING: dict[str, str] = {
+    "app.mcp_server.scope.resolve_sprint": "sprint materialization (CHT-1557)",
 }
 
 # What a registrar may call.
@@ -157,11 +178,15 @@ SCOPE_GRANTS: dict[str, frozenset[Access]] = {
 }
 
 
-def scopes_permit(scopes: frozenset[str], fn) -> bool:
+def scopes_permit(scopes: frozenset, fn) -> bool:
     """May a principal holding ``scopes`` call ``fn`` (an API function or
     an ``Access``)? The wildcard permits everything, unclassified
     included, which is what every credential had before scopes. Anything
-    narrower fails closed on an unclassified ``fn``."""
+    narrower fails closed on an unclassified ``fn``.
+
+    A set of scopes permits the union of what each grants. The design
+    grants one policy per token (§4.4), so a set of two is not expected;
+    if one arrives it is not a narrowing: {read, write} is write."""
     if ALL in scopes:
         return True
     access = access_of(fn)
@@ -173,7 +198,7 @@ def scopes_granting(access: Access | None) -> list[str]:
     return [s for s, grants in SCOPE_GRANTS.items() if access in grants]
 
 
-def refuse_out_of_scope(scopes: frozenset[str], fn) -> None:
+def refuse_out_of_scope(scopes: frozenset, fn) -> None:
     """403 ``policy_denied`` unless ``scopes`` permit ``fn``. Not the RFC
     6750 ``insufficient_scope`` step-up: the policy was chosen by a human
     at consent, and a client cannot escalate it (design §4.4), so it is a
@@ -192,7 +217,7 @@ def refuse_out_of_scope(scopes: frozenset[str], fn) -> None:
                 + "Reconnect with a broader policy to do this."
             ),
             "required_scopes": needed,
-            "granted_scopes": sorted(scopes),
+            "granted_scopes": sorted(str(s) if isinstance(s, str) else repr(s) for s in scopes),
         },
     )
 

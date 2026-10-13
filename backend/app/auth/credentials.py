@@ -74,9 +74,19 @@ class Principal:
     # must still treat None as "no holder on record", never as "self".
     holder_user_id: str | None
     kind: CredentialKind
-    scopes: frozenset[str] = field(default=ALL_SCOPES)
+    scopes: frozenset = field(default=ALL_SCOPES)
     # Id of the credential's row, where it has one (an API key's id).
     credential_id: str | None = None
+
+    def __post_init__(self):
+        # Scopes granted to a token are strings off the wire, and the
+        # wildcard is not a string, so it cannot get in that way; this
+        # also refuses code that hands an OAuth token the wildcard
+        # (CHT-1562 review, S1). Only API keys and session JWTs carry it.
+        if self.kind is CredentialKind.OAUTH_ACCESS and (
+            ALL in self.scopes or not all(isinstance(s, str) for s in self.scopes)
+        ):
+            raise ValueError("an OAuth access token carries the scopes it was granted, never the wildcard")
 
     def has_scope(self, scope: str) -> bool:
         return ALL in self.scopes or scope in self.scopes

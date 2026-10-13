@@ -171,30 +171,43 @@ class InProcessBackend:
         return get_current_mcp_user()
 
     # -- scope / context ----------------------------------------------------
+    #
+    # Resolvers are reads, and every tool calls one before its data method,
+    # so each is behind the same check (CHT-1562 review, B1): a principal
+    # whose scopes permit no read is refused here, before a name lookup
+    # can list projects or ``resolve_sprint`` can materialize a sprint.
 
+    @_translated(Access.READ)
     async def resolve_team(self, team: str | None) -> str:
         return await scope.resolve_team(self._user, team)
 
+    @_translated(Access.READ)
     async def resolve_project(self, project: str | None, team: str | None) -> tuple[str, str]:
         return await scope.resolve_project(self._user, project, team)
 
+    @_translated(Access.READ)
     async def optional_project(self, project: str | None, team: str | None) -> tuple[str | None, str]:
         # No profile to fall back on: the default project is the single
         # accessible one, or the caller is asked to pass `project`.
         return await scope.resolve_project(self._user, project, team)
 
+    @_translated(Access.READ)
     async def team_for_project(self, project_id: str) -> str:
         return await _team_id_for_project(project_id)
 
+    @_translated(Access.READ)
     async def resolve_assignee(self, value: str, team_id: str) -> str:
         return await scope.resolve_assignee(self._user, team_id, value)
 
+    @_translated(Access.READ)
     async def resolve_sprint(self, value: str, project_id: str) -> str:
         return await scope.resolve_sprint(project_id, value)
 
+    @_translated(Access.READ)
     async def resolve_document(self, value: str) -> str:
         return await _resolve_document_id(self._user, value)
 
+    @_translated(Access.READ)
     async def me_id(self) -> str:
         return self._user.id
 

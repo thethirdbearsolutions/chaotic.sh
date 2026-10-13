@@ -14,6 +14,7 @@ import re
 import pytest
 
 from app.mcp_server import context, tools
+from .mcp_principal import api_key_principal
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +22,7 @@ def _as(test_user):
     """Run every test in this file as test_user (mirrors auth.py setting
     the contextvar per-request, just without going through HTTP).
     """
-    token = context.current_mcp_principal.set(context.api_key_principal(test_user))
+    token = context.current_mcp_principal.set(api_key_principal(test_user))
     yield
     context.current_mcp_principal.reset(token)
 
@@ -1643,7 +1644,7 @@ class TestProjectList:
             is_agent=True,
             agent_team_id=test_team.id,
         )
-        token = context.current_mcp_principal.set(context.api_key_principal(agent))
+        token = context.current_mcp_principal.set(api_key_principal(agent))
         try:
             result = await tools.project_list()
             assert "error" not in result
@@ -1665,7 +1666,7 @@ class TestProjectList:
             is_agent=True,
             agent_project_id=test_project.id,
         )
-        token = context.current_mcp_principal.set(context.api_key_principal(agent))
+        token = context.current_mcp_principal.set(api_key_principal(agent))
         try:
             result = await tools.project_list()
             assert "error" in result
@@ -1730,7 +1731,7 @@ class TestResolveDocumentIdAgentBranches:
             is_agent=True,
             agent_team_id=test_team.id,
         )
-        token = context.current_mcp_principal.set(context.api_key_principal(agent))
+        token = context.current_mcp_principal.set(api_key_principal(agent))
         try:
             # Agent-created docs require an emoji icon (CHT-631, enforced
             # in app.api.documents.create_document, unrelated to this

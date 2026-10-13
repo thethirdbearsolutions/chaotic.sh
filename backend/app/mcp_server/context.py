@@ -12,7 +12,6 @@ MCP session manager fans work out across its own internal task group.
 """
 from __future__ import annotations
 
-import contextlib
 import contextvars
 from typing import TYPE_CHECKING
 
@@ -40,28 +39,3 @@ def get_current_mcp_principal() -> Principal:
 def get_current_mcp_user() -> User:
     """The user the in-flight MCP request acts as (see above)."""
     return current_mcp_principal.get().user
-
-
-def api_key_principal(user: User) -> Principal:
-    """``user`` as an API key's principal (every scope), the way a ``ck_``
-    key resolves. For tests and in-process callers that do not come
-    through ``auth.py``. ``holder_user_id`` is ``user`` itself, which is
-    right for a human's key and not for an agent's (whose holder is a
-    human); nothing on the MCP path reads it today."""
-    from app.auth.credentials import CredentialKind, Principal
-
-    return Principal(user=user, holder_user_id=user.id, kind=CredentialKind.API_KEY)
-
-
-@contextlib.contextmanager
-def acting_as(who):
-    """Bind ``who`` (a ``Principal``, or a user via ``api_key_principal``)
-    for the duration of the block."""
-    from app.auth.credentials import Principal
-
-    principal = who if isinstance(who, Principal) else api_key_principal(who)
-    token = current_mcp_principal.set(principal)
-    try:
-        yield principal
-    finally:
-        current_mcp_principal.reset(token)
