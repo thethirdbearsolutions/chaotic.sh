@@ -18,24 +18,52 @@ import pytest
 from .conftest import _build_schema_template
 
 BACKEND = Path(__file__).resolve().parents[1]
-# Any import statement naming the module (`import os, sqlite3` included),
-# or a dynamic import of it.
+# Modules that would open the database with a SQLite other than Oxyde's:
+# sqlite3 itself, and the libraries built on it.
+_SECOND_SQLITE = r"(?:sqlite3|aiosqlite|sqlalchemy)"
+# Any import statement naming one (`import os, sqlite3` included), or a
+# dynamic import of one.
 _SQLITE3_IMPORT = re.compile(
-    r"^\s*(?:import|from)\s[^\n#]*\bsqlite3\b|import_module\(\s*['\"]sqlite3['\"]",
+    rf"^\s*(?:import|from)\s[^\n#]*\b{_SECOND_SQLITE}\b"
+    rf"|(?:__import__|import_module)\(\s*['\"]{_SECOND_SQLITE}\b",
     re.MULTILINE,
 )
 
 
-@pytest.mark.parametrize("tree", ["app", "migrations"])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "import sqlite3",
+        "import os, sqlite3",
+        "from sqlite3 import connect",
+        "    import aiosqlite",
+        "from sqlalchemy.ext.asyncio import create_async_engine",
+        'db = __import__("sqlite3")',
+        "importlib.import_module('aiosqlite')",
+    ],
+)
+def test_the_guard_recognises_a_second_sqlite(line):
+    assert _SQLITE3_IMPORT.search(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    ['url = "sqlite+aiosqlite:///x.db"', "# no sqlite3 here", "from oxyde import execute_raw"],
+)
+def test_the_guard_ignores_mentions_that_are_not_imports(line):
+    assert not _SQLITE3_IMPORT.search(line)
+
+
+@pytest.mark.parametrize("tree", ["app", "migrations", "oxyde_config.py"])
 def test_server_side_code_never_imports_sqlite3(tree):
-    """Everything under app/ and migrations/ runs in a process where Oxyde
-    may have the database open: the server, `oxyde migrate`, and the
-    startup bootstrap. Read the database through Oxyde instead, as
-    0008's and 0019's `_read_through_oxyde` do."""
+    """Everything under app/ and migrations/, and oxyde_config.py, runs in
+    a process where Oxyde may have the database open: the server, `oxyde
+    migrate`, and the startup bootstrap. Read the database through Oxyde
+    instead, as 0008's and 0019's `_read_through_oxyde` do."""
+    root = BACKEND / tree
+    files = [root] if root.is_file() else sorted(root.rglob("*.py"))
     offenders = [
-        str(path.relative_to(BACKEND))
-        for path in sorted((BACKEND / tree).rglob("*.py"))
-        if _SQLITE3_IMPORT.search(path.read_text())
+        str(path.relative_to(BACKEND)) for path in files if _SQLITE3_IMPORT.search(path.read_text())
     ]
     assert offenders == []
 

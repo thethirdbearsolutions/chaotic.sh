@@ -244,8 +244,8 @@ def _recording(ctx) -> bool:
     return getattr(ctx, "_mode", "execute") == "collect"
 
 
-def _read_through_oxyde(database, sql: str, params: list) -> list[tuple]:
-    """Rows of `sql` (as tuples), read through Oxyde's own connection to
+def _read_through_oxyde(database, sql: str, params: list) -> list[dict]:
+    """Rows of `sql` (as dicts keyed by column name), read through Oxyde's own connection to
     the migration target.
 
     Never sqlite3.connect() the target here. That loads a second, separate
@@ -276,7 +276,7 @@ def _read_through_oxyde(database, sql: str, params: list) -> list[tuple]:
     reader.join()
     if "error" in outcome:
         raise outcome["error"]
-    return [tuple(row.values()) for row in outcome["rows"]]
+    return outcome["rows"]
 
 
 def _read_create_statements(ctx) -> dict[str, str]:
@@ -299,7 +299,7 @@ def _read_create_statements(ctx) -> dict[str, str]:
         f"({', '.join('?' for _ in tables)})",
         tables,
     )
-    return dict(rows)
+    return {row["name"]: row["sql"] for row in rows}
 
 
 def _schema_edit(ctx, action: str) -> None:

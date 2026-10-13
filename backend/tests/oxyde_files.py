@@ -55,7 +55,16 @@ class OxydeFile:
             settings=PoolSettings(max_connections=1),
             auto_register=False,
         )
-        self._call(self.database.connect())
+        try:
+            self._call(self.database.connect())
+        except BaseException:
+            self._stop_loop()
+            raise
+
+    def _stop_loop(self) -> None:
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join()
+        self._loop.close()
 
     def _call(self, coroutine):
         return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result()
@@ -76,6 +85,4 @@ class OxydeFile:
             try:
                 self._call(self.database.disconnect())
             finally:
-                self._loop.call_soon_threadsafe(self._loop.stop)
-                self._thread.join()
-                self._loop.close()
+                self._stop_loop()

@@ -36,10 +36,13 @@ def _build_schema_template(path: str) -> None:
 
     Oxyde's registry is process-global: the builder registers `default`
     with overwrite=True and tears everything down with disconnect_all().
-    That is only safe because it runs before any test has registered a
-    connection (the template is a session fixture the `db` fixture depends
-    on); a test that registers its own connection without going through
-    `db` must call disconnect_all() itself, as test_bootstrap_empty_db does.
+    So no Oxyde connection may be live in the process when it is called:
+    the session fixture runs it before the first `db` test, and the guard
+    in test_one_sqlite_per_file calls it from a test that uses no `db`
+    (apply_migrations() only migrates `default`, so it cannot have a pool
+    name of its own). A test that registers its own connection without
+    going through `db` must call disconnect_all() itself, as
+    test_bootstrap_empty_db does.
     """
     import asyncio
     import threading

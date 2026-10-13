@@ -50,16 +50,18 @@ def _planned_renames(fetch, table, column):
     """Return [(row_id, old_value, new_value)] for every row the dedupe
     UPDATE in upgrade() will rename: rows that are not the MIN(id) of
     their (team_id, column) group. `fetch(sql)` returns the rows of
-    `sql` over the pre-migration data."""
+    `sql` over the pre-migration data, as dicts keyed by column name."""
     rows = fetch(
-        f'SELECT id, "{column}" FROM "{table}" '
+        f'SELECT id, "{column}" AS value FROM "{table}" '
         f'WHERE id NOT IN (SELECT MIN(id) FROM "{table}" GROUP BY team_id, "{column}")'
     )
-    return [(row_id, value, f"{value}-dup-{row_id[:8]}") for row_id, value in rows]
+    return [
+        (row["id"], row["value"], f"{row['value']}-dup-{row['id'][:8]}") for row in rows
+    ]
 
 
 def _read_through_oxyde(database, sql, params=None):
-    """Rows of `sql` (as tuples), read through Oxyde's own connection to
+    """Rows of `sql` (as dicts keyed by column name), read through Oxyde's own connection to
     the migration target.
 
     Never sqlite3.connect() the target here. That loads a second, separate
@@ -90,7 +92,7 @@ def _read_through_oxyde(database, sql, params=None):
     reader.join()
     if "error" in outcome:
         raise outcome["error"]
-    return [tuple(row.values()) for row in outcome["rows"]]
+    return outcome["rows"]
 
 
 def _target_reader(ctx):
