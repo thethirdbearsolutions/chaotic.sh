@@ -60,4 +60,8 @@ async def get_me(current_user: CurrentUser):
         parent_user_name=parent_user_name,
         created_at=current_user.created_at,
         updated_at=current_user.updated_at,
+        kind=current_user.kind,
+        external_ref=current_user.external_ref,
+        registered_by_id=current_user.registered_by_id,
+        can_register=current_user.can_register,
     )

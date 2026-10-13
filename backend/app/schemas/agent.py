@@ -1,5 +1,6 @@
 """Agent schemas."""
 from pydantic import BaseModel, ConfigDict, Field
+from app.enums import AgentKind
 from app.utils import DateTimeUTC
 
 
@@ -30,6 +31,13 @@ class AgentResponse(BaseModel):
     agent_project_id: str | None
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
+    # Agent identity (CHT-1497). `kind` is assistant for a hand-made
+    # agent, service for a registrar, session for a registered identity;
+    # `external_ref` and `registered_by_id` are set only on the last.
+    kind: AgentKind | None = None
+    external_ref: str | None = None
+    registered_by_id: str | None = None
+    can_register: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

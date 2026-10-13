@@ -15,6 +15,7 @@ from app.oxyde_models.issue import (
     OxydeIssueDescriptionRevision, OxydeTicketLimbo, OxydeTicketLimboBlocker,
 )
 from app.oxyde_models.ritual import OxydeRitualAttestation
+from app.enums import AgentKind
 from app.schemas.agent import AgentCreate, AgentUpdate
 from app.services.api_key_service import APIKeyService
 from app.schemas.api_key import APIKeyCreate
@@ -88,6 +89,7 @@ class AgentService:
                 name=agent_in.name,
                 avatar_url=agent_in.avatar_url,
                 is_agent=True,
+                kind=AgentKind.ASSISTANT,
                 parent_user_id=parent_user.id,
                 agent_team_id=team_id,
                 agent_project_id=project_id,
