@@ -4,7 +4,7 @@
 Two modes (no JWT on either):
 
 1. ``Authorization: Bearer ck_...`` or ``Bearer cat_...`` on /mcp -- works
-   for Claude Code's ``--transport http``, OAuth MCP clients (CHT-1520,
+   for Claude Code's ``--transport http``, OAuth MCP clients (CHT-1576,
    with ``OAUTH_ENABLED`` on) and anything else that lets you set a
    header. Resolved by ``app.auth.credentials.mcp_resolver`` (CHT-1560),
    the same resolver the REST API uses: same key hash/expiry/active
@@ -171,14 +171,16 @@ async def _resolve(
             return None, JSONResponse({"error": exc.detail}, status_code=exc.status_code, headers=_WWW_AUTHENTICATE)
         # Any other kind: a JWT, which /mcp does not accept, an OAuth
         # token on the capability URL, or an OAuth access token that
-        # failed verification (CHT-1520).
+        # failed verification (CHT-1576).
         message = (
             "Not a chaotic API key (expected a `ck_...` token)."
             if exc.failure is CredentialFailure.UNSUPPORTED else exc.detail
         )
-        return None, JSONResponse(
-            {"error": message}, status_code=exc.status_code, headers=invalid_token_challenge or challenge,
-        )
+        # The challenge goes on a 401 only (RFC 6750 §3.1). On a 403 (an
+        # inactive agent) it would tell an OAuth client to re-authorize,
+        # which yields a token for the same agent and the same 403: a loop.
+        headers = (invalid_token_challenge or challenge) if exc.status_code == 401 else None
+        return None, JSONResponse({"error": message}, status_code=exc.status_code, headers=headers)
     return principal, None
 
 

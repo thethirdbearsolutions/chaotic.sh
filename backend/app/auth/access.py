@@ -34,7 +34,7 @@ two places: ``SCOPE_GRANTS`` says which markers each advertised scope
 ``authorize`` applies the registrar rule and then the scope rule. API
 keys and session JWTs carry ``ALL_SCOPES``, so the scope rule refuses
 them nothing; it bites only once a narrower credential exists (OAuth
-access tokens, CHT-1520).
+access tokens, CHT-1576).
 
 ``signup`` and ``login`` are classified too though no registrar rule
 reaches them (they do not authenticate): every route carries a marker,

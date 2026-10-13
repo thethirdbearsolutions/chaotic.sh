@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.oxyde_models.user import OxydeUser as User
 from app.auth.access import authorize
+from app.config import get_settings
 from app.auth.credentials import CredentialError, CredentialKind, classify, rest_resolver
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
@@ -33,11 +34,13 @@ async def get_current_user(
 
 def _http_error(exc: CredentialError) -> HTTPException:
     """REST's answer to a credential that did not resolve: the resolver's
-    detail, with a Bearer challenge on a 401. A failed OAuth access token
-    gets RFC 6750's ``error="invalid_token"`` (refresh or re-authorize,
-    CHT-1520); every other failure keeps the bare challenge it always had."""
+    detail, with a Bearer challenge on a 401. With ``OAUTH_ENABLED`` on, a
+    failed OAuth access token gets RFC 6750's ``error="invalid_token"``
+    (refresh or re-authorize, CHT-1576); every other failure, and every
+    failure with the flag off, keeps the bare challenge it always had."""
     if exc.status_code == status.HTTP_401_UNAUTHORIZED:
-        challenge = 'Bearer error="invalid_token"' if exc.kind is CredentialKind.OAUTH_ACCESS else "Bearer"
+        invalid_token = exc.kind is CredentialKind.OAUTH_ACCESS and get_settings().oauth_enabled
+        challenge = 'Bearer error="invalid_token"' if invalid_token else "Bearer"
         return HTTPException(
             status_code=exc.status_code,
             detail=exc.detail,
