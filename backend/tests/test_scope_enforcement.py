@@ -1,9 +1,10 @@
 """OAuth scopes are enforced where the registrar rule is (CHT-1562).
 
-No credential carries a narrower scope yet (OAuth access tokens arrive
-with CHT-1520), so these tests bind a synthetic ``Principal`` with
-limited scopes: on REST by standing in for the resolver, on /mcp by
-binding it in the request context the way ``auth.py`` does.
+These tests bind a synthetic ``Principal`` with limited scopes, to
+cover the rule itself: on REST by standing in for the resolver, on /mcp
+by binding it in the request context the way ``auth.py`` does. Real
+OAuth access tokens (CHT-1520) carrying scopes through the resolver are
+tested in test_credential_resolver.py and test_mcp_endpoint.py.
 """
 import importlib
 from datetime import datetime, timedelta, timezone

@@ -204,12 +204,9 @@ async def test_holder_metadata_is_capped(agent, test_team, test_user, grantee_ke
         await TokenService().start_session(holder={"label": "x" * ts.HOLDER_JSON_MAX}, **common)
 
 
-async def test_a_token_is_not_yet_a_bearer_anywhere(client, connection):
-    """Until the CredentialResolver (CHT-1560) and scope enforcement
-    (CHT-1562) land, a cat_ bearer gets 401 on REST and on /mcp."""
-    headers = {"Authorization": f"Bearer {connection.access_token}"}
-    assert (await client.get("/api/auth/me", headers=headers)).status_code == 401
-    assert (await client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"}, headers=headers)).status_code == 401
+# A token as a bearer on REST and /mcp (the credential resolver, CHT-1520):
+# tests/test_credential_resolver.py and TestOAuthAccessTokens in
+# tests/test_mcp_endpoint.py.
 
 
 # --- I15: only unrevoked sessions, only access tokens ---------------------------
