@@ -196,7 +196,8 @@ class OxydeAuthToken(Model):
     # §4.1.3), so an expiry GC must keep a spent code at least until its
     # session's absolute expiry.
     holder_session: OxydeHolderSession | None = Field(default=None, db_on_delete="CASCADE")
-    team: OxydeTeam | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
+    # The session's team; NULL with it (account-wide WEB_LOGIN, CHT-1524).
+    team: OxydeTeam | None = Field(default=None, db_on_delete="CASCADE")
     principal_user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     holder_user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     oauth_client: OxydeOAuthClient | None = Field(default=None, db_on_delete="CASCADE")
@@ -245,7 +246,12 @@ class OxydeRevocationEvent(Model):
     # newest `seq` is the revocation epoch every validation cache compares
     # against, so a revocation in any process is seen by every other
     # process's next request. Rows are never deleted (team and actor are
-    # SET NULL), which is what keeps MAX(seq) from going backwards.
+    # SET NULL), which is what keeps MAX(seq) from going backwards: an
+    # audit-retention GC, if one is ever written, must keep at least the
+    # newest row, or stale caches would be trusted. Every writer computes
+    # MAX(seq) + 1 inside its revoking transaction, after that
+    # transaction's first write (so it holds the write lock); see
+    # `TokenService._revoke_session_in_tx`, the only writer so far.
     seq: int = Field()
     team: OxydeTeam | None = Field(default=None, db_on_delete="SET NULL")
     # Who revoked: a user, or NULL for the system (refresh-token reuse,

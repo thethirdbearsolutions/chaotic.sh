@@ -55,16 +55,21 @@ async def test_every_model_builds_from_ids_alone(test_user, test_team):
     assert (await OxydeHolderSession.objects.get(via=HolderVia.OAUTH)).via == HolderVia.OAUTH
 
 
-async def test_a_web_login_session_may_have_no_team(test_user):
-    """CHT-1524: an account-wide session."""
+async def test_a_web_login_session_and_its_tokens_may_have_no_team(test_user):
+    """CHT-1524: an account-wide session, and the tokens it holds."""
     session = await OxydeHolderSession.objects.create(
         principal_user_id=test_user.id, holder_user_id=test_user.id, via=HolderVia.OAUTH, resource="https://x",
         idle_expires_at=LATER, absolute_expires_at=LATER,
     )
     assert session.team_id is None
+    token = await OxydeAuthToken.objects.create(
+        kind=TokenKind.REFRESH, token_hash="h-web", display_prefix="crt_0000", holder_session_id=session.id,
+        principal_user_id=test_user.id, holder_user_id=test_user.id, resource="https://x", expires_at=LATER,
+    )
+    assert token.team_id is None
 
 
-@pytest.mark.parametrize("missing", ["team_id", "principal_user_id", "holder_user_id"])
+@pytest.mark.parametrize("missing", ["principal_user_id", "holder_user_id"])
 async def test_a_token_missing_a_required_reference_is_refused(test_user, test_team, missing):
     values = dict(
         kind=TokenKind.CLAIM_TICKET, token_hash=f"h-{missing}", display_prefix="cct_0000", team_id=test_team.id,
