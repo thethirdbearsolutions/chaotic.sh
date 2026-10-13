@@ -228,7 +228,7 @@ class TestRelations:
         relations = api_client.get_relations(issue1["id"])
         assert not any(r["id"] == relation["id"] for r in relations)
 
-    def test_relations_shape_end_to_end(self, api_client, test_team, test_project):
+    def test_relations_shape_end_to_end(self, api_client, test_team, test_project, auth_token):
         """CHT-1431: pin the relations wire shape and drive the real CLI over it.
 
         GET /issues/{id}/relations returns flat related_issue_* fields
@@ -238,6 +238,7 @@ class TestRelations:
         same team, the case the bug was first seen on.
         """
         import json
+        from unittest.mock import patch
         from click.testing import CliRunner
         from cli.main import cli as chaotic_cli
         from app.schemas.issue import IssueRelationResponse
@@ -266,18 +267,22 @@ class TestRelations:
         assert outgoing["related_issue_status"] == "backlog"
 
         runner = CliRunner()
-        table = runner.invoke(chaotic_cli, ["issue", "relations", target["identifier"]])
+        with patch("cli.main.get_token", return_value=auth_token):
+            table = runner.invoke(chaotic_cli, ["issue", "relations", target["identifier"]])
+            as_json = runner.invoke(
+                chaotic_cli, ["issue", "relations", target["identifier"], "--json"]
+            )
+            view = runner.invoke(chaotic_cli, ["issue", "view", target["identifier"], "--json"])
+
         assert table.exit_code == 0, table.output
         assert table.exception is None
         assert blocker["identifier"] in table.output
         assert downstream["identifier"] in table.output
         assert "Blocked By" in table.output
 
-        as_json = runner.invoke(chaotic_cli, ["issue", "relations", target["identifier"], "--json"])
         assert as_json.exit_code == 0, as_json.output
         assert json.loads(as_json.output) == relations
 
-        view = runner.invoke(chaotic_cli, ["issue", "view", target["identifier"], "--json"])
         assert view.exit_code == 0, view.output
         assert json.loads(view.output)["relations"] == relations
 
