@@ -124,6 +124,16 @@ class TestScopeRule:
             _principal(test_user, {ALL, "chaotic:read"})
         assert _principal(test_user, {"*"}).scopes == frozenset({"*"})
 
+    def test_token_service_scopes_never_carry_the_wildcard(self, test_user):
+        """What TokenService (#340) parses off a stored or requested scope
+        string is strings, so ``*`` there is an unknown scope."""
+        from app.services.token_service import _split_scopes
+
+        parsed = frozenset(_split_scopes("* chaotic:read"))
+        assert ALL not in parsed
+        assert not scopes_permit(parsed, Access.WRITE)
+        assert _principal(test_user, parsed).scopes == parsed
+
     def test_mcp_bookkeeping_helpers_are_listed(self):
         """The MCP helpers outside app.api that reconcile on read are the
         ones MCP_READS_WITH_BOOKKEEPING lists (review, B1)."""
