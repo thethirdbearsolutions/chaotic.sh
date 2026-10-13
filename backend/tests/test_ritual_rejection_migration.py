@@ -94,7 +94,7 @@ def _seed(c, attester: str | None = "agent") -> None:
 def test_creates_the_table_and_changes_nothing_else(at_before):
     before = _snapshot(at_before)
 
-    _migrate(at_before)
+    _migrate(at_before, target="0025_ritual_rejections")
 
     assert _snapshot(at_before) == before
     with closing(sqlite3.connect(at_before)) as c:
@@ -115,7 +115,7 @@ def test_creates_the_table_and_changes_nothing_else(at_before):
 
 
 def test_a_rejection_outlives_its_people_but_not_its_issue_or_ritual(at_before):
-    _migrate(at_before)
+    _migrate(at_before, target="0025_ritual_rejections")
     with closing(sqlite3.connect(at_before)) as c:
         c.execute("PRAGMA foreign_keys = ON")
         _seed(c)
@@ -133,7 +133,7 @@ def test_a_rejection_outlives_its_people_but_not_its_issue_or_ritual(at_before):
 
 def test_downgrade_drops_exactly_the_table(at_before):
     before = _snapshot(at_before)
-    _migrate(at_before)
+    _migrate(at_before, target="0025_ritual_rejections")
     result = subprocess.run(
         [sys.executable, "-c", _ROLLBACK, at_before],
         cwd=BACKEND, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
