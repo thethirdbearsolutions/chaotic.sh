@@ -233,17 +233,27 @@ With `OAUTH_ENABLED` on, MCP clients register in one of two ways
   client's `client_id` is an `https` URL, and the server fetches the JSON
   document behind it. Because an unauthenticated caller picks that URL,
   the fetch connects only to public addresses (never loopback, private,
-  link-local or CGNAT ones, checked after DNS resolution), follows no
-  redirects, and gives up after 3 seconds or 16 KB. It also ignores
-  `HTTPS_PROXY`, since a proxy would resolve the name again, so the server
-  needs direct outbound HTTPS to the client's host. Documents are cached
-  for their `Cache-Control: max-age`, between 5 minutes and 24 hours.
+  link-local or CGNAT ones, checked after DNS resolution) on port 443
+  only, follows no redirects, and gives up after 3 seconds or 16 KB (on
+  the wire: a compressed response is refused, and so is one that isn't
+  `application/json`). It also ignores `HTTPS_PROXY`, since a proxy
+  would resolve the name again, so the server needs direct outbound
+  HTTPS to the client's host. Documents are cached for their
+  `Cache-Control: max-age`, between 5 minutes and 24 hours. A document's
+  redirect URIs must be `https`, loopback `http`, or a native app's
+  reverse-domain scheme (`com.example.app:/cb`). Fetches of new client
+  IDs are limited to `OAUTH_CIMD_FETCH_MAX_PER_IP_PER_HOUR` (default 30)
+  per source address, and at most `OAUTH_CIMD_MAX_PENDING_CLIENTS`
+  (default 500) never-authorized documents are kept. Both in-memory
+  limits here, and `OAUTH_AUTHORIZE_MAX_PER_IP_PER_MINUTE` (default 30)
+  on `/oauth/authorize`, are per server process.
 - **Dynamic client registration** (`POST /oauth/register`, RFC 7591), for
   older clients. It is unauthenticated by design, so it is limited:
   `OAUTH_DCR_MAX_PER_IP_PER_HOUR` (default 10) registrations per source
   address, and at most `OAUTH_DCR_MAX_PENDING_CLIENTS` (default 500)
-  clients that have never been used to authorize. Those are deleted 24
-  hours after they register. Behind a reverse proxy every request has the
+  clients that have never been used to authorize. Those are refused 24
+  hours after they register and deleted shortly after. A "source
+  address" is an IPv4 address or an IPv6 /64. Behind a reverse proxy every request has the
   proxy's address, so the per-address limit becomes a server-wide one
   unless uvicorn is run with `--proxy-headers` and `--forwarded-allow-ips`.
   Set `OAUTH_DCR_ENABLED=false` to turn registration off; clients that

@@ -74,12 +74,22 @@ class Settings(BaseSettings):
     # fallback for MCP clients without CIMD support. On by default (design
     # decision D5); while on, the AS metadata advertises the endpoint.
     oauth_dcr_enabled: bool = True
-    # DCR abuse limits (CHT-1518, threat S6): registrations per source IP
-    # per rolling hour, and how many registered-but-never-authorized
-    # clients may exist at once. A client never used for a successful
-    # authorization is deleted 24 hours after it registered.
+    # DCR abuse limits (CHT-1518, threat S6): registrations per source
+    # address (an IPv4 address or an IPv6 /64) per rolling hour, and how
+    # many registered-but-never-authorized clients may exist at once. A
+    # client never used for a successful authorization is deleted about
+    # 24 hours after it registered.
     oauth_dcr_max_per_ip_per_hour: int = Field(10, ge=1)
     oauth_dcr_max_pending_clients: int = Field(500, ge=1)
+    # The same for metadata-document (CIMD) clients, which any
+    # /oauth/authorize can make this server fetch (CHT-1572): fetches of
+    # a new or expired client_id per source address per rolling hour (per
+    # server process), and how many never-authorized CIMD clients may be
+    # stored at once (known clients are exempt).
+    oauth_cimd_fetch_max_per_ip_per_hour: int = Field(30, ge=1)
+    oauth_cimd_max_pending_clients: int = Field(500, ge=1)
+    # /oauth/authorize requests per source address per minute (per process).
+    oauth_authorize_max_per_ip_per_minute: int = Field(30, ge=1)
     # Token lifetimes (CHT-1516; design doc §2.5, decision D4). An access
     # token lives 10 minutes. A refresh token is single use; its session
     # stays refreshable while used at least once per idle window, up to the

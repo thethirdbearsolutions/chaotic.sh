@@ -12,10 +12,18 @@ client_id itself:
   CASCADE from it, so deleting it would disconnect every user.
 * **DCR** (RFC 7591 fallback, ``OAUTH_DCR_ENABLED``): ``register`` mints
   a ``dcr_<random>`` client_id for an unauthenticated caller. Rate
-  limited per source IP and capped globally on clients never used to
-  authorize; those are deleted 24 h after registering (``gc_unused``,
-  run lazily whenever a row is created) and refused by ``resolve`` past that age
-  even before the sweep reaches them.
+  limited per source address and capped globally on clients never used
+  to authorize; those are refused by ``resolve`` 24 h after registering
+  and deleted a little later (``gc_unused``, run lazily whenever a row
+  is created).
+
+Both caps are enforced atomically: the row is inserted first, inside a
+transaction (the insert takes SQLite's write lock, so concurrent
+creators queue), then counted, and the transaction is rolled back if
+the count is over. A burst of parallel requests can't each read "one
+under the limit" and all insert. New CIMD fetches are rate limited per
+source address in memory (``app.oauth.ratelimit``), since a failed
+fetch leaves no row to count.
 * Built-in names (``app.oauth.clients.KNOWN_CLIENTS``): advisory, a
   "recognized" badge on consent; no rows.
 
@@ -31,13 +39,14 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from oxyde import IntegrityError, execute_raw
+from oxyde import IntegrityError, atomic, execute_raw
 
 from app.config import get_settings
 from app.enums import OAuthClientRegistration
-from app.oauth import cimd
+from app.oauth import cimd, ratelimit
 from app.oauth.clients import (
     DCR_MAX_CLIENT_NAME,
+    KNOWN_CLIENTS,
     DCR_MAX_REDIRECT_URIS,
     dcr_redirect_uri_problem,
     is_loopback_redirect,
@@ -46,8 +55,13 @@ from app.oauth.clients import (
 )
 from app.oxyde_models.oauth import OxydeOAuthClient
 
+KNOWN_CLIENT_IDS = frozenset(cid for known in KNOWN_CLIENTS for cid in known.client_ids)
 DCR_PREFIX = "dcr_"
 DCR_UNUSED_TTL = timedelta(hours=24)
+# A DCR client is refused at DCR_UNUSED_TTL but deleted only this much
+# later, so a consent begun just before the TTL doesn't lose its request
+# (and the agent it is creating) to the cascade mid-approval.
+DCR_GC_GRACE = timedelta(minutes=15)
 DCR_RATE_WINDOW = timedelta(hours=1)
 # Longer than an authorization request lives (10 minutes, CHT-1519).
 CIMD_GC_CACHE_GRACE = timedelta(minutes=15)
@@ -97,11 +111,17 @@ def _clean_name(name: object) -> str | None:
 
 
 def hash_ip(ip: str | None) -> str | None:
-    """A keyed digest of a source IP, so the DCR rate limit needs no raw
-    addresses at rest."""
+    """A keyed digest of a source address's rate-limit bucket (its IPv4
+    address or IPv6 /64, ``ratelimit.address_bucket``), so the DCR rate
+    limit needs no raw addresses at rest."""
     if not ip:
         return None
-    return hmac.new(get_settings().secret_key.encode(), ip.encode(), hashlib.sha256).hexdigest()
+    bucket = ratelimit.address_bucket(ip)
+    return hmac.new(get_settings().secret_key.encode(), bucket.encode(), hashlib.sha256).hexdigest()
+
+
+def _too_many(description: str) -> OAuthClientError:
+    return OAuthClientError("too_many_requests", description, 429)
 
 
 def hash_client_secret(secret: str) -> str:
@@ -119,13 +139,15 @@ def redirect_uris_of(client: OxydeOAuthClient) -> list[str]:
 class OAuthClientService:
     # --- lookup ---------------------------------------------------------------
 
-    async def resolve(self, client_id: str | None) -> OxydeOAuthClient:
+    async def resolve(self, client_id: str | None, *, source_ip: str | None = None) -> OxydeOAuthClient:
         """The client named by ``client_id``, fetched or refreshed if it
-        is a CIMD URL. Raises OAuthClientError("invalid_client")."""
+        is a CIMD URL. ``source_ip`` is who is asking, for the CIMD fetch
+        rate limit (None: not limited, e.g. an in-process caller). Raises
+        OAuthClientError ("invalid_client", or "too_many_requests")."""
         if not client_id:
             raise OAuthClientError("invalid_client", "client_id is required")
         if cimd.looks_like_cimd(client_id):
-            return await self._resolve_cimd(client_id)
+            return await self._resolve_cimd(client_id, source_ip)
         if client_id.startswith(DCR_PREFIX):
             row = await OxydeOAuthClient.objects.get_or_none(id=client_id)
             if (
@@ -141,7 +163,7 @@ class OAuthClientService:
     def _expired_unused(row: OxydeOAuthClient, now: datetime) -> bool:
         return row.last_authorized_at is None and row.created_at <= now - DCR_UNUSED_TTL
 
-    async def _resolve_cimd(self, client_id: str) -> OxydeOAuthClient:
+    async def _resolve_cimd(self, client_id: str, source_ip: str | None) -> OxydeOAuthClient:
         try:
             cimd.check_client_id_url(client_id)
         except cimd.CIMDError as exc:
@@ -152,6 +174,11 @@ class OAuthClientService:
             raise OAuthClientError("invalid_client", "this client has been disabled on this server")
         if row is not None and row.cache_expires_at is not None and row.cache_expires_at > now:
             return row
+        settings = get_settings()
+        if source_ip and not ratelimit.cimd_fetches.allow(
+            ratelimit.address_bucket(source_ip), settings.oauth_cimd_fetch_max_per_ip_per_hour,
+        ):
+            raise _too_many("too many new client metadata documents requested from this address; try again later")
         try:
             fetched = await cimd.fetch(client_id)
             document = cimd.parse_client_metadata(client_id, fetched.body)
@@ -172,7 +199,15 @@ class OAuthClientService:
             # URLs can't grow the table without bound.
             await self.gc_unused(now=now)
             try:
-                return await OxydeOAuthClient.objects.create(id=client_id, **fields)
+                async with atomic():
+                    created = await OxydeOAuthClient.objects.create(id=client_id, **fields)
+                    if known_client_name(client_id) is None:
+                        pending = await self._count_pending(OAuthClientRegistration.CIMD)
+                        if pending > settings.oauth_cimd_max_pending_clients:
+                            raise _too_many(
+                                "this server has too many unused client metadata documents; try again later",
+                            )
+                return created
             except IntegrityError:
                 pass  # a concurrent authorize created it first; update it below
         # In place, keeping is_active: an admin's disable must survive a refetch.
@@ -219,42 +254,49 @@ class OAuthClientService:
         now = _now()
         await self.gc_unused(now=now)
         ip_hash = hash_ip(source_ip)
-        if ip_hash is not None:
-            # Raw SQL: Oxyde has no range lookups on DateTimeUTC fields
-            # (see IssueService.release_lease_if_expired). Enums are
-            # stored by name.
-            rows = await execute_raw(
-                "SELECT COUNT(*) AS n FROM oauth_clients "
-                "WHERE registration = ? AND registered_ip_hash = ? AND created_at >= ?",
-                [OAuthClientRegistration.DCR.name, ip_hash, now - DCR_RATE_WINDOW],
-            )
-            recent = rows[0]["n"]
-            if recent >= settings.oauth_dcr_max_per_ip_per_hour:
-                raise OAuthClientError(
-                    "too_many_requests", "too many client registrations from this address; try again later", 429,
-                )
-        pending = await OxydeOAuthClient.objects.filter(
-            registration=OAuthClientRegistration.DCR, last_authorized_at__isnull=True,
-        ).count()
-        if pending >= settings.oauth_dcr_max_pending_clients:
-            raise OAuthClientError(
-                "too_many_requests", "this server has too many unused client registrations; try again later", 429,
-            )
         secret = None
         if clean["token_endpoint_auth_method"] == "client_secret_post":
             secret = CLIENT_SECRET_PREFIX + secrets.token_hex(32)
-        row = await OxydeOAuthClient.objects.create(
-            id=DCR_PREFIX + secrets.token_hex(16),
-            registration=OAuthClientRegistration.DCR,
-            client_name=clean["client_name"],
-            redirect_uris=json.dumps(clean["redirect_uris"]),
-            token_endpoint_auth_method=clean["token_endpoint_auth_method"],
-            client_secret_hash=hash_client_secret(secret) if secret else None,
-            metadata_json=json.dumps(clean),
-            registered_ip_hash=ip_hash,
-            created_at=now,
-        )
+        # Insert, then count, in one transaction (module docstring).
+        async with atomic():
+            row = await OxydeOAuthClient.objects.create(
+                id=DCR_PREFIX + secrets.token_hex(16),
+                registration=OAuthClientRegistration.DCR,
+                client_name=clean["client_name"],
+                redirect_uris=json.dumps(clean["redirect_uris"]),
+                token_endpoint_auth_method=clean["token_endpoint_auth_method"],
+                client_secret_hash=hash_client_secret(secret) if secret else None,
+                metadata_json=json.dumps(clean),
+                registered_ip_hash=ip_hash,
+                created_at=now,
+            )
+            if ip_hash is not None:
+                # Raw SQL: Oxyde has no range lookups on DateTimeUTC fields
+                # (see IssueService.release_lease_if_expired). Enums are
+                # stored by name.
+                rows = await execute_raw(
+                    "SELECT COUNT(*) AS n FROM oauth_clients "
+                    "WHERE registration = ? AND registered_ip_hash = ? AND created_at >= ?",
+                    [OAuthClientRegistration.DCR.name, ip_hash, now - DCR_RATE_WINDOW],
+                )
+                if rows[0]["n"] > settings.oauth_dcr_max_per_ip_per_hour:
+                    raise _too_many("too many client registrations from this address; try again later")
+            if await self._count_pending(OAuthClientRegistration.DCR) > settings.oauth_dcr_max_pending_clients:
+                raise _too_many("this server has too many unused client registrations; try again later")
         return row, secret
+
+    @staticmethod
+    async def _count_pending(registration: OAuthClientRegistration) -> int:
+        """Clients of this kind never used to authorize, not counting the
+        known clients (which are exempt from the CIMD cap)."""
+        known = sorted(KNOWN_CLIENT_IDS)
+        placeholders = ", ".join("?" for _ in known) or "''"
+        rows = await execute_raw(
+            "SELECT COUNT(*) AS n FROM oauth_clients WHERE registration = ? "
+            f"AND last_authorized_at IS NULL AND id NOT IN ({placeholders})",
+            [registration.name, *known],
+        )
+        return rows[0]["n"]
 
     @staticmethod
     def _validate_registration(metadata: dict) -> dict:
@@ -305,9 +347,10 @@ class OAuthClientService:
         }
 
     async def gc_unused(self, *, now: datetime | None = None) -> int:
-        """Delete clients never used to authorize within DCR_UNUSED_TTL of
-        their creation. Only never-authorized rows: a client that ever
-        authorized may have sessions that CASCADE from it.
+        """Delete clients never used to authorize within DCR_UNUSED_TTL
+        (plus DCR_GC_GRACE) of their creation. Only never-authorized rows:
+        a client that ever authorized may have sessions that CASCADE from
+        it.
 
         CIMD rows too, since any unauthenticated /oauth/authorize can
         create one by naming a new URL, but only once their cache has been
@@ -317,12 +360,14 @@ class OAuthClientService:
         again next time."""
         now = now or _now()
         rows = await execute_raw(
-            "DELETE FROM oauth_clients WHERE last_authorized_at IS NULL AND created_at <= ? "
-            "AND (registration = ? OR (registration = ? AND cache_expires_at <= ?)) RETURNING id",
+            "DELETE FROM oauth_clients WHERE last_authorized_at IS NULL AND ("
+            "(registration = ? AND created_at <= ?) "
+            "OR (registration = ? AND created_at <= ? AND cache_expires_at <= ?)) RETURNING id",
             [
-                now - DCR_UNUSED_TTL,
                 OAuthClientRegistration.DCR.name,
+                now - DCR_UNUSED_TTL - DCR_GC_GRACE,
                 OAuthClientRegistration.CIMD.name,
+                now - DCR_UNUSED_TTL,
                 now - CIMD_GC_CACHE_GRACE,
             ],
         )
