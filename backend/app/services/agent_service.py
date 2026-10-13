@@ -222,8 +222,14 @@ class AgentService:
         if not agent.parent_user_id or agent.parent_user_id == actor.id:
             return
         from app.services.inbox_service import InboxService
+        from app.services.team_service import TeamService
 
+        # A creator who has left the agent's team hears nothing more about
+        # it: the entry names the actor and is broadcast on the team's
+        # channel (CHT-1508).
         try:
+            if await TeamService().get_member(agent.agent_team_id, agent.parent_user_id) is None:
+                return
             await InboxService().notify_agent_status(agent=agent, actor=actor, verb=verb)
         except Exception:
             logger.exception("Failed to notify the creator of agent %s that it was %s", agent.id, verb)

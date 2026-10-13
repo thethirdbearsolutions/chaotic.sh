@@ -206,3 +206,34 @@ class TestCanManageAgent:
         response = await client.delete(f"/api/api-keys/{created.json()['id']}", headers=auth_headers2)
 
         assert response.status_code == 204
+
+
+@pytest.mark.asyncio
+class TestRemovedCreatorIsNotNotified:
+    async def _entries(self, user_id):
+        from app.enums import InboxEntryKind
+        from app.oxyde_models.inbox import OxydeInboxEntry
+
+        return await OxydeInboxEntry.objects.filter(
+            recipient_user_id=user_id, kind=InboxEntryKind.AGENT_STATUS,
+        ).all()
+
+    async def test_admin_retiring_it_writes_no_entry_for_the_ex_member(
+        self, client, auth_headers, test_user2, test_team,
+    ):
+        """The entry names the admin and is broadcast on the team's
+        channel: nothing an ex-member should still receive."""
+        agent, _, _ = await _agent_by_departed_creator(test_user2, test_team)
+
+        retired = await client.post(f"/api/agents/{agent.id}/deactivate", headers=auth_headers)
+
+        assert retired.status_code == 200
+        assert await self._entries(test_user2.id) == []
+
+    async def test_a_re_added_creator_is_told_again(self, client, auth_headers, test_user2, test_team):
+        agent, _, _ = await _agent_by_departed_creator(test_user2, test_team)
+        await _rejoin(test_user2, test_team)
+
+        await client.post(f"/api/agents/{agent.id}/deactivate", headers=auth_headers)
+
+        assert len(await self._entries(test_user2.id)) == 1
