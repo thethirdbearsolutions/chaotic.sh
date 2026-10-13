@@ -25,6 +25,12 @@
         if (event.target.closest('a')) setOpen(false);
     });
 
+    // A tap or click anywhere outside the header closes the open menu.
+    var header = toggle.closest('.header') || nav.parentNode;
+    document.addEventListener('click', function (event) {
+        if (isOpen() && !header.contains(event.target)) setOpen(false);
+    });
+
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' && isOpen()) {
             setOpen(false);

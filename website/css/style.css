@@ -222,6 +222,11 @@ strong {
     padding: 6rem 2rem;
 }
 
+/* Keep anchor targets clear of the fixed header (about 72px tall). */
+section[id] {
+    scroll-margin-top: 72px;
+}
+
 .section-alt {
     background: var(--bg-secondary);
 }
