@@ -20,6 +20,8 @@ from app.mcp_server.asgi import mcp_lifespan, mount_mcp
 from app.mcp_server.tools import ALL_TOOLS, toolset_fingerprint
 from app.oauth.cors import OAuthAwareCORS
 from app.oauth.discovery import router as oauth_discovery_router
+from app.api.oauth import public_router as oauth_router
+from app.oauth.errors import OAuthHTTPError, oauth_error_handler
 from app.version import get_version_info
 
 settings = get_settings()
@@ -157,6 +159,9 @@ mount_mcp(app)
 # OAuth discovery documents for /mcp (CHT-1517), also ahead of the SPA
 # catch-all. They 404 unless OAUTH_ENABLED is set.
 app.include_router(oauth_discovery_router)
+# The authorization server's own endpoints (CHT-1518..), same gating.
+app.include_router(oauth_router)
+app.add_exception_handler(OAuthHTTPError, oauth_error_handler)
 
 # Get the directory of this file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

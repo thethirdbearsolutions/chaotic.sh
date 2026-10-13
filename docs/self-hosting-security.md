@@ -224,6 +224,44 @@ Inspector](https://github.com/modelcontextprotocol/inspector):
   list only origins you trust, and remove it when you are done. With the
   default `CORS_ORIGINS=*` direct mode needs no change.
 
+## OAuth client registration
+
+With `OAUTH_ENABLED` on, MCP clients register in one of two ways
+(CHT-1518):
+
+- **Client ID Metadata Documents** (claude.ai, Claude Code, ChatGPT): the
+  client's `client_id` is an `https` URL, and the server fetches the JSON
+  document behind it. Because an unauthenticated caller picks that URL,
+  the fetch connects only to public addresses (never loopback, private,
+  link-local or CGNAT ones, checked after DNS resolution) on port 443
+  only, follows no redirects, and gives up after 3 seconds or 16 KB (on
+  the wire: a compressed response is refused, and so is one that isn't
+  `application/json`). It also ignores `HTTPS_PROXY`, since a proxy
+  would resolve the name again, so the server needs direct outbound
+  HTTPS to the client's host. Documents are cached for their
+  `Cache-Control: max-age`, between 5 minutes and 24 hours. A document's
+  redirect URIs must be `https`, loopback `http`, or a native app's
+  reverse-domain scheme (`com.example.app:/cb`). Fetches of new client
+  IDs are limited to `OAUTH_CIMD_FETCH_MAX_PER_IP_PER_HOUR` (default 30)
+  per source address, and at most `OAUTH_CIMD_MAX_PENDING_CLIENTS`
+  (default 500) never-authorized documents are kept. Both in-memory
+  limits here, and `OAUTH_AUTHORIZE_MAX_PER_IP_PER_MINUTE` (default 30)
+  on `/oauth/authorize`, are per server process, and each remembers
+  at most 10,000 addresses, so an attacker with more addresses than that
+  (IPv4 addresses or IPv6 /64s) can outrun them; the caps on stored
+  clients still hold.
+- **Dynamic client registration** (`POST /oauth/register`, RFC 7591), for
+  older clients. It is unauthenticated by design, so it is limited:
+  `OAUTH_DCR_MAX_PER_IP_PER_HOUR` (default 10) registrations per source
+  address, and at most `OAUTH_DCR_MAX_PENDING_CLIENTS` (default 500)
+  clients that have never been used to authorize. Those are refused 24
+  hours after they register and deleted shortly after. A "source
+  address" is an IPv4 address or an IPv6 /64. Behind a reverse proxy every request has the
+  proxy's address, so the per-address limit becomes a server-wide one
+  unless uvicorn is run with `--proxy-headers` and `--forwarded-allow-ips`.
+  Set `OAUTH_DCR_ENABLED=false` to turn registration off; clients that
+  use metadata documents don't need it.
+
 ## Firewall example (ufw)
 
 If you're running the server on a VPS/box with a public IP and you've

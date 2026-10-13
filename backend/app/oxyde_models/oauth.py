@@ -76,7 +76,8 @@ class OxydeOAuthClient(Model):
     # The client_id itself: a CIMD URL, `dcr_<random>`, or `builtin:<name>`.
     # Sessions and tokens CASCADE from this row, so deleting it disconnects
     # every user of the client: a CIMD cache refresh must UPDATE the row in
-    # place, and only never-authorized DCR rows may be garbage-collected.
+    # place, and only never-authorized rows may be garbage-collected
+    # (OAuthClientService.gc_unused).
     id: str = Field(db_pk=True)
     registration: DbEnum(OAuthClientRegistration) = Field()
     client_name: str | None = Field(default=None)

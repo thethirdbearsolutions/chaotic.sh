@@ -590,7 +590,11 @@ class TestRegisterOnly:
     def test_every_rest_write_route_authenticates_through_get_current_user(self):
         """The REST rule lives in get_current_user, so a write route that
         authenticates some other way would escape it."""
-        unauthenticated = {"/api/auth/signup", "/api/auth/login", "/api/teams/invitations/{token}/accept"}
+        unauthenticated = {
+            "/api/auth/signup", "/api/auth/login", "/api/teams/invitations/{token}/accept",
+            # RFC 7591: registration is unauthenticated (CHT-1518).
+            "/oauth/register",
+        }
         escaped = [
             (sorted(methods), path) for methods, path, _endpoint, dependant in _api_routes()
             if methods - {"GET", "HEAD", "OPTIONS"}
