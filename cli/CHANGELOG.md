@@ -15,16 +15,30 @@ hand.
 _The a18 and a19 entries were never written; their contents are in the
 `v0.1.0a18` and `v0.1.0a19` tag history (CHT-1463)._
 
+### Upgrade notes
+
+- **MCP clients must reconnect**: `ritual_attest` and `ritual_complete` gained
+  parameters, so a cached toolset is stale (compare `server_info`'s
+  `mcp_tool_count` and fingerprint).
+- **A note alone no longer clears a ritual that declares an artifact**, and an
+  a19 CLI cannot attest such a ritual; upgrade the CLI with the server.
+- **Roll back by restoring the pre-upgrade backup**, not by `oxyde migrate`
+  downgrading past 0018.
+
 ### Added
 
 - **Ritual artifacts** — a ritual can declare an `artifact` (a document or
-  a URL) that an attestation must point at. A document must exist, belong to
-  the attester's team, be theirs, be newer than the sprint or ticket, and back
-  only one attestation. `chaotic ritual create/update --artifact`
-  (CHT-1359; migration 0018).
-- **Every API route is reachable from the CLI client**, and every paginated
-  list method takes `skip`/`limit`, so REST callers are no longer stuck on the
-  first page (CHT-1383).
+  a URL) that an attestation must point at: `chaotic ritual create/update
+  --artifact`. Attesters supply it with `chaotic ritual attest/complete
+  --document` (id, prefix or title) or `--url`, the MCP `ritual_attest` and
+  `ritual_complete` tools gain `document` and `url`, and the web UI has an
+  artifact selector. A document must exist, belong to the ritual's team, be
+  the attester's own, be newer than the sprint or ticket, and back only one
+  attestation; a URL must be http(s) with a host. `ritual show` prints the
+  artifact (CHT-1359; migration 0018).
+- **Every client-facing API route is reachable from the CLI client**, and
+  every paginated list method takes `skip`/`limit`, so REST callers are no
+  longer stuck on the first page (CHT-1383).
 
 ### Fixed
 
@@ -41,8 +55,10 @@ _The a18 and a19 entries were never written; their contents are in the
 - Migration 0017 records the schema that hand-written migrations 0005-0016
   produced, so `oxyde makemigrations` works again; it executes nothing
   (CHT-1410, CHT-1412).
-- Rolling SQLite backup script: ten slots across minute, hour, daily and
-  weekly tiers, with a disk guard and a lock (CHT-1418).
+- Rolling SQLite backup script, `scripts/sqlite-backup.sh`: ten slots across
+  minute, hour, daily and weekly tiers, with a disk guard and a lock
+  (CHT-1418). Opt-in: nothing installs or schedules it; run it from cron or a
+  systemd timer.
 - ADR-0002 amended: access control is enforced above the service layer, and
   `foreign_keys` is ON (CHT-1457).
 
