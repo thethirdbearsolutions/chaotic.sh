@@ -35,6 +35,8 @@ class UserResponse(BaseModel):
     kind: AgentKind | None = None
     external_ref: str | None = None
     registered_by_id: str | None = None
+    # A registrar sees its own capability on /auth/me (CHT-1497 review).
+    can_register: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -22,7 +22,7 @@ class TestIdentityFields:
         assert {k: listed[0][k] for k in expected} == expected
 
         me = (await client.get("/api/auth/me", headers={"Authorization": f"Bearer {key}"})).json()
-        assert {k: me[k] for k in expected} == expected
+        assert {k: me[k] for k in expected} == expected and me["can_register"] is False
 
     async def test_a_human_has_no_kind(self, client, auth_headers):
         me = (await client.get("/api/auth/me", headers=auth_headers)).json()
@@ -30,5 +30,5 @@ class TestIdentityFields:
 
     async def test_user_lookup_carries_the_fields_without_leaking_others(self, client, auth_headers, test_user):
         body = (await client.get(f"/api/users/{test_user.id}", headers=auth_headers)).json()
-        assert body["kind"] is None
-        assert "can_register" not in body and "hashed_password" not in body
+        assert body["kind"] is None and body["can_register"] is False
+        assert "hashed_password" not in body and "is_superuser" not in body
