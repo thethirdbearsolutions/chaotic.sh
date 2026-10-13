@@ -45,7 +45,9 @@ def get_current_mcp_user() -> User:
 def api_key_principal(user: User) -> Principal:
     """``user`` as an API key's principal (every scope), the way a ``ck_``
     key resolves. For tests and in-process callers that do not come
-    through ``auth.py``."""
+    through ``auth.py``. ``holder_user_id`` is ``user`` itself, which is
+    right for a human's key and not for an agent's (whose holder is a
+    human); nothing on the MCP path reads it today."""
     from app.auth.credentials import CredentialKind, Principal
 
     return Principal(user=user, holder_user_id=user.id, kind=CredentialKind.API_KEY)
