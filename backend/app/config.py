@@ -1,13 +1,17 @@
 """Application configuration."""
+import logging
 import os
-from urllib.parse import urlsplit
-
 import ipaddress
+from urllib.parse import urlsplit
 
 from pydantic import AnyHttpUrl, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_FORWARDED_ALLOW_IPS = "127.0.0.1,::1"
 
 # Default DB lives next to the backend package so `just serve` from any cwd
 # resolves to the same file. Production installs override via DATABASE_URL.
@@ -63,12 +67,14 @@ class Settings(BaseSettings):
     # real client rather than on the proxy. Requests from anywhere else
     # keep their socket address and their forwarded headers are ignored.
     # The default trusts a proxy on the same machine, the topology
-    # docs/self-hosting-security.md recommends. Empty trusts nobody. "*"
-    # and a /0 network are refused: trusting every sender would let any
-    # client pick the address its limits are counted against. The same
-    # name as uvicorn's own variable on purpose; serve-prod turns uvicorn's
-    # handling off and this app applies the list itself (app.main).
-    forwarded_allow_ips: str = "127.0.0.1,::1"
+    # docs/self-hosting-security.md recommends. Empty trusts nobody. The
+    # operator owns this list: every address in it can claim to be any
+    # client. A value that does not parse ("*", a host name, a typo) is
+    # logged as an error and replaced by the default rather than stopping
+    # the server (PR #346 review). The same name as uvicorn's own
+    # variable on purpose; every start path turns uvicorn's handling off
+    # and this app applies the list itself (app.main).
+    forwarded_allow_ips: str = DEFAULT_FORWARDED_ALLOW_IPS
 
     # Public base URL, used to build absolute links in outbound email
     # (invitation accept links). No scheme/host detection from requests --
@@ -162,11 +168,18 @@ class Settings(BaseSettings):
     @field_validator("forwarded_allow_ips")
     @classmethod
     def _check_forwarded_allow_ips(cls, value: str) -> str:
-        """Every entry must be an IP address or a CIDR network, and none
-        may cover every address (CHT-1586). Checked here rather than left
-        to uvicorn's parser, which silently turns a typo into a literal
-        that never matches, and would accept "*"."""
-        parse_trusted_proxies(value)
+        """Fall back to loopback, loudly, on a value that does not parse
+        (CHT-1586). uvicorn's own parser would silently turn a typo into
+        a literal that never matches and would accept "*"; refusing to
+        start instead would turn an upgrade into an outage."""
+        try:
+            parse_trusted_proxies(value)
+        except ValueError as exc:
+            logger.error(
+                "Ignoring FORWARDED_ALLOW_IPS=%r: %s. Trusting forwarded headers only from %s.",
+                value, exc, DEFAULT_FORWARDED_ALLOW_IPS,
+            )
+            return DEFAULT_FORWARDED_ALLOW_IPS
         return value
 
     @property
@@ -198,26 +211,21 @@ class Settings(BaseSettings):
 
 def parse_trusted_proxies(value: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Network | ipaddress.IPv6Network]:
     """Parse FORWARDED_ALLOW_IPS: comma-separated IP addresses and CIDR
-    networks, blanks ignored. Raises ValueError on anything else, on "*",
-    and on a network of prefix length 0, any of which would let every
-    sender set its own client address."""
+    networks, blanks ignored. Raises ValueError on anything else: "*", a
+    host name, or a network with host bits set (``10.0.0.1/8``, almost
+    always a typo). It does not judge how wide a valid list is; that is
+    the operator's call (docs/self-hosting-security.md)."""
     parsed = []
     for raw in value.split(","):
         entry = raw.strip()
         if not entry:
             continue
         if entry == "*":
-            raise ValueError(
-                'FORWARDED_ALLOW_IPS must not be "*": trusting forwarded headers from every sender '
-                "lets any client choose the address its rate limits count against. List your proxies' addresses."
-            )
+            raise ValueError('"*" would trust forwarded headers from every sender; list your proxies\' addresses')
         try:
-            item = ipaddress.ip_network(entry, strict=True) if "/" in entry else ipaddress.ip_address(entry)
+            parsed.append(ipaddress.ip_network(entry, strict=True) if "/" in entry else ipaddress.ip_address(entry))
         except ValueError as exc:
-            raise ValueError(f"FORWARDED_ALLOW_IPS entry {entry!r} is not an IP address or CIDR network: {exc}") from None
-        if isinstance(item, (ipaddress.IPv4Network, ipaddress.IPv6Network)) and item.prefixlen == 0:
-            raise ValueError(f"FORWARDED_ALLOW_IPS entry {entry!r} covers every address; list your proxies' addresses.")
-        parsed.append(item)
+            raise ValueError(f"entry {entry!r} is not an IP address or CIDR network ({exc})") from None
     return parsed
 
 

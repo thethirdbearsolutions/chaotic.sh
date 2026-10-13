@@ -5,11 +5,15 @@ reverse proxy that is the proxy's address unless the proxy's
 X-Forwarded-For is believed, and it must be believed only from the
 proxies listed in FORWARDED_ALLOW_IPS, never from any sender.
 """
+import ast
+import logging
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from pydantic import ValidationError
 from unittest.mock import patch
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -93,13 +97,27 @@ class TestForwardedFor:
         assert outermost.cls is ProxyHeadersMiddleware
         assert outermost.kwargs["trusted_hosts"] == get_settings().trusted_proxies
 
-    def test_serve_prod_leaves_proxy_headers_to_the_app(self):
-        """uvicorn would otherwise apply its own FORWARDED_ALLOW_IPS,
-        without this module's validation."""
+    def test_every_start_path_leaves_proxy_headers_to_the_app(self):
+        """uvicorn would otherwise apply its own FORWARDED_ALLOW_IPS, read
+        from the process environment only (not .env) and unvalidated."""
         justfile = (REPO_ROOT / "justfile").read_text()
         for recipe in ("serve", "serve-prod"):
             body = justfile.split(f"\n{recipe}:\n", 1)[1].split("\n\n", 1)[0]
             assert "--no-proxy-headers" in body, recipe
+
+        # `python -m app.main` and the e2e server build uvicorn in Python.
+        for path, call in (("backend/app/main.py", "run"), ("e2e/conftest.py", "Config")):
+            tree = ast.parse((REPO_ROOT / path).read_text())
+            calls = [
+                node for node in ast.walk(tree)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == call and getattr(node.func.value, "id", None) == "uvicorn"
+            ]
+            assert calls, path
+            for node in calls:
+                kwargs = {kw.arg: kw.value for kw in node.keywords}
+                assert isinstance(kwargs.get("proxy_headers"), ast.Constant), path
+                assert kwargs["proxy_headers"].value is False, path
 
 
 class TestSetting:
@@ -116,20 +134,44 @@ class TestSetting:
     @pytest.mark.parametrize(
         "value, why",
         [
-            ("*", "must not be"),
-            ("127.0.0.1,*", "must not be"),
-            ("0.0.0.0/0", "covers every address"),
-            ("::/0", "covers every address"),
+            ("*", "would trust forwarded headers from every sender"),
+            ("127.0.0.1,*", "would trust forwarded headers from every sender"),
             ("proxy.internal", "not an IP address"),
             ("10.0.0.1/8", "not an IP address"),  # host bits set: a typo, not a network
             ("10.0.0.0/33", "not an IP address"),
         ],
     )
-    def test_refused(self, value, why):
-        with pytest.raises(ValidationError, match=why):
-            Settings(forwarded_allow_ips=value)
+    def test_unusable_value_falls_back_to_loopback_with_an_error(self, value, why, caplog):
+        """A bad value must not stop the server (PR #346 review): it is
+        logged, naming the value, and loopback is trusted instead."""
+        with caplog.at_level(logging.ERROR, logger="app.config"):
+            settings = Settings(forwarded_allow_ips=value)
+        assert settings.trusted_proxies == ["127.0.0.1", "::1"]
+        (record,) = [r for r in caplog.records if r.name == "app.config"]
+        assert record.levelno == logging.ERROR
+        assert repr(value) in record.getMessage()
+        assert why in record.getMessage()
         with pytest.raises(ValueError, match=why):
             parse_trusted_proxies(value)
+
+    def test_wide_lists_are_the_operators_call(self):
+        """No width check: split /1s would get round any /0 check. The
+        docs say the operator owns the list."""
+        assert Settings(forwarded_allow_ips="0.0.0.0/0").trusted_proxies == ["0.0.0.0/0"]
+
+    def test_what_the_operator_sees_at_startup(self):
+        """Importing the app with a bad value, as uvicorn does before it
+        configures app logging: the server still comes up, and stderr
+        names the bad value and the fallback."""
+        env = {**os.environ, "FORWARDED_ALLOW_IPS": "*", "SECRET_KEY": "x" * 32}
+        result = subprocess.run(
+            [sys.executable, "-c", "import app.main as m; print('TRUSTED', m.settings.trusted_proxies)"],
+            cwd=REPO_ROOT / "backend", env=env, capture_output=True, text=True, timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "TRUSTED ['127.0.0.1', '::1']" in result.stdout
+        assert "Ignoring FORWARDED_ALLOW_IPS='*'" in result.stderr
+        assert "Trusting forwarded headers only from 127.0.0.1,::1" in result.stderr
 
     def test_read_from_the_environment(self, monkeypatch):
         monkeypatch.setenv("FORWARDED_ALLOW_IPS", "10.1.2.3")

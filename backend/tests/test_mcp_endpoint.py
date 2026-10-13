@@ -488,6 +488,24 @@ class TestCapabilityPathRedaction:
         assert api_key not in scope["path"]
         assert api_key.encode() not in scope["raw_path"]
 
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize("suffix, logged", [("/", "/"), ("/x", "/..."), ("/x/y", "/...")])
+    async def test_paths_below_the_key_are_redacted(self, recording_client, api_key, monkeypatch, enabled, suffix, logged):
+        """CHT-1587: a trailing slash or a sub-path logged the whole key."""
+        from app.config import get_settings
+
+        monkeypatch.setenv("MCP_CAPABILITY_URL_ENABLED", "true" if enabled else "false")
+        get_settings.cache_clear()
+        try:
+            ac, recorder = recording_client
+            resp = await ac.get(f"/mcp/{api_key}{suffix}")
+        finally:
+            get_settings.cache_clear()
+        assert resp.status_code == 404
+        (scope,) = recorder.scopes
+        assert scope["path"] == f"/mcp/ck_...{api_key[-4:]}{logged}"
+        assert api_key.encode() not in scope["raw_path"]
+
     async def test_bearer_mode_path_untouched(self, recording_client, api_key):
         ac, recorder = recording_client
         headers = {**_MCP_HEADERS, "Authorization": f"Bearer {api_key}"}
@@ -512,6 +530,14 @@ class TestCapabilityURLFlag:
         yield _set
         get_settings.cache_clear()
 
+    @staticmethod
+    def _assert_deprecated(resp):
+        from app.mcp_server.auth import CAPABILITY_URL_DEPRECATION_LINK
+
+        assert resp.headers["deprecation"] == "@1791849600"
+        assert resp.headers["link"] == CAPABILITY_URL_DEPRECATION_LINK
+        assert 'rel="deprecation"' in resp.headers["link"]
+
     def test_on_by_default(self):
         from app.config import Settings
 
@@ -522,11 +548,15 @@ class TestCapabilityURLFlag:
         init = _rpc("initialize", _init_params())
         ok = await client.post(f"/mcp/{api_key}", json=init, headers=_MCP_HEADERS)
         assert ok.status_code == 200
-        assert ok.headers["deprecation"] == "@1791849600"
-        # Errors from the capability route are deprecated too.
+        self._assert_deprecated(ok)
+        # Errors from the capability route are deprecated too: a bad key,
+        # and a method the router refuses.
         bad = await client.post("/mcp/ck_" + "0" * 64, json=init, headers=_MCP_HEADERS)
         assert bad.status_code == 401
-        assert bad.headers["deprecation"] == "@1791849600"
+        self._assert_deprecated(bad)
+        put = await client.put(f"/mcp/{api_key}", json={}, headers=_MCP_HEADERS)
+        assert put.status_code == 405
+        self._assert_deprecated(put)
 
     async def test_bearer_mode_is_not_deprecated(self, client, bearer_headers, capability_url):
         capability_url(True)
@@ -534,21 +564,58 @@ class TestCapabilityURLFlag:
         assert resp.status_code == 200
         assert "deprecation" not in resp.headers
 
+    @pytest.mark.parametrize("method", ["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"])
     @pytest.mark.parametrize("valid", [True, False])
-    async def test_disabled_is_404_whether_or_not_the_key_is_valid(self, client, api_key, capability_url, valid):
-        """A stale URL learns nothing about its key."""
+    async def test_disabled_is_404_for_every_method_and_key(self, client, api_key, capability_url, valid, method):
+        """A stale URL learns nothing about its key, or about the route."""
         capability_url(False)
         key = api_key if valid else "ck_" + "0" * 64
-        resp = await client.post(f"/mcp/{key}", json=_rpc("initialize", _init_params()), headers=_MCP_HEADERS)
+        resp = await client.request(method, f"/mcp/{key}", json={}, headers=_MCP_HEADERS)
         assert resp.status_code == 404
         assert resp.json() == {"detail": "Not Found"}
         assert "deprecation" not in resp.headers
         assert "www-authenticate" not in resp.headers
 
+    async def test_disabled_never_reads_the_key(self, client, api_key, capability_url, monkeypatch):
+        """The property the 404 exists for: no resolver call, so no lookup
+        and no timing difference between a valid and an invalid key."""
+        from app.auth import credentials
+        from app.oxyde_models.api_key import OxydeAPIKey
+
+        calls = []
+        real = credentials.capability_url_resolver.resolve
+
+        async def spy(*args, **kwargs):
+            calls.append(args)
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(credentials.capability_url_resolver, "resolve", spy)
+        before = (await OxydeAPIKey.objects.get(key_prefix=APIKeyService()._get_prefix(api_key))).last_used_at
+        init = _rpc("initialize", _init_params())
+
+        capability_url(False)
+        assert (await client.post(f"/mcp/{api_key}", json=init, headers=_MCP_HEADERS)).status_code == 404
+        assert calls == []
+        assert (await OxydeAPIKey.objects.get(key_prefix=APIKeyService()._get_prefix(api_key))).last_used_at == before
+
+        # The spy does see a call once the URL is served.
+        capability_url(True)
+        assert (await client.post(f"/mcp/{api_key}", json=init, headers=_MCP_HEADERS)).status_code == 200
+        assert len(calls) == 1
+
     async def test_disabled_keeps_bearer_mode(self, client, bearer_headers, capability_url):
         capability_url(False)
         resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=bearer_headers)
         assert resp.status_code == 200
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize("suffix", ["/", "/x", "/x/y"])
+    async def test_paths_below_the_key_are_404_not_the_spa(self, client, api_key, capability_url, enabled, suffix):
+        """CHT-1587: these fell through to the SPA catch-all with a 200."""
+        capability_url(enabled)
+        resp = await client.get(f"/mcp/{api_key}{suffix}")
+        assert resp.status_code == 404
+        assert resp.json() == {"detail": "Not Found"}
 
     @pytest.mark.parametrize("enabled", [True, False])
     async def test_missing_key_hint_follows_the_setting(self, client, capability_url, enabled):
@@ -558,25 +625,32 @@ class TestCapabilityURLFlag:
         assert ("capability URL" in resp.json()["error"]) is enabled
 
     @pytest.mark.parametrize("enabled", [True, False])
-    def test_startup_warning(self, capability_url, caplog, enabled):
+    async def test_startup_warning_from_the_lifespan(self, capability_url, caplog, monkeypatch, enabled):
+        """Drive app.main's real lifespan, with only its I/O stubbed."""
+        import contextlib
         import logging
-
-        from app.mcp_server.auth import warn_if_capability_url_enabled
-
-        capability_url(enabled)
-        with caplog.at_level(logging.WARNING, logger="app.mcp_server.auth"):
-            warn_if_capability_url_enabled()
-        assert ("MCP_CAPABILITY_URL_ENABLED is on" in caplog.text) is enabled
-
-    async def test_lifespan_calls_the_startup_warning(self, monkeypatch):
-        """app.main's lifespan runs the check before anything else that
-        can fail (the lifespan itself is only driven by a real server)."""
-        import inspect
 
         import app.main as main
 
-        source = inspect.getsource(main.lifespan)
-        assert "warn_if_capability_url_enabled()" in source
+        async def noop(*args, **kwargs):
+            return None
+
+        @contextlib.asynccontextmanager
+        async def no_mcp():
+            yield
+
+        for name in ("init_oxyde", "close_oxyde", "bootstrap_if_empty", "verify_migrations_current",
+                     "_mcp_toolset_fingerprint"):
+            monkeypatch.setattr(main, name, noop)
+        monkeypatch.setattr(main, "get_version_info", lambda *a, **k: None)
+        monkeypatch.setattr(main, "mcp_lifespan", no_mcp)
+        monkeypatch.setattr(main.settings, "secret_key", "x" * 32)
+
+        capability_url(enabled)
+        with caplog.at_level(logging.WARNING, logger="app.mcp_server.auth"):
+            async with main.lifespan(main.app):
+                pass
+        assert ("MCP_CAPABILITY_URL_ENABLED is on" in caplog.text) is enabled
 
 
 class TestToolsList:

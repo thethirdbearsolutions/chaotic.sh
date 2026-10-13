@@ -171,8 +171,9 @@ app.add_exception_handler(OAuthHTTPError, oauth_error_handler)
 # Added last, so it is the outermost middleware and everything inside it,
 # the OAuth per-address limits included, sees the real client. Only the
 # addresses in FORWARDED_ALLOW_IPS are believed (validated in Settings);
-# serve-prod passes --no-proxy-headers so uvicorn does not apply its own
-# list as well.
+# every start path (justfile serve/serve-prod, `python -m app.main`, the e2e
+# server) turns uvicorn's own handling off so it does not apply a second
+# list read only from the process environment.
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.trusted_proxies)
 
 # Get the directory of this file
@@ -384,4 +385,8 @@ if __name__ == "__main__":
         host=settings.host,
         port=settings.port,
         reload=settings.debug,
+        # CHT-1586: the app applies FORWARDED_ALLOW_IPS itself (see the
+        # ProxyHeadersMiddleware above); uvicorn's own copy reads only the
+        # process environment, not .env, so it could disagree.
+        proxy_headers=False,
     )
