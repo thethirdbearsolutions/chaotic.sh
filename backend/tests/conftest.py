@@ -150,7 +150,18 @@ async def db(tmp_path, schema_template):
 
     QueryManager.create = _create_and_refetch
 
+    # Web Push (CHT-1605) never reaches the network from a test: a test
+    # that registers a device gets a push service that accepts everything,
+    # unless it installs its own (tests/test_push_sender.py).
+    import httpx
+    from app.services import push_sender
+    push_sender._transport = httpx.MockTransport(lambda request: httpx.Response(201))
+
     yield None
+
+    # Deliveries still in flight finish against this database, not the next.
+    await push_sender.drain()
+    push_sender._transport = None
 
     # Restore original create
     QueryManager.create = _original_create

@@ -1136,6 +1136,7 @@ class RitualService:
         await InboxService().notify_review_requested(
             ritual=ritual, issue=issue, project=project,
             attested_by_name=attester.name if attester else "Someone",
+            attested_by_id=attested_by_id,
         )
 
     async def _ensure_and_clear_limbo_for_attest(

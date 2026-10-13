@@ -577,7 +577,19 @@ person chooses that URL, it is checked when registered: it must be
 `https`, at most 2048 characters, carry no credentials or fragment, and
 its host must be, or resolve only to, public addresses. Loopback,
 private, link-local, CGNAT, multicast and reserved addresses are refused,
-including their IPv4-in-IPv6 forms.
+including their IPv4-in-IPv6 forms. The check is made again before
+every notification is sent, against the setting as it is then, and the
+server connects to the address it checked (certificate and SNI still
+for the name, no redirects, no proxy), so a name that later resolves to
+an internal address, or a private endpoint registered while the setting
+below was on, gets nothing.
+
+What a notification carries: the inbox entry's id and kind, the issue
+identifier, the title (up to 200 characters) and the ritual id; never a
+token, a comment body or a description. When the entry is settled
+elsewhere (a gate approved, an issue deleted), a second message tells
+the app to withdraw it. A device whose push service answers 404 or 410
+is deleted; other failures are retried and counted on the device.
 
 If your ntfy runs on the same machine or your LAN, set
 `PUSH_ALLOW_PRIVATE_ENDPOINTS=true`. That admits loopback, private

@@ -689,7 +689,7 @@ class IssueService:
         for ritual in gate_rituals:
             await inbox_service.notify_gate_pending(
                 ritual=ritual, issue=issue, project=project,
-                requested_by_name=requester_name,
+                requested_by_name=requester_name, requested_by_id=requester_id,
             )
 
     async def _record_intent_activity(
