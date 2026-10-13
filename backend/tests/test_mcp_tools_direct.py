@@ -1471,6 +1471,42 @@ class TestReviewRegressions:
         assert "error" in again
         assert "Already rejected" in str(again["error"])
 
+    async def test_ritual_reject_refuses_an_agent_key(self, test_team, test_project):
+        """The same 403 as REST: an agent cannot send a review back, even
+        one attested by someone else (PR #353 review finding 11)."""
+        from app.enums import ApprovalMode, RitualTrigger
+        from app.oxyde_models.user import OxydeUser
+        from app.utils.security import get_password_hash
+
+        await self._ritual(test_project.id, "code-review",
+                           trigger=RitualTrigger.TICKET_CLOSE,
+                           approval_mode=ApprovalMode.REVIEW)
+        iss = await tools.issue_create(title="Reviewed")
+        assert "error" not in await tools.ritual_attest(
+            ritual="code-review", note="looks fine", identifier=iss["identifier"],
+        )
+        agent = await OxydeUser.objects.create(
+            email="team-agent-reject@example.com", hashed_password=get_password_hash("x"),
+            name="Team Agent", is_agent=True, agent_team_id=test_team.id,
+        )
+        # Even as a team owner: the admin check passes, the agent check refuses.
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeamMember
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=agent.id, role=TeamRole.OWNER)
+        token = context.current_mcp_principal.set(api_key_principal(agent))
+        try:
+            result = await tools.ritual_reject(
+                ritual="code-review", identifier=iss["identifier"], note="no", project=test_project.id,
+            )
+        finally:
+            context.current_mcp_principal.reset(token)
+        assert "error" in result
+        assert "Agents cannot reject" in str(result["error"])
+        pending = await tools.ritual_pending(identifier=iss["identifier"])
+        [row] = pending["pending_rituals"]
+        assert row["attestation"] is not None
+        assert row["last_rejection"] is None
+
     async def test_ritual_reject_needs_a_reason_and_a_ticket_ritual(self, test_project):
         from app.enums import ApprovalMode
         await self._ritual(test_project.id, "retro", approval_mode=ApprovalMode.REVIEW)

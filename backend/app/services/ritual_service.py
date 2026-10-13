@@ -1538,10 +1538,28 @@ class RitualService:
 
     async def supersede_rejections(self, ritual_id: str, issue_id: str) -> int:
         """Mark every outstanding rejection of this (ritual, issue) as
-        answered: the attester tried again or a human completed the gate."""
-        return await OxydeRitualRejection.objects.filter(
+        answered: the attester tried again or a human completed the gate.
+        The attester's GATE_REJECTED inbox entry is settled with it (best
+        effort); the owner's copy stays, as a record of what happened."""
+        outstanding = await OxydeRitualRejection.objects.filter(
+            ritual_id=ritual_id, issue_id=issue_id, superseded_at=None,
+        ).all()
+        if not outstanding:
+            return 0
+        count = await OxydeRitualRejection.objects.filter(
             ritual_id=ritual_id, issue_id=issue_id, superseded_at=None,
         ).update(superseded_at=datetime.now(timezone.utc))
+        try:
+            from app.services.inbox_service import InboxService
+            await InboxService().resolve_rejected(
+                ritual_id=ritual_id, issue_id=issue_id,
+                recipient_user_ids=[r.attested_by_id for r in outstanding if r.attested_by_id],
+            )
+        except Exception:
+            logger.exception(
+                "Failed to resolve rejected inbox entries ritual=%s issue=%s", ritual_id, issue_id,
+            )
+        return count
 
     async def _open_gate_request(self, ritual_id: str, issue_id: str):
         """The open intent whose unresolved blocker is this GATE ritual on
@@ -1600,73 +1618,101 @@ class RitualService:
         if not note:
             raise ValueError("A rejection needs a reason.")
 
-        async with atomic():
-            attestation = await self.get_issue_attestation(ritual.id, issue_id)
-            if attestation is not None and attestation.approved_at is not None:
-                raise RitualAlreadyResolvedError(
-                    "approved", attestation.approved_by, attestation.approved_at,
-                )
-            outstanding = await self.outstanding_rejection(ritual.id, issue_id)
+        try:
+            async with atomic():
+                attestation = await self.get_issue_attestation(ritual.id, issue_id)
+                if attestation is not None and attestation.approved_at is not None:
+                    raise RitualAlreadyResolvedError(
+                        "approved", attestation.approved_by, attestation.approved_at,
+                    )
+                outstanding = await self.outstanding_rejection(ritual.id, issue_id)
 
-            if ritual.approval_mode == ApprovalMode.REVIEW:
-                if attestation is None:
+                if ritual.approval_mode == ApprovalMode.REVIEW:
+                    if attestation is None:
+                        if outstanding is not None:
+                            raise RitualAlreadyResolvedError(
+                                "rejected", outstanding.rejected_by_id, outstanding.rejected_at,
+                            )
+                        raise NothingToRejectError(
+                            f"Ritual '{ritual.name}' has no attestation on this ticket to reject."
+                        )
+                    # Compare-and-delete, the counterpart of _approve_atomic: an
+                    # approval that landed after the read above wins.
+                    deleted = await OxydeRitualAttestation.objects.filter(
+                        id=attestation.id, approved_at=None,
+                    ).delete()
+                    if not deleted:
+                        fresh = await self.get_issue_attestation(ritual.id, issue_id)
+                        raise RitualAlreadyResolvedError(
+                            "approved",
+                            fresh.approved_by if fresh else None,
+                            fresh.approved_at if fresh else None,
+                        )
+                    if outstanding is not None:
+                        # An attestation newer than a rejection answers it;
+                        # the attest's own best-effort supersede must have
+                        # failed. Settle it here so the one-outstanding
+                        # index does not refuse this reject.
+                        await self.supersede_rejections(ritual.id, issue_id)
+                    record = dict(
+                        attested_by_id=attestation.attested_by,
+                        attested_at=attestation.attested_at,
+                        attestation_note=attestation.note,
+                        artifact_ref=attestation.artifact_ref,
+                    )
+                else:
                     if outstanding is not None:
                         raise RitualAlreadyResolvedError(
                             "rejected", outstanding.rejected_by_id, outstanding.rejected_at,
                         )
-                    raise NothingToRejectError(
-                        f"Ritual '{ritual.name}' has no attestation on this ticket to reject."
+                    intent = await self._open_gate_request(ritual.id, issue_id)
+                    if intent is None:
+                        raise NothingToRejectError(
+                            f"Nobody is waiting on gate '{ritual.name}' for this ticket; "
+                            "there is no request to reject."
+                        )
+                    record = dict(
+                        attested_by_id=intent.requested_by_id,
+                        attested_at=intent.requested_at,
                     )
-                # Compare-and-delete, the counterpart of _approve_atomic: an
-                # approval that landed after the read above wins.
-                deleted = await OxydeRitualAttestation.objects.filter(
-                    id=attestation.id, approved_at=None,
-                ).delete()
-                if not deleted:
-                    fresh = await self.get_issue_attestation(ritual.id, issue_id)
-                    raise RitualAlreadyResolvedError(
-                        "approved",
-                        fresh.approved_by if fresh else None,
-                        fresh.approved_at if fresh else None,
-                    )
-                record = dict(
-                    attested_by_id=attestation.attested_by,
-                    attested_at=attestation.attested_at,
-                    attestation_note=attestation.note,
-                    artifact_ref=attestation.artifact_ref,
-                )
-            else:
-                if outstanding is not None:
-                    raise RitualAlreadyResolvedError(
-                        "rejected", outstanding.rejected_by_id, outstanding.rejected_at,
-                    )
-                intent = await self._open_gate_request(ritual.id, issue_id)
-                if intent is None:
-                    raise NothingToRejectError(
-                        f"Nobody is waiting on gate '{ritual.name}' for this ticket; "
-                        "there is no request to reject."
-                    )
-                record = dict(
-                    attested_by_id=intent.requested_by_id,
-                    attested_at=intent.requested_at,
-                )
 
-            rejection = await OxydeRitualRejection.objects.create(
-                ritual_id=ritual.id,
-                issue_id=issue_id,
-                rejected_by_id=rejecter_id,
-                note=note,
-                **record,
-            )
-            # Same shape as RITUAL_ATTESTED: the ritual in field_name, the
-            # note (here the reason) in new_value.
-            await OxydeIssueActivity.objects.create(
-                issue_id=issue_id,
-                user_id=rejecter_id,
-                activity_type=ActivityType.RITUAL_REJECTED,
-                field_name=ritual.name,
-                new_value=note,
-            )
+                # attested_by on an attestation has no foreign key (0017),
+                # so a legacy row can name a user that is gone; this table's
+                # column does reference users, so record "unknown" rather
+                # than fail the reject (PR #353 review finding 5).
+                if record["attested_by_id"] and not await OxydeUser.objects.filter(
+                    id=record["attested_by_id"],
+                ).exists():
+                    record["attested_by_id"] = None
+
+                rejection = await OxydeRitualRejection.objects.create(
+                    ritual_id=ritual.id,
+                    issue_id=issue_id,
+                    rejected_by_id=rejecter_id,
+                    note=note,
+                    **record,
+                )
+                # Same shape as RITUAL_ATTESTED: the ritual in field_name, the
+                # note (here the reason) in new_value.
+                await OxydeIssueActivity.objects.create(
+                    issue_id=issue_id,
+                    user_id=rejecter_id,
+                    activity_type=ActivityType.RITUAL_REJECTED,
+                    field_name=ritual.name,
+                    new_value=note,
+                )
+        except IntegrityError:
+            # uq_ritual_rejection_outstanding: a concurrent reject of the
+            # same (ritual, issue) committed first (PR #353 review finding
+            # 3). The whole transaction rolled back, including a REVIEW's
+            # attestation delete, so report the winner like any reject
+            # after a reject.
+            winner = await self.outstanding_rejection(ritual.id, issue_id)
+            if winner is None:
+                raise
+            raise RitualAlreadyResolvedError(
+                "rejected", winner.rejected_by_id, winner.rejected_at,
+            ) from None
 
         await self._after_reject(ritual, issue_id, rejection)
         return rejection
@@ -1675,7 +1721,8 @@ class RitualService:
         self, ritual: OxydeRitual, issue_id: str, rejection: "OxydeRitualRejection",
     ) -> None:
         """Side effects of a committed reject, each best-effort: the
-        approvers' inbox entries are resolved, the attester (and its owner,
+        approvers' inbox entries are resolved (a review's all of them, a
+        gate's only the rejecter's), the attester (and its owner,
         for an agent) is told why, and the team sees a ritual_rejected
         event. "Keep" leaves the ticket where it is; a "bounce" policy
         would move it back to todo here.
@@ -1684,7 +1731,18 @@ class RitualService:
 
         inbox = InboxService()
         try:
-            await inbox.resolve_gate_or_review(ritual_id=ritual.id, issue_id=issue_id)
+            if ritual.approval_mode == ApprovalMode.REVIEW:
+                # The attestation is gone: nothing is left to review.
+                await inbox.resolve_gate_or_review(ritual_id=ritual.id, issue_id=issue_id)
+            else:
+                # The gate is still pending and any approver can still
+                # complete it: only the rejecter's own prompt is settled
+                # (PR #353 review finding 4). Asking again re-notifies the
+                # rejecter; the others' unread entries dedupe it.
+                await inbox.resolve_gate_or_review(
+                    ritual_id=ritual.id, issue_id=issue_id,
+                    recipient_user_id=rejection.rejected_by_id,
+                )
         except Exception:
             logger.exception(
                 "Failed to resolve inbox entries after reject ritual=%s issue=%s",

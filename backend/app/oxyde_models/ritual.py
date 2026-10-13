@@ -167,4 +167,13 @@ class OxydeRitualRejection(Model):
         table_name = "ritual_rejections"
         indexes = [
             Index(("ritual_id", "issue_id"), name="ritual_rejections_ritual_issue_idx"),
+            # At most one unanswered rejection per (ritual, issue): two
+            # admins rejecting at once cannot both land; the loser's
+            # IntegrityError is the same 409 as a reject after a reject
+            # (PR #353 review finding 3). Answered rows stay, one per round.
+            Index(("ritual_id", "issue_id"), unique=True, name="uq_ritual_rejection_outstanding",
+                  where="superseded_at IS NULL"),
+            # authored_counts and the SET NULL on a user delete look these up.
+            Index(("attested_by_id",), name="ritual_rejections_attested_by_idx"),
+            Index(("rejected_by_id",), name="ritual_rejections_rejected_by_idx"),
         ]

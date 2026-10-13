@@ -22,7 +22,12 @@ from .test_token_store_migration import _ROLLBACK, _to_production_users
 
 NOW = "2026-10-13T00:00:00+00:00"
 TABLE = "ritual_rejections"
-INDEX = "ritual_rejections_ritual_issue_idx"
+INDEXES = {
+    "ritual_rejections_ritual_issue_idx",
+    "uq_ritual_rejection_outstanding",
+    "ritual_rejections_attested_by_idx",
+    "ritual_rejections_rejected_by_idx",
+}
 
 # column -> (referenced table, ON DELETE)
 EXPECTED_FKS = {
@@ -76,18 +81,18 @@ def _snapshot(path: str):
             (kind, name): sql for kind, name, sql in c.execute(
                 "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
             )
-            if name not in (TABLE, INDEX, "oxyde_migrations")
+            if name not in {TABLE, "oxyde_migrations", *INDEXES}
         }
         tables = [t for (kind, t) in ddl if kind == "table"]
         rows = {t: sorted(map(tuple, c.execute(f'SELECT * FROM "{t}"'))) for t in tables}
     return ddl, rows
 
 
-def _seed(c, attester: str | None = "agent") -> None:
+def _seed(c, attester: str | None = "agent", row_id: str = "x1", superseded_at: str | None = None) -> None:
     c.execute(
         f"INSERT INTO {TABLE} (id, ritual_id, issue_id, attested_by_id, attested_at, rejected_by_id, "
-        "rejected_at, note) VALUES ('x1', 'r1', 'i1', ?, ?, 'admin', ?, 'Not yet')",
-        (attester, NOW, NOW),
+        "rejected_at, note, superseded_at) VALUES (?, 'r1', 'i1', ?, ?, 'admin', ?, 'Not yet', ?)",
+        (row_id, attester, NOW, NOW, superseded_at),
     )
 
 
@@ -105,7 +110,11 @@ def test_creates_the_table_and_changes_nothing_else(at_before):
                 "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL", (TABLE,)
             )
         }
-        assert indexes == {INDEX}
+        assert indexes == INDEXES
+        (partial,) = c.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'uq_ritual_rejection_outstanding'"
+        ).fetchone()
+        assert "UNIQUE" in partial.upper() and "superseded_at IS NULL" in partial
         notnull = {r[1] for r in c.execute(f"PRAGMA table_info('{TABLE}')") if r[3]}
         assert {"rejected_at", "note"} <= notnull
         assert c.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
@@ -129,6 +138,18 @@ def test_a_rejection_outlives_its_people_but_not_its_issue_or_ritual(at_before):
         _seed(c, attester=None)
         c.execute("DELETE FROM rituals WHERE id = 'r1'")
         assert c.execute(f"SELECT count(*) FROM {TABLE}").fetchone() == (0,)
+
+
+def test_one_unanswered_rejection_per_ritual_and_ticket(at_before):
+    """uq_ritual_rejection_outstanding: answered rounds accumulate, but a
+    second unanswered rejection of the same (ritual, issue) is refused."""
+    _migrate(at_before, target="0025_ritual_rejections")
+    with closing(sqlite3.connect(at_before)) as c:
+        _seed(c, row_id="old1", superseded_at=NOW)
+        _seed(c, row_id="old2", superseded_at=NOW)
+        _seed(c, row_id="open1")
+        with pytest.raises(sqlite3.IntegrityError):
+            _seed(c, row_id="open2")
 
 
 def test_downgrade_drops_exactly_the_table(at_before):

@@ -323,7 +323,10 @@ class TestRejectGate:
         assert resp.json()["attested_at"] is not None
         assert (await OxydeIssue.objects.get(id=test_issue.id)).status == status_before
         assert await OxydeTicketLimbo.objects.filter(issue_id=test_issue.id, cleared_at=None).count() == 1
-        assert not await _entries(test_issue, InboxEntryKind.GATE_PENDING, read_at=None)
+        # The gate is still pending: only the rejecter's prompt is settled,
+        # the other approver can still complete it (review finding 4).
+        unread = await _entries(test_issue, InboxEntryKind.GATE_PENDING, read_at=None)
+        assert {e.recipient_user_id for e in unread} == {owner.id}
         rejected = await _entries(test_issue, InboxEntryKind.GATE_REJECTED)
         assert {e.recipient_user_id for e in rejected} == {agent.id, owner.id}
         assert "gate request" in rejected[0].title
@@ -349,11 +352,18 @@ class TestRejectGate:
 
         pending = await _entries(test_issue, InboxEntryKind.GATE_PENDING, read_at=None)
         assert {e.recipient_user_id for e in pending} == {test_user.id, owner.id}  # every admin
+        # The rejecter is paged afresh; the other admin's entry was never
+        # settled, so it is not duplicated.
+        assert len(await _entries(test_issue, InboxEntryKind.GATE_PENDING)) == 3
         rejection = await RitualService().latest_rejection(gate_close_ritual.id, test_issue.id)
         assert rejection.superseded_at is not None
+        # Asking again answered the rejection: the requester's own
+        # "rejected" entry is settled, the owner's copy stays as a record.
+        rejected_unread = await _entries(test_issue, InboxEntryKind.GATE_REJECTED, read_at=None)
+        assert {e.recipient_user_id for e in rejected_unread} == {owner.id}
         # Asking a third time without a new reject does not page anyone again.
         await self._requested(test_issue, agent)
-        assert len(await _entries(test_issue, InboxEntryKind.GATE_PENDING)) == 4  # two admins, asked twice
+        assert len(await _entries(test_issue, InboxEntryKind.GATE_PENDING)) == 3
 
         # And it can now be rejected again, or completed.
         resp = await client.post(
@@ -396,6 +406,177 @@ class TestRejectGate:
         await _reject(client, auth_headers, gate_close_ritual, test_issue)
         types = [m.get("type") for _, m in captured_broadcasts]
         assert "ritual_rejected" in types
+
+
+class TestReviewFindings:
+    """PR #353 independent review."""
+
+    async def test_the_retry_that_asks_again_still_shows_the_reason(
+        self, client, auth_headers, test_issue, agent, gate_close_ritual,
+    ):
+        """Finding 1: asking again marks the rejection answered, but the
+        refusal of that very attempt is where the agent reads why."""
+        from app.api.issues import _ritual_refusal_detail
+
+        with pytest.raises(TicketRitualsError):
+            await _try_close(test_issue, agent.id)
+        await _reject(client, auth_headers, gate_close_ritual, test_issue, note="Wait for the freeze to lift")
+
+        with pytest.raises(TicketRitualsError) as retry:
+            await _try_close(test_issue, agent.id)
+        detail = await _ritual_refusal_detail(retry.value, "ticket_rituals_pending", "Ticket has pending rituals", "closing")
+        assert "Wait for the freeze to lift" in detail["message"]
+        [rej] = detail["rejections"]
+        assert rej["ritual"] == gate_close_ritual.name
+        assert rej["note"] == "Wait for the freeze to lift"
+        assert rej["rejected_by_name"] == "Test User"
+        assert rej["asked_again"] is True
+        # It is answered all the same: the next retry does not repeat it.
+        with pytest.raises(TicketRitualsError) as third:
+            await _try_close(test_issue, agent.id)
+        detail = await _ritual_refusal_detail(third.value, "ticket_rituals_pending", "Ticket has pending rituals", "closing")
+        assert detail["rejections"] == []
+        assert "freeze" not in detail["message"]
+
+    async def test_the_refusal_names_an_outstanding_review_rejection(
+        self, client, auth_headers, test_issue, agent, review_close_ritual,
+    ):
+        from app.api.issues import _ritual_refusal_detail
+
+        with pytest.raises(TicketRitualsError):
+            await _try_close(test_issue, agent.id)
+        await RitualService().attest_for_issue(
+            ritual=review_close_ritual, issue_id=test_issue.id, user_id=agent.id, note="done",
+        )
+        await _reject(client, auth_headers, review_close_ritual, test_issue, note="- [x] add tests [/]")
+        with pytest.raises(TicketRitualsError) as retry:
+            await _try_close(test_issue, agent.id)
+        detail = await _ritual_refusal_detail(retry.value, "ticket_rituals_pending", "Ticket has pending rituals", "closing")
+        [rej] = detail["rejections"]
+        assert rej["note"] == "- [x] add tests [/]"
+        assert rej["asked_again"] is False
+
+    async def test_concurrent_rejects_cannot_both_land(
+        self, client, auth_headers, test_user, test_issue, agent, gate_close_ritual, monkeypatch,
+    ):
+        """Finding 3: the second of two simultaneous rejects passes the
+        read check (simulated here) and hits uq_ritual_rejection_outstanding,
+        which surfaces as the ordinary already-rejected 409."""
+        with pytest.raises(TicketRitualsError):
+            await _try_close(test_issue, agent.id)
+        assert (await _reject(client, auth_headers, gate_close_ritual, test_issue)).status_code == 200
+
+        real = RitualService.outstanding_rejection
+        calls = {"n": 0}
+
+        async def blind_first_read(self, ritual_id, issue_id):
+            calls["n"] += 1
+            return None if calls["n"] == 1 else await real(self, ritual_id, issue_id)
+
+        monkeypatch.setattr(RitualService, "outstanding_rejection", blind_first_read)
+        resp = await _reject(client, auth_headers, gate_close_ritual, test_issue, note="me too")
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["detail"]["resolution"] == "rejected"
+        assert resp.json()["detail"]["resolved_by"] == test_user.id
+        assert await OxydeRitualRejection.objects.count() == 1
+
+    async def test_a_review_race_rolls_the_withdrawal_back(
+        self, client, auth_headers, test_issue, agent, review_close_ritual, monkeypatch,
+    ):
+        """The same race on a REVIEW: the losing reject's attestation delete
+        is rolled back with it."""
+        with pytest.raises(TicketRitualsError):
+            await _try_close(test_issue, agent.id)
+        await RitualService().attest_for_issue(
+            ritual=review_close_ritual, issue_id=test_issue.id, user_id=agent.id, note="done",
+        )
+        # A rejection that is somehow still outstanding next to a live
+        # attestation (an attest whose supersede failed) is settled, not a 409.
+        await OxydeRitualRejection.objects.create(
+            ritual_id=review_close_ritual.id, issue_id=test_issue.id, note="stale",
+        )
+        resp = await _reject(client, auth_headers, review_close_ritual, test_issue, note="fresh")
+        assert resp.status_code == 200, resp.text
+        assert await RitualService().outstanding_rejection(review_close_ritual.id, test_issue.id) is not None
+        assert await OxydeRitualRejection.objects.filter(superseded_at=None).count() == 1
+
+    async def test_an_attester_who_no_longer_exists_is_not_a_500(
+        self, client, auth_headers, test_issue, agent, review_close_ritual, monkeypatch,
+    ):
+        """Finding 5: in a migrated database attestations.attested_by has
+        no foreign key (0017) and this table's column does; a dangling
+        attester is recorded as unknown. The test schema is built from the
+        models, which do declare that key, so the dangling id is served by
+        the read instead of written."""
+        with pytest.raises(TicketRitualsError):
+            await _try_close(test_issue, agent.id)
+        await RitualService().attest_for_issue(
+            ritual=review_close_ritual, issue_id=test_issue.id, user_id=agent.id, note="done",
+        )
+        real = RitualService.get_issue_attestation
+
+        async def dangling(self, ritual_id, issue_id):
+            att = await real(self, ritual_id, issue_id)
+            if att is not None:
+                att.attested_by = "ghost-user-id"
+            return att
+
+        monkeypatch.setattr(RitualService, "get_issue_attestation", dangling)
+
+        resp = await _reject(client, auth_headers, review_close_ritual, test_issue, note="who?")
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["attested_by"] is None
+        assert resp.json()["attestation_note"] == "done"
+
+    async def test_reattesting_settles_the_attesters_rejected_entry(
+        self, client, auth_headers, test_issue, agent, owner, review_close_ritual,
+    ):
+        """Finding 4: the attester's GATE_REJECTED entry is resolved once
+        the rejection is answered."""
+        with pytest.raises(TicketRitualsError):
+            await _try_close(test_issue, agent.id)
+        service = RitualService()
+        await service.attest_for_issue(ritual=review_close_ritual, issue_id=test_issue.id, user_id=agent.id, note="1")
+        await _reject(client, auth_headers, review_close_ritual, test_issue)
+        unread = await _entries(test_issue, InboxEntryKind.GATE_REJECTED, read_at=None)
+        assert {e.recipient_user_id for e in unread} == {agent.id, owner.id}
+
+        await service.attest_for_issue(ritual=review_close_ritual, issue_id=test_issue.id, user_id=agent.id, note="2")
+
+        unread = await _entries(test_issue, InboxEntryKind.GATE_REJECTED, read_at=None)
+        assert {e.recipient_user_id for e in unread} == {owner.id}
+
+    async def test_completing_a_rejected_gate_settles_the_rejected_entry(
+        self, client, auth_headers, test_issue, agent, gate_close_ritual,
+    ):
+        with pytest.raises(TicketRitualsError):
+            await _try_close(test_issue, agent.id)
+        await _reject(client, auth_headers, gate_close_ritual, test_issue)
+        resp = await client.post(
+            f"/api/rituals/{gate_close_ritual.id}/complete-issue/{test_issue.id}",
+            json={"note": "fine"}, headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert not await _entries(test_issue, InboxEntryKind.GATE_REJECTED, read_at=None, recipient_user_id=agent.id)
+        assert not await _entries(test_issue, InboxEntryKind.GATE_PENDING, read_at=None)
+
+    async def test_a_ritual_from_another_project_is_refused(
+        self, client, auth_headers, test_team, test_issue, test_user,
+    ):
+        """Finding 11: the cross-project 400, same as approve."""
+        from app.oxyde_models.project import OxydeProject
+        from app.oxyde_models.ritual import OxydeRitual
+
+        other = await OxydeProject.objects.create(team_id=test_team.id, name="Other", key="OTH")
+        ritual = await OxydeRitual.objects.create(
+            project_id=other.id, name="elsewhere", prompt="?",
+            trigger=RitualTrigger.TICKET_CLOSE, approval_mode=ApprovalMode.REVIEW,
+        )
+        approve = await _approve(client, auth_headers, ritual, test_issue)
+        reject = await _reject(client, auth_headers, ritual, test_issue)
+        assert approve.status_code == reject.status_code == 400
+        assert "does not belong" in reject.json()["detail"]
 
 
 async def test_deleting_the_issue_removes_its_rejections(client, auth_headers, test_issue, agent, gate_close_ritual):

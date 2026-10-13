@@ -27,6 +27,7 @@ from app.oxyde_models.issue import (
 )
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
+from app.oxyde_models.ritual import OxydeRitualRejection
 from app.oxyde_models.sprint import OxydeSprint
 from app.enums import IssueStatus, ActivityType, IssueRelationType
 from app.enums import UnestimatedHandling
@@ -117,8 +118,14 @@ class TicketRitualsError(Exception):
     attestable and what only a human can do, is built by the API layer.
     """
 
-    def __init__(self, issue_id: str, pending_rituals: list[dict] | None = None, rituals=None, issue_pk: str | None = None):
+    def __init__(
+        self, issue_id: str, pending_rituals: list[dict] | None = None, rituals=None,
+        issue_pk: str | None = None, answered_rejection_ids: set[str] | None = None,
+    ):
         self.issue_id = issue_id
+        # Rejections this very attempt answered by asking again (CHT-1606):
+        # already marked superseded, but the refusal still shows them.
+        self.answered_rejection_ids = set(answered_rejection_ids or ())
         self.rituals = list(rituals or [])
         self.pending_rituals = pending_rituals if pending_rituals is not None else [
             {"name": r.name, "prompt": r.prompt} for r in self.rituals
@@ -162,8 +169,14 @@ class ClaimRitualsError(Exception):
     attestable and what only a human can do, is built by the API layer.
     """
 
-    def __init__(self, issue_id: str, pending_rituals: list[dict] | None = None, rituals=None, issue_pk: str | None = None):
+    def __init__(
+        self, issue_id: str, pending_rituals: list[dict] | None = None, rituals=None,
+        issue_pk: str | None = None, answered_rejection_ids: set[str] | None = None,
+    ):
         self.issue_id = issue_id
+        # Rejections this very attempt answered by asking again (CHT-1606):
+        # already marked superseded, but the refusal still shows them.
+        self.answered_rejection_ids = set(answered_rejection_ids or ())
         self.rituals = list(rituals or [])
         self.pending_rituals = pending_rituals if pending_rituals is not None else [
             {"name": r.name, "prompt": r.prompt} for r in self.rituals
@@ -595,8 +608,12 @@ class IssueService:
             )
 
         gate_rituals = [r for r in newly_blocked_rituals if r.approval_mode == ApprovalMode.GATE]
+        answered_rejection_ids: set[str] = set()
         try:
-            gate_rituals += await self._rejected_gates_asked_again(issue, pending_rituals, gate_rituals)
+            again, answered_rejection_ids = await self._rejected_gates_asked_again(
+                issue, pending_rituals, gate_rituals,
+            )
+            gate_rituals += again
         except Exception:
             logger.exception(
                 "Failed to check rejected gates for issue=%s", issue.id,
@@ -609,30 +626,48 @@ class IssueService:
                     "Failed to fan out gate-pending inbox/email for issue=%s", issue.id,
                 )
 
-        raise error_class(issue.identifier, rituals=pending_rituals, issue_pk=issue.id)
+        raise error_class(
+            issue.identifier, rituals=pending_rituals, issue_pk=issue.id,
+            answered_rejection_ids=answered_rejection_ids,
+        )
 
-    async def _rejected_gates_asked_again(self, issue, pending_rituals: list, already: list) -> list:
+    async def _rejected_gates_asked_again(
+        self, issue, pending_rituals: list, already: list,
+    ) -> tuple[list, set[str]]:
         """GATE rituals a human rejected that the requester is now asking
-        for again (CHT-1606).
+        for again (CHT-1606), and the ids of the rejections this attempt
+        answers.
 
         A reject keeps the request's blocker open under the same intent,
         so asking again adds no new blocker and would notify nobody: the
-        approvers' entries were resolved by the reject. These are the
-        rituals to notify about again. Every rejection of a gate being
-        notified about here (newly blocked or asked again) is marked
-        answered, so the next attempt does not re-notify.
+        approvers' entries were resolved by the reject. The rituals
+        returned are the ones to notify about again. Every rejection of
+        a gate being notified about here (newly blocked or asked again) is
+        marked answered, so the next attempt does not re-notify; its id is
+        returned so the refusal for *this* attempt still shows the reason
+        (PR #353 review finding 1).
+
+        One query for the issue's outstanding rejections, then one update
+        per gate that has one; nothing else when nothing was rejected.
         """
-        ritual_service = RitualService()
+        outstanding = await OxydeRitualRejection.objects.filter(
+            issue_id=issue.id, superseded_at=None,
+        ).all()
+        if not outstanding:
+            return [], set()
+        rejected_ritual_ids = {r.ritual_id for r in outstanding}
         already_ids = {r.id for r in already}
         again = [
             r for r in pending_rituals
             if r.approval_mode == ApprovalMode.GATE
             and r.id not in already_ids
-            and await ritual_service.outstanding_rejection(r.id, issue.id) is not None
+            and r.id in rejected_ritual_ids
         ]
-        for ritual in [*already, *again]:
-            await ritual_service.supersede_rejections(ritual.id, issue.id)
-        return again
+        answered_ritual_ids = {r.id for r in [*already, *again]} & rejected_ritual_ids
+        ritual_service = RitualService()
+        for ritual_id in answered_ritual_ids:
+            await ritual_service.supersede_rejections(ritual_id, issue.id)
+        return again, {r.id for r in outstanding if r.ritual_id in answered_ritual_ids}
 
     async def _notify_gate_pending(self, issue, requester_id: str, gate_rituals: list) -> None:
         """CHT-1250/CHT-1251: a GATE ritual just became blocking on

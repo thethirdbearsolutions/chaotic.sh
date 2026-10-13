@@ -381,18 +381,42 @@ class InboxService:
             )
             await self._broadcast(team_id, "created", entry)
 
-    async def resolve_gate_or_review(self, *, ritual_id: str, issue_id: str) -> int:
+    async def resolve_gate_or_review(
+        self, *, ritual_id: str, issue_id: str, recipient_user_id: str | None = None,
+    ) -> int:
         """Mark every open GATE_PENDING/REVIEW_REQUESTED entry for this
         (ritual, issue) as read, for every recipient -- the underlying
         gate/review was just resolved, so it's no longer 'awaiting'
         anyone. Best-effort: called from a fail-soft try/except at the
         call site, same as the other post-resolution side effects there.
+
+        With `recipient_user_id`, only that recipient's entries: a gate
+        reject settles the rejecter's prompt while the gate stays pending
+        for the other approvers (CHT-1606).
         """
         now = datetime.now(timezone.utc)
-        return await OxydeInboxEntry.objects.filter(
+        filters = dict(
             ritual_id=ritual_id, issue_id=issue_id, read_at=None,
             kind__in=[InboxEntryKind.GATE_PENDING.name, InboxEntryKind.REVIEW_REQUESTED.name],
-        ).update(read_at=now)
+        )
+        if recipient_user_id is not None:
+            filters["recipient_user_id"] = recipient_user_id
+        return await OxydeInboxEntry.objects.filter(**filters).update(read_at=now)
+
+    async def resolve_rejected(
+        self, *, ritual_id: str, issue_id: str, recipient_user_ids: list[str],
+    ) -> int:
+        """Mark the open GATE_REJECTED entries of these recipients for this
+        (ritual, issue) as read: they answered the rejection (attested or
+        asked again), or a human completed the gate anyway (CHT-1606).
+        """
+        if not recipient_user_ids:
+            return 0
+        return await OxydeInboxEntry.objects.filter(
+            ritual_id=ritual_id, issue_id=issue_id, read_at=None,
+            kind=InboxEntryKind.GATE_REJECTED.name,
+            recipient_user_id__in=list(recipient_user_ids),
+        ).update(read_at=datetime.now(timezone.utc))
 
     # ------------------------------------------------------------------
     # Readers
