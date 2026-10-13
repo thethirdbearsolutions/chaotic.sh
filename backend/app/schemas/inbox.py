@@ -1,7 +1,7 @@
 """Inbox schemas (CHT-1250)."""
 from typing import ClassVar
 from pydantic import BaseModel, ConfigDict, field_validator
-from app.enums import InboxEntryKind
+from app.enums import InboxActionKind, InboxActionNote, InboxEntryKind, InboxEntryState
 from app.schemas.principal import HasPrincipals, PrincipalSummary
 from app.utils import DateTimeUTC
 
@@ -16,6 +16,19 @@ def _coerce_enum(enum_cls, v):
         except KeyError:
             return enum_cls(v)  # by value: "gate_pending"
     return v
+
+
+class InboxEntryAction(BaseModel):
+    """One call the recipient can make on this entry, spelled out so a
+    client (and a notification button) never builds a URL (CHT-1607).
+    `path` is absolute from the server root and already carries the ids;
+    send the request with the user's own credentials. `note` says whether
+    the JSON body takes {"note": "..."}."""
+
+    kind: InboxActionKind
+    method: str = "POST"
+    path: str
+    note: InboxActionNote = InboxActionNote.NONE
 
 
 class InboxEntryResponse(HasPrincipals, BaseModel):
@@ -41,6 +54,14 @@ class InboxEntryResponse(HasPrincipals, BaseModel):
     body: str | None = None
     created_at: DateTimeUTC
     read_at: DateTimeUTC | None = None
+    # Sync fields (CHT-1607). `state` is derived from the timestamps: a
+    # RESOLVED or ARCHIVED entry is a tombstone a syncing device drops.
+    archived_at: DateTimeUTC | None = None
+    resolved_at: DateTimeUTC | None = None
+    updated_at: DateTimeUTC
+    state: InboxEntryState = InboxEntryState.OPEN
+    # What the recipient can do about it in one call; empty on a tombstone.
+    actions: list[InboxEntryAction] = []
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,6 +69,20 @@ class InboxEntryResponse(HasPrincipals, BaseModel):
     @classmethod
     def coerce_kind(cls, v):
         return _coerce_enum(InboxEntryKind, v)
+
+
+class InboxSyncResponse(BaseModel):
+    """One page of GET /inbox/sync (CHT-1607).
+
+    Store `next_cursor` and send it back as `since` next time; while
+    `has_more` is true, fetch again at once. `team_ids` are the teams the
+    user can read now: drop any held entry whose team is not in it (left
+    or deleted teams send no tombstones)."""
+
+    entries: list[InboxEntryResponse]
+    next_cursor: str | None = None
+    has_more: bool = False
+    team_ids: list[str]
 
 
 class MarkAllReadResponse(BaseModel):

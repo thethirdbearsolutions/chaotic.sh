@@ -171,6 +171,30 @@ class InboxEntryKind(str, Enum):
     GATE_REJECTED = "gate_rejected"        # A human rejected this user's (or their agent's) gate request or review attestation (CHT-1606)
 
 
+class InboxEntryState(str, Enum):
+    """Where an inbox entry stands, for a syncing client (CHT-1607).
+    Derived from the entry's timestamps, never stored. A RESOLVED or
+    ARCHIVED entry is a tombstone: the device drops it."""
+    OPEN = "open"            # Still in the inbox (read or not)
+    RESOLVED = "resolved"    # What it asked for was settled elsewhere: the gate completed, the review decided, the rejection answered
+    ARCHIVED = "archived"    # The recipient archived it
+
+
+class InboxActionKind(str, Enum):
+    """A one-call action an inbox entry offers its recipient (CHT-1607)."""
+    APPROVE = "approve"      # Complete a GATE, or approve a REVIEW attestation
+    REJECT = "reject"        # Send a GATE request or REVIEW attestation back, with a note (CHT-1606)
+    MARK_READ = "mark_read"
+    ARCHIVE = "archive"
+
+
+class InboxActionNote(str, Enum):
+    """Whether an inbox action takes a `note` in its JSON body."""
+    NONE = "none"            # Send no body
+    OPTIONAL = "optional"    # Send {} or {"note": "..."}
+    REQUIRED = "required"    # Send {"note": "..."}; an empty note is refused
+
+
 # --- Agent identity enums (CHT-1497) ---
 
 class AgentKind(str, Enum):

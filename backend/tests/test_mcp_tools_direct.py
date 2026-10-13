@@ -1152,6 +1152,8 @@ class TestNoLeakedEnumNames:
         # currently hold enum NAMES on every transport, HTTP included --
         # a pre-existing leak, tracked separately, not this sweep's business.
         "old_value", "new_value",
+        # an inbox entry action's HTTP method ("POST", CHT-1607)
+        "method",
     }
     # "BACKLOG" (the enum NAME) and "IssueStatus.BACKLOG" (str() of a
     # member -- a third form that reached production once already; the

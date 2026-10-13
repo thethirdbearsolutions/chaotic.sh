@@ -7,7 +7,9 @@ can never drift from the activity log / websocket feeds it's derived from.
 """
 import uuid
 from datetime import datetime, timezone
-from app.utils.datetimes import DateTimeUTC
+from pydantic import field_validator
+
+from app.utils.datetimes import DateTimeUTC, ensure_utc
 from oxyde import Model, Field, Index
 from app.enums import InboxEntryKind
 from app.oxyde_models.enums import DbEnum
@@ -34,6 +36,29 @@ class OxydeInboxEntry(Model):
     # A real archive (CHT-1316): archived entries drop out of the inbox list
     # + unread count entirely, instead of piggybacking on read-state.
     archived_at: DateTimeUTC | None = Field(default=None)
+    # What the entry asked for was settled elsewhere (CHT-1607): the gate
+    # was completed, the review approved or rejected, the rejection
+    # answered. Distinct from read_at, which the recipient sets by reading;
+    # a syncing client drops a resolved entry.
+    resolved_at: DateTimeUTC | None = Field(default=None)
+    # Bumped by every change a syncing client must see: created, read,
+    # archived, resolved (CHT-1607). The sync cursor orders on
+    # (updated_at, id). Every writer of the columns above sets it too.
+    # The db_default exists only so migration 0027 could add the column NOT
+    # NULL to a table with rows (SQLite needs a constant); the migration
+    # backfills every row, and every insert sets the Python default.
+    # Typed plain `datetime` because pydantic folds an Annotated type's
+    # metadata into a plain FieldInfo, which drops Oxyde's db_default; the
+    # validator below does what DateTimeUTC would.
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        db_default="'1970-01-01 00:00:00'",
+    )
+
+    @field_validator("updated_at", mode="before")
+    @classmethod
+    def _updated_at_utc(cls, v):
+        return ensure_utc(v)
 
     class Meta:
         is_table = True
@@ -45,4 +70,9 @@ class OxydeInboxEntry(Model):
             # keeps them across a table rebuild (CHT-1410).
             Index(("recipient_user_id",), name="inbox_entries_recipient_user_id_idx"),
             Index(("team_id",), name="inbox_entries_team_id_idx"),
+            # The sync scan (CHT-1607): one recipient's entries in cursor order.
+            Index(
+                ("recipient_user_id", "updated_at", "id"),
+                name="inbox_entries_recipient_updated_idx",
+            ),
         ]
