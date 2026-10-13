@@ -296,6 +296,7 @@ export function renderTicketRitualActions(ritual, issueId) {
         return `
             <span class="text-warning">Awaiting approval</span>
             <button class="btn btn-small btn-primary" data-action="approve-ticket-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}">Approve</button>
+            <button class="btn btn-small btn-secondary" data-action="reject-ticket-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}">Reject</button>
         `;
     }
 
@@ -373,6 +374,56 @@ export async function approveTicketRitual(ritualId, issueId) {
     }
 }
 
+/**
+ * The rejection a human has not seen answered yet (CHT-1606): shown on a
+ * pending ritual so the attester reads why before trying again.
+ */
+export function renderOutstandingRejection(rejection) {
+    if (!rejection || rejection.superseded_at) return '';
+    const who = escapeHtml(rejection.rejected_by_name || 'Someone');
+    return `<div class="ticket-ritual-rejection"><strong>Rejected by ${who}:</strong> ${escapeHtml(rejection.note || '')}</div>`;
+}
+
+/**
+ * Reject a ticket's GATE request or REVIEW attestation with a required
+ * reason (CHT-1606). `onRejected` reloads whichever view opened it.
+ */
+export function showRejectTicketRitualModal(ritualId, issueId, ritualName, onRejected = null) {
+    document.getElementById('modal-title').textContent = `Reject: ${ritualName}`;
+    document.getElementById('modal-content').innerHTML = `
+        <form id="reject-ticket-ritual-form">
+            <p class="ritual-prompt-hint">The gate stays pending and the ticket does not move. The attester is told why and can try again.</p>
+            <div class="form-group">
+                <label for="reject-ritual-note">Reason (required)</label>
+                <textarea id="reject-ritual-note" placeholder="What has to change before this can pass?" required></textarea>
+            </div>
+            <button type="submit" class="btn btn-danger">Reject</button>
+        </form>
+    `;
+    document.getElementById('reject-ticket-ritual-form').addEventListener('submit', (event) => {
+        handleRejectTicketRitual(event, ritualId, issueId, ritualName, onRejected);
+    });
+    showModal();
+}
+
+export async function handleRejectTicketRitual(event, ritualId, issueId, ritualName, onRejected = null) {
+    event.preventDefault();
+    const note = document.getElementById('reject-ritual-note').value.trim();
+    if (!note) {
+        showToast('A rejection needs a reason.', 'error');
+        return false;
+    }
+    try {
+        await api.rejectTicketRitual(ritualId, issueId, note);
+        showToast(`"${ritualName}" rejected. The attester has been told why.`, 'success');
+        closeModal();
+        if (onRejected) await onRejected();
+    } catch (e) {
+        showApiError('reject ritual', e);
+    }
+    return false;
+}
+
 export function showCompleteTicketRitualModal(ritualId, issueId, ritualName, artifact = '') {
     document.getElementById('modal-title').textContent = `Complete: ${ritualName}`;
     document.getElementById('modal-content').innerHTML = `
@@ -416,6 +467,11 @@ registerActions({
     },
     'approve-ticket-ritual': (_event, data) => {
         approveTicketRitual(data.ritualId, data.issueId);
+    },
+    'reject-ticket-ritual': (_event, data) => {
+        showRejectTicketRitualModal(
+            data.ritualId, data.issueId, data.ritualName, () => loadTicketRituals(data.issueId),
+        );
     },
     'complete-ticket-ritual': (_event, data) => {
         showCompleteTicketRitualModal(data.ritualId, data.issueId, data.ritualName, data.ritualArtifact || '');

@@ -94,6 +94,7 @@ vi.mock('./mention-autocomplete.js', () => ({
 
 vi.mock('./rituals-view.js', () => ({
     renderTicketRitualActions: vi.fn(() => ''),
+    renderOutstandingRejection: vi.fn((r) => (r && !r.superseded_at ? `REJECTION:${r.note}` : '')),
 }));
 
 vi.mock('./state.js', async (importOriginal) => {
@@ -305,6 +306,13 @@ describe('issue-detail-view', () => {
             const result = formatActivityText(activity);
             expect(result).toContain('&lt;script&gt;');
             expect(result).not.toContain(xss);
+        });
+
+        it('formats ritual_rejected with the ritual and the reason (CHT-1606)', () => {
+            const text = formatActivityText({ activity_type: 'ritual_rejected', field_name: 'code-review', new_value: 'No tests' });
+            expect(text).toContain('Rejected <strong>code-review</strong>');
+            expect(text).toContain('title="No tests"');
+            expect(getActivityIcon('ritual_rejected')).toBe('⛔');
         });
 
         it('escapes field_name in ritual_attested (XSS)', () => {

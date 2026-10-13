@@ -14,7 +14,7 @@ import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtm
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
-import { renderTicketRitualActions } from './rituals-view.js';
+import { renderTicketRitualActions, renderOutstandingRejection } from './rituals-view.js';
 import { showDetailDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { registerActions } from './event-delegation.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
@@ -116,6 +116,7 @@ export function getActivityIcon(type) {
         'doc_commented': '💬',
         // Ritual activities (CHT-673)
         'ritual_attested': '✅',
+        'ritual_rejected': '⛔',
     };
     return icons[type] || '•';
 }
@@ -201,6 +202,16 @@ export function formatActivityText(activity) {
             return notePreview
                 ? `<span class="activity-attestation-link" title="${notePreview}">Attested to <strong>${ritualName}</strong></span>`
                 : `Attested to <strong>${ritualName}</strong>`;
+        }
+        case 'ritual_rejected': {
+            // CHT-1606: the ritual in field_name, the reason in new_value.
+            const ritualName = escapeHtml(activity.field_name || 'ritual');
+            const reason = activity.new_value
+                ? escapeAttr(activity.new_value.substring(0, 200)) + (activity.new_value.length > 200 ? '...' : '')
+                : '';
+            return reason
+                ? `<span class="activity-attestation-link" title="${reason}">Rejected <strong>${ritualName}</strong></span>`
+                : `Rejected <strong>${ritualName}</strong>`;
         }
         case 'updated':
             // Generic update - show field if available
@@ -335,6 +346,7 @@ export function renderTicketRituals(issueId) {
                             <span class="badge badge-ritual-${r.approval_mode || 'auto'}">${r.approval_mode || 'auto'}</span>
                         </div>
                         <div class="ticket-ritual-prompt markdown-body">${r.prompt ? renderMarkdown(r.prompt) : ''}</div>
+                        ${r.attestation ? '' : renderOutstandingRejection(r.last_rejection)}
                         ${r.attestation ? `
                             <div class="ticket-ritual-attestation">
                                 <span class="attestation-by">Attested by ${escapeHtml(r.attestation.attested_by_name || 'Unknown')}</span>

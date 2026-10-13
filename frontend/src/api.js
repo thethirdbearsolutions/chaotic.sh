@@ -449,6 +449,12 @@ export class ApiClient {
         return this.request('POST', `/rituals/${ritualId}/approve-issue/${issueId}`, {});
     }
 
+    // CHT-1606: send a ticket's GATE request or REVIEW attestation back.
+    // The reason is required; the gate stays pending.
+    async rejectTicketRitual(ritualId, issueId, note) {
+        return this.request('POST', `/rituals/${ritualId}/reject-issue/${issueId}`, { note });
+    }
+
     // Documents
     async createDocument(teamId, data) {
         // CHT-1223: team_id moved from a query param to the URL path.
