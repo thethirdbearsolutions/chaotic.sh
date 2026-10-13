@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from .oxyde_files import OxydeFile, leave_wal_mode
+
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 MIGRATION = MIGRATIONS_DIR / "0019_authorship_fks_set_null.py"
 NOW = "2026-10-13T00:00:00+00:00"
@@ -49,6 +51,7 @@ def _migrate(path: str, target: str | None = None) -> None:
         import app.oxyde_models  # noqa: F401
         try:
             await apply_migrations(migrations_dir=str(MIGRATIONS_DIR), target=target)
+            await leave_wal_mode()  # the tests read and write it with sqlite3 next
         finally:
             await disconnect_all()
 
@@ -181,22 +184,34 @@ def test_downgrade_restores_cascade_without_touching_rows(at_0018):
     _migrate(at_0018)
     before = _counts(at_0018)
 
-    class _Ctx:
-        _mode = "execute"
-        dialect = "sqlite"
-
-        def __init__(self, path):
-            self._db_conn = type("Conn", (), {"url": f"sqlite:///{path}"})()
-            self.statements: list[str] = []
-
-        def execute(self, sql):
-            self.statements.append(sql)
-
     ctx = _Ctx(at_0018)
-    _load_migration().downgrade(ctx)
+    try:
+        _load_migration().downgrade(ctx)
+    finally:
+        ctx.close()
     _run_in_one_transaction(at_0018, ctx.statements)
     assert set(_on_delete(at_0018).values()) == {"CASCADE"}
     assert _counts(at_0018) == before
+
+
+class _Ctx:
+    """A migration context that collects SQL instead of running it, over a
+    real Oxyde connection to `path`: 0019 reads the CREATE text it
+    rewrites through that connection, as it does under the executor."""
+
+    _mode = "execute"
+    dialect = "sqlite"
+
+    def __init__(self, path):
+        self._file = OxydeFile(path)
+        self._db_conn = self._file.database
+        self.statements: list[str] = []
+
+    def execute(self, sql):
+        self.statements.append(sql)
+
+    def close(self):
+        self._file.close()
 
 
 def _run_in_one_transaction(path: str, statements: list[str]) -> None:
@@ -222,19 +237,11 @@ def test_a_rewrite_that_misses_fails_the_transaction_and_changes_nothing(at_0018
     module = _load_migration()
     monkeypatch.setattr(module, "rewrite_create_table", lambda sql, column, action: sql)
 
-    class _Ctx:
-        _mode = "execute"
-        dialect = "sqlite"
-
-        def __init__(self, path):
-            self._db_conn = type("Conn", (), {"url": f"sqlite:///{path}"})()
-            self.statements: list[str] = []
-
-        def execute(self, sql):
-            self.statements.append(sql)
-
     ctx = _Ctx(at_0018)
-    module.upgrade(ctx)
+    try:
+        module.upgrade(ctx)
+    finally:
+        ctx.close()
     with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
         _run_in_one_transaction(at_0018, ctx.statements)
     assert set(_on_delete(at_0018).values()) == {"CASCADE"}

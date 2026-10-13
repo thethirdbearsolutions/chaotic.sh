@@ -36,13 +36,18 @@ def _build_schema_template(path: str) -> None:
 
     Oxyde's registry is process-global: the builder registers `default`
     with overwrite=True and tears everything down with disconnect_all().
-    That is only safe because it runs before any test has registered a
-    connection (the template is a session fixture the `db` fixture depends
-    on); a test that registers its own connection without going through
-    `db` must call disconnect_all() itself, as test_bootstrap_empty_db does.
+    So no Oxyde connection may be live in the process when it is called:
+    the session fixture runs it before the first `db` test, and the guard
+    in test_one_sqlite_per_file calls it from a test that uses no `db`
+    (apply_migrations() only migrates `default`, so it cannot have a pool
+    name of its own). A test that registers its own connection without
+    going through `db` must call disconnect_all() itself, as
+    test_bootstrap_empty_db does.
     """
     import asyncio
     import threading
+
+    from .oxyde_files import leave_wal_mode
 
     async def _apply():
         from oxyde import AsyncDatabase, PoolSettings, disconnect_all
@@ -53,6 +58,11 @@ def _build_schema_template(path: str) -> None:
         import app.oxyde_models  # noqa: F401 -- register models before migrating
         try:
             await apply_migrations(migrations_dir=_MIGRATIONS_DIR)
+            # Every test copies this file with Python's sqlite3, a second
+            # SQLite library, and Oxyde's close can still be running when
+            # disconnect_all() returns. Out of WAL mode there is no -shm or
+            # -wal for the two to fight over (CHT-1491; tests/oxyde_files.py).
+            await leave_wal_mode()
         finally:
             await disconnect_all()
 
@@ -80,8 +90,9 @@ def schema_template(tmp_path_factory) -> str:
 
 
 def _copy_database(src: str, dst: str) -> None:
-    """Snapshot `src` into `dst` through SQLite's backup API, so a WAL left by
-    the builder is folded in rather than copied alongside."""
+    """Snapshot `src` into `dst` through SQLite's backup API. `src` is the
+    template, which the builder leaves in rollback-journal mode, so this
+    second SQLite library never meets a WAL that Oxyde has open."""
     import sqlite3
     from contextlib import closing
 
