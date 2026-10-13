@@ -127,6 +127,50 @@ async def test_refusal_reports_counts_and_keeps_keys(test_user, test_team, test_
 
 
 @pytest.mark.asyncio
+async def test_refusal_counts_every_attribution_the_agent_would_lose(
+    test_user, test_team, test_project, test_sprint, test_issue, test_document, make_ritual,
+):
+    """Not only the cascading columns: attestations, approvals, budget
+    transactions and revisions are SET NULL and would lose the agent too."""
+    from app.oxyde_models.document import OxydeDocumentRevision
+    from app.oxyde_models.issue import OxydeBudgetTransaction, OxydeIssueDescriptionRevision
+    from app.oxyde_models.ritual import OxydeRitualAttestation
+
+    service = AgentService()
+    agent, _, _ = await service.create(AgentCreate(name="Attester"), test_user, test_team.id)
+    ritual = await make_ritual()
+    await OxydeRitualAttestation.objects.create(ritual_id=ritual.id, issue_id=test_issue.id, attested_by=agent.id)
+    await OxydeRitualAttestation.objects.create(
+        ritual_id=ritual.id, sprint_id=test_sprint.id, attested_by=test_user.id, approved_by=agent.id,
+    )
+    await OxydeBudgetTransaction.objects.create(
+        sprint_id=test_sprint.id, issue_id=test_issue.id, user_id=agent.id, points=1,
+        issue_identifier=test_issue.identifier, issue_title="t", sprint_name="s",
+    )
+    # Snapshots of the current bodies, so the revision-history check at
+    # teardown (CHT-1340) holds.
+    await OxydeIssueDescriptionRevision.objects.create(
+        issue_id=test_issue.id, version=99, description=test_issue.description, author_id=agent.id,
+    )
+    await OxydeDocumentRevision.objects.create(
+        document_id=test_document.id, version=99, title=test_document.title, content=test_document.content,
+        author_id=agent.id,
+    )
+
+    with pytest.raises(AgentHasAuthoredContentError) as refused:
+        await service.delete(agent)
+
+    counts = refused.value.counts
+    assert counts["ritual attestations"] == 1
+    assert counts["ritual approvals"] == 1
+    assert counts["budget transactions"] == 1
+    assert counts["issue description revisions"] == 1
+    assert counts["document revisions"] == 1
+    assert counts["issues"] == 0
+    assert await service.get_by_id(agent.id) is not None
+
+
+@pytest.mark.asyncio
 async def test_an_agent_that_authored_nothing_is_deleted(client, auth_headers, test_user, test_team):
     service = AgentService()
     agent, _, _ = await service.create(AgentCreate(name="Idle"), test_user, test_team.id)

@@ -292,6 +292,24 @@ SQLALCHEMY_ISSUES = (
             "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE)",
             "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE)",
         ),
+        (  # "NOT NULL" inside a string literal is data, not a constraint
+            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL DEFAULT 'NOT NULL' "
+            "REFERENCES users(id) ON DELETE CASCADE)",
+            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT DEFAULT 'NOT NULL' "
+            "REFERENCES users(id) ON DELETE SET NULL)",
+        ),
+        (  # ... and inside a CHECK expression it is part of the expression
+            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL CHECK (creator_id IS NOT NULL), "
+            "FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE CASCADE)",
+            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT CHECK (creator_id IS NOT NULL), "
+            "FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE SET NULL)",
+        ),
+        (  # ... and inside a comment it is prose
+            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT /* NOT NULL */ NOT NULL "
+            "REFERENCES users(id) ON DELETE CASCADE)",
+            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT /* NOT NULL */ "
+            "REFERENCES users(id) ON DELETE SET NULL)",
+        ),
         (  # no foreign key at all: nothing to set null, so NOT NULL stays
             "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL)",
             "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL)",

@@ -6,8 +6,14 @@ import uuid
 from oxyde import atomic
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.api_key import OxydeAPIKey
-from app.oxyde_models.document import OxydeDocument, OxydeDocumentActivity, OxydeDocumentComment
-from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity, OxydeIssueComment, OxydeTicketLimbo
+from app.oxyde_models.document import (
+    OxydeDocument, OxydeDocumentActivity, OxydeDocumentComment, OxydeDocumentRevision,
+)
+from app.oxyde_models.issue import (
+    OxydeBudgetTransaction, OxydeIssue, OxydeIssueActivity, OxydeIssueComment,
+    OxydeIssueDescriptionRevision, OxydeTicketLimbo,
+)
+from app.oxyde_models.ritual import OxydeRitualAttestation
 from app.schemas.agent import AgentCreate, AgentUpdate
 from app.services.api_key_service import APIKeyService
 from app.schemas.api_key import APIKeyCreate
@@ -113,7 +119,9 @@ class AgentService:
         return await OxydeUser.objects.join("parent_user").filter(id=agent.id).first()
 
     async def authored_counts(self, agent_id: str) -> dict[str, int]:
-        """How many records name this agent as their author."""
+        """How many records attribute something to this agent: every
+        column that would lose the attribution (or, for ritual gate
+        requests, the row) if the agent were deleted."""
         return {
             "issues": await OxydeIssue.objects.filter(creator_id=agent_id).count(),
             "issue comments": await OxydeIssueComment.objects.filter(author_id=agent_id).count(),
@@ -122,6 +130,12 @@ class AgentService:
             "document comments": await OxydeDocumentComment.objects.filter(author_id=agent_id).count(),
             "document activity entries": await OxydeDocumentActivity.objects.filter(user_id=agent_id).count(),
             "ritual gate requests": await OxydeTicketLimbo.objects.filter(requested_by_id=agent_id).count(),
+            # SET NULL already, but each still loses its attribution.
+            "ritual attestations": await OxydeRitualAttestation.objects.filter(attested_by=agent_id).count(),
+            "ritual approvals": await OxydeRitualAttestation.objects.filter(approved_by=agent_id).count(),
+            "budget transactions": await OxydeBudgetTransaction.objects.filter(user_id=agent_id).count(),
+            "issue description revisions": await OxydeIssueDescriptionRevision.objects.filter(author_id=agent_id).count(),
+            "document revisions": await OxydeDocumentRevision.objects.filter(author_id=agent_id).count(),
         }
 
     async def delete(self, agent: OxydeUser) -> None:

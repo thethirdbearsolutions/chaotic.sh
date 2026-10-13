@@ -67,6 +67,59 @@ TARGETS = [
 _ACTION = r"(?:SET\s+NULL|SET\s+DEFAULT|CASCADE|RESTRICT|NO\s+ACTION)"
 _ON_DELETE = re.compile(r"\bON\s+DELETE\s+" + _ACTION, re.IGNORECASE)
 _NOT_NULL = re.compile(r"\s*\bNOT\s+NULL\b(?:\s+ON\s+CONFLICT\s+\w+)?", re.IGNORECASE)
+
+
+def _top_level_mask(text: str) -> list[bool]:
+    """For each character of a column definition, whether it is plain
+    top-level text: not inside a string literal, a quoted identifier,
+    parentheses (a CHECK or DEFAULT expression, a type's size) or a
+    comment."""
+    mask = [False] * len(text)
+    depth, i, n = 0, 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch in "'\"`[":
+            close = "]" if ch == "[" else ch
+            j = i + 1
+            while j < n:
+                if text[j] == close:
+                    if close != "]" and j + 1 < n and text[j + 1] == close:
+                        j += 2  # doubled quote: an escaped quote character
+                        continue
+                    break
+                j += 1
+            i = j + 1
+            continue
+        if text.startswith("--", i):
+            end = text.find("\n", i)
+            i = n if end == -1 else end
+            continue
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif depth == 0:
+            mask[i] = True
+        i += 1
+    return mask
+
+
+def _strip_not_null(text: str) -> str:
+    """Remove the column's own NOT NULL constraint(s) from `text`, leaving
+    any "NOT NULL" inside a literal, an expression or a comment alone."""
+    mask = _top_level_mask(text)
+    pieces, cursor = [], 0
+    for match in _NOT_NULL.finditer(text):
+        keyword = match.start() + len(match.group(0)) - len(match.group(0).lstrip())
+        if all(mask[keyword:match.end()]):
+            pieces.append(text[cursor:match.start()])
+            cursor = match.end()
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 _IDENT = r"""(?:"(?:[^"]|"")+"|`[^`]+`|\[[^\]]+\]|'[^']+'|[A-Za-z_][A-Za-z0-9_$]*)"""
 _REFERENCES_USERS = re.compile(
     r"\bREFERENCES\s+(?P<table>" + _IDENT + r")\s*(?:\(\s*" + _IDENT + r"\s*\))?",
@@ -143,7 +196,7 @@ def _rewrite_definition(definition: str, column: str, action: str) -> str | None
         # Only the column-constraint part before REFERENCES can carry the
         # column's own NOT NULL.
         before, after = rewritten[: ref.start()], rewritten[ref.start():]
-        rewritten = _NOT_NULL.sub("", before) + after
+        rewritten = _strip_not_null(before) + after
     return rewritten
 
 
@@ -157,7 +210,7 @@ def _drop_column_not_null(definition: str, column: str) -> str | None:
     lead = _LEADING_IDENT.match(definition)
     if not lead or _unquote(lead.group("name")) != column:
         return None
-    return _NOT_NULL.sub("", definition)
+    return _strip_not_null(definition)
 
 
 def rewrite_create_table(sql: str, column: str, action: str) -> str:
