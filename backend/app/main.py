@@ -21,7 +21,7 @@ from app.mcp_server.tools import ALL_TOOLS, toolset_fingerprint
 from app.oauth.cors import OAuthAwareCORS
 from app.oauth.discovery import router as oauth_discovery_router
 from app.api.oauth import public_router as oauth_router
-from app.oauth.errors import OAuthHTTPError, oauth_error_handler
+from app.oauth.errors import FRAME_HEADERS, OAuthHTTPError, oauth_error_handler
 from app.version import get_version_info
 
 settings = get_settings()
@@ -193,11 +193,15 @@ def _render_index(request: Request):
     in the page so "what's live" is visible without grepping the bundle.
     """
     info = _version_info()
-    return templates.TemplateResponse(request, "index.html", {
+    response = templates.TemplateResponse(request, "index.html", {
         "asset_version": info["bundle_hash"],
         "css_version": info["css_hash"],
         "git_sha_short": info["git_sha_short"],
     })
+    # Never framed: the OAuth consent page is a route of this shell, and
+    # framing any of it invites clickjacking (CHT-1519, threat S4).
+    response.headers.update(FRAME_HEADERS)
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)

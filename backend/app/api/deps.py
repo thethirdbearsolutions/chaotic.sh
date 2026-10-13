@@ -126,3 +126,29 @@ async def get_auth_method(
 
 
 AuthMethod = Annotated[str, Depends(get_auth_method)]
+
+
+HUMAN_SESSION_REQUIRED = {
+    "error_code": "human_session_required",
+    "message": "Only a person signed in to the web app can review or approve an app's access.",
+}
+
+
+async def require_human_session(
+    user: CurrentUser,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> User:
+    """The caller is a human using their web login (I18): not an agent,
+    not an API key, not any OAuth token. Decided by the credential's
+    class (``app.auth.credentials.classify``), so a token kind added later
+    is refused unless it is a session JWT."""
+    if (
+        user.is_agent
+        or credentials is None
+        or classify(credentials.credentials) is not CredentialKind.SESSION_JWT
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(HUMAN_SESSION_REQUIRED))
+    return user
+
+
+HumanUser = Annotated[User, Depends(require_human_session)]

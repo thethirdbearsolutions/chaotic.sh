@@ -109,6 +109,19 @@ export class ApiClient {
         return this.request('GET', '/auth/me');
     }
 
+    // OAuth consent (CHT-1519)
+    async getOAuthRequest(requestId) {
+        return this.request('GET', `/oauth/requests/${encodeURIComponent(requestId)}`);
+    }
+
+    async approveOAuthRequest(requestId, choice) {
+        return this.request('POST', `/oauth/requests/${encodeURIComponent(requestId)}/approve`, choice);
+    }
+
+    async denyOAuthRequest(requestId) {
+        return this.request('POST', `/oauth/requests/${encodeURIComponent(requestId)}/deny`, {});
+    }
+
     logout() {
         this.setToken(null);
     }

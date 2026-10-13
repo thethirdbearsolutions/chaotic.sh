@@ -13,12 +13,20 @@
 import { showMainScreen, updateUserInfo } from './auth.js';
 import { getTeams, loadTeams, selectTeam } from './teams.js';
 import { showOnboarding, hasCompletedOnboarding } from './onboarding.js';
+import { consentRequestId, showConsent } from './oauth-consent.js';
 
 /**
  * Initialize the app after authentication.
  * Loads teams, selects the first team, or starts onboarding.
  */
 export async function initApp() {
+    // An app asking for access (CHT-1519): after sign-in, the consent
+    // page is all this tab shows; approving or denying leaves the app.
+    const consentId = consentRequestId(window.location.pathname);
+    if (consentId) {
+        await showConsent(consentId);
+        return;
+    }
     showMainScreen();
     updateUserInfo();
     await loadTeams();

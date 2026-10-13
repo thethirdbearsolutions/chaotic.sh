@@ -8423,3 +8423,41 @@ input[type="checkbox"] {
     background: rgba(239, 68, 68, 0.12);
     color: var(--error-color);
 }
+
+/* OAuth consent page (CHT-1519) */
+#oauth-consent-screen {
+    min-height: 100vh;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+.oauth-consent {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 48px var(--space-xl);
+}
+.oauth-consent h1 { font-size: var(--font-xl); margin-bottom: var(--space-lg); }
+.oauth-consent fieldset {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin: var(--space-lg) 0;
+    padding: var(--space-lg);
+}
+.oauth-consent legend { padding: 0 var(--space-sm); color: var(--text-secondary); }
+.oauth-consent select,
+.oauth-consent input[type="text"] { width: 100%; margin: var(--space-xs) 0; }
+.oauth-redirect-host { font-size: var(--font-xl); word-break: break-all; }
+.oauth-badge {
+    display: inline-block;
+    padding: 2px var(--space-md);
+    border-radius: var(--radius-pill);
+    font-size: var(--font-sm);
+    border: 1px solid var(--border-color);
+}
+.oauth-badge-recognized { border-color: var(--success-color); color: var(--success-color); }
+.oauth-badge-unverified { border-color: var(--warning-color); color: var(--warning-color); }
+.oauth-warning { color: var(--warning-color); }
+.oauth-muted { color: var(--text-muted); font-size: var(--font-sm); }
+.oauth-note { color: var(--text-secondary); }
+.oauth-check { display: block; margin: var(--space-xs) 0; }
+.oauth-disabled { color: var(--text-muted); }
+.oauth-actions { display: flex; justify-content: flex-end; gap: var(--space-md); }
