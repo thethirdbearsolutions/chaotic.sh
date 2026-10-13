@@ -109,6 +109,7 @@ vi.mock('./keyboard.js', () => ({
     createSidebarNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     createSimpleListNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     updateKeyboardSelection: vi.fn(),
+    isAnyDetailViewActive: vi.fn(() => false),
 }));
 vi.mock('./teams.js', () => ({
     toggleTeamDropdown: vi.fn(),
@@ -234,7 +235,7 @@ import { initIssueTooltip } from './issue-tooltip.js';
 import { closeSidebar } from './sidebar.js';
 import { hideTooltip } from './issue-tooltip.js';
 import { navigateTo, navigateToEpicByIdentifier } from './router.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive } from './keyboard.js';
 import { initEventDelegation } from './event-delegation.js';
 import { initAuth } from './auth.js';
 import { showAuthScreen } from './auth.js';
@@ -264,6 +265,7 @@ await import('./app.js');
 const keyboardHandlerConfig = createKeyboardHandler.mock.calls[0]?.[0];
 const modifierHandlerConfig = createModifierKeyHandler.mock.calls[0]?.[0];
 const listNavCallCount = createListNavigationHandler.mock.calls.length;
+const inboxNavConfig = createInboxNavigationHandler.mock.calls[0]?.[0];
 const docListNavCallCount = createDocListNavigationHandler.mock.calls.length;
 const sidebarNavCallCount = createSidebarNavigationHandler.mock.calls.length;
 const simpleNavCallCount = createSimpleListNavigationHandler.mock.calls.length;
@@ -274,6 +276,12 @@ const simpleNavViews = simpleNavConfigs.map((c) => c?.view);
 // starts fresh and assertions aren't cumulative.
 beforeEach(() => {
     vi.clearAllMocks();
+});
+
+describe('inbox keyboard handler wiring (CHT-1513)', () => {
+    it('goes quiet while a detail view is shown over the inbox', () => {
+        expect(inboxNavConfig.isDetailViewActive).toBe(isAnyDetailViewActive);
+    });
 });
 
 describe('app.js view registrations', () => {
