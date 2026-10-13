@@ -257,7 +257,9 @@
     <!-- Agents & MCP Section (CHT-1479, CHT-1595). Facts here come from
          docs/agents.md and the code on main; keep them in step when those
          change. OAuth is on main but not yet in a PyPI release: when the
-         next release ships, drop the "Next release" badge below. -->
+         next release ships, drop every "Next release" badge in this
+         section: the "Remote: add by URL" card, the "Agents are
+         identities" heading (#identities) and the self-registration card. -->
     <section class="section section-alt" id="agents">
         <div class="section-content">
             <h2 class="section-title">Agents &amp; MCP</h2>
@@ -274,7 +276,7 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                 </div>
                 <div class="feature-card">
                     <h3 class="feature-title">Remote: add by URL <span class="badge-next">Next release</span></h3>
-                    <p class="feature-description">The server speaks MCP over Streamable HTTP at <code>/mcp</code>. Give a client the URL and nothing else: it finds Chaotic's sign-in (OAuth), opens a consent page in your browser, and you approve it there. Setup is documented for claude.ai custom connectors, Claude Desktop, ChatGPT, Claude Code and MCP Inspector; the Claude Code flow is the one tested end to end so far.</p>
+                    <p class="feature-description">The server speaks MCP over Streamable HTTP at <code>/mcp</code>. Give a client the URL and nothing else: it finds Chaotic's sign-in (OAuth), opens a consent page in your browser, and you approve it there. Setup is documented for claude.ai custom connectors, Claude Desktop, ChatGPT, Claude Code and MCP Inspector; the Claude Code flow is the one tested end to end so far. claude.ai, Claude Desktop and ChatGPT connect from their own servers, so they need yours on public https.</p>
                     <pre class="code-block"><code>claude mcp add --transport http chaotic \
   https://your-chaotic-host/mcp
 # then /mcp in a session → Authenticate</code></pre>
@@ -282,18 +284,18 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                 </div>
             </div>
 
-            <h3 class="subsection-title" id="identities">Agents are identities, and you approve them</h3>
+            <h3 class="subsection-title" id="identities">Agents are identities, and you approve them <span class="badge-next">Next release</span></h3>
             <p class="section-lead">An agent is a teammate with its own name, not a borrowed login. Everything it does is attributed to it, and a human answers for every one.</p>
             <div class="identity-grid">
                 <figure class="screenshot identity-shot">
                     <a href="images/app-consent.png"><img src="images/app-consent.png" width="560" height="636" loading="lazy"
                          alt="Chaotic consent page: Connect MCP Inspector to Chaotic? An Unverified app badge, a warning that approval goes to a program on this computer, then Team, Acts as (create a new agent) and Projects choices"></a>
-                    <figcaption>The real consent page. The app asked; a person picks the team, the agent and the projects.</figcaption>
+                    <figcaption>The consent page in the next release, from a local server on main. The app asked; a person picks the team, the agent and the projects.</figcaption>
                 </figure>
                 <ul class="identity-points">
                     <li>
                         <h4>You approve every connection</h4>
-                        <p>The consent page names the app and where the approval goes, with a warning for apps that registered themselves. You choose the team, which agent it acts as (a new one, or one you manage) and which projects. Nothing is approved silently, not even a recognized app.</p>
+                        <p>The consent page names the app and the host the approval goes to. An app that registered itself is badged <em>Unverified app</em>, and an approval going to a program on this computer (a localhost redirect) gets a warning. You choose the team, which agent it acts as (a new one, or one you manage) and which projects. Nothing is approved silently, not even a recognized app.</p>
                     </li>
                     <li>
                         <h4>It acts as the agent, never as you</h4>
@@ -301,7 +303,7 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                     </li>
                     <li>
                         <h4>Short-lived, and easy to cut off</h4>
-                        <p>Access tokens last 10 minutes and refresh while the app is used, for at most 90 days before you approve again. Disconnect from Settings &rsaquo; Connected Apps or <code>chaotic auth connections revoke</code>. Deactivating the agent or leaving the team ends it too.</p>
+                        <p>Access tokens last 10 minutes. An app that asks to stay connected (<code>offline_access</code>) refreshes them while it is used at least once every 30 days, for at most 90 days before you approve again. Disconnect from Settings &rsaquo; Connected Apps or <code>chaotic auth connections revoke</code>. Deactivating the agent or leaving the team ends it too.</p>
                     </li>
                     <li>
                         <h4>A human behind every agent</h4>
@@ -313,11 +315,11 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                 <figure class="screenshot">
                     <a href="images/app-connected-apps.png"><img src="images/app-connected-apps.png" width="792" height="225" loading="lazy"
                          alt="Settings, Connected Apps: MCP Inspector, acting as the agent MCP Inspector (Maya Chen), 1 project in Acme Robotics, policy write, with a Disconnect button"></a>
-                    <figcaption>Connected Apps: what each connection acts as, where, and a Disconnect button.</figcaption>
+                    <figcaption>Connected Apps (next release): what each connection acts as, where, and a Disconnect button.</figcaption>
                 </figure>
                 <div class="feature-card registration-card">
                     <h3 class="feature-title">Self-registration for harnesses <span class="badge-next">Next release</span></h3>
-                    <p class="feature-description">A harness that runs many sessions can give each one its own identity. A person makes a <em>registrar</em> agent once; the registrar calls <code>POST /api/agents/register</code> with a session reference and gets back a session agent with a key that expires in 7 days.</p>
+                    <p class="feature-description">A harness that runs many sessions can give each one its own identity. An agent's creator or a team admin can mark it as a <em>registrar</em> (the <code>can_register</code> field, API only for now); the registrar then calls <code>POST /api/agents/register</code> with a session reference and gets back a session agent with a key that expires in 7 days.</p>
                     <p class="feature-note">A session identity is an ordinary agent, so gates, leases and the inbox apply. Its scope is never wider than its registrar's, its owner is the human behind the registrar's key, it cannot register others, and registrars are capped (200 live identities and 60 registrations an hour by default). Deactivating a registrar retires its sessions.</p>
                 </div>
             </div>
