@@ -63,4 +63,5 @@ async def get_me(current_user: CurrentUser):
         kind=current_user.kind,
         external_ref=current_user.external_ref,
         registered_by_id=current_user.registered_by_id,
+        can_register=current_user.can_register,
     )

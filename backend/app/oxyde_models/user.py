@@ -36,13 +36,15 @@ class OxydeUser(Model):
     # `claude-code:session:<id>`. A lookup key, never a credential: getting
     # a key for it takes the registrar's own key (CHT-1498).
     external_ref: str | None = Field(default=None)
-    # The registrar (or human) that registered this identity. A plain id
-    # with no foreign key on purpose: provenance, not ownership, and adding
-    # a foreign key to users is a hand-written table rebuild.
+    # The registrar (or human) that registered this identity. A historical
+    # id with no foreign key on purpose: provenance, not ownership, and a
+    # foreign key on users is a hand-written table rebuild. It can name a
+    # user that has since been deleted; readers treat that as "registrar
+    # unknown" (the principal summary's registered_by_name is then null).
     registered_by_id: str | None = Field(default=None)
-    # May this agent register session identities? Set only by the agent's
-    # creator or a team admin (PATCH /agents/{id}); such an agent may do
-    # nothing else that writes (CHT-1498).
+    # May this agent register session identities? To be set only by the
+    # agent's creator or a team admin (PATCH /agents/{id}, CHT-1498), after
+    # which the agent may do nothing else that writes.
     can_register: bool = Field(default=False)
 
     class Meta:

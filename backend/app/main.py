@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -19,6 +18,8 @@ from app.api.deps import check_user_team_access
 from app.services.user_service import UserService
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
 from app.mcp_server.tools import ALL_TOOLS, toolset_fingerprint
+from app.oauth.cors import OAuthAwareCORS
+from app.oauth.discovery import router as oauth_discovery_router
 from app.version import get_version_info
 
 settings = get_settings()
@@ -81,10 +82,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
+# CORS middleware. OAuthAwareCORS is a plain CORSMiddleware with these
+# arguments while OAUTH_ENABLED is off; when on, it also opens the public
+# OAuth endpoints to any origin and exposes WWW-Authenticate on /mcp
+# (CHT-1551; see app/oauth/cors.py).
 _origins = [o.strip() for o in settings.cors_origins.split(",")]
 app.add_middleware(
-    CORSMiddleware,
+    OAuthAwareCORS,
     allow_origins=_origins,
     allow_credentials=("*" not in _origins),
     allow_methods=["*"],
@@ -149,6 +153,10 @@ app.include_router(api_router, prefix="/api")
 # (CHT-1266). Registered before the SPA catch-all below so it gets first
 # look; see app/mcp_server/asgi.py for the routing/auth/lifespan details.
 mount_mcp(app)
+
+# OAuth discovery documents for /mcp (CHT-1517), also ahead of the SPA
+# catch-all. They 404 unless OAUTH_ENABLED is set.
+app.include_router(oauth_discovery_router)
 
 # Get the directory of this file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -329,7 +337,15 @@ async def cli_auth(request: Request, callback: str = Query(...), state: str = Qu
 
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 async def spa_fallback(request: Request, full_path: str):
-    """Serve the SPA for all non-API routes."""
+    """Serve the SPA for all non-API routes.
+
+    Except ``/.well-known/*`` (CHT-1550): clients probing for discovery
+    documents (OAuth, OIDC, security.txt, ...) expect JSON or a 404, and
+    would try to parse the SPA's HTML. The documents this server does
+    serve are routed ahead of this catch-all.
+    """
+    if full_path == ".well-known" or full_path.startswith(".well-known/"):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
     return _render_index(request)
 
 
