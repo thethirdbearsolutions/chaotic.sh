@@ -1685,6 +1685,17 @@ describe('Inbox Navigation Handler', () => {
             handler(makeEvent('Enter'));
             expect(actions.toggleInboxExpand).not.toHaveBeenCalled();
         });
+
+        it.each(['button', 'a'])('leaves Enter on a focused <%s> inside a row to that control', (tag) => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            const control = document.createElement(tag);
+            if (tag === 'a') control.href = '#x';
+            document.querySelectorAll('.inbox-row')[1].appendChild(control);
+            const event = makeEvent('Enter', { target: control });
+            handler(event);
+            expect(actions.toggleInboxExpand).not.toHaveBeenCalled();
+            expect(event.preventDefault).not.toHaveBeenCalled();
+        });
     });
 
     describe('e to archive entry (CHT-1250 UX)', () => {

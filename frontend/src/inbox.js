@@ -433,16 +433,6 @@ function openInboxEntry(data) {
 }
 
 /**
- * Open an inbox entry given its rendered DOM row (keyboard Enter path --
- * see createInboxNavigationHandler in keyboard.js).
- */
-export function openInboxEntryElement(rowEl) {
-    if (!rowEl) return;
-    const { entryId, issueId, documentId } = rowEl.dataset;
-    openInboxEntry({ entryId, issueId, documentId });
-}
-
-/**
  * Archive an entry given its rendered DOM row (keyboard `e` path).
  */
 export function archiveInboxEntryElement(rowEl) {
@@ -457,8 +447,38 @@ export function toggleInboxEntryElementExpand(rowEl) {
     if (rowEl?.dataset?.entryId) toggleInboxEntryExpand(rowEl.dataset.entryId);
 }
 
+// Controls whose own activation (click, Enter, Space) must never also toggle
+// the row they sit in (CHT-1320).
+const ROW_CONTROL_SELECTOR = 'a[href], button, input, textarea, select, label, summary, [contenteditable]:not([contenteditable="false"])';
+
+/**
+ * True when an event on an inbox row belongs to something inside it rather
+ * than to the row's toggle (CHT-1320). Only the row itself and its
+ * header/title/meta strip toggle; the expanded panel is reading space.
+ */
+export function isInsideRowContent(target, rowEl) {
+    if (!target || target === rowEl || !target.closest) return false;
+    const control = target.closest(ROW_CONTROL_SELECTOR);
+    if (control && control !== rowEl && rowEl?.contains(control)) return true;
+    return !!target.closest('.inbox-row-expanded-panel');
+}
+
+function hasTextSelection() {
+    const sel = typeof window !== 'undefined' ? window.getSelection?.() : null;
+    return !!sel && !sel.isCollapsed && sel.toString() !== '';
+}
+
 registerActions({
-    'toggle-inbox-expand': (event, data) => {
+    'toggle-inbox-expand': (event, data, rowEl) => {
+        // The inbox keyboard handler (registered before delegation) already
+        // handled this Enter and re-rendered the row; toggling again here
+        // undid it, so Enter on a focused row did nothing.
+        if (event.type === 'keydown' && event.defaultPrevented) return;
+        // A click that ends a text selection is a selection, not a toggle.
+        if (event.type === 'click' && hasTextSelection()) return;
+        // Clicks/keys on a link, input or button, or anywhere in the
+        // expanded reading panel, belong to that content, not the toggle.
+        if (isInsideRowContent(event.target, rowEl)) return;
         event.preventDefault();
         if (data.entryId) toggleInboxEntryExpand(data.entryId);
     },

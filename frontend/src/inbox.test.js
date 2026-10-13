@@ -60,10 +60,16 @@ import {
 } from './state.js';
 import {
     loadInbox, renderInbox, renderInboxBadge, refreshInboxUnreadCount,
-    markAllInboxRead, toggleInboxUnreadFilter, openInboxEntryElement,
+    markAllInboxRead, toggleInboxUnreadFilter,
     archiveInboxEntry, focusFirstInboxRow,
     toggleInboxEntryExpand, collapseInboxExpand, reassignInboxEntry,
 } from './inbox.js';
+import { registerActions } from './event-delegation.js';
+
+// The action map inbox.js registered at import (captured before any
+// beforeEach clearAllMocks wipes the mock's call log).
+const inboxActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
+const openFull = (data) => inboxActions['open-inbox-full']({ preventDefault: vi.fn() }, data);
 
 // Reassignable entry: an assignment carrying both a source user and an issue.
 const ASSIGN = {
@@ -241,36 +247,23 @@ describe('toggleInboxUnreadFilter', () => {
     });
 });
 
-describe('openInboxEntryElement', () => {
+describe("open-inbox-full action (the action bar's Open button)", () => {
     it('marks the entry read and opens the linked issue', () => {
         getInboxEntries.mockReturnValue([{ ...ENTRY }]);
-        const row = document.createElement('div');
-        row.dataset.entryId = 'entry-1';
-        row.dataset.issueId = 'issue-1';
-        openInboxEntryElement(row);
+        openFull({ entryId: 'entry-1', issueId: 'issue-1' });
         expect(viewIssue).toHaveBeenCalledWith('issue-1');
         expect(api.markInboxRead).toHaveBeenCalledWith('entry-1');
     });
 
     it('opens a linked document when there is no issue', () => {
         getInboxEntries.mockReturnValue([{ ...ENTRY, id: 'entry-2', issue_id: null }]);
-        const row = document.createElement('div');
-        row.dataset.entryId = 'entry-2';
-        row.dataset.documentId = 'doc-1';
-        openInboxEntryElement(row);
+        openFull({ entryId: 'entry-2', documentId: 'doc-1' });
         expect(viewDocument).toHaveBeenCalledWith('doc-1');
-    });
-
-    it('is a no-op for a null row', () => {
-        expect(() => openInboxEntryElement(null)).not.toThrow();
     });
 
     it('does not re-mark an already-read entry', () => {
         getInboxEntries.mockReturnValue([{ ...ENTRY, read_at: '2026-07-06T13:00:00Z' }]);
-        const row = document.createElement('div');
-        row.dataset.entryId = 'entry-1';
-        row.dataset.issueId = 'issue-1';
-        openInboxEntryElement(row);
+        openFull({ entryId: 'entry-1', issueId: 'issue-1' });
         expect(api.markInboxRead).not.toHaveBeenCalled();
     });
 });

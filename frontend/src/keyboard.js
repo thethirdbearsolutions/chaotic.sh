@@ -496,6 +496,13 @@ export function createInboxNavigationHandler(actions) {
                 // CHT-1320: Enter now expands the row in place (triggering
                 // content + action bar) rather than navigating away. "Open"
                 // in the action bar is the deliberate navigate path.
+                // Enter on a focused button or link inside a row activates
+                // that control (via its own data-action or natively); it
+                // must not also toggle the row.
+                if (e.target.closest?.('#inbox-list')
+                    && e.target.closest('a[href], button, summary, [contenteditable]:not([contenteditable="false"])')) {
+                    break;
+                }
                 if (selectedIndex >= 0 && items[selectedIndex]) {
                     e.preventDefault();
                     actions.toggleInboxExpand(items[selectedIndex]);

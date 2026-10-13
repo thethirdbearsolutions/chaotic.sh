@@ -93,7 +93,6 @@ vi.mock('./issues-view.js', () => ({
 vi.mock('./gate-approvals.js', () => ({ loadGateApprovals: vi.fn() }));
 vi.mock('./inbox.js', () => ({
     loadInbox: vi.fn(),
-    openInboxEntryElement: vi.fn(),
     toggleInboxEntryElementExpand: vi.fn(),
     collapseInboxExpand: vi.fn(),
     archiveInboxEntryElement: vi.fn(),
