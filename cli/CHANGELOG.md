@@ -5,7 +5,7 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
-## [0.1.0a21] - 2026-10-14
+## [0.1.0a21] - 2026-10-13
 
 Server and CLI changes merged since a20 (PRs #311-#320). This release
 carries one database migration (0019) and changes how `chaotic system
