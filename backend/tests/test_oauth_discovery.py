@@ -157,6 +157,10 @@ class TestIssuerValidation:
         ("ftp://tracker.example.com", "absolute http(s)"),
         ("tracker.example.com", "absolute http(s)"),
         ("", "absolute http(s)"),
+        ('https://a"b.example.com', "quote"),
+        ("https://a\\b.example.com", "quote"),
+        ("https://tracker.example.com\r\nX: y", "control character"),
+        ("https://tracker example.com", "whitespace"),
     ])
     def test_invalid_rejected_when_enabled(self, url, fragment):
         assert fragment in oauth_issuer_problem(url)

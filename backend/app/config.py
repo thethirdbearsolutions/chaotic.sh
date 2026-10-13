@@ -114,6 +114,9 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 def oauth_issuer_problem(base_url: str) -> str | None:
     """Why ``base_url`` can't be an OAuth issuer, or None if it can."""
+    # It is interpolated into a quoted WWW-Authenticate parameter on /mcp.
+    if any(c in base_url for c in '"\\') or any(c.isspace() or ord(c) < 0x20 or ord(c) == 0x7F for c in base_url):
+        return f"{base_url!r} contains a quote, backslash, whitespace or control character"
     parsed = urlsplit(base_url.rstrip("/"))
     if parsed.scheme not in ("https", "http") or not parsed.hostname:
         return f"{base_url!r} is not an absolute http(s) URL"
