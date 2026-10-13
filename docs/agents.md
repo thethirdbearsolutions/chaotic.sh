@@ -496,15 +496,20 @@ The server needs direct outbound https to fetch client metadata
 documents (from `claude.ai`, `chatgpt.com`, ...); it ignores
 `HTTPS_PROXY` for those fetches.
 
-Where to set them: the server reads its environment and a `.env` file
-in the directory it runs from. For a `chaotic system install` server
-that is `~/.chaotic/server/backend/.env` (under `$CHAOTIC_HOME` if you
-set it), one `NAME=value` per line; then `chaotic system stop` and
-`chaotic system start`. Prefer that file to adding `Environment=` lines
-to the service unit: `chaotic system reconfigure` regenerates the unit
-without them, and `chaotic system upgrade` won't rewrite a unit that has
-variables it doesn't know, so it would stop updating it (CHT-1592 tracks
-setting these through `system install` itself). To check:
+Where to set them: on a `chaotic system install` server, use
+`chaotic system config set NAME VALUE` (CHT-1592), setting `APP_BASE_URL`
+before `OAUTH_ENABLED`, then `chaotic system config check`, `chaotic
+system stop` and `chaotic system start`. The settings are kept in
+`~/.chaotic/server.json` (under `$CHAOTIC_HOME` if you set it) and
+written into the service unit, so `system reconfigure` and `system
+upgrade` keep them. Do not add `Environment=` lines to the unit by hand:
+`reconfigure` drops them and `upgrade` stops rewriting a unit that has
+them (`chaotic system config list` names any, and `set` with the same
+value adopts them). Full steps: `docs/self-hosting-security.md`, "Server
+settings on an installed server". For a dev server or one you run by
+hand, the server also reads its environment and a `.env` file in the
+directory it runs from (`backend/.env`), one `NAME=value` per line; on an
+installed server a value in the unit overrides `.env`. To check:
 `curl https://your-chaotic-host/.well-known/oauth-authorization-server`
 returns JSON whose `issuer` is exactly your `APP_BASE_URL`, and an
 unauthenticated `POST /mcp` answers 401 with a `WWW-Authenticate`
@@ -641,18 +646,6 @@ there's no local profile to fall back on the way the stdio server has:
 `team`/`project` parameter at all in either transport -- issue
 identifiers (`CHT-123`) are unique instance-wide, so there's nothing to
 disambiguate.
-
-### Server settings for OAuth (`chaotic system config`)
-
-On a server set up with `chaotic system install`, set `OAUTH_ENABLED`,
-`APP_BASE_URL` and the related settings with `chaotic system config set`
-(CHT-1592), not by editing the service unit: they are kept in
-`~/.chaotic/server.json` and survive `system reconfigure` and `system
-upgrade`. Set `APP_BASE_URL` (the exact public `https` origin, no
-trailing slash) before `OAUTH_ENABLED`, run `chaotic system config
-check`, then restart. The full steps are in
-`docs/self-hosting-security.md`, "Server settings on an installed
-server".
 
 ## Shelling out to the CLI directly
 
