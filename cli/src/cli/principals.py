@@ -4,8 +4,10 @@ Responses that name an actor carry a principal summary next to the
 ``*_name`` string: ``{id, name, is_agent, owner_id, owner_name}``.
 ``principal_label`` turns it into one line a person can read at a glance,
 "Builder Bot (agent of Ada)", so an agent is never mistaken for its
-owner. A response from a backend older than the summary has only the
-name, and gets it unchanged.
+owner. A session identity a registrar registered (CHT-1498, ``kind``
+"session") reads "Claude · cht-1498 (session · via Claude Code (cloud))".
+A response from a backend older than the summary has only the name, and
+gets it unchanged.
 """
 from __future__ import annotations
 
@@ -21,6 +23,9 @@ def principal_label(principal, fallback: str | None = None) -> str | None:
     name = principal["name"]
     if not principal.get("is_agent"):
         return name
+    if principal.get("kind") == "session":
+        registrar = principal.get("registered_by_name")
+        return f"{name} (session · via {registrar})" if registrar else f"{name} (session)"
     owner = principal.get("owner_name")
     return f"{name} (agent of {owner})" if owner else f"{name} (agent)"
 

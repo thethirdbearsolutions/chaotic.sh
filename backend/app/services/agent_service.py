@@ -89,7 +89,8 @@ class AgentService:
                 name=agent_in.name,
                 avatar_url=agent_in.avatar_url,
                 is_agent=True,
-                kind=AgentKind.ASSISTANT,
+                kind=AgentKind.SERVICE if agent_in.can_register else AgentKind.ASSISTANT,
+                can_register=agent_in.can_register,
                 parent_user_id=parent_user.id,
                 agent_team_id=team_id,
                 agent_project_id=project_id,
@@ -201,6 +202,15 @@ class AgentService:
     async def update(self, agent: OxydeUser, agent_in: AgentUpdate) -> OxydeUser:
         """Update an agent."""
         update_data = agent_in.model_dump(exclude_unset=True)
+        if update_data.get("can_register") is None:
+            update_data.pop("can_register", None)
+        else:
+            # A registrar is kind service; turning it off makes it an
+            # ordinary hand-made agent again (CHT-1498). The route refuses
+            # this for a registered identity.
+            update_data["kind"] = AgentKind.SERVICE if update_data["can_register"] else AgentKind.ASSISTANT
+        if not update_data:
+            return await OxydeUser.objects.join("parent_user").filter(id=agent.id).first()
         for field, value in update_data.items():
             setattr(agent, field, value)
         await agent.save(update_fields=set(update_data.keys()))
@@ -260,6 +270,15 @@ class AgentService:
         Returns None when the agent no longer exists (a concurrent delete
         won), so the route can answer 404.
         """
+        return (await self._set_active(agent, actor, active=False))[0]
+
+    async def deactivate_with_identities(
+        self, agent: OxydeUser, actor: OxydeUser,
+    ) -> tuple[OxydeUser | None, int]:
+        """``deactivate``, also reporting how many identities the agent had
+        registered that went with it (CHT-1498): deactivating a registrar
+        deactivates every active identity it registered and revokes their
+        keys, in the same transaction."""
         return await self._set_active(agent, actor, active=False)
 
     async def reactivate(self, agent: OxydeUser, actor: OxydeUser) -> OxydeUser | None:
@@ -268,16 +287,30 @@ class AgentService:
         reactivation never silently re-arms a key that may have been the
         reason for the deactivation. Idempotent. Returns None when the
         agent no longer exists."""
-        return await self._set_active(agent, actor, active=True)
+        return (await self._set_active(agent, actor, active=True))[0]
 
-    async def _set_active(self, agent: OxydeUser, actor: OxydeUser, *, active: bool) -> OxydeUser | None:
+    async def _set_active(
+        self, agent: OxydeUser, actor: OxydeUser, *, active: bool,
+    ) -> tuple[OxydeUser | None, int]:
         changed = False
+        identities: list[OxydeUser] = []
         async with atomic():
             if not active:
                 await OxydeAPIKey.objects.filter(principal_user_id=agent.id).update(is_active=False)
             current = await OxydeUser.objects.filter(id=agent.id, is_agent=True).first()
             if current is None:
-                return None
+                return None, 0
+            if not active:
+                # A registrar's identities go with it (CHT-1498). Reactivating
+                # the registrar does not bring them back: each is reactivated
+                # on its own, like any agent.
+                identities = await OxydeUser.objects.filter(
+                    registered_by_id=agent.id, is_agent=True, is_active=True,
+                ).all()
+                ids = [i.id for i in identities]
+                if ids:
+                    await OxydeAPIKey.objects.filter(principal_user_id__in=ids).update(is_active=False)
+                    await OxydeUser.objects.filter(id__in=ids).update(is_active=False)
             if current.is_active != active:
                 current.is_active = active
                 await current.save(update_fields={"is_active"})
@@ -286,7 +319,12 @@ class AgentService:
         # keep a joined relation loaded).
         current = await OxydeUser.objects.join("parent_user").filter(id=agent.id, is_agent=True).first()
         if current is None:
-            return None
+            return None, len(identities)
+        for identity in identities:
+            logger.info(
+                "identity %s (%s) deactivated with its registrar %s by user %s",
+                identity.id, identity.name, agent.id, actor.id,
+            )
         if changed:
             verb = "reactivated" if active else "deactivated"
             # No activity table covers agents; this log line and the
@@ -295,7 +333,7 @@ class AgentService:
                 "agent %s (%s) %s by user %s (%s)", current.id, current.name, verb, actor.id, actor.name,
             )
             await self._notify_parent(current, actor, verb)
-        return current
+        return current, len(identities)
 
     async def _notify_parent(self, agent: OxydeUser, actor: OxydeUser, verb: str) -> None:
         """Tell the agent's creator who changed it, unless they did it

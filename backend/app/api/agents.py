@@ -1,7 +1,15 @@
 """Agent routes."""
-from fastapi import APIRouter, HTTPException, status
-from app.api.deps import CurrentUser, can_manage_agent, check_user_team_access
-from app.schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentCreated
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from app.api.deps import (
+    CurrentUser, can_manage_agent, check_user_team_access, get_api_key_record, registrar_may_call,
+)
+from app.enums import AgentKind
+from app.schemas.agent import (
+    AgentCreate, AgentRegister, AgentRegistered, AgentUpdate, AgentResponse, AgentCreated,
+)
+from app.services.registration_service import RegistrationRefused, RegistrationService
 from app.schemas.api_key import AgentKeyResponse, APIKeyCreated
 from app.services.agent_service import (
     AgentHasAuthoredContentError, AgentInactiveError, AgentManageDeniedError, AgentService,
@@ -209,7 +217,9 @@ async def update_agent(
     agent_in: AgentUpdate,
     current_user: CurrentUser,
 ):
-    """Update an agent's name or avatar."""
+    """Update an agent's name or avatar, or make it a registrar
+    (`can_register`, CHT-1498). Allowed to its creator while in the
+    agent's team and to that team's admins."""
     agent_service = AgentService()
     agent = await agent_service.get_by_id(agent_id)
 
@@ -223,6 +233,17 @@ async def update_agent(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this agent",
+        )
+
+    if agent_in.can_register is not None and (
+        agent.registered_by_id is not None or agent.kind == AgentKind.SESSION
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "registered_identity_cannot_register",
+                "message": "A registered identity cannot be made a registrar: registration is one level deep.",
+            },
         )
 
     agent = await agent_service.update(agent, agent_in)
@@ -370,10 +391,11 @@ async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> Age
             detail=f"Not authorized to {action} this agent",
         )
 
+    retired = None
     if active:
         agent = await agent_service.reactivate(agent, current_user)
     else:
-        agent = await agent_service.deactivate(agent, current_user)
+        agent, retired = await agent_service.deactivate_with_identities(agent, current_user)
     if agent is None:
         # Deleted between the lookup and the write.
         raise HTTPException(
@@ -381,7 +403,9 @@ async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> Age
             detail="Agent not found",
         )
 
-    return agent_response(agent)
+    response = agent_response(agent)
+    response.deactivated_identities = retired
+    return response
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -410,3 +434,41 @@ async def delete_agent(
         await agent_service.delete(agent)
     except AgentHasAuthoredContentError as refused:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refused)) from refused
+
+
+@router.post(
+    "/agents/register",
+    response_model=AgentRegistered,
+    status_code=status.HTTP_201_CREATED,
+    responses={200: {"model": AgentRegistered, "description": "An existing identity, with a fresh key"}},
+)
+@registrar_may_call
+async def register_agent(
+    req: AgentRegister,
+    current_user: CurrentUser,
+    calling_key: Annotated[object | None, Depends(get_api_key_record)],
+    response: Response,
+) -> AgentRegistered:
+    """Get or create the session identity a registrar knows by
+    `external_ref`, and mint it a fresh expiring key (CHT-1498). 201 when
+    created, 200 when it already existed (its other keys are revoked:
+    one live key per identity). The key is shown only here.
+
+    Callers: an agent with `can_register` (with one of its own keys), or
+    a person in the team. Rules and refusals: app.services.registration_service.
+    """
+    try:
+        reg = await RegistrationService().register(current_user, calling_key, req)
+    except RegistrationRefused as refused:
+        raise HTTPException(
+            status_code=refused.status_code, detail=refused.detail(), headers=refused.headers,
+        ) from refused
+    if not reg.created:
+        response.status_code = status.HTTP_200_OK
+    return AgentRegistered(
+        agent=agent_response(reg.agent),
+        created=reg.created,
+        api_key=reg.full_key,
+        api_key_id=reg.api_key.id,
+        expires_at=reg.api_key.expires_at,
+    )

@@ -248,9 +248,9 @@ class TestDeactivateAgent:
         agent, _, _ = await AgentService().create(AgentCreate(name="Gone"), test_user, test_team.id)
 
         async def vanished(self, agent, actor):
-            return None
+            return None, 0
 
-        monkeypatch.setattr(AgentService, "deactivate", vanished)
+        monkeypatch.setattr(AgentService, "deactivate_with_identities", vanished)
         response = await client.post(f"/api/agents/{agent.id}/deactivate", headers=auth_headers)
 
         assert response.status_code == 404

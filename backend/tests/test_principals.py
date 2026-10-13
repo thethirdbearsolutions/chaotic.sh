@@ -30,12 +30,15 @@ def _is_agent_of(principal, agent, owner):
     assert principal == {
         "id": agent.id, "name": agent.name, "is_agent": True,
         "owner_id": owner.id, "owner_name": owner.name,
+        # A hand-made agent (CHT-1498): no registrar.
+        "kind": "assistant", "registered_by_id": None, "registered_by_name": None,
     }
 
 
 def _is_person(principal, user):
     assert principal == {
         "id": user.id, "name": user.name, "is_agent": False, "owner_id": None, "owner_name": None,
+        "kind": None, "registered_by_id": None, "registered_by_name": None,
     }
 
 

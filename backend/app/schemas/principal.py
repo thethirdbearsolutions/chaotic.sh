@@ -16,12 +16,16 @@ hash and agent-scoping columns, and a summary must not.
 A principal that no longer exists (author deleted, CHT-1427) is ``None``;
 the companion ``*_name`` already says "Deleted user".
 
-``kind`` and the registrar land with the identity columns (CHT-1497);
-until then ``is_agent`` and the owner are what tells principals apart.
+``kind`` says what sort of agent it is (assistant, service = a
+registrar, session = an identity a registrar registered), and a
+registered identity also names its registrar (CHT-1498), so a client can
+render "session · via <registrar>".
 """
 from typing import ClassVar
 
 from pydantic import BaseModel
+
+from app.enums import AgentKind
 
 
 class PrincipalSummary(BaseModel):
@@ -34,6 +38,11 @@ class PrincipalSummary(BaseModel):
     # Both None for a person.
     owner_id: str | None = None
     owner_name: str | None = None
+    # None for a person (CHT-1498).
+    kind: AgentKind | None = None
+    # The registrar of a registered identity; both None otherwise.
+    registered_by_id: str | None = None
+    registered_by_name: str | None = None
 
 
 class HasPrincipals:
