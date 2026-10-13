@@ -305,6 +305,13 @@ class Client:
     def revoke_api_key(self, api_key_id: str):
         return self._request("DELETE", f"/api-keys/{api_key_id}")
 
+    # Connected apps: your own OAuth connections (CHT-1523)
+    def list_connections(self) -> list:
+        return self._request("GET", "/oauth/connections")
+
+    def revoke_connection(self, connection_id: str):
+        return self._request("DELETE", f"/oauth/connections/{connection_id}")
+
     # Teams
     def create_team(self, name: str, key: str, description: str = None) -> dict:
         data = {"name": name, "key": key}

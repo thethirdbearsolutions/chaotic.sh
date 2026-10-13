@@ -196,4 +196,77 @@ def register(cli):
         _client().revoke_api_key(key["id"])
         console.print(f"[green]API key '{key['name']}' revoked.[/green]")
 
+    @auth.group("connections")
+    def auth_connections():
+        """Your connected apps: the OAuth connections you approved."""
+        pass
+
+    @auth_connections.command("list")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    def auth_connections_list():
+        """List the apps you connected over OAuth, and what each can do."""
+        m = _main()
+        connections = _client().list_connections()
+        if m.is_json_output():
+            m.output_json(connections)
+            return
+        if not connections:
+            console.print("[yellow]No connected apps.[/yellow]")
+            return
+
+        table = Table(title="Connected Apps")
+        table.add_column("ID", style="dim", no_wrap=True)
+        table.add_column("App")
+        table.add_column("Agent")
+        table.add_column("Team")
+        table.add_column("Projects")
+        table.add_column("Policy")
+        table.add_column("Created")
+        table.add_column("Last Used")
+
+        for c in connections:
+            agent = c.get("agent") or {}
+            projects = c.get("project_ids")
+            table.add_row(
+                c["id"][:8],
+                c.get("client_name") or c.get("client_id") or "-",
+                agent.get("name") or "-",
+                c.get("team_name") or "-",
+                "all" if projects is None else str(len(projects)),
+                c.get("policy") or "-",
+                (c.get("created_at") or "")[:10] or "-",
+                (c.get("last_used_at") or "")[:10] or "-",
+            )
+
+        console.print(table)
+
+    @auth_connections.command("revoke")
+    @click.argument("connection_id")
+    @_main().require_auth
+    @_main().handle_error
+    def auth_connections_revoke(connection_id):
+        """Disconnect an app: its tokens stop working on its next request.
+
+        CONNECTION_ID can be the full ID or a prefix (e.g., the first 8 characters).
+        """
+        m = _main()
+        matches = [c for c in _client().list_connections() if c["id"].startswith(connection_id)]
+        exact = [c for c in matches if c["id"] == connection_id]
+        if exact:
+            matches = exact
+        if not matches:
+            console.print(f"[red]Connection '{connection_id}' not found.[/red]")
+            raise SystemExit(1)
+        if len(matches) > 1:
+            console.print(f"[red]Ambiguous connection ID prefix '{connection_id}'. Please be more specific.[/red]")
+            raise SystemExit(1)
+        connection = matches[0]
+        name = connection.get("client_name") or connection.get("client_id") or connection["id"]
+        if not m.confirm_action(f"Disconnect '{name}'? It will have to be approved again to reconnect."):
+            raise SystemExit(0)
+        _client().revoke_connection(connection["id"])
+        console.print(f"[green]Disconnected '{name}'.[/green]")
+
     return auth
