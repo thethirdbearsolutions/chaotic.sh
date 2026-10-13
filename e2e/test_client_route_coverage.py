@@ -67,6 +67,9 @@ ROUTES_NOT_FOR_THE_CLIENT = {
     ("GET", "/api/push/preferences"): "push preferences: the native app",
     ("PATCH", "/api/push/preferences"): "push preferences: the native app",
     ("GET", "/api/push/vapid-public-key"): "push registration: the native app only",
+    # Inbox sync (CHT-1607): the native app's offline cache. The CLI reads
+    # the inbox live (`GET /api/inbox`) and keeps no cache to sync.
+    ("GET", "/api/inbox/sync"): "inbox cursor sync: the native app's offline cache",
 }
 
 # Routes that exist server-side but have no Client method yet. Empty since
