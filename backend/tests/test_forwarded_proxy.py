@@ -134,14 +134,15 @@ class TestSetting:
     @pytest.mark.parametrize(
         "value, why",
         [
-            ("*", "would trust forwarded headers from every sender"),
-            ("127.0.0.1,*", "would trust forwarded headers from every sender"),
+            ("*", "every sender"),
+            ("0.0.0.0/0", "every sender"),  # another way to write "*"
+            ("::/0", "every sender"),
             ("proxy.internal", "not an IP address"),
             ("10.0.0.1/8", "not an IP address"),  # host bits set: a typo, not a network
             ("10.0.0.0/33", "not an IP address"),
         ],
     )
-    def test_unusable_value_falls_back_to_loopback_with_an_error(self, value, why, caplog):
+    def test_nothing_usable_falls_back_to_loopback_with_an_error(self, value, why, caplog):
         """A bad value must not stop the server (PR #346 review): it is
         logged, naming the value, and loopback is trusted instead."""
         with caplog.at_level(logging.ERROR, logger="app.config"):
@@ -151,13 +152,29 @@ class TestSetting:
         assert record.levelno == logging.ERROR
         assert repr(value) in record.getMessage()
         assert why in record.getMessage()
-        with pytest.raises(ValueError, match=why):
-            parse_trusted_proxies(value)
+        assert "only from: 127.0.0.1,::1" in record.getMessage()
+        assert parse_trusted_proxies(value)[0] == []
+
+    def test_a_bad_entry_is_dropped_and_the_rest_kept(self, caplog):
+        """Dropping only narrows trust, and keeps a remote proxy's clients
+        apart while someone reads the error (PR #346 re-review)."""
+        with caplog.at_level(logging.ERROR, logger="app.config"):
+            settings = Settings(forwarded_allow_ips="10.0.0.5, proxy.internal, 0.0.0.0/0, 192.168.0.0/16")
+        assert settings.trusted_proxies == ["10.0.0.5", "192.168.0.0/16"]
+        (record,) = [r for r in caplog.records if r.name == "app.config"]
+        message = record.getMessage()
+        assert "'proxy.internal'" in message and "'0.0.0.0/0'" in message
+        assert "from the rest: 10.0.0.5,192.168.0.0/16" in message
+
+    def test_a_good_value_logs_nothing(self, caplog):
+        with caplog.at_level(logging.ERROR, logger="app.config"):
+            Settings(forwarded_allow_ips="10.0.0.5,::1")
+        assert not [r for r in caplog.records if r.name == "app.config"]
 
     def test_wide_lists_are_the_operators_call(self):
-        """No width check: split /1s would get round any /0 check. The
+        """Beyond /0 no width check: split ranges would get round any. The
         docs say the operator owns the list."""
-        assert Settings(forwarded_allow_ips="0.0.0.0/0").trusted_proxies == ["0.0.0.0/0"]
+        assert Settings(forwarded_allow_ips="0.0.0.0/1,128.0.0.0/1").trusted_proxies == ["0.0.0.0/1", "128.0.0.0/1"]
 
     def test_what_the_operator_sees_at_startup(self):
         """Importing the app with a bad value, as uvicorn does before it
@@ -170,8 +187,8 @@ class TestSetting:
         )
         assert result.returncode == 0, result.stderr
         assert "TRUSTED ['127.0.0.1', '::1']" in result.stdout
-        assert "Ignoring FORWARDED_ALLOW_IPS='*'" in result.stderr
-        assert "Trusting forwarded headers only from 127.0.0.1,::1" in result.stderr
+        assert "FORWARDED_ALLOW_IPS='*': dropped '*'" in result.stderr
+        assert "trusting forwarded headers only from: 127.0.0.1,::1" in result.stderr
 
     def test_read_from_the_environment(self, monkeypatch):
         monkeypatch.setenv("FORWARDED_ALLOW_IPS", "10.1.2.3")

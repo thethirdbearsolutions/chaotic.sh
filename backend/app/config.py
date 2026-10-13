@@ -69,9 +69,10 @@ class Settings(BaseSettings):
     # The default trusts a proxy on the same machine, the topology
     # docs/self-hosting-security.md recommends. Empty trusts nobody. The
     # operator owns this list: every address in it can claim to be any
-    # client. A value that does not parse ("*", a host name, a typo) is
-    # logged as an error and replaced by the default rather than stopping
-    # the server (PR #346 review). The same name as uvicorn's own
+    # client. An entry that is not usable ("*", a /0 network, a host
+    # name, a typo) is logged as an error and dropped, keeping the rest;
+    # with nothing left the default applies. The server never refuses to
+    # start over it (PR #346 review). The same name as uvicorn's own
     # variable on purpose; every start path turns uvicorn's handling off
     # and this app applies the list itself (app.main).
     forwarded_allow_ips: str = DEFAULT_FORWARDED_ALLOW_IPS
@@ -168,24 +169,29 @@ class Settings(BaseSettings):
     @field_validator("forwarded_allow_ips")
     @classmethod
     def _check_forwarded_allow_ips(cls, value: str) -> str:
-        """Fall back to loopback, loudly, on a value that does not parse
-        (CHT-1586). uvicorn's own parser would silently turn a typo into
-        a literal that never matches and would accept "*"; refusing to
+        """Drop, loudly, each entry that is not a usable address or
+        network (CHT-1586), keeping the rest; if that leaves nothing of a
+        non-empty value, trust loopback only. Dropping only narrows
+        trust. uvicorn's own parser would silently turn a typo into a
+        literal that never matches and would accept "*"; refusing to
         start instead would turn an upgrade into an outage."""
-        try:
-            parse_trusted_proxies(value)
-        except ValueError as exc:
-            logger.error(
-                "Ignoring FORWARDED_ALLOW_IPS=%r: %s. Trusting forwarded headers only from %s.",
-                value, exc, DEFAULT_FORWARDED_ALLOW_IPS,
-            )
-            return DEFAULT_FORWARDED_ALLOW_IPS
-        return value
+        kept, dropped = parse_trusted_proxies(value)
+        if not dropped:
+            return value
+        if kept:
+            result, outcome = ",".join(str(item) for item in kept), "Trusting forwarded headers from the rest"
+        else:
+            result, outcome = DEFAULT_FORWARDED_ALLOW_IPS, "Nothing usable is left, so trusting forwarded headers only from"
+        logger.error(
+            "FORWARDED_ALLOW_IPS=%r: dropped %s. %s: %s.",
+            value, "; ".join(f"{entry!r} ({why})" for entry, why in dropped), outcome, result,
+        )
+        return result
 
     @property
     def trusted_proxies(self) -> list[str]:
         """FORWARDED_ALLOW_IPS as the list ProxyHeadersMiddleware takes."""
-        return [str(net) for net in parse_trusted_proxies(self.forwarded_allow_ips)]
+        return [str(item) for item in parse_trusted_proxies(self.forwarded_allow_ips)[0]]
 
     @model_validator(mode="after")
     def _check_oauth_issuer(self) -> "Settings":
@@ -209,24 +215,36 @@ class Settings(BaseSettings):
         return self.app_base_url.rstrip("/")
 
 
-def parse_trusted_proxies(value: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Network | ipaddress.IPv6Network]:
-    """Parse FORWARDED_ALLOW_IPS: comma-separated IP addresses and CIDR
-    networks, blanks ignored. Raises ValueError on anything else: "*", a
-    host name, or a network with host bits set (``10.0.0.1/8``, almost
-    always a typo). It does not judge how wide a valid list is; that is
-    the operator's call (docs/self-hosting-security.md)."""
-    parsed = []
+TrustedProxy = ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+def parse_trusted_proxies(value: str) -> tuple[list[TrustedProxy], list[tuple[str, str]]]:
+    """Split FORWARDED_ALLOW_IPS (comma-separated, blanks ignored) into
+    the usable IP addresses and CIDR networks, and the entries that are
+    not, each with the reason: "*" or a /0 network (both mean every
+    sender), a host name, or a network with host bits set (``10.0.0.1/8``,
+    almost always a typo). Beyond /0 it does not judge how wide a list
+    is; that is the operator's call (docs/self-hosting-security.md)."""
+    kept: list[TrustedProxy] = []
+    dropped: list[tuple[str, str]] = []
+    every_sender = "it would trust forwarded headers from every sender"
     for raw in value.split(","):
         entry = raw.strip()
         if not entry:
             continue
         if entry == "*":
-            raise ValueError('"*" would trust forwarded headers from every sender; list your proxies\' addresses')
+            dropped.append((entry, every_sender))
+            continue
         try:
-            parsed.append(ipaddress.ip_network(entry, strict=True) if "/" in entry else ipaddress.ip_address(entry))
+            item = ipaddress.ip_network(entry, strict=True) if "/" in entry else ipaddress.ip_address(entry)
         except ValueError as exc:
-            raise ValueError(f"entry {entry!r} is not an IP address or CIDR network ({exc})") from None
-    return parsed
+            dropped.append((entry, f"not an IP address or CIDR network: {exc}"))
+            continue
+        if isinstance(item, (ipaddress.IPv4Network, ipaddress.IPv6Network)) and item.prefixlen == 0:
+            dropped.append((entry, every_sender))
+            continue
+        kept.append(item)
+    return kept, dropped
 
 
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})

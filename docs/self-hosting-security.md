@@ -290,12 +290,15 @@ proxy's own is ignored. The proxy must set or append the header (nginx:
 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` Caddy
 does it by default).
 
-**You own this list.** Every address in it can claim to be any client,
-and the app does not judge how wide a list is (a width check would be
-cosmetic: two `/1` networks cover everything a `/0` does). A value that
-does not parse (`*`, a host name, a network with host bits set such as
-`10.0.0.1/8`) is not used: the server logs an error naming the value,
-trusts only `127.0.0.1,::1`, and keeps serving.
+**You own this list.** Every address in it can claim to be any client.
+Apart from `*` and `/0`, the app does not judge how wide a list is (a
+width check would be cosmetic: two `/1` networks cover everything a `/0`
+does). An entry that is not usable is dropped, and the server logs an
+error naming it and keeps serving with the rest. That covers `*`,
+`0.0.0.0/0` and `::/0` (each means every sender), a host name, and a
+network with host bits set such as `10.0.0.1/8`. If nothing usable is
+left, it trusts only `127.0.0.1,::1`. Dropping an entry only ever
+narrows trust.
 
 Every start path in this repo (`just serve-prod`, `just serve`,
 `python -m app.main`) turns off uvicorn's own forwarded-header handling,
@@ -322,9 +325,14 @@ OAuth (CHT-1522; design doc "MCP OAuth and token service: design" §5):
 
 Either way the key is scrubbed from the logged request path, including
 on `/mcp/<key>/` and `/mcp/<key>/anything`, which always answer 404
-(CHT-1587). So a client still using a stale URL never puts its key in
-this server's logs; logs upstream of it, such as a reverse proxy's, are
-another matter.
+(CHT-1587). Any other path segment, in an HTTP or a WebSocket request,
+that starts with a prefix this server mints (`ck_`, `cat_`, `crt_`, ...)
+and is long enough to be a secret is scrubbed too. That catches
+`//mcp/<key>` from a base URL with a trailing slash, `/mcp//<key>` and
+`/MCP/<key>`; those still route as they did before (they never reach
+the capability URL). So a key in the path does not reach this server's
+access or error log. Query strings are not scrubbed, and logs upstream
+of the server, such as a reverse proxy's, are another matter.
 
 The default becomes `false` in the release that ships OAuth for MCP,
 and the route is removed two releases after that. Moving a connector

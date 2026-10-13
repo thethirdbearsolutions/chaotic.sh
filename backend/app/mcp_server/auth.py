@@ -55,6 +55,7 @@ in ``context.current_mcp_principal`` for the life of the request; the
 from __future__ import annotations
 
 import logging
+from urllib.parse import quote
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
@@ -166,25 +167,43 @@ class CapabilityPathRedaction:
     before routing, it also applies MCP_CAPABILITY_URL_ENABLED (CHT-1522):
     off, every request gets a 404 without the key being read; on, every
     response but a 500 carries the deprecation headers.
+
+    Other shapes a key can arrive in (``//mcp/<key>`` from a base URL
+    with a trailing slash, ``/mcp//<key>``, ``/MCP/<key>``, a key pasted
+    anywhere else) and WebSocket requests are scrubbed too (PR #346
+    re-review): every segment that starts with a prefix this server mints
+    and is long enough to be a secret is redacted. Those requests route
+    as before (the SPA, a 403 WebSocket close); none of them reaches the
+    capability route, so none reaches the key resolver.
     """
 
     def __init__(self, app: ASGIApp):
         self._app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not scope.get("path", "").startswith(_MCP_PREFIX):
+        if scope["type"] not in ("http", "websocket"):
             await self._app(scope, receive, send)
             return
-        key, slash, tail = scope["path"][len(_MCP_PREFIX):].partition("/")
+        path = scope.get("path", "")
+        key, slash, tail = path[len(_MCP_PREFIX):].partition("/") if path.startswith(_MCP_PREFIX) else ("", "", "")
         if not key:
+            # Any other shape (`//mcp/<key>`, `/mcp//<key>`, `/MCP/<key>`, a
+            # key pasted anywhere else): scrub every segment that looks like
+            # a secret this server mints, and route the rest as usual.
+            redacted = _redact_secret_segments(path)
+            if redacted != path:
+                _set_path(scope, redacted)
             await self._app(scope, receive, send)
             return
 
-        # Whatever follows the key (CHT-1587: a trailing slash, a sub-path)
-        # is dropped from the logged path too; the key is the first segment.
-        redacted_path = f"{_MCP_PREFIX}{_redact_key(key)}" + (f"/{'...' if tail else ''}" if slash else "")
-        scope["path"] = redacted_path
-        scope["raw_path"] = redacted_path.encode()
+        # The capability URL: the first segment after /mcp/ is the key,
+        # whatever it looks like, and anything below it is dropped from
+        # the logged path too (CHT-1587).
+        _set_path(scope, f"{_MCP_PREFIX}{_redact_key(key)}" + (f"/{'...' if tail else ''}" if slash else ""))
+        if scope["type"] == "websocket":
+            # No WebSocket route lives here; the router refuses it (403).
+            await self._app(scope, receive, send)
+            return
 
         enabled = capability_url_enabled()
         if enabled:
@@ -198,6 +217,30 @@ class CapabilityPathRedaction:
             return
         scope[_SCOPE_KEY] = key
         await self._app(scope, receive, send)
+
+
+def _set_path(scope: Scope, path: str) -> None:
+    """Rewrite the path every logger reads (``path``; ``raw_path`` kept
+    consistent, percent-encoded as the ASGI spec has it)."""
+    scope["path"] = path
+    scope["raw_path"] = quote(path).encode("ascii")
+
+
+# Shorter than this a segment cannot hold a secret worth hiding (every
+# secret this server mints is a prefix plus 64 hex characters), and
+# leaving it alone keeps a short word like `cat_x` routable.
+_MIN_SECRET_SEGMENT = 13
+
+
+def _redact_secret_segments(path: str) -> str:
+    """Redact each path segment that starts with a prefix this server
+    mints (``ck_``, ``cat_``, ...) and is long enough to be a secret."""
+    return "/".join(
+        _redact_key(segment)
+        if len(segment) >= _MIN_SECRET_SEGMENT and segment.startswith(ALL_SECRET_PREFIXES)
+        else segment
+        for segment in path.split("/")
+    )
 
 
 def _with_deprecation(send: Send) -> Send:

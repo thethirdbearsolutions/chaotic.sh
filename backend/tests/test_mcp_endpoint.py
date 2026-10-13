@@ -506,6 +506,84 @@ class TestCapabilityPathRedaction:
         assert scope["path"] == f"/mcp/ck_...{api_key[-4:]}{logged}"
         assert api_key.encode() not in scope["raw_path"]
 
+    @pytest.fixture
+    def resolver_calls(self, monkeypatch):
+        from app.auth import credentials
+
+        calls = []
+        real = credentials.capability_url_resolver.resolve
+
+        async def spy(*args, **kwargs):
+            calls.append(args)
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(credentials.capability_url_resolver, "resolve", spy)
+        return calls
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize("shape", ["//mcp/{key}", "/mcp//{key}", "/MCP/{key}", "/somewhere/{key}/else"])
+    async def test_other_shapes_are_redacted_and_never_resolved(
+        self, recording_client, api_key, monkeypatch, resolver_calls, enabled, shape,
+    ):
+        """PR #346 re-review: a key in any other segment is scrubbed too,
+        and these shapes never reach the capability route."""
+        from app.config import get_settings
+
+        monkeypatch.setenv("MCP_CAPABILITY_URL_ENABLED", "true" if enabled else "false")
+        get_settings.cache_clear()
+        try:
+            ac, recorder = recording_client
+            # Absolute, or httpx reads `//mcp/...` as a host.
+            resp = await ac.get("http://test" + shape.format(key=api_key))
+        finally:
+            get_settings.cache_clear()
+        assert resp.status_code not in (401, 403)
+        assert resolver_calls == []
+        (scope,) = recorder.scopes
+        assert scope["path"] == shape.format(key=f"ck_...{api_key[-4:]}")
+        assert api_key.encode() not in scope["raw_path"]
+
+    @pytest.mark.parametrize("prefix", ["cat_", "crt_"])
+    async def test_oauth_token_shapes_are_redacted_anywhere(self, recording_client, prefix):
+        ac, recorder = recording_client
+        token = prefix + "ab" * 32
+        await ac.get(f"/x/{token}")
+        (scope,) = recorder.scopes
+        assert scope["path"] == f"/x/{prefix}...abab"
+
+    async def test_short_lookalike_segments_still_route(self, recording_client):
+        """Too short to be a secret: left alone, so it routes as before."""
+        ac, recorder = recording_client
+        await ac.get("/api/projects/ck_short")
+        (scope,) = recorder.scopes
+        assert scope["path"] == "/api/projects/ck_short"
+
+    @pytest.mark.parametrize("path", ["/mcp/{key}", "//mcp/{key}"])
+    async def test_websocket_paths_are_redacted(self, db, api_key, resolver_calls, path):
+        """uvicorn logs `"WebSocket <path>" 403` from the same scope."""
+        from app.main import app
+
+        scope = {
+            "type": "websocket", "path": path.format(key=api_key),
+            "raw_path": path.format(key=api_key).encode(), "query_string": b"",
+            "headers": [], "client": ("127.0.0.1", 1), "server": ("test", 80),
+            "scheme": "ws", "root_path": "", "subprotocols": [],
+        }
+        sent = []
+
+        async def receive():
+            return {"type": "websocket.connect"}
+
+        async def send(message):
+            sent.append(message)
+
+        await app(scope, receive, send)
+        assert sent[-1]["type"] == "websocket.close"
+        assert resolver_calls == []
+        assert api_key not in scope["path"]
+        assert api_key.encode() not in scope["raw_path"]
+        assert scope["path"] == path.format(key=f"ck_...{api_key[-4:]}")
+
     async def test_bearer_mode_path_untouched(self, recording_client, api_key):
         ac, recorder = recording_client
         headers = {**_MCP_HEADERS, "Authorization": f"Bearer {api_key}"}
