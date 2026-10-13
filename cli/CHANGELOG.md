@@ -5,6 +5,121 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
+## [0.1.0a21] - 2026-10-13
+
+Server and CLI changes merged since a20 (PRs #311-#320). This release
+carries one database migration (0019) and changes how `chaotic system
+upgrade` stops, restarts and configures the service: install the new CLI
+first (`uv tool install --force chaotic-cli==0.1.0a21`), then run
+`chaotic system upgrade`, which backs up and migrates before restarting.
+
+### Upgrade notes
+
+- **Migration 0019: authorship no longer cascades.** The six foreign keys
+  that record who wrote something (`issues.creator_id`,
+  `issue_comments.author_id`, `issue_activities.user_id`,
+  `documents.author_id`, `document_comments.author_id`,
+  `document_activities.user_id`) change from ON DELETE CASCADE to ON DELETE
+  SET NULL, and lose their NOT NULL. The migration edits the stored table
+  definitions in one transaction; no row is copied and no index rebuilt.
+  API responses can now carry a null author id, with `"Deleted user"` as
+  the name.
+- **Deleting an agent that authored anything returns 409** (`chaotic agent
+  delete`, `DELETE /agents/{id}`) with a count per kind of record, instead
+  of deleting its issues, comments, activity and documents with it. The
+  count covers issues, comments, activity, documents, ritual gate requests,
+  attestations and approvals, budget transactions and revisions, so any
+  agent that has closed a ticket cannot be deleted. Only an agent that
+  authored nothing is deleted; to retire one that did, revoke its API keys
+  (`chaotic auth keys revoke`). Only the agent's owner can do that: its keys
+  belong to the human who created it, so a team admin who can attempt the
+  delete cannot follow the 409's advice (CHT-1494).
+- **Known issue: deleting a human account still deletes its agents**, which
+  bypasses the 409 guard, on a database whose `users.parent_user_id` has ON
+  DELETE CASCADE (one built from the migration chain). The agents' authored
+  work survives with a null author, but the agents are gone
+  (CHT-1467).
+- **Server hosts need uv 0.5.31 or newer**: all three `pyproject.toml`
+  files now set `[tool.uv] required-version = ">=0.5.31"`, so `just sync`
+  (which `system install`/`upgrade` run) fails on an older uv. Upgrade uv
+  on the server first if needed.
+- **`system upgrade` refreshes the service file.** After migrating and
+  before starting, it regenerates the systemd unit / launchd plist from
+  `server.json` and rewrites it only when the result keeps every setting
+  the current file makes and only adds settings. The old file is kept byte
+  for byte in `~/.chaotic/service-backups/` (newest 5 per file), the new
+  one is written atomically, Linux runs `systemctl --user daemon-reload`,
+  and a diff with environment values and comments redacted is printed. A
+  unit with anything the rewrite would drop or change (extra environment,
+  a different `ExecStart`, comments, a symlink, ...) is left alone with
+  `Service file not updated: ...`; move those customisations into a
+  drop-in (`systemctl --user edit chaotic`). An upgrade that rolls back
+  restores this run's backup of the file.
+- **Bounded shutdown.** uvicorn now gets `--timeout-graceful-shutdown 10`
+  (justfile `serve-prod`), the generated unit sets `TimeoutStopSec=30`
+  (launchd `ExitTimeOut=30`), and the CLI waits up to 120 s for a stop,
+  which covers the 90 s systemd default that units written before this
+  release still have. The new unit setting arrives through the service-file
+  refresh above, so the stop during this upgrade still runs under the old
+  unit. An upgrade now always starts the server and checks `/health` and
+  the deployed commit, even if the server was stopped beforehand, and every
+  failure path says whether the server is up.
+- **MCP clients must reconnect**: `issue_update` gained `parent` and
+  `no_parent`, so a cached toolset is stale (the tool count stays 38;
+  compare `server_info`'s fingerprint). The server also drops open `/mcp`
+  streams after 10 s on stop.
+- **Roll back by restoring the pre-upgrade backup** (`chaotic system backup
+  --restore <timestamp>`), not by `oxyde migrate` downgrading past 0019: the
+  downgrade restores CASCADE but not the dropped NOT NULLs, and rows whose
+  author was deleted meanwhile keep a null author. A refreshed service file
+  can be put back from `~/.chaotic/service-backups/` (then `systemctl
+  --user daemon-reload`).
+
+### Added
+
+- **MCP `issue_update` sets and clears a parent** (`parent`, `no_parent`)
+  on both transports, checked before any attestation or write: unknown,
+  self, cross-project and cyclic parents are refused. The `issue_block`,
+  `issue_label` and `issue_update` descriptions name the CLI command for
+  what MCP cannot do yet (CHT-1460).
+- **`issue view` shows relations**, and `issue view --json` has a
+  `relations` array with the same rows as `issue relations --json`, or
+  `relations: null` when the relations call fails (CHT-1431).
+- **The open issue detail refreshes live** in the web UI when an agent or
+  another client comments, updates, relates or attests on it, whichever
+  list it was opened from. Refreshes are ordered and coalesced, keep focus,
+  caret and scroll, and hold off while a dropdown, menu or IME composition
+  is open (CHT-1237, CHT-1286).
+
+### Fixed
+
+- **`chaotic issue relations` no longer crashes** with `KeyError:
+  'related_issue'`: the CLI now reads the flat shape the API returns
+  (CHT-1431).
+- **A stalled stop no longer leaves the server down.** `system upgrade`
+  died on a raw `TimeoutExpired` after 60 s and left the service stopped,
+  and an upgrade that found the server stopped never started it again;
+  stop and start no longer raise, and when a stop fails, upgrade,
+  `reconfigure` and `backup --restore` say whether the server is running
+  or down and start it again if it is down (CHT-1474, CHT-1475).
+- **Escape in the create-issue modal closes only the topmost layer**: an
+  open dropdown first, then a clean modal in one press; a modal with input
+  only blurs the field, so a stray Escape no longer discards it (CHT-1231).
+- Remote events no longer re-render a sprint detail over an open issue or
+  pull you back into the last sprint you viewed (CHT-1487).
+
+### Internal
+
+- `backend/uv.lock`, `cli/uv.lock` and `e2e/uv.lock` are committed; CI,
+  `just sync` and the server install/upgrade path install with `uv sync
+  --locked`, and `just lock` re-resolves all three (CHT-1201). `uv tool
+  install chaotic-cli` is unaffected.
+- `CONTRIBUTING.md`, issue forms and a PR template; the a18 and a19
+  changelog entries are backfilled (CHT-1463, CHT-1478).
+- chaotic.sh refresh: Agents & MCP section, screenshots, What's New, a
+  mobile nav, and Docs and license links (CHT-238, CHT-689, CHT-692,
+  CHT-694, CHT-695, CHT-1479, CHT-1481, CHT-1482).
+
 ## [0.1.0a20] - 2026-10-13
 
 Server and CLI changes merged since a19 (PRs #303-#309). This release

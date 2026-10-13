@@ -383,5 +383,11 @@ class TestInProcessCallsReturnSchemas:
         from app.api import issues
         got = await issues.get_issue_by_identifier(test_issue.identifier, test_user)
         dumped = got.model_dump(mode="json")
-        assert "creator" not in dumped
+        # `creator` is the ORM relation's name AND, since CHT-1500, a
+        # schema field: the principal summary, which carries only its own
+        # declared keys, never the user row behind it.
+        from app.schemas.principal import PrincipalSummary
+        assert set(dumped["creator"]) == set(PrincipalSummary.model_fields)
+        assert "email" not in dumped["creator"]
+        assert "is_superuser" not in str(dumped)
         assert "hashed_password" not in str(dumped)

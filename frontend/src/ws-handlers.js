@@ -19,7 +19,7 @@ import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRem
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { loadGateApprovals } from './gate-approvals.js';
-import { loadInbox, refreshInboxUnreadCount } from './inbox.js';
+import { loadInbox, refreshInboxUnreadCount, isInboxEventAlreadyApplied, recordInboxEvent } from './inbox.js';
 
 /**
  * True while the issue detail view has its inline description editor open.
@@ -394,11 +394,18 @@ function handleAttestation(data) {
  * docstring) -- filter to this user's own entries client-side, same as
  * issue events filter on assignee_id.
  */
-function handleInbox(data) {
+function handleInbox(data, context) {
     if (data.recipient_user_id !== getCurrentUser()?.id) return;
     refreshInboxUnreadCount();
-    if (getCurrentView() === 'inbox') {
-        loadInbox();
+    // Confirms our own archive/read, so a fetch that was already in flight
+    // cannot bring the entry back (CHT-1514).
+    recordInboxEvent(context?.type, data);
+    // The server echoes our own mark-read/archive back to us; reloading for
+    // that would only redraw what is already on screen. Anything else
+    // refreshes in the background, keeping the open row, cursor, focus and
+    // scroll (CHT-1320, PR #260 review finding 1).
+    if (getCurrentView() === 'inbox' && !isInboxEventAlreadyApplied(context?.type, data)) {
+        loadInbox({ background: true });
     }
 }
 
@@ -499,7 +506,7 @@ function handleReconnected() {
     } else if (view === 'approvals') {
         loadGateApprovals();
     } else if (view === 'inbox') {
-        loadInbox();
+        loadInbox({ background: true });
     }
     // An open issue detail sits on top of whichever list `view` names
     // (CHT-1237), so refresh it as well, not instead.

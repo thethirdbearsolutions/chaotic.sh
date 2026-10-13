@@ -13,12 +13,16 @@ copy, used by both transports.
 """
 from __future__ import annotations
 
+# `assignee`/`author`/`source_user` are principal summaries ({id, name,
+# is_agent, owner_id, owner_name}, CHT-1500): the `*_name` beside each is
+# what a tool input takes, the summary says whether it is a person or an
+# agent and, for an agent, whose.
 COMPACT_ISSUE_FIELDS = (
     "identifier", "title", "status", "priority", "issue_type", "estimate",
-    "assignee_name", "sprint_name", "parent_identifier", "labels", "updated_at",
+    "assignee_name", "assignee", "sprint_name", "parent_identifier", "labels", "updated_at",
 )
 COMPACT_DOCUMENT_FIELDS = (
-    "id", "title", "icon", "project_id", "sprint_id", "author_name", "labels", "updated_at",
+    "id", "title", "icon", "project_id", "sprint_id", "author_name", "author", "labels", "updated_at",
 )
 COMPACT_PROJECT_FIELDS = (
     "id", "key", "name", "description", "issue_count", "estimate_scale",
@@ -27,7 +31,7 @@ COMPACT_PROJECT_FIELDS = (
 )
 COMPACT_INBOX_FIELDS = (
     "id", "kind", "title", "issue_identifier", "document_title", "source_user_name",
-    "created_at", "read_at",
+    "source_user", "created_at", "read_at",
 )
 # Long free text in list/feed rows is cut to this many chars with an
 # explicit `...(+N chars)` marker: project descriptions in project_list,

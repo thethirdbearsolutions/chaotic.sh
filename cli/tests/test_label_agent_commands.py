@@ -362,3 +362,333 @@ class TestAgentKeysCreate:
 
         assert result.exit_code != 0
         assert 'not found' in result.output.lower()
+
+
+class TestAgentKeysListRevoke:
+    """agent keys list / revoke (CHT-1508)."""
+
+    _KEYS = [
+        {"id": "key-aaaa-1", "name": "Key for claude-bot", "key_prefix": "ck_aaaa", "owner_id": "u1",
+         "owner_name": "Carol", "legacy_self_minted": False, "is_active": True,
+         "created_at": "2026-10-01T00:00:00Z", "last_used_at": None},
+        {"id": "key-bbbb-2", "name": "self", "key_prefix": "ck_bbbb", "owner_id": "agent-uuid-123",
+         "owner_name": "claude-bot", "legacy_self_minted": True, "is_active": False,
+         "created_at": "2026-10-02T00:00:00Z", "last_used_at": "2026-10-03T00:00:00Z"},
+        {"id": "key-cccc-3", "name": "new", "key_prefix": "ck_cccc1234", "owner_id": "u1",
+         "owner_name": "Carol", "legacy_self_minted": False, "is_active": True,
+         "created_at": "2026-10-04T00:00:00Z", "last_used_at": None},
+    ]
+
+    def _setup(self):
+        from cli.main import client
+
+        client.get_team_agents = MagicMock(return_value=[{"id": "agent-uuid-123", "name": "claude-bot"}])
+        client.list_agent_keys = MagicMock(return_value=self._KEYS)
+        client.revoke_api_key = MagicMock(return_value=None)
+        return client
+
+    def test_list_shows_holder_and_self(self, cli_runner):
+        from cli.main import cli
+
+        client = self._setup()
+        result = cli_runner.invoke(cli, ['agent', 'keys', 'list', 'claude-bot'])
+
+        assert result.exit_code == 0, result.output
+        assert 'Carol' in result.output and 'legacy' in result.output
+        client.list_agent_keys.assert_called_once_with('agent-uuid-123')
+
+    def test_list_json(self, cli_runner):
+        import json
+        from cli.main import cli
+
+        self._setup()
+        result = cli_runner.invoke(cli, ['--json', 'agent', 'keys', 'list', 'claude-bot'])
+
+        assert result.exit_code == 0, result.output
+        assert [k["id"] for k in json.loads(result.output)] == ["key-aaaa-1", "key-bbbb-2", "key-cccc-3"]
+
+    def test_list_empty(self, cli_runner):
+        from cli.main import cli, client
+
+        self._setup()
+        client.list_agent_keys = MagicMock(return_value=[])
+        result = cli_runner.invoke(cli, ['agent', 'keys', 'list', 'claude-bot'])
+
+        assert result.exit_code == 0
+        assert 'no API keys' in result.output
+
+    def test_revoke_by_prefix(self, cli_runner):
+        from cli.main import cli
+
+        client = self._setup()
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', 'key-cccc'])
+
+        assert result.exit_code == 0, result.output
+        client.revoke_api_key.assert_called_once_with('key-cccc-3')
+
+    def test_revoke_skips_revoked_keys(self, cli_runner):
+        """PR #326 third review, finding 4: a revoked key is no candidate,
+        and does not make an active key's prefix ambiguous."""
+        from cli.main import cli
+
+        client = self._setup()
+        result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', 'key-bbbb'])
+        assert result.exit_code != 0
+        assert 'no active key' in result.output
+
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', 'ck_'])
+        assert 'Ambiguous' in result.output  # two active keys, not three
+        client.revoke_api_key.assert_not_called()
+
+    def test_revoke_by_pasted_full_key(self, cli_runner):
+        from cli.main import cli
+
+        client = self._setup()
+        secret = 'ck_cccc1234' + 'f' * 56
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', secret])
+
+        assert result.exit_code == 0, result.output
+        client.revoke_api_key.assert_called_once_with('key-cccc-3')
+        assert secret not in result.output
+
+    def test_an_unknown_pasted_secret_is_not_echoed(self, cli_runner):
+        from cli.main import cli
+
+        client = self._setup()
+        secret = 'ck_99999999' + 'e' * 56
+        result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', secret])
+
+        assert result.exit_code != 0
+        assert 'no active key' in result.output
+        assert secret not in result.output and 'e' * 20 not in result.output
+        client.revoke_api_key.assert_not_called()
+
+    def test_revoke_by_display_prefix(self, cli_runner):
+        """The ck_ prefix `keys list` shows works too (PR #326 re-review, finding 7)."""
+        from cli.main import cli
+
+        client = self._setup()
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', 'ck_aaaa'])
+
+        assert result.exit_code == 0, result.output
+        client.revoke_api_key.assert_called_once_with('key-aaaa-1')
+
+    def test_revoke_declined(self, cli_runner):
+        from cli.main import cli
+
+        client = self._setup()
+        with patch('cli.main.confirm_action', return_value=False):
+            result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', 'key-aaaa'])
+
+        assert result.exit_code == 0
+        client.revoke_api_key.assert_not_called()
+
+    def test_revoke_ambiguous_unknown_and_empty(self, cli_runner):
+        from cli.main import cli
+
+        client = self._setup()
+        for ref, expected in (('key-', 'Ambiguous'), ('nope', 'has no active key'), ('  ', 'must not be empty')):
+            result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', ref])
+            assert result.exit_code != 0
+            assert expected in result.output
+        client.revoke_api_key.assert_not_called()
+
+
+class TestAgentDeactivate:
+    """Tests for agent deactivate command (CHT-1494)."""
+
+    def test_agent_deactivate_by_name(self, cli_runner):
+        """agent deactivate resolves the agent by name and deactivates it."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.deactivate_agent = MagicMock(return_value={
+            "id": "agent-uuid-123", "name": "claude-bot", "is_active": False,
+        })
+
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['agent', 'deactivate', 'claude-bot'])
+
+        assert result.exit_code == 0, result.output
+        assert 'deactivated' in result.output
+        client.deactivate_agent.assert_called_once_with('agent-uuid-123')
+
+    def test_agent_deactivate_declined(self, cli_runner):
+        """Declining the confirmation deactivates nothing."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.deactivate_agent = MagicMock()
+
+        with patch('cli.main.confirm_action', return_value=False):
+            result = cli_runner.invoke(cli, ['agent', 'deactivate', 'agent-uuid'])
+
+        assert result.exit_code == 0
+        client.deactivate_agent.assert_not_called()
+
+    def test_agent_deactivate_json(self, cli_runner):
+        """agent deactivate --json prints the agent as JSON."""
+        import json
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.deactivate_agent = MagicMock(return_value={
+            "id": "agent-uuid-123", "name": "claude-bot", "is_active": False,
+        })
+
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['agent', 'deactivate', 'claude-bot', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["is_active"] is False
+
+    def test_agent_deactivate_ambiguous(self, cli_runner):
+        """An ambiguous identifier deactivates nothing."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "bot-1"},
+            {"id": "agent-uuid-456", "name": "bot-2"},
+        ])
+        client.deactivate_agent = MagicMock()
+
+        result = cli_runner.invoke(cli, ['agent', 'deactivate', 'agent-uuid'])
+
+        assert result.exit_code != 0
+        assert 'Ambiguous' in result.output
+        client.deactivate_agent.assert_not_called()
+
+    def test_agent_deactivate_not_found(self, cli_runner):
+        """An unknown identifier shows an error."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['agent', 'deactivate', 'nonexistent'])
+
+        assert result.exit_code != 0
+        assert 'not found' in result.output.lower()
+
+    def test_agent_deactivate_json_without_yes_refuses(self, cli_runner):
+        """Under --json without --yes the confirmation can't be answered:
+        exit 2 with a JSON error, and nothing is deactivated."""
+        import json
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.deactivate_agent = MagicMock()
+
+        result = cli_runner.invoke(cli, ['agent', 'deactivate', 'claude-bot', '--json'])
+
+        assert result.exit_code == 2, result.output
+        assert "error" in json.loads(result.output)
+        client.deactivate_agent.assert_not_called()
+
+    @pytest.mark.parametrize("command", [
+        ['agent', 'deactivate'],
+        ['agent', 'reactivate'],
+        ['agent', 'delete'],
+        ['agent', 'keys', 'create'],
+    ])
+    @pytest.mark.parametrize("ref", ["", "   "])
+    def test_empty_identifier_is_refused(self, cli_runner, command, ref):
+        """An empty ID prefix would match every agent (CHT-1494)."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.deactivate_agent = MagicMock()
+        client.reactivate_agent = MagicMock()
+        client.delete_agent = MagicMock()
+        client.create_agent_key = MagicMock()
+
+        result = cli_runner.invoke(cli, ['--yes', *command, ref])
+
+        assert result.exit_code == 1, result.output
+        assert 'must not be empty' in result.output
+        client.deactivate_agent.assert_not_called()
+        client.reactivate_agent.assert_not_called()
+        client.delete_agent.assert_not_called()
+        client.create_agent_key.assert_not_called()
+
+    def test_agent_list_marks_deactivated(self, cli_runner):
+        """agent list marks a deactivated agent."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {
+                "id": "agent-uuid-123456789",
+                "name": "old-bot",
+                "is_active": False,
+                "agent_project_id": None,
+                "parent_user_name": "Alice",
+                "created_at": "2026-02-10T12:00:00",
+            },
+        ])
+
+        result = cli_runner.invoke(cli, ['agent', 'list'])
+
+        assert result.exit_code == 0
+        assert 'deactivated' in result.output
+
+
+class TestAgentReactivate:
+    """Tests for agent reactivate command (CHT-1494)."""
+
+    def test_agent_reactivate_by_prefix(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot", "is_active": False},
+        ])
+        client.reactivate_agent = MagicMock(return_value={
+            "id": "agent-uuid-123", "name": "claude-bot", "is_active": True,
+        })
+
+        result = cli_runner.invoke(cli, ['agent', 'reactivate', 'agent-uuid'])
+
+        assert result.exit_code == 0, result.output
+        assert 'reactivated' in result.output
+        assert 'chaotic agent keys create agent-uuid-123' in result.output
+        client.reactivate_agent.assert_called_once_with('agent-uuid-123')
+
+    def test_agent_reactivate_json(self, cli_runner):
+        import json
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot", "is_active": False},
+        ])
+        client.reactivate_agent = MagicMock(return_value={
+            "id": "agent-uuid-123", "name": "claude-bot", "is_active": True,
+        })
+
+        result = cli_runner.invoke(cli, ['agent', 'reactivate', 'claude-bot', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["is_active"] is True
+
+    def test_agent_reactivate_not_found(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[])
+        client.reactivate_agent = MagicMock()
+
+        result = cli_runner.invoke(cli, ['agent', 'reactivate', 'nope'])
+
+        assert result.exit_code != 0
+        assert 'not found' in result.output.lower()
+        client.reactivate_agent.assert_not_called()

@@ -1,12 +1,15 @@
 """Agent routes."""
 from fastapi import APIRouter, HTTPException, status
-from app.api.deps import CurrentUser, check_user_team_access
+from app.api.deps import CurrentUser, can_manage_agent, check_user_team_access
 from app.schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentCreated
-from app.schemas.api_key import APIKeyCreated
-from app.services.agent_service import AgentHasAuthoredContentError, AgentService
+from app.schemas.api_key import AgentKeyResponse, APIKeyCreated
+from app.services.agent_service import (
+    AgentHasAuthoredContentError, AgentInactiveError, AgentManageDeniedError, AgentService,
+)
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
 from app.services.project_service import ProjectService
+from app.services.user_service import UserService
 
 router = APIRouter()
 
@@ -218,12 +221,7 @@ async def update_agent(
             detail="Agent not found",
         )
 
-    # Only the parent user or team admins can update agents
-    team_service = TeamService()
-    is_admin = await team_service.is_team_admin(agent.agent_team_id, current_user.id)
-    is_owner = agent.parent_user_id == current_user.id
-
-    if not (is_admin or is_owner):
+    if not await can_manage_agent(current_user, agent):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this agent",
@@ -264,18 +262,22 @@ async def create_agent_key(
             detail="Agent not found",
         )
 
-    # Only the parent user or team admins can mint a new key for an agent
-    team_service = TeamService()
-    is_admin = await team_service.is_team_admin(agent.agent_team_id, current_user.id)
-    is_owner = agent.parent_user_id == current_user.id
-
-    if not (is_admin or is_owner):
+    if not await can_manage_agent(current_user, agent):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to mint a key for this agent",
         )
 
-    full_key, api_key_id = await agent_service.create_key(agent_id, current_user)
+    try:
+        full_key, api_key_id = await agent_service.create_key(agent_id, current_user)
+    except AgentManageDeniedError as refused:
+        # Lost the right between the check above and the mint (CHT-1508).
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(refused)) from refused
+    except AgentInactiveError as refused:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refused)) from refused
+    except ValueError as gone:
+        # Deleted between the lookup above and the mint.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found") from gone
 
     api_key_service = APIKeyService()
     api_key = await api_key_service.get_by_id(api_key_id)
@@ -287,6 +289,122 @@ async def create_agent_key(
         key_prefix=api_key.key_prefix,
         created_at=api_key.created_at,
         expires_at=api_key.expires_at,
+    )
+
+
+@router.get("/agents/{agent_id}/keys", response_model=list[AgentKeyResponse])
+async def list_agent_keys(
+    agent_id: str,
+    current_user: CurrentUser,
+) -> list[AgentKeyResponse]:
+    """Every API key that authenticates as the agent, active or revoked,
+    newest first: the ones people minted for it and the ones it minted
+    for itself (CHT-1508). Same authorization as minting one. Revoke one
+    with DELETE /api-keys/{id}."""
+    agent_service = AgentService()
+    agent = await agent_service.get_by_id(agent_id)
+
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found",
+        )
+
+    if not await can_manage_agent(current_user, agent):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to list this agent's keys",
+        )
+
+    keys = await agent_service.list_keys(agent.id)
+    user_service = UserService()
+    names: dict[str, str | None] = {}
+    for key in keys:
+        if key.user_id not in names:
+            owner = await user_service.get_by_id(key.user_id)
+            names[key.user_id] = owner.name if owner else None
+
+    return [
+        AgentKeyResponse(
+            id=key.id,
+            name=key.name,
+            key_prefix=key.key_prefix,
+            created_at=key.created_at,
+            last_used_at=key.last_used_at,
+            expires_at=key.expires_at,
+            is_active=key.is_active,
+            owner_id=key.user_id,
+            owner_name=names[key.user_id],
+            legacy_self_minted=key.user_id == agent.id,
+        )
+        for key in keys
+    ]
+
+
+@router.post("/agents/{agent_id}/deactivate", response_model=AgentResponse)
+async def deactivate_agent(
+    agent_id: str,
+    current_user: CurrentUser,
+) -> AgentResponse:
+    """Retire an agent: revoke all its API keys and block it from signing
+    in, keeping its authored work attributed (CHT-1494). Allowed to the
+    agent's parent user while still a member of the agent's team, and to
+    admins of that team (``can_manage_agent``, CHT-1508) -- the same
+    people who may delete it, so an admin can retire an agent whose
+    delete is refused for having authored work."""
+    return await _set_agent_active(agent_id, current_user, active=False)
+
+
+@router.post("/agents/{agent_id}/reactivate", response_model=AgentResponse)
+async def reactivate_agent(
+    agent_id: str,
+    current_user: CurrentUser,
+) -> AgentResponse:
+    """Undo a deactivation (CHT-1494). Its revoked keys stay revoked:
+    mint a new one with POST /agents/{agent_id}/keys. Same authorization
+    as deactivate."""
+    return await _set_agent_active(agent_id, current_user, active=True)
+
+
+async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> AgentResponse:
+    action = "reactivate" if active else "deactivate"
+    agent_service = AgentService()
+    agent = await agent_service.get_by_id(agent_id)
+
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found",
+        )
+
+    if not await can_manage_agent(current_user, agent):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Not authorized to {action} this agent",
+        )
+
+    if active:
+        agent = await agent_service.reactivate(agent, current_user)
+    else:
+        agent = await agent_service.deactivate(agent, current_user)
+    if agent is None:
+        # Deleted between the lookup and the write.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found",
+        )
+
+    return AgentResponse(
+        id=agent.id,
+        name=agent.name,
+        avatar_url=agent.avatar_url,
+        is_active=agent.is_active,
+        parent_user_id=agent.parent_user_id,
+        parent_user_name=agent.parent_user.name if agent.parent_user else None,
+        agent_team_id=agent.agent_team_id,
+        agent_project_id=agent.agent_project_id,
+        created_at=agent.created_at,
+        updated_at=agent.updated_at,
     )
 
 
@@ -306,12 +424,7 @@ async def delete_agent(
             detail="Agent not found",
         )
 
-    # Only the parent user or team admins can delete agents
-    team_service = TeamService()
-    is_admin = await team_service.is_team_admin(agent.agent_team_id, current_user.id)
-    is_owner = agent.parent_user_id == current_user.id
-
-    if not (is_admin or is_owner):
+    if not await can_manage_agent(current_user, agent):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to delete this agent",

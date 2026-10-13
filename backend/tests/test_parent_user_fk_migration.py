@@ -13,7 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_authorship_fk_migration import _run_in_one_transaction
+from .test_authorship_fk_migration import _run_in_one_transaction
+
+from .oxyde_files import OxydeFile
 
 BACKEND = Path(__file__).resolve().parents[1]
 MIGRATION = BACKEND / "migrations" / "0020_parent_user_restrict.py"
@@ -72,18 +74,45 @@ def _load_migration():
 
 
 class _Ctx:
-    """An execute-mode context that collects SQL, as Oxyde does, for a
-    test to run in one transaction."""
+    """A migration context that collects SQL instead of running it, over a
+    real Oxyde connection to `path` (0020 reads the schema through it, as
+    under the executor). Close it before Python's sqlite3 touches the file
+    (tests/oxyde_files.py, CHT-1491)."""
 
     _mode = "execute"
     dialect = "sqlite"
 
     def __init__(self, path):
-        self._db_conn = type("Conn", (), {"url": f"sqlite:///{path}"})()
+        self._file = OxydeFile(path)
+        self._db_conn = self._file.database
         self.statements: list[str] = []
 
     def execute(self, sql):
         self.statements.append(sql)
+
+    def close(self):
+        self._file.close()
+
+
+def _collect(path: str, module=None, step: str = "upgrade") -> list[str]:
+    """The SQL `step` collects against `path`, or what it raises."""
+    ctx = _Ctx(path)
+    try:
+        getattr(module or _load_migration(), step)(ctx)
+    finally:
+        ctx.close()
+    return ctx.statements
+
+
+def _refused(path: str, match: str, module=None) -> None:
+    """Upgrading `path` raises `match` before collecting any SQL."""
+    ctx = _Ctx(path)
+    try:
+        with pytest.raises(RuntimeError, match=match):
+            (module or _load_migration()).upgrade(ctx)
+    finally:
+        ctx.close()
+    assert ctx.statements == []
 
 
 def _seed(path: str) -> None:
@@ -230,10 +259,7 @@ def test_a_dangling_parent_stops_the_migration_before_anything_is_written(prod_s
         c.commit()
     sql = _users_sql(prod_shaped)
 
-    ctx = _Ctx(prod_shaped)
-    with pytest.raises(RuntimeError, match=r"orphan -> gone.*nothing was changed"):
-        _load_migration().upgrade(ctx)
-    assert ctx.statements == []
+    _refused(prod_shaped, r"orphan -> gone.*nothing was changed")
     assert _users_sql(prod_shaped) == sql
 
 
@@ -246,10 +272,7 @@ def test_a_dangling_parent_on_a_non_agent_row_is_reported_too(at_0019):
         )
         c.commit()
 
-    ctx = _Ctx(at_0019)
-    with pytest.raises(RuntimeError, match=r"legacy -> gone.*= NULL.*nothing was changed"):
-        _load_migration().upgrade(ctx)
-    assert ctx.statements == []
+    _refused(at_0019, r"legacy -> gone.*= NULL.*nothing was changed")
 
 
 def _break_agent_project(path: str) -> None:
@@ -284,11 +307,10 @@ def test_a_parent_violation_that_appears_after_the_precheck_fails_the_transactio
         c.commit()
     module = _load_migration()
     real_read = module._read
-    monkeypatch.setattr(module, "_read", lambda path: (real_read(path)[0], []))
-    ctx = _Ctx(prod_shaped)
-    module.upgrade(ctx)
+    monkeypatch.setattr(module, "_read", lambda ctx: (real_read(ctx)[0], []))
+    statements = _collect(prod_shaped, module)
     with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed: 0020 no row violates"):
-        _run_in_one_transaction(prod_shaped, ctx.statements)
+        _run_in_one_transaction(prod_shaped, statements)
     assert _parent_fks(prod_shaped) == []
 
 
@@ -300,63 +322,61 @@ def test_0020_does_not_load_0019():
     assert "spec_from_file_location" not in source
 
 
-def test_a_rewrite_that_misses_is_refused_before_anything_is_written(prod_shaped, monkeypatch):
-    """With no foreign key to rewrite, a no-op rewrite must be refused:
-    zero matching foreign keys is not "all of them RESTRICT"."""
+def test_a_rewrite_that_misses_fails_the_transaction(prod_shaped, monkeypatch):
+    """With no foreign key to rewrite, a no-op rewrite must fail the
+    verification: zero matching foreign keys is not "all of them RESTRICT"."""
     module = _load_migration()
     monkeypatch.setattr(module, "rewrite_users_table", lambda sql, action: sql)
-    ctx = _Ctx(prod_shaped)
-    with pytest.raises(RuntimeError, match="exactly one foreign key.*nothing was changed"):
-        module.upgrade(ctx)
-    assert ctx.statements == []
+    statements = _collect(prod_shaped, module)
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed: 0020 users.parent_user_id"):
+        _run_in_one_transaction(prod_shaped, statements)
+    assert _parent_fks(prod_shaped) == []
 
 
-def test_a_rewrite_that_changes_a_column_is_refused(prod_shaped, monkeypatch):
-    """The point of comparing shapes: a stored-text edit that changed how
-    rows decode (here, a dropped NOT NULL) must never be written."""
+@pytest.mark.parametrize(
+    ("change", "failed"),
+    [
+        # A dropped NOT NULL: rows would no longer be held to it.
+        (('"name" VARCHAR(255) NOT NULL', '"name" VARCHAR(255)'), "the users columns are unchanged"),
+        # Another foreign key's action changed along the way.
+        (
+            ('REFERENCES "teams" ("id") ON DELETE SET NULL', 'REFERENCES "teams" ("id") ON DELETE CASCADE'),
+            "the other users foreign keys are unchanged",
+        ),
+    ],
+)
+def test_a_rewrite_that_changes_anything_else_fails_the_transaction(at_0019, monkeypatch, change, failed):
+    """The point of comparing the table before and after: a stored-text
+    edit that changed how rows decode, or another constraint, must roll back."""
     module = _load_migration()
     real = module.rewrite_users_table
-    monkeypatch.setattr(
-        module, "rewrite_users_table",
-        lambda sql, action: real(sql, action).replace('"name" VARCHAR(255) NOT NULL', '"name" VARCHAR(255)'),
-    )
-    ctx = _Ctx(prod_shaped)
-    with pytest.raises(RuntimeError, match="changes its columns"):
-        module.upgrade(ctx)
-    assert ctx.statements == []
-
-
-def test_the_transaction_verifies_what_was_stored(prod_shaped, monkeypatch):
-    """Past the pre-write check, the in-transaction verification is the
-    last line: a no-op edit must fail it and roll back."""
-    module = _load_migration()
-    monkeypatch.setattr(module, "rewrite_users_table", lambda sql, action: sql)
-    monkeypatch.setattr(module, "check_rewrite", lambda original, rewritten, action: None)
-    ctx = _Ctx(prod_shaped)
-    module.upgrade(ctx)
-    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed: 0020 users.parent_user_id"):
-        _run_in_one_transaction(prod_shaped, ctx.statements)
-    assert _parent_fks(prod_shaped) == []
+    assert change[0] in _users_sql(at_0019)
+    monkeypatch.setattr(module, "rewrite_users_table", lambda sql, action: real(sql, action).replace(*change))
+    statements = _collect(at_0019, module)
+    with pytest.raises(sqlite3.IntegrityError, match=f"CHECK constraint failed: 0020 {failed}"):
+        _run_in_one_transaction(at_0019, statements)
+    assert _parent_fks(at_0019) == ["CASCADE"]
 
 
 def test_downgrade_restores_cascade_without_touching_rows(at_0019):
     _migrate(at_0019)
     before = _snapshot(at_0019)
-    ctx = _Ctx(at_0019)
-    _load_migration().downgrade(ctx)
-    _run_in_one_transaction(at_0019, ctx.statements)
+    _run_in_one_transaction(at_0019, _collect(at_0019, step="downgrade"))
     assert _parent_fks(at_0019) == ["CASCADE"]
     assert _snapshot(at_0019) == before
 
 
-def test_a_database_file_it_cannot_read_is_refused():
-    class _NoFile(_Ctx):
-        def __init__(self):
-            self._db_conn = None
-            self.statements = []
+def test_no_connection_to_read_through_is_refused():
+    class _NoConnection:
+        _mode = "execute"
+        dialect = "sqlite"
+        _db_conn = None
 
-    with pytest.raises(RuntimeError, match="nothing was changed"):
-        _load_migration().upgrade(_NoFile())
+        def execute(self, sql):  # pragma: no cover - must not be reached
+            raise AssertionError(sql)
+
+    with pytest.raises(RuntimeError, match="no connection.*nothing was changed"):
+        _load_migration().upgrade(_NoConnection())
 
 
 SQLALCHEMY_USERS = (
@@ -420,11 +440,3 @@ def test_the_replay_records_restrict():
 
 def test_the_template_schema_is_migrated(schema_template):
     assert _parent_fks(schema_template) == ["RESTRICT"]
-
-
-def test_a_schema_read_that_fails_is_refused(tmp_path):
-    """The read runs in a child process; its failure stops the migration."""
-    ctx = _Ctx(str(tmp_path / "missing.db"))
-    with pytest.raises(RuntimeError, match="could not read the schema.*nothing was changed"):
-        _load_migration().upgrade(ctx)
-    assert ctx.statements == []

@@ -27,17 +27,10 @@ does. Where the column already references users, its ON DELETE is
 rewritten; where it has no reference, one is appended to the column's
 own definition.
 
-The current CREATE text is read by a read-only connection in a child
-process, not in the migrating process: Oxyde links its own copy of
-SQLite, and a connection from Python's copy opened and closed beside
-Oxyde's would release Oxyde's POSIX locks on the file (see _READER).
-0019 reads it in-process. While this migration did too, and its tests
-also ran Oxyde in-process beside their own sqlite3 connections, about
-one run in two hundred failed transiently: a `quick_check` inside the
-transaction, or an `integrity_check` afterwards reporting an index row
-missing, never on a copy of the same database. With the read and the
-tests' migrations moved out of process, 60 runs of the suite (over a
-thousand migrations) were clean.
+The current CREATE text, and any dangling parent, are read through the
+migration's own Oxyde connection, never with Python's sqlite3: Oxyde
+links its own copy of SQLite, and a second copy opening the same WAL
+database breaks Oxyde's locks (CHT-1491; 0019 does the same).
 
 Adding a foreign key changes nothing on disk, but rows that already
 exist can violate it. A user row (agent or not) whose parent_user_id
@@ -52,17 +45,16 @@ with the ids to fix. To check a database before upgrading (read-only):
 Any row it returns must be pointed at an existing human (or, for a row
 that is not an agent, have parent_user_id cleared) first.
 
-Before anything is written, the old and the new CREATE text are each
-built in a scratch in-memory database and compared: every column
-(name, type, NOT NULL, default, primary key, hidden) and every other
-foreign key must be identical, and the new text must have exactly one
-foreign key from parent_user_id to users, with the intended action. That
-is what makes a stored-text edit safe -- rows decode the same way -- and
-it is checked deterministically. Inside the transaction a
-CHECK-constrained temp table then fails (and rolls back) the edit
-unless the stored text is the new text, the reloaded schema has exactly
-one such foreign key with that action, no row violates *that* foreign
-key, and `PRAGMA quick_check` is clean.
+Inside the transaction, before the edit, the table's columns (name,
+type, NOT NULL, default, primary key, hidden) and its other foreign keys
+are copied to temp tables. After it, a CHECK-constrained temp table
+fails (and rolls back) the edit unless the stored text is the new text;
+the columns and the other foreign keys are exactly as they were (so
+rows decode the same way, which is what makes a stored-text edit safe);
+there is exactly one foreign key from parent_user_id to users and it
+says the intended action; no row violates *that* foreign key; and
+`PRAGMA quick_check` is clean. Each check is a named constraint, so a
+failure says which one.
 
 Violations of the table's other foreign keys (`agent_team_id`,
 `agent_project_id`: a team or project deleted while foreign keys were
@@ -168,16 +160,36 @@ def _quote_literal(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
 
 
-def _database_path(ctx) -> str | None:
-    if getattr(ctx, "dialect", "sqlite") != "sqlite":
-        return None
-    url = getattr(getattr(ctx, "_db_conn", None), "url", None)
-    if not url or not url.startswith("sqlite"):
-        return None
-    path = url.split("///", 1)[-1]
-    if not path or path == ":memory:":
-        return None
-    return path
+def _read_through_oxyde(database, sql: str, params: list) -> list[dict]:
+    """Rows of `sql` (as dicts keyed by column name), read through Oxyde's
+    own connection to the migration target. (0019's, after CHT-1491.)
+
+    Never sqlite3.connect() the target here: Oxyde links its own copy of
+    SQLite, POSIX locks are per process, and a second copy opening the
+    same WAL database truncates the -shm Oxyde has mapped and drops its
+    locks on close (SIGBUS, "database disk image is malformed"). upgrade()
+    is synchronous and runs inside the executor's event loop, so the
+    query runs on a short-lived thread with an event loop of its own.
+    """
+    import asyncio
+    import threading
+
+    from oxyde import execute_raw
+
+    outcome = {}
+
+    def run():
+        try:
+            outcome["rows"] = asyncio.run(execute_raw(sql, params, client=database))
+        except BaseException as error:  # re-raised on the migration's thread
+            outcome["error"] = error
+
+    reader = threading.Thread(target=run, name="migration-0020-read")
+    reader.start()
+    reader.join()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["rows"]
 
 
 # --- this migration -----------------------------------------------------
@@ -229,95 +241,44 @@ DANGLING_PARENTS_SQL = (
 )
 
 
-def _shape(sql: str) -> tuple[list, list]:
-    """(columns, foreign keys) of the users table `sql` creates, built in
-    a scratch in-memory database."""
-    import sqlite3
-
-    connection = sqlite3.connect(":memory:")
-    try:
-        connection.execute(sql)
-        columns = connection.execute(f"PRAGMA table_xinfo({_quote_literal(TABLE)})").fetchall()
-        fks = connection.execute(f"PRAGMA foreign_key_list({_quote_literal(TABLE)})").fetchall()
-    finally:
-        connection.close()
-    # (from, table, to, on_update, on_delete, match), without the id/seq
-    # numbering, which moves when a foreign key is added.
-    return columns, sorted((fk[3], fk[2].lower(), fk[4], fk[5], fk[6], fk[7]) for fk in fks)
-
-
-def check_rewrite(original: str, rewritten: str, action: str) -> None:
-    """Refuse (before anything is written) unless `rewritten` differs from
-    `original` only in the parent_user_id foreign key, which it has
-    exactly once, with ON DELETE `action`."""
-    old_columns, old_fks = _shape(original)
-    new_columns, new_fks = _shape(rewritten)
-    if new_columns != old_columns:
-        raise RuntimeError(
-            f"0020: the rewritten {TABLE} definition changes its columns; nothing was changed"
-        )
-    parent = [fk for fk in new_fks if fk[0] == COLUMN and fk[1] == "users"]
-    others_old = [fk for fk in old_fks if not (fk[0] == COLUMN and fk[1] == "users")]
-    others_new = [fk for fk in new_fks if not (fk[0] == COLUMN and fk[1] == "users")]
-    if len(parent) != 1 or parent[0][4].upper() != action or others_new != others_old:
-        raise RuntimeError(
-            f"0020: the rewritten {TABLE} definition does not have exactly one foreign key from "
-            f"{COLUMN} to users with ON DELETE {action} and the others unchanged; nothing was changed"
-        )
-
-
-# Run in a child process. Oxyde links its own copy of SQLite, and two
-# copies of SQLite in one process do not see each other's POSIX locks:
-# closing a connection opened by Python's sqlite3 here would release the
-# locks Oxyde's open connections hold on the same file, and a closing
-# Oxyde connection could then believe it is the last one and checkpoint
-# and delete the WAL under the migration's transaction
-# (https://www.sqlite.org/howtocorrupt.html, "multiple copies of SQLite
-# linked into the same application"). A separate process has its own
-# locks, which SQLite coordinates normally.
-_READER = r"""
-import json, sqlite3, sys
-from urllib.parse import quote
-path, table, dangling_sql = sys.argv[1:4]
-connection = sqlite3.connect("file:" + quote(path, safe="/") + "?mode=ro", uri=True)
-try:
-    row = connection.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
-    ).fetchone()
-    dangling = connection.execute(dangling_sql).fetchall() if row else []
-finally:
-    connection.close()
-json.dump({"sql": row[0] if row else None, "dangling": dangling}, sys.stdout)
-"""
-
-
-def _read(path: str) -> tuple[str | None, list[tuple[str, str]]]:
+def _read(ctx) -> tuple[str | None, list[tuple[str, str]]]:
     """The users CREATE text and every (row id, missing parent id), read
-    read-only in a child process (see _READER) before the migration's
-    transaction."""
-    import json
-    import subprocess
-    import sys
-
-    result = subprocess.run(
-        [sys.executable, "-I", "-c", _READER, path, TABLE, DANGLING_PARENTS_SQL],
-        capture_output=True, text=True, timeout=300,
+    through the migration's own connection before its transaction."""
+    database = getattr(ctx, "_db_conn", None)
+    if (
+        getattr(ctx, "dialect", "sqlite") != "sqlite"
+        or database is None
+        or not callable(getattr(database, "execute", None))
+    ):
+        raise RuntimeError(
+            "0020 needs to read the SQLite schema it rewrites and has no connection to "
+            "the target database; nothing was changed"
+        )
+    rows = _read_through_oxyde(
+        database, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", [TABLE]
     )
-    if result.returncode != 0:
-        lines = result.stderr.strip().splitlines() or [f"exit status {result.returncode}"]
-        raise RuntimeError(f"0020 could not read the schema of {path}: {lines[-1]}; nothing was changed")
-    data = json.loads(result.stdout)
-    return data["sql"], [tuple(row) for row in data["dangling"]]
+    if not rows:
+        return None, []
+    dangling = _read_through_oxyde(database, DANGLING_PARENTS_SQL, [])
+    return rows[0]["sql"], [(row["id"], row[COLUMN]) for row in dangling]
+
+
+# Everything about users except the parent foreign key, which the edit
+# must leave exactly as it was: the columns (how rows decode) and the
+# other foreign keys.
+_COLUMNS_SQL = (
+    'SELECT cid, name, type, "notnull", dflt_value, pk, hidden '
+    f"FROM pragma_table_xinfo({_quote_literal(TABLE)})"
+)
+_OTHER_FKS_SQL = (
+    'SELECT "from", lower("table"), "to", on_update, on_delete, "match" '
+    f"FROM pragma_foreign_key_list({_quote_literal(TABLE)}) "
+    f"WHERE NOT (\"from\" = {_quote_literal(COLUMN)} AND lower(\"table\") = 'users')"
+)
 
 
 def _schema_edit(ctx, action: str) -> None:
-    path = _database_path(ctx)
-    if path is None:
-        raise RuntimeError(
-            "0020 needs to read the SQLite schema it rewrites and could not open the "
-            "target database file; nothing was changed"
-        )
-    original, dangling = _read(path)
+    original, dangling = _read(ctx)
     if original is None:
         raise RuntimeError(f"0020: the database has no {TABLE} table; nothing was changed")
     if dangling:
@@ -331,7 +292,8 @@ def _schema_edit(ctx, action: str) -> None:
         )
 
     rewritten = rewrite_users_table(original, action)
-    check_rewrite(original, rewritten, action)
+    ctx.execute(f"CREATE TEMP TABLE _cht1467_columns AS {_COLUMNS_SQL}")
+    ctx.execute(f"CREATE TEMP TABLE _cht1467_fks AS {_OTHER_FKS_SQL}")
     if rewritten != original:
         ctx.execute("PRAGMA writable_schema = ON")
         ctx.execute(
@@ -356,14 +318,20 @@ def _schema_edit(ctx, action: str) -> None:
     ctx.execute(
         "CREATE TEMP TABLE _cht1467_verify ("
         "a INTEGER CONSTRAINT \"0020 the stored users definition is the rewritten one\" CHECK (a = 0), "
-        f"b INTEGER CONSTRAINT \"0020 users.parent_user_id has one foreign key, ON DELETE {action}\" CHECK (b = 0), "
-        "c INTEGER CONSTRAINT \"0020 no row violates the parent_user_id foreign key\" CHECK (c = 0), "
-        "d INTEGER CONSTRAINT \"0020 PRAGMA quick_check is ok\" CHECK (d = 0))"
+        "b INTEGER CONSTRAINT \"0020 the users columns are unchanged\" CHECK (b = 0), "
+        "c INTEGER CONSTRAINT \"0020 the other users foreign keys are unchanged\" CHECK (c = 0), "
+        f"d INTEGER CONSTRAINT \"0020 users.parent_user_id has one foreign key, ON DELETE {action}\" CHECK (d = 0), "
+        "e INTEGER CONSTRAINT \"0020 no row violates the parent_user_id foreign key\" CHECK (e = 0), "
+        "f INTEGER CONSTRAINT \"0020 PRAGMA quick_check is ok\" CHECK (f = 0))"
     )
     ctx.execute(
-        "INSERT INTO _cht1467_verify (a, b, c, d) SELECT "
+        "INSERT INTO _cht1467_verify (a, b, c, d, e, f) SELECT "
         f"(SELECT count(*) <> 1 OR sum(sql <> {_quote_literal(rewritten)}) <> 0 FROM sqlite_master "
         f"WHERE type = 'table' AND name = {_quote_literal(TABLE)}), "
+        f"(SELECT count(*) FROM (SELECT * FROM _cht1467_columns EXCEPT {_COLUMNS_SQL} "
+        f"UNION ALL SELECT * FROM ({_COLUMNS_SQL} EXCEPT SELECT * FROM _cht1467_columns))), "
+        f"(SELECT count(*) FROM (SELECT * FROM _cht1467_fks EXCEPT {_OTHER_FKS_SQL} "
+        f"UNION ALL SELECT * FROM ({_OTHER_FKS_SQL} EXCEPT SELECT * FROM _cht1467_fks))), "
         f"(SELECT count(*) <> 1 OR sum(upper(on_delete) <> {_quote_literal(action)}) <> 0 {parent_fk}), "
         # Only rows violating the parent foreign key: other foreign keys
         # on users are out of scope (see the docstring).
@@ -371,7 +339,8 @@ def _schema_edit(ctx, action: str) -> None:
         f"WHERE fkid IN (SELECT id {parent_fk})), "
         "(SELECT count(*) FROM pragma_quick_check WHERE quick_check <> 'ok')"
     )
-    ctx.execute("DROP TABLE _cht1467_verify")
+    for table in ("_cht1467_verify", "_cht1467_columns", "_cht1467_fks"):
+        ctx.execute(f"DROP TABLE {table}")
 
 
 def _record(ctx, action: str) -> None:

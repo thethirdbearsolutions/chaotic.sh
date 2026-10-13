@@ -10,6 +10,7 @@ vi.mock('./api.js', () => ({
         markInboxRead: vi.fn(() => Promise.resolve({})),
         archiveInbox: vi.fn(() => Promise.resolve({})),
         markAllInboxRead: vi.fn(() => Promise.resolve({ marked_count: 0 })),
+        updateIssue: vi.fn(() => Promise.resolve({})),
     },
 }));
 
@@ -59,9 +60,32 @@ import {
 } from './state.js';
 import {
     loadInbox, renderInbox, renderInboxBadge, refreshInboxUnreadCount,
-    markAllInboxRead, toggleInboxUnreadFilter, openInboxEntryElement,
+    markAllInboxRead, toggleInboxUnreadFilter,
     archiveInboxEntry, focusFirstInboxRow,
+    toggleInboxEntryExpand, collapseInboxExpand, reassignInboxEntry,
 } from './inbox.js';
+import { registerActions } from './event-delegation.js';
+
+// The action map inbox.js registered at import (captured before any
+// beforeEach clearAllMocks wipes the mock's call log).
+const inboxActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
+const openFull = (data) => inboxActions['open-inbox-full']({ preventDefault: vi.fn() }, data);
+
+// Reassignable entry: an assignment carrying both a source user and an issue.
+const ASSIGN = {
+    id: 'assign-1',
+    kind: 'assignment',
+    title: 'ethan assigned you PRJ-9',
+    body: 'Please pick this up',
+    issue_id: 'issue-9',
+    issue_identifier: 'PRJ-9',
+    document_id: null,
+    document_title: null,
+    source_user_id: 'user-ethan',
+    source_user_name: 'ethan',
+    created_at: '2026-07-06T12:00:00Z',
+    read_at: null,
+};
 
 const ENTRY = {
     id: 'entry-1',
@@ -85,6 +109,7 @@ beforeEach(() => {
     getCurrentTeam.mockReturnValue({ id: 'team-1' });
     getInboxEntries.mockReturnValue([]);
     getInboxUnreadCount.mockReturnValue(0);
+    collapseInboxExpand(); // reset module-level expand state between tests (CHT-1320)
 });
 
 describe('loadInbox', () => {
@@ -222,36 +247,23 @@ describe('toggleInboxUnreadFilter', () => {
     });
 });
 
-describe('openInboxEntryElement', () => {
+describe("open-inbox-full action (the action bar's Open button)", () => {
     it('marks the entry read and opens the linked issue', () => {
         getInboxEntries.mockReturnValue([{ ...ENTRY }]);
-        const row = document.createElement('div');
-        row.dataset.entryId = 'entry-1';
-        row.dataset.issueId = 'issue-1';
-        openInboxEntryElement(row);
+        openFull({ entryId: 'entry-1', issueId: 'issue-1' });
         expect(viewIssue).toHaveBeenCalledWith('issue-1');
         expect(api.markInboxRead).toHaveBeenCalledWith('entry-1');
     });
 
     it('opens a linked document when there is no issue', () => {
         getInboxEntries.mockReturnValue([{ ...ENTRY, id: 'entry-2', issue_id: null }]);
-        const row = document.createElement('div');
-        row.dataset.entryId = 'entry-2';
-        row.dataset.documentId = 'doc-1';
-        openInboxEntryElement(row);
+        openFull({ entryId: 'entry-2', documentId: 'doc-1' });
         expect(viewDocument).toHaveBeenCalledWith('doc-1');
-    });
-
-    it('is a no-op for a null row', () => {
-        expect(() => openInboxEntryElement(null)).not.toThrow();
     });
 
     it('does not re-mark an already-read entry', () => {
         getInboxEntries.mockReturnValue([{ ...ENTRY, read_at: '2026-07-06T13:00:00Z' }]);
-        const row = document.createElement('div');
-        row.dataset.entryId = 'entry-1';
-        row.dataset.issueId = 'issue-1';
-        openInboxEntryElement(row);
+        openFull({ entryId: 'entry-1', issueId: 'issue-1' });
         expect(api.markInboxRead).not.toHaveBeenCalled();
     });
 });
@@ -303,14 +315,14 @@ describe('loadInbox focus gating (PR #252 review finding 1)', () => {
         getInboxEntries.mockReturnValue([ENTRY]); // what renderInbox reads
         isModalOpen.mockReturnValue(false);
         await loadInbox({ focusFirst: true });
-        expect(document.activeElement).toBe(document.querySelector('#inbox-list .inbox-row'));
+        expect(document.activeElement).toBe(document.querySelector('#inbox-list .inbox-row .inbox-row-toggle'));
     });
 
     it('does NOT focus on a background load (focusFirst omitted)', async () => {
         api.getInbox.mockResolvedValue([ENTRY]);
         getInboxEntries.mockReturnValue([ENTRY]);
-        await loadInbox(); // ws/reconnect path
-        expect(document.activeElement).not.toBe(document.querySelector('#inbox-list .inbox-row'));
+        await loadInbox({ background: true }); // ws/reconnect path
+        expect(document.querySelector('#inbox-list').contains(document.activeElement)).toBe(false);
     });
 
     it('does NOT steal focus while a modal is open, even on focusFirst', async () => {
@@ -330,7 +342,7 @@ describe('focusFirstInboxRow (CHT-1250 UX: keyboard nav engages immediately)', (
         expect(setSelectedInboxIndex).toHaveBeenCalledWith(0);
         const row = document.querySelector('#inbox-list .inbox-row');
         expect(row.classList.contains('keyboard-selected')).toBe(true);
-        expect(document.activeElement).toBe(row);
+        expect(document.activeElement).toBe(row.querySelector('.inbox-row-toggle'));
     });
 
     it('sets index -1 when the list is empty', () => {
@@ -349,5 +361,118 @@ describe('renderInboxRow archive button (CHT-1250 UX)', () => {
         expect(btn).not.toBeNull();
         expect(btn.getAttribute('data-action')).toBe('archive-inbox-entry');
         expect(btn.getAttribute('data-entry-id')).toBe('entry-1');
+    });
+
+    it('toggles from a real <button> in the row, not a role=button row (PR #260 review 2)', () => {
+        getInboxEntries.mockReturnValue([ENTRY]);
+        renderInbox();
+        const row = document.querySelector('.inbox-row');
+        expect(row.hasAttribute('data-action')).toBe(false);
+        expect(row.hasAttribute('role')).toBe(false);
+        const toggle = row.querySelector('.inbox-row-toggle');
+        expect(toggle.tagName).toBe('BUTTON');
+        expect(toggle.getAttribute('data-action')).toBe('toggle-inbox-expand');
+        expect(toggle.getAttribute('aria-expanded')).toBe('false');
+        // No interactive element is nested inside another one.
+        expect(row.querySelector('button button, button a, [role="button"] button')).toBeNull();
+    });
+});
+
+describe('toggleInboxEntryExpand (CHT-1320: Gmail-style expand in place)', () => {
+    it('expands the row inline with an action bar and marks it read', () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
+        renderInbox();
+        toggleInboxEntryExpand('assign-1');
+        const row = document.querySelector('.inbox-row');
+        expect(row.classList.contains('inbox-row-expanded')).toBe(true);
+        const toggle = row.querySelector('.inbox-row-toggle');
+        expect(toggle.getAttribute('aria-expanded')).toBe('true');
+        // aria-controls names the panel, a labelled region beside the toggle.
+        const panel = document.getElementById(toggle.getAttribute('aria-controls'));
+        expect(panel).not.toBeNull();
+        expect(panel.getAttribute('role')).toBe('region');
+        expect(panel.getAttribute('aria-label')).toBe(ASSIGN.title);
+        expect(toggle.contains(panel)).toBe(false);
+        expect(document.querySelector('.inbox-action-bar')).not.toBeNull();
+        // Expanding = you've seen it -> marked read.
+        expect(api.markInboxRead).toHaveBeenCalledWith('assign-1');
+    });
+
+    it('clears the unread dot immediately on expand (PR #260 review)', () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN, read_at: null }]);
+        renderInbox();
+        expect(document.querySelector('.inbox-row-unread-dot')).not.toBeNull();
+        toggleInboxEntryExpand('assign-1');
+        // Optimistic read is applied before the re-render, so the dot is gone
+        // without waiting for the mark-read API to resolve.
+        expect(document.querySelector('.inbox-row-unread-dot')).toBeNull();
+    });
+
+    it('shows a Reassign-back button for an assignment with a source user + issue', () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
+        renderInbox();
+        toggleInboxEntryExpand('assign-1');
+        const btn = document.querySelector('[data-action="reassign-inbox-entry"]');
+        expect(btn).not.toBeNull();
+        expect(btn.textContent).toContain('ethan');
+        // Open-full button too (there's a linked issue).
+        expect(document.querySelector('[data-action="open-inbox-full"]')).not.toBeNull();
+    });
+
+    it('does NOT show Reassign for a gate_pending entry (no source user)', () => {
+        getInboxEntries.mockReturnValue([{ ...ENTRY }]);
+        renderInbox();
+        toggleInboxEntryExpand('entry-1');
+        expect(document.querySelector('[data-action="reassign-inbox-entry"]')).toBeNull();
+    });
+
+    it('collapses on a second toggle', () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
+        renderInbox();
+        toggleInboxEntryExpand('assign-1');
+        toggleInboxEntryExpand('assign-1');
+        expect(document.querySelector('.inbox-row-expanded')).toBeNull();
+    });
+});
+
+describe('collapseInboxExpand (CHT-1320)', () => {
+    it('returns false when nothing is expanded', () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
+        renderInbox();
+        expect(collapseInboxExpand()).toBe(false);
+    });
+
+    it('returns true and collapses when a row is open', () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
+        renderInbox();
+        toggleInboxEntryExpand('assign-1');
+        expect(collapseInboxExpand()).toBe(true);
+        expect(document.querySelector('.inbox-row-expanded')).toBeNull();
+    });
+});
+
+describe('reassignInboxEntry (CHT-1320: PATCH-first, archive on success)', () => {
+    it('reassigns the issue back to the source user and archives the entry', async () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
+        getInboxUnreadCount.mockReturnValue(1);
+        await reassignInboxEntry('assign-1');
+        expect(api.updateIssue).toHaveBeenCalledWith('issue-9', { assignee_id: 'user-ethan' });
+        expect(api.archiveInbox).toHaveBeenCalledWith('assign-1'); // cleared only after reassign lands
+    });
+
+    it('no-ops when the entry lacks an issue or source user', async () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN, source_user_id: null }]);
+        await reassignInboxEntry('assign-1');
+        expect(api.updateIssue).not.toHaveBeenCalled();
+    });
+
+    it('leaves the entry in the inbox (does NOT archive) when the PATCH fails', async () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
+        api.updateIssue.mockRejectedValueOnce(new Error('nope'));
+        await reassignInboxEntry('assign-1');
+        expect(showApiError).toHaveBeenCalledWith(expect.stringContaining('reassign'), expect.any(Error));
+        // The whole point of PATCH-first: a failed reassign must not orphan the
+        // entry by archiving it (archive persists server-side, CHT-1316).
+        expect(api.archiveInbox).not.toHaveBeenCalled();
     });
 });

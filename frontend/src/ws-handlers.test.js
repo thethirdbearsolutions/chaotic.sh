@@ -101,6 +101,8 @@ vi.mock('./epics.js', () => ({
 vi.mock('./inbox.js', () => ({
     loadInbox: vi.fn(),
     refreshInboxUnreadCount: vi.fn(),
+    isInboxEventAlreadyApplied: vi.fn(() => false),
+    recordInboxEvent: vi.fn(),
 }));
 
 import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
@@ -113,7 +115,7 @@ import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
 import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRemoteDocumentDeleted } from './documents.js';
 import { loadEpics } from './epics.js';
-import { loadInbox, refreshInboxUnreadCount } from './inbox.js';
+import { loadInbox, refreshInboxUnreadCount, isInboxEventAlreadyApplied, recordInboxEvent } from './inbox.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { dispatch as rawDispatch, resetWsState } from './ws.js';
@@ -895,7 +897,31 @@ describe('ws-handlers.js', () => {
             getCurrentUser.mockReturnValue({ id: 'user-1' });
             getCurrentView.mockReturnValue('inbox');
             dispatch({ type: 'created', entity: 'inbox', data: { recipient_user_id: 'user-1' } });
-            expect(loadInbox).toHaveBeenCalled();
+            // In the background: no skeleton, the open row/cursor/focus survive (CHT-1320).
+            expect(loadInbox).toHaveBeenCalledWith({ background: true });
+        });
+
+        it('skips the reload for an event this client already shows (our own read echo)', () => {
+            getCurrentUser.mockReturnValue({ id: 'user-1' });
+            getCurrentView.mockReturnValue('inbox');
+            isInboxEventAlreadyApplied.mockReturnValueOnce(true);
+            const data = { id: 'entry-1', recipient_user_id: 'user-1' };
+            dispatch({ type: 'read', entity: 'inbox', data });
+            expect(isInboxEventAlreadyApplied).toHaveBeenCalledWith('read', data);
+            expect(loadInbox).not.toHaveBeenCalled();
+            // The badge still re-syncs from the server.
+            expect(refreshInboxUnreadCount).toHaveBeenCalled();
+        });
+
+        it('records every event for this user, even a skipped echo or off the inbox (CHT-1514)', () => {
+            getCurrentUser.mockReturnValue({ id: 'user-1' });
+            getCurrentView.mockReturnValue('my-issues');
+            const data = { id: 'entry-1', recipient_user_id: 'user-1' };
+            dispatch({ type: 'archived', entity: 'inbox', data });
+            expect(recordInboxEvent).toHaveBeenCalledWith('archived', data);
+            recordInboxEvent.mockClear();
+            dispatch({ type: 'archived', entity: 'inbox', data: { id: 'x', recipient_user_id: 'someone-else' } });
+            expect(recordInboxEvent).not.toHaveBeenCalled();
         });
 
         it('does not reload the inbox list on other views', () => {
@@ -927,7 +953,7 @@ describe('ws-handlers.js', () => {
         it('reloads the inbox list on the inbox view', () => {
             getCurrentView.mockReturnValue('inbox');
             dispatch({ type: 'reconnected', entity: 'connection', data: {} });
-            expect(loadInbox).toHaveBeenCalled();
+            expect(loadInbox).toHaveBeenCalledWith({ background: true });
         });
 
         it('refetches the issues list on the issues view', () => {

@@ -31,7 +31,6 @@ from app.utils.markdown import strip_code_spans
 if TYPE_CHECKING:
     from app.oxyde_models.document import OxydeDocument
     from app.oxyde_models.issue import OxydeIssue
-    from app.oxyde_models.user import OxydeUser
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +213,61 @@ class InboxService:
         )
         await self._broadcast(project.team_id, "created", entry)
 
+    async def notify_agent_status(self, *, agent, actor, verb: str) -> None:
+        """Someone other than its creator deactivated or reactivated an
+        agent (CHT-1494): tell the creator who, so a bot that starts
+        failing auth has an explanation in the app."""
+        if verb == "deactivated":
+            body = (
+                "Its API keys were revoked and it can no longer sign in. "
+                "Its authored work is kept. It can be reactivated with "
+                "`chaotic agent reactivate`."
+            )
+        else:
+            body = (
+                "It can sign in again once it has a key; its old keys stay "
+                "revoked. Mint one with `chaotic agent keys create`."
+            )
+        entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=agent.parent_user_id,
+            kind=InboxEntryKind.AGENT_STATUS,
+            team_id=agent.agent_team_id,
+            project_id=agent.agent_project_id,
+            source_user_id=actor.id,
+            title=f"{actor.name} {verb} your agent {agent.name}",
+            body=body,
+        )
+        await self._broadcast(agent.agent_team_id, "created", entry)
+
+    async def notify_agent_keys_released(
+        self, *, recipient_user_id: str, agent, actor, removed, revoked: int, new_owner,
+    ) -> None:
+        """A member left the agent's team and took keys or ownership with
+        them (CHT-1510): tell a team admin, so the bot that just started
+        failing auth has an explanation and someone mints it a new key."""
+        who = removed.name if removed else "A member"
+        verb = "left the team" if removed is not None and removed.id == actor.id else "was removed from the team"
+        parts = []
+        if revoked:
+            parts.append(
+                f"{revoked} API key{'s' if revoked != 1 else ''} they held for it "
+                f"{'were' if revoked != 1 else 'was'} revoked, so anything running on "
+                f"{'them' if revoked != 1 else 'it'} has stopped."
+            )
+        if new_owner is not None:
+            parts.append(f"{new_owner.name} now owns the agent.")
+        parts.append("Mint a replacement key with `chaotic agent keys create` if it is still in use.")
+        entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=recipient_user_id,
+            kind=InboxEntryKind.AGENT_STATUS,
+            team_id=agent.agent_team_id,
+            project_id=agent.agent_project_id,
+            source_user_id=actor.id,
+            title=f"{who} {verb}: agent {agent.name} needs attention",
+            body=" ".join(parts),
+        )
+        await self._broadcast(agent.agent_team_id, "created", entry)
+
     async def notify_mentions(
         self, *, content: str, team_id: str, author, issue=None, document=None,
     ) -> None:
@@ -308,9 +362,11 @@ class InboxService:
 
     async def resolve_display_fields(
         self, entries: list[OxydeInboxEntry],
-    ) -> tuple[dict[str, "OxydeIssue"], dict[str, "OxydeDocument"], dict[str, "OxydeUser"]]:
-        """The issues, documents and users a page of entries refers to,
-        keyed by id, in three queries for the whole page (CHT-1399).
+    ) -> tuple[dict[str, "OxydeIssue"], dict[str, "OxydeDocument"]]:
+        """The issues and documents a page of entries refers to, keyed by
+        id, in two queries for the whole page (CHT-1399). The source user
+        is a principal summary, which the API batch-loads with
+        ``fill_principals`` (CHT-1500).
 
         The API used to resolve each entry's issue identifier, document
         title and source user name with one service lookup apiece, per
@@ -322,19 +378,16 @@ class InboxService:
         """
         from app.oxyde_models.document import OxydeDocument
         from app.oxyde_models.issue import OxydeIssue
-        from app.oxyde_models.user import OxydeUser
 
         issue_ids = sorted({e.issue_id for e in entries if e.issue_id})
         document_ids = sorted({e.document_id for e in entries if e.document_id})
-        user_ids = sorted({e.source_user_id for e in entries if e.source_user_id})
 
         issues = {i.id: i for i in await OxydeIssue.objects.filter(id__in=issue_ids).all()} if issue_ids else {}
         documents = (
             {d.id: d for d in await OxydeDocument.objects.filter(id__in=document_ids).all()}
             if document_ids else {}
         )
-        users = {u.id: u for u in await OxydeUser.objects.filter(id__in=user_ids).all()} if user_ids else {}
-        return issues, documents, users
+        return issues, documents
 
     async def list_for_user(
         self, user_id: str, *, team_id: str | None = None,

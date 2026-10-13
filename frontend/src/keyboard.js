@@ -443,23 +443,54 @@ export function createDocListNavigationHandler(actions) {
 }
 
 /**
- * Creates a handler for j/k (or arrow keys)/Enter/Escape list navigation in the inbox view
- * (CHT-1250). Same shape as createDocListNavigationHandler -- Enter opens
- * the selected entry (marks it read + deep-links), no separate 'e' action.
+ * True while a detail view (issue, epic, document, sprint) is on screen. They
+ * hide the list views via CSS but leave currentView and the list DOM intact,
+ * so the list handlers check this to go quiet behind them (CHT-1215).
+ */
+export function isAnyDetailViewActive() {
+    return ['issue-detail-view', 'epic-detail-view', 'document-detail-view', 'sprint-detail-view'].some((id) => {
+        const el = document.getElementById(id);
+        return !!el && !el.classList.contains('hidden');
+    });
+}
+
+/**
+ * Creates a handler for j/k (or arrow keys)/Enter/e/Escape list navigation in
+ * the inbox view (CHT-1250). Enter expands the selected entry in place
+ * (CHT-1320); the expanded row's "Open" button is the navigate-away path.
+ * Moving the cursor collapses an open row; Escape peels one layer per press:
+ * the open row, then the selection.
  *
  * @param {Object} actions
  * @param {Function} actions.getCurrentView - Returns the current view name
  * @param {Function} actions.getSelectedIndex - Returns the currently selected index
  * @param {Function} actions.setSelectedIndex - Sets the selected index
- * @param {Function} actions.openInboxEntry - Opens the entry at a given DOM row (element)
+ * @param {Function} actions.toggleInboxExpand - Expands/collapses the entry at a given DOM row (element)
+ * @param {Function} [actions.collapseInboxExpand] - Collapses the open row;
+ *   returns true if one was open
+ * @param {Function} [actions.archiveInboxEntry] - Archives the entry at a given DOM row (element)
+ * @param {Function} [actions.isInlineDropdownOpen] - Returns true if an inline
+ *   dropdown is open; the handler then yields every key to it (CHT-1231)
+ * @param {Function} [actions.isEscapeLayerAbove] - Returns true if something
+ *   above the list that Escape closes is open (the mobile sidebar drawer, a
+ *   header dropdown); the handler then leaves Escape to the global handler
  * @param {Function} actions.isModalOpen - Returns true if a modal is open
  * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @param {Function} [actions.isDetailViewActive] - Returns true if a detail
+ *   view is shown over the inbox; the handler then ignores every key
  * @returns {Function} The keydown event handler
  */
 export function createInboxNavigationHandler(actions) {
     const selector = '#inbox-list .inbox-row';
     return function handleInboxNavigation(e) {
         if (actions.getCurrentView() !== 'inbox') return;
+        // CHT-1513: "Open" in an expanded row shows the issue or document
+        // detail over the inbox but leaves currentView === 'inbox' and the
+        // rows in the DOM. Without this the handler stayed live behind the
+        // detail page: `e` archived the hidden selected entry (and the
+        // detail view's own `e` opened the estimate field), j/k moved the
+        // hidden cursor. Same check as the issues-list handler (CHT-1215).
+        if (actions.isDetailViewActive?.()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
         // Yield to the sidebar's own roving-focus handler while a nav link is
         // focused — these list handlers register earlier and would otherwise
@@ -467,26 +498,56 @@ export function createInboxNavigationHandler(actions) {
         if (e.target.closest?.('.sidebar-nav')) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
+        // CHT-1231 / CHT-1320: this handler registers before the global one,
+        // so it must honour the same Escape layering. An IME composition owns
+        // Escape, and an open inline dropdown is the topmost layer: the global
+        // handler closes it alone, and the row stays expanded until the next
+        // press. Yielding for every key also keeps j/k/Enter for the dropdown.
+        if (e.isComposing) return;
+        if (actions.isInlineDropdownOpen?.()) return;
 
         const items = document.querySelectorAll(selector);
         if (items.length === 0) return;
 
         const selectedIndex = actions.getSelectedIndex();
+        // Moving the cursor closes any open row (CHT-1320). When focus is in
+        // the list (a row's toggle, or an action button in the row being
+        // collapsed) it follows the cursor, so it is neither dropped to
+        // <body> nor left a row behind the highlight (PR #260 review 3).
+        const moveCursor = (delta) => {
+            const focusInList = !!document.activeElement?.closest?.('#inbox-list');
+            actions.collapseInboxExpand?.();
+            updateKeyboardSelection(selectedIndex + delta, actions.setSelectedIndex, selector);
+            if (focusInList) {
+                const row = document.querySelector(`${selector}.keyboard-selected`);
+                (row?.querySelector('.inbox-row-toggle') || row)?.focus({ preventScroll: true });
+            }
+        };
         switch (e.key) {
             case 'j':
             case 'ArrowDown':
                 e.preventDefault();
-                updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex, selector);
+                moveCursor(1);
                 break;
             case 'k':
             case 'ArrowUp':
                 e.preventDefault();
-                updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex, selector);
+                moveCursor(-1);
                 break;
             case 'Enter':
+                // CHT-1320: Enter now expands the row in place (triggering
+                // content + action bar) rather than navigating away. "Open"
+                // in the action bar is the deliberate navigate path.
+                // Enter on a focused button or link inside a row activates
+                // that control (via its own data-action or natively); it
+                // must not also toggle the row.
+                if (e.target.closest?.('#inbox-list')
+                    && e.target.closest('a[href], button, summary, [contenteditable]:not([contenteditable="false"])')) {
+                    break;
+                }
                 if (selectedIndex >= 0 && items[selectedIndex]) {
                     e.preventDefault();
-                    actions.openInboxEntry(items[selectedIndex]);
+                    actions.toggleInboxExpand(items[selectedIndex]);
                 }
                 break;
             case 'e':
@@ -498,8 +559,22 @@ export function createInboxNavigationHandler(actions) {
                 }
                 break;
             case 'Escape':
+                // One layer per press (CHT-1320, PR #260 review finding 4).
+                // A drawer or header dropdown over the list is the topmost
+                // layer: leave Escape to the global handler, which closes it.
+                if (actions.isEscapeLayerAbove?.()) break;
+                // Escape closes an open row first (keeping the cursor there);
+                // only a second Escape clears the selection. Either way the
+                // press is spent, so stop the global handler from also
+                // closing a dropdown or the sidebar with it.
+                if (actions.collapseInboxExpand?.()) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    break;
+                }
                 if (selectedIndex >= 0) {
                     e.preventDefault();
+                    e.stopImmediatePropagation();
                     items.forEach(item => item.classList.remove('keyboard-selected'));
                     actions.setSelectedIndex(-1);
                 }

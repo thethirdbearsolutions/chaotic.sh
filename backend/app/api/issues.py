@@ -39,6 +39,7 @@ from app.services.issue_service import (
     EstimateRequiredError,
     IssueAlreadyClaimedError,
 )
+from app.services.principals import fill_principals, load_principals
 from app.services.project_service import ProjectService
 from app.services.sprint_service import SprintService
 from app.services.team_service import TeamService
@@ -70,8 +71,17 @@ from app.websocket import broadcast_issue_event, broadcast_comment_event, broadc
 router = APIRouter()
 
 
-async def _validate_assignee(assignee_id: str | None, team_id: str) -> None:
-    """Validate that assignee exists and belongs to the project's team (CHT-293)."""
+async def _validate_assignee(
+    assignee_id: str | None, team_id: str, current_assignee_id: str | None = None,
+) -> None:
+    """Validate that assignee exists and belongs to the project's team (CHT-293).
+
+    A deactivated user or agent can't be newly assigned work: it can never
+    sign in to do it (CHT-1494). Re-sending an issue's existing assignee
+    (`current_assignee_id`) is not a new assignment, so an update that
+    touches other fields of an issue already held by a retired agent
+    still goes through.
+    """
     if not assignee_id:
         return
     user = await OxydeUser.objects.get_or_none(id=assignee_id)
@@ -79,6 +89,11 @@ async def _validate_assignee(assignee_id: str | None, team_id: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Assignee not found",
+        )
+    if not user.is_active and assignee_id != current_assignee_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Assignee '{user.name}' is deactivated and cannot be assigned work",
         )
     # Agents: check team scope; humans: check team membership
     if user.is_agent:
@@ -233,14 +248,20 @@ async def issues_to_responses(issues) -> list[IssueResponse]:
             for row in rows
         }
 
-    assignees = await _lookup(OxydeUser, {i.assignee_id for i in issues}, "name")
+    # Creators and assignees as principal summaries (CHT-1500): two
+    # queries for both roles, and the assignee name is read off them.
+    principals = await load_principals(
+        {i.assignee_id for i in issues} | {i.creator_id for i in issues}
+    )
     sprints = await _lookup(OxydeSprint, {i.sprint_id for i in issues}, "name")
     parents = await _lookup(Issue, {i.parent_id for i in issues}, "identifier")
     projects = await _lookup(OxydeProject, {i.project_id for i in issues}, "key")
 
     return [
         issue_to_response(issue).model_copy(update={
-            "assignee_name": assignees.get(issue.assignee_id),
+            "assignee_name": _principal_name(principals, issue.assignee_id),
+            "creator": principals.get(issue.creator_id) if issue.creator_id else None,
+            "assignee": principals.get(issue.assignee_id) if issue.assignee_id else None,
             "sprint_name": sprints.get(issue.sprint_id),
             "parent_identifier": parents.get(issue.parent_id),
             "project_key": projects.get(issue.project_id),
@@ -249,9 +270,54 @@ async def issues_to_responses(issues) -> list[IssueResponse]:
     ]
 
 
+def _principal_name(principals, user_id):
+    principal = principals.get(user_id) if user_id else None
+    return principal.name if principal else None
+
+
 async def issue_response(issue: Issue) -> IssueResponse:
     """One issue, with companions resolved -- see issues_to_responses."""
     return (await issues_to_responses([issue]))[0]
+
+
+def _arrears_detail(e: SprintInArrearsError) -> dict:
+    """The 409 body for a refusal caused by sprint arrears.
+
+    Names the project and sprint that are over budget (CHT-1270): the
+    refused ticket's project is not necessarily the caller's current one,
+    and closing the wrong project's sprint releases nothing here.
+    """
+    where = f" in project {e.project_key}" if e.project_key else ""
+    return {
+        "error_code": "sprint_in_arrears",
+        "message": (
+            f"Sprint is in arrears{where}. Close that project's active sprint to "
+            "continue; a spent budget ends a sprint, not a date."
+        ),
+        "budget": e.budget,
+        "points_spent": e.points_spent,
+        "arrears_by": e.arrears_by,
+        "sprint_id": e.sprint_id,
+        "sprint_name": e.sprint_name,
+        "project_id": e.project_id,
+        "project_key": e.project_key,
+        "team_id": e.team_id,
+    }
+
+
+def _limbo_detail(e: SprintInLimboError) -> dict:
+    """The 409 body for a refusal caused by a sprint in limbo; names the
+    project for the same reason as _arrears_detail (CHT-1270)."""
+    where = f" in project {e.project_key}" if e.project_key else ""
+    return {
+        "error_code": "sprint_in_limbo",
+        "message": f"Sprint is in limbo{where}. Complete pending rituals to continue.",
+        "sprint_id": e.sprint_id,
+        "pending_rituals": e.pending_rituals,
+        "project_id": e.project_id,
+        "project_key": e.project_key,
+        "team_id": e.team_id,
+    }
 
 
 async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> dict:
@@ -269,8 +335,9 @@ async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> di
          1 attested, awaiting human approval (design-review). Attest the
          unattested ones before claiming."
 
-    Cost: one attestation lookup per ritual (plus two user lookups per
-    attested one) on top of the gating queries the service already ran;
+    Cost: one attestation lookup per ritual (plus two batched principal
+    queries for all of them, CHT-1500) on top of the gating queries the
+    service already ran;
     fine at today's ritual counts, revisit if projects grow dozens.
     """
     rows = await pending_ritual_responses(e.issue_pk, e.rituals) if e.rituals else []
@@ -374,23 +441,12 @@ async def create_issue(
     except SprintInLimboError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_limbo",
-                "message": "Sprint is in limbo. Complete pending rituals to continue.",
-                "sprint_id": e.sprint_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=_limbo_detail(e),
         )
     except SprintInArrearsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_arrears",
-                "message": "Sprint is in arrears. Close the current sprint to continue; a spent budget ends a sprint, not a date.",
-                "budget": e.budget,
-                "points_spent": e.points_spent,
-                "arrears_by": e.arrears_by,
-            },
+            detail=_arrears_detail(e),
         )
     except TicketRitualsError as e:
         raise HTTPException(
@@ -871,7 +927,7 @@ async def list_team_activities(
     all_activities.sort(key=lambda x: x.created_at, reverse=True)
 
     # Apply pagination
-    return all_activities[skip:skip + limit]
+    return await fill_principals(all_activities[skip:skip + limit])
 
 
 @router.get("/comments", response_model=list[TeamCommentResponse])
@@ -936,7 +992,7 @@ async def list_team_comments(
     all_comments.sort(key=lambda x: x.created_at, reverse=True)
 
     # Apply pagination
-    return all_comments[skip:skip + limit]
+    return await fill_principals(all_comments[skip:skip + limit])
 
 
 @router.get("/identifier/{identifier}", response_model=IssueResponse)
@@ -1027,7 +1083,7 @@ async def update_issue(
 
     # Validate assignee, sprint, labels, parent if provided (CHT-293, CHT-294, CHT-296, CHT-295)
     if issue_in.assignee_id is not None:
-        await _validate_assignee(issue_in.assignee_id, project.team_id)
+        await _validate_assignee(issue_in.assignee_id, project.team_id, issue.assignee_id)
     if issue_in.sprint_id is not None:
         await _validate_sprint(issue_in.sprint_id, issue.project_id)
     if issue_in.label_ids is not None:
@@ -1054,23 +1110,12 @@ async def update_issue(
     except SprintInLimboError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_limbo",
-                "message": "Sprint is in limbo. Complete pending rituals to continue.",
-                "sprint_id": e.sprint_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=_limbo_detail(e),
         )
     except SprintInArrearsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_arrears",
-                "message": "Sprint is in arrears. Close the current sprint to continue; a spent budget ends a sprint, not a date.",
-                "budget": e.budget,
-                "points_spent": e.points_spent,
-                "arrears_by": e.arrears_by,
-            },
+            detail=_arrears_detail(e),
         )
     except TicketRitualsError as e:
         raise HTTPException(
@@ -1291,7 +1336,7 @@ async def list_activities(
             return sprint_names.get(activity.old_value)
         return None
 
-    return [
+    return await fill_principals([
         IssueActivityResponse(
             id=a.id,
             issue_id=a.issue_id,
@@ -1306,7 +1351,7 @@ async def list_activities(
             created_at=ensure_utc(a.created_at),
         )
         for a in activities
-    ]
+    ])
 
 
 def _description_revision_author_name(rev) -> str | None:
@@ -1350,7 +1395,7 @@ async def list_description_revisions(
     await _get_issue_checked(issue_id, current_user)
 
     revisions = await IssueService().list_description_revisions(issue_id, skip, limit)
-    return [
+    return await fill_principals([
         IssueDescriptionRevisionListItem(
             id=rev.id,
             issue_id=rev.issue_id,
@@ -1360,7 +1405,7 @@ async def list_description_revisions(
             created_at=ensure_utc(rev.created_at),
         )
         for rev in revisions
-    ]
+    ])
 
 
 @router.get(
@@ -1382,7 +1427,7 @@ async def get_description_revision(
             detail="Revision not found",
         )
 
-    return IssueDescriptionRevisionResponse(
+    return await fill_principals(IssueDescriptionRevisionResponse(
         id=rev.id,
         issue_id=rev.issue_id,
         version=rev.version,
@@ -1390,7 +1435,7 @@ async def get_description_revision(
         author_id=rev.author_id,
         author_name=_description_revision_author_name(rev),
         created_at=ensure_utc(rev.created_at),
-    )
+    ))
 
 
 # Sub-issues
@@ -1471,6 +1516,7 @@ async def create_comment(
         created_at=ensure_utc(comment.created_at),
         updated_at=ensure_utc(comment.updated_at),
     )
+    await fill_principals(response)
     await broadcast_comment_event(project.team_id, "created", response.model_dump(mode="json"))
     await broadcast_activity_event(project.team_id, "created", {"issue_id": comment.issue_id})
     return response
@@ -1503,7 +1549,7 @@ async def list_comments(
         )
 
     comments = await issue_service.list_comments(issue_id, skip, limit)
-    return [
+    return await fill_principals([
         IssueCommentResponse(
             id=c.id,
             issue_id=c.issue_id,
@@ -1514,7 +1560,7 @@ async def list_comments(
             updated_at=ensure_utc(c.updated_at),
         )
         for c in comments
-    ]
+    ])
 
 
 @router.patch("/{issue_id}/comments/{comment_id}", response_model=IssueCommentResponse)
@@ -1571,6 +1617,7 @@ async def update_comment(
         created_at=ensure_utc(comment.created_at),
         updated_at=ensure_utc(comment.updated_at),
     )
+    await fill_principals(response)
     project = await project_service.get_by_id(issue.project_id)
     if project:
         await broadcast_comment_event(project.team_id, "updated", response.model_dump(mode="json"))
@@ -1814,7 +1861,7 @@ async def get_issue_documents(issue_id: str, current_user: CurrentUser):
         )
 
     documents = await document_service.get_linked_documents_for_issue(issue_id)
-    return [
+    return await fill_principals([
         DocumentResponse(
             id=doc.id,
             team_id=doc.team_id,
@@ -1829,4 +1876,4 @@ async def get_issue_documents(issue_id: str, current_user: CurrentUser):
             updated_at=ensure_utc(doc.updated_at),
         )
         for doc in documents
-    ]
+    ])

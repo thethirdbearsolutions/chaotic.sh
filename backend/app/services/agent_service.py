@@ -2,6 +2,7 @@
 
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
+import logging
 import uuid
 from oxyde import atomic
 from app.oxyde_models.user import OxydeUser
@@ -17,6 +18,8 @@ from app.oxyde_models.ritual import OxydeRitualAttestation
 from app.schemas.agent import AgentCreate, AgentUpdate
 from app.services.api_key_service import APIKeyService
 from app.schemas.api_key import APIKeyCreate
+
+logger = logging.getLogger(__name__)
 
 
 def _count_phrase(n: int, kind: str) -> str:
@@ -35,13 +38,24 @@ class AgentHasAuthoredContentError(Exception):
     """Refused: the agent wrote things, and deleting it would erase who
     wrote them (CHT-1427). `counts` maps a kind of record to how many."""
 
-    def __init__(self, agent_name: str, counts: dict[str, int]):
+    def __init__(self, agent_name: str, counts: dict[str, int], agent_id: str = "{id}"):
         self.counts = counts
         super().__init__(
             f"Agent '{agent_name}' cannot be deleted: it authored {describe_counts(counts)}. Deleting it "
-            "would leave that work without an author. Revoke its API keys instead "
-            "(`chaotic auth keys revoke`)."
+            "would leave that work without an author. Deactivate it instead "
+            f"(`chaotic agent deactivate`, or POST /api/agents/{agent_id}/deactivate): that "
+            "revokes its API keys and blocks it from signing in, and keeps its work "
+            "attributed to it. A deactivated agent can be reactivated later."
         )
+
+
+class AgentInactiveError(Exception):
+    """Refused: the agent is deactivated, so a key minted for it could
+    never authenticate (CHT-1494)."""
+
+
+class AgentManageDeniedError(Exception):
+    """Refused: the requester may not manage this agent (CHT-1508)."""
 
 
 class AgentService:
@@ -95,6 +109,79 @@ class AgentService:
         await api_key.refresh()
 
         return agent, full_key, api_key.id
+
+    async def can_manage(self, user: OxydeUser, agent: OxydeUser) -> bool:
+        """May `user` update, delete, deactivate/reactivate, mint a key for,
+        list the keys of, or revoke a key of `agent`?
+
+        Admins (and owners) of the agent's team may. The agent's creator
+        may only while still a member of that team: being removed from
+        the team ends the creator's rights over its agents, or an
+        ex-member could mint a fresh key and act in the team as the agent
+        (CHT-1508). A project-scoped agent needs nothing more, because a
+        human's project access *is* membership of the project's team
+        (``check_user_project_access``). Agents never manage agents: they
+        are not team members, and no agent is another agent's parent.
+        """
+        from app.enums import TeamRole
+        from app.services.team_service import TeamService
+
+        if user.is_agent:
+            return False
+        member = await TeamService().get_member(agent.agent_team_id, user.id)
+        if member is None:
+            return False
+        if member.role in (TeamRole.OWNER, TeamRole.ADMIN):
+            return True
+        return agent.parent_user_id == user.id
+
+    async def list_keys(self, agent_id: str) -> list[OxydeAPIKey]:
+        """Every API key that authenticates as the agent, newest first:
+        the ones linked to it (`agent_user_id`), whether a human minted
+        them or the agent did, and legacy self-minted ones that only
+        carry the agent as `user_id`."""
+        linked = await OxydeAPIKey.objects.filter(agent_user_id=agent_id).all()
+        legacy = await OxydeAPIKey.objects.filter(user_id=agent_id, agent_user_id=None).all()
+        return sorted([*linked, *legacy], key=lambda k: k.created_at, reverse=True)
+
+    async def release_member_agents(
+        self, team_id: str, removed_user_id: str, new_owner_id: str | None,
+    ) -> list[tuple[OxydeUser, int, bool]]:
+        """A member is leaving `team_id` (CHT-1510). Call inside the
+        transaction that deletes the membership.
+
+        Revokes the credentials the leaver holds for the team's agents:
+        every key they own that is linked to an agent of this team. A key
+        is owned by whoever minted it, and a key an agent mints for itself
+        is owned by the holder of the key it called with, so these are
+        exactly the keys they hold. Also revoked: the legacy self-minted
+        keys (no holder recorded) of the agents they created, which sign-in
+        already attributes to the creator. The agents stay. Agents they
+        created pass to `new_owner_id`, so someone in the team can mint
+        replacement keys; with no new owner the agent stays put and any
+        team admin can still manage it.
+
+        Returns (agent, keys revoked, owner reassigned) for each agent
+        that changed.
+        """
+        agents = await OxydeUser.objects.filter(is_agent=True, agent_team_id=team_id).all()
+        changed = []
+        for agent in agents:
+            revoked = await OxydeAPIKey.objects.filter(
+                agent_user_id=agent.id, user_id=removed_user_id, is_active=True,
+            ).update(is_active=False)
+            reassigned = False
+            if agent.parent_user_id == removed_user_id:
+                revoked += await OxydeAPIKey.objects.filter(
+                    user_id=agent.id, is_active=True,
+                ).update(is_active=False)  # legacy self-minted: no holder on record
+                if new_owner_id:
+                    await OxydeUser.objects.filter(id=agent.id).update(parent_user_id=new_owner_id)
+                    agent.parent_user_id = new_owner_id
+                    reassigned = True
+            if revoked or reassigned:
+                changed.append((agent, revoked, reassigned))
+        return changed
 
     async def get_by_id(self, agent_id: str) -> OxydeUser | None:
         """Get agent by ID."""
@@ -165,10 +252,113 @@ class AgentService:
         async with atomic():
             counts = await self.authored_counts(agent.id)
             if any(counts.values()):
-                raise AgentHasAuthoredContentError(agent.name, counts)
+                raise AgentHasAuthoredContentError(agent.name, counts, agent.id)
             await OxydeAPIKey.objects.filter(agent_user_id=agent.id).delete()
             await OxydeAPIKey.objects.filter(user_id=agent.id).delete()
             await agent.delete()
+
+    async def deactivate(self, agent: OxydeUser, actor: OxydeUser) -> OxydeUser | None:
+        """Retire an agent without erasing who wrote what (CHT-1494).
+
+        Revokes every API key that authenticates as the agent -- the ones
+        linked to it (`agent_user_id`) and any it minted for itself through
+        POST /api-keys (`user_id`) -- and sets is_active=false, which the
+        auth dependency already refuses. The agent row stays, so its
+        authored work keeps its author. Idempotent: deactivating an
+        inactive agent revokes any key that is somehow still active and
+        changes nothing else.
+
+        Returns None when the agent no longer exists (a concurrent delete
+        won), so the route can answer 404.
+        """
+        return await self._set_active(agent, actor, active=False)
+
+    async def reactivate(self, agent: OxydeUser, actor: OxydeUser) -> OxydeUser | None:
+        """Undo a deactivation (CHT-1494): set is_active=true. Revoked keys
+        stay revoked; mint a new one (`chaotic agent keys create`), so a
+        reactivation never silently re-arms a key that may have been the
+        reason for the deactivation. Idempotent. Returns None when the
+        agent no longer exists."""
+        return await self._set_active(agent, actor, active=True)
+
+    async def _set_active(self, agent: OxydeUser, actor: OxydeUser, *, active: bool) -> OxydeUser | None:
+        changed = False
+        async with atomic():
+            if not active:
+                await OxydeAPIKey.objects.filter(agent_user_id=agent.id).update(is_active=False)
+                await OxydeAPIKey.objects.filter(user_id=agent.id).update(is_active=False)
+            current = await OxydeUser.objects.filter(id=agent.id, is_agent=True).first()
+            if current is None:
+                return None
+            if current.is_active != active:
+                current.is_active = active
+                await current.save(update_fields={"is_active"})
+                changed = True
+        # Re-read with the parent joined for the response (save() does not
+        # keep a joined relation loaded).
+        current = await OxydeUser.objects.join("parent_user").filter(id=agent.id, is_agent=True).first()
+        if current is None:
+            return None
+        if changed:
+            verb = "reactivated" if active else "deactivated"
+            # No activity table covers agents; this log line and the
+            # creator's inbox entry are the audit trail (CHT-1494).
+            logger.info(
+                "agent %s (%s) %s by user %s (%s)", current.id, current.name, verb, actor.id, actor.name,
+            )
+            await self._notify_parent(current, actor, verb)
+        return current
+
+    async def _notify_parent(self, agent: OxydeUser, actor: OxydeUser, verb: str) -> None:
+        """Tell the agent's creator who changed it, unless they did it
+        themselves. Best-effort: the state change has already committed."""
+        if not agent.parent_user_id or agent.parent_user_id == actor.id:
+            return
+        from app.services.inbox_service import InboxService
+        from app.services.team_service import TeamService
+
+        # A creator who has left the agent's team hears nothing more about
+        # it: the entry names the actor and is broadcast on the team's
+        # channel (CHT-1508).
+        try:
+            if await TeamService().get_member(agent.agent_team_id, agent.parent_user_id) is None:
+                return
+            await InboxService().notify_agent_status(agent=agent, actor=actor, verb=verb)
+        except Exception:
+            logger.exception("Failed to notify the creator of agent %s that it was %s", agent.id, verb)
+
+    async def notify_member_agents_released(
+        self, *, team_id: str, released, removed: OxydeUser | None, actor: OxydeUser,
+        new_owner: OxydeUser | None,
+    ) -> None:
+        """Tell the team's admins (other than whoever did the removal) what
+        a member's departure did to each agent (CHT-1510). Best-effort:
+        the removal has already committed."""
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.services.inbox_service import InboxService
+
+        try:
+            admins = await OxydeTeamMember.objects.filter(team_id=team_id).all()
+            recipients = [
+                m.user_id for m in admins
+                if m.role in (TeamRole.OWNER, TeamRole.ADMIN) and m.user_id != actor.id
+            ]
+            inbox = InboxService()
+            for agent, revoked, reassigned in released:
+                logger.info(
+                    "agent %s (%s): %d key(s) revoked%s on removal of user %s from team %s by %s",
+                    agent.id, agent.name, revoked,
+                    f", owner now {new_owner.id}" if reassigned and new_owner else "",
+                    removed.id if removed else "?", team_id, actor.id,
+                )
+                for recipient_id in recipients:
+                    await inbox.notify_agent_keys_released(
+                        recipient_user_id=recipient_id, agent=agent, actor=actor, removed=removed,
+                        revoked=revoked, new_owner=new_owner if reassigned else None,
+                    )
+        except Exception:
+            logger.exception("Failed to notify admins of team %s about released agents", team_id)
 
     async def get_agent_api_keys(self, agent_id: str) -> list[OxydeAPIKey]:
         """Get all API keys for an agent."""
@@ -182,15 +372,30 @@ class AgentService:
         Returns:
             Tuple of (full API key, API key ID)
         """
-        agent = await self.get_by_id(agent_id)
-        if not agent:
-            raise ValueError("Agent not found")
-
         async with atomic():
+            # Checked inside the transaction so a deactivation that
+            # commits first is seen (CHT-1494).
+            agent = await self.get_by_id(agent_id)
+            if not agent:
+                raise ValueError("Agent not found")
+            # Re-checked here so a team removal that commits between the
+            # route's check and this insert is seen (CHT-1508).
+            if not await self.can_manage(requester_user, agent):
+                raise AgentManageDeniedError("Not authorized to mint a key for this agent")
+            if not agent.is_active:
+                raise AgentInactiveError(
+                    f"Agent '{agent.name}' is deactivated; reactivate it first "
+                    f"(`chaotic agent reactivate`, or POST /api/agents/{agent.id}/reactivate)."
+                )
             api_key_service = APIKeyService()
             api_key_create = APIKeyCreate(name=f"Key for {agent.name}")
+            # Owned by whoever minted it: the person who was shown the
+            # secret. So GET /api-keys lists exactly the keys a person
+            # holds, and leaving the team revokes exactly those
+            # (CHT-1508/CHT-1510). Keys minted before this were all owned
+            # by the agent's creator.
             api_key, full_key = await api_key_service.create(
-                agent.parent_user_id,  # Owner is the parent human user
+                requester_user.id,
                 api_key_create,
             )
 
