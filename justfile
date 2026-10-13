@@ -6,7 +6,8 @@ default:
 
 # Sync all dependencies (including dev) for every project `just lint`/`test-*` touch.
 # --locked installs exactly the committed uv.lock and fails if it is stale
-# (CHT-1201); after changing a pyproject.toml, run `just lock` and commit it.
+# (CHT-1201); after changing any pyproject.toml (a chaotic-cli version bump
+# included: all three locks record it), run `just lock` and commit the result.
 # `chaotic system install`/`upgrade` run this recipe on the server.
 sync:
     cd backend && uv sync --locked --extra dev
