@@ -105,9 +105,9 @@ class TestValues:
         ("https://Chaotic.Example.com", "lower case"),
         ("https://chaotic.example.com:443", "default port"),
         ("http://localhost:80", "default port"),
-        ("https://chaotic.example.com:99999", "invalid port"),
+        ("https://chaotic.example.com:99999", "not a valid URL"),
         ("https://chäotic.example.com", "xn--"),
-        ('https://chaotic.example.com"', "cannot carry"),
+        ('https://chaotic.example.com"', "canonical form"),
     ])
     def test_bad_base_urls(self, raw, why):
         value, problem = ss.normalize("APP_BASE_URL", raw)
@@ -667,3 +667,238 @@ class TestInstall:
             result = CliRunner().invoke(cli, ["system", "install", "--config", f"SMTP_PASSWORD={PASSWORD}"])
         assert result.exit_code == 0
         assert "SMTP_PASSWORD:" in result.output and PASSWORD not in result.output
+
+
+# --- PR #349 independent review -------------------------------------------
+
+class TestValuesThatUsedToRaise:
+    """Finding 1: values that made normalize/check or the write raise."""
+
+    @pytest.mark.parametrize("name,value", [
+        ("APP_BASE_URL", "https://[x"),
+        ("CORS_ORIGINS", "https://[x"),
+        ("SMTP_PORT", "²"),
+        ("SMTP_FROM", "a\udcffb"),
+        ("SMTP_PASSWORD", "\udcff"),
+    ])
+    def test_refused_not_raised(self, name, value):
+        _, problem = ss.normalize(name, value)
+        assert problem
+
+    def test_surrogates_are_never_stored(self):
+        assert ss.stored_settings({"settings": {"SMTP_FROM": "a\udcffb"}}) == {}
+
+    @pytest.mark.parametrize("settings", [
+        {"APP_BASE_URL": "https://[x", "OAUTH_ENABLED": "true"},
+        {"SMTP_PORT": "²"},
+        {"SMTP_FROM": "a\udcffb"},
+    ])
+    def test_check_and_valid_settings_do_not_raise(self, settings):
+        info = {"settings": settings}
+        errors, _ = ss.check(info)
+        assert errors
+        assert set(ss.invalid_settings(info)) <= set(settings)
+        assert all(name not in ss.valid_settings(info) for name in ss.invalid_settings(info))
+
+    def test_an_invalid_base_url_is_reported_once(self):
+        errors, _ = ss.check({"settings": {"APP_BASE_URL": "https://x.example.com/p", "OAUTH_ENABLED": "true"}})
+        assert len(errors) == 1 and "bare origin" in errors[0]
+
+
+class TestCanonicalOrigins:
+    """Finding 3: inputs the server's issuer check refuses as non-canonical
+    (backend/tests/test_cli_settings_parity.py pins the general rule)."""
+
+    @pytest.mark.parametrize("raw", [
+        "https://example.com:08443", "https://example.com:", "https://[0:0::1]",
+        "https://010.0.0.1", "https://0x7f.0.0.1", "https://1234", "https://127.1",
+        "https://a..b", "https://-a.example.com", "https://ab--c.example.com", "https://xn--zz",
+        "https://exa_mple.com", "https://example.com:0",
+    ])
+    def test_refused(self, raw):
+        assert ss.normalize("APP_BASE_URL", raw)[1], raw
+
+    @pytest.mark.parametrize("raw", [
+        "https://[::1]:8443", "https://127.0.0.1", "https://xn--bcher-kva.example", "https://a-b.example.com",
+    ])
+    def test_accepted(self, raw):
+        assert ss.normalize("APP_BASE_URL", raw) == (raw, None)
+
+
+@pytest.mark.parametrize("line,value", [
+    ("A=b # comment", "b"),
+    ("A=b#not-a-comment", "b#not-a-comment"),
+    ("A='b # kept' # gone", "b # kept"),
+    ('A="b \\" c"', 'b " c'),
+    ("A=", ""),
+])
+def test_dotenv_inline_comments(line, value):
+    assert ss.parse_dotenv_names('A="b" trailing') == {}  # python-dotenv refuses the line
+    """Finding 7: as python-dotenv reads them (parity: backend test)."""
+    assert ss.parse_dotenv_names(line) == {"A": value}
+
+
+class TestUpgradeNeverStopsOverSettings:
+    """Finding 1 (blocker): settings can never crash an upgrade or keep it
+    from starting the server."""
+
+    def _upgrade_with(self, tmp_path, settings, unit=None, os_type="linux", **overrides):
+        name = "chaotic.service" if os_type == "linux" else "com.chaotic.server.plist"
+        path = tmp_path / name
+        path.write_text(unit if unit is not None else (
+            generate_systemd_service(PORT, SECRET, HOST) if os_type == "linux"
+            else generate_launchd_plist(PORT, SECRET, HOST)))
+        defaults = dict(
+            load_server_json=dict(return_value={"port": PORT, "host": HOST, "secret_key": SECRET, "settings": settings}),
+            get_os=dict(return_value=os_type),
+            get_service_file_path=dict(return_value=path),
+            SERVICE_BACKUP_DIR=dict(new=tmp_path / "service-backups"),
+        )
+        defaults.update(overrides)
+        result, mocks = _upgrade(**defaults)
+        return result, mocks, path
+
+    @pytest.mark.parametrize("bad", [
+        {"APP_BASE_URL": "https://[x"},
+        {"SMTP_FROM": "a\udcffb"},
+        {"SMTP_PORT": "²"},
+        {"SMTP_PASSWORD": "\udcff" + PASSWORD},
+    ])
+    def test_bad_settings_are_named_left_out_and_the_server_starts(self, tmp_path, bad):
+        settings = {"OAUTH_DCR_ENABLED": "false", **bad}
+        result, m, path = self._upgrade_with(tmp_path, settings)
+        assert result.exit_code == 0, result.output
+        m["start_service"].assert_called_once()
+        out = _flat(result.output)
+        (name,) = bad
+        assert f"Left out of the service file (invalid in server.json): {name}" in out
+        assert PASSWORD not in result.output
+        # Rendered without it, the good setting still lands.
+        assert path.read_text() == generate_systemd_service(PORT, SECRET, HOST, {"OAUTH_DCR_ENABLED": "false"})
+
+    def test_a_bad_value_already_in_the_unit_keeps_the_unit(self, tmp_path):
+        """Dropping the line would change what the server runs with: the
+        unit is kept as it is, and the server still starts."""
+        unit = generate_systemd_service(PORT, SECRET, HOST).replace(
+            "[Install]", "Environment=APP_BASE_URL=https://example.com:08443\n[Install]")
+        result, m, path = self._upgrade_with(tmp_path, {"APP_BASE_URL": "https://example.com:08443"}, unit=unit)
+        assert result.exit_code == 0, result.output
+        m["start_service"].assert_called_once()
+        assert path.read_text() == unit
+        assert "Service file not updated" in _flat(result.output)
+
+    def test_an_unexpected_exception_still_reaches_start(self, tmp_path):
+        with patch("cli.server_settings.valid_settings", side_effect=RuntimeError("boom")):
+            result, m, path = self._upgrade_with(tmp_path, {"OAUTH_DCR_ENABLED": "false"})
+        assert result.exit_code == 0, result.output
+        m["start_service"].assert_called_once()
+        assert "checking server settings failed (RuntimeError)" in _flat(result.output)
+
+    def test_darwin_upgrade_writes_settings_into_the_plist(self, tmp_path):
+        result, m, path = self._upgrade_with(tmp_path, dict(OAUTH), os_type="darwin")
+        assert result.exit_code == 0, result.output
+        m["start_service"].assert_called_once()
+        env = plistlib.loads(path.read_bytes())["EnvironmentVariables"]
+        assert env["OAUTH_ENABLED"] == "true" and env["APP_BASE_URL"] == OAUTH["APP_BASE_URL"]
+        assert ["systemctl", "--user", "daemon-reload"] not in [c.args[0] for c in m["run_command"].call_args_list]
+
+    def test_darwin_upgrade_with_a_bad_setting(self, tmp_path):
+        result, m, path = self._upgrade_with(tmp_path, {"SMTP_FROM": "a\udcffb"}, os_type="darwin")
+        assert result.exit_code == 0, result.output
+        m["start_service"].assert_called_once()
+        assert path.read_text() == generate_launchd_plist(PORT, SECRET, HOST)
+
+
+class TestAtomicWrites:
+    def test_a_failed_service_file_write_keeps_the_old_file(self, tmp_path):
+        path = tmp_path / "chaotic.service"
+        path.write_text("old unit\n")
+        with patch("cli.system.get_os", return_value="linux"), \
+             patch("cli.system.get_service_file_path", return_value=path):
+            with pytest.raises(UnicodeEncodeError):
+                write_service_file(PORT, SECRET + "\udcff", HOST)
+        assert path.read_text() == "old unit\n"
+        assert list(tmp_path.iterdir()) == [path]
+
+    def test_reconfigure_leaves_out_a_bad_setting(self, server):
+        server.write({"OAUTH_DCR_ENABLED": "false", "SMTP_FROM": "a\udcffb"}, unit_settings={"OAUTH_DCR_ENABLED": "false"})
+        server.running = False
+        with patch("cli.system.validate_host", return_value=True), patch("cli.system.set_api_url"):
+            result = CliRunner().invoke(cli, ["system", "reconfigure", "--port", "24300", "--yes"])
+        assert result.exit_code == 0, result.output
+        assert server.unit.read_text() == generate_systemd_service(24300, SECRET, HOST, {"OAUTH_DCR_ENABLED": "false"})
+
+    def test_save_server_json_is_atomic_and_private(self, tmp_path):
+        target = tmp_path / "server.json"
+        target.write_text('{"secret_key": "KEEPME"}')
+        with patch("cli.system.SERVER_JSON", target), patch("cli.system.GLOBAL_CONFIG_DIR", tmp_path):
+            with pytest.raises(TypeError):
+                system.save_server_json({"bad": object()})
+            assert json.loads(target.read_text()) == {"secret_key": "KEEPME"}
+            system.save_server_json({"secret_key": "NEW"})
+        assert json.loads(target.read_text()) == {"secret_key": "NEW"}
+        assert oct(target.stat().st_mode & 0o777) == "0o600"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["server.json"]
+
+
+class TestUnreadableServerJson:
+    """Finding 2: set/unset never replace a server.json they cannot read."""
+
+    @pytest.mark.parametrize("content", [
+        '{"host": "127.0.0.1", "secret_key": "KEEPME", ',  # truncated
+        '["not", "an", "object"]',
+        '{"host": "127.0.0.1", "port": 24267}',  # lost its secret_key
+        b'\xff\xfe',
+    ])
+    @pytest.mark.parametrize("args", [("set", "OAUTH_DCR_ENABLED", "false"), ("unset", "OAUTH_DCR_ENABLED")])
+    def test_refused_and_untouched(self, server, content, args):
+        raw = content if isinstance(content, bytes) else content.encode()
+        server.json.write_bytes(raw)
+        unit = server.unit.read_text()
+        result = server.invoke(*args)
+        assert result.exit_code == 1
+        assert "Nothing was changed" in result.output and "restore it" in result.output
+        assert server.json.read_bytes() == raw
+        assert server.unit.read_text() == unit
+
+    def test_missing(self, server):
+        server.json.unlink()
+        result = server.invoke("set", "OAUTH_DCR_ENABLED", "false")
+        assert result.exit_code == 1 and "does not exist" in result.output
+        assert not server.json.exists()
+
+
+def test_adoption_refusal_names_the_hand_added_line(server):
+    """Finding 4."""
+    server.unit.write_text(server.unit.read_text().replace(
+        "[Install]", "Environment=APP_BASE_URL=https://chaotic.example.com\n[Install]"))
+    result = server.invoke("set", "OAUTH_ENABLED", "true")
+    assert result.exit_code == 1
+    assert "APP_BASE_URL is set in the service file by hand; adopt it first" in result.output
+
+
+class TestStdin:
+    """Finding 6: `set NAME -` keeps a secret out of argv."""
+
+    def test_reads_stdin(self, server):
+        result = CliRunner().invoke(cli, ["system", "config", "set", "SMTP_PASSWORD", "-"], input=PASSWORD + "\n")
+        assert result.exit_code == 0, result.output
+        assert server.info()["settings"] == {"SMTP_PASSWORD": PASSWORD}
+        assert PASSWORD not in result.output
+
+    def test_crlf_and_empty(self, server):
+        CliRunner().invoke(cli, ["system", "config", "set", "SMTP_PASSWORD", "-"], input=PASSWORD + "\r\n")
+        assert server.info()["settings"] == {"SMTP_PASSWORD": PASSWORD}
+        CliRunner().invoke(cli, ["system", "config", "set", "SMTP_HOST", "-"], input="")
+        assert server.info()["settings"]["SMTP_HOST"] == ""
+
+
+def test_malformed_install_config_is_not_echoed(tmp_path):
+    """Finding 5."""
+    from test_system_install import _install_patches
+    patches = _install_patches(GLOBAL_CONFIG_DIR=tmp_path, SERVER_DIR=tmp_path / "server",
+                               DATA_DIR=tmp_path / "data", LOGS_DIR=tmp_path / "logs")
+    with patch.multiple("cli.system", **patches):
+        result = CliRunner().invoke(cli, ["system", "install", "--yes", "--config", f"SMTP_PASSWORD {PASSWORD}"])
+    assert result.exit_code == 1
+    assert "expected NAME=VALUE" in result.output and PASSWORD not in result.output

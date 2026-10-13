@@ -80,6 +80,16 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
+def _encodable(value: str) -> bool:
+    """False for a lone surrogate (from non-UTF-8 argv bytes, or a
+    "\\udcff" escape in server.json), which no service file can hold."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def is_secret(name: str) -> bool:
     """Whether a value must never be shown. A setting this CLI does not
     know (set with --force) might hold anything, so it counts as one."""
@@ -105,28 +115,86 @@ def name_problem(name: str, force: bool = False) -> str | None:
     return None
 
 
+_LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+
+
+def _canonical_host(host: str) -> str | None:
+    """`host` as the server's URL parser would write it, if this CLI can
+    vouch that it would leave it exactly as it is; else None. Stricter
+    than the server on purpose: an origin accepted here must also pass
+    app.config.oauth_issuer_problem, which compares against pydantic's
+    normalised form (PR #349 review, finding 3)."""
+    if host.startswith("["):
+        if not host.endswith("]"):
+            return None
+        if "." in host:
+            return None  # an embedded IPv4 form: the server writes it in hex
+        try:
+            address = ipaddress.IPv6Address(host[1:-1])
+        except ValueError:
+            return None
+        return f"[{address.compressed}]"
+    labels = host.split(".")
+    last = labels[-1]
+    if last.isdigit() or last.startswith("0x"):
+        # A numeric last label makes the WHATWG parser read the host as an
+        # IPv4 address (octal, hex and short forms included): accept only
+        # the dotted-quad form it would print.
+        try:
+            return str(ipaddress.IPv4Address(host))
+        except ValueError:
+            return None
+    for label in labels:
+        if not _LABEL.match(label):
+            return None
+        if label.startswith("xn--"):
+            try:
+                if label.encode().decode("idna").encode("idna").decode() != label:
+                    return None
+            except (UnicodeError, ValueError):
+                return None
+        elif label[2:4] == "--":
+            return None  # reserved for IDNA ("ab--c"): not ours to guess at
+    return host
+
+
 def _origin(value: str, what: str) -> tuple[str, str | None]:
     """A bare http(s) origin with no trailing slash, in the form the
     server compares by exact string."""
     trimmed = value.rstrip("/")
     if not trimmed.isascii():
         return value, f"{what} {value!r} is not ASCII (write an internationalised host in its xn-- form)"
-    parsed = urlsplit(trimmed)
+    try:
+        parsed = urlsplit(trimmed)
+        port = parsed.port
+    except ValueError:  # an unbalanced "[", a non-numeric or out-of-range port
+        return value, f"{what} {value!r} is not a valid URL (check the host and port)"
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return value, f"{what} {value!r} is not an absolute http(s) URL, e.g. https://chaotic.example.com"
-    try:
-        port = parsed.port
-    except ValueError:
-        return value, f"{what} {value!r} has an invalid port"
-    if parsed.username is not None or parsed.password is not None:
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
         return value, f"{what} {value!r} must not carry credentials"
-    if parsed.path or parsed.query or parsed.fragment:
+    if parsed.path or parsed.query or parsed.fragment or "?" in trimmed or "#" in trimmed:
         return value, f"{what} {value!r} must be a bare origin, with no path, query or fragment"
-    if parsed.netloc != parsed.netloc.lower():
+    if parsed.netloc != parsed.netloc.lower() or parsed.scheme != trimmed.split(":", 1)[0]:
         return value, f"{what} {value!r} must be written in lower case: {trimmed.lower()!r}"
     if port is not None and port == _DEFAULT_PORTS[parsed.scheme]:
         canonical = f"{parsed.scheme}://{parsed.netloc.rsplit(':', 1)[0]}"
         return value, f"{what} {value!r} names the default port; use {canonical!r}"
+    netloc = parsed.netloc
+    if netloc.startswith("["):
+        cut = netloc.find("]") + 1
+        host_text, port_text = netloc[:cut], netloc[cut:]
+    else:
+        host_text, colon, port_text = netloc.partition(":")
+        port_text = colon + port_text
+    host = _canonical_host(host_text)
+    if host is None:
+        return value, f"{what} {value!r} does not have a host name or IP address in plain canonical form"
+    if port_text and not (port_text[1:].isdigit() and port is not None and 1 <= port <= 65535):
+        return value, f"{what} {value!r} has an invalid port"
+    canonical = f"{parsed.scheme}://{host}" + (f":{port}" if port is not None else "")
+    if canonical != trimmed:
+        return value, f"{what} {value!r} is not in canonical form; use {canonical!r}"
     return trimmed, None
 
 
@@ -150,6 +218,8 @@ def normalize(name: str, value: str) -> tuple[str, str | None]:
     """(the value to store, None) or (value, why it is refused). Never
     puts a secret value in the reason."""
     kind = KNOWN[name].kind if name in KNOWN else "text"
+    if not _encodable(value):  # before anything prints or parses it
+        return value, f"{name}: the value is not valid UTF-8 text"
     shown = "the value" if is_secret(name) else repr(value)
     if kind == "bool":
         lowered = value.strip().lower()
@@ -182,9 +252,12 @@ def normalize(name: str, value: str) -> tuple[str, str | None]:
         if problem:
             return value, f"{name}: {problem}"
     elif kind == "port":
-        if not value.strip().isdigit() or not 1 <= int(value.strip()) <= 65535:
+        digits = value.strip()
+        if not (digits.isascii() and digits.isdigit()) or not 1 <= int(digits) <= 65535:
             return value, f"{name} must be a port number (1-65535), not {shown}"
         value = str(int(value.strip()))
+    if not _encodable(value):
+        return value, f"{name}: the value is not valid UTF-8 text"
     if _UNSAFE.search(value):
         return value, (f"{name}: {shown} contains whitespace, a quote, a backslash, '%' or a control "
                        "character, which the service file cannot carry")
@@ -201,7 +274,37 @@ def stored_settings(server_info: dict) -> dict[str, str]:
         return {}
     return {name: value for name, value in sorted(raw.items())
             if isinstance(name, str) and _NAME.match(name) and name not in RESERVED
-            and isinstance(value, str) and not _UNSAFE.search(value)}
+            and isinstance(value, str) and _encodable(value) and not _UNSAFE.search(value)}
+
+
+def _problem(name: str, value: str) -> str | None:
+    """normalize()'s refusal, or None. Never raises: a value it cannot
+    judge counts as a problem (the upgrade path relies on this)."""
+    try:
+        return normalize(name, value)[1]
+    except Exception:  # noqa: BLE001 -- any surprise is a refusal, not a crash
+        return f"{name}: the value could not be checked"
+
+
+def invalid_settings(server_info: dict) -> list[str]:
+    """Names in server.json's settings that must not reach the service
+    file: not storable (see stored_settings), or a known name whose value
+    the server would refuse or drop. Never raises."""
+    raw = server_info.get(SETTINGS_KEY)
+    if not isinstance(raw, dict):
+        return []
+    settings = stored_settings(server_info)
+    return sorted((str(name) for name in raw
+                   if name not in settings or (name in KNOWN and _problem(name, settings[name]))), key=str)
+
+
+def valid_settings(server_info: dict) -> dict[str, str]:
+    """The settings it is safe to render into the service file: stored,
+    and (for a known name) a value the server accepts. What upgrade,
+    reconfigure and install write, so a bad hand-edit can never break
+    a service file or stop a server from starting over one entry."""
+    bad = set(invalid_settings(server_info))
+    return {name: value for name, value in stored_settings(server_info).items() if name not in bad}
 
 
 def check(server_info: dict) -> tuple[list[str], list[str]]:
@@ -216,20 +319,20 @@ def check(server_info: dict) -> tuple[list[str], list[str]]:
         return [f"server.json's \"{SETTINGS_KEY}\" is not an object; it is ignored"], []
     raw = raw or {}
     settings = stored_settings(server_info)
-    for name in sorted(raw):
+    bad = invalid_settings(server_info)
+    for name in bad:
         if name not in settings:
             errors.append(f"server.json setting {name!r} is not a valid name or value; it is left out of the service file")
-            continue
-        if name in KNOWN:
-            value, problem = normalize(name, settings[name])
-            if problem:
-                errors.append(problem)
-            else:
-                settings[name] = value  # judge "True" as the server would: true
+        else:
+            errors.append(_problem(name, settings.pop(name)) or f"{name} could not be checked")
+    for name in settings:
+        settings[name] = normalize(name, settings[name])[0]  # judge "True" as the server would: true
 
     if settings.get("OAUTH_ENABLED") == "true":
         base = settings.get("APP_BASE_URL")
-        if not base:
+        if not base and "APP_BASE_URL" in bad:
+            pass  # already reported as invalid
+        elif not base:
             errors.append("OAUTH_ENABLED is true but APP_BASE_URL is not set: the server will not start. "
                           "Set it to the https origin clients reach this server at.")
         else:
@@ -246,6 +349,35 @@ def check(server_info: dict) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
+_DOTENV_ESCAPES = {"\\": "\\", '"': '"', "'": "'", "n": "\n", "r": "\r", "t": "\t"}
+
+
+def _dotenv_value(value: str) -> str | None:
+    """A .env value as python-dotenv (pydantic-settings' loader) reads
+    it, or None for a line it would refuse. A quoted value runs to its
+    closing quote and may be followed only by a comment; an unquoted one
+    ends at whitespace followed by '#'."""
+    if value[:1] not in ("'", '"'):
+        return re.split(r"\s+#", value, maxsplit=1)[0].strip()
+    quote, out, i = value[0], [], 1
+    while i < len(value):
+        c = value[i]
+        if c == "\\" and i + 1 < len(value) and value[i + 1] in ("\\", quote):
+            out.append(value[i + 1])
+            i += 2
+            continue
+        if c == "\\" and quote == '"' and i + 1 < len(value) and value[i + 1] in _DOTENV_ESCAPES:
+            out.append(_DOTENV_ESCAPES[value[i + 1]])
+            i += 2
+            continue
+        if c == quote:
+            rest = value[i + 1:].strip()
+            return "".join(out) if not rest or rest.startswith("#") else None
+        out.append(c)
+        i += 1
+    return None  # unterminated
+
+
 def parse_dotenv_names(text: str) -> dict[str, str]:
     """NAME -> value of each plain `NAME=value` line of a .env file (the
     server's own fallback source), good enough to tell an operator which
@@ -260,6 +392,7 @@ def parse_dotenv_names(text: str) -> dict[str, str]:
             line = line[len("export "):].lstrip()
         name, sep, value = line.partition("=")
         name = name.strip().upper()  # pydantic-settings matches names case-insensitively
-        if sep and _NAME.match(name):
-            found[name] = value.strip().strip("\"'")
+        parsed = _dotenv_value(value.strip()) if sep and _NAME.match(name) else None
+        if parsed is not None:
+            found[name] = parsed
     return found

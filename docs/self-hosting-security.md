@@ -189,7 +189,10 @@ plist) writes them into it as environment variables: `install`,
 `reconfigure`, `upgrade`, and `system config` itself (CHT-1592). So a
 setting survives every rewrite of the file. An install with no settings
 gets exactly the service file it got before, and `upgrade` changes
-nothing about it.
+nothing about it. Settings never stop an upgrade: an entry in server.json
+the server would refuse (a hand edit, say) is named and left out of the
+regenerated file, or the file is kept as it is if leaving it out would
+drop a line already there, and the server is started either way.
 
 ```bash
 chaotic system config list                 # every setting: its value, or the server default
@@ -205,13 +208,29 @@ then `chaotic system start`); `set` says so. The names it knows are
 `OAUTH_ENABLED`, `APP_BASE_URL`, `FORWARDED_ALLOW_IPS`,
 `MCP_CAPABILITY_URL_ENABLED`, `OAUTH_DCR_ENABLED`, `CORS_ORIGINS` and
 `SMTP_HOST`/`PORT`/`USER`/`PASSWORD`/`FROM`. Each value is checked by the
-rules the server applies, so a typo fails at `set`, not at the next
-start. Any other name needs `--force`; `SECRET_KEY`, `HOST`, `PORT`,
+rules the server applies (for `APP_BASE_URL`, only values its OAuth
+issuer check accepts; a backend test pins that), so a typo fails at
+`set`, not at the next start. Any other name needs `--force`; `SECRET_KEY`, `HOST`, `PORT`,
 `DATABASE_URL`, `DATABASE_PATH` and `PATH` are never settings (use
 `reconfigure` for host and port). A value may not contain whitespace,
-quotes, a backslash or `%`, which a service file cannot carry as is. The
-value of `SMTP_PASSWORD`, and of any name set with `--force`, is never
-printed.
+quotes, a backslash or `%`, which a service file cannot carry as is, nor
+invalid UTF-8. The value of `SMTP_PASSWORD`, and of any name set with
+`--force`, is never printed.
+
+**Secrets.** A command-line argument is visible to every user on the
+machine in the process list (`ps`, `/proc/<pid>/cmdline`) while the
+command runs, which for `install` is minutes, and it lands in your shell
+history. So do not pass `SMTP_PASSWORD` (or any secret) as `--config` or
+as a `set` argument on a shared host. Give `set` the value `-` to read it
+from standard input instead (one trailing newline is dropped):
+
+```bash
+read -rs PW && printf '%s\n' "$PW" | chaotic system config set SMTP_PASSWORD -
+chaotic system config set SMTP_PASSWORD - < ~/smtp-password   # or from a 0600 file
+```
+
+The value ends up in `server.json` and the service file, both readable
+only by you (0600).
 
 `list` and `check` also say where something else disagrees with
 server.json: a variable added to the service file by hand, one set in a

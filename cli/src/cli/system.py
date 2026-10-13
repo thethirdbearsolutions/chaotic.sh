@@ -21,6 +21,7 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -213,12 +214,11 @@ def load_server_json() -> dict:
 
 
 def save_server_json(data: dict):
-    """Save server metadata to server.json."""
+    """Save server metadata to server.json: atomically and 0600 from the
+    moment it exists, since it holds SECRET_KEY and a crash mid-write
+    must not leave a truncated file (PR #349 review)."""
     GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(SERVER_JSON, "w") as f:
-        json.dump(data, f, indent=2)
-    # Restrict permissions since server.json contains SECRET_KEY
-    os.chmod(SERVER_JSON, 0o600)
+    _write_private_file(SERVER_JSON, json.dumps(data, indent=2))
 
 
 def generate_secret_key() -> str:
@@ -400,11 +400,9 @@ def write_service_file(port: int, secret_key: str, host: str = "127.0.0.1",
     else:
         raise RuntimeError(f"Unsupported OS: {os_type}")
 
-    with open(service_path, "w") as f:
-        f.write(content)
-
-    # Restrict permissions - service files contain SECRET_KEY
-    os.chmod(service_path, 0o600)
+    # Atomic and 0600 throughout (service files contain SECRET_KEY): a
+    # failed write leaves the previous file, never a truncated one.
+    _write_private_file(service_path, content)
 
     return service_path
 
@@ -704,10 +702,13 @@ def reconcile_service_file(port: int, host: str, secret_key: str,
     except (OSError, UnicodeDecodeError) as e:
         return ServiceFileUpdate("skipped", path, reason=f"could not read {path}: {e}")
 
-    if os_type == "linux":
-        desired = generate_systemd_service(port, secret_key, host, settings)
-    else:
-        desired = generate_launchd_plist(port, secret_key, host, settings)
+    try:
+        if os_type == "linux":
+            desired = generate_systemd_service(port, secret_key, host, settings)
+        else:
+            desired = generate_launchd_plist(port, secret_key, host, settings)
+    except Exception as e:  # noqa: BLE001 -- "never raises": upgrade must reach start_service
+        return ServiceFileUpdate("skipped", path, reason=f"could not generate it ({type(e).__name__})")
     if current == desired:
         return ServiceFileUpdate("unchanged", path)
 
@@ -724,6 +725,8 @@ def reconcile_service_file(port: int, host: str, secret_key: str,
         _write_private_file(path, desired)
     except OSError as e:
         return ServiceFileUpdate("skipped", path, reason=f"could not write {path}: {e}")
+    except ValueError as e:  # UnicodeEncodeError: name the kind, never the text
+        return ServiceFileUpdate("skipped", path, reason=f"could not write {path} ({type(e).__name__})")
     if os_type == "linux" and not _daemon_reload():
         # Not fatal: start_service() runs daemon-reload again before
         # starting, and fails loudly (with a rollback) if it cannot.
@@ -1712,7 +1715,7 @@ def _parse_install_settings(pairs) -> dict[str, str]:
     for pair in pairs:
         name, sep, value = pair.partition("=")
         name = name.strip().upper()
-        problem = None if sep else f"--config {pair.split('=')[0]!r}: expected NAME=VALUE"
+        problem = None if sep else "--config: expected NAME=VALUE"  # never echo it: it may be a secret
         problem = problem or server_settings.name_problem(name)
         if not problem:
             value, problem = server_settings.normalize(name, value)
@@ -1935,7 +1938,7 @@ def system_reconfigure(host, port, yes):
     console.print("Updated server.json.")
 
     # Regenerate service file
-    service_path = write_service_file(new_port, secret_key, new_host, stored_settings(server_info))
+    service_path = write_service_file(new_port, secret_key, new_host, server_settings.valid_settings(server_info))
     console.print(f"Regenerated service file: {service_path}")
 
     # Restart if running
@@ -2344,12 +2347,24 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     # install and reconfigure were the only writers, so fixes to the unit
     # never reached existing installs. No-op when nothing differs.
     console.print("Checking service file...")
-    service_update = reconcile_service_file(
-        port, host, server_info.get("secret_key", ""), settings=stored_settings(server_info))
+    # Settings never stop an upgrade (PR #349 review): an entry the server
+    # would refuse is named and left out of the regenerated file (which
+    # then keeps the file as it is if that would drop it), and anything
+    # unexpected is reported by type, never value, before the start.
+    try:
+        bad_settings = server_settings.invalid_settings(server_info)
+        settings_errors, _ = server_settings.check(server_info)
+        service_update = reconcile_service_file(
+            port, host, server_info.get("secret_key", ""), settings=server_settings.valid_settings(server_info))
+    except Exception as e:  # noqa: BLE001
+        bad_settings, settings_errors = [], []
+        service_update = ServiceFileUpdate("skipped", reason=f"checking server settings failed ({type(e).__name__})")
     _report_service_file_update(service_update)
-    # A setting saved with `system config set --force` the server cannot
-    # start with: say so before the start fails and rolls back.
-    settings_errors, _ = server_settings.check(server_info)
+    if bad_settings:
+        console.print(f"  [yellow]Left out of the service file (invalid in server.json): "
+                      f"{escape(', '.join(bad_settings))}. See 'chaotic system config check'.[/yellow]")
+    # Including a setting saved with `system config set --force` the
+    # server cannot start with: say so before the start fails.
     _print_problems(settings_errors, [])
 
     # Start server, whatever state the upgrade found it in (CHT-1475): an
@@ -2639,6 +2654,13 @@ def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str]
     errors, warnings = server_settings.check(candidate)
     if errors and not force:
         _print_problems(errors, [])
+        unit_env = _service_file_env() or {}
+        for name in sorted(n for n in set(unit_env) & set(server_settings.KNOWN) - set(settings)
+                           if any(n in error for error in errors)):
+            # Adopting hand-added lines: the server runs fine with this
+            # one, server.json just does not have it yet.
+            console.print(f"{name} is set in the service file by hand; adopt it first with "
+                          f"'chaotic system config set {name} <value>'.")
         console.print("Nothing was changed. (--force saves it anyway.)")
         raise SystemExit(1)
     save_server_json(candidate)
@@ -2650,7 +2672,8 @@ def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str]
 
     update = reconcile_service_file(
         server_info.get("port", DEFAULT_PORT), server_info.get("host", "127.0.0.1"),
-        server_info.get("secret_key", ""), settings=stored_settings(candidate), owned=frozenset(owned))
+        server_info.get("secret_key", ""), settings=server_settings.valid_settings(candidate),
+        owned=frozenset(owned))
     if update.status == "skipped":
         console.print(f"[yellow]Service file not updated: {escape(update.reason)}.[/yellow]")
         console.print("The server will not see this setting until the service file carries it. "
@@ -2669,11 +2692,26 @@ def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str]
 
 
 def _require_installed() -> dict:
+    """server.json of an installed server, read strictly: `set`/`unset`
+    rewrite the whole file, so one that does not parse, or has lost its
+    secret_key, is refused rather than replaced (PR #349 review)."""
     if not is_server_installed():
         console.print("[red]Chaotic server is not installed.[/red]")
         console.print("Run 'chaotic system install' first (it takes --config NAME=VALUE).")
         raise SystemExit(1)
-    return load_server_json()
+    try:
+        server_info = json.loads(SERVER_JSON.read_text())
+        problem = None if isinstance(server_info, dict) and server_info.get("secret_key") else "it has no secret_key"
+    except FileNotFoundError:
+        problem = "it does not exist"
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        problem = f"it cannot be read ({type(e).__name__})"
+    if problem:
+        console.print(f"[red]{SERVER_JSON}: {problem}.[/red]")
+        console.print("Nothing was changed. Fix it or restore it from a backup first; it holds the "
+                      "server's SECRET_KEY, host and port (the service file has the same values).")
+        raise SystemExit(1)
+    return server_info
 
 
 @system.group("config")
@@ -2746,11 +2784,18 @@ def system_config_set(name, value, force):
       chaotic system config set APP_BASE_URL https://chaotic.example.com
       chaotic system config set OAUTH_ENABLED true
       chaotic system config set MCP_CAPABILITY_URL_ENABLED false
+      chaotic system config set SMTP_PASSWORD - < password-file
 
-    Takes effect when the server restarts.
+    A VALUE of - reads it from standard input (one trailing newline is
+    dropped), which keeps a secret out of shell history and the process
+    list. Takes effect when the server restarts.
     """
     name = name.upper()
     server_info = _require_installed()
+    if value == "-":
+        value = sys.stdin.read()
+        value = value[:-1] if value.endswith("\n") else value
+        value = value[:-1] if value.endswith("\r") else value
     problem = server_settings.name_problem(name, force)
     if problem:
         console.print(f"[red]{escape(problem)}[/red]")
