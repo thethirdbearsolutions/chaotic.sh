@@ -49,6 +49,8 @@ vi.mock('./ui.js', () => ({
     showApiError: vi.fn(),
     closeAllDropdowns: vi.fn(),
     registerDropdownClickOutside: vi.fn(),
+    markModalDirty: vi.fn(),
+    clearModalDirty: vi.fn(),
 }));
 
 vi.mock('./issue-detail-view.js', () => ({
@@ -669,6 +671,17 @@ describe('issue-creation', () => {
             expect(showToast).toHaveBeenCalledWith('Please select a project', 'error');
         });
 
+        it('clears the modal dirty mark along with the form (CHT-1231)', async () => {
+            const { clearModalDirty } = await import('./ui.js');
+            clearModalDirty.mockClear();
+            document.getElementById('create-issue-title').value = 'Test';
+
+            await handleCreateIssueAndNew();
+
+            expect(clearModalDirty).toHaveBeenCalled();
+            expect(document.getElementById('create-issue-title').value).toBe('');
+        });
+
         it('preserves field selections (status, priority, etc.) after Create & New', async () => {
             document.getElementById('create-issue-title').value = 'Test';
             document.getElementById('create-issue-status').value = 'todo';
@@ -771,6 +784,19 @@ describe('issue-creation', () => {
             const btn = document.getElementById('create-issue-type-btn');
             expect(btn.innerHTML).toContain('type-bug');
             expect(document.getElementById('create-issue-type').value).toBe('bug');
+        });
+
+        it('marks the modal dirty so Escape keeps the choice (CHT-1231)', async () => {
+            const { markModalDirty } = await import('./ui.js');
+            markModalDirty.mockClear();
+            setCreateIssueField('priority', 'high', 'High');
+            expect(markModalDirty).toHaveBeenCalled();
+        });
+
+        it('returns focus to the toolbar button that opened the dropdown (CHT-1231)', () => {
+            setCreateIssueField('priority', 'high', 'High');
+            expect(document.activeElement).toBe(
+                document.querySelector('.toolbar-btn[data-dropdown-type="priority"]'));
         });
 
         it('updates assignee field', () => {
