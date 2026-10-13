@@ -23,7 +23,9 @@ async def sprint_current(
 
     Call this when a write is refused with `sprint_in_arrears` or
     `sprint_in_limbo` -- it reports what's actually blocking, which
-    nothing else on this surface does.
+    nothing else on this surface does. Pass the refusal's `project_id`
+    as `project` (and its `team_id` as `team`): arrears and limbo belong
+    to the refused ticket's project, which need not be the current one.
 
     Only closed tickets accrue budget: completing an issue charges the
     project's currently-active sprint (estimate points, or 1 point if
@@ -68,7 +70,11 @@ async def sprint_close(
     """Close a sprint and rotate to the next planned one.
 
     This is the remedy for `sprint_in_arrears`: budget is only released
-    by closing, not by editing tickets.
+    by closing, not by editing tickets. Pass the refusal's `project_id`
+    as `project`, its `team_id` as `team` and its `sprint_id` as
+    `sprint`: closing another project's sprint releases nothing, one
+    close of the right one is enough, and naming the sprint makes a
+    repeated close fail instead of closing the fresh sprint (CHT-1270).
 
     If the project has per-sprint rituals, closing enters LIMBO instead
     of rotating -- the result has `entered_limbo: true`, `now_active`

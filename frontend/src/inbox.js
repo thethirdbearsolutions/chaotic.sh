@@ -25,6 +25,7 @@ const KIND_LABELS = {
     mention: 'Mention',
     assignment: 'Assignment',
     review_requested: 'Review requested',
+    agent_status: 'Agent',
 };
 
 // Only entries of these kinds are read-only within a fixed request race

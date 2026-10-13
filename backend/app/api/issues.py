@@ -70,8 +70,17 @@ from app.websocket import broadcast_issue_event, broadcast_comment_event, broadc
 router = APIRouter()
 
 
-async def _validate_assignee(assignee_id: str | None, team_id: str) -> None:
-    """Validate that assignee exists and belongs to the project's team (CHT-293)."""
+async def _validate_assignee(
+    assignee_id: str | None, team_id: str, current_assignee_id: str | None = None,
+) -> None:
+    """Validate that assignee exists and belongs to the project's team (CHT-293).
+
+    A deactivated user or agent can't be newly assigned work: it can never
+    sign in to do it (CHT-1494). Re-sending an issue's existing assignee
+    (`current_assignee_id`) is not a new assignment, so an update that
+    touches other fields of an issue already held by a retired agent
+    still goes through.
+    """
     if not assignee_id:
         return
     user = await OxydeUser.objects.get_or_none(id=assignee_id)
@@ -79,6 +88,11 @@ async def _validate_assignee(assignee_id: str | None, team_id: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Assignee not found",
+        )
+    if not user.is_active and assignee_id != current_assignee_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Assignee '{user.name}' is deactivated and cannot be assigned work",
         )
     # Agents: check team scope; humans: check team membership
     if user.is_agent:
@@ -254,6 +268,46 @@ async def issue_response(issue: Issue) -> IssueResponse:
     return (await issues_to_responses([issue]))[0]
 
 
+def _arrears_detail(e: SprintInArrearsError) -> dict:
+    """The 409 body for a refusal caused by sprint arrears.
+
+    Names the project and sprint that are over budget (CHT-1270): the
+    refused ticket's project is not necessarily the caller's current one,
+    and closing the wrong project's sprint releases nothing here.
+    """
+    where = f" in project {e.project_key}" if e.project_key else ""
+    return {
+        "error_code": "sprint_in_arrears",
+        "message": (
+            f"Sprint is in arrears{where}. Close that project's active sprint to "
+            "continue; a spent budget ends a sprint, not a date."
+        ),
+        "budget": e.budget,
+        "points_spent": e.points_spent,
+        "arrears_by": e.arrears_by,
+        "sprint_id": e.sprint_id,
+        "sprint_name": e.sprint_name,
+        "project_id": e.project_id,
+        "project_key": e.project_key,
+        "team_id": e.team_id,
+    }
+
+
+def _limbo_detail(e: SprintInLimboError) -> dict:
+    """The 409 body for a refusal caused by a sprint in limbo; names the
+    project for the same reason as _arrears_detail (CHT-1270)."""
+    where = f" in project {e.project_key}" if e.project_key else ""
+    return {
+        "error_code": "sprint_in_limbo",
+        "message": f"Sprint is in limbo{where}. Complete pending rituals to continue.",
+        "sprint_id": e.sprint_id,
+        "pending_rituals": e.pending_rituals,
+        "project_id": e.project_id,
+        "project_key": e.project_key,
+        "team_id": e.team_id,
+    }
+
+
 async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> dict:
     """The 409 detail for a claim/close refused by pending ticket rituals
     (CHT-1360). Rows are the same PendingRitualResponse shape ritual_pending
@@ -374,23 +428,12 @@ async def create_issue(
     except SprintInLimboError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_limbo",
-                "message": "Sprint is in limbo. Complete pending rituals to continue.",
-                "sprint_id": e.sprint_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=_limbo_detail(e),
         )
     except SprintInArrearsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_arrears",
-                "message": "Sprint is in arrears. Close the current sprint to continue; a spent budget ends a sprint, not a date.",
-                "budget": e.budget,
-                "points_spent": e.points_spent,
-                "arrears_by": e.arrears_by,
-            },
+            detail=_arrears_detail(e),
         )
     except TicketRitualsError as e:
         raise HTTPException(
@@ -1027,7 +1070,7 @@ async def update_issue(
 
     # Validate assignee, sprint, labels, parent if provided (CHT-293, CHT-294, CHT-296, CHT-295)
     if issue_in.assignee_id is not None:
-        await _validate_assignee(issue_in.assignee_id, project.team_id)
+        await _validate_assignee(issue_in.assignee_id, project.team_id, issue.assignee_id)
     if issue_in.sprint_id is not None:
         await _validate_sprint(issue_in.sprint_id, issue.project_id)
     if issue_in.label_ids is not None:
@@ -1054,23 +1097,12 @@ async def update_issue(
     except SprintInLimboError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_limbo",
-                "message": "Sprint is in limbo. Complete pending rituals to continue.",
-                "sprint_id": e.sprint_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=_limbo_detail(e),
         )
     except SprintInArrearsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_arrears",
-                "message": "Sprint is in arrears. Close the current sprint to continue; a spent budget ends a sprint, not a date.",
-                "budget": e.budget,
-                "points_spent": e.points_spent,
-                "arrears_by": e.arrears_by,
-            },
+            detail=_arrears_detail(e),
         )
     except TicketRitualsError as e:
         raise HTTPException(

@@ -716,9 +716,25 @@ class TestSprintTools:
             identifier=blocked["identifier"], status="in_progress",
         )
         assert "error" in refused
+        # CHT-1270: the envelope names what to close, and closing exactly
+        # that (project + sprint by id) is the way out.
+        err = refused["error"]
+        assert err["project_id"] == test_project.id
+        assert err["project_key"] == test_project.key
+        assert err["team_id"] == test_project.team_id
+        assert err["sprint_id"] == sprint["id"]
 
-        closed = await tools.sprint_close()
+        closed = await tools.sprint_close(
+            sprint=err["sprint_id"], project=err["project_id"], team=err["team_id"],
+        )
         assert "error" not in closed
+
+        # Repeating the same close fails instead of closing the fresh sprint.
+        again = await tools.sprint_close(
+            sprint=err["sprint_id"], project=err["project_id"], team=err["team_id"],
+        )
+        assert "error" in again
+        assert (await tools.sprint_current())["id"] != sprint["id"]
 
         # A fresh active sprint, and the write now goes through.
         after = await tools.issue_update(
