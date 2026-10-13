@@ -145,6 +145,9 @@ jobs:
           # Empty when the secret is unset, which makes the action fall back
           # to trusted publishing (OIDC).
           password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          # Re-running a release, or backfilling a GitHub Release for a version
+          # that was uploaded by hand, must not fail on files already there.
+          skip-existing: true
 
   publish-pypi:
     # Deliberately NOT `needs: publish-test-pypi`: the smoke publish is
@@ -169,3 +172,6 @@ jobs:
           # to trusted publishing (OIDC); see the header comment for the
           # publisher claims PyPI must be configured with.
           password: ${{ secrets.PYPI_API_TOKEN }}
+          # A version already on PyPI (uploaded by hand before CHT-1356, or a
+          # re-run) is skipped rather than failing with "file exists".
+          skip-existing: true
