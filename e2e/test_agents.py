@@ -72,7 +72,7 @@ class TestDeletingTheOwner:
             api_client.delete_me()
 
         assert refused.value.status_code == 409
-        assert "'Worker' authored 1 issues" in str(refused.value)
+        assert f"'Worker' ({agent['id'][:8]}) authored 1 issue, 1 issue activity entry" in str(refused.value)
         assert api_client.get_agent(agent["id"])["id"] == agent["id"]
         assert api_client.get_issue(issue["id"])["creator_id"] == agent["id"]
 

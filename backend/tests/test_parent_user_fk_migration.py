@@ -13,10 +13,55 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_authorship_fk_migration import _migrate, _run_in_one_transaction
+from tests.test_authorship_fk_migration import _run_in_one_transaction
 
-MIGRATION = Path(__file__).resolve().parents[1] / "migrations" / "0020_parent_user_restrict.py"
+BACKEND = Path(__file__).resolve().parents[1]
+MIGRATION = BACKEND / "migrations" / "0020_parent_user_restrict.py"
 NOW = "2026-10-13T00:00:00+00:00"
+
+_MIGRATE = """
+import asyncio, sys
+from oxyde import AsyncDatabase, PoolSettings, disconnect_all
+from oxyde.migrations.executor import apply_migrations
+
+async def main(path, target):
+    database = AsyncDatabase(f"sqlite:///{path}", overwrite=True, settings=PoolSettings(max_connections=1))
+    await database.connect()
+    import app.oxyde_models  # noqa: F401
+    try:
+        await apply_migrations(migrations_dir="migrations", target=target or None)
+    finally:
+        await disconnect_all()
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))
+# Skip interpreter finalization: under pytest-xdist, Oxyde's native
+# runtime aborts the process while being torn down, after the work is
+# done and every connection is closed.
+sys.stdout.flush()
+sys.stderr.flush()
+import os
+os._exit(0)
+"""
+
+
+def _migrate(path: str, target: str | None = None) -> None:
+    """Apply the chain (up to `target`) to `path` in a child process.
+
+    Not in this process, as test_authorship_fk_migration does: Oxyde
+    links its own copy of SQLite, and these tests also open the file with
+    Python's sqlite3. Two copies of SQLite in one process do not see each
+    other's POSIX locks, so an Oxyde connection still closing in the
+    background could checkpoint the WAL under a Python connection here
+    (the same hazard 0020 avoids for its own schema read)."""
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", _MIGRATE, path, target or ""],
+        cwd=BACKEND, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"migrate failed ({result.returncode}): {result.stderr.strip()[-2000:]}")
 
 
 def _load_migration():
@@ -192,14 +237,104 @@ def test_a_dangling_parent_stops_the_migration_before_anything_is_written(prod_s
     assert _users_sql(prod_shaped) == sql
 
 
-def test_a_rewrite_that_misses_fails_the_transaction_and_changes_nothing(prod_shaped, monkeypatch):
-    """With no foreign key to rewrite, a no-op rewrite must still fail the
-    verification: zero matching foreign keys is not "all of them RESTRICT"."""
+def test_a_dangling_parent_on_a_non_agent_row_is_reported_too(at_0019):
+    with closing(sqlite3.connect(at_0019)) as c:
+        c.execute(
+            "INSERT INTO users (id, email, hashed_password, name, created_at, updated_at, is_agent, parent_user_id) "
+            "VALUES ('legacy', 'l@example.com', 'x', 'l', ?, ?, 0, 'gone')",
+            (NOW, NOW),
+        )
+        c.commit()
+
+    ctx = _Ctx(at_0019)
+    with pytest.raises(RuntimeError, match=r"legacy -> gone.*= NULL.*nothing was changed"):
+        _load_migration().upgrade(ctx)
+    assert ctx.statements == []
+
+
+def _break_agent_project(path: str) -> None:
+    """A project deleted while foreign keys were off (before CHT-1341):
+    the agent keeps an agent_project_id that names nothing."""
+    with closing(sqlite3.connect(path)) as c:
+        c.execute("PRAGMA foreign_keys = OFF")
+        c.execute("UPDATE users SET agent_project_id = 'deleted-project' WHERE id = 'agent'")
+        c.commit()
+        assert c.execute("PRAGMA foreign_key_check('users')").fetchall()
+
+
+@pytest.mark.parametrize("shape", ["chain", "production"])
+def test_violations_of_other_users_foreign_keys_do_not_stop_it(request, shape):
+    """Only the parent foreign key is 0020's to verify; an unrelated stale
+    reference must neither fail the migration opaquely nor be touched."""
+    path = request.getfixturevalue("at_0019" if shape == "chain" else "prod_shaped")
+    _break_agent_project(path)
+    before = _snapshot(path)
+
+    _migrate(path)
+
+    assert _parent_fks(path) == ["RESTRICT"]
+    assert _snapshot(path) == before
+
+
+def test_a_parent_violation_that_appears_after_the_precheck_fails_the_transaction(prod_shaped, monkeypatch):
+    """The read-only precheck runs before the transaction; the in-transaction
+    check on the parent foreign key is what holds if a row changes between."""
+    with closing(sqlite3.connect(prod_shaped)) as c:
+        c.execute("UPDATE users SET parent_user_id = 'gone' WHERE id = 'agent'")
+        c.commit()
+    module = _load_migration()
+    real_read = module._read
+    monkeypatch.setattr(module, "_read", lambda path: (real_read(path)[0], []))
+    ctx = _Ctx(prod_shaped)
+    module.upgrade(ctx)
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed: 0020 no row violates"):
+        _run_in_one_transaction(prod_shaped, ctx.statements)
+    assert _parent_fks(prod_shaped) == []
+
+
+def test_0020_does_not_load_0019():
+    """0020 carries copies of the parsing helpers, so editing 0019 cannot
+    change it."""
+    source = MIGRATION.read_text()
+    assert "0019_authorship_fks_set_null.py" not in source
+    assert "spec_from_file_location" not in source
+
+
+def test_a_rewrite_that_misses_is_refused_before_anything_is_written(prod_shaped, monkeypatch):
+    """With no foreign key to rewrite, a no-op rewrite must be refused:
+    zero matching foreign keys is not "all of them RESTRICT"."""
     module = _load_migration()
     monkeypatch.setattr(module, "rewrite_users_table", lambda sql, action: sql)
     ctx = _Ctx(prod_shaped)
+    with pytest.raises(RuntimeError, match="exactly one foreign key.*nothing was changed"):
+        module.upgrade(ctx)
+    assert ctx.statements == []
+
+
+def test_a_rewrite_that_changes_a_column_is_refused(prod_shaped, monkeypatch):
+    """The point of comparing shapes: a stored-text edit that changed how
+    rows decode (here, a dropped NOT NULL) must never be written."""
+    module = _load_migration()
+    real = module.rewrite_users_table
+    monkeypatch.setattr(
+        module, "rewrite_users_table",
+        lambda sql, action: real(sql, action).replace('"name" VARCHAR(255) NOT NULL', '"name" VARCHAR(255)'),
+    )
+    ctx = _Ctx(prod_shaped)
+    with pytest.raises(RuntimeError, match="changes its columns"):
+        module.upgrade(ctx)
+    assert ctx.statements == []
+
+
+def test_the_transaction_verifies_what_was_stored(prod_shaped, monkeypatch):
+    """Past the pre-write check, the in-transaction verification is the
+    last line: a no-op edit must fail it and roll back."""
+    module = _load_migration()
+    monkeypatch.setattr(module, "rewrite_users_table", lambda sql, action: sql)
+    monkeypatch.setattr(module, "check_rewrite", lambda original, rewritten, action: None)
+    ctx = _Ctx(prod_shaped)
     module.upgrade(ctx)
-    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed: 0020 users.parent_user_id"):
         _run_in_one_transaction(prod_shaped, ctx.statements)
     assert _parent_fks(prod_shaped) == []
 
@@ -285,3 +420,11 @@ def test_the_replay_records_restrict():
 
 def test_the_template_schema_is_migrated(schema_template):
     assert _parent_fks(schema_template) == ["RESTRICT"]
+
+
+def test_a_schema_read_that_fails_is_refused(tmp_path):
+    """The read runs in a child process; its failure stops the migration."""
+    ctx = _Ctx(str(tmp_path / "missing.db"))
+    with pytest.raises(RuntimeError, match="could not read the schema.*nothing was changed"):
+        _load_migration().upgrade(ctx)
+    assert ctx.statements == []

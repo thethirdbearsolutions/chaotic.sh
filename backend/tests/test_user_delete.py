@@ -16,7 +16,7 @@ from app.oxyde_models.team import OxydeTeamMember
 from app.oxyde_models.user import OxydeUser
 from app.schemas.agent import AgentCreate
 from app.services.agent_service import AgentService
-from app.services.user_service import UserHasAuthoredContentError, UserService
+from app.services.user_service import UserDeletionRefusedError, UserService
 
 
 async def _issue(project, number, creator_id):
@@ -34,7 +34,7 @@ async def test_a_human_who_authored_anything_is_not_deleted(client, auth_headers
 
     assert response.status_code == 409, response.text
     detail = response.json()["detail"]
-    assert test_user.name in detail and "1 issues" in detail
+    assert test_user.name in detail and "it authored 1 issue." in detail
     assert await OxydeUser.objects.filter(id=test_user.id).count() == 1
     assert (await OxydeIssue.objects.get(id=issue.id)).creator_id == test_user.id
     assert await OxydeTeamMember.objects.filter(user_id=test_user.id).count() >= 1
@@ -62,7 +62,7 @@ async def test_an_agent_with_authored_work_blocks_its_owners_deletion(
 
     assert response.status_code == 409, response.text
     detail = response.json()["detail"]
-    assert "'Worker' authored 1 issue comments, 1 ritual gate requests" in detail
+    assert f"'Worker' ({worker.id[:8]}) authored 1 issue comment, 1 ritual gate request." in detail
     assert "Idle" not in detail
     for agent in (worker, idle):
         assert await service.get_by_id(agent.id) is not None, "nothing may be deleted on refusal"
@@ -80,12 +80,76 @@ async def test_refusal_reports_the_users_and_each_agents_counts(test_user, test_
     await _issue(test_project, 504, agent.id)
     await _issue(test_project, 505, agent.id)
 
-    with pytest.raises(UserHasAuthoredContentError) as refused:
+    with pytest.raises(UserDeletionRefusedError) as refused:
         await UserService().delete(test_user)
 
     assert refused.value.counts["issues"] == 1
-    assert refused.value.agent_counts["Writer"]["issues"] == 2
-    assert "it authored 1 issues" in str(refused.value)
+    assert refused.value.agent_counts[agent.id]["issues"] == 2
+    assert refused.value.agent_names == {agent.id: "Writer"}
+    assert "it authored 1 issue;" in str(refused.value)
+    assert f"'Writer' ({agent.id[:8]}) authored 2 issues." in str(refused.value)
+
+
+@pytest.mark.asyncio
+async def test_agents_with_the_same_name_are_reported_separately(test_user, test_team, test_project):
+    """Agent names are not unique; the refusal must not fold two into one."""
+    service = AgentService()
+    first, _, _ = await service.create(AgentCreate(name="Worker"), test_user, test_team.id)
+    second, _, _ = await service.create(AgentCreate(name="Worker"), test_user, test_team.id)
+    await _issue(test_project, 506, first.id)
+    await _issue(test_project, 507, second.id)
+    await _issue(test_project, 508, second.id)
+
+    with pytest.raises(UserDeletionRefusedError) as refused:
+        await UserService().delete(test_user)
+
+    assert refused.value.agent_counts[first.id]["issues"] == 1
+    assert refused.value.agent_counts[second.id]["issues"] == 2
+    message = str(refused.value)
+    assert f"'Worker' ({first.id[:8]}) authored 1 issue" in message
+    assert f"'Worker' ({second.id[:8]}) authored 2 issues" in message
+
+
+@pytest.mark.asyncio
+async def test_gate_clearances_and_blocker_resolutions_count_as_authored(
+    test_user, test_project, test_issue, make_ritual,
+):
+    """A human who only approved gates is still the record of who did."""
+    from app.oxyde_models.issue import OxydeTicketLimboBlocker
+
+    other = await OxydeUser.objects.create(email="req@example.com", hashed_password="x", name="Requester")
+    ritual = await make_ritual()
+    limbo = await OxydeTicketLimbo.objects.create(
+        issue_id=test_issue.id, limbo_type=LimboType.CLOSE, requested_by_id=other.id, cleared_by_id=test_user.id,
+    )
+    await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id, resolved_by_id=test_user.id)
+    # test_issue was created by test_user; leave only the gate attribution.
+    await OxydeIssue.objects.filter(id=test_issue.id).update(creator_id=other.id)
+
+    with pytest.raises(UserDeletionRefusedError) as refused:
+        await UserService().delete(test_user)
+
+    counts = {kind: n for kind, n in refused.value.counts.items() if n}
+    assert counts == {"ritual gate clearances": 1, "ritual blocker resolutions": 1}
+    assert "1 ritual gate clearance, 1 ritual blocker resolution" in str(refused.value)
+
+
+@pytest.mark.asyncio
+async def test_a_non_agent_row_naming_the_user_as_parent_refuses_the_delete(client, auth_headers, test_user):
+    """Legacy or hand-edited data: a non-agent row with parent_user_id set.
+    The RESTRICT applies to it, so the delete must refuse with a 409 that
+    names it, not fail with a 500 or delete a login account."""
+    child = await OxydeUser.objects.create(
+        email="child@example.com", hashed_password="x", name="Child", parent_user_id=test_user.id,
+    )
+
+    response = await client.delete("/api/users/me", headers=auth_headers)
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert f"'Child' ({child.id[:8]})" in detail and "not agents" in detail
+    assert await OxydeUser.objects.filter(id=child.id).count() == 1
+    assert await OxydeUser.objects.filter(id=test_user.id).count() == 1
 
 
 @pytest.mark.asyncio
