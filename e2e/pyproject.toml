@@ -24,6 +24,10 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["chaotic_e2e"]
 
+# Oldest uv verified to read the committed uv.lock (revision 3, CHT-1201).
+[tool.uv]
+required-version = ">=0.5.31"
+
 [tool.uv.sources]
 chaotic-cli = { path = "../cli", editable = true }
 chaotic-backend = { path = "../backend", editable = true }

@@ -664,6 +664,92 @@ class TestIssueUpdateBody:
         (_, kwargs), = fake.calls_to("update_issue")
         assert kwargs == {"title": "New", "description": "Body"}
 
+    async def test_parent_resolves_identifier_to_id(self, fake):
+        await _tools(fake)["issue_update"]("CHT-1", parent=" CHT-2 ")
+        assert ("CHT-2",) in [args for args, _ in fake.calls_to("get_issue")]
+        (_, kwargs), = fake.calls_to("update_issue")
+        assert kwargs == {"parent_id": "i2"}
+
+    async def test_no_parent_sends_explicit_null(self, fake):
+        await _tools(fake)["issue_update"]("CHT-1", no_parent=True)
+        (_, kwargs), = fake.calls_to("update_issue")
+        assert kwargs == {"parent_id": None}
+
+    async def test_parent_and_no_parent_together_is_an_input_error(self, fake):
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="CHT-2", no_parent=True)
+        assert result["error"]["error_code"] == "tool_input"
+        assert fake.calls_to("update_issue") == []
+
+    async def test_blank_parent_is_an_input_error_not_a_detach(self, fake):
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="  ")
+        assert result["error"]["error_code"] == "tool_input"
+        assert fake.calls_to("update_issue") == []
+
+    async def test_self_parent_is_an_input_error(self, fake):
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="CHT-1")
+        assert result["error"]["error_code"] == "tool_input"
+        assert fake.calls_to("update_issue") == []
+
+    async def test_cross_project_parent_fails_before_attesting(self, fake):
+        fake.issues["CHT-9"] = {"id": "i9", "identifier": "OTH-9", "project_id": "proj-2"}
+        fake.pending_issue_rituals = {"pending_rituals": [
+            {"id": "r-ticket", "name": "close-gate", "approval_mode": "auto"}], "completed_rituals": []}
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="CHT-9", attest={"close-gate": "x"})
+        assert result["error"]["error_code"] == "tool_input"
+        assert "different project" in result["error"]["message"]
+        assert fake.calls_to("attest_ritual_for_issue") == []
+        assert fake.calls_to("update_issue") == []
+
+    async def test_non_404_parent_lookup_error_is_not_reworded(self, fake):
+        real_get = fake.get_issue
+
+        async def get_issue(identifier):
+            if identifier == "CHT-2":
+                raise BackendError("upstream exploded", 500, "upstream exploded")
+            return await real_get(identifier)
+
+        fake.get_issue = get_issue
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="CHT-2")
+        assert result["error"]["message"] == "upstream exploded"
+        assert fake.calls_to("update_issue") == []
+
+    async def test_cycle_fails_before_attesting(self, fake):
+        # CHT-3 -> CHT-2 -> CHT-1: making CHT-3 the parent of CHT-1 closes a loop.
+        fake.issues["CHT-2"].update(parent_id="i1", parent_identifier="CHT-1")
+        fake.issues["CHT-3"] = {"id": "i3", "identifier": "CHT-3", "project_id": "proj-1",
+                                "parent_id": "i2", "parent_identifier": "CHT-2"}
+        fake.pending_issue_rituals = {"pending_rituals": [
+            {"id": "r-ticket", "name": "close-gate", "approval_mode": "auto"}], "completed_rituals": []}
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="CHT-3", status="done",
+                                                    attest={"close-gate": "x"})
+        assert result["error"]["error_code"] == "tool_input"
+        assert "cycle" in result["error"]["message"]
+        assert fake.calls_to("attest_ritual_for_issue") == []
+        assert fake.calls_to("update_issue") == []
+
+    async def test_non_cyclic_ancestor_chain_is_allowed(self, fake):
+        fake.issues["CHT-3"] = {"id": "i3", "identifier": "CHT-3", "project_id": "proj-1"}
+        fake.issues["CHT-2"].update(parent_id="i3", parent_identifier="CHT-3")
+        await _tools(fake)["issue_update"]("CHT-1", parent="CHT-2")
+        (_, kwargs), = fake.calls_to("update_issue")
+        assert kwargs == {"parent_id": "i2"}
+
+    async def test_missing_project_ids_are_not_a_match(self, fake):
+        fake.issues["CHT-1"]["project_id"] = None
+        fake.issues["CHT-2"]["project_id"] = None
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="CHT-2")
+        assert result["error"]["error_code"] == "tool_input"
+        assert fake.calls_to("update_issue") == []
+
+    async def test_unknown_parent_fails_before_any_write(self, fake):
+        fake.pending_issue_rituals = {"pending_rituals": [
+            {"id": "r-ticket", "name": "close-gate", "approval_mode": "auto"}], "completed_rituals": []}
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="CHT-404", attest={"close-gate": "x"})
+        assert result["error"]["error_code"] == "tool_input"
+        assert result["error"]["message"] == "Parent issue CHT-404 not found."
+        assert fake.calls_to("attest_ritual_for_issue") == []
+        assert fake.calls_to("update_issue") == []
+
 
 class TestIssueStartBody:
     async def test_claims_as_me(self, fake):

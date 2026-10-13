@@ -637,12 +637,12 @@ registers them; the canonical descriptions and schemas are in
 | `issue_list` | `issue list` (with `all_projects` for team-wide) |
 | `issue_view` | `issue show` |
 | `issue_create` | `issue create` |
-| `issue_update` | `issue update` + `issue assign` (status/priority/estimate/assignee/title/description; `assignee: "unassigned"` clears; `attest` map for ritual notes) |
+| `issue_update` | `issue update` + `issue assign` (status/priority/estimate/assignee/title/description/parent; `assignee: "unassigned"` clears; `no_parent` is `--no-parent`; `attest` map for ritual notes) |
 | `issue_comment` | `issue comment` |
 | `issue_start` | `issue start` |
 | `issue_ready` | `issue ready` |
 | `issue_relations` | `issue relations` |
-| `issue_block` | `issue block` |
+| `issue_block` | `issue block` (`relation_type: "duplicates"` is the relation half of `issue duplicate`) |
 | `issue_unblock` | `issue unblock` |
 | `issue_label` | `issue update --label` / `--remove-label` |
 | `issue_revisions` | `issue history` |

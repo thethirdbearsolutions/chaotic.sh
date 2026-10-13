@@ -914,15 +914,17 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
         # as applied without running it (for pre-Oxyde databases)
         if fake_initial:
             run_command(
-                ["uv", "run", "oxyde", "migrate", "0001_initial", "--fake"],
+                ["uv", "run", "--frozen", "oxyde", "migrate", "0001_initial", "--fake"],
                 cwd=backend_dir,
                 timeout=30,
                 env=migration_env,
             )
 
-        # Run Oxyde migrations
+        # Run Oxyde migrations. --frozen (here and above): use the env
+        # `just sync` just built from the committed uv.lock; a plain
+        # `uv run` would re-resolve and rewrite a stale lock (CHT-1201).
         run_command(
-            ["uv", "run", "oxyde", "migrate"],
+            ["uv", "run", "--frozen", "oxyde", "migrate"],
             cwd=backend_dir,
             timeout=120,
             env=migration_env,

@@ -228,6 +228,74 @@ class TestRelations:
         relations = api_client.get_relations(issue1["id"])
         assert not any(r["id"] == relation["id"] for r in relations)
 
+    def test_relations_shape_end_to_end(self, api_client, test_team, test_project, auth_token):
+        """CHT-1431: pin the relations wire shape and drive the real CLI over it.
+
+        GET /issues/{id}/relations returns flat related_issue_* fields
+        (IssueRelationResponse), read from the asked-about issue's side;
+        `issue relations` (table and --json) and `issue view --json` must
+        both consume that shape. Includes a cross-project relation in the
+        same team, the case the bug was first seen on.
+        """
+        import json
+        from unittest.mock import patch
+        from click.testing import CliRunner
+        from cli.main import cli as chaotic_cli
+        from app.schemas.issue import IssueRelationResponse
+
+        other_project = api_client.create_project(
+            team_id=test_team["id"], name="E2E Other", key="OTH"
+        )
+        blocker = api_client.create_issue(test_project["id"], "Blocker")
+        target = api_client.create_issue(test_project["id"], "Target")
+        downstream = api_client.create_issue(other_project["id"], "Downstream")
+        api_client.create_relation(blocker["id"], target["id"], "blocks")
+        api_client.create_relation(target["id"], downstream["id"], "relates_to")
+        dup = api_client.create_issue(test_project["id"], "Dup of target")
+        api_client.create_relation(dup["id"], target["id"], "duplicates")
+
+        relations = api_client.get_relations(target["id"])
+        assert all(set(r) == set(IssueRelationResponse.model_fields) for r in relations)
+        by_identifier = {r["related_issue_identifier"]: r for r in relations}
+        assert set(by_identifier) == {
+            blocker["identifier"], downstream["identifier"], dup["identifier"],
+        }
+        # Incoming duplicates is NOT relabelled by the server (only blocks
+        # is); the CLI renders it as "Duplicated By" from direction.
+        assert by_identifier[dup["identifier"]]["relation_type"] == "duplicates"
+        assert by_identifier[dup["identifier"]]["direction"] == "incoming"
+        incoming = by_identifier[blocker["identifier"]]
+        assert incoming["relation_type"] == "blocked_by"
+        assert incoming["direction"] == "incoming"
+        assert incoming["related_issue_id"] == blocker["id"]
+        assert incoming["related_issue_title"] == "Blocker"
+        outgoing = by_identifier[downstream["identifier"]]
+        assert outgoing["relation_type"] == "relates_to"
+        assert outgoing["direction"] == "outgoing"
+        assert outgoing["related_issue_status"] == "backlog"
+
+        runner = CliRunner()
+        with patch("cli.main.get_token", return_value=auth_token):
+            table = runner.invoke(chaotic_cli, ["issue", "relations", target["identifier"]])
+            as_json = runner.invoke(
+                chaotic_cli, ["issue", "relations", target["identifier"], "--json"]
+            )
+            view = runner.invoke(chaotic_cli, ["issue", "view", target["identifier"], "--json"])
+
+        assert table.exit_code == 0, table.output
+        assert table.exception is None
+        assert blocker["identifier"] in table.output
+        assert downstream["identifier"] in table.output
+        assert "Blocked By" in table.output
+        assert "Duplicated" in table.output
+        assert "Duplicates" not in table.output
+
+        assert as_json.exit_code == 0, as_json.output
+        assert json.loads(as_json.output) == relations
+
+        assert view.exit_code == 0, view.output
+        assert json.loads(view.output)["relations"] == relations
+
 
 class TestComments:
     def test_create_comment(self, api_client, test_project):
