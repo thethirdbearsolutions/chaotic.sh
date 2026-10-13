@@ -268,7 +268,10 @@ class TestEndpoint:
         with patch("app.main.manager") as manager:
             manager.connect = AsyncMock()
             await websocket_endpoint(ws, team_id=test_team.id, token=jwt_for(test_user))
-        manager.connect.assert_awaited_once_with(ws, test_team.id, subprotocol=None)
+        manager.connect.assert_awaited_once()
+        assert manager.connect.await_args.args == (ws, test_team.id)
+        assert manager.connect.await_args.kwargs["subprotocol"] is None
+        assert manager.connect.await_args.kwargs["owner"].user_id == test_user.id
         manager.disconnect.assert_called_with(ws, test_team.id)
 
 
@@ -367,6 +370,150 @@ class TestMidConnection:
         await APIKeyService().revoke(row, actor_id=test_user.id)
         await asyncio.wait_for(task, 5)
         ws.close.assert_awaited_once_with(code=4001)
+
+
+@pytest.mark.usefixtures("no_recheck")
+class TestImmediateClose:
+    """CHT-1616: a revocation made in this process closes the socket at
+    once, with the code the re-check would give, not up to
+    WS_AUTH_RECHECK_SECONDS later. ``no_recheck`` makes the re-check an
+    hour, so a close here can only come from the revocation."""
+
+    BROADCAST = {"type": "created", "entity": "issue", "data": {}}
+
+    async def _closed_at_once(self, ws, task, team_id) -> int:
+        from app.websocket import manager
+
+        # The hook ran before the revoking call returned.
+        ws.close.assert_awaited_once()
+        assert ws not in manager.active_connections.get(team_id, set())
+        assert ws not in manager.owners
+        await manager.broadcast_to_team(team_id, self.BROADCAST)
+        ws.send_json.assert_not_awaited()
+        await asyncio.wait_for(task, 5)
+        ws.close.assert_awaited_once()  # the endpoint's cleanup did not close it again
+        return ws.close.await_args.kwargs["code"]
+
+    async def _open(self, token, team_id):
+        ws = FakeWebSocket(subprotocols=["chaotic", f"chaotic.bearer.{token}"])
+        task = await run_endpoint(ws, team_id)
+        ws.accept.assert_awaited_once()
+        return ws, task
+
+    async def test_key_revoked_closes_4001_and_spares_other_sockets(self, test_user, test_team):
+        row, raw = await key_for(test_user)
+        ws, task = await self._open(raw, test_team.id)
+        other, other_task = await self._open(jwt_for(test_user), test_team.id)
+        await APIKeyService().revoke(row, actor_id=test_user.id)
+        assert await self._closed_at_once(ws, task, test_team.id) == 4001
+        other.close.assert_not_awaited()
+        other.send_json.assert_awaited_once_with(self.BROADCAST)
+        await other.close()
+        await other_task
+
+    async def test_member_removed_closes_4003_on_that_team_only(
+        self, client, test_user, test_user2, test_team, auth_headers,
+    ):
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role="MEMBER")
+        other_team = await OxydeTeam.objects.create(name="Other", key="OTH")
+        await OxydeTeamMember.objects.create(team_id=other_team.id, user_id=test_user2.id, role="OWNER")
+        ws, task = await self._open(jwt_for(test_user2), test_team.id)
+        elsewhere, elsewhere_task = await self._open(jwt_for(test_user2), other_team.id)
+        admin, admin_task = await self._open(jwt_for(test_user), test_team.id)
+        response = await client.delete(f"/api/teams/{test_team.id}/members/{test_user2.id}", headers=auth_headers)
+        assert response.status_code == 204, response.text
+        assert await self._closed_at_once(ws, task, test_team.id) == 4003
+        elsewhere.close.assert_not_awaited()
+        admin.close.assert_not_awaited()
+        for sock, t in ((elsewhere, elsewhere_task), (admin, admin_task)):
+            await sock.close()
+            await t
+
+    async def test_member_leaving_closes_4003(self, client, test_user2, test_team, auth_headers2):
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role="MEMBER")
+        ws, task = await self._open(jwt_for(test_user2), test_team.id)
+        response = await client.delete(f"/api/teams/{test_team.id}/members/{test_user2.id}", headers=auth_headers2)
+        assert response.status_code == 204, response.text
+        assert await self._closed_at_once(ws, task, test_team.id) == 4003
+
+    async def test_user_deleted_closes_4001(self, test_user2, test_team):
+        """A user who no longer exists is 4001, as on the re-check."""
+        from app.services.user_service import UserService
+
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role="MEMBER")
+        ws, task = await self._open(jwt_for(test_user2), test_team.id)
+        await UserService().delete(test_user2)
+        assert await self._closed_at_once(ws, task, test_team.id) == 4001
+
+    async def test_team_deleted_closes_4003(self, client, test_user, test_team, auth_headers):
+        ws, task = await self._open(jwt_for(test_user), test_team.id)
+        response = await client.delete(f"/api/teams/{test_team.id}", headers=auth_headers)
+        assert response.status_code == 204, response.text
+        assert await self._closed_at_once(ws, task, test_team.id) == 4003
+
+    async def test_holder_session_revoked_closes_4001(self, test_user, test_team, monkeypatch):
+        """No OAuth session acts as a human yet (CHT-1602); when one does,
+        revoking it closes its socket."""
+        from app.services.credential_events import CredentialsEnded, ended
+
+        async def resolve(token):
+            return Principal(user=test_user, holder_user_id=test_user.id, kind=CredentialKind.OAUTH_ACCESS,
+                             scopes=frozenset({"chaotic:read"}), holder_session_id="hs-1")
+        monkeypatch.setattr(ws_auth.ws_resolver, "resolve", resolve)
+        ws, task = await self._open("cat_x", test_team.id)
+        await ended(CredentialsEnded.of("user_revoked", holder_session_ids=["hs-2"]))
+        ws.close.assert_not_awaited()
+        await ended(CredentialsEnded.of("user_revoked", holder_session_ids=["hs-1"]))
+        assert await self._closed_at_once(ws, task, test_team.id) == 4001
+
+    async def test_principal_deactivated_closes_4003(self, test_user, test_team):
+        """No human is deactivated through the API today, and /ws refuses
+        agents, so this drives the hook directly."""
+        from app.services.credential_events import CredentialsEnded, ended
+        from app.services.revocation_service import REASON_PRINCIPAL_DEACTIVATED
+
+        ws, task = await self._open(jwt_for(test_user), test_team.id)
+        await ended(CredentialsEnded.of(REASON_PRINCIPAL_DEACTIVATED, user_ids=[test_user.id]))
+        assert await self._closed_at_once(ws, task, test_team.id) == 4003
+
+    async def test_a_socket_already_gone_does_not_break_the_revocation(self, test_user, test_team):
+        row, raw = await key_for(test_user)
+        ws, task = await self._open(raw, test_team.id)
+
+        async def gone(code=1000):
+            ws._closed.set()
+            raise RuntimeError("already closed")
+
+        ws.close = AsyncMock(side_effect=gone)
+        revoked = await APIKeyService().revoke(row, actor_id=test_user.id)
+        assert revoked.is_active is False
+        ws.close.assert_awaited_once_with(code=4001)
+        await asyncio.wait_for(task, 5)
+
+    async def test_the_watcher_after_a_hook_close_does_nothing(self, test_user, test_team):
+        """Both paths go through ConnectionManager.close, which closes once."""
+        from app.websocket import manager
+
+        ws = FakeWebSocket()
+        await manager.connect(ws, test_team.id)
+        assert await manager.close(ws, test_team.id, 4001)
+        assert not await manager.close(ws, test_team.id, 4003)
+        ws.close.assert_awaited_once_with(code=4001)
+
+    async def test_close_for(self, test_user, test_user2, test_team):
+        from app.websocket import SocketOwner, manager
+
+        mine, theirs, elsewhere = FakeWebSocket(), FakeWebSocket(), FakeWebSocket()
+        await manager.connect(mine, test_team.id, owner=SocketOwner(team_id=test_team.id, user_id=test_user.id))
+        await manager.connect(theirs, test_team.id, owner=SocketOwner(team_id=test_team.id, user_id=test_user2.id))
+        await manager.connect(elsewhere, "t2", owner=SocketOwner(team_id="t2", user_id=test_user.id))
+        assert await manager.close_for(user_id=test_user.id, team_id=test_team.id, code=4003) == 1
+        mine.close.assert_awaited_once_with(code=4003)
+        theirs.close.assert_not_awaited()
+        elsewhere.close.assert_not_awaited()
+        assert await manager.close_for(user_id=test_user.id, code=4003) == 1
+        elsewhere.close.assert_awaited_once_with(code=4003)
+        manager.disconnect(theirs, test_team.id)
 
 
 class TestWatcherFailure:

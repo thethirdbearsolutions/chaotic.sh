@@ -4,7 +4,9 @@ The backend suite (tests/test_ws_auth.py) pins the rules with a fake
 socket; this checks what only a real handshake shows: the header and
 subprotocol paths reach the app, the server selects ``chaotic`` and
 never echoes the bearer entry, a refusal before accept fails the
-handshake, and a revoked key's open socket is closed with 4001.
+handshake, a revoked key's open socket is closed with 4001 at once
+(CHT-1616), and the periodic re-check still catches a revocation no
+hook saw.
 """
 import time
 
@@ -82,7 +84,13 @@ class TestMidConnection:
         # The e2e server runs in this process, so it reads this setting.
         monkeypatch.setattr(get_settings(), "ws_auth_recheck_seconds", 0.2)
 
-    def test_revoked_key_is_closed_4001(self, fast_recheck, api_client, test_team):
+    @pytest.fixture
+    def no_recheck(self, monkeypatch):
+        """An hour: a close inside a test can only come from the
+        revocation itself (CHT-1616)."""
+        monkeypatch.setattr(get_settings(), "ws_auth_recheck_seconds", 3600)
+
+    def test_revoked_key_is_closed_4001_at_once(self, no_recheck, api_client, test_team):
         created = api_client.create_api_key("ws revoke e2e")
         with connect(_url(test_team["id"]), additional_headers={"Authorization": f"Bearer {created['key']}"},
                      open_timeout=5) as ws:
@@ -92,7 +100,7 @@ class TestMidConnection:
                 ws.recv(timeout=5)
         assert exc.value.rcvd.code == 4001
 
-    def test_removed_member_is_closed_4003(self, fast_recheck, api_client, auth_token2, test_user2, test_team):
+    def test_removed_member_is_closed_4003_at_once(self, no_recheck, api_client, auth_token2, test_user2, test_team):
         """Member removal through the real API, mid-connection: closed
         with 4003, and the code reaches the client (PR #352 review, 5)."""
         from conftest import _run_async
@@ -108,3 +116,19 @@ class TestMidConnection:
             with pytest.raises(ConnectionClosed) as exc:
                 ws.recv(timeout=5)
         assert exc.value.rcvd.code == 4003
+
+    def test_the_recheck_still_catches_a_revocation_made_elsewhere(self, fast_recheck, api_client, test_team):
+        """The backstop: a key revoked by another process (here, straight
+        in the database, so no hook runs) closes at the next re-check."""
+        from conftest import _run_async
+
+        from app.oxyde_models.api_key import OxydeAPIKey
+
+        created = api_client.create_api_key("ws backstop e2e")
+        with connect(_url(test_team["id"]), additional_headers={"Authorization": f"Bearer {created['key']}"},
+                     open_timeout=5) as ws:
+            _assert_open(ws)
+            _run_async(OxydeAPIKey.objects.filter(id=created["id"]).update(is_active=False))
+            with pytest.raises(ConnectionClosed) as exc:
+                ws.recv(timeout=5)
+        assert exc.value.rcvd.code == 4001

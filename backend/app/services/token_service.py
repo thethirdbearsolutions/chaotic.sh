@@ -68,7 +68,8 @@ from oxyde import atomic
 
 from app.enums import HolderVia, RevocationTarget, TokenKind
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeRevocationEvent
-from app.services.push_service import PushService
+from app.services import credential_events
+from app.services.credential_events import CredentialsEnded
 
 logger = logging.getLogger(__name__)
 
@@ -826,6 +827,12 @@ class TokenService:
         async with atomic():
             revoked = await self._revoke_session_in_tx(holder_session_id, actor_id=actor_id, reason=reason)
         _forget_grace_pairs(holder_session_id)
+        if revoked:
+            # Its push devices and sockets end with it, after the commit
+            # (CHT-1625).
+            await credential_events.ended(
+                CredentialsEnded.of(reason, holder_session_ids=[holder_session_id]),
+            )
         return revoked
 
     async def revoke_sessions_batch(
@@ -852,10 +859,12 @@ class TokenService:
             tokens = await OxydeAuthToken.objects.filter(
                 holder_session_id__in=ids, revoked_at__isnull=True,
             ).update(revoked_at=now)
-            # A signed-out device stops being pushed to (CHT-1604).
-            await PushService().delete_for_sessions(ids)
         for holder_session_id in ids:
             _forget_grace_pairs(holder_session_id)
+        # What depends on the sessions (push devices, sockets) ends with
+        # them, once this commits: now outside a transaction, or with the
+        # caller's revoking() (CHT-1625).
+        await credential_events.ended(CredentialsEnded.of(reason, holder_session_ids=ids))
         return sessions, tokens
 
     async def _revoke_session_in_tx(self, holder_session_id: str, *, actor_id: str | None, reason: str) -> bool:
@@ -871,8 +880,6 @@ class TokenService:
         tokens = await OxydeAuthToken.objects.filter(
             holder_session_id=holder_session_id, revoked_at__isnull=True,
         ).update(revoked_at=now)
-        # A signed-out device stops being pushed to (CHT-1604).
-        await PushService().delete_for_sessions([holder_session_id])
         session = await OxydeHolderSession.objects.get(id=holder_session_id)
         await OxydeRevocationEvent.objects.create(
             seq=await revocation_epoch() + 1,
