@@ -3,6 +3,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, status, Query, Header
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_project_access, check_user_team_access
 from app.utils import ensure_utc
 
@@ -377,6 +378,7 @@ async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> di
     }
 
 
+@writes
 async def create_issue(
     project_id: str,
     issue_in: IssueCreate,
@@ -490,6 +492,7 @@ async def create_issue(
     return response
 
 
+@reads
 async def list_ready_issues(
     current_user: CurrentUser,
     project_id: str | None = None,
@@ -544,6 +547,7 @@ async def list_ready_issues(
 
 
 @router.get("", response_model=list[IssueResponse])
+@reads
 async def list_issues(
     current_user: CurrentUser,
     project_id: str | None = None,
@@ -706,6 +710,7 @@ async def list_issues(
 
 
 @router.get("/search", response_model=list[IssueResponse])
+@reads
 async def search_issues(
     team_id: str,
     q: Annotated[str, Query(min_length=1, max_length=200)],
@@ -744,6 +749,7 @@ async def search_issues(
 
 
 @router.post("/batch-update", response_model=list[IssueResponse])
+@writes
 async def batch_update_issues(
     batch_in: IssueBatchUpdate,
     current_user: CurrentUser,
@@ -821,6 +827,7 @@ async def batch_update_issues(
 
 # Activities
 @router.get("/activities", response_model=list[IssueActivityFeedResponse])
+@reads
 async def list_team_activities(
     team_id: str,
     current_user: CurrentUser,
@@ -931,6 +938,7 @@ async def list_team_activities(
 
 
 @router.get("/comments", response_model=list[TeamCommentResponse])
+@reads
 async def list_team_comments(
     team_id: str,
     current_user: CurrentUser,
@@ -996,6 +1004,7 @@ async def list_team_comments(
 
 
 @router.get("/identifier/{identifier}", response_model=IssueResponse)
+@reads
 async def get_issue_by_identifier(
     identifier: str, current_user: CurrentUser
 ) -> IssueResponse:
@@ -1029,6 +1038,7 @@ async def get_issue_by_identifier(
 
 
 @router.get("/{issue_id}", response_model=IssueResponse)
+@reads
 async def get_issue(issue_id: str, current_user: CurrentUser) -> IssueResponse:
     """Get issue by ID."""
     issue_service = IssueService()
@@ -1056,6 +1066,7 @@ async def get_issue(issue_id: str, current_user: CurrentUser) -> IssueResponse:
 
 
 @router.patch("/{issue_id}", response_model=IssueResponse)
+@writes
 async def update_issue(
     issue_id: str,
     issue_in: IssueUpdate,
@@ -1169,6 +1180,7 @@ async def update_issue(
 
 
 @router.delete("/{issue_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def delete_issue(issue_id: str, current_user: CurrentUser):
     """Delete an issue."""
     issue_service = IssueService()
@@ -1197,6 +1209,7 @@ async def delete_issue(issue_id: str, current_user: CurrentUser):
 
 # Labels
 @router.post("/{issue_id}/labels", response_model=IssueResponse)
+@writes
 async def add_label_to_issue(
     issue_id: str,
     body: AddLabelRequest,
@@ -1240,6 +1253,7 @@ async def add_label_to_issue(
 
 
 @router.delete("/{issue_id}/labels/{label_id}", response_model=IssueResponse)
+@writes
 async def remove_label_from_issue(
     issue_id: str,
     label_id: str,
@@ -1283,6 +1297,7 @@ async def remove_label_from_issue(
 
 
 @router.get("/{issue_id}/activities", response_model=list[IssueActivityResponse])
+@reads
 async def list_activities(
     issue_id: str,
     current_user: CurrentUser,
@@ -1384,6 +1399,7 @@ async def _get_issue_checked(issue_id: str, current_user) -> "Issue":
     "/{issue_id}/description-revisions",
     response_model=list[IssueDescriptionRevisionListItem],
 )
+@reads
 async def list_description_revisions(
     issue_id: str,
     current_user: CurrentUser,
@@ -1412,6 +1428,7 @@ async def list_description_revisions(
     "/{issue_id}/description-revisions/{version}",
     response_model=IssueDescriptionRevisionResponse,
 )
+@reads
 async def get_description_revision(
     issue_id: str,
     version: int,
@@ -1440,6 +1457,7 @@ async def get_description_revision(
 
 # Sub-issues
 @router.get("/{issue_id}/sub-issues", response_model=list[IssueResponse])
+@reads
 async def list_sub_issues(
     issue_id: str,
     current_user: CurrentUser,
@@ -1475,6 +1493,7 @@ async def list_sub_issues(
     response_model=IssueCommentResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@writes
 async def create_comment(
     issue_id: str,
     comment_in: IssueCommentCreate,
@@ -1523,6 +1542,7 @@ async def create_comment(
 
 
 @router.get("/{issue_id}/comments", response_model=list[IssueCommentResponse])
+@reads
 async def list_comments(
     issue_id: str,
     current_user: CurrentUser,
@@ -1564,6 +1584,7 @@ async def list_comments(
 
 
 @router.patch("/{issue_id}/comments/{comment_id}", response_model=IssueCommentResponse)
+@writes
 async def update_comment(
     issue_id: str,
     comment_id: str,
@@ -1627,6 +1648,7 @@ async def update_comment(
 @router.delete(
     "/{issue_id}/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT
 )
+@writes
 async def delete_comment(
     issue_id: str,
     comment_id: str,
@@ -1679,6 +1701,7 @@ async def delete_comment(
     response_model=IssueRelationResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@writes
 async def create_relation(
     issue_id: str,
     relation_in: IssueRelationCreate,
@@ -1763,6 +1786,7 @@ async def create_relation(
 
 
 @router.get("/{issue_id}/relations", response_model=list[IssueRelationResponse])
+@reads
 async def list_relations(
     issue_id: str,
     current_user: CurrentUser,
@@ -1795,6 +1819,7 @@ async def list_relations(
 @router.delete(
     "/{issue_id}/relations/{relation_id}", status_code=status.HTTP_204_NO_CONTENT
 )
+@writes
 async def delete_relation(
     issue_id: str,
     relation_id: str,
@@ -1839,6 +1864,7 @@ async def delete_relation(
 
 
 @router.get("/{issue_id}/documents", response_model=list[DocumentResponse])
+@reads
 async def get_issue_documents(issue_id: str, current_user: CurrentUser):
     """Get documents linked to an issue."""
     issue_service = IssueService()

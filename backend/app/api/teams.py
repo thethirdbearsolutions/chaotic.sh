@@ -2,6 +2,7 @@
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_team_access
 from app.utils import ensure_utc
 from app.schemas.team import (
@@ -28,6 +29,7 @@ router = APIRouter()
 
 
 @router.post("", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
+@writes
 async def create_team(team_in: TeamCreate, current_user: CurrentUser):
     """Create a new team."""
     if current_user.is_agent:
@@ -50,6 +52,7 @@ async def create_team(team_in: TeamCreate, current_user: CurrentUser):
 
 
 @router.get("", response_model=list[TeamResponse])
+@reads
 async def list_my_teams(current_user: CurrentUser):
     """List teams for current user."""
     team_service = TeamService()
@@ -58,6 +61,7 @@ async def list_my_teams(current_user: CurrentUser):
 
 
 @router.get("/{team_id}", response_model=TeamResponse)
+@reads
 async def get_team(team_id: str, current_user: CurrentUser):
     """Get team by ID."""
     team_service = TeamService()
@@ -81,6 +85,7 @@ async def get_team(team_id: str, current_user: CurrentUser):
 
 
 @router.patch("/{team_id}", response_model=TeamResponse)
+@writes
 async def update_team(
     team_id: str, team_in: TeamUpdate, current_user: CurrentUser
 ):
@@ -105,6 +110,7 @@ async def update_team(
 
 
 @router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def delete_team(team_id: str, current_user: CurrentUser):
     """Delete a team."""
     team_service = TeamService()
@@ -128,6 +134,7 @@ async def delete_team(team_id: str, current_user: CurrentUser):
 
 # Members
 @router.get("/{team_id}/members", response_model=list[TeamMemberResponse])
+@reads
 async def list_team_members(
     team_id: str,
     current_user: CurrentUser,
@@ -161,6 +168,7 @@ async def list_team_members(
 
 
 @router.patch("/{team_id}/members/{user_id}", response_model=TeamMemberResponse)
+@writes
 async def update_member_role(
     team_id: str,
     user_id: str,
@@ -209,6 +217,7 @@ async def update_member_role(
 
 
 @router.delete("/{team_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def remove_member(
     team_id: str, user_id: str, current_user: CurrentUser
 ):
@@ -266,6 +275,7 @@ async def remove_member(
     response_model=TeamInvitationResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@writes
 async def create_invitation(
     team_id: str,
     invitation_in: TeamInvitationCreate,
@@ -323,6 +333,7 @@ async def create_invitation(
 
 
 @router.get("/{team_id}/invitations", response_model=list[TeamInvitationResponse])
+@reads
 async def list_team_invitations(
     team_id: str,
     current_user: CurrentUser,
@@ -343,6 +354,7 @@ async def list_team_invitations(
 
 
 @router.post("/invitations/{token}/accept", response_model=TeamMemberResponse)
+@writes
 async def accept_invitation(token: str, current_user: CurrentUser):
     """Accept a team invitation."""
     team_service = TeamService()
@@ -379,6 +391,7 @@ async def accept_invitation(token: str, current_user: CurrentUser):
 @router.delete(
     "/{team_id}/invitations/{invitation_id}", status_code=status.HTTP_204_NO_CONTENT
 )
+@writes
 async def delete_invitation(
     team_id: str, invitation_id: str, current_user: CurrentUser
 ):

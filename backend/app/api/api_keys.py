@@ -2,6 +2,7 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from oxyde import atomic
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, can_manage_agent, get_api_key_record
 from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated
 from app.services.agent_service import AgentService
@@ -12,6 +13,7 @@ router = APIRouter()
 
 
 @router.post("", response_model=APIKeyCreated, status_code=status.HTTP_201_CREATED)
+@writes
 async def create_api_key(
     api_key_in: APIKeyCreate,
     current_user: CurrentUser,
@@ -78,6 +80,7 @@ async def create_api_key(
 
 
 @router.get("", response_model=list[APIKeyResponse])
+@reads
 async def list_api_keys(
     current_user: CurrentUser,
     skip: int = 0,
@@ -93,6 +96,7 @@ async def list_api_keys(
 
 
 @router.delete("/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def revoke_api_key(
     api_key_id: str,
     current_user: CurrentUser,

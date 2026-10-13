@@ -1,5 +1,6 @@
 """Project API routes."""
 from fastapi import APIRouter, HTTPException, status
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_team_access, check_user_project_access
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.services.project_service import ProjectService
@@ -9,6 +10,7 @@ from app.websocket import broadcast_project_event
 router = APIRouter()
 
 
+@writes
 async def create_project(
     team_id: str,
     project_in: ProjectCreate,
@@ -43,6 +45,7 @@ async def create_project(
     return response
 
 
+@reads
 async def list_projects(
     team_id: str,
     current_user: CurrentUser,
@@ -67,6 +70,7 @@ async def list_projects(
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
+@reads
 async def get_project(project_id: str, current_user: CurrentUser) -> ProjectResponse:
     """Get project by ID."""
     project_service = ProjectService()
@@ -88,6 +92,7 @@ async def get_project(project_id: str, current_user: CurrentUser) -> ProjectResp
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
+@writes
 async def update_project(
     project_id: str,
     project_in: ProjectUpdate,
@@ -116,6 +121,7 @@ async def update_project(
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def delete_project(project_id: str, current_user: CurrentUser):
     """Delete a project."""
     project_service = ProjectService()
