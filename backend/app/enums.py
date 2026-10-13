@@ -166,4 +166,4 @@ class InboxEntryKind(str, Enum):
     MENTION = "mention"                    # Someone @mentioned this user in a comment
     ASSIGNMENT = "assignment"               # An issue was assigned to this user
     REVIEW_REQUESTED = "review_requested"  # A REVIEW ritual was attested; an admin must approve it
-    AGENT_STATUS = "agent_status"          # Someone else deactivated or reactivated an agent this user created
+    AGENT_STATUS = "agent_status"          # Someone else deactivated/reactivated an agent this user created, or a departing member's agent keys were revoked (admins)

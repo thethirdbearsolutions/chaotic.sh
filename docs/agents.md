@@ -419,13 +419,26 @@ there's no local profile to fall back on the way the stdio server has:
   reactivate <agent>` undoes it, but its old keys stay revoked: mint a
   new one with `chaotic agent keys create`. When someone other than the
   creator does either, the creator gets an inbox entry saying who.
-- A creator removed from the agent's team loses every right over the
-  agent (update, delete, deactivate/reactivate, minting or revoking its
-  keys); a team admin keeps them, and the creator gets them back on
-  rejoining. Keys the creator already holds still work, since they
-  sign in as the agent, which is still in the team: when you remove
-  someone, deactivate and reactivate their agents and mint fresh keys
-  for whoever runs them now.
+- An agent key belongs to whoever minted it: the creator holds the key
+  `agent create` printed, and a key an admin mints with `chaotic agent
+  keys create` is the admin's (it shows in their `chaotic auth keys
+  list`, not the creator's). `chaotic agent keys list <agent>` shows
+  every key that signs in as the agent and who holds it, including keys
+  the agent minted for itself; `chaotic agent keys revoke <agent> <key>`
+  revokes one. Both are for team admins and the agent's creator.
+- **Leaving a team ends the agent keys you hold for it.** When a member
+  is removed from a team, or leaves it, every key they hold for that
+  team's agents is revoked in the same step, along with the keys their
+  own agents minted for themselves. Anything still running on those keys
+  stops, with the same 401 as any revoked key, over REST and MCP alike.
+  The agents stay. Agents the member created pass to the admin who
+  removed them, or to the team's owner if they left on their own. The
+  team's other admins get an inbox entry for each affected agent, so
+  someone can mint a replacement key. Separately from that revocation,
+  an agent key whose holder is no longer in the agent's team does not
+  sign in. The removed creator also loses every right over the agent
+  (update, delete, deactivate/reactivate, listing, minting or revoking
+  its keys). Rejoining does not bring back revoked keys or ownership.
 
 `issue_view`/`issue_update`/`issue_comment`/`issue_start` don't take a
 `team`/`project` parameter at all in either transport -- issue

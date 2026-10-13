@@ -29,6 +29,17 @@ class APIKeyResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AgentKeyResponse(APIKeyResponse):
+    """One key that authenticates as an agent, for the people who manage
+    it (GET /agents/{id}/keys, CHT-1508). `owner_id` is whoever holds the
+    key: the human who minted it, or the agent itself for a key it minted
+    through POST /api-keys (`self_minted`)."""
+
+    owner_id: str
+    owner_name: str | None = None
+    self_minted: bool
+
+
 class APIKeyCreated(BaseModel):
     """Schema for newly created API key (includes full key, shown only once)."""
 

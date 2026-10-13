@@ -240,6 +240,35 @@ class InboxService:
         )
         await self._broadcast(agent.agent_team_id, "created", entry)
 
+    async def notify_agent_keys_released(
+        self, *, recipient_user_id: str, agent, actor, removed, revoked: int, new_owner,
+    ) -> None:
+        """A member left the agent's team and took keys or ownership with
+        them (CHT-1510): tell a team admin, so the bot that just started
+        failing auth has an explanation and someone mints it a new key."""
+        who = removed.name if removed else "A member"
+        verb = "left the team" if removed is not None and removed.id == actor.id else "was removed from the team"
+        parts = []
+        if revoked:
+            parts.append(
+                f"{revoked} API key{'s' if revoked != 1 else ''} they held for it "
+                f"{'were' if revoked != 1 else 'was'} revoked, so anything running on "
+                f"{'them' if revoked != 1 else 'it'} has stopped."
+            )
+        if new_owner is not None:
+            parts.append(f"{new_owner.name} now owns the agent.")
+        parts.append("Mint a replacement key with `chaotic agent keys create` if it is still in use.")
+        entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=recipient_user_id,
+            kind=InboxEntryKind.AGENT_STATUS,
+            team_id=agent.agent_team_id,
+            project_id=agent.agent_project_id,
+            source_user_id=actor.id,
+            title=f"{who} {verb}: agent {agent.name} needs attention",
+            body=" ".join(parts),
+        )
+        await self._broadcast(agent.agent_team_id, "created", entry)
+
     async def notify_mentions(
         self, *, content: str, team_id: str, author, issue=None, document=None,
     ) -> None:

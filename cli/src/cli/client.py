@@ -778,6 +778,10 @@ class Client:
         """Mint a new API key for an existing agent."""
         return self._request("POST", f"/agents/{agent_id}/keys")
 
+    def list_agent_keys(self, agent_id: str) -> list:
+        """Every key that signs in as the agent, active or revoked."""
+        return self._request("GET", f"/agents/{agent_id}/keys")
+
     # Inbox (CHT-1250)
     def get_inbox(
         self, team_id: str | None, unread: bool = False, skip: int = 0, limit: int = 50,

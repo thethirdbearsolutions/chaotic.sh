@@ -54,14 +54,15 @@ async def revoke_api_key(
             detail="API key not found",
         )
 
-    # An agent's key is owned by the agent's creator, but revoking it is
-    # managing the agent: the creator may only while still in the agent's
-    # team, and the team's admins may too (CHT-1508).
-    agent = await AgentService().get_by_id(api_key.agent_user_id) if api_key.agent_user_id else None
-    if agent is not None:
-        allowed = await can_manage_agent(current_user, agent)
-    else:
-        allowed = api_key.user_id == current_user.id
+    # Whoever holds a key may revoke it. Beyond that, a key that
+    # authenticates as an agent -- linked to it, or minted by the agent
+    # for itself -- may be revoked by whoever may manage the agent: its
+    # team's admins, and its creator while still in the team (CHT-1508).
+    allowed = api_key.user_id == current_user.id
+    if not allowed:
+        agent_service = AgentService()
+        agent = await agent_service.get_by_id(api_key.agent_user_id or api_key.user_id)
+        allowed = agent is not None and await can_manage_agent(current_user, agent)
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

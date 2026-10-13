@@ -557,3 +557,45 @@ class TestToolsCall:
         resp = await _tool_call(client, bearer_headers, "issue_delete_everything")
         body = resp.json()
         assert "error" in body or body.get("result", {}).get("isError") is True
+
+
+class TestRemovedCreatorsAgentKey:
+    """CHT-1510: an agent key whose owner has left the agent's team is
+    refused on both MCP transports, exactly like a revoked key, whether
+    the removal revoked it or not."""
+
+    async def _setup(self, db, test_user, test_team):
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.oxyde_models.user import OxydeUser
+        from app.schemas.agent import AgentCreate
+        from app.services.agent_service import AgentService
+
+        bob = await OxydeUser.objects.create(email="bob-mcp@example.com", hashed_password="x", name="Bob")
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=bob.id, role=TeamRole.MEMBER)
+        _, key, _ = await AgentService().create(AgentCreate(name="Bob Bot"), bob, test_team.id)
+        return bob, key
+
+    async def _both(self, client, key):
+        init = _rpc("initialize", _init_params())
+        bearer = await client.post("/mcp", json=init, headers={**_MCP_HEADERS, "Authorization": f"Bearer {key}"})
+        capability = await client.post(f"/mcp/{key}", json=init, headers=_MCP_HEADERS)
+        return bearer.status_code, capability.status_code
+
+    async def test_membership_gone_without_revocation(self, client, db, test_user, test_team):
+        from app.oxyde_models.team import OxydeTeamMember
+
+        bob, key = await self._setup(db, test_user, test_team)
+        assert await self._both(client, key) == (200, 200)
+
+        await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=bob.id).delete()
+
+        assert await self._both(client, key) == (401, 401)
+
+    async def test_removed_through_the_route(self, client, db, test_user, test_team, auth_headers):
+        bob, key = await self._setup(db, test_user, test_team)
+
+        removed = await client.delete(f"/api/teams/{test_team.id}/members/{bob.id}", headers=auth_headers)
+
+        assert removed.status_code == 204
+        assert await self._both(client, key) == (401, 401)

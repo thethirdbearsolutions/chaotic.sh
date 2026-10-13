@@ -76,8 +76,7 @@ class TestRemovedCreatorIsRefused:
         response = await client.post(f"/api/agents/{agent.id}/deactivate", headers=auth_headers2)
 
         assert response.status_code == 403, response.text
-        signed_in = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {key}"})
-        assert signed_in.status_code == 200
+        assert (await UserService().get_by_id(agent.id)).is_active is True
 
     async def test_cannot_reactivate(self, client, auth_headers, auth_headers2, test_user2, test_team):
         agent, _, _ = await _agent_by_departed_creator(test_user2, test_team)
@@ -89,15 +88,31 @@ class TestRemovedCreatorIsRefused:
         assert response.status_code == 403, response.text
         assert (await UserService().get_by_id(agent.id)).is_active is False
 
-    async def test_cannot_revoke_the_agents_key(self, client, auth_headers2, test_user2, test_team):
-        """The key's user_id is the creator, which used to be enough."""
-        agent, key, key_id = await _agent_by_departed_creator(test_user2, test_team)
+    async def test_cannot_revoke_a_key_someone_else_minted(
+        self, client, auth_headers, auth_headers2, test_user2, test_team,
+    ):
+        """Keys belong to whoever minted them: the creator used to own
+        every key of the agent, admin-minted ones included."""
+        agent, _, _ = await _agent_by_departed_creator(test_user2, test_team)
+        minted = await client.post(f"/api/agents/{agent.id}/keys", headers=auth_headers)
+        assert minted.status_code == 201
+
+        response = await client.delete(f"/api/api-keys/{minted.json()['id']}", headers=auth_headers2)
+
+        assert response.status_code == 403, response.text
+        signed_in = await client.get(
+            "/api/auth/me", headers={"Authorization": f"Bearer {minted.json()['key']}"},
+        )
+        assert signed_in.status_code == 200
+
+    async def test_may_still_revoke_a_key_they_hold(self, client, auth_headers2, test_user2, test_team):
+        """Revoking a key you hold only ever reduces access."""
+        agent, _, key_id = await _agent_by_departed_creator(test_user2, test_team)
 
         response = await client.delete(f"/api/api-keys/{key_id}", headers=auth_headers2)
 
-        assert response.status_code == 403, response.text
-        signed_in = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {key}"})
-        assert signed_in.status_code == 200
+        assert response.status_code == 204, response.text
+        assert await _live_keys(agent) == 0
 
     async def test_project_scoped_agent(self, client, auth_headers2, test_user2, test_team, test_project):
         agent, _, _ = await _agent_by_departed_creator(test_user2, test_team, test_project.id)
