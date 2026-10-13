@@ -195,6 +195,14 @@ class TestAuthorizeValidation:
         request_id = await _request_id(client, oauth_client, scope=scope)
         assert (await OxydeOAuthAuthorizationRequest.objects.get(id=request_id)).scope == stored
 
+    async def test_expired_requests_are_swept(self, client, oauth_client):
+        old = await _request_id(client, oauth_client)
+        await OxydeOAuthAuthorizationRequest.objects.filter(id=old).update(
+            expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        )
+        new = await _request_id(client, oauth_client)
+        assert {r.id for r in await OxydeOAuthAuthorizationRequest.objects.all()} == {new}
+
     async def test_existing_query_on_redirect_uri_is_kept(self):
         assert with_query("https://a.example/cb?x=1", {"code": "c", "state": None}) == "https://a.example/cb?x=1&code=c"
         assert with_query("https://a.example/cb", {}) == "https://a.example/cb"

@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import status
-from oxyde import IntegrityError
+from oxyde import IntegrityError, execute_raw
 
 from app.config import get_settings
 from app.enums import AgentKind, HolderVia, OAuthClientRegistration, TokenKind
@@ -135,7 +135,14 @@ class OAuthConsentService:
         scopes: list[str],
     ) -> OxydeOAuthAuthorizationRequest:
         """Store a request that /oauth/authorize has fully validated. The
-        resource is not stored: every connector token is for ``/mcp``."""
+        requested resource is not kept: every connector token is for
+        ``/mcp``.
+
+        Sweeps expired requests first: anyone can create one, so they
+        must not accumulate. Nothing references a request once it has
+        expired (a code minted from it names it without a foreign key).
+        Raw SQL: Oxyde has no range lookups on DateTimeUTC fields."""
+        await execute_raw("DELETE FROM oauth_authorization_requests WHERE expires_at <= ?", [_now()])
         return await OxydeOAuthAuthorizationRequest.objects.create(
             id=secrets.token_urlsafe(16),  # 128 bits
             client_id=client.id,
