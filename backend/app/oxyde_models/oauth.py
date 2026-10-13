@@ -22,12 +22,27 @@ acts as (`principal_user_id`) and the human who answers for it
 (`holder_user_id`: the consenting human for OAuth, the credential's
 holder for a claim). Neither is ever self-asserted by the bearer.
 
-Foreign keys: a session or token goes with its principal, its holder,
-its team, its client and the credential it was claimed with (CASCADE).
-Attribution columns (`revoked_by_id`, `actor_id`) are SET NULL so the
-audit survives the user. `grant_id` (CHT-1442), `superseded_by_id`,
-`replaces_id` and `auth_request_id` have no foreign key: the first has
-no table yet, and the others name rows a GC may remove first.
+Foreign keys: when a session's or token's principal, holder, team,
+client or credential row is DELETED, the session or token is deleted
+with it (CASCADE). That is all the schema does. Revoking or deactivating
+those rows deletes nothing: `APIKeyService.revoke` sets `is_active`
+false, deactivating a user sets `is_active` false, and neither touches a
+session. Ending the sessions and tickets of a revoked key, a deactivated
+or retired user, or a departed member is the RevocationService's job
+(CHT-1449, CHT-1523), and until it does, the credential resolver
+(CHT-1560) refuses a token whose principal is inactive or whose agent
+principal's holder has left the team, as it does for keys. Every
+revocation goes through `TokenService.revoke_session` (or its successor)
+so that it writes a `revocation_events` row: validation caches are keyed
+to the newest of those rows (see `OxydeRevocationEvent.seq`). A cascade
+DELETE writes no event, so a cached validation of a deleted token can
+outlive it by up to the cache window (30 s).
+
+Attribution columns (`revoked_by_id`, `actor_id`) and the audit's
+`team_id` are SET NULL, so the audit survives the user and the team.
+`grant_id` (CHT-1442), `superseded_by_id`, `replaces_id` and
+`auth_request_id` have no foreign key: the first has no table yet, and
+the others name rows a GC may remove first.
 
 A required reference is declared `X | None = Field(default=None,
 db_nullable=False)`: the column is NOT NULL, but the model can be built
@@ -43,7 +58,7 @@ from datetime import datetime, timezone
 
 from oxyde import Field, Index, Model
 
-from app.enums import HolderVia, OAuthClientRegistration, TokenKind
+from app.enums import HolderVia, OAuthClientRegistration, RevocationTarget, TokenKind
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.oxyde_models.enums import DbEnum
 from app.oxyde_models.team import OxydeTeam
@@ -59,6 +74,9 @@ class OxydeOAuthClient(Model):
     """An OAuth client. CHT-1518 fills it; nothing here trusts it."""
 
     # The client_id itself: a CIMD URL, `dcr_<random>`, or `builtin:<name>`.
+    # Sessions and tokens CASCADE from this row, so deleting it disconnects
+    # every user of the client: a CIMD cache refresh must UPDATE the row in
+    # place, and only never-authorized DCR rows may be garbage-collected.
     id: str = Field(db_pk=True)
     registration: DbEnum(OAuthClientRegistration) = Field()
     client_name: str | None = Field(default=None)
@@ -87,7 +105,9 @@ class OxydeOAuthClient(Model):
 class OxydeOAuthAuthorizationRequest(Model):
     """A validated /oauth/authorize request awaiting consent (CHT-1519)."""
 
-    # 128-bit random, used in the consent URL.
+    # 128-bit random, used in the consent URL. Stored raw on purpose: it is
+    # a capability only until its first authenticated read binds it to
+    # that user, and approving it needs that user's web login.
     id: str = Field(db_pk=True)
     client: OxydeOAuthClient | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     redirect_uri: str = Field()
@@ -107,6 +127,8 @@ class OxydeOAuthAuthorizationRequest(Model):
         table_name = "oauth_authorization_requests"
         indexes = [
             Index(("expires_at",), name="ix_oauth_authorization_requests_expires_at"),
+            Index(("client_id",), name="ix_oauth_authorization_requests_client_id"),
+            Index(("bound_user_id",), name="ix_oauth_authorization_requests_bound_user_id"),
         ]
 
 
@@ -116,7 +138,8 @@ class OxydeHolderSession(Model):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     # The team the principal acts in. Also the session's scope: the
     # session reaches at most this team, narrowed by scope_project_ids.
-    team: OxydeTeam | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
+    # NULL only for an account-wide session (WEB_LOGIN, CHT-1524).
+    team: OxydeTeam | None = Field(default=None, db_on_delete="CASCADE")
     # The user every request on this session acts as (ADR-0008).
     principal_user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     # The human who answers for it: the consenting human (OAUTH), or the
@@ -156,6 +179,7 @@ class OxydeHolderSession(Model):
             Index(("holder_user_id",), name="ix_holder_sessions_holder_user_id"),
             Index(("oauth_client_id",), name="ix_holder_sessions_oauth_client_id"),
             Index(("credential_id",), name="ix_holder_sessions_credential_id"),
+            Index(("revoked_by_id",), name="ix_holder_sessions_revoked_by_id"),
         ]
 
 
@@ -166,8 +190,11 @@ class OxydeAuthToken(Model):
     kind: DbEnum(TokenKind) = Field()
     token_hash: str = Field()  # hex SHA-256 of the whole token; unique
     display_prefix: str = Field()  # the first 8 characters, for display
-    # NULL for authorization codes and claim tickets, which have no
-    # session until they are redeemed.
+    # The session the token belongs to. For an authorization code or a
+    # claim ticket: NULL until redeemed, then the one session it started.
+    # That link is the contract code-reuse revocation relies on (OAuth 2.1
+    # §4.1.3), so an expiry GC must keep a spent code at least until its
+    # session's absolute expiry.
     holder_session: OxydeHolderSession | None = Field(default=None, db_on_delete="CASCADE")
     team: OxydeTeam | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     principal_user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
@@ -204,6 +231,8 @@ class OxydeAuthToken(Model):
             Index(("principal_user_id",), name="ix_auth_tokens_principal_user_id"),
             Index(("minted_by_credential_id",), name="ix_auth_tokens_minted_by_credential_id"),
             Index(("oauth_client_id",), name="ix_auth_tokens_oauth_client_id"),
+            Index(("holder_user_id",), name="ix_auth_tokens_holder_user_id"),
+            Index(("team_id",), name="ix_auth_tokens_team_id"),
         ]
 
 
@@ -211,11 +240,18 @@ class OxydeRevocationEvent(Model):
     """One revocation, as it happened (agent identities spec §8 item 11)."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
-    team: OxydeTeam | None = Field(default=None, db_on_delete="CASCADE")
+    # Strictly increasing, assigned inside the revoking transaction (which
+    # holds SQLite's write lock, so no two can take the same number). The
+    # newest `seq` is the revocation epoch every validation cache compares
+    # against, so a revocation in any process is seen by every other
+    # process's next request. Rows are never deleted (team and actor are
+    # SET NULL), which is what keeps MAX(seq) from going backwards.
+    seq: int = Field()
+    team: OxydeTeam | None = Field(default=None, db_on_delete="SET NULL")
     # Who revoked: a user, or NULL for the system (refresh-token reuse,
     # expiry sweeps) and for a user since deleted.
     actor: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
-    target_type: str = Field()  # holder_session, api_key, oauth_client, identity, grant, member, bulk
+    target_type: DbEnum(RevocationTarget) = Field()
     target_id: str | None = Field(default=None)
     filter: str | None = Field(default=None)  # JSON, for bulk revocations
     dry_run: bool = Field(default=False)
@@ -227,5 +263,8 @@ class OxydeRevocationEvent(Model):
         is_table = True
         table_name = "revocation_events"
         indexes = [
+            Index(("seq",), unique=True, name="ux_revocation_events_seq"),
             Index(("team_id", "created_at"), name="ix_revocation_events_team_id_created_at"),
+            Index(("target_type", "target_id"), name="ix_revocation_events_target"),
+            Index(("actor_id",), name="ix_revocation_events_actor_id"),
         ]

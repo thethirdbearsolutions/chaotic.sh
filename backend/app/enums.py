@@ -213,3 +213,15 @@ class OAuthClientRegistration(str, Enum):
     CIMD = "cimd"
     DCR = "dcr"
     BUILTIN = "builtin"
+
+
+class RevocationTarget(str, Enum):
+    """What a `revocation_events` row revoked (CHT-1515; RevocationService,
+    CHT-1449)."""
+    HOLDER_SESSION = "holder_session"
+    API_KEY = "api_key"
+    OAUTH_CLIENT = "oauth_client"
+    IDENTITY = "identity"
+    GRANT = "grant"
+    MEMBER = "member"
+    BULK = "bulk"
