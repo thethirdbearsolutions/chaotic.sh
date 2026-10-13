@@ -32,9 +32,10 @@ sync-cli:
 serve:
     cd backend && uv run uvicorn app.main:app --reload --port 24267
 
-# Run the backend server (production mode, supports PORT and DATABASE_URL env vars)
+# Run the backend server (production mode, supports PORT and DATABASE_URL env vars).
+# --frozen: run the env `just sync` built; never re-resolve or rewrite uv.lock (CHT-1201).
 serve-prod:
-    cd backend && uv run uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267}
+    cd backend && uv run --frozen uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267}
 
 # Run all test suites (backend, frontend, CLI)
 test-all: test-backend test-frontend test-cli
