@@ -42,7 +42,8 @@ export function consentRequestId(pathname) {
 /**
  * May the browser be sent to ``url`` as an OAuth redirect? https, http
  * (the server allows it only for loopback hosts) and RFC 8252 private-use
- * schemes, which are reverse domain names and so contain a period.
+ * schemes, which are reverse domain names and so contain a period; all in
+ * lower case, the server's rule.
  * Everything else, javascript:, data:, vbscript:, file:, blob: in any
  * case among them, is refused.
  * @param {string} url
@@ -55,6 +56,9 @@ export function isSafeRedirect(url) {
     } catch {
         return false;
     }
+    // new URL() lower-cases the scheme; the server accepts only a
+    // lower-case one, so the raw text must already be what was parsed.
+    if (!url.startsWith(protocol)) return false;
     if (protocol === 'https:' || protocol === 'http:') return true;
     return /^[a-z][a-z0-9+-]*(\.[a-z0-9+-]+)+:$/.test(protocol);
 }
