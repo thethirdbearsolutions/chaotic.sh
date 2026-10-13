@@ -76,7 +76,10 @@ def http_error_payload(e: HTTPException) -> dict:
     return backend_error_payload(translate_http_exception(e))
 
 
-# Backend methods that only read. A registrar may call these and nothing
+# Backend methods that read. (Not strictly side-effect free:
+# get_current_sprint, like its REST GET, may create the project's first
+# sprints through ensure_sprints_exist -- unattributed bookkeeping,
+# CHT-1557.) A registrar may call these and nothing
 # else (CHT-1498): every other method is treated as a write, so a new
 # method is refused to a registrar until it is named a read here or by
 # its get_/list_ prefix. tests/test_agent_register.py pins the split.

@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 @router.get("/{user_id}", response_model=UserResponse)
-async def get_user(user_id: str, current_user: CurrentUser):
+async def get_user(user_id: str, current_user: CurrentUser) -> UserResponse:
     """Get user by ID."""
     user_service = UserService()
     user = await user_service.get_by_id(user_id)
@@ -30,7 +30,13 @@ async def get_user(user_id: str, current_user: CurrentUser):
                 detail="Not authorized to view this user",
             )
 
-    return user
+    response = UserResponse.model_validate(user)
+    if user.is_agent:
+        from app.api.agents import sees_external_ref
+
+        if not await sees_external_ref(current_user, user):
+            response.external_ref = None
+    return response
 
 
 @router.patch("/me", response_model=UserResponse)

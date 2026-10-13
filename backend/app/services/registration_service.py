@@ -40,7 +40,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from oxyde import IntegrityError, atomic
+import unicodedata
+
+from oxyde import IntegrityError, atomic, execute_raw
+from oxyde.db.transaction import get_active_transaction
 
 from app.config import get_settings
 from app.enums import AgentKind
@@ -83,8 +86,40 @@ class Registration:
     extra: dict = field(default_factory=dict)
 
 
-def _norm(name: str) -> str:
-    return " ".join(name.split()).casefold()
+def normalize_name(name: str) -> str:
+    """The form two names are compared in (rule 8): NFKC (so full-width
+    and compatibility letters fold to plain ones), every format character
+    dropped (zero-width spaces and joiners, bidi marks: Unicode category
+    Cf), all whitespace dropped (so "TestUser" and "Test User", which a
+    zero-width or missing space makes look alike, compare equal), case
+    folded. Homoglyphs across scripts are out of scope."""
+    folded = unicodedata.normalize("NFKC", name)
+    folded = "".join(c for c in folded if unicodedata.category(c) != "Cf")
+    return "".join(folded.split()).casefold()
+
+
+async def member_named(team_id: str, name: str) -> bool:
+    """Is `name` (normalized) the name of a human member of `team_id`?"""
+    member_ids = [m.user_id for m in await OxydeTeamMember.objects.filter(team_id=team_id).all()]
+    if not member_ids:  # pragma: no cover - an agent's team always has its creator or an admin
+        return False
+    people = await OxydeUser.objects.filter(id__in=member_ids, is_agent=False).values("name").all()
+    wanted = normalize_name(name)
+    return any(normalize_name(p["name"] if isinstance(p, dict) else p.name) == wanted for p in people)
+
+
+def name_matches_member_detail(name: str) -> dict:
+    return {
+        "error_code": "name_matches_member",
+        "message": f"{name!r} is the name of a person in this team; an agent may not share it.",
+    }
+
+
+def is_sqlite_busy(exc: BaseException) -> bool:
+    """SQLITE_BUSY / SQLITE_BUSY_SNAPSHOT / "database is locked", however
+    the driver words it."""
+    text = str(exc).lower()
+    return "database is locked" in text or "busy" in text
 
 
 class RegistrationService:
@@ -92,19 +127,48 @@ class RegistrationService:
         self, caller: OxydeUser, calling_key: OxydeAPIKey | None, req: AgentRegister,
     ) -> Registration:
         """Get or create the identity, mint its key. Raises
-        RegistrationRefused for anything the rules refuse."""
+        RegistrationRefused for anything the rules refuse.
+
+        Opens its own transaction and takes SQLite's writer lock as the
+        first statement, so concurrent registrations (a session's CLI,
+        its stdio MCP server and its subagents all register the same ref
+        at start) queue behind one another, and each sees the previous
+        one's commit: the second finds the identity and takes the get
+        path, and the caps count what was just committed. Without the
+        lock a transaction that has already read cannot upgrade to a
+        writer once another has committed (SQLITE_BUSY_SNAPSHOT), which
+        was a 500 (CHT-1311/CHT-1411, the same reason as
+        IssueService._take_relation_write_lock)."""
+        if get_active_transaction() is not None:
+            # Inside a transaction that has already read, the lock cannot
+            # wait: it fails. See above.
+            raise RuntimeError("RegistrationService.register must open its own transaction")
         try:
             return await self._register(caller, calling_key, req)
+        except RegistrationRefused:
+            raise
         except IntegrityError:
-            # Lost a race to create the same (team, external_ref): the row
-            # exists now, so the second attempt takes the get path.
+            # Backstop for a writer that bypassed the lock: the row exists
+            # now, so the second attempt takes the get path.
             return await self._register(caller, calling_key, req)
+        except Exception as exc:
+            if not is_sqlite_busy(exc):
+                raise
+            # The lock wait outlasted the pool's busy_timeout: retryable.
+            refused = RegistrationRefused(
+                503, "registration_busy", "Another registration is in progress; retry shortly.",
+                retry_after_seconds=1,
+            )
+            refused.headers = {"Retry-After": "1"}
+            raise refused from exc
 
     async def _register(
         self, caller: OxydeUser, calling_key: OxydeAPIKey | None, req: AgentRegister,
     ) -> Registration:
         settings = get_settings()
         async with atomic():
+            # First statement: the database-wide writer lock (see register).
+            await execute_raw("UPDATE users SET can_register = can_register WHERE 0")
             team_id, project_id, holder_id = await self._authorize(caller, calling_key, req)
 
             existing = await self._find(team_id, req.external_ref)
@@ -287,25 +351,28 @@ class RegistrationService:
             )
 
     async def _check_rate(self, caller: OxydeUser, limit: int) -> None:
-        identity_ids = [
-            row["id"] if isinstance(row, dict) else row.id
-            for row in await OxydeUser.objects.filter(registered_by_id=caller.id).values("id").all()
-        ]
-        if not identity_ids:
-            return
+        """Registrations (keys named "session <ref>", which only this
+        service mints) for the registrar's identities in the last rolling
+        hour. One indexed join, bounded by `limit`: the row it reads is
+        the limit-th newest registration, present only when the window is
+        full, and the window frees a slot when that one ages out."""
         now = datetime.now(timezone.utc)
         window = now - timedelta(hours=1)
-        recent = await OxydeAPIKey.objects.filter(
-            principal_user_id__in=identity_ids, created_at__gte=window,
-        ).order_by("created_at").values("created_at").all()
-        if len(recent) >= limit:
-            # The window frees a slot when its oldest registration ages out.
-            oldest = recent[len(recent) - limit]
-            oldest_at = ensure_utc(oldest["created_at"] if isinstance(oldest, dict) else oldest.created_at)
+        rows = await execute_raw(
+            "SELECT k.created_at AS created_at FROM api_keys AS k "
+            "JOIN users AS u ON u.id = k.principal_user_id "
+            "WHERE u.registered_by_id = ? AND k.name LIKE 'session %' AND k.created_at >= ? "
+            "ORDER BY k.created_at DESC LIMIT 1 OFFSET ?",
+            # Stored datetimes are naive UTC text, "YYYY-MM-DD HH:MM:SS.ffffff"
+            # (0006), so a bytewise comparison orders them.
+            [caller.id, window.strftime("%Y-%m-%d %H:%M:%S.%f"), limit - 1],
+        )
+        if rows:
+            oldest_at = ensure_utc(rows[0]["created_at"])
             retry_after = max(1, int((oldest_at + timedelta(hours=1) - now).total_seconds()) + 1)
             refused = RegistrationRefused(
                 429, "registrar_rate_limited",
-                f"This registrar made {len(recent)} registrations in the last hour (limit {limit}). "
+                f"This registrar made {limit} registrations in the last hour (the limit). "
                 f"Retry in {retry_after} seconds, or raise REGISTRAR_MAX_REGISTRATIONS_PER_HOUR.",
                 limit=limit, retry_after_seconds=retry_after,
             )
@@ -315,16 +382,9 @@ class RegistrationService:
     # -- rule 8: names --------------------------------------------------------
 
     async def _check_name(self, team_id: str, name: str) -> None:
-        member_ids = [m.user_id for m in await OxydeTeamMember.objects.filter(team_id=team_id).all()]
-        if not member_ids:  # pragma: no cover - every caller is (or is held by) a member
-            return
-        people = await OxydeUser.objects.filter(id__in=member_ids, is_agent=False).values("name").all()
-        wanted = _norm(name)
-        if any(_norm(p["name"] if isinstance(p, dict) else p.name) == wanted for p in people):
-            raise RegistrationRefused(
-                422, "name_matches_member",
-                f"{name!r} is the name of a person in this team; an identity may not share it.",
-            )
+        if await member_named(team_id, name):
+            detail = name_matches_member_detail(name)
+            raise RegistrationRefused(422, detail["error_code"], detail["message"])
 
     @staticmethod
     def _default_name(caller: OxydeUser, external_ref: str) -> str:

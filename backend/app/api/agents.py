@@ -9,7 +9,10 @@ from app.enums import AgentKind
 from app.schemas.agent import (
     AgentCreate, AgentRegister, AgentRegistered, AgentUpdate, AgentResponse, AgentCreated,
 )
-from app.services.registration_service import RegistrationRefused, RegistrationService
+from app.enums import TeamRole
+from app.services.registration_service import (
+    RegistrationRefused, RegistrationService, member_named, name_matches_member_detail,
+)
 from app.schemas.api_key import AgentKeyResponse, APIKeyCreated
 from app.services.agent_service import (
     AgentHasAuthoredContentError, AgentInactiveError, AgentManageDeniedError, AgentService,
@@ -22,8 +25,34 @@ from app.services.user_service import UserService
 router = APIRouter()
 
 
-def agent_response(agent) -> AgentResponse:
-    """The wire form of an agent row (with `parent_user` joined)."""
+async def _is_team_admin(user, team_id: str | None) -> bool:
+    if user.is_agent or not team_id:
+        return False
+    member = await TeamService().get_member(team_id, user.id)
+    return member is not None and member.role in (TeamRole.OWNER, TeamRole.ADMIN)
+
+
+async def sees_external_ref(viewer, agent, *, admin: bool | None = None) -> bool:
+    """`external_ref` (a harness session address) is shown only to the
+    identity itself, the human who owns and holds it, and admins of its
+    team (CHT-1498 review). Other teammates see null."""
+    if not agent.external_ref:
+        return True
+    if viewer.id in (agent.id, agent.parent_user_id):
+        return True
+    return admin if admin is not None else await _is_team_admin(viewer, agent.agent_team_id)
+
+
+async def _refuse_member_name(team_id: str, name: str) -> None:
+    """Rule 8 for every agent name, not only registered ones: an agent may
+    not carry a person's name in its team (normalized, CHT-1498)."""
+    if await member_named(team_id, name):
+        raise HTTPException(status_code=422, detail=name_matches_member_detail(name))
+
+
+def agent_response(agent, *, show_ref: bool = True) -> AgentResponse:
+    """The wire form of an agent row (with `parent_user` joined).
+    `show_ref`: see ``sees_external_ref``."""
     return AgentResponse(
         id=agent.id,
         name=agent.name,
@@ -36,7 +65,7 @@ def agent_response(agent) -> AgentResponse:
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         kind=agent.kind,
-        external_ref=agent.external_ref,
+        external_ref=agent.external_ref if show_ref else None,
         registered_by_id=agent.registered_by_id,
         can_register=agent.can_register,
     )
@@ -77,6 +106,7 @@ async def create_team_agent(
             detail="Agents cannot create other agents",
         )
 
+    await _refuse_member_name(team_id, agent_in.name)
     agent_service = AgentService()
     agent, api_key, api_key_id = await agent_service.create(
         agent_in=agent_in,
@@ -133,6 +163,7 @@ async def create_project_agent(
             detail="Agents cannot create other agents",
         )
 
+    await _refuse_member_name(project.team_id, agent_in.name)
     agent_service = AgentService()
     agent, api_key, api_key_id = await agent_service.create(
         agent_in=agent_in,
@@ -179,8 +210,9 @@ async def list_team_agents(
     agent_service = AgentService()
     agents = await agent_service.list_by_team(team_id)
 
+    admin = await _is_team_admin(current_user, team_id)
     return [
-        agent_response(agent)
+        agent_response(agent, show_ref=await sees_external_ref(current_user, agent, admin=admin))
         for agent in agents
     ]
 
@@ -208,7 +240,7 @@ async def get_agent(
             detail="Not authorized to view this agent",
         )
 
-    return agent_response(agent)
+    return agent_response(agent, show_ref=await sees_external_ref(current_user, agent))
 
 
 @router.patch("/agents/{agent_id}", response_model=AgentResponse)
@@ -246,9 +278,12 @@ async def update_agent(
             },
         )
 
+    if agent_in.name is not None and agent_in.name != agent.name:
+        await _refuse_member_name(agent.agent_team_id, agent_in.name)
+
     agent = await agent_service.update(agent, agent_in)
 
-    return agent_response(agent)
+    return agent_response(agent, show_ref=await sees_external_ref(current_user, agent))
 
 
 @router.post(
@@ -403,7 +438,7 @@ async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> Age
             detail="Agent not found",
         )
 
-    response = agent_response(agent)
+    response = agent_response(agent, show_ref=await sees_external_ref(current_user, agent))
     response.deactivated_identities = retired
     return response
 

@@ -570,3 +570,223 @@ class TestRegistrarToggle:
         registrar_id, key = registrar
         response = await client.patch(f"/api/agents/{registrar_id}", json={"can_register": False}, headers=_bearer(key))
         assert response.status_code == 403
+
+
+class TestReviewFollowUps:
+    """The independent review of #335 (CHT-1498)."""
+
+    async def test_deleting_a_registrar_retires_its_identities(self, client, auth_headers, registrar, test_team):
+        registrar_id, key = registrar
+        session = (await _register(client, key)).json()
+
+        assert (await client.delete(f"/api/agents/{registrar_id}", headers=auth_headers)).status_code == 204
+
+        assert (await client.get("/api/auth/me", headers=_bearer(session["api_key"]))).status_code == 401
+        identity = await OxydeUser.objects.get(id=session["agent"]["id"])
+        # Kept, with its historical registrar id, which now names nobody.
+        assert identity.is_active is False and identity.registered_by_id == registrar_id
+        assert await OxydeUser.objects.get_or_none(id=registrar_id) is None
+        shown = (await client.get(f"/api/agents/{identity.id}", headers=auth_headers)).json()
+        assert shown["registered_by_id"] == registrar_id and shown["is_active"] is False
+
+    async def test_deleting_a_person_retires_what_their_registrars_registered(
+        self, client, auth_headers, auth_headers2, test_user2, test_team,
+    ):
+        """test_user2 owns a registrar whose key test_user (an admin) holds,
+        so the identity belongs to test_user; deleting test_user2 deletes
+        the registrar and must retire the identity too."""
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+        registrar_id, _ = await _registrar(client, auth_headers2, team_id=test_team.id)
+        admin_key = (await client.post(f"/api/agents/{registrar_id}/keys", headers=auth_headers)).json()["key"]
+        session = (await _register(client, admin_key)).json()
+
+        assert (await client.delete("/api/users/me", headers=auth_headers2)).status_code == 204, "owner delete"
+
+        assert (await client.get("/api/auth/me", headers=_bearer(session["api_key"]))).status_code == 401
+        assert (await OxydeUser.objects.get(id=session["agent"]["id"])).is_active is False
+
+    async def test_a_person_registering_for_themself_takes_their_identities_with_them(
+        self, client, auth_headers2, test_user2, test_team, auth_headers,
+    ):
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+        made = await client.post(
+            "/api/agents/register", json={"external_ref": REF, "team_id": test_team.id}, headers=auth_headers2,
+        )
+        assert made.status_code == 201
+        # Their identity is their agent: deleting them deletes it (it authored nothing).
+        assert (await client.delete("/api/users/me", headers=auth_headers2)).status_code == 204
+        assert await OxydeUser.objects.get_or_none(id=made.json()["agent"]["id"]) is None
+
+    async def test_any_key_minted_for_a_session_identity_expires_with_the_session_ttl(
+        self, client, auth_headers, registrar, limits,
+    ):
+        _, key = registrar
+        limits(agent_session_key_ttl_seconds=3600)
+        agent_id = (await _register(client, key)).json()["agent"]["id"]
+
+        minted = await client.post(f"/api/agents/{agent_id}/keys", headers=auth_headers)
+
+        assert minted.status_code == 201
+        left = datetime.fromisoformat(minted.json()["expires_at"]) - datetime.now(timezone.utc)
+        assert timedelta(minutes=59) < left <= timedelta(hours=1)
+
+    async def test_a_hand_made_agents_minted_key_still_does_not_expire(self, client, auth_headers, test_team):
+        agent = (await client.post(f"/api/teams/{test_team.id}/agents", json={"name": "H"}, headers=auth_headers)).json()
+        minted = await client.post(f"/api/agents/{agent['id']}/keys", headers=auth_headers)
+        assert minted.json()["expires_at"] is None
+
+    async def test_only_registrations_count_toward_the_hourly_rate(self, client, auth_headers, registrar, limits):
+        _, key = registrar
+        limits(registrar_max_registrations_per_hour=2)
+        agent_id = (await _register(client, key)).json()["agent"]["id"]
+        for _ in range(3):
+            assert (await client.post(f"/api/agents/{agent_id}/keys", headers=auth_headers)).status_code == 201
+        assert (await _register(client, key)).status_code == 200
+        assert (await _register(client, key)).status_code == 429
+
+    @pytest.mark.parametrize("name", [
+        "Test\u200bUser",  # zero-width space
+        "TestUser",  # no space at all
+        "\uff34\uff45\uff53\uff54 \uff35\uff53\uff45\uff52",  # full-width
+        "\u200eTest User\u200f",  # bidi marks
+        "Test\u00a0User",  # no-break space
+    ])
+    async def test_normalized_member_names_are_refused(self, client, registrar, name):
+        _, key = registrar
+        response = await _register(client, key, name=name)
+        assert response.status_code == 422 and _code(response) == "name_matches_member"
+
+    async def test_agent_create_and_rename_are_checked_too(self, client, auth_headers, registrar, test_team):
+        registrar_id, key = registrar
+        created = await client.post(
+            f"/api/teams/{test_team.id}/agents", json={"name": "test​user".replace("​", " ")}, headers=auth_headers,
+        )
+        assert created.status_code == 422 and _code(created) == "name_matches_member"
+
+        identity = (await _register(client, key)).json()["agent"]["id"]
+        for agent_id in (identity, registrar_id):
+            renamed = await client.patch(f"/api/agents/{agent_id}", json={"name": "Tester"}, headers=auth_headers)
+            assert renamed.status_code == 200
+            renamed = await client.patch(f"/api/agents/{agent_id}", json={"name": "TEST USER"}, headers=auth_headers)
+            assert renamed.status_code == 422 and _code(renamed) == "name_matches_member"
+
+    async def test_external_ref_is_shown_only_to_the_identity_its_owner_and_admins(
+        self, client, auth_headers, registrar, test_user2, auth_headers2, test_team,
+    ):
+        _, key = registrar
+        session = (await _register(client, key)).json()
+        agent_id = session["agent"]["id"]
+        member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+
+        async def seen(headers, via_users=False):
+            one = (await client.get(f"/api/agents/{agent_id}", headers=headers)).json()["external_ref"]
+            listed = [
+                a["external_ref"] for a in (await client.get(f"/api/teams/{test_team.id}/agents", headers=headers)).json()
+                if a["id"] == agent_id
+            ][0]
+            assert one == listed
+            if via_users:  # /users/{id} answers an agent only to itself (agents share no team)
+                assert (await client.get(f"/api/users/{agent_id}", headers=headers)).json()["external_ref"] == one
+            return one
+
+        assert await seen(auth_headers) == REF  # owner (and team owner)
+        assert await seen(_bearer(session["api_key"]), via_users=True) == REF  # the identity itself
+        assert await seen(auth_headers2) is None  # a plain teammate
+        await OxydeTeamMember.objects.filter(id=member.id).update(role=TeamRole.ADMIN)
+        assert await seen(auth_headers2) == REF  # a team admin
+        other_agent = (await client.post(
+            f"/api/teams/{test_team.id}/agents", json={"name": "Peer"}, headers=auth_headers,
+        )).json()
+        assert await seen(_bearer(other_agent["api_key"])) is None  # another agent
+
+    async def test_register_refuses_to_run_inside_a_transaction(self, test_user, registrar):
+        from oxyde import atomic
+
+        from app.schemas.agent import AgentRegister
+        from app.services.registration_service import RegistrationService
+
+        async with atomic():
+            with pytest.raises(RuntimeError, match="own transaction"):
+                await RegistrationService().register(test_user, None, AgentRegister(external_ref=REF))
+
+    async def test_a_lock_timeout_is_a_retryable_503(self, client, registrar, monkeypatch):
+        from app.services.registration_service import RegistrationService
+
+        _, key = registrar
+
+        async def locked(self, *args):
+            raise RuntimeError("database is locked")
+
+        monkeypatch.setattr(RegistrationService, "_register", locked)
+        response = await _register(client, key)
+        assert response.status_code == 503 and _code(response) == "registration_busy"
+        assert response.headers["Retry-After"] == "1"
+
+    async def test_other_errors_are_not_mapped(self, test_user, monkeypatch):
+        from app.schemas.agent import AgentRegister
+        from app.services.registration_service import RegistrationService
+
+        async def broken(self, *args):
+            raise ValueError("boom")
+
+        monkeypatch.setattr(RegistrationService, "_register", broken)
+        with pytest.raises(ValueError):
+            await RegistrationService().register(test_user, None, AgentRegister(external_ref=REF))
+
+
+class TestConcurrentRegistration:
+    """Registrations on separate connections (CHT-1498 review S2). The test
+    pool has one connection, which serialises requests and hides the race,
+    so a rival Oxyde pool on the same file plays the other process: it
+    holds SQLite's writer lock with the same identity inserted but not yet
+    committed. Without the lock as the first statement, our transaction
+    reads first, then cannot upgrade to a writer once the rival commits
+    (SQLITE_BUSY_SNAPSHOT, a 500 in production). With it, ours waits,
+    then sees the rival's identity and takes the get path."""
+
+    async def test_a_registration_waits_for_a_concurrent_one_and_reuses_its_identity(
+        self, client, registrar, test_team, test_user,
+    ):
+        import os
+        import uuid as uuidlib
+
+        from oxyde import AsyncDatabase, PoolSettings, execute_raw
+        from oxyde.db.transaction import AsyncTransaction
+
+        registrar_id, key = registrar
+        # Use the key once now: sign-in writes last_used_at at most once a
+        # minute, and that write would otherwise be what waits for the
+        # rival, before our transaction even starts.
+        assert (await client.get("/api/auth/me", headers=_bearer(key))).status_code == 200
+        url = os.environ["DATABASE_URL"].replace("sqlite+aiosqlite:///", "sqlite:///")
+        rival = AsyncDatabase(url, name="rival", overwrite=True, settings=PoolSettings(max_connections=1))
+        await rival.connect()
+        rival_id = str(uuidlib.uuid4())
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+        try:
+            tx = AsyncTransaction(rival)
+            await tx.__aenter__()
+            await execute_raw(
+                "INSERT INTO users (id, email, hashed_password, name, is_active, is_superuser, created_at, "
+                "updated_at, is_agent, kind, parent_user_id, agent_team_id, external_ref, registered_by_id, "
+                "can_register) VALUES (?, ?, '', 'Rival', 1, 0, ?, ?, 1, 'SESSION', ?, ?, ?, ?, 0)",
+                [rival_id, f"{rival_id}@agent.local", now, now, test_user.id, test_team.id, REF, registrar_id],
+                client=tx,
+            )
+            ours = asyncio.create_task(_register(client, key, name="Ours"))
+            await asyncio.sleep(0.5)
+            assert not ours.done(), "our registration must wait behind the rival's writer lock"
+            # Without the lock as our first statement, ours has already read
+            # by now: in production's WAL mode it then fails to become a
+            # writer after this commit (SQLITE_BUSY_SNAPSHOT, a 500); in
+            # this harness's rollback-journal mode the rival's commit waits
+            # for our read lock while we wait for its write lock, until the
+            # busy timeout. Either way this test does not pass.
+            await tx.__aexit__(None, None, None)  # the rival commits
+            response = await ours
+        finally:
+            await rival.disconnect()
+
+        assert response.status_code == 200, response.text
+        assert response.json()["agent"]["id"] == rival_id and response.json()["agent"]["name"] == "Ours"
+        assert await OxydeUser.objects.filter(external_ref=REF).count() == 1
