@@ -461,18 +461,33 @@ OAUTH_TOKEN_REFUSED = {
 }
 
 
-async def _require_person(
-    user: CurrentUser,
+# The credential kinds a person may manage their connected apps with: an
+# allowlist, as for require_human_session, so a kind added later is
+# refused until someone decides otherwise.
+PERSON_KINDS = frozenset({CredentialKind.SESSION_JWT, CredentialKind.API_KEY})
+
+
+async def _person_credential(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> None:
+    """Refuse by credential class, before the credential is resolved: an
+    OAuth access token (whoever its principal is: once a holder session
+    can act as a human, WEB_LOGIN, CHT-1524, a token an app holds must
+    still not reach that human's other connections) is refused without
+    being validated, so it is never marked used. No credential at all is
+    left to the resolver's 401."""
+    if credentials is not None and classify(credentials.credentials) not in PERSON_KINDS:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(OAUTH_TOKEN_REFUSED))
+
+
+async def _require_person(
+    _kind: Annotated[None, Depends(_person_credential)],
+    user: CurrentUser,
 ) -> OxydeUser:
     """A human, on one of their own credentials: a session JWT (web or
-    CLI login) or a human's ``ck_`` key. Refused by credential class first,
-    so an OAuth access token is refused whoever its principal is: once a
-    holder session can act as a human (WEB_LOGIN, CHT-1524), a token an
-    app holds must still not reach that human's other connections. Then
-    any agent, whatever it presents."""
-    if credentials is not None and classify(credentials.credentials) is CredentialKind.OAUTH_ACCESS:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(OAUTH_TOKEN_REFUSED))
+    CLI login) or a human's ``ck_`` key. The credential's class is checked
+    first (``_person_credential``, which FastAPI solves before resolving
+    ``user``); then any agent is refused, whatever it presents."""
     if user.is_agent:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(HUMAN_REQUIRED))
     return user

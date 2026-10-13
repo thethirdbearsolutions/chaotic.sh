@@ -198,6 +198,32 @@ class TestConnectedApps:
             assert response.status_code == 403, response.text
             assert response.json()["detail"]["error_code"] == "oauth_token_refused"
         assert not await _revoked(connection)
+        # Refused before it was resolved: never marked used.
+        token = await OxydeAuthToken.objects.get(holder_session_id=claim.holder_session_id, kind=TokenKind.ACCESS)
+        assert token.used_at is None
+        session = await OxydeHolderSession.objects.get(id=claim.holder_session_id)
+        assert session.last_used_at is None
+
+    async def test_no_credential_is_a_401(self, client):
+        assert (await client.get("/api/oauth/connections")).status_code == 401
+
+    async def test_the_batch_is_atomic_on_its_own(self, oauth_on, test_team, test_user, monkeypatch):
+        """Outside any transaction, a failure between its two updates
+        leaves the sessions unrevoked."""
+        agent = await make_agent(test_team, test_user)
+        issued = await connector_token(agent, test_team, test_user)
+        original = OxydeAuthToken.objects.filter
+
+        def failing_filter(*args, **kwargs):
+            if "holder_session_id__in" in kwargs:
+                raise RuntimeError("boom")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(OxydeAuthToken.objects, "filter", failing_filter)
+        with pytest.raises(RuntimeError):
+            await TokenService().revoke_sessions_batch([issued.holder_session_id], actor_id=None, reason="t")
+        monkeypatch.undo()
+        assert not await _revoked(issued)
 
     async def test_an_agent_cannot_list_or_revoke(self, client, oauth_on, test_team, test_user):
         agent = await make_agent(test_team, test_user)

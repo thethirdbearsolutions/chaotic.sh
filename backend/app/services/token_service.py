@@ -821,23 +821,25 @@ class TokenService:
     ) -> tuple[int, int]:
         """Revoke many holder sessions and their tokens in two set-based
         updates, writing NO ``revocation_events`` row: the caller must
-        write exactly one, in the same transaction, after this returns
+        write exactly one after this returns, in its own transaction
         (``RevocationService._record`` does; that row moves the epoch
-        once for the whole action). Call inside ``atomic()``. Returns
-        (sessions revoked, tokens revoked); sessions already revoked are
-        left as they are and not counted."""
+        once for the whole action). The two updates are atomic on their
+        own either way: a savepoint inside the caller's transaction, a
+        transaction of their own outside one. Returns (sessions revoked, tokens revoked);
+        sessions already revoked are left as they are and not counted."""
         ids = list(dict.fromkeys(holder_session_ids))
         if not ids:
             return 0, 0
         now = _now()
-        # The conditional UPDATE first, as in _revoke_session_in_tx: it
-        # takes the write lock before the tokens are read.
-        sessions = await OxydeHolderSession.objects.filter(id__in=ids, revoked_at__isnull=True).update(
-            revoked_at=now, revoked_by_id=actor_id, revoked_reason=reason,
-        )
-        tokens = await OxydeAuthToken.objects.filter(
-            holder_session_id__in=ids, revoked_at__isnull=True,
-        ).update(revoked_at=now)
+        async with atomic():
+            # The conditional UPDATE first, as in _revoke_session_in_tx: it
+            # takes the write lock before the tokens are read.
+            sessions = await OxydeHolderSession.objects.filter(id__in=ids, revoked_at__isnull=True).update(
+                revoked_at=now, revoked_by_id=actor_id, revoked_reason=reason,
+            )
+            tokens = await OxydeAuthToken.objects.filter(
+                holder_session_id__in=ids, revoked_at__isnull=True,
+            ).update(revoked_at=now)
         for holder_session_id in ids:
             _forget_grace_pairs(holder_session_id)
         return sessions, tokens
