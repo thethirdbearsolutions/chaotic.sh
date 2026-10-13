@@ -1024,7 +1024,7 @@ class TestSprintCloseProject:
         assert "Sprint 30" in result.output and "CUR" in result.output
         assert "Sprint 31" in result.output
         assert "0/20" in result.output
-        assert "unblocked" in result.output
+        assert "no longer in arrears" in result.output
         client.get_current_sprint.assert_called_once_with("test-project-123")
 
     def test_project_option_closes_that_projects_sprint(self, cli_runner):
@@ -1072,7 +1072,7 @@ class TestSprintCloseProject:
         )
         assert result.exit_code == 0, result.output
         assert "over budget" in result.output
-        assert "unblocked" not in result.output
+        assert "no longer in arrears" not in result.output
 
     def test_failed_lookup_after_close_still_reports_the_close(self, cli_runner):
         from cli.main import cli, client

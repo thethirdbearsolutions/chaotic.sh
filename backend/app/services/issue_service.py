@@ -66,6 +66,7 @@ class SprintInArrearsError(Exception):
         self, budget: int, points_spent: int, *,
         sprint_id: str | None = None, sprint_name: str | None = None,
         project_id: str | None = None, project_key: str | None = None,
+        team_id: str | None = None,
     ):
         self.budget = budget
         self.points_spent = points_spent
@@ -74,6 +75,7 @@ class SprintInArrearsError(Exception):
         self.sprint_name = sprint_name
         self.project_id = project_id
         self.project_key = project_key
+        self.team_id = team_id
         where = f" in project {project_key}" if project_key else ""
         super().__init__(
             f"Sprint is in arrears{where}. Close that project's active sprint to continue; "
@@ -85,12 +87,22 @@ class SprintInArrearsError(Exception):
 class SprintInLimboError(Exception):
     """Raised when sprint is in limbo (pending rituals) and operations are blocked."""
 
-    def __init__(self, sprint_id: str, pending_rituals: list[dict]):
+    def __init__(
+        self, sprint_id: str, pending_rituals: list[dict], *,
+        project_id: str | None = None, project_key: str | None = None,
+        team_id: str | None = None,
+    ):
         self.sprint_id = sprint_id
         self.pending_rituals = pending_rituals
+        # Like arrears, limbo is the refused ticket's project's, not the
+        # caller's current one; say which (CHT-1270).
+        self.project_id = project_id
+        self.project_key = project_key
+        self.team_id = team_id
         ritual_names = [r.get("name", "unknown") for r in pending_rituals]
+        where = f" in project {project_key}" if project_key else ""
         super().__init__(
-            f"Sprint is in limbo. Complete pending rituals to continue: {', '.join(ritual_names)}"
+            f"Sprint is in limbo{where}. Complete pending rituals to continue: {', '.join(ritual_names)}"
         )
 
 
@@ -256,7 +268,12 @@ class IssueService:
         ritual_service = RitualService()
         pending_rituals = await ritual_service.get_pending_rituals(project_id, limbo_sprint.id)
         pending_data = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
-        raise SprintInLimboError(limbo_sprint.id, pending_data)
+        project = await OxydeProject.objects.get_or_none(id=project_id)
+        raise SprintInLimboError(
+            limbo_sprint.id, pending_data,
+            project_id=project_id, project_key=project.key if project else None,
+            team_id=project.team_id if project else None,
+        )
 
     async def _check_sprint_arrears(self, project_id: str) -> None:
         """Check if the current sprint is in arrears and raise error if so."""
@@ -272,6 +289,7 @@ class IssueService:
                 current_sprint.budget, current_sprint.points_spent,
                 sprint_id=current_sprint.id, sprint_name=current_sprint.name,
                 project_id=project_id, project_key=project.key if project else None,
+                team_id=project.team_id if project else None,
             )
 
     async def _intent_is_stale(self, intent: "OxydeTicketLimbo") -> bool:
@@ -782,7 +800,7 @@ class IssueService:
             raise SprintInArrearsError(
                 fresh.budget, fresh.points_spent,
                 sprint_id=fresh.id, sprint_name=fresh.name,
-                project_id=project.id, project_key=project.key,
+                project_id=project.id, project_key=project.key, team_id=project.team_id,
             )
 
         # Record the transaction only after the increment actually applied,

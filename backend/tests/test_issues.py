@@ -2210,6 +2210,12 @@ async def test_update_issue_sprint_limbo_error(client, auth_headers, test_projec
     # CHT-1223: stable discriminator so clients can switch on error_code
     # instead of duck-typing which keys are present.
     assert response.json()["detail"]["error_code"] == "sprint_in_limbo"
+    # CHT-1270: limbo, like arrears, names the refused ticket's project.
+    detail = response.json()["detail"]
+    assert detail["project_id"] == test_project.id
+    assert detail["project_key"] == test_project.key
+    assert detail["team_id"] == test_project.team_id
+    assert test_project.key in detail["message"]
 
 
 @pytest.mark.asyncio
@@ -2431,6 +2437,7 @@ async def test_update_issue_sprint_arrears_error(client, auth_headers, test_proj
     assert detail["sprint_id"] == sprint.id
     assert detail["sprint_name"] == "Arrears Sprint"
     assert detail["arrears_by"] == 5
+    assert detail["team_id"] == test_project.team_id
     assert test_project.key in detail["message"]
 
 

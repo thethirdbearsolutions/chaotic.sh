@@ -280,10 +280,11 @@ def register(cli):
         your current one, close that project's sprint with --project KEY.
         """
         m = _main()
+        current_project_id = m.get_current_project()
         if project_key:
             project = m.resolve_project(project_key)
         else:
-            project_id = m.get_current_project()
+            project_id = current_project_id
             if not project_id:
                 raise click.ClickException(
                     "No project selected. Pass --project KEY, or run 'chaotic project use KEY'."
@@ -303,7 +304,7 @@ def register(cli):
                 f"[yellow]Sprint '{result['name']}' in {key} entered limbo: it has not rotated yet, "
                 f"and {key} stays blocked until its sprint rituals are done.[/yellow]"
             )
-            if project_id != m.get_current_project():
+            if project_id != current_project_id:
                 console.print(f"Run `chaotic project use {key}`, then `chaotic ritual pending` to continue.")
             else:
                 console.print("Run `chaotic ritual pending` to continue.")
@@ -322,7 +323,7 @@ def register(cli):
         budget = active.get("budget")
         spent = active.get("points_spent") or 0
         if budget is None:
-            console.print(f"Now active: '{active.get('name')}' (no budget). {key} is unblocked.")
+            console.print(f"Now active: '{active.get('name')}' (no budget). {key} is no longer in arrears.")
         elif spent > budget:
             console.print(
                 f"[red]Now active: '{active.get('name')}' ({spent}/{budget} points), "
@@ -330,7 +331,7 @@ def register(cli):
             )
         else:
             console.print(
-                f"Now active: '{active.get('name')}' ({spent}/{budget} points). {key} is unblocked."
+                f"Now active: '{active.get('name')}' ({spent}/{budget} points). {key} is no longer in arrears."
             )
 
     @sprint.command("update")

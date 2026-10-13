@@ -275,6 +275,22 @@ def _arrears_detail(e: SprintInArrearsError) -> dict:
         "sprint_name": e.sprint_name,
         "project_id": e.project_id,
         "project_key": e.project_key,
+        "team_id": e.team_id,
+    }
+
+
+def _limbo_detail(e: SprintInLimboError) -> dict:
+    """The 409 body for a refusal caused by a sprint in limbo; names the
+    project for the same reason as _arrears_detail (CHT-1270)."""
+    where = f" in project {e.project_key}" if e.project_key else ""
+    return {
+        "error_code": "sprint_in_limbo",
+        "message": f"Sprint is in limbo{where}. Complete pending rituals to continue.",
+        "sprint_id": e.sprint_id,
+        "pending_rituals": e.pending_rituals,
+        "project_id": e.project_id,
+        "project_key": e.project_key,
+        "team_id": e.team_id,
     }
 
 
@@ -398,12 +414,7 @@ async def create_issue(
     except SprintInLimboError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_limbo",
-                "message": "Sprint is in limbo. Complete pending rituals to continue.",
-                "sprint_id": e.sprint_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=_limbo_detail(e),
         )
     except SprintInArrearsError as e:
         raise HTTPException(
@@ -1072,12 +1083,7 @@ async def update_issue(
     except SprintInLimboError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_limbo",
-                "message": "Sprint is in limbo. Complete pending rituals to continue.",
-                "sprint_id": e.sprint_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=_limbo_detail(e),
         )
     except SprintInArrearsError as e:
         raise HTTPException(

@@ -244,7 +244,65 @@ class TestArrearsErrorParsing:
         error_msg = str(exc_info.value)
         assert "Sprint 7 in project OTH" in error_msg
         assert "12/10" in error_msg
-        assert "chaotic sprint close --project OTH" in error_msg
+        # Named by sprint id, so a repeat fails rather than closing the new sprint.
+        assert "chaotic sprint close s-1 --project OTH" in error_msg
+        assert "chaotic project use OTH" in error_msg  # before ritual pending
+        assert "team use" not in error_msg  # no team_id: same-team server
+
+
+class TestRefusalNamesProject:
+    """CHT-1270: arrears/limbo advice switches to the refused project's team
+    and project, since keys are unique only per team."""
+
+    ARREARS = {
+        "error_code": "sprint_in_arrears", "arrears_by": 1, "budget": 3,
+        "points_spent": 4, "sprint_id": "s-9", "sprint_name": "Sprint 9",
+        "project_id": "p-oth", "project_key": "OTH", "team_id": "t-other",
+    }
+
+    def _fmt(self, detail, team="t-cur", project="p-cur"):
+        with patch("cli.config.get_current_team", return_value=team), \
+             patch("cli.config.get_current_project", return_value=project):
+            return Client()._format_error(detail)
+
+    def test_other_team_switches_team_and_project_first(self):
+        msg = self._fmt(self.ARREARS)
+        assert "`chaotic team use t-other` then `chaotic project use OTH`" in msg
+        assert "then `chaotic sprint close s-9`" in msg
+        assert "--project" not in msg  # would resolve OTH in the wrong team
+
+    def test_same_team_other_project_uses_project_flag(self):
+        msg = self._fmt(self.ARREARS, team="t-other")
+        assert "team use" not in msg
+        assert "`chaotic sprint close s-9 --project OTH`" in msg
+        assert "after `chaotic project use OTH`" in msg
+
+    def test_refused_project_is_current(self):
+        msg = self._fmt(self.ARREARS, team="t-other", project="p-oth")
+        assert "project use" not in msg and "team use" not in msg
+        assert "`chaotic sprint close s-9 --project OTH`" in msg
+
+    def test_limbo_names_project_and_switch(self):
+        detail = {
+            "error_code": "sprint_in_limbo", "sprint_id": "s-9",
+            "pending_rituals": [{"name": "retro", "prompt": "p"}],
+            "project_id": "p-oth", "project_key": "OTH", "team_id": "t-other",
+        }
+        msg = self._fmt(detail)
+        assert "project OTH is in limbo" in msg
+        assert "`chaotic team use t-other` then `chaotic project use OTH`, then `chaotic ritual pending`" in msg
+
+    def test_limbo_on_current_project(self):
+        detail = {
+            "pending_rituals": [], "sprint_id": "s-9",
+            "project_id": "p-oth", "project_key": "OTH", "team_id": "t-other",
+        }
+        msg = self._fmt(detail, team="t-other", project="p-oth")
+        assert msg == "Sprint in project OTH is in limbo. Run `chaotic ritual pending` to see what to do next."
+
+    def test_old_server_limbo_keeps_old_advice(self):
+        msg = self._fmt({"pending_rituals": [], "sprint_id": "s"})
+        assert msg == "Sprint is in limbo. Run `chaotic ritual pending` to see what to do next."
 
 
 class TestFormatError:
