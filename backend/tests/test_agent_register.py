@@ -454,9 +454,11 @@ class TestRegisterOnly:
         wrapper judges a method by the API function it names, with the
         same @reads/@writes marker as that function's REST route
         (CHT-1561). This pins that every public coroutine is either a
-        resolver (reads only) or wrapped, that each wrapped method really
-        calls the function it names, and the split itself, so a new
-        write can't hide behind a read's marker unnoticed."""
+        resolver (reads only) or wrapped, that each wrapped method's one
+        ``app.api`` call is the function it names, and the split itself,
+        so a new write can't hide behind a read's marker unnoticed. It
+        checks the ``<module>_api.<fn>(`` call only: a method that also
+        wrote through a service directly would pass, so review that."""
         import inspect
         import re
 
@@ -506,9 +508,41 @@ class TestRegisterOnly:
         assert [(sorted(m), p) for m, p, a in routes if a is None] == []
         # A read must be a GET, and a GET must be a read: the marker
         # agrees with the HTTP method everywhere today, so a disagreement
-        # is a mislabel until someone decides otherwise here.
+        # is a mislabel until someone decides otherwise. A deliberate
+        # exception (say a side-effecting GET reclassified @writes, per
+        # CHT-1568) goes in an explicit exception list here; do not drop
+        # the assertion.
         assert [(sorted(m), p) for m, p, a in routes if (a is Access.READ) != (m == {"GET"})] == []
         assert [(sorted(m), p) for m, p, a in routes if a is Access.REGISTER] == [(["POST"], "/api/agents/register")]
+
+    def test_reads_with_bookkeeping_are_all_listed(self):
+        """Every @reads API function that calls a known lazy-reconciliation
+        path is in READS_WITH_BOOKKEEPING, and nothing else is (CHT-1561
+        review; the policy question is CHT-1568). A tripwire on the known
+        service calls, not a proof that the other reads are pure."""
+        import importlib
+        import inspect
+        import pkgutil
+        import re
+
+        import app.api
+        from app.auth.access import READS_WITH_BOOKKEEPING, Access, access_of
+
+        triggers = re.compile(
+            r"\.(release_expired_leases|release_lease_if_expired|list_ready_issues|ensure_sprints_exist"
+            r"|check_limbo|maybe_clear_limbo_for_project|get_issues_with_pending_gates"
+            r"|get_issues_with_pending_approvals)\("
+        )
+        found = set()
+        for info in pkgutil.iter_modules(app.api.__path__):
+            module = importlib.import_module(f"app.api.{info.name}")
+            for name, fn in vars(module).items():
+                if (
+                    inspect.iscoroutinefunction(fn) and fn.__module__ == module.__name__
+                    and access_of(fn) is Access.READ and triggers.search(inspect.getsource(fn))
+                ):
+                    found.add(f"{module.__name__}.{name}")
+        assert found == set(READS_WITH_BOOKKEEPING)
 
     def test_an_unclassified_endpoint_is_refused_to_a_registrar(self):
         from fastapi import HTTPException

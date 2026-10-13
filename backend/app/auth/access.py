@@ -22,10 +22,17 @@ authenticated route and every MCP backend method to be classified, so
 that path is a backstop, not the rule.
 
 A read here is what a registrar may call, not a promise of no side
-effects: ``get_current_sprint`` may create a project's first sprints
-(``ensure_sprints_exist``, unattributed bookkeeping, CHT-1557). The same
-classification is where OAuth scopes will attach (architecture review
-e10bc055, finding 3).
+effects. Some reads reconcile stored state lazily, as unattributed
+bookkeeping a caller cannot direct; ``READS_WITH_BOOKKEEPING`` below
+lists them, and tests/test_agent_register.py pins that list against the
+service calls known to do it (a new mechanism must be added there). Whether a register-only principal, or a
+read-scoped OAuth token, should be able to trigger them is CHT-1568.
+The same classification is where OAuth scopes will attach
+(architecture review e10bc055, finding 3).
+
+``signup`` and ``login`` are classified too though no registrar rule
+reaches them (they do not authenticate): every route carries a marker,
+for completeness and for the scopes to come.
 """
 from __future__ import annotations
 
@@ -56,6 +63,31 @@ def _mark(access: Access):
 reads = _mark(Access.READ)
 writes = _mark(Access.WRITE)
 registers = _mark(Access.REGISTER)
+
+# Reads that write as a side effect, by qualified name -> what they do.
+# Each is unattributed reconciliation, triggered by any reader:
+#   lease release (CHT-1246): an expired claim lease reverts the issue to
+#     todo, unassigns it, records LEASE_EXPIRED and broadcasts;
+#   limbo self-heal (CHT-1278): check_limbo completes a sprint's limbo
+#     once nothing is pending;
+#   orphan cleanup: a ticket-limbo record whose gate is gone is resolved
+#     and its blockers cleared;
+#   sprint materialization (CHT-1557): a project's first current/next
+#     sprints are created.
+_LEASE = "lease release (CHT-1246)"
+READS_WITH_BOOKKEEPING: dict[str, str] = {
+    "app.api.issues.get_issue": _LEASE,
+    "app.api.issues.get_issue_by_identifier": _LEASE,
+    "app.api.issues.list_issues": _LEASE,
+    "app.api.issues.list_team_activities": _LEASE,
+    "app.api.issues.list_ready_issues": _LEASE,
+    "app.api.nested.list_project_ready_issues": _LEASE,
+    "app.api.nested.list_team_ready_issues": _LEASE,
+    "app.api.rituals.get_limbo_status": "limbo self-heal (CHT-1278)",
+    "app.api.rituals.get_issues_with_pending_gates": "orphaned ticket-limbo cleanup",
+    "app.api.rituals.get_issues_with_pending_approvals": "orphaned ticket-limbo cleanup",
+    "app.api.sprints.get_current_sprint": "sprint materialization (CHT-1557)",
+}
 
 # What a registrar may call.
 REGISTRAR_MAY = frozenset({Access.READ, Access.REGISTER})
