@@ -26,10 +26,14 @@ import json
 import re
 from urllib.parse import parse_qsl
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.api.deps import CurrentUser, HumanUser
+from app.api.deps import CurrentUser, HumanUser, security
+from app.auth.credentials import CredentialKind, classify
 from app.auth.access import reads, writes
 from app.config import get_settings
 from app.enums import OAuthClientRegistration
@@ -46,6 +50,7 @@ from app.schemas.oauth import (
     AuthorizationRequestView,
     ClientRegistrationResponse,
     ConnectionResponse,
+    ConsentClient,
     TokenAgent,
     TokenResponse,
 )
@@ -449,11 +454,31 @@ HUMAN_REQUIRED = {
     "error_code": "human_required",
     "message": "Only a person can list or revoke their connected apps; an agent cannot.",
 }
+OAUTH_TOKEN_REFUSED = {
+    "error_code": "oauth_token_refused",
+    "message": "A connected app's own token cannot list or revoke connected apps; "
+               "use your web login, your CLI login or one of your API keys.",
+}
 
 
-def _require_human(user) -> None:
+async def _require_person(
+    user: CurrentUser,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> OxydeUser:
+    """A human, on one of their own credentials: a session JWT (web or
+    CLI login) or a human's ``ck_`` key. Refused by credential class first,
+    so an OAuth access token is refused whoever its principal is: once a
+    holder session can act as a human (WEB_LOGIN, CHT-1524), a token an
+    app holds must still not reach that human's other connections. Then
+    any agent, whatever it presents."""
+    if credentials is not None and classify(credentials.credentials) is CredentialKind.OAUTH_ACCESS:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(OAUTH_TOKEN_REFUSED))
     if user.is_agent:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(HUMAN_REQUIRED))
+    return user
+
+
+Person = Annotated[OxydeUser, Depends(_require_person)]
 
 
 async def _connection_responses(rows) -> list[ConnectionResponse]:
@@ -464,14 +489,18 @@ async def _connection_responses(rows) -> list[ConnectionResponse]:
     agents = {u.id: u for u in await OxydeUser.objects.filter(id__in=ids("principal_user_id")).all()}
     teams = {t.id: t for t in await OxydeTeam.objects.filter(id__in=ids("team_id")).all()}
     out = []
+    client_service = OAuthClientService()
     for row in rows:
         client = clients.get(row.oauth_client_id)
         agent = agents.get(row.principal_user_id)
         team = teams.get(row.team_id)
+        identity = client_service.identity(client) if client else None
         out.append(ConnectionResponse(
             id=row.id,
-            client_id=row.oauth_client_id,
-            client_name=(client.client_name if client else None),
+            client=ConsentClient(
+                client_id=client.id, name=identity.name, trust=identity.trust, host=identity.host,
+                registration=client.registration.value,
+            ) if client else None,
             agent=TokenAgent(id=agent.id, name=agent.name, kind=agent.kind) if agent else None,
             team_id=row.team_id,
             team_name=team.name if team else None,
@@ -489,20 +518,18 @@ async def _connection_responses(rows) -> list[ConnectionResponse]:
 
 @router.get("/connections", response_model=list[ConnectionResponse])
 @reads
-async def list_connections(current_user: CurrentUser) -> list[ConnectionResponse]:
+async def list_connections(current_user: Person) -> list[ConnectionResponse]:
     """The caller's live OAuth connections, newest first."""
-    _require_human(current_user)
     rows = await RevocationService().list_connections(current_user.id)
     return await _connection_responses(rows)
 
 
 @router.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 @writes
-async def revoke_connection(connection_id: str, current_user: CurrentUser) -> None:
+async def revoke_connection(connection_id: str, current_user: Person) -> None:
     """Revoke one of the caller's own OAuth connections: the holder
     session and every token on it, effective on the app's next request.
     Idempotent; 404 for a connection that is not the caller's."""
-    _require_human(current_user)
     result = await RevocationService().revoke_connection(current_user.id, connection_id)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")

@@ -9,6 +9,7 @@ import { showToast, showApiError } from './ui.js';
 import { escapeHtml, escapeAttr, formatDate } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
+import { trustBadge } from './oauth-consent.js';
 
 let connections = [];
 
@@ -30,7 +31,8 @@ export async function loadConnections() {
 }
 
 function appName(connection) {
-    return connection.client_name || connection.client_id || 'Unknown app';
+    const client = connection.client || {};
+    return client.name || client.client_id || 'Unknown app';
 }
 
 function reach(connection) {
@@ -58,7 +60,7 @@ export function renderConnections() {
     container.innerHTML = connections.map(c => `
         <div class="api-key-item connected-app-item">
             <div class="api-key-info">
-                <div class="api-key-name">${escapeHtml(appName(c))}</div>
+                <div class="api-key-name">${escapeHtml(appName(c))} ${trustBadge(c.client || { trust: 'unverified' })}</div>
                 <div class="api-key-meta">
                     <span>as ${escapeHtml(c.agent ? c.agent.name : 'an agent')}</span>
                     <span>${escapeHtml(reach(c))}</span>
@@ -66,7 +68,7 @@ export function renderConnections() {
                     <span class="api-key-date">Connected ${formatDate(c.created_at)}</span>
                     ${c.last_used_at ? `<span class="api-key-date">Last used ${formatDate(c.last_used_at)}</span>` : ''}
                 </div>
-                ${c.client_id && c.client_id !== c.client_name ? `<div class="api-key-meta"><code>${escapeHtml(c.client_id)}</code></div>` : ''}
+                ${c.client && c.client.client_id !== c.client.name ? `<div class="api-key-meta"><code>${escapeHtml(c.client.client_id)}</code></div>` : ''}
             </div>
             <button class="btn btn-danger-outline" data-action="revoke-connection" data-connection-id="${escapeAttr(c.id)}" data-connection-name="${escapeAttr(appName(c))}">Disconnect</button>
         </div>

@@ -41,7 +41,9 @@ validation reads it (one indexed single-row read) and trusts a cached
 token row only if it was cached under the same epoch, so a revocation
 made by any process, or by an admin script that goes through
 ``revoke_session``, is seen on the very next request everywhere. Rule:
-every revocation goes through ``revoke_session``. A cascade DELETE (a
+every revocation goes through ``revoke_session``, or through
+``revoke_sessions_batch`` followed by exactly one event in the same
+transaction (``RevocationService``, CHT-1523). A cascade DELETE (a
 user, team, client or key deleted) writes no event, so a cached
 validation of a token deleted that way can outlive it by up to
 VALIDATION_CACHE_SECONDS.
@@ -813,6 +815,32 @@ class TokenService:
             revoked = await self._revoke_session_in_tx(holder_session_id, actor_id=actor_id, reason=reason)
         _forget_grace_pairs(holder_session_id)
         return revoked
+
+    async def revoke_sessions_batch(
+        self, holder_session_ids, *, actor_id: str | None, reason: str,
+    ) -> tuple[int, int]:
+        """Revoke many holder sessions and their tokens in two set-based
+        updates, writing NO ``revocation_events`` row: the caller must
+        write exactly one, in the same transaction, after this returns
+        (``RevocationService._record`` does; that row moves the epoch
+        once for the whole action). Call inside ``atomic()``. Returns
+        (sessions revoked, tokens revoked); sessions already revoked are
+        left as they are and not counted."""
+        ids = list(dict.fromkeys(holder_session_ids))
+        if not ids:
+            return 0, 0
+        now = _now()
+        # The conditional UPDATE first, as in _revoke_session_in_tx: it
+        # takes the write lock before the tokens are read.
+        sessions = await OxydeHolderSession.objects.filter(id__in=ids, revoked_at__isnull=True).update(
+            revoked_at=now, revoked_by_id=actor_id, revoked_reason=reason,
+        )
+        tokens = await OxydeAuthToken.objects.filter(
+            holder_session_id__in=ids, revoked_at__isnull=True,
+        ).update(revoked_at=now)
+        for holder_session_id in ids:
+            _forget_grace_pairs(holder_session_id)
+        return sessions, tokens
 
     async def _revoke_session_in_tx(self, holder_session_id: str, *, actor_id: str | None, reason: str) -> bool:
         now = _now()

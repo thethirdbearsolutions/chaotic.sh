@@ -129,7 +129,7 @@ async def delete_team(team_id: str, current_user: CurrentUser):
             detail="Only owner can delete team",
         )
 
-    await team_service.delete(team)
+    await team_service.delete(team, actor_id=current_user.id)
 
 
 # Members

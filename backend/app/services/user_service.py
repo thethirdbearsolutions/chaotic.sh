@@ -154,9 +154,12 @@ class UserService:
             # The deletes below cascade their sessions away; revoking them
             # first moves the revocation epoch, so no cached validation
             # outlives the account (CHT-1523).
-            await RevocationService().revoke_for_holder(user.id, actor_id=None)
-            await agent_service.revoke_credentials_of(
-                [user.id] + [agent.id for agent in agents], actor_id=None, reason=REASON_PRINCIPAL_DELETED,
+            revocations = RevocationService()
+            await revocations.revoke_for_principals(
+                [user.id], actor_id=None, reason=REASON_PRINCIPAL_DELETED, as_holder=True,
+            )
+            await revocations.revoke_for_principals(
+                [agent.id for agent in agents], actor_id=None, reason=REASON_PRINCIPAL_DELETED,
             )
             for agent in agents:
                 await agent_service._retire_identities(agent.id)

@@ -282,9 +282,12 @@ in uvicorn's access log or a reverse proxy's. Responses are sent with
 
 Each person sees the OAuth connections they approved under **Settings >
 Connected Apps** in the web app, or with `chaotic auth connections list`,
-and can disconnect any of them (`chaotic auth connections revoke <id>`;
+and can disconnect any of them. Each app is labelled exactly as the
+consent screen labelled it (recognized, identified by its website's host,
+or unverified), so an unverified app calling itself "Claude" says so (`chaotic auth connections revoke <id>`;
 REST: `GET` and `DELETE /api/oauth/connections`). Only their own: someone
-else's connection is a 404, and an agent cannot list or revoke any. This
+else's connection is a 404. An agent cannot list or revoke any, and
+neither can any OAuth access token, whoever it acts as. This
 works with `OAUTH_ENABLED` off too, so turning OAuth off never stops
 anyone ending a connection. A disconnected app's next request fails.
 
@@ -299,8 +302,10 @@ Connections also end on their own when what they depended on goes
   approved in that team, the ones claimed with their keys there, and the
   keys themselves (as before).
 - **A person's account deleted**: every connection they approved.
+- **A team deleted**: every connection in it.
 
-Each one is recorded in the `revocation_events` table, with counts.
+Each action is recorded as one row in the `revocation_events` table, with
+counts.
 
 ## Firewall example (ufw)
 

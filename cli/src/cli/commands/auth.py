@@ -3,10 +3,30 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
 from .shared import _client, console, parse_duration
+
+
+# How the consent screen labels an app (frontend/src/oauth-consent.js).
+TRUST_LABELS = {
+    "recognized": "recognized",
+    "cimd": "identified by its website",
+    "unverified": "unverified (registered itself)",
+}
+
+
+def _app_name(connection) -> str:
+    client = connection.get("client") or {}
+    return client.get("name") or client.get("client_id") or "unknown app"
+
+
+def _trust_label(connection) -> str:
+    client = connection.get("client") or {}
+    label = TRUST_LABELS.get(client.get("trust"), TRUST_LABELS["unverified"])
+    return f"{label} · {client['host']}" if client.get("host") else label
 
 
 def _main():
@@ -219,6 +239,7 @@ def register(cli):
         table = Table(title="Connected Apps")
         table.add_column("ID", style="dim", no_wrap=True)
         table.add_column("App")
+        table.add_column("Trust")
         table.add_column("Agent")
         table.add_column("Team")
         table.add_column("Projects")
@@ -226,18 +247,22 @@ def register(cli):
         table.add_column("Created")
         table.add_column("Last Used")
 
+        # Every string here comes from the server, and the app's name from
+        # the app itself: escape it all, so a name like "[/red]" cannot
+        # break the render or "[link=...]" inject a hyperlink.
         for c in connections:
             agent = c.get("agent") or {}
             projects = c.get("project_ids")
             table.add_row(
-                c["id"][:8],
-                c.get("client_name") or c.get("client_id") or "-",
-                agent.get("name") or "-",
-                c.get("team_name") or "-",
+                escape(c["id"][:8]),
+                escape(_app_name(c)),
+                escape(_trust_label(c)),
+                escape(agent.get("name") or "-"),
+                escape(c.get("team_name") or "-"),
                 "all" if projects is None else str(len(projects)),
-                c.get("policy") or "-",
-                (c.get("created_at") or "")[:10] or "-",
-                (c.get("last_used_at") or "")[:10] or "-",
+                escape(c.get("policy") or "-"),
+                escape((c.get("created_at") or "")[:10] or "-"),
+                escape((c.get("last_used_at") or "")[:10] or "-"),
             )
 
         console.print(table)
@@ -257,16 +282,19 @@ def register(cli):
         if exact:
             matches = exact
         if not matches:
-            console.print(f"[red]Connection '{connection_id}' not found.[/red]")
+            console.print(f"[red]Connection '{escape(connection_id)}' not found.[/red]")
             raise SystemExit(1)
         if len(matches) > 1:
-            console.print(f"[red]Ambiguous connection ID prefix '{connection_id}'. Please be more specific.[/red]")
+            console.print(
+                f"[red]Ambiguous connection ID prefix '{escape(connection_id)}'. Please be more specific.[/red]"
+            )
             raise SystemExit(1)
         connection = matches[0]
-        name = connection.get("client_name") or connection.get("client_id") or connection["id"]
+        name = f"{_app_name(connection)} ({_trust_label(connection)})"
+        # confirm_action prompts through click, not Rich: no markup there.
         if not m.confirm_action(f"Disconnect '{name}'? It will have to be approved again to reconnect."):
             raise SystemExit(0)
         _client().revoke_connection(connection["id"])
-        console.print(f"[green]Disconnected '{name}'.[/green]")
+        console.print(f"[green]Disconnected '{escape(name)}'.[/green]")
 
     return auth

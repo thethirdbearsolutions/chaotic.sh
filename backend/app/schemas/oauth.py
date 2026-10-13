@@ -170,8 +170,10 @@ class ConnectionResponse(BaseModel):
     regardless."""
 
     id: str
-    client_id: str | None = None
-    client_name: str | None = None
+    # The app, named exactly as the consent screen named it: trust label
+    # and host from OAuthClientService.identity(), never the bare
+    # self-asserted client_name (CHT-1523 review).
+    client: ConsentClient | None = None
     agent: TokenAgent | None = None
     team_id: str | None = None
     team_name: str | None = None

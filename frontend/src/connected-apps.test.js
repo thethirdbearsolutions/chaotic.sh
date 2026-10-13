@@ -29,8 +29,13 @@ import {
 
 const CONNECTION = {
     id: 'hs-1',
-    client_id: 'https://claude.ai/oauth/claude-client-metadata',
-    client_name: 'Claude',
+    client: {
+        client_id: 'https://claude.ai/oauth/claude-client-metadata',
+        name: 'Claude',
+        trust: 'recognized',
+        host: 'claude.ai',
+        registration: 'cimd',
+    },
     agent: { id: 'a-1', name: 'Claude (Ethan)', kind: null },
     team_id: 't-1',
     team_name: 'Chaotic',
@@ -69,6 +74,13 @@ describe('connected-apps module', () => {
         expect(container.textContent).toContain('No connected apps');
     });
 
+    it('labels a connection whose client is gone as unverified', () => {
+        setConnections([{ ...CONNECTION, client: null }]);
+        renderConnections();
+        expect(container.textContent).toContain('Unknown app');
+        expect(container.textContent).toContain('Unverified app');
+    });
+
     it('does nothing without its container', () => {
         document.body.innerHTML = '';
         expect(() => renderConnections()).not.toThrow();
@@ -77,7 +89,10 @@ describe('connected-apps module', () => {
     it('renders each connection with what it can do', () => {
         setConnections([
             CONNECTION,
-            { ...CONNECTION, id: 'hs-2', client_name: null, project_ids: ['p-1'], agent: null, last_used_at: null },
+            {
+                ...CONNECTION, id: 'hs-2', project_ids: ['p-1'], agent: null, last_used_at: null,
+                client: { client_id: 'dcr_x', name: 'Claude', trust: 'unverified', host: null, registration: 'dcr' },
+            },
         ]);
         renderConnections();
         const items = container.querySelectorAll('.connected-app-item');
@@ -87,7 +102,12 @@ describe('connected-apps module', () => {
         expect(items[0].textContent).toContain('all of Chaotic');
         expect(items[0].textContent).toContain('policy write');
         expect(items[0].textContent).toContain('Last used');
-        expect(items[1].textContent).toContain(CONNECTION.client_id);
+        expect(items[0].textContent).toContain('Recognized app');
+        expect(items[0].textContent).toContain('claude.ai');
+        expect(items[0].textContent).toContain(CONNECTION.client.client_id);
+        // An unverified app that calls itself "Claude" says so.
+        expect(items[1].textContent).toContain('Unverified app');
+        expect(items[1].textContent).toContain('dcr_x');
         expect(items[1].textContent).toContain('1 project in Chaotic');
         expect(items[1].textContent).not.toContain('Last used');
         const button = items[0].querySelector('[data-action="revoke-connection"]');
@@ -96,7 +116,7 @@ describe('connected-apps module', () => {
     });
 
     it('escapes what an app says about itself', () => {
-        setConnections([{ ...CONNECTION, client_name: '<img src=x onerror=alert(1)>' }]);
+        setConnections([{ ...CONNECTION, client: { ...CONNECTION.client, name: '<img src=x onerror=alert(1)>' } }]);
         renderConnections();
         expect(container.querySelector('img')).toBeNull();
     });

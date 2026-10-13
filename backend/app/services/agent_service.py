@@ -393,10 +393,7 @@ class AgentService:
         key that signs in as them opened or minted (CHT-1523). Call inside
         the transaction that deactivates, retires or deletes them, after
         its first write."""
-        revocations = RevocationService()
-        keys = await OxydeAPIKey.objects.filter(principal_user_id__in=user_ids).all()
-        await revocations.revoke_for_keys([key.id for key in keys], actor_id=actor_id, reason=reason)
-        await revocations.revoke_for_principals(user_ids, actor_id=actor_id, reason=reason)
+        await RevocationService().revoke_for_principals(user_ids, actor_id=actor_id, reason=reason)
 
     @staticmethod
     def _log_retired(identities, registrar_id: str, actor_id: str | None) -> None:

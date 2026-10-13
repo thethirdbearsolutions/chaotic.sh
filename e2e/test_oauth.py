@@ -225,7 +225,8 @@ def test_connected_apps_list_and_revoke(test_server, oauth_on, web_login_token, 
 
     [connection] = api_client.list_connections()
     assert connection["id"] == tokens["chaotic"]["holder_session_id"]
-    assert connection["client_id"] == client_id and connection["client_name"] == "E2E Connector"
+    assert connection["client"]["client_id"] == client_id and connection["client"]["name"] == "E2E Connector"
+    assert connection["client"]["trust"] == "unverified"  # registered itself (DCR)
     assert connection["agent"]["id"] == tokens["chaotic"]["agent"]["id"]
     assert connection["team_id"] == test_team["id"] and connection["policy"] == "write"
 
