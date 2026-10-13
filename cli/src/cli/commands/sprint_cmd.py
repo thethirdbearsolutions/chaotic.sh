@@ -267,25 +267,71 @@ def register(cli):
 
     @sprint.command("close")
     @click.argument("sprint_id", required=False)
-    @_main().require_project
+    @click.option("--project", "project_key", help="Project (ID, key, or name) - overrides current project")
+    @_main().require_team
     @_main().handle_error
-    def sprint_close(sprint_id):
+    def sprint_close(sprint_id, project_key):
         """Close the current sprint and rotate to next.
 
         SPRINT_ID can be a full ID, prefix, or omitted for current sprint.
         If project has rituals, sprint enters limbo until rituals are attested.
+
+        Arrears is per project: when a refusal names a project other than
+        your current one, close that project's sprint with --project KEY.
         """
         m = _main()
-        project_id = m.get_current_project()
+        if project_key:
+            project = m.resolve_project(project_key)
+        else:
+            project_id = m.get_current_project()
+            if not project_id:
+                raise click.ClickException(
+                    "No project selected. Pass --project KEY, or run 'chaotic project use KEY'."
+                )
+            project = _client().get_project(project_id)
+        project_id = project["id"]
+        key = project.get("key") or project_id
         sprint_id = m.resolve_sprint_id(sprint_id or "current", project_id)
 
         result = _client().close_sprint(sprint_id)
 
         if result.get("limbo"):
-            console.print(f"[yellow]Sprint '{result['name']}' closed.[/yellow]")
-            console.print("Run `chaotic ritual list` to continue.")
+            # Limbo is not a rotation: the sprint is still the active one,
+            # so arrears still blocks this project until the rituals clear.
+            # Closing again does nothing but fail (CHT-1270).
+            console.print(
+                f"[yellow]Sprint '{result['name']}' in {key} entered limbo: it has not rotated yet, "
+                f"and {key} stays blocked until its sprint rituals are done.[/yellow]"
+            )
+            if project_id != m.get_current_project():
+                console.print(f"Run `chaotic project use {key}`, then `chaotic ritual pending` to continue.")
+            else:
+                console.print("Run `chaotic ritual pending` to continue.")
+            return
+
+        console.print(f"[green]Sprint '{result['name']}' in {key} closed. Next sprint is now active.[/green]")
+        # Say what the caller actually needs to know -- "am I unblocked?" --
+        # from the sprint that is active now, not the closed one, which
+        # stays over budget forever (CHT-1351, CHT-1270). The close has
+        # already committed, so a failed lookup must not read as a failed
+        # close and invite another one.
+        try:
+            active = _client().get_current_sprint(project_id)
+        except Exception:
+            return
+        budget = active.get("budget")
+        spent = active.get("points_spent") or 0
+        if budget is None:
+            console.print(f"Now active: '{active.get('name')}' (no budget). {key} is unblocked.")
+        elif spent > budget:
+            console.print(
+                f"[red]Now active: '{active.get('name')}' ({spent}/{budget} points), "
+                f"which is itself over budget.[/red]"
+            )
         else:
-            console.print(f"[green]Sprint '{result['name']}' closed. Next sprint is now active.[/green]")
+            console.print(
+                f"Now active: '{active.get('name')}' ({spent}/{budget} points). {key} is unblocked."
+            )
 
     @sprint.command("update")
     @click.argument("sprint_id", required=False)

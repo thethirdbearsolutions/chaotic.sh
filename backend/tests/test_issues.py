@@ -944,6 +944,34 @@ async def test_check_sprint_arrears_blocks_operations(db, test_project, test_use
     assert "arrears" in str(exc_info.value).lower()
     assert exc_info.value.budget == 10
     assert exc_info.value.points_spent == 15
+    assert exc_info.value.project_key == test_project.key
+    assert exc_info.value.sprint_id == sprint.id
+
+
+@pytest.mark.asyncio
+async def test_deduct_refusal_names_project_and_sprint(db, test_project, test_user, test_issue):
+    """CHT-1270: the race-safe deduction's refusal (the second of two racing
+    closes) carries the same project/sprint context as the fast-path check."""
+    from app.services.issue_service import IssueService, SprintInArrearsError
+    from app.oxyde_models.sprint import OxydeSprint
+    from app.enums import SprintStatus
+
+    sprint = await OxydeSprint.objects.create(
+        project_id=test_project.id,
+        name="Spent Sprint",
+        status=SprintStatus.ACTIVE,
+        budget=3,
+        points_spent=4,
+    )
+
+    with pytest.raises(SprintInArrearsError) as exc_info:
+        await IssueService()._deduct_from_sprint_budget(test_issue, test_user.id)
+
+    assert exc_info.value.project_id == test_project.id
+    assert exc_info.value.project_key == test_project.key
+    assert exc_info.value.sprint_id == sprint.id
+    assert exc_info.value.sprint_name == "Spent Sprint"
+    assert test_project.key in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -2394,6 +2422,16 @@ async def test_update_issue_sprint_arrears_error(client, auth_headers, test_proj
     )
     assert response.status_code == 409
     assert "arrears" in response.json()["detail"]["message"].lower()
+    # CHT-1270: the refusal names the over-budget project and sprint, so a
+    # caller whose current project is another one closes the right sprint.
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "sprint_in_arrears"
+    assert detail["project_id"] == test_project.id
+    assert detail["project_key"] == test_project.key
+    assert detail["sprint_id"] == sprint.id
+    assert detail["sprint_name"] == "Arrears Sprint"
+    assert detail["arrears_by"] == 5
+    assert test_project.key in detail["message"]
 
 
 # ============================================

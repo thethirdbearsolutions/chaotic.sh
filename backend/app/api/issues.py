@@ -254,6 +254,30 @@ async def issue_response(issue: Issue) -> IssueResponse:
     return (await issues_to_responses([issue]))[0]
 
 
+def _arrears_detail(e: SprintInArrearsError) -> dict:
+    """The 409 body for a refusal caused by sprint arrears.
+
+    Names the project and sprint that are over budget (CHT-1270): the
+    refused ticket's project is not necessarily the caller's current one,
+    and closing the wrong project's sprint releases nothing here.
+    """
+    where = f" in project {e.project_key}" if e.project_key else ""
+    return {
+        "error_code": "sprint_in_arrears",
+        "message": (
+            f"Sprint is in arrears{where}. Close that project's active sprint to "
+            "continue; a spent budget ends a sprint, not a date."
+        ),
+        "budget": e.budget,
+        "points_spent": e.points_spent,
+        "arrears_by": e.arrears_by,
+        "sprint_id": e.sprint_id,
+        "sprint_name": e.sprint_name,
+        "project_id": e.project_id,
+        "project_key": e.project_key,
+    }
+
+
 async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> dict:
     """The 409 detail for a claim/close refused by pending ticket rituals
     (CHT-1360). Rows are the same PendingRitualResponse shape ritual_pending
@@ -384,13 +408,7 @@ async def create_issue(
     except SprintInArrearsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_arrears",
-                "message": "Sprint is in arrears. Close the current sprint to continue; a spent budget ends a sprint, not a date.",
-                "budget": e.budget,
-                "points_spent": e.points_spent,
-                "arrears_by": e.arrears_by,
-            },
+            detail=_arrears_detail(e),
         )
     except TicketRitualsError as e:
         raise HTTPException(
@@ -1064,13 +1082,7 @@ async def update_issue(
     except SprintInArrearsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "sprint_in_arrears",
-                "message": "Sprint is in arrears. Close the current sprint to continue; a spent budget ends a sprint, not a date.",
-                "budget": e.budget,
-                "points_spent": e.points_spent,
-                "arrears_by": e.arrears_by,
-            },
+            detail=_arrears_detail(e),
         )
     except TicketRitualsError as e:
         raise HTTPException(

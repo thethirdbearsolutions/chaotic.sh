@@ -219,6 +219,34 @@ class TestArrearsErrorParsing:
         assert "chaotic sprint close" in error_msg.lower()
 
 
+    def test_arrears_error_names_the_project_to_close(self, mock_client_request):
+        """CHT-1270: the refusal names the over-budget project and the exact close."""
+        response_data = {
+            "detail": {
+                "error_code": "sprint_in_arrears",
+                "message": "Sprint is in arrears in project OTH.",
+                "arrears_by": 2,
+                "budget": 10,
+                "points_spent": 12,
+                "sprint_id": "s-1",
+                "sprint_name": "Sprint 7",
+                "project_id": "p-1",
+                "project_key": "OTH",
+            }
+        }
+        mock_client_request.method_response = MockResponse(409, response_data)
+
+        client = Client()
+
+        with pytest.raises(APIError) as exc_info:
+            client._request("PATCH", "/api/issues/1", {"status": "done"})
+
+        error_msg = str(exc_info.value)
+        assert "Sprint 7 in project OTH" in error_msg
+        assert "12/10" in error_msg
+        assert "chaotic sprint close --project OTH" in error_msg
+
+
 class TestFormatError:
     """Tests for the _format_error helper method (CHT-788)."""
 

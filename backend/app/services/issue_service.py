@@ -54,14 +54,29 @@ Label = OxydeLabel
 
 
 class SprintInArrearsError(Exception):
-    """Raised when sprint is in arrears and budget-consuming operations are blocked."""
+    """Raised when sprint is in arrears and budget-consuming operations are blocked.
 
-    def __init__(self, budget: int, points_spent: int):
+    Carries which project's sprint is over budget (CHT-1270): arrears is
+    keyed on the ticket's project, and a caller whose current project is
+    a different one would otherwise "close the current sprint" in the
+    wrong project, over and over, without ever unblocking this one.
+    """
+
+    def __init__(
+        self, budget: int, points_spent: int, *,
+        sprint_id: str | None = None, sprint_name: str | None = None,
+        project_id: str | None = None, project_key: str | None = None,
+    ):
         self.budget = budget
         self.points_spent = points_spent
         self.arrears_by = points_spent - budget
+        self.sprint_id = sprint_id
+        self.sprint_name = sprint_name
+        self.project_id = project_id
+        self.project_key = project_key
+        where = f" in project {project_key}" if project_key else ""
         super().__init__(
-            f"Sprint is in arrears. Close the current sprint to continue; sprints end "
+            f"Sprint is in arrears{where}. Close that project's active sprint to continue; "
             f"a spent budget ends a sprint, not a date. "
             f"(budget: {budget}, spent: {points_spent}, arrears by: {self.arrears_by})"
         )
@@ -252,7 +267,12 @@ class IssueService:
             return
 
         if current_sprint.budget is not None and current_sprint.points_spent > current_sprint.budget:
-            raise SprintInArrearsError(current_sprint.budget, current_sprint.points_spent)
+            project = await OxydeProject.objects.get_or_none(id=project_id)
+            raise SprintInArrearsError(
+                current_sprint.budget, current_sprint.points_spent,
+                sprint_id=current_sprint.id, sprint_name=current_sprint.name,
+                project_id=project_id, project_key=project.key if project else None,
+            )
 
     async def _intent_is_stale(self, intent: "OxydeTicketLimbo") -> bool:
         """Whether an open intent has outlived its TTL and can be taken
@@ -759,7 +779,11 @@ class IssueService:
             # Lost the race (or entered already in arrears). Re-read the
             # live row for accurate budget+spent figures in the 409 body.
             fresh = await OxydeSprint.objects.filter(id=current_sprint.id).first() or current_sprint
-            raise SprintInArrearsError(fresh.budget, fresh.points_spent)
+            raise SprintInArrearsError(
+                fresh.budget, fresh.points_spent,
+                sprint_id=fresh.id, sprint_name=fresh.name,
+                project_id=project.id, project_key=project.key,
+            )
 
         # Record the transaction only after the increment actually applied,
         # so a blocked deduction never leaves an orphan transaction row.

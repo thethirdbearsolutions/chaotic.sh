@@ -117,8 +117,29 @@ class Client:
         if "pending_rituals" in detail:
             return "Sprint is in limbo. Run `chaotic ritual pending` to see what to do next."
         if "arrears_by" in detail:
-            return "Sprint is in arrears. Run `chaotic sprint close` to resolve, then complete rituals with `chaotic ritual pending`."
+            return self._format_arrears_error(detail)
         return detail.get("message", str(detail))
+
+    @staticmethod
+    def _format_arrears_error(detail: dict) -> str:
+        """Name the project that is over budget, and the close that fixes it.
+
+        Arrears is keyed on the refused ticket's project, which need not be
+        the current one; a bare `chaotic sprint close` then closes some
+        other project's sprint, and repeating it never helps (CHT-1270).
+        Servers before CHT-1270 send no project_key; keep the old advice.
+        """
+        key = detail.get("project_key")
+        if not key:
+            return "Sprint is in arrears. Run `chaotic sprint close` to resolve, then complete rituals with `chaotic ritual pending`."
+        name = detail.get("sprint_name") or "The active sprint"
+        spent, budget = detail.get("points_spent"), detail.get("budget")
+        figures = f" ({spent}/{budget} points)" if spent is not None and budget is not None else ""
+        return (
+            f"{name} in project {key} is in arrears{figures}. "
+            f"Run `chaotic sprint close --project {key}` to resolve: one close starts a fresh sprint. "
+            f"If it enters limbo instead, complete that project's rituals (`chaotic ritual pending`)."
+        )
 
     def _format_validation_errors(self, detail: list) -> str:
         """Format a list of FastAPI/pydantic validation errors (422 body)
