@@ -26,9 +26,23 @@ first (`uv tool install --force chaotic-cli==0.1.0a21`), then run
   the name.
 - **Deleting an agent that authored anything returns 409** (`chaotic agent
   delete`, `DELETE /agents/{id}`) with a count per kind of record, instead
-  of deleting its issues, comments, activity and documents with it. Only an
-  agent that authored nothing is deleted; to retire one that did, revoke its
-  API keys (`chaotic auth keys revoke`).
+  of deleting its issues, comments, activity and documents with it. The
+  count covers issues, comments, activity, documents, ritual gate requests,
+  attestations and approvals, budget transactions and revisions, so any
+  agent that has closed a ticket cannot be deleted. Only an agent that
+  authored nothing is deleted; to retire one that did, revoke its API keys
+  (`chaotic auth keys revoke`). Only the agent's owner can do that: its keys
+  belong to the human who created it, so a team admin who can attempt the
+  delete cannot follow the 409's advice (CHT-1494).
+- **Known issue: deleting a human account still deletes its agents**, which
+  bypasses the 409 guard, on a database whose `users.parent_user_id` has ON
+  DELETE CASCADE (one built from the migration chain). The agents' authored
+  work survives with a null author, but the agents are gone
+  (CHT-1467).
+- **Server hosts need uv 0.5.31 or newer**: all three `pyproject.toml`
+  files now set `[tool.uv] required-version = ">=0.5.31"`, so `just sync`
+  (which `system install`/`upgrade` run) fails on an older uv. Upgrade uv
+  on the server first if needed.
 - **`system upgrade` refreshes the service file.** After migrating and
   before starting, it regenerates the systemd unit / launchd plist from
   `server.json` and rewrites it only when the result keeps every setting
@@ -69,8 +83,8 @@ first (`uv tool install --force chaotic-cli==0.1.0a21`), then run
   `issue_label` and `issue_update` descriptions name the CLI command for
   what MCP cannot do yet (CHT-1460).
 - **`issue view` shows relations**, and `issue view --json` has a
-  `relations` array with the same rows as `issue relations --json`
-  (CHT-1431).
+  `relations` array with the same rows as `issue relations --json`, or
+  `relations: null` when the relations call fails (CHT-1431).
 - **The open issue detail refreshes live** in the web UI when an agent or
   another client comments, updates, relates or attests on it, whichever
   list it was opened from. Refreshes are ordered and coalesced, keep focus,

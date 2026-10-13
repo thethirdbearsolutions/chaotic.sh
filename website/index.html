@@ -548,7 +548,7 @@ claude mcp add --transport http chaotic \
                         <time datetime="2026-10-14">Oct 14, 2026</time>
                     </div>
                     <ul class="release-notes">
-                        <li><strong>Deleting an agent keeps its work.</strong> Authorship no longer cascades, and an agent that authored anything can't be deleted; revoke its keys instead.</li>
+                        <li><strong>Agents that authored work can't be deleted, so their work is never lost.</strong></li>
                         <li><code>chaotic system upgrade</code> always ends with the server up, bounds shutdown time, and refreshes an unedited service file (backing up the old one).</li>
                         <li>The open issue in the web UI updates live when an agent comments, and MCP <code>issue_update</code> can set or clear a parent.</li>
                         <li>One database migration: upgrade with <code>chaotic system upgrade</code>, which backs up first. MCP clients should reconnect.</li>
