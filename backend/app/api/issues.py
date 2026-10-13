@@ -335,8 +335,9 @@ async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> di
          1 attested, awaiting human approval (design-review). Attest the
          unattested ones before claiming."
 
-    Cost: one attestation lookup per ritual (plus two user lookups per
-    attested one) on top of the gating queries the service already ran;
+    Cost: one attestation lookup per ritual (plus two batched principal
+    queries for all of them, CHT-1500) on top of the gating queries the
+    service already ran;
     fine at today's ritual counts, revisit if projects grow dozens.
     """
     rows = await pending_ritual_responses(e.issue_pk, e.rituals) if e.rituals else []

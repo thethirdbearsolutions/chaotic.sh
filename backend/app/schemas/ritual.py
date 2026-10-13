@@ -245,6 +245,9 @@ class RitualAttestationResponse(HasPrincipals, BaseModel):
     """Schema for ritual attestation response."""
 
     principal_fields: ClassVar[dict[str, str]] = {"attester": "attested_by", "approver": "approved_by"}
+    principal_name_fields: ClassVar[dict[str, str]] = {
+        "attester": "attested_by_name", "approver": "approved_by_name",
+    }
 
     id: str
     ritual_id: str

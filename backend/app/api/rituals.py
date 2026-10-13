@@ -28,34 +28,33 @@ from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
 from app.enums import ApprovalMode, RitualTrigger, ActivityType
-from app.services.principals import fill_principals, load_principals
+from app.services.principals import fill_principals
 from app.websocket import broadcast_attestation_event
 
 router = APIRouter()
 
 
-async def _build_attestation_response(att) -> RitualAttestationResponse:
-    """Build attestation response with its principals loaded (CHT-1500):
-    two queries for attester and approver together."""
-    principals = await load_principals((att.attested_by, att.approved_by))
-    attester = principals.get(att.attested_by) if att.attested_by else None
-    approver = principals.get(att.approved_by) if att.approved_by else None
+def _attestation_response(att) -> RitualAttestationResponse:
+    """The attestation without its principals; ``fill_principals`` sets
+    attester/approver and their names, once for a whole response."""
     return RitualAttestationResponse(
         id=att.id,
         ritual_id=att.ritual_id,
         sprint_id=att.sprint_id,
         issue_id=att.issue_id,
         attested_by=att.attested_by,
-        attested_by_name=attester.name if attester else None,
         attested_at=att.attested_at,
         note=att.note,
         artifact_ref=att.artifact_ref,
         approved_by=att.approved_by,
-        approved_by_name=approver.name if approver else None,
         approved_at=att.approved_at,
-        attester=attester,
-        approver=approver,
     )
+
+
+async def _build_attestation_response(att) -> RitualAttestationResponse:
+    """One attestation with its principals loaded (CHT-1500): two queries
+    for attester and approver together."""
+    return await fill_principals(_attestation_response(att))
 
 
 async def pending_ritual_responses(issue_id: str | None, rituals) -> list[PendingRitualResponse]:
@@ -78,9 +77,9 @@ async def pending_ritual_responses(issue_id: str | None, rituals) -> list[Pendin
             note_required=ritual.note_required,
             artifact=ritual.artifact,
             conditions=ritual.conditions,
-            attestation=(await _build_attestation_response(att)) if att else None,
+            attestation=_attestation_response(att) if att else None,
         ))
-    return rows
+    return await fill_principals(rows)
 
 
 async def create_ritual(
@@ -231,7 +230,7 @@ async def get_limbo_status(
         if limbo_sprint:
             att = await ritual_service.get_attestation(ritual.id, limbo_sprint.id)
             if att:
-                attestation = await _build_attestation_response(att)
+                attestation = _attestation_response(att)
 
         pending_responses.append(PendingRitualResponse(
             id=ritual.id,
@@ -266,9 +265,10 @@ async def get_limbo_status(
                     approval_mode=ritual.approval_mode,
                     created_at=ritual.created_at,
                     updated_at=ritual.updated_at,
-                    attestation=await _build_attestation_response(att),
+                    attestation=_attestation_response(att),
                 ))
 
+    await fill_principals([pending_responses, completed_responses])
     return LimboStatusResponse(
         in_limbo=in_limbo,
         sprint_id=limbo_sprint.id if limbo_sprint else None,
@@ -534,9 +534,10 @@ async def get_pending_ticket_rituals(
                 approval_mode=ritual.approval_mode,
                 created_at=ritual.created_at,
                 updated_at=ritual.updated_at,
-                attestation=await _build_attestation_response(att),
+                attestation=_attestation_response(att),
             ))
 
+    await fill_principals(completed_responses)
     return TicketRitualsStatusResponse(
         issue_id=issue_id,
         pending_rituals=pending_responses,
@@ -726,7 +727,7 @@ async def approve_issue_attestation(
     ritual_id: str,
     issue_id: str,
     current_user: CurrentUser,
-):
+) -> RitualAttestationResponse:
     """Approve a ticket-close ritual attestation (for REVIEW mode)."""
     ritual_service = RitualService()
     issue_service = IssueService()
@@ -809,7 +810,7 @@ async def approve_issue_attestation(
             detail=str(e),
         )
 
-    return attestation
+    return await _build_attestation_response(attestation)
 
 
 # ============================================================================
@@ -1204,7 +1205,7 @@ async def approve_attestation(
     ritual_id: str,
     current_user: CurrentUser,
     project_id: str | None = None,
-):
+) -> RitualAttestationResponse:
     """Approve a ritual attestation (for REVIEW/GATE modes).
 
     ``project_id`` is optional (CHT-1223) -- derived from the ritual when
@@ -1270,7 +1271,7 @@ async def approve_attestation(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-    return attestation
+    return await _build_attestation_response(attestation)
 
 
 @router.post("/{ritual_id}/complete", response_model=RitualAttestationResponse)

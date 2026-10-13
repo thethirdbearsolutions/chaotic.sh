@@ -9,6 +9,8 @@ name, and gets it unchanged.
 """
 from __future__ import annotations
 
+from rich.markup import escape
+
 
 def principal_label(principal, fallback: str | None = None) -> str | None:
     """``"Name"`` for a person, ``"Name (agent of Owner)"`` for an agent
@@ -21,3 +23,14 @@ def principal_label(principal, fallback: str | None = None) -> str | None:
         return name
     owner = principal.get("owner_name")
     return f"{name} (agent of {owner})" if owner else f"{name} (agent)"
+
+
+def principal_markup(principal, fallback: str | None = None) -> str | None:
+    """`principal_label`, escaped for a Rich markup string or table cell.
+
+    Names are free text: a name containing ``[/dim]`` would otherwise
+    crash the render (MarkupError) and one containing ``[link=...]`` would
+    inject a terminal hyperlink. Use this wherever the label lands in
+    markup; use `principal_label` for plain output (click.echo, JSON)."""
+    label = principal_label(principal, fallback)
+    return None if label is None else escape(label)

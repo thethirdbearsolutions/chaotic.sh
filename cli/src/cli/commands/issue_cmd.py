@@ -7,7 +7,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from ..principals import principal_label
+from ..principals import principal_markup
 from .shared import (
     _warn_off_scale_estimate,
     _client,
@@ -96,6 +96,15 @@ def _relation_row(r) -> tuple:
         _text(status),
         _text(r.get("direction")),
     )
+
+
+def _assignee_markup(iss) -> str:
+    """The Assignee line's value: an assigned issue whose assignee no
+    longer resolves (or an old backend without assignee_name) shows the
+    id prefix rather than claiming "Unassigned", as the list view does."""
+    if not iss.get("assignee_id"):
+        return "Unassigned"
+    return principal_markup(iss.get("assignee"), iss.get("assignee_name")) or escape(iss["assignee_id"][:8] + "...")
 
 
 def _relations_or_none(iss):
@@ -433,7 +442,7 @@ def register(cli):
                 i.get("issue_type", "task").replace("_", " ").title(),
                 "-" if i.get("estimate") is None else str(i.get("estimate")),
                 "Unassigned" if not i.get("assignee_id")
-                else principal_label(i.get("assignee"), i.get("assignee_id")[:8] + "..."),
+                else principal_markup(i.get("assignee"), i.get("assignee_id")[:8] + "..."),
             ])
             table.add_row(*row)
 
@@ -633,8 +642,8 @@ def register(cli):
                 f"[dim]Priority:[/dim] {iss['priority'].replace('_', ' ').title()}",
                 f"[dim]Type:[/dim] {iss.get('issue_type', 'task').replace('_', ' ').title()}",
                 f"[dim]Estimate:[/dim] {'-' if iss.get('estimate') is None else iss['estimate']} points",
-                f"[dim]Assignee:[/dim] {principal_label(iss.get('assignee'), iss.get('assignee_name')) or 'Unassigned'}",
-                f"[dim]Creator:[/dim] {principal_label(iss.get('creator'), iss.get('creator_name')) or 'Unknown'}",
+                f"[dim]Assignee:[/dim] {_assignee_markup(iss)}",
+                f"[dim]Creator:[/dim] {principal_markup(iss.get('creator'), iss.get('creator_name')) or 'Unknown'}",
             ]
 
             # Show parent info if this is a sub-issue
@@ -675,9 +684,9 @@ def register(cli):
                             date_str = dt.strftime('%Y-%m-%d %H:%M')
                         except (ValueError, AttributeError):
                             date_str = created_at[:16] if len(created_at) > 16 else created_at
-                        console.print(f"  \u2022 [dim]{principal_label(c.get('author'), c.get('author_name', 'User'))} ({date_str}):[/dim]")
+                        console.print(f"  \u2022 [dim]{principal_markup(c.get('author'), c.get('author_name', 'User'))} ({date_str}):[/dim]")
                     else:
-                        console.print(f"  \u2022 [dim]{principal_label(c.get('author'), c.get('author_name', 'User'))}:[/dim]")
+                        console.print(f"  \u2022 [dim]{principal_markup(c.get('author'), c.get('author_name', 'User'))}:[/dim]")
                     console.print(Markdown(c.get('content', '')))
 
             # Show relations (CHT-1431): blockers matter before claiming.
@@ -703,7 +712,7 @@ def register(cli):
                     console.print("\n[bold]Ritual Attestations:[/bold]")
                     for r in attestations_with_notes:
                         att = r["attestation"]
-                        console.print(f"  \u2713 [green]{r['name']}[/green] - {principal_label(att.get('attester'), att.get('attested_by_name', 'Unknown'))}")
+                        console.print(f"  \u2713 [green]{r['name']}[/green] - {principal_markup(att.get('attester'), att.get('attested_by_name', 'Unknown'))}")
                         if att.get("note"):
                             console.print(f"    [dim]{att['note']}[/dim]")
             except m.APIError:
@@ -1111,7 +1120,7 @@ def register(cli):
                 m.output_json(rev)
                 return
             body = rev.get("description") or "(empty)"
-            author = principal_label(rev.get("author"), rev.get("author_name") or "Unknown")
+            author = principal_markup(rev.get("author"), rev.get("author_name") or "Unknown")
             date = (rev.get("created_at") or "")[:19].replace("T", " ")
             console.print(Panel(
                 Markdown(body),
@@ -1137,7 +1146,7 @@ def register(cli):
         for rev in revisions:
             table.add_row(
                 f"v{rev['version']}",
-                principal_label(rev.get("author"), rev.get("author_name") or "Unknown"),
+                principal_markup(rev.get("author"), rev.get("author_name") or "Unknown"),
                 (rev.get("created_at") or "")[:19].replace("T", " "),
             )
 
@@ -1567,7 +1576,7 @@ def register(cli):
                 ref = "-"
 
             action = (a.get("activity_type") or "").replace("_", " ")
-            by = principal_label(a.get("user"), a.get("user_name") or a.get("user_email") or "-")
+            by = principal_markup(a.get("user"), a.get("user_name") or a.get("user_email") or "-")
 
             # Build details
             details = ""
@@ -1618,7 +1627,7 @@ def register(cli):
             else:
                 source = c.get("source_type", "-")
 
-            by = principal_label(c.get("author"), c.get("author_name") or "-")
+            by = principal_markup(c.get("author"), c.get("author_name") or "-")
             content = (c.get("content") or "").replace("\n", " ")[:80]
 
             table.add_row(date, source, by, content)

@@ -78,7 +78,12 @@ async def fill_principals(responses):
     }
     principals = await load_principals(ids)
     for m in models:
+        names = type(m).principal_name_fields
         for field, id_field in type(m).principal_fields.items():
             uid = getattr(m, id_field)
-            setattr(m, field, principals.get(uid) if uid else None)
+            principal = principals.get(uid) if uid else None
+            setattr(m, field, principal)
+            name_field = names.get(field)
+            if name_field and principal and getattr(m, name_field) is None:
+                setattr(m, name_field, principal.name)
     return responses

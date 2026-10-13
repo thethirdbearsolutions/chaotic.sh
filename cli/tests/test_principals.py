@@ -1,6 +1,6 @@
 """The CLI says when an actor is an agent, and whose (CHT-1500)."""
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -93,3 +93,100 @@ class TestRendering:
 
         assert result.exit_code == 0, result.output
         assert "Builder Bot (agent of Ada)" in result.output
+
+
+EVIL_AGENT = {"id": "a2", "name": "[link=https://evil.example]Bot[/link]", "is_agent": True,
+              "owner_id": "u2", "owner_name": "Ada [/dim]"}
+EVIL_PERSON = {"id": "u2", "name": "Ada [/dim]", "is_agent": False, "owner_id": None, "owner_name": None}
+
+
+class TestMarkupEscaping:
+    """Names are free text, and they land in Rich markup (PR #327 review,
+    finding 2): a closing tag must not crash the render and a link tag
+    must not become a hyperlink."""
+
+    def test_principal_markup_escapes(self):
+        from cli.principals import principal_markup
+
+        assert principal_markup(EVIL_PERSON) == "Ada \\[/dim]"
+        assert principal_markup(None, "[b]x") == "\\[b]x"
+        assert principal_markup(None) is None
+
+    def test_issue_show_renders_hostile_names_literally(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            **ISSUE, "assignee": EVIL_AGENT, "assignee_name": EVIL_AGENT["name"],
+            "creator": EVIL_PERSON, "creator_name": EVIL_PERSON["name"],
+        })
+        client.get_comments = MagicMock(return_value=[
+            {"content": "x", "author_name": EVIL_AGENT["name"], "author": EVIL_AGENT,
+             "created_at": "2026-10-13T10:00:00"},
+            {"content": "y", "author_name": "Old [/dim] backend"},
+        ])
+        client.get_pending_issue_rituals = MagicMock(return_value={"pending_rituals": [], "completed_rituals": [
+            {"name": "t", "attestation": {"note": "n", "attested_by_name": "Ada [/dim]", "attester": EVIL_PERSON}},
+        ]})
+        client.get_relations = MagicMock(return_value=[])
+        client.get_issue_documents = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ["issue", "show", "CHT-100"])
+
+        assert result.exit_code == 0, result.output
+        assert result.exception is None
+        assert "[link=https://evil.example]Bot[/link] (agent of Ada [/dim])" in result.output
+        assert "Creator: Ada [/dim]" in result.output
+        assert "Old [/dim] backend" in result.output
+
+    def test_assigned_but_unresolved_is_not_unassigned(self, cli_runner):
+        """review finding 3: an id with no summary and no name shows the id."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            **ISSUE, "assignee": None, "assignee_name": None, "assignee_id": "deadbeef-1234",
+        })
+        client.get_comments = MagicMock(return_value=[])
+        client.get_pending_issue_rituals = MagicMock(return_value={"pending_rituals": [], "completed_rituals": []})
+        client.get_relations = MagicMock(return_value=[])
+        client.get_issue_documents = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ["issue", "show", "CHT-100"])
+
+        assert result.exit_code == 0, result.output
+        assert "Assignee: deadbeef..." in result.output
+        assert "Unassigned" not in result.output
+
+    def test_comment_table_cells(self, cli_runner, monkeypatch):
+        from cli.commands.shared import console
+        from cli.main import cli, client
+
+        monkeypatch.setattr(console._stdout_console, "width", 200)
+        client.get_team_comments = MagicMock(return_value=[{
+            "source_type": "issue", "issue_identifier": "CHT-1", "content": "c",
+            "author_name": EVIL_AGENT["name"], "author": EVIL_AGENT, "created_at": "2026-10-13T10:00:00",
+        }])
+        result = cli_runner.invoke(cli, ["comments"])
+
+        assert result.exit_code == 0, result.output
+        assert "[link=https://evil.example]Bot[/link] (agent of Ada [/dim])" in result.output
+
+    def test_doc_show(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_documents = MagicMock(return_value=[])
+        client.get_document = MagicMock(return_value={
+            "id": "d1", "title": "Doc", "content": "body", "author_name": EVIL_AGENT["name"],
+            "author": EVIL_AGENT, "updated_at": "2026-10-13T10:00:00", "created_at": "2026-10-13T10:00:00",
+        })
+        client.get_document_issues = MagicMock(return_value=[])
+        client.get_document_comments = MagicMock(return_value=[
+            {"content": "c", "author_name": "Ada [/dim]", "author": EVIL_PERSON, "created_at": "2026-10-13T10:00:00"},
+        ])
+        with patch("cli.main.resolve_document_id", return_value="d1"):
+            result = cli_runner.invoke(cli, ["doc", "show", "d1"])
+
+        assert result.exit_code == 0, result.output
+        assert "(agent of Ada [/dim])" in result.output
+        assert "Ada [/dim]" in result.output

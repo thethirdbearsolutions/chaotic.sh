@@ -233,3 +233,79 @@ class TestOtherSurfaces:
         )
         one = _ok(await client.get(f"/api/issues/{issue.id}", headers=auth_headers))
         assert one["creator"] is None and one["creator_name"] == "Deleted user"
+
+
+class TestApproveResponses:
+    """The approve endpoints return the built attestation response, so the
+    approver they exist to record is named (PR #327 review, finding 1)."""
+
+    async def test_approve_issue_attestation(self, client, auth_headers, test_user, test_project, test_issue, agent):
+        from app.enums import ApprovalMode, RitualTrigger
+        from app.oxyde_models.ritual import OxydeRitual
+
+        ritual = await OxydeRitual.objects.create(
+            project_id=test_project.id, name="review-ticket", prompt="?",
+            trigger=RitualTrigger.TICKET_CLOSE, approval_mode=ApprovalMode.REVIEW,
+        )
+        await OxydeRitualAttestation.objects.create(
+            ritual_id=ritual.id, issue_id=test_issue.id, attested_by=agent.id, note="done",
+        )
+
+        got = _ok(await client.post(f"/api/rituals/{ritual.id}/approve-issue/{test_issue.id}", headers=auth_headers))
+
+        _is_agent_of(got["attester"], agent, test_user)
+        _is_person(got["approver"], test_user)
+        assert got["attested_by_name"] == agent.name and got["approved_by_name"] == test_user.name
+
+    async def test_approve_sprint_attestation(self, client, auth_headers, test_user, test_project, agent):
+        from app.enums import ApprovalMode, SprintStatus
+        from app.oxyde_models.ritual import OxydeRitual
+        from app.oxyde_models.sprint import OxydeSprint
+
+        ritual = await OxydeRitual.objects.create(
+            project_id=test_project.id, name="review-sprint", prompt="?", approval_mode=ApprovalMode.REVIEW,
+        )
+        sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id, name="Sprint 1", status=SprintStatus.COMPLETED, limbo=True,
+        )
+        await OxydeRitualAttestation.objects.create(
+            ritual_id=ritual.id, sprint_id=sprint.id, attested_by=agent.id, note="done",
+        )
+
+        got = _ok(await client.post(
+            f"/api/rituals/{ritual.id}/approve?project_id={test_project.id}", headers=auth_headers,
+        ))
+
+        _is_agent_of(got["attester"], agent, test_user)
+        _is_person(got["approver"], test_user)
+
+
+async def test_pending_rituals_load_principals_once_for_all_rows(
+    client, auth_headers, test_user, test_issue, agent, make_ritual, monkeypatch,
+):
+    """Attesters for every ritual on the pending/completed lists come from
+    one batched load, not one per attested ritual (review finding 4)."""
+    from app.services import principals as principals_mod
+
+    for _ in range(4):
+        ritual = await make_ritual()
+        await OxydeRitualAttestation.objects.create(
+            ritual_id=ritual.id, issue_id=test_issue.id, attested_by=agent.id,
+        )
+
+    loads = []
+    real = principals_mod.load_principals
+
+    async def counting(ids):
+        loads.append(1)
+        return await real(ids)
+
+    monkeypatch.setattr(principals_mod, "load_principals", counting)
+    body = _ok(await client.get(f"/api/rituals/issue/{test_issue.id}/pending", headers=auth_headers))
+
+    atts = [r["attestation"] for r in body["pending_rituals"] + body["completed_rituals"] if r.get("attestation")]
+    assert len(atts) == 4
+    for att in atts:
+        _is_agent_of(att["attester"], agent, test_user)
+        assert att["attested_by_name"] == agent.name
+    assert len(loads) <= 2, f"{len(loads)} principal loads for one response"

@@ -388,4 +388,6 @@ class TestInProcessCallsReturnSchemas:
         # declared keys, never the user row behind it.
         from app.schemas.principal import PrincipalSummary
         assert set(dumped["creator"]) == set(PrincipalSummary.model_fields)
+        assert "email" not in dumped["creator"]
+        assert "is_superuser" not in str(dumped)
         assert "hashed_password" not in str(dumped)

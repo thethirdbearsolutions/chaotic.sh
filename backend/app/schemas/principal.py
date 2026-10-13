@@ -42,6 +42,11 @@ class HasPrincipals:
     ``principal_fields`` maps each summary field to the id field it
     summarises, e.g. ``{"creator": "creator_id"}``.
     ``fill_principals`` reads it, so a schema declares its actors once.
+
+    ``principal_name_fields`` optionally maps a summary field to its
+    ``*_name`` companion, which ``fill_principals`` sets from the summary
+    when the builder left it unset, so a builder need not look names up.
     """
 
     principal_fields: ClassVar[dict[str, str]] = {}
+    principal_name_fields: ClassVar[dict[str, str]] = {}

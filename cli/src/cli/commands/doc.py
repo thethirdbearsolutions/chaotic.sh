@@ -6,7 +6,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from ..principals import principal_label
+from ..principals import principal_markup
 from .shared import _client, console, get_status_color, resolve_content_value
 
 
@@ -146,7 +146,7 @@ def register(cli):
         # Build subtitle with author and scope
         subtitle_parts = []
         if d.get('author_name'):
-            subtitle_parts.append(f"By {principal_label(d.get('author'), d['author_name'])}")
+            subtitle_parts.append(f"By {principal_markup(d.get('author'), d['author_name'])}")
         if d.get("sprint_id"):
             scope = "Sprint-scoped"
         elif d.get("project_id"):
@@ -186,9 +186,9 @@ def register(cli):
                             date_str = dt.strftime('%Y-%m-%d %H:%M')
                         except (ValueError, AttributeError):
                             date_str = created_at[:16] if len(created_at) > 16 else created_at
-                        console.print(f"  \u2022 [dim]{principal_label(c.get('author'), c.get('author_name', 'User'))} ({date_str}):[/dim]")
+                        console.print(f"  \u2022 [dim]{principal_markup(c.get('author'), c.get('author_name', 'User'))} ({date_str}):[/dim]")
                     else:
-                        console.print(f"  \u2022 [dim]{principal_label(c.get('author'), c.get('author_name', 'User'))}:[/dim]")
+                        console.print(f"  \u2022 [dim]{principal_markup(c.get('author'), c.get('author_name', 'User'))}:[/dim]")
                     console.print(Markdown(c.get('content', '')))
             else:
                 console.print("\n[dim]No comments[/dim]")
@@ -238,7 +238,7 @@ def register(cli):
                 m.output_json(rev)
                 return
             body = rev.get("content") or "(empty)"
-            author = principal_label(rev.get("author"), rev.get("author_name") or "Unknown")
+            author = principal_markup(rev.get("author"), rev.get("author_name") or "Unknown")
             date = (rev.get("created_at") or "")[:19].replace("T", " ")
             console.print(Panel(
                 Markdown(body),
@@ -266,7 +266,7 @@ def register(cli):
             table.add_row(
                 f"v{rev['version']}",
                 rev.get("title") or "",
-                principal_label(rev.get("author"), rev.get("author_name") or "Unknown"),
+                principal_markup(rev.get("author"), rev.get("author_name") or "Unknown"),
                 (rev.get("created_at") or "")[:19].replace("T", " "),
             )
 
