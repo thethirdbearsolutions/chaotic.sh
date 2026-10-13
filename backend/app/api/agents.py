@@ -335,7 +335,7 @@ async def list_agent_keys(
             is_active=key.is_active,
             owner_id=key.user_id,
             owner_name=names[key.user_id],
-            self_minted=key.user_id == agent.id,
+            legacy_self_minted=key.user_id == agent.id,
         )
         for key in keys
     ]

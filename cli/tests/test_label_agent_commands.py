@@ -369,10 +369,10 @@ class TestAgentKeysListRevoke:
 
     _KEYS = [
         {"id": "key-aaaa-1", "name": "Key for claude-bot", "key_prefix": "ck_aaaa", "owner_id": "u1",
-         "owner_name": "Carol", "self_minted": False, "is_active": True,
+         "owner_name": "Carol", "legacy_self_minted": False, "is_active": True,
          "created_at": "2026-10-01T00:00:00Z", "last_used_at": None},
         {"id": "key-bbbb-2", "name": "self", "key_prefix": "ck_bbbb", "owner_id": "agent-uuid-123",
-         "owner_name": "claude-bot", "self_minted": True, "is_active": False,
+         "owner_name": "claude-bot", "legacy_self_minted": True, "is_active": False,
          "created_at": "2026-10-02T00:00:00Z", "last_used_at": "2026-10-03T00:00:00Z"},
     ]
 
@@ -391,7 +391,7 @@ class TestAgentKeysListRevoke:
         result = cli_runner.invoke(cli, ['agent', 'keys', 'list', 'claude-bot'])
 
         assert result.exit_code == 0, result.output
-        assert 'Carol' in result.output and '(self)' in result.output
+        assert 'Carol' in result.output and 'legacy' in result.output
         client.list_agent_keys.assert_called_once_with('agent-uuid-123')
 
     def test_list_json(self, cli_runner):
@@ -423,6 +423,17 @@ class TestAgentKeysListRevoke:
 
         assert result.exit_code == 0, result.output
         client.revoke_api_key.assert_called_once_with('key-bbbb-2')
+
+    def test_revoke_by_display_prefix(self, cli_runner):
+        """The ck_ prefix `keys list` shows works too (PR #326 re-review, finding 7)."""
+        from cli.main import cli
+
+        client = self._setup()
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['agent', 'keys', 'revoke', 'claude-bot', 'ck_aaaa'])
+
+        assert result.exit_code == 0, result.output
+        client.revoke_api_key.assert_called_once_with('key-aaaa-1')
 
     def test_revoke_declined(self, cli_runner):
         from cli.main import cli

@@ -70,8 +70,11 @@ class APIKeyService:
         # Return first 11 chars: "ck_" + first 8 hex chars
         return key[:11]
 
-    async def create(self, user_id: str, api_key_in: APIKeyCreate) -> tuple[OxydeAPIKey, str]:
-        """Create a new API key. Returns (api_key_model, full_key)."""
+    async def create(
+        self, user_id: str, api_key_in: APIKeyCreate, agent_user_id: str | None = None,
+    ) -> tuple[OxydeAPIKey, str]:
+        """Create a new API key held by `user_id`, signing in as
+        `agent_user_id` when given. Returns (api_key_model, full_key)."""
         full_key = self._generate_key()
         key_prefix = self._get_prefix(full_key)
         key_hash = _sha256_key_hash(full_key)
@@ -82,6 +85,7 @@ class APIKeyService:
             key_prefix=key_prefix,
             key_hash=key_hash,
             expires_at=api_key_in.expires_at,
+            agent_user_id=agent_user_id,
         )
         await api_key.refresh()
 

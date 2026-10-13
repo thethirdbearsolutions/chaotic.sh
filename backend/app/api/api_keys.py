@@ -1,6 +1,7 @@
 """API Key routes."""
-from fastapi import APIRouter, HTTPException, status
-from app.api.deps import CurrentUser, can_manage_agent
+from typing import Annotated
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.api.deps import CurrentUser, can_manage_agent, get_api_key_record
 from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated
 from app.services.agent_service import AgentService
 from app.services.api_key_service import APIKeyService
@@ -12,10 +13,26 @@ router = APIRouter()
 async def create_api_key(
     api_key_in: APIKeyCreate,
     current_user: CurrentUser,
+    calling_key: Annotated[object | None, Depends(get_api_key_record)],
 ):
-    """Create a new API key. The full key is only shown once."""
+    """Create a new API key. The full key is only shown once.
+
+    An agent minting a key for itself gets one linked to it whose holder
+    is the human behind the key it called with (CHT-1508): whoever holds
+    the calling key holds the new one too, so leaving the team ends both.
+    With no human on record (a key from before holders were recorded),
+    the key falls back to the agent's creator at sign-in.
+    """
     api_key_service = APIKeyService()
-    api_key, full_key = await api_key_service.create(current_user.id, api_key_in)
+    if current_user.is_agent:
+        holder_id = current_user.id
+        if calling_key is not None and calling_key.user_id != current_user.id:
+            holder_id = calling_key.user_id
+        api_key, full_key = await api_key_service.create(
+            holder_id, api_key_in, agent_user_id=current_user.id,
+        )
+    else:
+        api_key, full_key = await api_key_service.create(current_user.id, api_key_in)
 
     return APIKeyCreated(
         id=api_key.id,
@@ -33,9 +50,12 @@ async def list_api_keys(
     skip: int = 0,
     limit: int = 1000,
 ):
-    """List all API keys for the current user."""
-    api_key_service = APIKeyService()
-    api_keys = await api_key_service.list_by_user(current_user.id)
+    """List all API keys for the current user: the ones they hold. For an
+    agent, every key that signs in as it (CHT-1508)."""
+    if current_user.is_agent:
+        api_keys = await AgentService().list_keys(current_user.id)
+    else:
+        api_keys = await APIKeyService().list_by_user(current_user.id)
     return api_keys[skip:skip + limit]
 
 
@@ -55,10 +75,13 @@ async def revoke_api_key(
         )
 
     # Whoever holds a key may revoke it. Beyond that, a key that
-    # authenticates as an agent -- linked to it, or minted by the agent
-    # for itself -- may be revoked by whoever may manage the agent: its
+    # authenticates as an agent -- linked to it, or a legacy one the agent
+    # minted for itself -- may be revoked by whoever may manage the agent: its
     # team's admins, and its creator while still in the team (CHT-1508).
-    allowed = api_key.user_id == current_user.id
+    allowed = api_key.user_id == current_user.id or (
+        # An agent may revoke any key that signs in as itself.
+        current_user.is_agent and api_key.agent_user_id == current_user.id
+    )
     if not allowed:
         agent_service = AgentService()
         agent = await agent_service.get_by_id(api_key.agent_user_id or api_key.user_id)

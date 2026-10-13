@@ -97,19 +97,6 @@ async def _authenticate_with_api_key(api_key: str) -> User:
                 detail="Agent not found",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        # The key is owned by the human who minted it. Once they are no
-        # longer in the agent's team the key is dead, whether or not the
-        # removal got to revoke it (CHT-1510): answered exactly like a
-        # revoked key. The REST API, /mcp and the MCP bearer path all come
-        # through here.
-        if key_record.user_id != user.id and (
-            await TeamService().get_member(user.agent_team_id, key_record.user_id) is None
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid API key",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
     else:
         # Backwards compatible: authenticate as the human user
         user = await user_service.get_by_id(key_record.user_id)
@@ -120,6 +107,24 @@ async def _authenticate_with_api_key(api_key: str) -> User:
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+    # An agent key is only as good as the membership of the human behind
+    # it (CHT-1508/CHT-1510). The key row's user_id records that holder:
+    # whoever minted a linked key, or the holder of the key an agent used
+    # to mint one for itself. A self-minted key from before holders were
+    # recorded (user_id is the agent) falls back to the agent's creator.
+    # Once that human is no longer in the agent's team the key is dead,
+    # whether or not the removal got to revoke it, and it is answered
+    # exactly like a revoked key. REST and both MCP transports come
+    # through here.
+    if user.is_agent:
+        holder_id = key_record.user_id if key_record.user_id != user.id else user.parent_user_id
+        if not holder_id or await TeamService().get_member(user.agent_team_id, holder_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -127,6 +132,18 @@ async def _authenticate_with_api_key(api_key: str) -> User:
         )
 
     return user
+
+
+async def get_api_key_record(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+):
+    """The key row behind this request's `ck_...` bearer token, or None
+    for a JWT. Only meaningful alongside CurrentUser, which has already
+    validated the token."""
+    if not credentials or not credentials.credentials.startswith("ck_"):
+        return None
+    service = APIKeyService()
+    return await service.get_by_prefix(service._get_prefix(credentials.credentials))
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]

@@ -5,15 +5,18 @@ they had been shown: the one `agent create` printed and any they minted.
 Those keys sign in as the agent, which is still in the team, so the
 ex-member kept acting in the team as it. Now:
 
+* A key is held by whoever minted it; a key an agent mints for itself is
+  held by the holder of the key it called with (so the human behind a
+  self-minted key is on record, PR #326 re-review finding 1).
 * ``DELETE /teams/{id}/members/{user}`` revokes, in the same transaction,
-  every key the member owns that is linked to an agent of that team, plus
-  the self-minted keys of the agents they created; those agents pass to
+  every key the member holds that is linked to an agent of that team, plus
+  the legacy self-minted keys (no holder recorded) of the agents they
+  created; those agents pass to
   the removing admin (or the team's owner when the member leaves on their
   own) and the team's other admins get an inbox entry.
-* Key auth refuses an agent key whose owner is no longer in the agent's
-  team, with the revoked-key 401, even if nothing revoked it.
-* A key is owned by whoever minted it, so an admin's replacement key is
-  not the ex-member's (they neither hold nor list it).
+* Key auth refuses an agent key whose holder (for a legacy self-minted
+  key: the agent's creator) is no longer in the agent's team, with the
+  revoked-key 401, even if nothing revoked it.
 """
 import pytest
 
@@ -202,9 +205,10 @@ class TestKeyAuthChecksTheOwnersMembership:
         assert refused.status_code == 401
         assert refused.json()["detail"] == "Invalid API key"
         assert await _is_active(w["k1_id"]) is True
-        # The admin's key and the bot's own key are not Bob's membership's business.
+        # k3 was minted by the bot with Bob's k1, so it is Bob's too; the
+        # admin's key is not Bob's membership's business.
+        assert (await client.get("/api/auth/me", headers=_bearer(w["k3"]))).status_code == 401
         assert (await client.get("/api/auth/me", headers=_bearer(w["k2"]))).status_code == 200
-        assert (await client.get("/api/auth/me", headers=_bearer(w["k3"]))).status_code == 200
 
         await OxydeTeamMember.objects.create(team_id=w["team"].id, user_id=w["bob"].id, role=TeamRole.MEMBER)
         assert (await client.get("/api/auth/me", headers=_bearer(w["k1"]))).status_code == 200
@@ -246,9 +250,10 @@ class TestListAgentKeys:
         assert response.status_code == 200, response.text
         rows = {r["id"]: r for r in response.json()}
         assert set(rows) == {w["k1_id"], w["k2_id"], w["k3_id"]}
-        assert (rows[w["k1_id"]]["owner_name"], rows[w["k1_id"]]["self_minted"]) == ("Test User 2", False)
-        assert (rows[w["k2_id"]]["owner_name"], rows[w["k2_id"]]["self_minted"]) == ("Carol", False)
-        assert (rows[w["k3_id"]]["owner_id"], rows[w["k3_id"]]["self_minted"]) == (w["agent_id"], True)
+        assert (rows[w["k1_id"]]["owner_name"], rows[w["k1_id"]]["legacy_self_minted"]) == ("Test User 2", False)
+        assert (rows[w["k2_id"]]["owner_name"], rows[w["k2_id"]]["legacy_self_minted"]) == ("Carol", False)
+        # Self-minted with Bob's key: held by Bob.
+        assert (rows[w["k3_id"]]["owner_id"], rows[w["k3_id"]]["legacy_self_minted"]) == (w["bob"].id, False)
         assert all(r["is_active"] for r in rows.values())
         assert all("key" not in r and "key_hash" not in r for r in rows.values())
 
@@ -310,3 +315,132 @@ class TestMintRechecksInsideTheTransaction:
 
         assert response.status_code == 403, response.text
         assert await OxydeAPIKey.objects.filter(agent_user_id=w["agent_id"]).count() == before
+
+
+async def _legacy_self_minted_key(agent_id):
+    """A key as an agent minted it for itself before holders were
+    recorded: owned by the agent, linked to nothing."""
+    from app.schemas.api_key import APIKeyCreate
+    from app.services.api_key_service import APIKeyService
+
+    record, key = await APIKeyService().create(agent_id, APIKeyCreate(name="legacy self"))
+    assert record.agent_user_id is None
+    return record, key
+
+
+@pytest.mark.asyncio
+class TestSelfMintedKeysHaveAHolder:
+    """PR #326 re-review finding 1: a self-minted key used to carry no
+    human, so a non-creator who minted one through the agent kept it."""
+
+    async def test_the_probe_bob_mints_for_ownerbot_ownerbot_self_mints_bob_removed(self, client, world):
+        w = world
+        await OxydeTeamMember.objects.filter(team_id=w["team"].id, user_id=w["bob"].id).update(role=TeamRole.ADMIN)
+        ownerbot = await client.post(
+            f"/api/teams/{w['team'].id}/agents", json={"name": "ownerbot"}, headers=w["owner_headers"],
+        )
+        linked = await client.post(f"/api/agents/{ownerbot.json()['id']}/keys", headers=w["bob_headers"])
+        assert linked.status_code == 201
+        selfm = await client.post("/api/api-keys", json={"name": "stash"}, headers=_bearer(linked.json()["key"]))
+        assert selfm.status_code == 201
+        row = await OxydeAPIKey.objects.get(id=selfm.json()["id"])
+        assert (row.user_id, row.agent_user_id) == (w["bob"].id, ownerbot.json()["id"])
+
+        removed = await client.delete(f"/api/teams/{w['team'].id}/members/{w['bob'].id}", headers=w["carol_headers"])
+
+        assert removed.status_code == 204
+        for key in (linked.json()["key"], selfm.json()["key"]):
+            assert (await client.get("/api/auth/me", headers=_bearer(key))).status_code == 401
+        assert await _is_active(selfm.json()["id"]) is False
+        # The owner's own key for ownerbot is untouched.
+        assert (await client.get("/api/auth/me", headers=_bearer(ownerbot.json()["api_key"]))).status_code == 200
+
+    async def test_the_holder_is_inherited_down_a_chain(self, client, world):
+        w = world
+        second = await client.post("/api/api-keys", json={"name": "chain"}, headers=_bearer(w["k3"]))
+        assert second.status_code == 201
+        assert (await OxydeAPIKey.objects.get(id=second.json()["id"])).user_id == w["bob"].id
+
+        await OxydeTeamMember.objects.filter(team_id=w["team"].id, user_id=w["bob"].id).delete()
+
+        assert (await client.get("/api/auth/me", headers=_bearer(second.json()["key"]))).status_code == 401
+
+    async def test_a_key_self_minted_with_the_admins_key_survives_bobs_removal(self, client, world):
+        w = world
+        carols = await client.post("/api/api-keys", json={"name": "c"}, headers=_bearer(w["k2"]))
+
+        await client.delete(f"/api/teams/{w['team'].id}/members/{w['bob'].id}", headers=w["carol_headers"])
+
+        assert (await client.get("/api/auth/me", headers=_bearer(carols.json()["key"]))).status_code == 200
+
+    async def test_the_agent_lists_and_revokes_its_own_keys(self, client, world):
+        w = world
+
+        listed = await client.get("/api/api-keys", headers=_bearer(w["k1"]))
+        assert {k["id"] for k in listed.json()} == {w["k1_id"], w["k2_id"], w["k3_id"]}
+
+        revoked = await client.delete(f"/api/api-keys/{w['k3_id']}", headers=_bearer(w["k1"]))
+        assert revoked.status_code == 204
+        assert await _is_active(w["k3_id"]) is False
+
+    async def test_a_human_minted_key_is_unchanged(self, client, world):
+        created = await client.post("/api/api-keys", json={"name": "human"}, headers=world["bob_headers"])
+        row = await OxydeAPIKey.objects.get(id=created.json()["id"])
+        assert (row.user_id, row.agent_user_id) == (world["bob"].id, None)
+
+
+@pytest.mark.asyncio
+class TestLegacySelfMintedKeys:
+    """PR #326 re-review finding 2: keys minted before holders were
+    recorded, by agents whose creator may already have left. No data
+    migration: sign-in vouches for them through the agent's creator."""
+
+    async def test_refused_once_the_creator_is_gone_and_back_on_rejoin(self, client, world):
+        w = world
+        _, key = await _legacy_self_minted_key(w["agent_id"])
+        assert (await client.get("/api/auth/me", headers=_bearer(key))).status_code == 200
+
+        await OxydeTeamMember.objects.filter(team_id=w["team"].id, user_id=w["bob"].id).delete()
+        refused = await client.get("/api/auth/me", headers=_bearer(key))
+        assert refused.status_code == 401 and refused.json()["detail"] == "Invalid API key"
+
+        await OxydeTeamMember.objects.create(team_id=w["team"].id, user_id=w["bob"].id, role=TeamRole.MEMBER)
+        assert (await client.get("/api/auth/me", headers=_bearer(key))).status_code == 200
+
+    async def test_listed_as_legacy_and_revoked_by_the_creators_removal(self, client, world):
+        w = world
+        record, key = await _legacy_self_minted_key(w["agent_id"])
+        rows = {r["id"]: r for r in (await client.get(
+            f"/api/agents/{w['agent_id']}/keys", headers=w["carol_headers"],
+        )).json()}
+        assert (rows[record.id]["owner_id"], rows[record.id]["legacy_self_minted"]) == (w["agent_id"], True)
+
+        await client.delete(f"/api/teams/{w['team'].id}/members/{w['bob'].id}", headers=w["carol_headers"])
+
+        assert await _is_active(record.id) is False
+
+    async def test_an_admin_may_revoke_one(self, client, world):
+        w = world
+        record, key = await _legacy_self_minted_key(w["agent_id"])
+
+        response = await client.delete(f"/api/api-keys/{record.id}", headers=w["carol_headers"])
+
+        assert response.status_code == 204
+        assert (await client.get("/api/auth/me", headers=_bearer(key))).status_code == 401
+
+
+@pytest.mark.asyncio
+class TestReleaseWithNoNewOwner:
+    async def test_keys_still_revoked_and_the_agent_stays_put(self, world):
+        """Unreachable through the route (a team always keeps an owner),
+        but release_member_agents must not reassign to nobody."""
+        from app.services.agent_service import AgentService
+
+        w = world
+        await OxydeTeamMember.objects.filter(team_id=w["team"].id, user_id=w["bob"].id).delete()
+
+        released = await AgentService().release_member_agents(w["team"].id, w["bob"].id, None)
+
+        [(agent, revoked, reassigned)] = released
+        assert agent.id == w["agent_id"] and revoked == 2 and reassigned is False
+        assert (await OxydeUser.objects.get(id=w["agent_id"])).parent_user_id == w["bob"].id

@@ -125,12 +125,13 @@ class AgentService:
         return agent.parent_user_id == user.id
 
     async def list_keys(self, agent_id: str) -> list[OxydeAPIKey]:
-        """Every API key that authenticates as the agent: the ones linked to
-        it (`agent_user_id`, minted by a human) and any it minted for
-        itself through POST /api-keys (`user_id`). Newest first."""
+        """Every API key that authenticates as the agent, newest first:
+        the ones linked to it (`agent_user_id`), whether a human minted
+        them or the agent did, and legacy self-minted ones that only
+        carry the agent as `user_id`."""
         linked = await OxydeAPIKey.objects.filter(agent_user_id=agent_id).all()
-        own = await OxydeAPIKey.objects.filter(user_id=agent_id).all()
-        return sorted([*linked, *own], key=lambda k: k.created_at, reverse=True)
+        legacy = await OxydeAPIKey.objects.filter(user_id=agent_id, agent_user_id=None).all()
+        return sorted([*linked, *legacy], key=lambda k: k.created_at, reverse=True)
 
     async def release_member_agents(
         self, team_id: str, removed_user_id: str, new_owner_id: str | None,
@@ -139,10 +140,12 @@ class AgentService:
         transaction that deletes the membership.
 
         Revokes the credentials the leaver holds for the team's agents:
-        every key they own that is linked to an agent of this team (keys
-        are owned by whoever minted them, so these are the ones they were
-        shown), plus the self-minted keys of the agents they created,
-        which their agent process minted. The agents stay. Agents they
+        every key they own that is linked to an agent of this team. A key
+        is owned by whoever minted it, and a key an agent mints for itself
+        is owned by the holder of the key it called with, so these are
+        exactly the keys they hold. Also revoked: the legacy self-minted
+        keys (no holder recorded) of the agents they created, which sign-in
+        already attributes to the creator. The agents stay. Agents they
         created pass to `new_owner_id`, so someone in the team can mint
         replacement keys; with no new owner the agent stays put and any
         team admin can still manage it.
@@ -160,7 +163,7 @@ class AgentService:
             if agent.parent_user_id == removed_user_id:
                 revoked += await OxydeAPIKey.objects.filter(
                     user_id=agent.id, is_active=True,
-                ).update(is_active=False)
+                ).update(is_active=False)  # legacy self-minted: no holder on record
                 if new_owner_id:
                     await OxydeUser.objects.filter(id=agent.id).update(parent_user_id=new_owner_id)
                     agent.parent_user_id = new_owner_id

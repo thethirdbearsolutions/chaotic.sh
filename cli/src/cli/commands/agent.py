@@ -267,7 +267,9 @@ def register(cli):
     @_main().handle_error
     def agent_keys_list(agent_ref):
         """List every API key that signs in as an agent, active or revoked,
-        with who holds it ("(self)" for a key the agent minted for itself).
+        with who holds it. A key the agent minted for itself is held by
+        whoever holds the key it used; one minted before holders were
+        recorded shows "(creator, legacy)".
 
         Allowed to team admins and to the agent's creator while in the team.
 
@@ -294,7 +296,7 @@ def register(cli):
         table.add_column("Last Used")
         table.add_column("Active")
         for k in keys:
-            holder = "(self)" if k.get("self_minted") else (k.get("owner_name") or k.get("owner_id") or "-")
+            holder = "(creator, legacy)" if k.get("legacy_self_minted") else (k.get("owner_name") or k.get("owner_id") or "-")
             table.add_row(
                 k["id"][:8] + "...",
                 k.get("name") or "Unnamed",
@@ -314,12 +316,13 @@ def register(cli):
     def agent_keys_revoke(agent_ref, key_ref):
         """Revoke one of an agent's API keys, leaving its others working.
 
-        KEY is the key's ID or an ID prefix, as `chaotic agent keys list`
-        shows it. To revoke all of them and stop the agent, use
+        KEY is the key's ID, an ID prefix, or its `ck_...` prefix, as
+        `chaotic agent keys list` shows them. To revoke all of them and stop the agent, use
         `chaotic agent deactivate`.
 
         Example:
             chaotic agent keys revoke claude-bot 1a2b3c4d
+            chaotic agent keys revoke claude-bot ck_9f8e7d6c
         """
         m = _main()
         agent_ref = _require_ref(agent_ref)
@@ -328,7 +331,10 @@ def register(cli):
             console.print("[red]Key identifier must not be empty.[/red]")
             raise SystemExit(1)
         agent_obj = _resolve_agent(_client().get_team_agents(m.get_current_team()), agent_ref)
-        matches = [k for k in _client().list_agent_keys(agent_obj["id"]) if k["id"].startswith(key_ref)]
+        matches = [
+            k for k in _client().list_agent_keys(agent_obj["id"])
+            if k["id"].startswith(key_ref) or (k.get("key_prefix") or "").startswith(key_ref)
+        ]
         if not matches:
             console.print(f"[red]Agent '{agent_obj['name']}' has no key '{key_ref}'.[/red]")
             raise SystemExit(1)

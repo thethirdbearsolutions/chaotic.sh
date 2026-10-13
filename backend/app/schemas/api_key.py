@@ -31,13 +31,16 @@ class APIKeyResponse(BaseModel):
 
 class AgentKeyResponse(APIKeyResponse):
     """One key that authenticates as an agent, for the people who manage
-    it (GET /agents/{id}/keys, CHT-1508). `owner_id` is whoever holds the
-    key: the human who minted it, or the agent itself for a key it minted
-    through POST /api-keys (`self_minted`)."""
+    it (GET /agents/{id}/keys, CHT-1508). `owner_id` is the human who
+    holds the key: whoever minted it, or for a key the agent minted for
+    itself, the holder of the key it called with. `legacy_self_minted`
+    marks a key the agent minted before holders were recorded: its
+    `owner_id` is the agent, and sign-in vouches for it through the
+    agent's creator instead."""
 
     owner_id: str
     owner_name: str | None = None
-    self_minted: bool
+    legacy_self_minted: bool
 
 
 class APIKeyCreated(BaseModel):

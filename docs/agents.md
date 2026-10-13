@@ -422,21 +422,32 @@ there's no local profile to fall back on the way the stdio server has:
 - An agent key belongs to whoever minted it: the creator holds the key
   `agent create` printed, and a key an admin mints with `chaotic agent
   keys create` is the admin's (it shows in their `chaotic auth keys
-  list`, not the creator's). `chaotic agent keys list <agent>` shows
-  every key that signs in as the agent and who holds it, including keys
-  the agent minted for itself; `chaotic agent keys revoke <agent> <key>`
-  revokes one. Both are for team admins and the agent's creator.
+  list`, not the creator's). A key an agent mints for itself through
+  `POST /api-keys` belongs to whoever holds the key it called with, so
+  every agent key has a human behind it. `chaotic agent keys list
+  <agent>` shows every key that signs in as the agent and who holds
+  it; `chaotic agent keys revoke <agent> <key>` revokes one by its ID
+  prefix or its `ck_...` prefix. Both are for team admins and the
+  agent's creator.
+- **Changed for existing keys:** before this, every key minted for an
+  agent was recorded as its creator's, even one a team admin minted, and
+  a key an agent minted for itself recorded no human at all (it shows as
+  `(creator, legacy)` in `keys list`). Those keys now stand or fall with
+  the agent's creator, so when the creator leaves the team, an admin's
+  bot running on such a key stops too. Mint it a fresh key (the new one
+  is the admin's own) and the problem cannot recur.
 - **Leaving a team ends the agent keys you hold for it.** When a member
   is removed from a team, or leaves it, every key they hold for that
-  team's agents is revoked in the same step, along with the keys their
-  own agents minted for themselves. Anything still running on those keys
+  team's agents is revoked in the same step: keys they minted, keys an
+  agent minted for itself with one of their keys, and the legacy
+  self-minted keys of agents they created. Anything still running on those keys
   stops, with the same 401 as any revoked key, over REST and MCP alike.
   The agents stay. Agents the member created pass to the admin who
   removed them, or to the team's owner if they left on their own. The
   team's other admins get an inbox entry for each affected agent, so
   someone can mint a replacement key. Separately from that revocation,
-  an agent key whose holder is no longer in the agent's team does not
-  sign in. The removed creator also loses every right over the agent
+  an agent key whose holder (for a legacy self-minted key, the agent's
+  creator) is no longer in the agent's team does not sign in. The removed creator also loses every right over the agent
   (update, delete, deactivate/reactivate, listing, minting or revoking
   its keys). Rejoining does not bring back revoked keys or ownership.
 
