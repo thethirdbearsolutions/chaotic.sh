@@ -19,7 +19,7 @@ import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRem
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { loadGateApprovals } from './gate-approvals.js';
-import { loadInbox, refreshInboxUnreadCount, isInboxEventAlreadyApplied } from './inbox.js';
+import { loadInbox, refreshInboxUnreadCount, isInboxEventAlreadyApplied, recordInboxEvent } from './inbox.js';
 
 /**
  * True while the issue detail view has its inline description editor open.
@@ -397,6 +397,9 @@ function handleAttestation(data) {
 function handleInbox(data, context) {
     if (data.recipient_user_id !== getCurrentUser()?.id) return;
     refreshInboxUnreadCount();
+    // Confirms our own archive/read, so a fetch that was already in flight
+    // cannot bring the entry back (CHT-1514).
+    recordInboxEvent(context?.type, data);
     // The server echoes our own mark-read/archive back to us; reloading for
     // that would only redraw what is already on screen. Anything else
     // refreshes in the background, keeping the open row, cursor, focus and

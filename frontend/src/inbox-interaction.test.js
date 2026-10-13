@@ -7,7 +7,7 @@
  * at module load, event delegation later (on DOMContentLoaded). Real DOM
  * events then show what a click or a key press actually does in the browser.
  */
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, onTestFinished } from 'vitest';
 
 vi.mock('./api.js', () => ({
     api: {
@@ -72,11 +72,11 @@ import {
 import { dispatch, resetWsState } from './ws.js';
 import { registerWsHandlers } from './ws-handlers.js';
 import { initEventDelegation } from './event-delegation.js';
-import { createInboxNavigationHandler } from './keyboard.js';
+import { createInboxNavigationHandler, isAnyDetailViewActive } from './keyboard.js';
 import * as inboxModule from './inbox.js';
 import {
     renderInbox, selectInboxRow, collapseInboxExpand, loadInbox, toggleInboxUnreadFilter,
-    toggleInboxEntryElementExpand, archiveInboxEntryElement,
+    toggleInboxEntryElementExpand, archiveInboxEntryElement, resetInboxLocalState,
 } from './inbox.js';
 
 const ASSIGN = {
@@ -121,6 +121,7 @@ beforeAll(() => {
         isInlineDropdownOpen: () => false,
         isModalOpen: () => false,
         isCommandPaletteOpen: () => false,
+        isDetailViewActive: isAnyDetailViewActive,
     }));
     // ... then delegation on DOMContentLoaded.
     initEventDelegation();
@@ -130,7 +131,12 @@ beforeAll(() => {
 
 beforeEach(() => {
     vi.clearAllMocks();
-    document.body.innerHTML = '<div id="inbox-list"></div><span id="inbox-badge"></span>';
+    resetInboxLocalState();
+    document.body.innerHTML = `
+        <div id="inbox-view" class="view"><div id="inbox-list"></div></div>
+        <div id="issue-detail-view" class="view hidden"></div>
+        <div id="document-detail-view" class="view hidden"></div>
+        <span id="inbox-badge"></span>`;
     setInboxEntries([{ ...ASSIGN }, { ...OTHER }]);
     collapseInboxExpand();
     renderInbox();
@@ -490,5 +496,207 @@ describe('finding 8 and 10: scroll into view, row-scoped selection check', () =>
         window.getSelection().addRange(range);
         click(row().querySelector('.inbox-row-title'));
         expect(isExpanded()).toBe(true);
+    });
+});
+
+// The real router hides every .view and shows the one it switches to; the
+// detail views do the same when they open over a list (CHT-1513).
+function showView(id) {
+    document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+    document.getElementById(id).classList.remove('hidden');
+}
+
+describe('CHT-1513: the inbox keys go quiet behind a detail view opened from it', () => {
+    let viewIssue;
+    let viewDocument;
+    const DOC = {
+        ...OTHER, id: 'doc-1', kind: 'mention', issue_id: null, issue_identifier: null,
+        document_id: 'doc-9', document_title: 'Spec',
+    };
+
+    beforeAll(async () => {
+        ({ viewIssue } = await import('./issue-detail-view.js'));
+        ({ viewDocument } = await import('./documents.js'));
+    });
+
+    beforeEach(() => {
+        viewIssue.mockImplementation(() => showView('issue-detail-view'));
+        viewDocument.mockImplementation(() => showView('document-detail-view'));
+        setInboxEntries([{ ...ASSIGN }, { ...OTHER }, { ...DOC }]);
+        renderInbox();
+        selectInboxRow(0);
+    });
+
+    afterEach(() => {
+        viewIssue.mockReset();
+        viewDocument.mockReset();
+    });
+
+    function openFromRow(entryId) {
+        const r = rowById(entryId);
+        selectInboxRow([...document.querySelectorAll('.inbox-row')].indexOf(r));
+        key(toggleOf(r), 'Enter');
+        click(document.querySelector('.inbox-row-expanded-panel [data-action="open-inbox-full"]'));
+    }
+
+    for (const [label, entryId, detailId] of [
+        ['issue', 'assign-1', 'issue-detail-view'],
+        ['document', 'doc-1', 'document-detail-view'],
+    ]) {
+        it(`after Open (${label}), e and j/k on the detail page leave the inbox alone`, () => {
+            openFromRow(entryId);
+            expect(document.getElementById(detailId).classList.contains('hidden')).toBe(false);
+            const selectedBefore = getSelectedInboxIndex();
+
+            // Keys land wherever focus is: the hidden Open button can still
+            // hold it in some browsers, so press on it as well as on body.
+            for (const target of [document.activeElement, document.body]) {
+                const e = key(target, 'e');
+                // Left for the detail view's own `e` (estimate).
+                expect(e.defaultPrevented).toBe(false);
+                key(target, 'j');
+                key(target, 'k');
+                key(target, 'Escape');
+            }
+
+            expect(api.archiveInbox).not.toHaveBeenCalled();
+            expect(getInboxEntries().map(x => x.id)).toEqual(['assign-1', 'assign-2', 'doc-1']);
+            expect(getSelectedInboxIndex()).toBe(selectedBefore);
+            expect(isExpanded()).toBe(true);
+        });
+    }
+
+    it('back on the inbox, the keys work again', () => {
+        openFromRow('assign-1');
+        showView('inbox-view'); // Back / sidebar / browser back all route here
+        key(document.body, 'j');
+        expect(getSelectedInboxIndex()).toBe(1);
+        expect(isExpanded()).toBe(false);
+        const e = key(document.body, 'e');
+        expect(e.defaultPrevented).toBe(true);
+        expect(api.archiveInbox).toHaveBeenCalledWith('assign-2');
+    });
+});
+
+describe('CHT-1514: a fetch already in flight cannot undo a local archive or read', () => {
+    const UNREAD = { ...ASSIGN, read_at: null };
+    const UNREAD2 = { ...OTHER, read_at: null };
+    let release;
+
+    // A background refresh (some other inbox event) whose fetch the test
+    // completes later, with what the server held when it started.
+    function startStaleRefresh() {
+        api.getInbox.mockImplementationOnce(() => new Promise(r => { release = r; }));
+        dispatch({ type: 'created', entity: 'inbox', data: { id: 'z', recipient_user_id: 'me' } });
+        expect(api.getInbox).toHaveBeenCalledTimes(1);
+    }
+
+    beforeEach(() => {
+        api.getInbox.mockResolvedValue([]);
+        setInboxEntries([{ ...UNREAD }, { ...UNREAD2 }]);
+        setInboxUnreadCount(2);
+        renderInbox();
+        selectInboxRow(0);
+    });
+
+    it('an archived row stays gone when the stale fetch lands after our skipped echo', async () => {
+        startStaleRefresh();
+        key(toggleOf(row()), 'e');
+        await flush();
+        expect(rowById('assign-1')).toBeUndefined();
+        // Our own echo: skipped as already applied, no reload.
+        dispatch({ type: 'archived', entity: 'inbox', data: { id: 'assign-1', recipient_user_id: 'me' } });
+        expect(api.getInbox).toHaveBeenCalledTimes(1);
+
+        release([{ ...UNREAD }, { ...UNREAD2 }]);
+        await flush();
+        expect(rowById('assign-1')).toBeUndefined();
+        expect(getInboxEntries().map(x => x.id)).toEqual(['assign-2']);
+    });
+
+    it('an archived row stays gone when the stale fetch lands before the echo', async () => {
+        startStaleRefresh();
+        let archived;
+        api.archiveInbox.mockImplementationOnce(() => new Promise(r => { archived = r; }));
+        key(toggleOf(row()), 'e');
+        release([{ ...UNREAD }, { ...UNREAD2 }]);
+        await flush();
+        expect(rowById('assign-1')).toBeUndefined();
+        archived({});
+        await flush();
+    });
+
+    it('a row read here keeps its read state and the badge is not lowered twice', async () => {
+        api.getInboxUnreadCount.mockResolvedValue({ unread_count: 1 }); // the server after our read
+        onTestFinished(() => api.getInboxUnreadCount.mockResolvedValue({ unread_count: 0 }));
+        startStaleRefresh();
+        key(toggleOf(row()), 'Enter'); // expand: marks read
+        expect(api.markInboxRead).toHaveBeenCalledTimes(1);
+        await flush();
+        dispatch({ type: 'read', entity: 'inbox', data: { id: 'assign-1', recipient_user_id: 'me' } });
+        expect(api.getInbox).toHaveBeenCalledTimes(1);
+
+        release([{ ...UNREAD }, { ...UNREAD2 }]);
+        await flush();
+        expect(rowById('assign-1').querySelector('.inbox-row-unread-dot')).toBeNull();
+        expect(getInboxEntries().find(x => x.id === 'assign-1').read_at).not.toBeNull();
+
+        const count = getInboxUnreadCount();
+        expect(count).toBe(1);
+        key(document.activeElement, 'Escape'); // collapse
+        key(toggleOf(rowById('assign-1')), 'Enter'); // and open it again
+        expect(isExpanded()).toBe(true);
+        expect(getInboxUnreadCount()).toBe(count);
+        expect(api.markInboxRead).toHaveBeenCalledTimes(1);
+    });
+
+    it('once a fetch started after the server confirmed, the server is trusted again', async () => {
+        key(toggleOf(row()), 'e');
+        await flush(); // archive confirmed
+        api.getInbox.mockResolvedValueOnce([{ ...UNREAD2 }]);
+        dispatch({ type: 'created', entity: 'inbox', data: { id: 'z', recipient_user_id: 'me' } });
+        await flush();
+        // A later fetch that (for whatever reason) has the entry shows it:
+        // the local tombstone did not outlive the confirming fetch.
+        api.getInbox.mockResolvedValueOnce([{ ...UNREAD }, { ...UNREAD2 }]);
+        dispatch({ type: 'created', entity: 'inbox', data: { id: 'z', recipient_user_id: 'me' } });
+        await flush();
+        expect(rowById('assign-1')).toBeTruthy();
+    });
+
+    it('a failed archive lets the next fetch show the entry again', async () => {
+        api.archiveInbox.mockRejectedValueOnce(new Error('offline'));
+        const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+        key(toggleOf(row()), 'e');
+        await flush();
+        err.mockRestore();
+        api.getInbox.mockResolvedValueOnce([{ ...UNREAD }, { ...UNREAD2 }]);
+        dispatch({ type: 'created', entity: 'inbox', data: { id: 'z', recipient_user_id: 'me' } });
+        await flush();
+        expect(rowById('assign-1')).toBeTruthy();
+    });
+
+    it('unread-only: the open row archived in another tab leaves the list', async () => {
+        api.getInbox.mockResolvedValueOnce([{ ...UNREAD }, { ...UNREAD2 }]);
+        toggleInboxUnreadFilter();
+        try {
+            await flush();
+            await flush();
+            selectInboxRow(0);
+            key(toggleOf(row()), 'Enter');
+            expect(isExpanded()).toBe(true);
+
+            // Another tab archives it; the unread-only fetch no longer has it.
+            api.getInbox.mockResolvedValueOnce([{ ...UNREAD2 }]);
+            dispatch({ type: 'archived', entity: 'inbox', data: { id: 'assign-1', recipient_user_id: 'me' } });
+            await flush();
+
+            expect(rowById('assign-1')).toBeUndefined();
+            expect(isExpanded()).toBe(false);
+        } finally {
+            api.getInbox.mockResolvedValue([]);
+            toggleInboxUnreadFilter();
+            await flush();
+        }
     });
 });
