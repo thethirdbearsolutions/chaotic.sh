@@ -554,7 +554,7 @@ class TestPrefixCollisions:
         assert (await service.validate_key(second_key)).id == second.id
         assert await service.validate_key(_sibling(first_key)) is None
 
-    async def test_legacy_rows_sharing_a_prefix_each_validate(self, db, test_user, test_user2):
+    async def test_legacy_rows_sharing_a_prefix_each_validate(self, db, test_user, test_user2, caplog):
         """Several bcrypt rows (and a current row) under one prefix: every
         one of them is tried, so each key finds its own row, is upgraded,
         and nobody else's row is touched."""
@@ -566,7 +566,11 @@ class TestPrefixCollisions:
 
         assert await service.validate_key(current_key[:11] + "e" * 56) is None
         for key, row in zip(reversed(legacy_keys), reversed(legacy_rows)):
-            assert (await service.validate_key(key)).id == row.id
+            caplog.clear()
+            with caplog.at_level("INFO", logger="app.services.api_key_service"):
+                assert (await service.validate_key(key)).id == row.id
+            # The fallback says when it fires, so it can be retired (CHT-1555).
+            assert any("legacy bcrypt" in r.getMessage() and row.id in r.getMessage() for r in caplog.records)
             await row.refresh()
             assert row.key_hash == "sha256$" + _prehash_key(key)
         assert (await service.validate_key(current_key)).id == current.id
