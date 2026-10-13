@@ -64,7 +64,9 @@ Not every route requires a token. Grepping `backend/app/main.py` and
 credentials at all:
 
 - `GET /` and the SPA fallback (`GET /{full_path:path}`) — serve the
-  static frontend shell. No data.
+  static frontend shell. No data. The fallback does not answer `/.well-known/*`:
+  anything there that is not a document this server serves is a JSON
+  404 (CHT-1550).
 - `GET /static/*` — static assets (`StaticFiles` mount).
 - `GET /api/version` — deploy metadata (git sha, commit time, build
   hashes). Explicitly commented as "unauthenticated on purpose — it's
@@ -175,6 +177,51 @@ out with wrong guesses.
    you don't fully trust.** Chaotic's own server doesn't terminate TLS —
    that's the reverse proxy's job (point 1). Without it, JWTs and API
    keys travel in the clear over Bearer headers.
+
+## CORS and browser-based MCP clients
+
+`CORS_ORIGINS` (default `*`) sets the app-wide CORS policy. A list of
+explicit origins is the hardened setting: only those origins can call the
+API from a browser, with credentials allowed. It also turns on the mcp
+SDK's DNS-rebinding guard on `/mcp`, keyed to the same list
+(`_transport_security()` in `backend/app/mcp_server/asgi.py`): a request
+to `/mcp` whose `Origin` header is not listed gets a 403 `Invalid Origin
+header`, and its `Host` must match one of the listed origins. Requests
+with no `Origin` (Claude Code, curl, any server-side client) pass the
+`Origin` check.
+
+With `OAUTH_ENABLED` on (CHT-1551, `backend/app/oauth/cors.py`):
+
+- The OAuth discovery documents (`/.well-known/oauth-protected-resource`,
+  `/.well-known/oauth-protected-resource/mcp`,
+  `/.well-known/oauth-authorization-server`) and the token, register and
+  revoke endpoints answer any origin with `Access-Control-Allow-Origin: *`
+  and no credentials, whatever `CORS_ORIGINS` says. None of them reads a
+  cookie, so this exposes nothing a server-side client could not already
+  fetch. `/oauth/authorize` keeps the app-wide policy: clients navigate to
+  it rather than fetching it.
+- `/mcp` responses carry `Access-Control-Expose-Headers: WWW-Authenticate`,
+  so browser code at an allowed origin can read the 401 challenge's
+  `resource_metadata` link instead of probing well-known paths.
+
+With it off, CORS is exactly the app-wide policy everywhere.
+
+claude.ai and other hosted connectors do discovery and the token exchange
+server-side, so none of this affects them. It matters for clients whose
+OAuth flow runs in the browser, such as [MCP
+Inspector](https://github.com/modelcontextprotocol/inspector):
+
+- **Proxy mode** (Inspector's default) sends `/mcp` traffic from its local
+  proxy process, with no `Origin` header, so it works with any
+  `CORS_ORIGINS`. Prefer it.
+- **Direct mode** calls `/mcp` from the Inspector page. With an explicit
+  `CORS_ORIGINS`, add the page's origin to the list, e.g.
+  `CORS_ORIGINS=https://tracker.example.com,http://localhost:6274`, and
+  restart. Without it the browser's CORS preflight for `/mcp` fails, and
+  an authenticated request that got past it would get the SDK guard's 403. Listing an
+  origin also grants it credentialed CORS access to the whole `/api`, so
+  list only origins you trust, and remove it when you are done. With the
+  default `CORS_ORIGINS=*` direct mode needs no change.
 
 ## Firewall example (ufw)
 

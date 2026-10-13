@@ -43,7 +43,11 @@ class Settings(BaseSettings):
     # opens a fresh one. 0 disables expiry (pre-CHT-1326 behavior).
     intent_ttl_minutes: int = 15
 
-    # CORS
+    # CORS: "*" or a comma-separated list of origins. An explicit list also
+    # keys the DNS-rebinding guard on /mcp (mcp_server/asgi.py). With
+    # OAUTH_ENABLED, the public OAuth endpoints answer any origin
+    # regardless (CHT-1551, oauth/cors.py). See
+    # docs/self-hosting-security.md, "CORS and browser-based MCP clients".
     cors_origins: str = "*"
 
     # Server
