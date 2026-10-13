@@ -268,6 +268,26 @@ class InboxService:
         )
         await self._broadcast(agent.agent_team_id, "created", entry)
 
+    async def notify_connection_revoked_for_reuse(self, *, session, principal) -> None:
+        """A refresh token of a connection was presented a second time and
+        the connection was revoked (CHT-1516, design §2.4): tell the human
+        who answers for it. Either the client misbehaved or someone else
+        has a copy of the token; either way the app stops working until it
+        is reconnected, and this is the explanation."""
+        name = principal.name if principal is not None else "an agent"
+        entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=session.holder_user_id,
+            kind=InboxEntryKind.AGENT_STATUS,
+            team_id=session.team_id,
+            title=f"A connection acting as {name} was revoked",
+            body=(
+                "One of its refresh tokens was used twice, which happens when a token "
+                "has been copied. Every token of the connection was revoked. If you still "
+                "use the app, reconnect it; if you don't recognise this, check who has access."
+            ),
+        )
+        await self._broadcast(session.team_id, "created", entry)
+
     async def notify_mentions(
         self, *, content: str, team_id: str, author, issue=None, document=None,
     ) -> None:

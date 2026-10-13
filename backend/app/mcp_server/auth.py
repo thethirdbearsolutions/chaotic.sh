@@ -54,6 +54,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.api.deps import _authenticate_with_api_key
 from app.mcp_server.context import current_mcp_user
 from app.oauth.discovery import www_authenticate_challenge
+from app.services.token_service import ALL_SECRET_PREFIXES
 
 _WWW_AUTHENTICATE = {"WWW-Authenticate": "Bearer"}
 
@@ -76,9 +77,14 @@ def _redact_key(key: str) -> str:
     dots, not a unicode ellipsis -- uvicorn percent-encodes non-ASCII
     path bytes in access-log lines (`ck_%E2%80%A619a0`), which defeats
     the at-a-glance readability this exists for.
+
+    Every prefix this server mints is kept whole (CHT-1516): a
+    `cat_`/`crt_`/`cac_`/`cct_` token pasted into a path is scrubbed the
+    same way and reads as `cat_...19a0`, not `cat...19a0`.
     """
     if len(key) > 12:
-        return f"{key[:3]}...{key[-4:]}"
+        prefix = next((p for p in ALL_SECRET_PREFIXES if key.startswith(p)), key[:3])
+        return f"{prefix}...{key[-4:]}"
     return "..."
 
 

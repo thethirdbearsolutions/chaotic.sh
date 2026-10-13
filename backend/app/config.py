@@ -75,6 +75,19 @@ class Settings(BaseSettings):
     # decision D5); while on, the AS metadata advertises the endpoint.
     # CHT-1518 implements the endpoint and its rate limits.
     oauth_dcr_enabled: bool = True
+    # Token lifetimes (CHT-1516; design doc §2.5, decision D4). An access
+    # token lives 10 minutes. A refresh token is single use; its session
+    # stays refreshable while used at least once per idle window, up to the
+    # absolute limit (OAuth connections: 30 days idle, 90 absolute, so a
+    # human re-consents once a quarter; claim holders: 24 hours idle, 30
+    # days absolute). Codes live 60 s and claim tickets 5 minutes.
+    oauth_access_token_ttl_seconds: int = Field(600, ge=60)
+    oauth_refresh_idle_ttl_seconds: int = Field(30 * 24 * 3600, ge=60)
+    oauth_refresh_absolute_ttl_seconds: int = Field(90 * 24 * 3600, ge=60)
+    claim_refresh_idle_ttl_seconds: int = Field(24 * 3600, ge=60)
+    claim_refresh_absolute_ttl_seconds: int = Field(30 * 24 * 3600, ge=60)
+    oauth_code_ttl_seconds: int = Field(60, ge=10)
+    claim_ticket_ttl_seconds: int = Field(300, ge=10)
 
     # Email (SMTP) -- CHT-1251. Empty smtp_host means "unconfigured": the
     # mutating paths that would send email (gate-pending, invitations) log
