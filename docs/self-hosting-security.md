@@ -87,7 +87,8 @@ Everything else under `/api/*` goes through `get_current_user` in
 `backend/app/api/deps.py`, which requires a `Bearer` credential that's
 either a JWT (`decode_token`) or an API key (`ck_...`, validated via
 `APIKeyService`) — a 401 if missing, a 403 if the resolved user is
-inactive. The `/ws` WebSocket endpoint requires a valid token query param
+inactive. The credential itself is resolved by
+`backend/app/auth/credentials.py`, which `/mcp` shares (CHT-1560). The `/ws` WebSocket endpoint requires a valid token query param
 and checks team membership before accepting. The `/mcp` mount
 (`backend/app/mcp_server/asgi.py`) requires either a `Bearer` header or a
 capability-URL API key path segment — no anonymous MCP access.
