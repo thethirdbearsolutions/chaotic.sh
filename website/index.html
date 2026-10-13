@@ -19,12 +19,18 @@
                 <img src="favicon-256x256.png" alt="Chaotic logo" width="32" height="32">
                 <span class="logo-text">Chaotic</span>
             </a>
-            <nav class="nav">
+            <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu">
+                <span class="nav-toggle-bar"></span>
+                <span class="nav-toggle-bar"></span>
+                <span class="nav-toggle-bar"></span>
+            </button>
+            <nav class="nav" id="site-nav" aria-label="Main">
                 <a href="#features" class="nav-link">Features</a>
-                <a href="#how-it-works" class="nav-link">How it Works</a>
-                <a href="#comparison" class="nav-link">Why Chaotic</a>
+                <a href="#agents" class="nav-link">Agents &amp; MCP</a>
+                <a href="#whats-new" class="nav-link">What's New</a>
                 <a href="manifesto.html" class="nav-link">Manifesto</a>
                 <a href="philosophy.html" class="nav-link">Philosophy</a>
+                <a href="/docs" class="nav-link">Docs</a>
                 <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-primary">GitHub</a>
             </nav>
         </div>
@@ -126,7 +132,7 @@
                         <li>Attest documentation is current</li>
                         <li>Request an oppositional code review</li>
                         <li>File a design spec with the alternatives you considered</li>
-                        <li>Reflect on what went well this sprint and vent about what frustrated you</p>
+                        <li>Reflect on what went well this sprint and vent about what frustrated you</li>
                     </ul>
                     <p class="feature-note">Until rituals complete, the action is blocked. The pause is the point.</p>
                 </div>
@@ -218,6 +224,93 @@
                     </ul>
                 </div>
             </div>
+        </div>
+    </section>
+
+    <!-- Product Section (CHT-694): real screenshots of the web UI, captured
+         from a throwaway instance seeded with made-up data. -->
+    <section class="section" id="product">
+        <div class="section-content">
+            <h2 class="section-title">The Dashboard, For Real</h2>
+            <p class="section-lead">Not a mockup. This is the web UI that ships with Chaotic, watching an agent work through a sprint. (The team and tickets are made up.)</p>
+            <figure class="screenshot screenshot-hero">
+                <a href="images/app-issues.png"><img src="images/app-issues.png" width="1440" height="810" loading="lazy"
+                     alt="Chaotic issues view: a Backend API project grouped by status, with a sprint progress bar showing 6 of 20 points spent"></a>
+                <figcaption>Issues, grouped by status, with the sprint's point budget up top.</figcaption>
+            </figure>
+            <div class="screenshot-pair">
+                <figure class="screenshot">
+                    <a href="images/app-approvals.png"><img src="images/app-approvals.png" width="1180" height="470" loading="lazy"
+                         alt="Approvals view: an agent attested the code-review ritual on a ticket, and it waits for a human to approve"></a>
+                    <figcaption>An agent attested a <code>review</code> ritual. The ticket can't close until you approve.</figcaption>
+                </figure>
+                <figure class="screenshot">
+                    <a href="images/app-board.png"><img src="images/app-board.png" width="1440" height="460" loading="lazy"
+                         alt="Board view with Backlog, Todo, In Progress and In Review columns"></a>
+                    <figcaption>The board, for when you'd rather see columns.</figcaption>
+                </figure>
+            </div>
+        </div>
+    </section>
+
+    <!-- Agents & MCP Section (CHT-1479). Facts here come from README.md and
+         docs/agents.md; keep them in step when those change. -->
+    <section class="section section-alt" id="agents">
+        <div class="section-content">
+            <h2 class="section-title">Agents &amp; MCP</h2>
+            <p class="section-lead">Agents can shell out to the CLI, or use Chaotic as native tools over the Model Context Protocol. Either way they get the same budgets, rituals and gates.</p>
+            <div class="agents-grid">
+                <div class="feature-card">
+                    <h3 class="feature-title">Local: <code>chaotic mcp</code></h3>
+                    <p class="feature-description">An MCP server over stdio for any harness on the same machine, such as Claude Code. It reuses the CLI's login and profile, so there is no separate MCP sign-in.</p>
+                    <pre class="code-block"><code>claude mcp add chaotic -- chaotic mcp
+
+# several agents on one machine? pin a profile
+claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
+                    <p class="feature-note">Any MCP host that takes a JSON config works the same way: command <code>chaotic</code>, args <code>["mcp"]</code>.</p>
+                </div>
+                <div class="feature-card">
+                    <h3 class="feature-title">Remote: <code>/mcp</code></h3>
+                    <p class="feature-description">The server also speaks MCP over Streamable HTTP at <code>/mcp</code>, authenticated with an API key. Point claude.ai custom connectors, Claude Code on the web, or any URL-based client at it.</p>
+                    <pre class="code-block"><code>chaotic auth keys create "my agent" --expires-in 90d
+claude mcp add --transport http chaotic \
+  https://your-chaotic-host/mcp \
+  --header "Authorization: Bearer ck_..."</code></pre>
+                    <p class="feature-note">Connector UIs that can't set a header can use a capability URL, <code>/mcp/ck_...</code>. Give it its own expiring key.</p>
+                </div>
+            </div>
+            <h3 class="subsection-title">What agents can do</h3>
+            <p class="section-lead">Both transports serve the same toolset, with typed schemas and structured errors an agent can act on.</p>
+            <div class="tool-families">
+                <div class="tool-family">
+                    <h4>Issues</h4>
+                    <p>List, view, create, update and comment; find ready work and claim it with a lease; block, unblock and label; read description history.</p>
+                </div>
+                <div class="tool-family">
+                    <h4>Sprints</h4>
+                    <p>Read the current sprint and its budget, add or remove issues, close the sprint, and audit the budget transactions behind its spend.</p>
+                </div>
+                <div class="tool-family">
+                    <h4>Rituals</h4>
+                    <p>See which rituals are pending, then attest or complete them, with a note or a linked document or URL as the evidence.</p>
+                </div>
+                <div class="tool-family">
+                    <h4>Docs</h4>
+                    <p>Write and update team documents, link them to issues, and browse every past revision.</p>
+                </div>
+                <div class="tool-family">
+                    <h4>Inbox</h4>
+                    <p>Read what's waiting on you, such as gates, mentions and assignments, and mark items read.</p>
+                </div>
+                <div class="tool-family">
+                    <h4>Context</h4>
+                    <p>Recent activity, projects, labels, and <code>server_info</code> to check the toolset after an upgrade.</p>
+                </div>
+            </div>
+            <p class="section-footnote">
+                Scope an agent's access with <code>chaotic agent create</code>: its key only reaches its own team or project.
+                Setup details are in <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/docs/agents.md">docs/agents.md</a>.
+            </p>
         </div>
     </section>
 
@@ -436,6 +529,78 @@
         </div>
     </section>
     
+    <!-- What's New Section (CHT-1481)
+         A hand-kept summary of cli/CHANGELOG.md. On each release:
+           1. Add a new <li class="release"> at the top of the list below with
+              the version, the date from the CHANGELOG heading, and two to four
+              one-line highlights from that entry.
+           2. Keep the four most recent entries; delete the oldest.
+           3. Update the version in the install section's "Latest release" line.
+         Link targets stay the same: the full notes live in cli/CHANGELOG.md. -->
+    <section class="section" id="whats-new">
+        <div class="section-content">
+            <h2 class="section-title">What's New</h2>
+            <ol class="release-list">
+                <li class="release">
+                    <div class="release-meta">
+                        <span class="release-version">0.1.0a20</span>
+                        <time datetime="2026-10-13">Oct 13, 2026</time>
+                    </div>
+                    <ul class="release-notes">
+                        <li><strong>Ritual artifacts.</strong> A ritual can require evidence: a document or a URL that the attestation must point at.</li>
+                        <li>Every client-facing API route is reachable from the CLI client, and list calls page with <code>skip</code>/<code>limit</code>.</li>
+                        <li>Zero-point estimates show as 0 everywhere, and blocking-cycle checks hold under concurrent writes.</li>
+                        <li>Two database migrations: upgrade with <code>chaotic system upgrade</code>, which backs up first. MCP clients should reconnect.</li>
+                    </ul>
+                </li>
+                <li class="release">
+                    <div class="release-meta">
+                        <span class="release-version">0.1.0a17</span>
+                        <time datetime="2026-07-11">Jul 11, 2026</time>
+                    </div>
+                    <ul class="release-notes">
+                        <li>Keyboard navigation across the web UI: roving focus and <code>j</code>/<code>k</code> in every list, sprint and epic views, and inline field dropdowns.</li>
+                    </ul>
+                </li>
+                <li class="release">
+                    <div class="release-meta">
+                        <span class="release-version">0.1.0a16</span>
+                        <time datetime="2026-07-05">Jul 5, 2026</time>
+                    </div>
+                    <ul class="release-notes">
+                        <li><strong>MCP servers</strong>: <code>chaotic mcp</code> over stdio and <code>/mcp</code> over Streamable HTTP.</li>
+                        <li><code>chaotic issue ready</code> and claim leases, so a crashed agent can't wedge a ticket.</li>
+                        <li>An inbox for everything awaiting you, revision history for issues and docs, and <code>chaotic await</code>.</li>
+                        <li>Project templates and starter packs: <code>rigor</code>, <code>consulting</code>, <code>human-led</code>, <code>solo-agent</code>.</li>
+                    </ul>
+                </li>
+            </ol>
+            <p class="section-footnote">
+                Full release notes: <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/cli/CHANGELOG.md">CHANGELOG</a>.
+            </p>
+        </div>
+    </section>
+
+    <!-- License Section (CHT-695) -->
+    <section class="section section-alt" id="open-source">
+        <div class="section-content">
+            <h2 class="section-title">Free and Open Source</h2>
+            <div class="license-card">
+                <p class="license-lead">Chaotic is MIT licensed and self-hosted. It runs on your laptop or your own server, and your data stays there.</p>
+                <ul class="license-points">
+                    <li>MIT license: use it, fork it, ship it</li>
+                    <li>No hosted service to sign up for</li>
+                    <li>The full source is on GitHub, website included</li>
+                </ul>
+                <p class="feature-note">Chaotic is alpha software. Back up before upgrades; <code>chaotic system upgrade</code> does it for you.</p>
+                <div class="cta-buttons">
+                    <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/LICENSE" class="btn btn-secondary">Read the License</a>
+                    <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-secondary">Source on GitHub</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- Install Section -->
     <section class="section cta-section" id="install">
         <div class="section-content">
@@ -454,6 +619,14 @@
                     </div>
                 </div>
             </div>
+            <p class="install-note">
+                Needs Python 3.10+ and git on Linux or macOS (Windows via WSL2). The script installs the
+                <a href="https://pypi.org/project/chaotic-cli/">chaotic-cli</a> package with uv and starts a local server.
+                Prefer to do it by hand (you'll also need <a href="https://docs.astral.sh/uv/">uv</a> and
+                <a href="https://github.com/casey/just">just</a>)? Run <code>uv tool install chaotic-cli</code>,
+                then <code>chaotic system install</code> and <code>chaotic quickstart</code>.
+            </p>
+            <p class="install-note">Latest release: <strong>0.1.0a20</strong></p>
             <div class="cta-buttons">
                 <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-primary btn-large">View on GitHub</a>
                 <a href="manifesto.html" class="btn btn-secondary btn-large">Read the Manifesto</a>
@@ -469,10 +642,14 @@
                 <span>Chaotic</span>
             </div>
             <div class="footer-links">
-                <a href="https://github.com/thethirdbearsolutions/chaotic.sh">GitHub</a>
+                <a href="index.html">Home</a>
                 <a href="manifesto.html">Manifesto</a>
                 <a href="philosophy.html">Philosophy</a>
+                <a href="/docs">Docs</a>
+                <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/cli/CHANGELOG.md">Changelog</a>
+                <a href="https://github.com/thethirdbearsolutions/chaotic.sh">GitHub</a>
             </div>
+            <p class="footer-license">Open source under the <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/LICENSE">MIT License</a>.</p>
             <p class="footer-copyright">&copy; 2025-2026 Chaotic. Agent-first project infrastructure.</p>
         </div>
     </footer>
@@ -544,5 +721,6 @@
         // Auto-rotate every 3 seconds
         rotationTimer = setInterval(cycleTagline, 3000);
     </script>
+    <script src="js/nav.js" defer></script>
 </body>
 </html>
