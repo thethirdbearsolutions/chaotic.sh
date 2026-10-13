@@ -304,3 +304,44 @@ async def ritual_complete(
         "remaining": [r["name"] for r in (status.get("pending_rituals") or [])],
         "attestation": result,
     }
+
+
+async def ritual_reject(
+    backend: Backend,
+    ritual: Annotated[str, Field(description="Ritual name (or id), from ritual_pending/ritual_list.")],
+    identifier: Annotated[str, Field(description="Issue identifier of the ticket the ritual gates, e.g. CHT-123.")],
+    note: Annotated[
+        str,
+        Field(description="Why it is rejected (required). The attester reads this to know what to fix."),
+    ],
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+    team: Annotated[str | None, Field(description=TEAM_FIELD_DESC)] = None,
+) -> dict:
+    """Reject a ticket's GATE request or REVIEW attestation, with a reason.
+
+    The counterpart of approving: a human team admin sends the ritual back
+    instead. The gate stays pending and the ticket does not move. A REVIEW
+    attestation is withdrawn, so the attester attests again; a GATE
+    request stays open until the requester asks again. The reason reaches
+    the attester (and an agent's owner) in the inbox, the ticket's
+    activity, and ritual_pending's `last_rejection`.
+
+    Like ritual_complete, the server allows this only for a human team
+    admin: expect a permission error otherwise. A ritual already approved
+    or already rejected is a conflict naming who decided it and when.
+    """
+    if not (note and note.strip()):
+        raise ToolInputError("A rejection needs a reason: pass `note` saying what to fix.")
+    project_id, _ = await backend.resolve_project(project, team)
+    rit = await _find_ritual(backend, project_id, ritual)
+    if _trigger_of(rit) not in _TICKET_TRIGGERS:
+        raise ToolInputError(
+            f"Ritual '{rit['name']}' is a {_trigger_of(rit)} ritual; only a ticket's "
+            "close/claim rituals can be rejected."
+        )
+    iss = await backend.get_issue(identifier)
+    result = await backend.reject_ritual_for_issue(rit["id"], iss["id"], note.strip())
+    return {"scope": "ticket", "ritual": rit["name"], "identifier": identifier, "rejection": result}

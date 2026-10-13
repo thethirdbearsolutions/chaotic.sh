@@ -215,6 +215,8 @@ class Backend(Protocol):
         document_id: str | None = None, url: str | None = None,
     ) -> dict: ...
 
+    async def reject_ritual_for_issue(self, ritual_id: str, issue_id: str, note: str) -> dict: ...
+
     # -- server (CHT-1401) ------------------------------------------------------
 
     async def server_info(self) -> dict:

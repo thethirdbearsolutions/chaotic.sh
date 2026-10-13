@@ -268,6 +268,10 @@ class FakeBackend:
         self._rec("complete_gate_ritual_for_issue", ritual_id, issue_id, note, **artifact)
         return {"id": "att-4"}
 
+    async def reject_ritual_for_issue(self, ritual_id, issue_id, note):
+        self._rec("reject_ritual_for_issue", ritual_id, issue_id, note)
+        return {"id": "rej-1", "note": note}
+
     # projects / activity
     async def list_projects(self, team_id, limit):
         self._rec("list_projects", team_id, limit)
@@ -467,6 +471,7 @@ class TestBoundary:
         "doc_view": {"document_id": "d"},
         "ritual_attest": {"ritual": "retro", "note": "n"},
         "ritual_complete": {"ritual": "retro"},
+        "ritual_reject": {"ritual": "close-gate", "identifier": "CHT-1", "note": "n"},
     }
 
     def test_every_tool_is_guarded(self):
@@ -1076,6 +1081,20 @@ class TestRitualBody:
         fake.rituals = []
         result = await _tools(fake)["ritual_complete"](ritual="retro")
         assert "no rituals configured" in result["error"]["message"]
+
+    async def test_reject_ticket_ritual(self, fake):
+        """CHT-1606: the reason is required and trimmed, and only a ticket's
+        rituals can be rejected; nothing reaches the server otherwise."""
+        result = await _tools(fake)["ritual_reject"](ritual="close-gate", identifier="CHT-1", note=" too early ")
+        assert result == {"scope": "ticket", "ritual": "close-gate", "identifier": "CHT-1",
+                          "rejection": {"id": "rej-1", "note": "too early"}}
+        assert fake.calls_to("reject_ritual_for_issue") == [(("r-ticket", "i1", "too early"), {})]
+
+        blank = await _tools(fake)["ritual_reject"](ritual="close-gate", identifier="CHT-1", note="  ")
+        assert blank["error"]["error_code"] == "tool_input"
+        sprint = await _tools(fake)["ritual_reject"](ritual="retro", identifier="CHT-1", note="x")
+        assert "close/claim" in sprint["error"]["message"]
+        assert len(fake.calls_to("reject_ritual_for_issue")) == 1
 
     async def test_complete_ticket_ritual(self, fake):
         result = await _tools(fake)["ritual_complete"](ritual="close-gate", identifier="CHT-1", note="ok")

@@ -3,11 +3,19 @@ import json as json_module
 import sys
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
 from ..principals import principal_markup
 from .shared import _client, console, format_ritual_line, print_ritual_prompt, resolve_content_value, resolve_document_id
+
+
+def print_rejection(rejection: dict) -> None:
+    """The reason a human sent this ritual back (CHT-1606), shown before
+    the attester is asked to attest again."""
+    who = principal_markup(rejection.get("rejecter"), rejection.get("rejected_by_name")) or "Someone"
+    console.print(f"\n[red]\u2717 Rejected by {who}:[/red] {escape(rejection.get('note') or '')}")
 
 
 def _main():
@@ -254,6 +262,9 @@ def register(cli):
                     console.print(f"[yellow]\u23f3[/yellow] {r['name']} {mode} - attested, pending approval")
                     raise SystemExit(1)
             else:
+                rejection = r.get("last_rejection")
+                if rejection and not rejection.get("superseded_at"):
+                    print_rejection(rejection)
                 console.print(f"\n[bold]Next pending ritual for {ticket_id}:[/bold] {r['name']} {mode}")
                 print_ritual_prompt(r['prompt'])
                 console.print(f"\n  [dim]Usage: chaotic ritual attest {r['name']} --ticket {ticket_id} --note \"your note here\"[/dim]")
@@ -667,10 +678,15 @@ def register(cli):
 
     @ritual.command("approve")
     @click.argument("ritual_name")
+    @click.option("--ticket", "ticket_id", help="Issue identifier, to approve a ticket's REVIEW attestation (e.g., CHT-123)")
     @_main().require_project
     @_main().handle_error
-    def ritual_approve(ritual_name):
-        """Approve a ritual attestation (admin only, for REVIEW mode)."""
+    def ritual_approve(ritual_name, ticket_id):
+        """Approve a ritual attestation (admin only, for REVIEW mode).
+
+        For a ticket-level ritual (close or claim), pass --ticket. The
+        opposite is `chaotic ritual reject`.
+        """
         m = _main()
         project_id = m.get_current_project()
 
@@ -683,6 +699,17 @@ def register(cli):
             console.print("Run `chaotic ritual list` to see available rituals.")
             raise SystemExit(1)
 
+        if rit.get("trigger") in ("ticket_close", "ticket_claim"):
+            if not ticket_id:
+                console.print(f"[red]Ritual '{ritual_name}' is a ticket-level ritual. Use --ticket <issue-id>.[/red]")
+                raise SystemExit(1)
+            issue = _client().get_issue_by_identifier(ticket_id)
+            _client().approve_issue_attestation(rit["id"], issue["id"])
+            console.print(f"[green]Ritual '{ritual_name}' approved for {ticket_id}.[/green]")
+            return
+        if ticket_id:
+            console.print("[yellow]Note: --ticket ignored for sprint rituals.[/yellow]")
+
         _client().approve_ritual(rit["id"], project_id)
 
         # Check if limbo cleared
@@ -693,6 +720,44 @@ def register(cli):
             pending_count = len(status["pending_rituals"])
             console.print(f"[green]Ritual '{ritual_name}' approved.[/green] {pending_count} remaining.")
             console.print("Run `chaotic ritual list` to continue.")
+
+    @ritual.command("reject")
+    @click.argument("ritual_name")
+    @click.option("--ticket", "ticket_id", required=True, help="Issue identifier of the ticket the ritual gates (e.g., CHT-123)")
+    @click.option("--note", "--reason", "note", required=True, callback=resolve_content_value,
+                  help="Why it is rejected (required): what the attester has to fix. @file or - read it from a file or stdin")
+    @_main().require_project
+    @_main().handle_error
+    def ritual_reject(ritual_name, ticket_id, note):
+        """Reject a ticket's GATE request or REVIEW attestation (human admin only).
+
+        The gate stays pending and the ticket does not move: a REVIEW
+        attestation is withdrawn so the agent attests again, and a GATE
+        request waits until the requester asks again. The reason reaches
+        the attester (and an agent's owner) in the inbox and the ticket's
+        activity, and shows in `chaotic ritual pending`.
+        """
+        if not (note and note.strip()):
+            console.print("[red]A rejection needs a reason: --note \"what to fix\".[/red]")
+            raise SystemExit(1)
+        m = _main()
+        project_id = m.get_current_project()
+
+        rituals = _client().get_rituals(project_id)
+        rit = next((r for r in rituals if r["name"] == ritual_name), None)
+        if not rit:
+            console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
+            console.print("Run `chaotic ritual list` to see available rituals.")
+            raise SystemExit(1)
+        if rit.get("trigger") not in ("ticket_close", "ticket_claim"):
+            console.print(f"[red]Ritual '{ritual_name}' is not a ticket-level ritual; only a ticket's close/claim rituals can be rejected.[/red]")
+            raise SystemExit(1)
+
+        issue = _client().get_issue_by_identifier(ticket_id)
+        rejection = _client().reject_ritual_for_issue(rit["id"], issue["id"], note.strip())
+        attester = principal_markup(rejection.get("attester"), rejection.get("attested_by_name"))
+        to = f" {attester} has been told why." if attester else ""
+        console.print(f"[yellow]Ritual '{ritual_name}' rejected for {ticket_id}.[/yellow]{to}")
 
     @ritual.command("complete")
     @click.argument("ritual_name")
@@ -784,7 +849,10 @@ def register(cli):
             context = entry.get("sprint_name") or entry.get("issue_identifier") or ""
 
             # Format status
-            if entry.get("approved_at"):
+            if entry.get("rejected_at"):
+                rejecter = principal_markup(entry.get("rejecter"), entry.get("rejected_by_name", ""))
+                status_str = f"[red]Rejected[/red] by {rejecter}"
+            elif entry.get("approved_at"):
                 approval_mode = entry.get("approval_mode", "auto")
                 if approval_mode == "auto":
                     status_str = "[green]Auto[/green]"
@@ -794,7 +862,7 @@ def register(cli):
             else:
                 status_str = "[yellow]Pending[/yellow]"
 
-            note = (entry.get("note") or "")[:40]
+            note = (entry.get("rejection_note") or entry.get("note") or "")[:40]
 
             table.add_row(
                 date,

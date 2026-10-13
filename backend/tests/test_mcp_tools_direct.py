@@ -1440,6 +1440,46 @@ class TestReviewRegressions:
         assert "error" in result
         assert "identifier" in str(result["error"])
 
+    # --- CHT-1606: ritual_reject ---
+
+    async def test_ritual_reject_sends_a_review_back_with_its_reason(self, test_project):
+        from app.enums import ApprovalMode, RitualTrigger
+        await self._ritual(test_project.id, "code-review",
+                           trigger=RitualTrigger.TICKET_CLOSE,
+                           approval_mode=ApprovalMode.REVIEW)
+        iss = await tools.issue_create(title="Reviewed")
+        attested = await tools.ritual_attest(ritual="code-review", note="looks fine", identifier=iss["identifier"])
+        assert "error" not in attested, attested
+
+        result = await tools.ritual_reject(ritual="code-review", identifier=iss["identifier"], note=" No tests ")
+
+        assert "error" not in result, result
+        assert result["scope"] == "ticket"
+        rejection = result["rejection"]
+        assert rejection["note"] == "No tests"
+        assert rejection["approval_mode"] == "review"
+        assert rejection["attestation_note"] == "looks fine"
+        assert "hashed_password" not in str(result)
+
+        pending = await tools.ritual_pending(identifier=iss["identifier"])
+        [row] = pending["pending_rituals"]
+        assert row["attestation"] is None
+        assert row["last_rejection"]["note"] == "No tests"
+        assert pending["unattested"] == ["code-review"]
+
+        again = await tools.ritual_reject(ritual="code-review", identifier=iss["identifier"], note="again")
+        assert "error" in again
+        assert "Already rejected" in str(again["error"])
+
+    async def test_ritual_reject_needs_a_reason_and_a_ticket_ritual(self, test_project):
+        from app.enums import ApprovalMode
+        await self._ritual(test_project.id, "retro", approval_mode=ApprovalMode.REVIEW)
+        iss = await tools.issue_create(title="Any")
+        blank = await tools.ritual_reject(ritual="retro", identifier=iss["identifier"], note="  ")
+        assert "reason" in str(blank["error"])
+        sprint = await tools.ritual_reject(ritual="retro", identifier=iss["identifier"], note="why")
+        assert "close/claim" in str(sprint["error"])
+
     # --- C6: gate rituals refuse attestation; the docstring now says so ---
 
     async def test_attesting_a_gate_ritual_is_refused(self, test_project):
@@ -1558,7 +1598,7 @@ class TestSweepCoverage:
         "issue_block", "issue_unblock", "issue_label",
         "doc_create", "doc_update", "doc_link", "doc_unlink",
         "sprint_add", "sprint_remove", "sprint_close",
-        "ritual_attest", "ritual_complete",
+        "ritual_attest", "ritual_complete", "ritual_reject",
         "inbox_mark_read", "inbox_mark_all_read",  # swept via inbox_list
         # read tools whose shape is asserted in their own tests
         "issue_view", "sprint_transactions",

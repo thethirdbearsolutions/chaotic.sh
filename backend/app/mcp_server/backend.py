@@ -47,7 +47,7 @@ from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.issue import (
     AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate, IssueUpdate,
 )
-from app.schemas.ritual import RitualAttestationCreate
+from app.schemas.ritual import RitualAttestationCreate, RitualRejectCreate
 from app.services.project_service import ProjectService
 
 
@@ -471,6 +471,15 @@ class InProcessBackend:
         result = await rituals_api.complete_gate_ritual_for_issue(
             ritual_id=ritual_id, issue_id=issue_id,
             attestation_in=RitualAttestationCreate(note=note, document_id=document_id, url=url),
+            current_user=self._user,
+        )
+        return _dump(result)
+
+    @_translated(rituals_api.reject_issue_attestation)
+    async def reject_ritual_for_issue(self, ritual_id: str, issue_id: str, note: str) -> dict:
+        result = await rituals_api.reject_issue_attestation(
+            ritual_id=ritual_id, issue_id=issue_id,
+            reject_in=RitualRejectCreate(note=note),
             current_user=self._user,
         )
         return _dump(result)

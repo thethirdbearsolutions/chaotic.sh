@@ -389,7 +389,7 @@ want to wake on intents regardless of ritual name.
                       commented, status_changed, priority_changed,
                       assigned, unassigned, labeled, unlabeled,
                       moved_to_sprint, removed_from_sprint,
-                      attested, approved, intent_opened,
+                      attested, approved, rejected, intent_opened,
                       intent_cleared, intent_canceled, lease_expired,
                       created, updated, deleted, any
                     Default: any. These tokens are a stable CLI contract;
@@ -667,6 +667,7 @@ registers them; the canonical descriptions and schemas are in
 | `ritual_list` | `ritual list` |
 | `ritual_attest` | `ritual attest` |
 | `ritual_complete` | `ritual complete` |
+| `ritual_reject` | `ritual reject` |
 | `inbox_list` | `inbox list` |
 | `inbox_mark_read` | `inbox mark-read` |
 | `inbox_mark_all_read` | `inbox mark-all-read` |

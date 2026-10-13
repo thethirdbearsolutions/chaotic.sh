@@ -310,6 +310,9 @@ class RestBackend:
             document_id=document_id, url=url,
         )
 
+    async def reject_ritual_for_issue(self, ritual_id: str, issue_id: str, note: str) -> dict:
+        return await self._call(self._client().reject_ritual_for_issue, ritual_id, issue_id, note)
+
     # -- projects / activity ----------------------------------------------------
 
     async def list_projects(self, team_id: str, limit: int) -> list:

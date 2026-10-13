@@ -37,7 +37,7 @@ from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
 from app.enums import ApprovalMode, RitualTrigger, ActivityType
-from app.services.principals import fill_principals
+from app.services.principals import fill_principals, load_principals
 from app.websocket import broadcast_attestation_event
 
 router = APIRouter()
@@ -827,18 +827,24 @@ async def _human_ritual_decider(ritual_id: str, issue_id: str, current_user, ver
     return ritual, issue, project
 
 
-def _already_resolved(resolution: str, resolved_by: str | None, resolved_at) -> HTTPException:
+async def _already_resolved(resolution: str, resolved_by: str | None, resolved_at) -> HTTPException:
     """The 409 for approving or rejecting a gate/review someone already
     decided (CHT-1606): who decided it and when, so a client acting on a
     stale notification can say so instead of failing blankly."""
+    principals = await load_principals([resolved_by])
+    who = principals.get(resolved_by) if resolved_by else None
+    when = resolved_at.isoformat() if resolved_at else None
+    by = f" by {who.name}" if who else ""
+    at = f" at {when}" if when else ""
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail={
             "error_code": "ritual_already_resolved",
-            "message": f"Already {resolution}.",
+            "message": f"Already {resolution}{by}{at}.",
             "resolution": resolution,
             "resolved_by": resolved_by,
-            "resolved_at": resolved_at.isoformat() if resolved_at else None,
+            "resolved_by_name": who.name if who else None,
+            "resolved_at": when,
         },
     )
 
@@ -864,14 +870,14 @@ async def approve_issue_attestation(
     if not attestation:
         rejected = await ritual_service.outstanding_rejection(ritual.id, issue_id)
         if rejected:
-            raise _already_resolved("rejected", rejected.rejected_by_id, rejected.rejected_at)
+            raise await _already_resolved("rejected", rejected.rejected_by_id, rejected.rejected_at)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No attestation found for this ritual",
         )
 
     if attestation.approved_at:
-        raise _already_resolved("approved", attestation.approved_by, attestation.approved_at)
+        raise await _already_resolved("approved", attestation.approved_by, attestation.approved_at)
 
     try:
         # Same duplicate-broadcast shape as CHT-1200 (attest): approve_for_issue()
@@ -941,7 +947,7 @@ async def reject_issue_attestation(
             ritual, issue_id, current_user.id, reject_in.note,
         )
     except RitualAlreadyResolvedError as e:
-        raise _already_resolved(e.resolution, e.resolved_by, e.resolved_at)
+        raise await _already_resolved(e.resolution, e.resolved_by, e.resolved_at)
     except NothingToRejectError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValueError as e:

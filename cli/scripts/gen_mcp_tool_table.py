@@ -66,6 +66,7 @@ CLI_EQUIVALENTS: dict[str, str] = {
     "ritual_list": "`ritual list`",
     "ritual_attest": "`ritual attest`",
     "ritual_complete": "`ritual complete`",
+    "ritual_reject": "`ritual reject`",
     "inbox_list": "`inbox list`",
     "inbox_mark_read": "`inbox mark-read`",
     "inbox_mark_all_read": "`inbox mark-all-read`",
