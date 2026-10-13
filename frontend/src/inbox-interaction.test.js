@@ -19,15 +19,40 @@ vi.mock('./api.js', () => ({
         updateIssue: vi.fn(() => Promise.resolve({})),
     },
 }));
-vi.mock('./ui.js', () => ({ showApiError: vi.fn(), isModalOpen: vi.fn(() => false) }));
-vi.mock('./issue-detail-view.js', () => ({ viewIssue: vi.fn() }));
-vi.mock('./documents.js', () => ({ viewDocument: vi.fn() }));
-vi.mock('./gate-approvals.js', () => ({ formatRelativeTime: vi.fn(() => '2h ago') }));
+vi.mock('./ui.js', () => ({ showApiError: vi.fn(), isModalOpen: vi.fn(() => false), showToast: vi.fn() }));
+vi.mock('./issue-detail-view.js', () => ({ viewIssue: vi.fn(), noteSkippedDetailRefresh: vi.fn() }));
+vi.mock('./documents.js', () => ({
+    viewDocument: vi.fn(),
+    refreshDocumentsListIfActive: vi.fn(),
+    refreshDocumentDetailIfViewing: vi.fn(),
+    handleRemoteDocumentDeleted: vi.fn(),
+}));
+vi.mock('./gate-approvals.js', () => ({ formatRelativeTime: vi.fn(() => '2h ago'), loadGateApprovals: vi.fn() }));
+// ws-handlers.js's other views: never reached by inbox events.
+vi.mock('./dashboard.js', () => ({
+    getMyIssues: vi.fn(() => []), setMyIssues: vi.fn(), renderMyIssues: vi.fn(),
+    loadMyIssues: vi.fn(), loadDashboardActivity: vi.fn(), loadSprintStatus: vi.fn(),
+}));
+vi.mock('./issue-list.js', () => ({ renderIssues: vi.fn() }));
+vi.mock('./issues-view.js', () => ({ loadIssues: vi.fn() }));
+vi.mock('./board.js', () => ({ loadBoard: vi.fn(), scheduleBoardRefresh: vi.fn() }));
+vi.mock('./sprints.js', () => ({
+    loadSprints: vi.fn(), viewSprint: vi.fn(), getCurrentSprintDetail: vi.fn(), clearCachedCurrentSprintIds: vi.fn(),
+}));
+vi.mock('./projects.js', () => ({ loadProjects: vi.fn(), renderProjects: vi.fn() }));
+vi.mock('./epics.js', () => ({ loadEpics: vi.fn() }));
+vi.mock('./router.js', () => ({ navigateTo: vi.fn() }));
 vi.mock('./state.js', () => {
     let entries = [];
     let unread = 0;
     let selected = -1;
     return {
+        getCurrentUser: vi.fn(() => ({ id: 'me' })),
+        getCurrentView: vi.fn(() => 'inbox'),
+        getCurrentDetailIssue: vi.fn(() => null),
+        getIssues: vi.fn(() => []), setIssues: vi.fn(),
+        getDetailNavContext: vi.fn(() => []), setDetailNavContext: vi.fn(),
+        getWebsocket: vi.fn(() => null), setWebsocket: vi.fn(),
         getCurrentTeam: vi.fn(() => ({ id: 'team-1' })),
         getInboxEntries: vi.fn(() => entries),
         setInboxEntries: vi.fn(e => { entries = e; }),
@@ -39,12 +64,18 @@ vi.mock('./state.js', () => {
 });
 
 import { api } from './api.js';
-import { setInboxEntries, getSelectedInboxIndex, setSelectedInboxIndex } from './state.js';
+import { showApiError } from './ui.js';
+import {
+    setInboxEntries, getInboxEntries, getSelectedInboxIndex, setSelectedInboxIndex,
+    getInboxUnreadCount, setInboxUnreadCount,
+} from './state.js';
+import { dispatch, resetWsState } from './ws.js';
+import { registerWsHandlers } from './ws-handlers.js';
 import { initEventDelegation } from './event-delegation.js';
 import { createInboxNavigationHandler } from './keyboard.js';
 import * as inboxModule from './inbox.js';
 import {
-    renderInbox, selectInboxRow, collapseInboxExpand,
+    renderInbox, selectInboxRow, collapseInboxExpand, loadInbox, toggleInboxUnreadFilter,
     toggleInboxEntryElementExpand, archiveInboxEntryElement,
 } from './inbox.js';
 
@@ -93,6 +124,8 @@ beforeAll(() => {
     }));
     // ... then delegation on DOMContentLoaded.
     initEventDelegation();
+    resetWsState();
+    registerWsHandlers();
 });
 
 beforeEach(() => {
@@ -187,9 +220,13 @@ describe('keys on an expanded row (CHT-1320)', () => {
         expect(isExpanded()).toBe(false);
     });
 
-    it('Space on the focused row toggles it once', () => {
-        key(row(), ' ');
+    it.each(['Enter', ' '])('%j on the focused row toggle toggles it once', (k) => {
+        const toggle = row().querySelector('.inbox-row-toggle');
+        expect(document.activeElement).toBe(toggle);
+        key(toggle, k);
         expect(isExpanded()).toBe(true);
+        key(document.activeElement, k);
+        expect(isExpanded()).toBe(false);
     });
 
     it.each(['Enter', ' '])('%j on a focused Open button opens and does not collapse', async (k) => {
@@ -228,6 +265,230 @@ describe('keys on an expanded row (CHT-1320)', () => {
         document.querySelector('.inbox-row-header').appendChild(input);
         input.focus();
         key(input, 'Enter');
+        expect(isExpanded()).toBe(true);
+    });
+});
+
+// ============================================================================
+// PR #260 independent review
+// ============================================================================
+
+const flush = () => new Promise(r => setTimeout(r, 0));
+const toggleOf = (r) => r.querySelector('.inbox-row-toggle');
+const rowById = (id) => [...document.querySelectorAll('.inbox-row')].find(r => r.dataset.entryId === id);
+
+describe('finding 1: background refreshes keep the open row (blocking)', () => {
+    const UNREAD = { ...ASSIGN, read_at: null };
+
+    beforeEach(() => {
+        setInboxEntries([{ ...UNREAD }, { ...OTHER }]);
+        setInboxUnreadCount(1);
+        renderInbox();
+        selectInboxRow(0);
+    });
+
+    it("our own mark-read echo leaves the row expanded and focused, with no reload", async () => {
+        key(toggleOf(row()), 'Enter');
+        expect(isExpanded()).toBe(true);
+        expect(api.markInboxRead).toHaveBeenCalledWith('assign-1');
+        await flush();
+
+        // The server broadcasts the read back to every connection, ours too.
+        dispatch({ type: 'read', entity: 'inbox', data: { id: 'assign-1', recipient_user_id: 'me' } });
+        await flush();
+
+        expect(api.getInbox).not.toHaveBeenCalled();
+        expect(isExpanded()).toBe(true);
+        expect(document.activeElement).toBe(toggleOf(rowById('assign-1')));
+        expect(rowById('assign-1').classList.contains('keyboard-selected')).toBe(true);
+    });
+
+    it('any other inbox event refreshes in the background: still expanded, selected and focused', async () => {
+        key(toggleOf(row()), 'Enter');
+        const NEW = { ...OTHER, id: 'new-1', title: 'new mention' };
+        api.getInbox.mockResolvedValueOnce([NEW, { ...UNREAD, read_at: 'x' }, { ...OTHER }]);
+
+        dispatch({ type: 'created', entity: 'inbox', data: { id: 'new-1', recipient_user_id: 'me' } });
+        expect(document.querySelector('.skeleton-list-item')).toBeNull(); // no skeleton flash
+        await flush();
+
+        expect(api.getInbox).toHaveBeenCalled();
+        expect(rowById('new-1')).toBeTruthy();
+        expect(rowById('assign-1').classList.contains('inbox-row-expanded')).toBe(true);
+        // Selection follows the entry (now index 1), not the old index.
+        expect(rowById('assign-1').classList.contains('keyboard-selected')).toBe(true);
+        expect(getSelectedInboxIndex()).toBe(1);
+        expect(document.activeElement).toBe(toggleOf(rowById('assign-1')));
+    });
+
+    it('focus on an action-bar button survives a background refresh', async () => {
+        key(toggleOf(row()), 'Enter');
+        const btn = document.querySelector('.inbox-row-expanded-panel [data-action="open-inbox-full"]');
+        btn.focus();
+        api.getInbox.mockResolvedValueOnce([{ ...UNREAD, read_at: 'x' }, { ...OTHER }]);
+        dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+        await flush();
+        expect(isExpanded()).toBe(true);
+        expect(document.activeElement.dataset.action).toBe('open-inbox-full');
+        expect(document.activeElement.closest('.inbox-row-expanded-panel')).not.toBeNull();
+    });
+
+    it('with the unread-only filter on, the open (now read) entry stays until the user moves on', async () => {
+        api.getInbox.mockResolvedValueOnce([{ ...UNREAD }, { ...OTHER, read_at: null }]);
+        toggleInboxUnreadFilter(); // intentional load
+        try {
+            await flush();
+            await flush();
+            selectInboxRow(0);
+            key(toggleOf(row()), 'Enter');
+            expect(isExpanded()).toBe(true);
+
+            // The server no longer returns it: it is read now.
+            api.getInbox.mockResolvedValueOnce([{ ...OTHER, read_at: null }]);
+            dispatch({ type: 'created', entity: 'inbox', data: { id: 'z', recipient_user_id: 'me' } });
+            await flush();
+
+            expect(rowById('assign-1')).toBeTruthy();
+            expect(rowById('assign-1').classList.contains('inbox-row-expanded')).toBe(true);
+            expect(document.activeElement).toBe(toggleOf(rowById('assign-1')));
+        } finally {
+            api.getInbox.mockResolvedValue([]);
+            toggleInboxUnreadFilter();
+            await flush();
+        }
+    });
+
+    it('a failed background refresh keeps the list on screen', async () => {
+        key(toggleOf(row()), 'Enter');
+        api.getInbox.mockRejectedValueOnce(new Error('offline'));
+        dispatch({ type: 'created', entity: 'inbox', data: { id: 'z', recipient_user_id: 'me' } });
+        await flush();
+        expect(isExpanded()).toBe(true);
+        expect(document.querySelector('.inbox-row')).not.toBeNull();
+        expect(showApiError).not.toHaveBeenCalled();
+    });
+
+    it('an intentional load still resets: collapsed, first row focused', async () => {
+        key(toggleOf(row()), 'Enter');
+        api.getInbox.mockResolvedValueOnce([{ ...OTHER }, { ...UNREAD, read_at: 'x' }]);
+        await loadInbox({ focusFirst: true });
+        expect(isExpanded()).toBe(false);
+        expect(document.activeElement).toBe(toggleOf(row()));
+    });
+});
+
+describe('finding 3: Escape and j/k from an action button keep focus in the list', () => {
+    beforeEach(() => {
+        key(toggleOf(row()), 'Enter');
+        document.querySelector('.inbox-row-expanded-panel [data-action="archive-inbox-entry"]').focus();
+    });
+
+    it('Escape collapses and focuses the row toggle', () => {
+        key(document.activeElement, 'Escape');
+        expect(isExpanded()).toBe(false);
+        expect(document.activeElement).toBe(toggleOf(rowById('assign-1')));
+    });
+
+    it('j collapses and focus follows the cursor to the next row', () => {
+        key(document.activeElement, 'j');
+        expect(isExpanded()).toBe(false);
+        expect(rowById('assign-2').classList.contains('keyboard-selected')).toBe(true);
+        expect(document.activeElement).toBe(toggleOf(rowById('assign-2')));
+    });
+});
+
+describe('finding 5: a failed mark-read rolls back', () => {
+    it('restores the unread state, re-syncs the badge and tells the user', async () => {
+        setInboxEntries([{ ...ASSIGN, read_at: null }, { ...OTHER }]);
+        setInboxUnreadCount(1);
+        renderInbox();
+        selectInboxRow(0);
+        api.markInboxRead.mockRejectedValueOnce(new Error('404'));
+        api.getInboxUnreadCount.mockResolvedValueOnce({ unread_count: 1 });
+
+        key(toggleOf(row()), 'Enter');
+        expect(getInboxUnreadCount()).toBe(0); // optimistic
+        await flush();
+        await flush();
+
+        expect(getInboxEntries().find(e => e.id === 'assign-1').read_at).toBeNull();
+        expect(rowById('assign-1').querySelector('.inbox-row-unread-dot')).not.toBeNull();
+        expect(getInboxUnreadCount()).toBe(1);
+        expect(showApiError).toHaveBeenCalledWith('mark inbox entry read', expect.any(Error));
+        // The row stays open and focused through the rollback.
+        expect(isExpanded()).toBe(true);
+        expect(document.activeElement).toBe(toggleOf(rowById('assign-1')));
+    });
+});
+
+describe('finding 6: Reassign back is guarded while in flight', () => {
+    it('a double press sends one PATCH and marks the button busy', async () => {
+        let resolve;
+        api.updateIssue.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+        key(toggleOf(row()), 'Enter');
+        const btn = () => document.querySelector('[data-action="reassign-inbox-entry"]');
+        click(btn());
+        click(btn());
+        expect(api.updateIssue).toHaveBeenCalledTimes(1);
+        expect(btn().getAttribute('aria-disabled')).toBe('true');
+        resolve({});
+        await flush();
+        expect(api.archiveInbox).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-enables the button after a failed PATCH so it can be retried', async () => {
+        api.updateIssue.mockRejectedValueOnce(new Error('nope'));
+        key(toggleOf(row()), 'Enter');
+        const btn = () => document.querySelector('[data-action="reassign-inbox-entry"]');
+        click(btn());
+        await flush();
+        expect(btn().hasAttribute('aria-disabled')).toBe(false);
+        click(btn());
+        expect(api.updateIssue).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('finding 7: the expanded panel escapes user content (real utils.js)', () => {
+    it('renders hostile names, bodies and titles as text', () => {
+        const evil = '<img src=x onerror="window.__xss=1">';
+        setInboxEntries([{
+            ...ASSIGN,
+            title: `t ${evil}`,
+            body: `<script>window.__xss=1</script>${evil}`,
+            source_user_name: evil,
+            issue_identifier: `"><img src=x onerror=1>`,
+        }]);
+        renderInbox();
+        selectInboxRow(0);
+        key(toggleOf(row()), 'Enter');
+        const list = document.getElementById('inbox-list');
+        expect(isExpanded()).toBe(true);
+        expect(list.querySelector('img, script')).toBeNull();
+        expect(list.querySelector('[onerror]')).toBeNull();
+        expect(document.querySelector('.inbox-expanded-source').textContent).toContain(evil);
+        expect(document.querySelector('.inbox-expanded-body').textContent).toContain('<script>');
+        expect(document.querySelector('[data-action="reassign-inbox-entry"]').textContent).toContain(evil);
+        expect(document.querySelector('.inbox-row-expanded-panel').getAttribute('aria-label')).toBe(`t ${evil}`);
+        expect(window.__xss).toBeUndefined();
+    });
+});
+
+describe('finding 8 and 10: scroll into view, row-scoped selection check', () => {
+    it('expanding scrolls the row into view (nearest)', () => {
+        Element.prototype.scrollIntoView.mockClear();
+        key(toggleOf(row()), 'Enter');
+        expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    });
+
+    it('a selection elsewhere on the page does not swallow a toggle click', () => {
+        const other = document.createElement('p');
+        other.textContent = 'elsewhere';
+        document.body.appendChild(other);
+        const range = document.createRange();
+        range.selectNodeContents(other);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        click(row().querySelector('.inbox-row-title'));
         expect(isExpanded()).toBe(true);
     });
 });

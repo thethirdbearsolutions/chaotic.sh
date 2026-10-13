@@ -666,6 +666,13 @@ document.addEventListener('keydown', createInboxNavigationHandler({
     collapseInboxExpand,
     archiveInboxEntry: archiveInboxEntryElement,
     isInlineDropdownOpen,
+    // What the global handler's Escape closes ahead of the list (PR #260
+    // review finding 4): the mobile sidebar drawer and the header dropdowns.
+    isEscapeLayerAbove: () => document.body.classList.contains('sidebar-open')
+        || ['team-dropdown', 'user-dropdown'].some(id => {
+            const el = document.getElementById(id);
+            return !!el && !el.classList.contains('hidden');
+        }),
     isModalOpen,
     isCommandPaletteOpen,
 }));

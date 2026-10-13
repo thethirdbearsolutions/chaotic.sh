@@ -315,14 +315,14 @@ describe('loadInbox focus gating (PR #252 review finding 1)', () => {
         getInboxEntries.mockReturnValue([ENTRY]); // what renderInbox reads
         isModalOpen.mockReturnValue(false);
         await loadInbox({ focusFirst: true });
-        expect(document.activeElement).toBe(document.querySelector('#inbox-list .inbox-row'));
+        expect(document.activeElement).toBe(document.querySelector('#inbox-list .inbox-row .inbox-row-toggle'));
     });
 
     it('does NOT focus on a background load (focusFirst omitted)', async () => {
         api.getInbox.mockResolvedValue([ENTRY]);
         getInboxEntries.mockReturnValue([ENTRY]);
-        await loadInbox(); // ws/reconnect path
-        expect(document.activeElement).not.toBe(document.querySelector('#inbox-list .inbox-row'));
+        await loadInbox({ background: true }); // ws/reconnect path
+        expect(document.querySelector('#inbox-list').contains(document.activeElement)).toBe(false);
     });
 
     it('does NOT steal focus while a modal is open, even on focusFirst', async () => {
@@ -342,7 +342,7 @@ describe('focusFirstInboxRow (CHT-1250 UX: keyboard nav engages immediately)', (
         expect(setSelectedInboxIndex).toHaveBeenCalledWith(0);
         const row = document.querySelector('#inbox-list .inbox-row');
         expect(row.classList.contains('keyboard-selected')).toBe(true);
-        expect(document.activeElement).toBe(row);
+        expect(document.activeElement).toBe(row.querySelector('.inbox-row-toggle'));
     });
 
     it('sets index -1 when the list is empty', () => {
@@ -363,12 +363,18 @@ describe('renderInboxRow archive button (CHT-1250 UX)', () => {
         expect(btn.getAttribute('data-entry-id')).toBe('entry-1');
     });
 
-    it('makes the whole row toggle-expand (no longer navigate-away)', () => {
+    it('toggles from a real <button> in the row, not a role=button row (PR #260 review 2)', () => {
         getInboxEntries.mockReturnValue([ENTRY]);
         renderInbox();
         const row = document.querySelector('.inbox-row');
-        expect(row.getAttribute('data-action')).toBe('toggle-inbox-expand');
-        expect(row.getAttribute('aria-expanded')).toBe('false');
+        expect(row.hasAttribute('data-action')).toBe(false);
+        expect(row.hasAttribute('role')).toBe(false);
+        const toggle = row.querySelector('.inbox-row-toggle');
+        expect(toggle.tagName).toBe('BUTTON');
+        expect(toggle.getAttribute('data-action')).toBe('toggle-inbox-expand');
+        expect(toggle.getAttribute('aria-expanded')).toBe('false');
+        // No interactive element is nested inside another one.
+        expect(row.querySelector('button button, button a, [role="button"] button')).toBeNull();
     });
 });
 
@@ -379,7 +385,14 @@ describe('toggleInboxEntryExpand (CHT-1320: Gmail-style expand in place)', () =>
         toggleInboxEntryExpand('assign-1');
         const row = document.querySelector('.inbox-row');
         expect(row.classList.contains('inbox-row-expanded')).toBe(true);
-        expect(row.getAttribute('aria-expanded')).toBe('true');
+        const toggle = row.querySelector('.inbox-row-toggle');
+        expect(toggle.getAttribute('aria-expanded')).toBe('true');
+        // aria-controls names the panel, a labelled region beside the toggle.
+        const panel = document.getElementById(toggle.getAttribute('aria-controls'));
+        expect(panel).not.toBeNull();
+        expect(panel.getAttribute('role')).toBe('region');
+        expect(panel.getAttribute('aria-label')).toBe(ASSIGN.title);
+        expect(toggle.contains(panel)).toBe(false);
         expect(document.querySelector('.inbox-action-bar')).not.toBeNull();
         // Expanding = you've seen it -> marked read.
         expect(api.markInboxRead).toHaveBeenCalledWith('assign-1');

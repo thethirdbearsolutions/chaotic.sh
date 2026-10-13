@@ -1787,9 +1787,18 @@ describe('Inbox Escape layering with the global handler (CHT-1320 x CHT-1231)', 
     let globalActions;
     let stack;
 
+    // Dispatch through the stack the way the DOM does, including
+    // stopImmediatePropagation (PR #260 review finding 4).
     function press(key, overrides = {}) {
-        const event = makeEvent(key, overrides);
-        stack.forEach(h => h(event));
+        let stopped = false;
+        const event = makeEvent(key, {
+            stopImmediatePropagation: vi.fn(() => { stopped = true; }),
+            ...overrides,
+        });
+        for (const h of stack) {
+            h(event);
+            if (stopped) break;
+        }
         return event;
     }
 
@@ -1802,7 +1811,7 @@ describe('Inbox Escape layering with the global handler (CHT-1320 x CHT-1231)', 
                 <div class="inbox-row keyboard-selected" data-entry-id="e2">Entry 2</div>
             </div>
         `;
-        state = { dropdown: false, modal: false, dirty: false, expanded: 'e2', selected: 1 };
+        state = { dropdown: false, modal: false, dirty: false, expanded: 'e2', selected: 1, layerAbove: false };
         const isInlineDropdownOpen = () => state.dropdown;
         const isModalOpen = () => state.modal;
         inboxActions = {
@@ -1817,6 +1826,7 @@ describe('Inbox Escape layering with the global handler (CHT-1320 x CHT-1231)', 
             }),
             archiveInboxEntry: vi.fn(),
             isInlineDropdownOpen,
+            isEscapeLayerAbove: () => state.layerAbove,
             isModalOpen,
             isCommandPaletteOpen: () => false,
         };
@@ -1896,6 +1906,52 @@ describe('Inbox Escape layering with the global handler (CHT-1320 x CHT-1231)', 
         expect(globalActions.closeModal).not.toHaveBeenCalled();
         expect(state.modal).toBe(true);
         expect(state.expanded).toBe('e2');
+    });
+
+    it('an Escape spent on the row does not also close a dropdown or the sidebar (finding 4)', () => {
+        press('Escape');
+        expect(state.expanded).toBe(null);
+        expect(globalActions.closeDropdowns).not.toHaveBeenCalled();
+        expect(globalActions.closeSidebar).not.toHaveBeenCalled();
+
+        press('Escape');
+        expect(state.selected).toBe(-1);
+        expect(globalActions.closeDropdowns).not.toHaveBeenCalled();
+
+        // Nothing left in the list: Escape reaches the global handler again.
+        press('Escape');
+        expect(globalActions.closeDropdowns).toHaveBeenCalledTimes(1);
+    });
+
+    it('the mobile sidebar drawer over the list closes alone; the row stays open (finding 4)', () => {
+        document.body.classList.add('sidebar-open');
+        state.layerAbove = true;
+
+        press('Escape');
+        expect(globalActions.closeSidebar).toHaveBeenCalledTimes(1);
+        expect(inboxActions.collapseInboxExpand).not.toHaveBeenCalled();
+        expect(state.expanded).toBe('e2');
+
+        document.body.classList.remove('sidebar-open');
+        state.layerAbove = false;
+        press('Escape');
+        expect(state.expanded).toBe(null);
+        expect(globalActions.closeSidebar).toHaveBeenCalledTimes(1);
+    });
+
+    it('an open header dropdown closes first; then the row, then the selection (finding 4)', () => {
+        state.layerAbove = true;
+        globalActions.closeDropdowns.mockImplementation(() => { state.layerAbove = false; });
+
+        press('Escape');
+        expect(globalActions.closeDropdowns).toHaveBeenCalledTimes(1);
+        expect(state.expanded).toBe('e2');
+
+        press('Escape');
+        expect(state.expanded).toBe(null);
+        press('Escape');
+        expect(state.selected).toBe(-1);
+        expect(globalActions.closeDropdowns).toHaveBeenCalledTimes(1);
     });
 
     it('Escape during IME composition touches no layer', () => {
