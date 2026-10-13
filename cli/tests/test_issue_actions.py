@@ -164,6 +164,40 @@ class TestIssueRelations:
         assert result.exception is None
         assert '[bold]x[/bold]' in result.output  # markup escaped, not interpreted
 
+    def test_relation_row_placeholders(self):
+        """Missing fields become '-' (title ''), whatever the row looks like."""
+        from cli.commands.issue_cmd import _relation_row
+
+        empty = ("-", "-", "-", "", "-", "-")
+        assert _relation_row(None) == empty
+        assert _relation_row("not-a-dict") == empty
+        assert _relation_row({}) == empty
+        assert _relation_row({"id": "short"}) == ("short", "-", "-", "", "-", "-")
+        assert _relation_row({"related_issue": {"identifier": "OLD-1"}}) == empty
+        assert _relation_row({"id": 12345, "relation_type": 7}) == ("12345", "7", "-", "", "-", "-")
+        assert _relation_row(WIRE_RELATION) == (
+            "rel-uuid...", "Blocks", "CHT-200", "Downstream work", "Backlog", "outgoing",
+        )
+
+    def test_incoming_duplicates_reads_duplicated_by(self, cli_runner, mock_issue):
+        """Review #1: the server relabels only incoming blocks; an incoming
+        duplicates edge means the other issue duplicates this one."""
+        from cli.main import cli, client
+        from cli.commands.issue_cmd import _relation_row
+
+        incoming_dup = {**WIRE_INCOMING, "relation_type": "duplicates"}
+        outgoing_dup = {**WIRE_RELATION, "relation_type": "duplicates"}
+        assert _relation_row(incoming_dup)[1] == "Duplicated By"
+        assert _relation_row(outgoing_dup)[1] == "Duplicates"
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_relations = MagicMock(return_value=[incoming_dup])
+        result = cli_runner.invoke(cli, ['issue', 'relations', 'CHT-100'])
+        assert result.exit_code == 0, result.output
+        # The narrow test terminal wraps the cell, so match the first word.
+        assert 'Duplicated' in result.output
+        assert 'Duplicates' not in result.output
+
     def test_relations_falls_back_to_related_issue_id(self, cli_runner, mock_issue):
         """No identifier on the row: show the related issue id instead of '-'."""
         from cli.main import cli, client

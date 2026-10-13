@@ -80,6 +80,10 @@ def _relation_row(r) -> tuple:
     rel_id = r.get("id")
     rel_id = f"{rel_id[:8]}..." if isinstance(rel_id, str) and len(rel_id) > 8 else rel_id
     rel_type = r.get("relation_type")
+    if rel_type == "duplicates" and r.get("direction") == "incoming":
+        # The server relabels only incoming blocks (as blocked_by); an
+        # incoming duplicates edge means the *other* issue duplicates this one.
+        rel_type = "duplicated_by"
     rel_type = rel_type.replace("_", " ").title() if isinstance(rel_type, str) else rel_type
     status = r.get("related_issue_status")
     status = status.replace("_", " ").title() if isinstance(status, str) else status
@@ -91,6 +95,19 @@ def _relation_row(r) -> tuple:
         _text(status),
         _text(r.get("direction")),
     )
+
+
+def _relations_or_none(iss):
+    """The issue's relations, or None when the relations call failed.
+
+    Relations are not on the issue payload, so show/view fetch them
+    separately (CHT-1431). A failure is None, not [], so a --json consumer
+    checking for blockers cannot mistake an API error for "unblocked".
+    """
+    try:
+        return _client().get_relations(iss["id"]) or []
+    except _main().APIError:
+        return None
 
 
 def register(cli):
@@ -593,15 +610,12 @@ def register(cli):
                     iss['sub_issues'] = _client().get_sub_issues(iss["id"])
                 except m.APIError:
                     iss['sub_issues'] = []
-                # Relations are not on the issue payload; fetch them like
-                # sub_issues so `view --json` shows blockers (CHT-1431).
-                try:
-                    iss['relations'] = _client().get_relations(iss["id"]) or []
-                except m.APIError:
-                    iss['relations'] = []
+                iss['relations'] = _relations_or_none(iss)
                 m.output_json(iss)
             else:
                 issues = [_client().get_issue_by_identifier(i) for i in identifiers]
+                for iss in issues:
+                    iss['relations'] = _relations_or_none(iss)
                 m.output_json(issues)
             return
 
@@ -663,16 +677,15 @@ def register(cli):
                     console.print(Markdown(c.get('content', '')))
 
             # Show relations (CHT-1431): blockers matter before claiming.
-            try:
-                relations = _client().get_relations(iss['id']) or []
-                if relations:
-                    console.print("\n[bold]Relations:[/bold]")
-                    for r in relations:
-                        _, rel_type, related, title, status, _ = _relation_row(r)
-                        suffix = f": {title}" if title else ""
-                        console.print(f"  • {rel_type} {related}{suffix} [dim]({status})[/dim]")
-            except m.APIError:
-                pass
+            relations = _relations_or_none(iss)
+            if relations is None:
+                console.print("\n[dim](relations unavailable)[/dim]")
+            elif relations:
+                console.print("\n[bold]Relations:[/bold]")
+                for r in relations:
+                    _, rel_type, related, title, status, _ = _relation_row(r)
+                    suffix = f": {title}" if title else ""
+                    console.print(f"  • {rel_type} {related}{suffix} [dim]({status})[/dim]")
 
             # Show ritual attestation notes
             try:

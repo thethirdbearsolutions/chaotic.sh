@@ -281,6 +281,45 @@ class TestIssueShowParentSubIssues:
         assert 'Relations:' in result.output
         assert 'Blocked By CHT-7: Upstream (In Progress)' in result.output
 
+    def test_show_relations_unavailable(self, cli_runner, mock_issue):
+        """Review #4: a failed relations call says so instead of looking like none."""
+        from cli.main import cli, client, APIError
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_comments = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [], "completed_rituals": [],
+        })
+        client.get_relations = MagicMock(side_effect=APIError("boom"))
+        client.get_issue_documents = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
+
+        assert result.exit_code == 0, result.output
+        assert '(relations unavailable)' in result.output
+        assert 'Relations:' not in result.output
+
+    def test_show_incoming_duplicate(self, cli_runner, mock_issue):
+        """Review #1: 'CHT-7 duplicates this' renders as Duplicated By, not Duplicates."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_comments = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [], "completed_rituals": [],
+        })
+        client.get_relations = MagicMock(return_value=[
+            {**RELATION, "relation_type": "duplicates", "direction": "incoming"},
+        ])
+        client.get_issue_documents = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
+
+        assert result.exit_code == 0, result.output
+        assert 'Duplicated By CHT-7: Upstream' in result.output
+
     def test_show_parent_api_failure_graceful(self, cli_runner, mock_issue):
         """issue show handles parent API failure gracefully."""
         from cli.main import cli, client, APIError
@@ -330,6 +369,7 @@ class TestIssueShowMulti:
         client.get_issue_by_identifier = MagicMock(
             side_effect=[mock_issue, mock_issue_2],
         )
+        client.get_relations = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', 'CHT-101'])
 
@@ -403,7 +443,22 @@ class TestIssueShowJson:
         result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100', '--json'])
 
         assert result.exit_code == 0, result.output
-        assert json.loads(result.stdout)['relations'] == []
+        # null, not []: an API error must not read as "no blockers" (review #2)
+        assert json.loads(result.stdout)['relations'] is None
+
+    def test_show_multi_json_includes_relations(self, cli_runner, mock_issue, mock_issue_2):
+        """Review #3: every --json shape of view carries relations."""
+        from cli.main import cli, client, APIError
+
+        client.get_issue_by_identifier = MagicMock(side_effect=[mock_issue, mock_issue_2])
+        client.get_relations = MagicMock(side_effect=[[RELATION], APIError("boom")])
+
+        result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100', 'CHT-101', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data[0]['relations'] == [RELATION]
+        assert data[1]['relations'] is None
 
     def test_show_multi_json(self, cli_runner, mock_issue, mock_issue_2):
         """issue show CHT-100 CHT-101 --json outputs JSON array."""
@@ -412,6 +467,7 @@ class TestIssueShowJson:
         client.get_issue_by_identifier = MagicMock(
             side_effect=[mock_issue, mock_issue_2],
         )
+        client.get_relations = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', 'CHT-101', '--json'])
 

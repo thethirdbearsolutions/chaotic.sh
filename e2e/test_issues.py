@@ -251,11 +251,19 @@ class TestRelations:
         downstream = api_client.create_issue(other_project["id"], "Downstream")
         api_client.create_relation(blocker["id"], target["id"], "blocks")
         api_client.create_relation(target["id"], downstream["id"], "relates_to")
+        dup = api_client.create_issue(test_project["id"], "Dup of target")
+        api_client.create_relation(dup["id"], target["id"], "duplicates")
 
         relations = api_client.get_relations(target["id"])
         assert all(set(r) == set(IssueRelationResponse.model_fields) for r in relations)
         by_identifier = {r["related_issue_identifier"]: r for r in relations}
-        assert set(by_identifier) == {blocker["identifier"], downstream["identifier"]}
+        assert set(by_identifier) == {
+            blocker["identifier"], downstream["identifier"], dup["identifier"],
+        }
+        # Incoming duplicates is NOT relabelled by the server (only blocks
+        # is); the CLI renders it as "Duplicated By" from direction.
+        assert by_identifier[dup["identifier"]]["relation_type"] == "duplicates"
+        assert by_identifier[dup["identifier"]]["direction"] == "incoming"
         incoming = by_identifier[blocker["identifier"]]
         assert incoming["relation_type"] == "blocked_by"
         assert incoming["direction"] == "incoming"
@@ -279,6 +287,8 @@ class TestRelations:
         assert blocker["identifier"] in table.output
         assert downstream["identifier"] in table.output
         assert "Blocked By" in table.output
+        assert "Duplicated" in table.output
+        assert "Duplicates" not in table.output
 
         assert as_json.exit_code == 0, as_json.output
         assert json.loads(as_json.output) == relations
