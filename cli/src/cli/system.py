@@ -2347,6 +2347,10 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     service_update = reconcile_service_file(
         port, host, server_info.get("secret_key", ""), settings=stored_settings(server_info))
     _report_service_file_update(service_update)
+    # A setting saved with `system config set --force` the server cannot
+    # start with: say so before the start fails and rolls back.
+    settings_errors, _ = server_settings.check(server_info)
+    _print_problems(settings_errors, [])
 
     # Start server, whatever state the upgrade found it in (CHT-1475): an
     # upgrade ends with the server running the new commit and verified, or
@@ -2629,6 +2633,9 @@ def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str]
     start with. Exits non-zero if the service file could not be
     rewritten, since the server will not see the change."""
     candidate = {**server_info, SETTINGS_KEY: settings}
+    raw = server_info.get(SETTINGS_KEY)
+    dropped = sorted(name for name in (raw if isinstance(raw, dict) else {})
+                     if name not in settings and name not in owned)
     errors, warnings = server_settings.check(candidate)
     if errors and not force:
         _print_problems(errors, [])
@@ -2636,6 +2643,9 @@ def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str]
         raise SystemExit(1)
     save_server_json(candidate)
     console.print("Saved to server.json.")
+    for name in dropped:
+        console.print(f"[yellow]Removed invalid server.json setting {escape(repr(name))}[/yellow] "
+                      "(it was never written to the service file).")
     _print_problems(errors, warnings)
 
     update = reconcile_service_file(

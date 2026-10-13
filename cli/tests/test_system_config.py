@@ -515,6 +515,14 @@ class TestUnset:
         assert server.info()["settings"] == {}
 
 
+    def test_set_names_invalid_entries_it_drops(self, server):
+        server.write({"BROKEN": "a b"}, unit_settings={})
+        result = server.invoke("set", "OAUTH_DCR_ENABLED", "false")
+        assert result.exit_code == 0, result.output
+        assert "Removed invalid server.json setting 'BROKEN'" in result.output
+        assert server.info()["settings"] == {"OAUTH_DCR_ENABLED": "false"}
+
+
 class TestGetListCheck:
     def test_get(self, server):
         server.write(dict(OAUTH))
@@ -589,6 +597,19 @@ def test_upgrade_keeps_settings(tmp_path):
     assert result.exit_code == 0, result.output
     assert "Updated service file" in _flat(result.output)
     assert path.read_text() == generate_systemd_service(PORT, SECRET, HOST, OAUTH)
+
+
+def test_upgrade_reports_settings_the_server_will_not_start_with(tmp_path):
+    path = tmp_path / "chaotic.service"
+    settings = {"OAUTH_ENABLED": "true"}  # saved with --force
+    path.write_text(generate_systemd_service(PORT, SECRET, HOST, settings))
+    result, _ = _upgrade(
+        load_server_json=dict(return_value={"port": PORT, "host": HOST, "secret_key": SECRET, "settings": settings}),
+        get_os=dict(return_value="linux"),
+        get_service_file_path=dict(return_value=path),
+        SERVICE_BACKUP_DIR=dict(new=tmp_path / "service-backups"),
+    )
+    assert "APP_BASE_URL is not set" in _flat(result.output)
 
 
 class TestInstall:
