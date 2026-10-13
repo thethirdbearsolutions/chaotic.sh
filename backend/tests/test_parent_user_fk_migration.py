@@ -224,7 +224,7 @@ def test_0020_makes_the_parent_restrict_without_touching_a_row(request, shape):
     path = request.getfixturevalue("at_0019" if shape == "chain" else "prod_shaped")
     before = _snapshot(path)
 
-    _migrate(path)
+    _migrate(path, target="0020_parent_user_restrict")
 
     assert _parent_fks(path) == ["RESTRICT"]
     assert _snapshot(path) == before, "the migration must not touch a row or an index"
@@ -243,7 +243,7 @@ def test_0020_makes_the_parent_restrict_without_touching_a_row(request, shape):
 
 
 def test_the_production_shape_gains_the_reference_on_the_column(prod_shaped):
-    _migrate(prod_shaped)
+    _migrate(prod_shaped, target="0020_parent_user_restrict")
     assert '"parent_user_id" VARCHAR(255) REFERENCES users (id) ON DELETE RESTRICT ON UPDATE CASCADE' in _users_sql(
         prod_shaped
     )
@@ -293,7 +293,7 @@ def test_violations_of_other_users_foreign_keys_do_not_stop_it(request, shape):
     _break_agent_project(path)
     before = _snapshot(path)
 
-    _migrate(path)
+    _migrate(path, target="0020_parent_user_restrict")
 
     assert _parent_fks(path) == ["RESTRICT"]
     assert _snapshot(path) == before
@@ -359,7 +359,7 @@ def test_a_rewrite_that_changes_anything_else_fails_the_transaction(at_0019, mon
 
 
 def test_downgrade_restores_cascade_without_touching_rows(at_0019):
-    _migrate(at_0019)
+    _migrate(at_0019, target="0020_parent_user_restrict")
     before = _snapshot(at_0019)
     _run_in_one_transaction(at_0019, _collect(at_0019, step="downgrade"))
     assert _parent_fks(at_0019) == ["CASCADE"]

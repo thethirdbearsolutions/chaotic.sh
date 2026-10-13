@@ -146,12 +146,14 @@ class UserService:
             if any(counts.values()) or agents_with_work or non_agent_children:
                 raise UserDeletionRefusedError(user, counts, agents_with_work, non_agent_children)
             for agent in agents:
-                await OxydeAPIKey.objects.filter(agent_user_id=agent.id).delete()
-                await OxydeAPIKey.objects.filter(user_id=agent.id).delete()
+                await OxydeAPIKey.objects.filter(principal_user_id=agent.id).delete()
                 await agent.delete()
             await OxydeTeamMember.objects.filter(user_id=user.id).delete()
             await OxydeTeamInvitation.objects.filter(email=user.email).delete()
-            await OxydeAPIKey.objects.filter(user_id=user.id).delete()
+            # Their own keys, and the ones they hold for other people's
+            # agents (CHT-1537).
+            await OxydeAPIKey.objects.filter(principal_user_id=user.id).delete()
+            await OxydeAPIKey.objects.filter(holder_user_id=user.id).delete()
             await user.delete()
 
     async def list_users(self, skip: int = 0, limit: int = 100) -> list[OxydeUser]:

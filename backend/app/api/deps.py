@@ -71,11 +71,8 @@ async def _authenticate_with_jwt(token: str) -> User:
 
 
 async def _authenticate_with_api_key(api_key: str) -> User:
-    """Authenticate using API key.
-
-    If the API key has an agent_user_id, return the agent User.
-    Otherwise, return the human user who owns the key (backwards compatible).
-    """
+    """Authenticate using API key: return the user the key signs in as
+    (its `principal_user_id`, CHT-1537), a human or an agent."""
     api_key_service = APIKeyService()
     key_record = await api_key_service.validate_key(api_key)
 
@@ -88,36 +85,28 @@ async def _authenticate_with_api_key(api_key: str) -> User:
 
     user_service = UserService()
 
-    # If this key is linked to an agent, authenticate as the agent
-    if key_record.agent_user_id:
-        user = await user_service.get_by_id(key_record.agent_user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Agent not found",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    else:
-        # Backwards compatible: authenticate as the human user
-        user = await user_service.get_by_id(key_record.user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    user = await user_service.get_by_id(key_record.principal_user_id)
+    if not user:
+        # One answer whether the missing user was a human or an agent
+        # (before CHT-1537 an agent key said "Agent not found"). The
+        # foreign key cascades the key away with its user, so this needs
+        # a row written with foreign keys off.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     # An agent key is only as good as the membership of the human behind
-    # it (CHT-1508/CHT-1510). The key row's user_id records that holder:
-    # whoever minted a linked key, or the holder of the key an agent used
-    # to mint one for itself. A self-minted key from before holders were
-    # recorded (user_id is the agent) falls back to the agent's creator.
+    # it (CHT-1508/CHT-1510): the key's `holder_user_id`, whoever minted
+    # it, or the holder of the key an agent used to mint one for itself
+    # (a legacy self-minted key was given the agent's creator by 0021).
     # Once that human is no longer in the agent's team the key is dead,
     # whether or not the removal got to revoke it, and it is answered
     # exactly like a revoked key. REST and both MCP transports come
     # through here.
     if user.is_agent:
-        holder_id = key_record.user_id if key_record.user_id != user.id else user.parent_user_id
+        holder_id = key_record.holder_user_id
         if not holder_id or await TeamService().get_member(user.agent_team_id, holder_id) is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

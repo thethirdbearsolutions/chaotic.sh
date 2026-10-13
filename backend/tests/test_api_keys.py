@@ -79,7 +79,8 @@ class TestAPIKeyServiceCreate:
 
         assert api_key is not None
         assert api_key.name == "Test Key"
-        assert api_key.user_id == test_user.id
+        assert api_key.principal_user_id == test_user.id
+        assert api_key.holder_user_id == test_user.id
         assert full_key.startswith("ck_")
 
     async def test_create_stores_hashed_key(self, db, test_user):
@@ -180,7 +181,7 @@ class TestAPIKeyServiceValidation:
 class TestAPIKeyServiceOperations:
     """Tests for other API key operations."""
 
-    async def test_list_by_user(self, db, test_user, test_user2):
+    async def test_list_by_holder(self, db, test_user, test_user2):
         """Should only list keys for the specified user."""
         service = APIKeyService()
 
@@ -189,8 +190,8 @@ class TestAPIKeyServiceOperations:
         await service.create(test_user.id, APIKeyCreate(name="User1 Key2"))
         await service.create(test_user2.id, APIKeyCreate(name="User2 Key"))
 
-        user1_keys = await service.list_by_user(test_user.id)
-        user2_keys = await service.list_by_user(test_user2.id)
+        user1_keys = await service.list_by_holder(test_user.id)
+        user2_keys = await service.list_by_holder(test_user2.id)
 
         assert len(user1_keys) == 2
         assert len(user2_keys) == 1
@@ -258,7 +259,7 @@ class TestBcryptCompatibility:
         service = APIKeyService()
         full_key = service._generate_key()
         legacy = await OxydeAPIKey.objects.create(
-            user_id=test_user.id, name="legacy", key_prefix=service._get_prefix(full_key),
+            principal_user_id=test_user.id, holder_user_id=test_user.id, name="legacy", key_prefix=service._get_prefix(full_key),
             key_hash=get_password_hash(_prehash_key(full_key)),
         )
         assert legacy.key_hash.startswith("$2")
@@ -299,7 +300,7 @@ class TestBcryptCompatibility:
         for bad_hash in ("", "garbage", "$2b$notreal", "sha256X"):
             full_key = service._generate_key()
             await OxydeAPIKey.objects.create(
-                user_id=test_user.id, name="broken", key_prefix=service._get_prefix(full_key),
+                principal_user_id=test_user.id, holder_user_id=test_user.id, name="broken", key_prefix=service._get_prefix(full_key),
                 key_hash=bad_hash,
             )
             assert await service.validate_key(full_key) is None, bad_hash
@@ -510,3 +511,37 @@ class TestAPIKeyServiceLookups:
         service = APIKeyService()
         result = await service.get_by_prefix("ck_unknown")
         assert result is None
+
+
+@pytest.mark.asyncio
+class TestAgentKeysNeedAHolder:
+    """An agent is no team member, so a key it held itself would never
+    sign in: minting one without a holder is a caller's bug and raises
+    rather than writing a dead key (CHT-1537)."""
+
+    async def test_an_agent_key_without_a_holder_raises(self, db, test_user, test_team):
+        from app.schemas.agent import AgentCreate
+        from app.services.agent_service import AgentService
+        from app.services.api_key_service import AgentKeyNeedsHolderError
+
+        agent, _, _ = await AgentService().create(AgentCreate(name="Bot"), test_user, test_team.id)
+        before = await OxydeAPIKey.objects.filter(principal_user_id=agent.id).count()
+
+        with pytest.raises(AgentKeyNeedsHolderError):
+            await APIKeyService().create(agent.id, APIKeyCreate(name="no holder"))
+
+        assert await OxydeAPIKey.objects.filter(principal_user_id=agent.id).count() == before
+
+    async def test_with_a_holder_it_is_minted(self, db, test_user, test_team):
+        from app.schemas.agent import AgentCreate
+        from app.services.agent_service import AgentService
+
+        agent, _, _ = await AgentService().create(AgentCreate(name="Bot"), test_user, test_team.id)
+        key, _ = await APIKeyService().create(agent.id, APIKeyCreate(name="held"), holder_user_id=test_user.id)
+
+        assert (key.principal_user_id, key.holder_user_id) == (agent.id, test_user.id)
+
+    async def test_a_human_key_defaults_to_its_human(self, db, test_user):
+        key, _ = await APIKeyService().create(test_user.id, APIKeyCreate(name="mine"))
+
+        assert key.holder_user_id == test_user.id

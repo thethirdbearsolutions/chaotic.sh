@@ -188,8 +188,10 @@ def test_the_database_agrees_with_the_record_on_delete_actions(schema_template):
 # (CHT-1467). ticket_limbo.requested_by_id is the known exception: it is
 # NOT NULL and cascades, which is why the delete guards count it.
 USER_FKS_ALLOWED_TO_CASCADE = {
-    ("api_keys", "user_id"),
-    ("api_keys", "agent_user_id"),
+    # A key goes with the user it signs in as and with the human who
+    # holds it (CHT-1537, 0021).
+    ("api_keys", "principal_user_id"),
+    ("api_keys", "holder_user_id"),
     ("team_members", "user_id"),
     ("team_invitations", "invited_by_id"),
     ("ticket_limbo", "requested_by_id"),

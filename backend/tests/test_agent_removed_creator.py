@@ -39,7 +39,7 @@ async def _rejoin(test_user2, test_team, role=TeamRole.MEMBER):
 
 
 async def _live_keys(agent):
-    return await OxydeAPIKey.objects.filter(agent_user_id=agent.id, is_active=True).count()
+    return await OxydeAPIKey.objects.filter(principal_user_id=agent.id, is_active=True).count()
 
 
 @pytest.mark.asyncio

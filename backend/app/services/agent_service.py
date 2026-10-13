@@ -96,14 +96,11 @@ class AgentService:
             # Create an API key for the agent
             api_key_service = APIKeyService()
             api_key_create = APIKeyCreate(name=f"Default key for {agent_in.name}")
+            # Signs in as the agent; held by its creator, who was shown
+            # the secret.
             api_key, full_key = await api_key_service.create(
-                parent_user.id,  # Owner is the parent human user
-                api_key_create,
+                agent.id, api_key_create, holder_user_id=parent_user.id,
             )
-
-            # Link the API key to the agent
-            api_key.agent_user_id = agent.id
-            await api_key.save(update_fields={"agent_user_id"})
 
         await agent.refresh()
         await api_key.refresh()
@@ -136,13 +133,9 @@ class AgentService:
         return agent.parent_user_id == user.id
 
     async def list_keys(self, agent_id: str) -> list[OxydeAPIKey]:
-        """Every API key that authenticates as the agent, newest first:
-        the ones linked to it (`agent_user_id`), whether a human minted
-        them or the agent did, and legacy self-minted ones that only
-        carry the agent as `user_id`."""
-        linked = await OxydeAPIKey.objects.filter(agent_user_id=agent_id).all()
-        legacy = await OxydeAPIKey.objects.filter(user_id=agent_id, agent_user_id=None).all()
-        return sorted([*linked, *legacy], key=lambda k: k.created_at, reverse=True)
+        """Every API key that signs in as the agent, newest first, whoever
+        minted it (CHT-1537: its `principal_user_id`)."""
+        return await APIKeyService().list_by_principal(agent_id)
 
     async def release_member_agents(
         self, team_id: str, removed_user_id: str, new_owner_id: str | None,
@@ -151,12 +144,11 @@ class AgentService:
         transaction that deletes the membership.
 
         Revokes the credentials the leaver holds for the team's agents:
-        every key they own that is linked to an agent of this team. A key
-        is owned by whoever minted it, and a key an agent mints for itself
-        is owned by the holder of the key it called with, so these are
-        exactly the keys they hold. Also revoked: the legacy self-minted
-        keys (no holder recorded) of the agents they created, which sign-in
-        already attributes to the creator. The agents stay. Agents they
+        every key that signs in as an agent of this team and names them as
+        its `holder_user_id`. A key is held by whoever minted it, and a key
+        an agent mints for itself by the holder of the key it called with;
+        an agent's legacy self-minted keys were given its creator as
+        holder by migration 0021 (CHT-1537). The agents stay. Agents they
         created pass to `new_owner_id`, so someone in the team can mint
         replacement keys; with no new owner the agent stays put and any
         team admin can still manage it.
@@ -168,13 +160,10 @@ class AgentService:
         changed = []
         for agent in agents:
             revoked = await OxydeAPIKey.objects.filter(
-                agent_user_id=agent.id, user_id=removed_user_id, is_active=True,
+                principal_user_id=agent.id, holder_user_id=removed_user_id, is_active=True,
             ).update(is_active=False)
             reassigned = False
             if agent.parent_user_id == removed_user_id:
-                revoked += await OxydeAPIKey.objects.filter(
-                    user_id=agent.id, is_active=True,
-                ).update(is_active=False)  # legacy self-minted: no holder on record
                 if new_owner_id:
                     await OxydeUser.objects.filter(id=agent.id).update(parent_user_id=new_owner_id)
                     agent.parent_user_id = new_owner_id
@@ -253,16 +242,14 @@ class AgentService:
             counts = await self.authored_counts(agent.id)
             if any(counts.values()):
                 raise AgentHasAuthoredContentError(agent.name, counts, agent.id)
-            await OxydeAPIKey.objects.filter(agent_user_id=agent.id).delete()
-            await OxydeAPIKey.objects.filter(user_id=agent.id).delete()
+            await OxydeAPIKey.objects.filter(principal_user_id=agent.id).delete()
             await agent.delete()
 
     async def deactivate(self, agent: OxydeUser, actor: OxydeUser) -> OxydeUser | None:
         """Retire an agent without erasing who wrote what (CHT-1494).
 
-        Revokes every API key that authenticates as the agent -- the ones
-        linked to it (`agent_user_id`) and any it minted for itself through
-        POST /api-keys (`user_id`) -- and sets is_active=false, which the
+        Revokes every API key that signs in as the agent (its
+        `principal_user_id`), whoever minted it, and sets is_active=false, which the
         auth dependency already refuses. The agent row stays, so its
         authored work keeps its author. Idempotent: deactivating an
         inactive agent revokes any key that is somehow still active and
@@ -285,8 +272,7 @@ class AgentService:
         changed = False
         async with atomic():
             if not active:
-                await OxydeAPIKey.objects.filter(agent_user_id=agent.id).update(is_active=False)
-                await OxydeAPIKey.objects.filter(user_id=agent.id).update(is_active=False)
+                await OxydeAPIKey.objects.filter(principal_user_id=agent.id).update(is_active=False)
             current = await OxydeUser.objects.filter(id=agent.id, is_agent=True).first()
             if current is None:
                 return None
@@ -360,12 +346,6 @@ class AgentService:
         except Exception:
             logger.exception("Failed to notify admins of team %s about released agents", team_id)
 
-    async def get_agent_api_keys(self, agent_id: str) -> list[OxydeAPIKey]:
-        """Get all API keys for an agent."""
-        return await OxydeAPIKey.objects.filter(
-            agent_user_id=agent_id
-        ).order_by("-created_at").all()
-
     async def create_key(self, agent_id: str, requester_user: OxydeUser) -> tuple[str, str]:
         """Mint a new API key for an existing agent.
 
@@ -389,19 +369,14 @@ class AgentService:
                 )
             api_key_service = APIKeyService()
             api_key_create = APIKeyCreate(name=f"Key for {agent.name}")
-            # Owned by whoever minted it: the person who was shown the
+            # Held by whoever minted it: the person who was shown the
             # secret. So GET /api-keys lists exactly the keys a person
             # holds, and leaving the team revokes exactly those
-            # (CHT-1508/CHT-1510). Keys minted before this were all owned
+            # (CHT-1508/CHT-1510). Keys minted before this were all held
             # by the agent's creator.
             api_key, full_key = await api_key_service.create(
-                requester_user.id,
-                api_key_create,
+                agent.id, api_key_create, holder_user_id=requester_user.id,
             )
-
-            # Link the API key to the agent
-            api_key.agent_user_id = agent.id
-            await api_key.save(update_fields={"agent_user_id"})
 
         await api_key.refresh()
 

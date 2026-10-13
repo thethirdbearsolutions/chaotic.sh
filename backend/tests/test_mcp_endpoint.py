@@ -251,7 +251,7 @@ class TestAuth:
         assert (await client.post("/mcp", json=init, headers=bearer)).status_code == 401
         assert (await client.post(f"/mcp/{key}", json=init, headers=_MCP_HEADERS)).status_code == 401
 
-        await OxydeAPIKey.objects.filter(agent_user_id=agent.id).update(is_active=True)
+        await OxydeAPIKey.objects.filter(principal_user_id=agent.id).update(is_active=True)
         assert (await client.post("/mcp", json=init, headers=bearer)).status_code == 403
         assert (await client.post(f"/mcp/{key}", json=init, headers=_MCP_HEADERS)).status_code == 403
 
