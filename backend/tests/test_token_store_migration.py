@@ -44,7 +44,7 @@ EXPECTED_FKS = {
     ("auth_tokens", "minted_by_credential_id"): ("api_keys", "CASCADE"),
     ("oauth_authorization_requests", "client_id"): ("oauth_clients", "CASCADE"),
     ("oauth_authorization_requests", "bound_user_id"): ("users", "CASCADE"),
-    ("revocation_events", "team_id"): ("teams", "CASCADE"),
+    ("revocation_events", "team_id"): ("teams", "SET NULL"),
     ("revocation_events", "actor_id"): ("users", "SET NULL"),
 }
 
@@ -52,16 +52,23 @@ EXPECTED_INDEXES = {
     "holder_sessions": {
         "ix_holder_sessions_team_id_revoked_at", "ix_holder_sessions_principal_user_id",
         "ix_holder_sessions_holder_user_id", "ix_holder_sessions_oauth_client_id",
-        "ix_holder_sessions_credential_id",
+        "ix_holder_sessions_credential_id", "ix_holder_sessions_revoked_by_id",
     },
     "auth_tokens": {
         "ux_auth_tokens_token_hash", "ix_auth_tokens_kind_expires_at", "ix_auth_tokens_holder_session_id",
         "ix_auth_tokens_replaces_id", "ix_auth_tokens_principal_user_id",
         "ix_auth_tokens_minted_by_credential_id", "ix_auth_tokens_oauth_client_id",
+        "ix_auth_tokens_holder_user_id", "ix_auth_tokens_team_id",
     },
     "oauth_clients": {"ix_oauth_clients_registration_created_at"},
-    "oauth_authorization_requests": {"ix_oauth_authorization_requests_expires_at"},
-    "revocation_events": {"ix_revocation_events_team_id_created_at"},
+    "oauth_authorization_requests": {
+        "ix_oauth_authorization_requests_expires_at", "ix_oauth_authorization_requests_client_id",
+        "ix_oauth_authorization_requests_bound_user_id",
+    },
+    "revocation_events": {
+        "ux_revocation_events_seq", "ix_revocation_events_team_id_created_at", "ix_revocation_events_target",
+        "ix_revocation_events_actor_id",
+    },
 }
 
 
@@ -181,8 +188,8 @@ def _seed_store(c) -> None:
             (token_id, kind, digest, NOW, LATER),
         )
     c.execute(
-        "INSERT INTO revocation_events (id, team_id, actor_id, target_type, target_id, dry_run, created_at) "
-        "VALUES ('e1', 't1', 'admin', 'holder_session', 'hs1', 0, ?)",
+        "INSERT INTO revocation_events (id, seq, team_id, actor_id, target_type, target_id, dry_run, created_at) "
+        "VALUES ('e1', 1, 't1', 'admin', 'HOLDER_SESSION', 'hs1', 0, ?)",
         (NOW,),
     )
 
@@ -220,7 +227,23 @@ def test_tokens_go_with_their_principal_and_audit_survives_the_actor(at_before):
         assert c.execute("SELECT count(*) FROM revocation_events").fetchone() == (1,)
 
 
-def test_revoking_a_session_row_by_delete_takes_its_tokens(at_before):
+def test_the_revocation_audit_outlives_its_team_and_seq_is_unique(at_before):
+    """Events are never deleted by a cascade: MAX(seq) is the revocation
+    epoch, and it must never go backwards."""
+    _migrate(at_before)
+    with closing(sqlite3.connect(at_before)) as c:
+        c.execute("PRAGMA foreign_keys = ON")
+        _seed_store(c)
+        c.execute("DELETE FROM teams WHERE id = 't1'")
+        assert c.execute("SELECT seq, team_id FROM revocation_events").fetchall() == [(1, None)]
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute(
+                "INSERT INTO revocation_events (id, seq, target_type, dry_run, created_at) "
+                "VALUES ('e2', 1, 'BULK', 0, ?)", (NOW,),
+            )
+
+
+def test_deleting_a_client_takes_its_sessions_and_tokens(at_before):
     _migrate(at_before)
     with closing(sqlite3.connect(at_before)) as c:
         c.execute("PRAGMA foreign_keys = ON")

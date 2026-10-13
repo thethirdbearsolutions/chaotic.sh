@@ -42,8 +42,21 @@ def upgrade(ctx):
                 'decimal_places': None
             },
             {
+                'name': 'seq',
+                'python_type': 'int',
+                'db_type': None,
+                'nullable': False,
+                'primary_key': False,
+                'unique': False,
+                'default': None,
+                'auto_increment': False,
+                'max_length': None,
+                'max_digits': None,
+                'decimal_places': None
+            },
+            {
                 'name': 'target_type',
-                'python_type': 'str',
+                'python_type': 'revocationtarget',
                 'db_type': None,
                 'nullable': False,
                 'primary_key': False,
@@ -161,10 +174,35 @@ def upgrade(ctx):
         ],
         indexes=[
             {
+                'name': 'ux_revocation_events_seq',
+                'fields': [
+                    'seq'
+                ],
+                'unique': True,
+                'method': None
+            },
+            {
                 'name': 'ix_revocation_events_team_id_created_at',
                 'fields': [
                     'team_id',
                     'created_at'
+                ],
+                'unique': False,
+                'method': None
+            },
+            {
+                'name': 'ix_revocation_events_target',
+                'fields': [
+                    'target_type',
+                    'target_id'
+                ],
+                'unique': False,
+                'method': None
+            },
+            {
+                'name': 'ix_revocation_events_actor_id',
+                'fields': [
+                    'actor_id'
                 ],
                 'unique': False,
                 'method': None
@@ -180,7 +218,7 @@ def upgrade(ctx):
                 'ref_columns': [
                     'id'
                 ],
-                'on_delete': 'CASCADE',
+                'on_delete': 'SET NULL',
                 'on_update': 'CASCADE'
             },
             {
@@ -597,7 +635,7 @@ def upgrade(ctx):
                 'name': 'team_id',
                 'python_type': 'str',
                 'db_type': None,
-                'nullable': False,
+                'nullable': True,
                 'primary_key': False,
                 'unique': False,
                 'default': None,
@@ -710,6 +748,14 @@ def upgrade(ctx):
                 'name': 'ix_holder_sessions_credential_id',
                 'fields': [
                     'credential_id'
+                ],
+                'unique': False,
+                'method': None
+            },
+            {
+                'name': 'ix_holder_sessions_revoked_by_id',
+                'fields': [
+                    'revoked_by_id'
                 ],
                 'unique': False,
                 'method': None
@@ -1137,6 +1183,22 @@ def upgrade(ctx):
                 ],
                 'unique': False,
                 'method': None
+            },
+            {
+                'name': 'ix_auth_tokens_holder_user_id',
+                'fields': [
+                    'holder_user_id'
+                ],
+                'unique': False,
+                'method': None
+            },
+            {
+                'name': 'ix_auth_tokens_team_id',
+                'fields': [
+                    'team_id'
+                ],
+                'unique': False,
+                'method': None
             }
         ],
         foreign_keys=[
@@ -1366,6 +1428,22 @@ def upgrade(ctx):
                 'name': 'ix_oauth_authorization_requests_expires_at',
                 'fields': [
                     'expires_at'
+                ],
+                'unique': False,
+                'method': None
+            },
+            {
+                'name': 'ix_oauth_authorization_requests_client_id',
+                'fields': [
+                    'client_id'
+                ],
+                'unique': False,
+                'method': None
+            },
+            {
+                'name': 'ix_oauth_authorization_requests_bound_user_id',
+                'fields': [
+                    'bound_user_id'
                 ],
                 'unique': False,
                 'method': None
