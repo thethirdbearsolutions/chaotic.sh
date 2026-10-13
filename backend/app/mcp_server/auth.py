@@ -1,16 +1,18 @@
 """Bearer-token / capability-URL auth for the /mcp Streamable HTTP endpoint
 (CHT-1266).
 
-Two modes, both API-key only (no JWT, no OAuth -- see CHT-1266: OAuth 2.1
-+ dynamic client registration for the paste-a-URL-and-authorize connector
-UX is an explicit, separate follow-up):
+Two modes (no JWT on either):
 
-1. ``Authorization: Bearer ck_...`` on /mcp -- works for Claude Code's
-   ``--transport http`` and anything else that lets you set a header.
-   Resolved by ``app.auth.credentials.mcp_resolver`` (CHT-1560), the
-   same resolver the REST API uses: same key hash/expiry/active checks,
-   same agent-vs-human resolution. /mcp accepts API keys only.
-2. ``/mcp/<api-key>`` -- a capability URL, for connector UIs that only
+1. ``Authorization: Bearer ck_...`` or ``Bearer cat_...`` on /mcp -- works
+   for Claude Code's ``--transport http``, OAuth MCP clients (CHT-1576,
+   with ``OAUTH_ENABLED`` on) and anything else that lets you set a
+   header. Resolved by ``app.auth.credentials.mcp_resolver`` (CHT-1560),
+   the same resolver the REST API uses: same key hash/expiry/active
+   checks, same agent-vs-human resolution. /mcp accepts API keys and
+   OAuth access tokens issued for /mcp or for the whole server.
+2. ``/mcp/<api-key>`` -- a capability URL, API keys only
+   (``capability_url_resolver``: an OAuth token is never carried in a
+   path, CHT-1570), for connector UIs that only
    take a URL and can't set custom headers (true of claude.ai's web
    custom-connector UI as of when this was written -- see docs/agents.md).
    The path segment IS the API key.
@@ -32,7 +34,8 @@ UX is an explicit, separate follow-up):
    dedicated-expiring-key advice above.
 
 OAuth discovery (CHT-1517): with ``OAUTH_ENABLED`` on, a 401 on bare
-/mcp for a missing or non-``ck_`` bearer carries the RFC 9728
+/mcp for a missing or non-``ck_`` bearer (a failed OAuth token
+included, with ``error="invalid_token"``) carries the RFC 9728
 ``resource_metadata`` and ``scope`` challenge parameters, which is how an
 OAuth MCP client finds the authorization server (see
 ``app.oauth.discovery``). A presented ``ck_`` key that fails, and every
@@ -50,7 +53,14 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.auth.credentials import CredentialError, CredentialFailure, CredentialKind, mcp_resolver
+from app.auth.credentials import (
+    CredentialError,
+    CredentialFailure,
+    CredentialKind,
+    CredentialResolver,
+    capability_url_resolver,
+    mcp_resolver,
+)
 from app.mcp_server.context import current_mcp_principal
 from app.oauth.discovery import www_authenticate_challenge
 from app.services.token_service import ALL_SECRET_PREFIXES
@@ -135,6 +145,7 @@ async def _resolve(
     api_key: str | None,
     challenge: dict[str, str] = _WWW_AUTHENTICATE,
     invalid_token_challenge: dict[str, str] | None = None,
+    resolver: CredentialResolver | None = None,
 ):
     """Resolve the presented credential with the shared resolver
     (``app.auth.credentials``, CHT-1560), the one the REST API uses.
@@ -143,10 +154,11 @@ async def _resolve(
     ``challenge`` is the WWW-Authenticate header when no token was sent,
     ``invalid_token_challenge`` (default: the same) when a token of any
     kind but an API key failed (picked by ``CredentialError.kind``); a
-    failed ``ck_`` key always gets the bare one.
+    failed ``ck_`` key always gets the bare one. ``resolver`` defaults to
+    ``mcp_resolver`` (read at call time, so tests can stand one in).
     """
     try:
-        principal = await mcp_resolver.resolve(api_key)
+        principal = await (resolver or mcp_resolver).resolve(api_key)
     except CredentialError as exc:
         if exc.failure is CredentialFailure.MISSING:
             return None, JSONResponse(
@@ -157,15 +169,18 @@ async def _resolve(
         if exc.kind is CredentialKind.API_KEY:
             # An API-key user: the OAuth hint would only mislead them.
             return None, JSONResponse({"error": exc.detail}, status_code=exc.status_code, headers=_WWW_AUTHENTICATE)
-        # Any other kind: today a JWT, which /mcp does not accept; from
-        # CHT-1520 also an OAuth access token that failed verification.
+        # Any other kind: a JWT, which /mcp does not accept, an OAuth
+        # token on the capability URL, or an OAuth access token that
+        # failed verification (CHT-1576).
         message = (
             "Not a chaotic API key (expected a `ck_...` token)."
             if exc.failure is CredentialFailure.UNSUPPORTED else exc.detail
         )
-        return None, JSONResponse(
-            {"error": message}, status_code=exc.status_code, headers=invalid_token_challenge or challenge,
-        )
+        # The challenge goes on a 401 only (RFC 6750 §3.1). On a 403 (an
+        # inactive agent) it would tell an OAuth client to re-authorize,
+        # which yields a token for the same agent and the same 403: a loop.
+        headers = (invalid_token_challenge or challenge) if exc.status_code == 401 else None
+        return None, JSONResponse({"error": message}, status_code=exc.status_code, headers=headers)
     return principal, None
 
 
@@ -185,12 +200,16 @@ class _AuthWrapperBase:
         """(no token sent, non-ck_ token sent)."""
         return _WWW_AUTHENTICATE, _WWW_AUTHENTICATE
 
+    def _resolver(self) -> CredentialResolver | None:
+        """None: ``mcp_resolver``."""
+        return None
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":  # pragma: no cover -- Route only ever matches "http" scopes
             await self._app(scope, receive, send)
             return
 
-        principal, error = await _resolve(self._extract_key(scope), *self._challenges())
+        principal, error = await _resolve(self._extract_key(scope), *self._challenges(), resolver=self._resolver())
         if error is not None:
             await error(scope, receive, send)
             return
@@ -226,3 +245,9 @@ class CapabilityURLAuth(_AuthWrapperBase):
 
     def _extract_key(self, scope: Scope) -> str | None:
         return scope.get(_SCOPE_KEY)
+
+    def _resolver(self) -> CredentialResolver:
+        # API keys only: an OAuth token in a path would be logged upstream
+        # and kept in history (CHT-1570), so it is refused here even when
+        # it is valid at /mcp with a header.
+        return capability_url_resolver

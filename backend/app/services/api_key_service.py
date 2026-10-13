@@ -118,6 +118,13 @@ class APIKeyService:
 
         return api_key, full_key
 
+    async def is_live(self, api_key_id: str) -> bool:
+        """Does the key with this id exist, active and unexpired? For a
+        credential something else hangs off (a claim holder session's
+        ``credential_id``, CHT-1576), checked without its secret."""
+        api_key = await self.get_by_id(api_key_id)
+        return api_key is not None and _usable(api_key, datetime.now(timezone.utc))
+
     async def get_by_id(self, api_key_id: str) -> OxydeAPIKey | None:
         """Get API key by ID."""
         return await OxydeAPIKey.objects.get_or_none(id=api_key_id)

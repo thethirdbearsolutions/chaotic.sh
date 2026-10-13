@@ -16,18 +16,15 @@ neither comes from anything the bearer asserts.
 
 What this module does not do yet:
 
-* It is not wired into authentication. ``validate_access`` returns a
-  ``ValidatedToken`` with everything a principal needs (who it acts as,
-  who holds it, team and project scope, scopes, policy, expiry), and the
-  credential resolver (``app.auth.credentials``, CHT-1560) turns that
-  into the request's principal for REST and /mcp alike, as the verifier
-  of its reserved ``OAUTH_ACCESS`` kind (CHT-1520 plugs it in). That is
-  also where the per-request checks that are not about the token
-  belong, as for a ``ck_`` key: the principal is active, and an agent
-  principal's holder is still in the agent's team. Scope enforcement is
-  CHT-1562. Until then a ``cat_`` bearer is refused everywhere: the
-  resolver classifies it as a session JWT, which fails to decode, and
-  /mcp accepts only API keys.
+* Authentication: ``validate_access`` returns a ``ValidatedToken`` with
+  everything a principal needs, and the credential resolver
+  (``app.auth.credentials``, CHT-1576) turns it into the request's
+  principal for REST and /mcp alike, as the verifier of its
+  ``OAUTH_ACCESS`` kind. The resolver also makes the per-request checks
+  that are not about the token, as for a ``ck_`` key: the principal is
+  an active agent in the session's team, and the human who answers for
+  it is active and still in that team. Scopes are enforced by
+  ``app.auth.access.authorize`` (CHT-1562).
 * Endpoints: the token endpoint and code exchange are CHT-1520, claim
   grants CHT-1447, and the RevocationService with cascades CHT-1449.
   ``revoke_session`` here is the one primitive they build on.
@@ -216,6 +213,10 @@ def audience_accepts(token_resource: str, endpoint_resource: str) -> bool:
         return True
     base = issuer()
     return token_resource == base and endpoint_resource == base + MCP_RESOURCE_PATH
+
+
+def _wrong_audience() -> TokenError:
+    return TokenError("invalid_token", "this token was not issued for this resource")
 
 
 # --- revocation epoch and process-local state ---------------------------------
@@ -685,9 +686,9 @@ class TokenService:
         epoch = await revocation_epoch()
         validated = self._cached(digest, now, epoch)
         if validated is None:
-            validated = await self._validate_from_db(digest, now, epoch)
-        if not audience_accepts(validated.resource, resource):
-            raise TokenError("invalid_token", "this token was not issued for this resource")
+            validated = await self._validate_from_db(digest, now, epoch, resource)
+        elif not audience_accepts(validated.resource, resource):
+            raise _wrong_audience()
         return validated
 
     def _cached(self, digest: str, now: datetime, epoch: int) -> ValidatedToken | None:
@@ -705,7 +706,7 @@ class TokenService:
             return None
         return validated
 
-    async def _validate_from_db(self, digest: str, now: datetime, epoch: int) -> ValidatedToken:
+    async def _validate_from_db(self, digest: str, now: datetime, epoch: int, resource: str) -> ValidatedToken:
         row = await OxydeAuthToken.objects.get_or_none(token_hash=digest)
         if (
             row is None
@@ -718,6 +719,10 @@ class TokenService:
         session = await OxydeHolderSession.objects.get_or_none(id=row.holder_session_id)
         if session is None or session.revoked_at is not None or session.absolute_expires_at <= now:
             raise TokenError("invalid_token", "the access token's connection has been revoked or has expired")
+        # Before the bookkeeping below: a token refused at this resource
+        # leaves no trace (no first use, no last-used time; CHT-1576).
+        if not audience_accepts(row.resource, resource):
+            raise _wrong_audience()
         # Two bookkeeping writes on the authentication path, both best
         # effort: under write contention they can wait out the busy
         # timeout, and that must not turn a valid token into a 500. If the

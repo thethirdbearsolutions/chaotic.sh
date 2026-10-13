@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.oxyde_models.user import OxydeUser as User
 from app.auth.access import authorize
+from app.config import get_settings
 from app.auth.credentials import CredentialError, CredentialKind, classify, rest_resolver
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
@@ -33,12 +34,17 @@ async def get_current_user(
 
 def _http_error(exc: CredentialError) -> HTTPException:
     """REST's answer to a credential that did not resolve: the resolver's
-    detail, with the bare Bearer challenge on a 401."""
+    detail, with a Bearer challenge on a 401. With ``OAUTH_ENABLED`` on, a
+    failed OAuth access token gets RFC 6750's ``error="invalid_token"``
+    (refresh or re-authorize, CHT-1576); every other failure, and every
+    failure with the flag off, keeps the bare challenge it always had."""
     if exc.status_code == status.HTTP_401_UNAUTHORIZED:
+        invalid_token = exc.kind is CredentialKind.OAUTH_ACCESS and get_settings().oauth_enabled
+        challenge = 'Bearer error="invalid_token"' if invalid_token else "Bearer"
         return HTTPException(
             status_code=exc.status_code,
             detail=exc.detail,
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={"WWW-Authenticate": challenge},
         )
     return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
@@ -105,7 +111,7 @@ async def check_user_project_access(user: User, project_id: str, team_id: str) -
 async def get_auth_method(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
 ) -> str:
-    """Get the authentication method used (jwt or api_key).
+    """Get the authentication method used (jwt, api_key or oauth).
 
     This is used to distinguish human requests (JWT from web UI login) from
     agent requests (API keys from CLI). The assumption is:
@@ -119,8 +125,11 @@ async def get_auth_method(
     if not credentials:
         return "unknown"
 
-    if classify(credentials.credentials) is CredentialKind.API_KEY:
+    kind = classify(credentials.credentials)
+    if kind is CredentialKind.API_KEY:
         return "api_key"
+    if kind is CredentialKind.OAUTH_ACCESS:
+        return "oauth"
     return "jwt"
 
 
