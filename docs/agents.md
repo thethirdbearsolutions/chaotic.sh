@@ -481,8 +481,8 @@ Usually also:
 - `MCP_CAPABILITY_URL_ENABLED=false`, once nothing uses the deprecated
   capability URL (below).
 - `OAUTH_DCR_ENABLED=false` if every client you use does metadata
-  documents (claude.ai, Claude Code, ChatGPT do; MCP Inspector does
-  not).
+  documents (claude.ai, Claude Code and ChatGPT do). Leave it on for
+  MCP Inspector and other clients that register themselves.
 
 The server needs direct outbound https to fetch client metadata
 documents (from `claude.ai`, `chatgpt.com`, ...); it ignores
