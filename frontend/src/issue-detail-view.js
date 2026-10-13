@@ -472,13 +472,88 @@ subscribe((key) => {
  * @param {string} issueId - Issue ID
  * @param {boolean} pushHistory - Whether to push to browser history
  */
-export async function viewIssue(issueId, pushHistory = true) {
+// Bumped by every navigating viewIssue() call -- not by background
+// refreshes (see `refresh` below).
+let viewIssueNavigationId = 0;
+// Bumped by every viewIssue() call, refresh or navigation: a refresh renders
+// only if no later call of either kind started while it was fetching, so two
+// overlapping refreshes can never land oldest-last (PR #318 review 1).
+let viewIssueRefreshSeq = 0;
+// True between compositionstart and compositionend on #new-comment: replacing
+// the textarea mid-composition aborts the IME input (PR #318 review 5).
+let commentComposing = false;
+
+/**
+ * Why a background refresh of the open issue must wait right now, or null.
+ *  - 'editor': the inline description editor is open. The refresh is noted
+ *    and resolved by the editor's Cancel/Save (CHT-1214); nothing retries.
+ *  - 'transient': an inline field dropdown, the overflow menu or the
+ *    @mention list is open, or an IME composition is in progress in the
+ *    comment box. A re-render would orphan the dropdown on a replaced row
+ *    (the CHT-1290 bug class), wipe the mention list, or abort the IME
+ *    input. These close on their own, so the caller retries shortly.
+ * @returns {'editor'|'transient'|null}
+ */
+export function detailRefreshBlocker() {
+    if (document.querySelector('.description-inline-editor')) return 'editor';
+    if (isInlineDropdownOpen()) return 'transient';
+    const detailView = document.getElementById('issue-detail-view');
+    if (detailView?.querySelector('.overflow-menu-dropdown:not(.hidden)')) return 'transient';
+    const mentions = document.getElementById('mention-suggestions');
+    if (mentions && !mentions.classList.contains('hidden')) return 'transient';
+    if (commentComposing) return 'transient';
+    return null;
+}
+
+function deferRefresh(blocker) {
+    noteSkippedDetailRefresh();
+    return blocker === 'editor' ? 'deferred' : 'retry';
+}
+
+/**
+ * True while issueId's detail is the one on screen.
+ * @param {string} issueId
+ */
+function isShowingIssueDetail(issueId) {
+    const el = document.getElementById('issue-detail-view');
+    return !!el && !el.classList.contains('hidden') && getCurrentDetailIssue()?.id === issueId;
+}
+
+/**
+ * @param {string} issueId
+ * @param {boolean} [pushHistory=true]
+ * @param {{refresh?: boolean}} [options] refresh: a background re-render of
+ *   the issue already on screen, triggered by a websocket event
+ *   (ws-handlers.js). Remote refreshes became live with CHT-1237, which
+ *   exposed two things this guards against:
+ *   - Stale responses. Only navigating calls bump viewIssueNavigationId, so
+ *     a refresh never cancels a navigation the user already started, and a
+ *     refresh whose fetch resolves after a newer navigation, or after the
+ *     user left the detail, or after they opened the description editor,
+ *     renders nothing instead of yanking them back to this issue.
+ *   - Focus loss. Typing a comment while a teammate or agent comments
+ *     would otherwise lose the caret mid-word: the text survives via the
+ *     CHT-1041 draft, but the textarea is replaced. Focus, selection and
+ *     the page scroll position are restored after the re-render.
+ *   - Transient UI. See detailRefreshBlocker(); checked before fetching and
+ *     again before rendering.
+ * @returns {Promise<'rendered'|'dropped'|'deferred'|'retry'|'failed'>} what
+ *   happened; ws-handlers.js retries a refresh that returns 'retry'.
+ */
+export async function viewIssue(issueId, pushHistory = true, { refresh = false } = {}) {
+    const navigationId = refresh ? viewIssueNavigationId : ++viewIssueNavigationId;
+    const refreshSeq = ++viewIssueRefreshSeq;
+    if (refresh) {
+        const blocker = detailRefreshBlocker();
+        if (blocker) return deferRefresh(blocker);
+    }
     try {
         // Record the list's scroll position before we replace it with detail
         // content, so Back can restore it (CHT-1211 item 1).
         if (pushHistory) saveScrollPosition();
 
-        ticketRitualsCollapsed = true;
+        // A refresh keeps whatever the user expanded (PR #318 review 3).
+        if (!refresh) ticketRitualsCollapsed = true;
         // CHT-1224: comments used to be the one fetch in this Promise.all with
         // no per-call .catch (unlike ritual status/sprints below), so a single
         // comments-endpoint failure discarded 4 successful fetches and failed
@@ -511,9 +586,6 @@ export async function viewIssue(issueId, pushHistory = true) {
                 is_pending: !r.attestation.approved_at,
             }));
 
-        // Store ritual status for renderTicketRituals (avoids duplicate API call)
-        currentTicketRituals = ritualStatus;
-
         // Combine and sort chronologically
         const allComments = [...comments, ...attestationNotes].sort((a, b) =>
             new Date(a.created_at) - new Date(b.created_at)
@@ -525,6 +597,30 @@ export async function viewIssue(issueId, pushHistory = true) {
             api.getSprints(issue.project_id).catch(e => { console.error('Failed to load sprints:', e); return []; }),
         ];
         const [parentIssue, projectSprints] = await Promise.all(secondaryFetches);
+
+        // Last await above: from here to the end of the try, rendering is
+        // synchronous, so these checks cannot go stale before it finishes.
+        if (navigationId !== viewIssueNavigationId) return 'dropped';
+        let restoreFocus = null;
+        let restoreScrollY = null;
+        if (refresh) {
+            if (refreshSeq !== viewIssueRefreshSeq) return 'dropped';
+            if (!isShowingIssueDetail(issueId)) return 'dropped';
+            const blocker = detailRefreshBlocker();
+            if (blocker) return deferRefresh(blocker);
+            restoreScrollY = window.scrollY;
+            const active = document.activeElement;
+            if (active?.id && document.getElementById('issue-detail-view').contains(active)) {
+                restoreFocus = {
+                    id: active.id,
+                    start: active.selectionStart,
+                    end: active.selectionEnd,
+                };
+            }
+        }
+
+        // Store ritual status for renderTicketRituals (avoids duplicate API call)
+        currentTicketRituals = ritualStatus;
 
         // Separate relations by type
         const blockingIssues = relations.filter(r => r.relation_type === 'blocks' && r.direction === 'outgoing');
@@ -921,7 +1017,10 @@ export async function viewIssue(issueId, pushHistory = true) {
 
         // Cmd/Ctrl+Enter to submit comment + draft persistence (CHT-1041)
         const commentTextarea = document.getElementById('new-comment');
+        commentComposing = false;
         if (commentTextarea) {
+            commentTextarea.addEventListener('compositionstart', () => { commentComposing = true; }, { signal: detailSignal });
+            commentTextarea.addEventListener('compositionend', () => { commentComposing = false; }, { signal: detailSignal });
             // Restore draft comment if available
             const savedDraft = getCommentDraft(issue.id);
             if (savedDraft) {
@@ -1006,8 +1105,36 @@ export async function viewIssue(issueId, pushHistory = true) {
             }
         };
         document.addEventListener('keydown', detailKeyHandler, { signal: detailSignal });
+
+        if (restoreFocus) {
+            const el = document.getElementById(restoreFocus.id);
+            if (el) {
+                el.focus({ preventScroll: true });
+                if (typeof restoreFocus.start === 'number' && typeof el.setSelectionRange === 'function') {
+                    try {
+                        el.setSelectionRange(restoreFocus.start, restoreFocus.end);
+                    } catch {
+                        // Input types without selection support (e.g. checkbox).
+                    }
+                }
+            }
+        }
+        // The innerHTML swap can collapse and regrow the page; put the
+        // reader back where they were.
+        if (restoreScrollY !== null) {
+            window.scrollTo(0, restoreScrollY);
+        }
+        return 'rendered';
     } catch (e) {
-        showApiError('load issue', e);
+        if (refresh) {
+            // A failed background refresh leaves the current render in
+            // place; an error toast for an action the user never took is
+            // noise (and an issue:deleted handler covers the 404 case).
+            console.error('Failed to refresh issue detail:', e);
+        } else {
+            showApiError('load issue', e);
+        }
+        return 'failed';
     }
 }
 
