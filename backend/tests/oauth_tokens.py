@@ -44,7 +44,7 @@ async def connector_token(agent, team, holder, *, scopes=("chaotic:write", "offl
         resource=MCP, scopes=scopes, scope_project_ids=project_ids, oauth_client_id=CLIENT,
         code_challenge="c", redirect_uri=REDIRECT,
     )
-    return await service.start_session_from(await service.redeem_single_use(code, TokenKind.AUTH_CODE))
+    return await service.start_session_from(await service.redeem_single_use(code, TokenKind.AUTH_CODE, client_id=CLIENT))
 
 
 async def server_token(agent, team, holder, *, scopes=("chaotic:write",)):

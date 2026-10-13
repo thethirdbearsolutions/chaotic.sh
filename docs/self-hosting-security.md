@@ -262,6 +262,22 @@ With `OAUTH_ENABLED` on, MCP clients register in one of two ways
   Set `OAUTH_DCR_ENABLED=false` to turn registration off; clients that
   use metadata documents don't need it.
 
+## OAuth tokens
+
+An approved connection gets its tokens from `POST /oauth/token`
+(CHT-1520): an access token (`cat_…`, 10 minutes) and, when the app asked
+for `offline_access`, a refresh token (`crt_…`) that is replaced on every
+use. Presenting a refresh token a second time, outside a 30-second grace
+window for concurrent refreshes, revokes the whole connection, since it
+means the token was copied. `POST /oauth/revoke` (RFC 7009) lets the app
+end its own connection.
+
+The token and revoke endpoints read their parameters from a form-encoded
+request body only, and refuse a request that has any query string. Codes,
+tokens and client secrets therefore never appear in a URL, and so never
+in uvicorn's access log or a reverse proxy's. Responses are sent with
+`Cache-Control: no-store`.
+
 ## Firewall example (ufw)
 
 If you're running the server on a VPS/box with a public IP and you've
