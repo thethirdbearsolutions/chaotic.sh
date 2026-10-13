@@ -288,9 +288,13 @@ SQLALCHEMY_ISSUES = (
             "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT REFERENCES users(id))",
             "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT REFERENCES users(id) ON DELETE SET NULL)",
         ),
-        (  # a reference to some other table is left alone
-            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT REFERENCES people(id) ON DELETE CASCADE)",
-            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT REFERENCES people(id) ON DELETE CASCADE)",
+        (  # a reference to some other table is left alone, NOT NULL included
+            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE)",
+            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE)",
+        ),
+        (  # no foreign key at all: nothing to set null, so NOT NULL stays
+            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL)",
+            "CREATE TABLE x (id TEXT PRIMARY KEY, creator_id TEXT NOT NULL)",
         ),
     ],
 )
@@ -305,7 +309,7 @@ def test_rewrite_handles_other_schema_spellings(sql, expected):
         table = "issues" if rewritten.startswith("CREATE TABLE issues") else "x"
         creator = [fk for fk in c.execute(f"PRAGMA foreign_key_list('{table}')") if fk[3] == "creator_id"]
         notnull = {row[1]: row[3] for row in c.execute(f"PRAGMA table_info('{table}')")}
-        if creator[0][2] == "users":
+        if creator and creator[0][2] == "users":
             assert creator[0][6] == "SET NULL"
             assert notnull["creator_id"] == 0
 

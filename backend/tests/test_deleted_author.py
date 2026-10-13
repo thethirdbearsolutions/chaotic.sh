@@ -84,6 +84,12 @@ async def test_deleting_an_author_keeps_their_work_and_names_them_deleted(
     listed = ok(await client.get(f"/api/issues?project_id={test_project.id}", headers=auth_headers))
     assert [(row["creator_id"], row["creator_name"]) for row in listed] == [(None, DELETED_USER_NAME)]
 
+    found = ok(await client.get(f"/api/issues/search?team_id={test_team.id}&q=kept", headers=auth_headers))
+    assert [(row["creator_id"], row["creator_name"]) for row in found] == [(None, DELETED_USER_NAME)]
+
+    docs = ok(await client.get(f"/api/teams/{test_team.id}/documents", headers=auth_headers))
+    assert [(row["author_id"], row["author_name"]) for row in docs] == [(None, DELETED_USER_NAME)]
+
 
 @pytest.mark.asyncio
 async def test_an_agent_that_authored_anything_is_not_deleted(client, auth_headers, test_user, test_team, test_project):

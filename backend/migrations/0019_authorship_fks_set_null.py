@@ -162,13 +162,17 @@ def _drop_column_not_null(definition: str, column: str) -> str | None:
 
 def rewrite_create_table(sql: str, column: str, action: str) -> str:
     """Return `sql` with every foreign key from `column` to users(id) set
-    to ON DELETE `action`; for SET NULL, also drop the column's NOT NULL.
-    Every other byte of the statement is preserved."""
+    to ON DELETE `action`; for SET NULL, also drop the column's NOT NULL
+    (only when such a foreign key exists: with none, nothing would ever be
+    set null). Every other byte of the statement is preserved."""
+    spans = _split_definitions(sql)
+    rewrites = {span: _rewrite_definition(sql[span[0]:span[1]], column, action) for span in spans}
+    references_users = any(r is not None for r in rewrites.values())
     pieces, cursor = [], 0
-    for start, end in _split_definitions(sql):
+    for start, end in spans:
         definition = sql[start:end]
-        rewritten = _rewrite_definition(definition, column, action)
-        if rewritten is None and action == "SET NULL":
+        rewritten = rewrites[(start, end)]
+        if rewritten is None and action == "SET NULL" and references_users:
             rewritten = _drop_column_not_null(definition, column)
         if rewritten is not None and rewritten != definition:
             pieces.append(sql[cursor:start])
