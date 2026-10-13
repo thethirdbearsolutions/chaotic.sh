@@ -133,6 +133,8 @@ class TestRedirectMatching:
 class TestDCRRedirectRules:
     @pytest.mark.parametrize("uri", [
         "https://app.example/cb", "http://localhost:3000/cb", "http://127.0.0.1/cb", "http://[::1]:5/cb",
+        "https://203.0.113.9/cb", "https://[2001:db8::1]:8443/cb", "https://xn--bcher-kva.example/cb",
+        "https://app.example/cb?x=1&y=%20",
     ])
     def test_allowed(self, uri):
         assert dcr_redirect_uri_problem(uri) is None
@@ -155,11 +157,40 @@ class TestDCRRedirectRules:
         ("HTTP://localhost/cb", "https"),
         ("JavaScript:alert(1)", "javascript"),
         ("data:text/html,x", "data"),
+        # Review S6: no character two URL parsers could read differently.
+        ("https://evil.example\\.claude.ai/cb", "RFC 3986"),
+        ("https://app.example/c\"b", "RFC 3986"),
+        ("https://app.example/c<b>", "RFC 3986"),
+        ("https://app.example/c{b}", "RFC 3986"),
+        ("https://APP.example/cb", "DNS name"),
+        ("https://a..b/cb", "DNS name"),
+        ("https://-a.example/cb", "DNS name"),
+        ("https://a_b.example/cb", "DNS name"),
+        ("https://evil%2eexample/cb", "DNS name"),
+        ("https://0x7f.1/cb", "IP address"),
+        ("https://foo.123/cb", "IP address"),
+        ("https://1.2.3/cb", "IP address"),
         ("", "non-empty"),
         (42, "non-empty"),
     ])
     def test_refused(self, uri, why):
         assert why in dcr_redirect_uri_problem(uri)
+
+
+class TestRedirectHost:
+    """What the consent page names as the redirect's host is the host a
+    browser goes to (review S6)."""
+
+    @pytest.mark.parametrize("uri,host", [
+        ("https://app.example/cb", "app.example"),
+        ("https://evil.example\\.claude.ai/cb", "evil.example"),
+        ("HTTPS://evil.example\\.claude.ai/cb", "evil.example"),
+        ("http://localhost:8080/cb", "localhost"),
+        ("com.example.app:/cb", "com.example.app:/cb"),
+    ])
+    def test_host(self, uri, host):
+        from app.oauth.clients import redirect_host
+        assert redirect_host(uri) == host
 
 
 class TestDocumentRedirectRules:
@@ -179,6 +210,8 @@ class TestDocumentRedirectRules:
         "file:///etc/passwd", "blob:https://app.example/x", "about:blank",
         "http://app.example/cb", "HTTPS://app.example/cb", "Com.Example.App:/cb", "myapp:/cb", "com.example.app:",
         "https://app.example:0/cb",
+        "https://evil.example\\.claude.ai/cb", "https://evil.example\\@claude.ai/cb",
+        "com.example.app:/c\\b",
     ])
     def test_refused(self, uri):
         assert redirect_uri_problem(uri, allow_private_use=True) is not None
@@ -237,6 +270,7 @@ class TestClientIdURL:
         ("https://app.example:8443/meta", "default https port"),
         ("https://app.example:22/meta", "default https port"),
         ("https://app.example:0/meta", "default https port"),
+        ("https://evil.example\\.claude.ai/meta", "RFC 3986"),
         ("https:///meta", "no host"),
         ("https://app.example/me ta", "whitespace"),
         ("https://app.example/" + "a" * 600, "too long"),
@@ -480,6 +514,7 @@ class TestDocument:
         (json.dumps(_doc(redirect_uris=["https://app.example.org/cb", "JaVaScRiPt:alert(1)"])).encode(),
          "javascript"),
         (json.dumps(_doc(redirect_uris=["data:text/html,x"])).encode(), "data"),
+        (json.dumps(_doc(redirect_uris=["https://evil.example\\.claude.ai/cb"])).encode(), "RFC 3986"),
         (json.dumps(_doc(redirect_uris=["http://app.example.org/cb"])).encode(), "unusable redirect_uri"),
         (json.dumps(_doc(redirect_uris=[f"https://app.example.org/{i}" for i in range(21)])).encode(),
          "more than 20"),
@@ -504,7 +539,7 @@ class TestResolveCIMD:
     async def test_first_resolve_fetches_and_stores(self, db, oauth_settings, monkeypatch):
         fake = _FakeFetch()
         monkeypatch.setattr(cimd, "fetch", fake)
-        client = await OAuthClientService().resolve(CIMD_URL)
+        client = await OAuthClientService().resolve(CIMD_URL, source_ip=None)
         assert client.id == CIMD_URL
         assert client.registration == OAuthClientRegistration.CIMD
         assert client.client_name == "Example App"
@@ -517,15 +552,15 @@ class TestResolveCIMD:
         fake = _FakeFetch()
         monkeypatch.setattr(cimd, "fetch", fake)
         service = OAuthClientService()
-        first = await service.resolve(CIMD_URL)
-        await service.resolve(CIMD_URL)
+        first = await service.resolve(CIMD_URL, source_ip=None)
+        await service.resolve(CIMD_URL, source_ip=None)
         assert fake.calls == 1
 
         await OxydeOAuthClient.objects.filter(id=CIMD_URL).update(
             cache_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
         )
         fake.document = _doc(client_name="Renamed", redirect_uris=["https://app.example.org/new"])
-        again = await service.resolve(CIMD_URL)
+        again = await service.resolve(CIMD_URL, source_ip=None)
         assert fake.calls == 2
         assert again.client_name == "Renamed"
         assert json.loads(again.redirect_uris) == ["https://app.example.org/new"]
@@ -534,34 +569,34 @@ class TestResolveCIMD:
 
     async def test_failed_refetch_fails_closed(self, db, oauth_settings, monkeypatch):
         monkeypatch.setattr(cimd, "fetch", _FakeFetch())
-        await OAuthClientService().resolve(CIMD_URL)
+        await OAuthClientService().resolve(CIMD_URL, source_ip=None)
         await OxydeOAuthClient.objects.filter(id=CIMD_URL).update(
             cache_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
         )
         monkeypatch.setattr(cimd, "fetch", _FakeFetch(error="the client's metadata document answered HTTP 500"))
         with pytest.raises(OAuthClientError) as refused:
-            await OAuthClientService().resolve(CIMD_URL)
+            await OAuthClientService().resolve(CIMD_URL, source_ip=None)
         assert refused.value.error == "invalid_client"
         assert "HTTP 500" in refused.value.description
 
     async def test_client_id_mismatch(self, db, oauth_settings, monkeypatch):
         monkeypatch.setattr(cimd, "fetch", _FakeFetch(document=_doc(client_id="https://elsewhere.example/x")))
         with pytest.raises(OAuthClientError, match="does not match"):
-            await OAuthClientService().resolve(CIMD_URL)
+            await OAuthClientService().resolve(CIMD_URL, source_ip=None)
         assert await OxydeOAuthClient.objects.filter(id=CIMD_URL).count() == 0
 
     async def test_disabled_client_is_refused_and_stays_disabled(self, db, oauth_settings, monkeypatch):
         fake = _FakeFetch()
         monkeypatch.setattr(cimd, "fetch", fake)
-        await OAuthClientService().resolve(CIMD_URL)
+        await OAuthClientService().resolve(CIMD_URL, source_ip=None)
         await OxydeOAuthClient.objects.filter(id=CIMD_URL).update(is_active=False)
         with pytest.raises(OAuthClientError, match="disabled"):
-            await OAuthClientService().resolve(CIMD_URL)
+            await OAuthClientService().resolve(CIMD_URL, source_ip=None)
         assert fake.calls == 1
 
     async def test_concurrent_first_resolves(self, db, oauth_settings, monkeypatch):
         monkeypatch.setattr(cimd, "fetch", _FakeFetch())
-        results = await asyncio.gather(*(OAuthClientService().resolve(CIMD_URL) for _ in range(3)))
+        results = await asyncio.gather(*(OAuthClientService().resolve(CIMD_URL, source_ip=None) for _ in range(3)))
         assert {r.id for r in results} == {CIMD_URL}
         assert await OxydeOAuthClient.objects.filter(id=CIMD_URL).count() == 1
 
@@ -577,7 +612,7 @@ class TestResolveCIMD:
             return None
         monkeypatch.setattr(OxydeOAuthClient.objects, "get_or_none", miss_once)
         with pytest.raises(OAuthClientError, match="disabled"):
-            await OAuthClientService().resolve(CIMD_URL)
+            await OAuthClientService().resolve(CIMD_URL, source_ip=None)
         monkeypatch.setattr(OxydeOAuthClient.objects, "get_or_none", real_get_or_none)
         row = await OxydeOAuthClient.objects.get(id=CIMD_URL)
         assert json.loads(row.redirect_uris) == ["https://app.example.org/callback"]
@@ -585,13 +620,13 @@ class TestResolveCIMD:
     @pytest.mark.parametrize("client_id", ["http://app.example.org/meta", "https://app.example.org"])
     async def test_unfetchable_client_id(self, db, oauth_settings, client_id):
         with pytest.raises(OAuthClientError) as refused:
-            await OAuthClientService().resolve(client_id)
+            await OAuthClientService().resolve(client_id, source_ip=None)
         assert refused.value.error == "invalid_client"
 
     @pytest.mark.parametrize("client_id", [None, "", "some-client", "dcr_missing", "builtin:claude"])
     async def test_unknown_client_id(self, db, oauth_settings, client_id):
         with pytest.raises(OAuthClientError) as refused:
-            await OAuthClientService().resolve(client_id)
+            await OAuthClientService().resolve(client_id, source_ip=None)
         assert refused.value.error == "invalid_client"
 
     async def test_identity(self, db, oauth_settings, monkeypatch):
@@ -600,13 +635,13 @@ class TestResolveCIMD:
             redirect_uris=["http://localhost/callback", "http://127.0.0.1/callback"],
         )))
         service = OAuthClientService()
-        identity = service.identity(await service.resolve(CLAUDE_CODE))
+        identity = service.identity(await service.resolve(CLAUDE_CODE, source_ip=None))
         assert (identity.name, identity.trust, identity.host) == ("Claude Code", "recognized", "claude.ai")
         assert identity.loopback_only is True
         assert identity.redirect_hosts == ("localhost", "127.0.0.1")
 
         monkeypatch.setattr(cimd, "fetch", _FakeFetch())
-        other = service.identity(await service.resolve(CIMD_URL))
+        other = service.identity(await service.resolve(CIMD_URL, source_ip=None))
         assert (other.name, other.trust, other.host, other.loopback_only) == (
             "Example App", "cimd", "app.example.org", False,
         )
@@ -656,24 +691,24 @@ class TestCIMDLimits:
         oauth_settings(oauth_cimd_max_pending_clients=2)
         monkeypatch.setattr(cimd, "fetch", _FakeFetch())
         service = OAuthClientService()
-        await service.resolve("https://app.example.org/a")
-        await service.resolve("https://app.example.org/b")
+        await service.resolve("https://app.example.org/a", source_ip=None)
+        await service.resolve("https://app.example.org/b", source_ip=None)
         with pytest.raises(OAuthClientError) as refused:
-            await service.resolve("https://app.example.org/c")
+            await service.resolve("https://app.example.org/c", source_ip=None)
         assert refused.value.status_code == 429
         # Rolled back, not left behind.
         assert await OxydeOAuthClient.objects.filter(id="https://app.example.org/c").count() == 0
         # A known client is never crowded out; an authorized one frees a slot.
-        await service.resolve(CLAUDE_CODE)
+        await service.resolve(CLAUDE_CODE, source_ip=None)
         await service.mark_authorized("https://app.example.org/a")
-        await service.resolve("https://app.example.org/c")
+        await service.resolve("https://app.example.org/c", source_ip=None)
 
     async def test_the_cap_holds_under_concurrency(self, db, oauth_settings, monkeypatch):
         oauth_settings(oauth_cimd_max_pending_clients=3)
         monkeypatch.setattr(cimd, "fetch", _FakeFetch())
         service = OAuthClientService()
         results = await asyncio.gather(
-            *(service.resolve(f"https://app.example.org/{n}") for n in range(8)), return_exceptions=True,
+            *(service.resolve(f"https://app.example.org/{n}", source_ip=None) for n in range(8)), return_exceptions=True,
         )
         assert sum(not isinstance(r, Exception) for r in results) == 3
         assert all(isinstance(r, OAuthClientError) for r in results if isinstance(r, Exception))
@@ -735,7 +770,7 @@ class TestRegisterEndpoint:
         assert row.registration == OAuthClientRegistration.DCR
         assert "evil.example" not in row.metadata_json
         assert row.registered_ip_hash and "127.0.0.1" not in row.registered_ip_hash
-        resolved = await OAuthClientService().resolve(body["client_id"])
+        resolved = await OAuthClientService().resolve(body["client_id"], source_ip=None)
         identity = OAuthClientService().identity(resolved)
         assert (identity.trust, identity.host, identity.name) == ("unverified", None, "MCP Inspector")
 
@@ -761,7 +796,7 @@ class TestRegisterEndpoint:
         response = await client.post("/oauth/register", json=_registration(
             client_name="Claude", redirect_uris=["https://claude.ai/api/mcp/auth_callback"],
         ))
-        row = await OAuthClientService().resolve(response.json()["client_id"])
+        row = await OAuthClientService().resolve(response.json()["client_id"], source_ip=None)
         assert OAuthClientService().identity(row).trust == "unverified"
 
     @pytest.mark.parametrize("body,error", [
@@ -893,8 +928,8 @@ class TestGarbageCollection:
 
         # Refused at 24 hours, before the sweep reaches it...
         with pytest.raises(OAuthClientError):
-            await service.resolve(stale.id)
-        assert (await service.resolve(used.id)).id == used.id
+            await service.resolve(stale.id, source_ip=None)
+        assert (await service.resolve(used.id, source_ip=None)).id == used.id
         # ...but kept for a grace period, so a consent begun just before
         # the deadline doesn't lose its request to the cascade (N6).
         assert await service.gc_unused() == 0
@@ -923,8 +958,8 @@ class TestGarbageCollection:
         authorized."""
         monkeypatch.setattr(cimd, "fetch", _FakeFetch())
         service = OAuthClientService()
-        await service.resolve(CIMD_URL)
-        await service.resolve(CLAUDE_CODE)
+        await service.resolve(CIMD_URL, source_ip=None)
+        await service.resolve(CLAUDE_CODE, source_ip=None)
         now = datetime.now(timezone.utc)
         await OxydeOAuthClient.objects.filter(id=CIMD_URL).update(created_at=now - timedelta(days=30))
         assert await service.gc_unused() == 0  # cache still current
@@ -945,7 +980,7 @@ class TestGarbageCollection:
         await OxydeOAuthClient.objects.filter(id=stale.id).update(
             created_at=datetime.now(timezone.utc) - timedelta(days=2),
         )
-        await service.resolve(CIMD_URL)
+        await service.resolve(CIMD_URL, source_ip=None)
         assert await OxydeOAuthClient.objects.filter(id=stale.id).count() == 0
 
 
@@ -1009,8 +1044,9 @@ class TestNoAmbientAuth:
                 for node in ast.walk(functions[name]):
                     if isinstance(node, ast.Attribute):
                         assert node.attr not in ("cookies", "auth", "user"), (route.path, name, node.attr)
-                    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                        assert node.value.lower() not in ("authorization", "cookie"), (route.path, name)
+                    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+                        value = node.value.decode("latin-1") if isinstance(node.value, bytes) else node.value
+                        assert value.lower() not in ("authorization", "cookie"), (route.path, name)
                     if isinstance(node, ast.Name):
                         todo.append(node.id)
             assert endpoint.__name__ in seen

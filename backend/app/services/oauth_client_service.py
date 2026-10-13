@@ -139,10 +139,11 @@ def redirect_uris_of(client: OxydeOAuthClient) -> list[str]:
 class OAuthClientService:
     # --- lookup ---------------------------------------------------------------
 
-    async def resolve(self, client_id: str | None, *, source_ip: str | None = None) -> OxydeOAuthClient:
+    async def resolve(self, client_id: str | None, *, source_ip: str | None) -> OxydeOAuthClient:
         """The client named by ``client_id``, fetched or refreshed if it
         is a CIMD URL. ``source_ip`` is who is asking, for the CIMD fetch
-        rate limit (None: not limited, e.g. an in-process caller). Raises
+        rate limit. Required, so an HTTP caller can't forget it; None
+        means not limited (an in-process caller, a test). Raises
         OAuthClientError ("invalid_client", or "too_many_requests")."""
         if not client_id:
             raise OAuthClientError("invalid_client", "client_id is required")
