@@ -1,4 +1,4 @@
-"""Mint real OAuth access tokens for tests (CHT-1520), straight through
+"""Mint real OAuth access tokens for tests (CHT-1576), straight through
 TokenService, the way the token endpoint and claim grants will: no
 endpoint is involved, so these tests do not depend on /oauth/*."""
 from app.config import get_settings

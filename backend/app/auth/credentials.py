@@ -15,7 +15,7 @@ Kinds of credential, decided by the token's shape (``classify``):
   ``holder_user_id`` to still be in the agent's team (ADR-0008).
 * ``OAUTH_ACCESS``: a token minted by ``TokenService`` (``cat_``, and
   the other token prefixes, which are refused as not access tokens),
-  validated by it (CHT-1520). Only while ``OAUTH_ENABLED`` is on. The
+  validated by it (CHT-1576). Only while ``OAUTH_ENABLED`` is on. The
   token must have been issued for the edge's resource (RFC 8707, design
   I16): a connector token (``<base>/mcp``) only at /mcp, a whole-server
   token (``<base>``, claim grants) at REST and /mcp. The per-request
@@ -90,7 +90,7 @@ class Principal:
     scopes: frozenset = field(default=ALL_SCOPES)
     # Id of the credential's row, where it has one (an API key's id).
     credential_id: str | None = None
-    # The holder session an OAuth access token belongs to (CHT-1520).
+    # The holder session an OAuth access token belongs to (CHT-1576).
     holder_session_id: str | None = None
 
     def __post_init__(self):
@@ -136,7 +136,7 @@ class CredentialError(Exception):
 
 def classify(token: str) -> CredentialKind:
     """The kind of credential ``token`` claims to be, by its shape alone.
-    Every ``TokenService`` prefix is an OAuth token (CHT-1520): a refresh
+    Every ``TokenService`` prefix is an OAuth token (CHT-1576): a refresh
     token or code sent as a bearer is then refused by the OAuth verifier,
     with the OAuth challenge, rather than failing to decode as a JWT."""
     if token.startswith("ck_"):
@@ -203,7 +203,7 @@ async def _verify_api_key(token: str, audience: str | None) -> Principal:
 
 
 async def _verify_oauth_access(token: str, audience: str | None) -> Principal:
-    """An OAuth access token (CHT-1520), for use at ``audience``.
+    """An OAuth access token (CHT-1576), for use at ``audience``.
 
     ``TokenService.validate_access`` checks the token itself: an
     unexpired, unrevoked access token on an unrevoked holder session

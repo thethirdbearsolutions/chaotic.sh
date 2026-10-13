@@ -298,7 +298,7 @@ class TestOAuthChallenge:
 
     @pytest.mark.parametrize("enabled", [False, True])
     async def test_non_ck_bearer(self, client, oauth, enabled):
-        # An OAuth access token this server never issued (CHT-1520); the
+        # An OAuth access token this server never issued (CHT-1576); the
         # client is pointed at discovery either way.
         oauth(enabled)
         resp = await self._init(client, {**_MCP_HEADERS, "Authorization": "Bearer cat_somethingelse"})
@@ -690,7 +690,7 @@ class TestRegistrarOverHTTP:
 
 
 class TestOAuthAccessTokens:
-    """Real OAuth access tokens at /mcp (CHT-1520), minted with
+    """Real OAuth access tokens at /mcp (CHT-1576), minted with
     TokenService: the wrapper binds the resolver's Principal, scopes and
     all (CHT-1562 review, S2), and a failed token gets the invalid_token
     challenge."""
@@ -756,6 +756,17 @@ class TestOAuthAccessTokens:
             resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=presented)
             assert resp.status_code == 401
             assert resp.headers["www-authenticate"] == TestOAuthChallenge._INVALID_TOKEN_CHALLENGE
+
+    async def test_inactive_agent_gets_403_without_a_challenge(self, client, agent, test_team, test_user):
+        """A challenge on a 403 would send an OAuth client back through
+        consent for the same agent, and the same 403 (review S1)."""
+        _, headers = await self._connector(agent, test_team, test_user, ("chaotic:write",))
+        agent.is_active = False
+        await agent.save(update_fields={"is_active"})
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 403
+        assert "www-authenticate" not in resp.headers
+        assert resp.json() == {"error": "User is inactive"}
 
     async def test_capability_url_refuses_a_valid_token(self, client, agent, test_team, test_user):
         """CHT-1570: a token is never accepted in a path, even one that is

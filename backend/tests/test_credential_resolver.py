@@ -3,7 +3,7 @@ and how an edge's accepted kinds gate a token. The HTTP behaviour of
 each edge is pinned by test_auth_deps.py (REST) and test_mcp_endpoint.py
 (/mcp); this covers what those cannot see.
 
-OAuth access tokens (CHT-1520) are minted for real with TokenService
+OAuth access tokens (CHT-1576) are minted for real with TokenService
 (tests/oauth_tokens.py), and each per-request check of the OAuth
 verifier gets a refusal test here, on the resolver and on REST."""
 from datetime import datetime, timedelta, timezone
@@ -146,7 +146,7 @@ async def test_invalid_and_inactive_carry_kind_and_status(db, test_user):
 
 @pytest.mark.asyncio
 async def test_mcp_picks_its_challenge_by_the_failed_kind(monkeypatch):
-    """The CHT-1520 seam: a failed credential of a kind other than an API
+    """The CHT-1576 seam: a failed credential of a kind other than an API
     key (an OAuth access token, once accepted) gets the invalid_token
     challenge and the resolver's detail; a failed key gets the bare one."""
     from app.mcp_server import auth
@@ -167,7 +167,7 @@ async def test_mcp_picks_its_challenge_by_the_failed_kind(monkeypatch):
     assert error.headers["www-authenticate"] == bare["WWW-Authenticate"]
 
 
-# --- OAuth access tokens (CHT-1520) --------------------------------------------
+# --- OAuth access tokens (CHT-1576) --------------------------------------------
 
 
 @pytest.fixture
@@ -273,6 +273,62 @@ async def test_deactivated_agent_is_inactive(connector, agent):
 
 
 @pytest.mark.asyncio
+async def test_deleted_principal_or_holder(agent, test_team, test_user):
+    """A deleted agent or holder cascades its session away, but a
+    validation cached just before still passes TokenService for up to
+    30 s (no revocation event moves the epoch). The resolver's own
+    lookups catch it."""
+    from app.oxyde_models.user import OxydeUser
+
+    holder = await OxydeUser.objects.create(email="holder@example.com", hashed_password="x", name="Holder")
+    await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=holder.id, role="MEMBER")
+    held = await connector_token(agent, test_team, holder)
+    await mcp_resolver.resolve(held.access_token)  # cached now
+    await OxydeUser.objects.filter(id=holder.id).delete()
+    assert (await TokenService().validate_access(held.access_token, resource=ts.mcp_resource())).holder_user_id == holder.id
+    await _refused(mcp_resolver, held.access_token)
+
+    issued = await connector_token(agent, test_team, test_user)
+    await mcp_resolver.resolve(issued.access_token)
+    await OxydeUser.objects.filter(id=agent.id).delete()
+    err = await _refused(mcp_resolver, issued.access_token)
+    assert err.detail == "User not found"
+
+
+@pytest.mark.asyncio
+async def test_wrong_audience_leaves_nothing_written(client, connector):
+    """A token refused at a resource is not marked used, and its session
+    gets no last-used time (CHT-1576 review, N2)."""
+    from app.oxyde_models.oauth import OxydeHolderSession
+
+    refused = await client.get("/api/auth/me", headers=bearer(connector))
+    assert refused.status_code == 401
+    row = await OxydeAuthToken.objects.get(token_hash=ts.token_digest(connector.access_token))
+    session = await OxydeHolderSession.objects.get(id=connector.holder_session_id)
+    assert row.used_at is None and session.last_used_at is None
+
+    await mcp_resolver.resolve(connector.access_token)
+    row = await OxydeAuthToken.objects.get(token_hash=ts.token_digest(connector.access_token))
+    assert row.used_at is not None
+    # Cached now; a refusal from the cache writes nothing either.
+    await _refused(rest_resolver, connector.access_token)
+
+
+@pytest.mark.asyncio
+async def test_ws_refuses_an_oauth_token(connector, test_team):
+    """/ws checks a login JWT itself (CHT-1567); an OAuth token never
+    decodes as one, so it closes with 4001. When /ws moves onto the
+    resolver, decide whether it is an OAuth audience."""
+    from unittest.mock import AsyncMock
+
+    from app.main import websocket_endpoint
+
+    ws = AsyncMock()
+    await websocket_endpoint(ws, token=connector.access_token, team_id=test_team.id)
+    ws.close.assert_awaited_once_with(code=4001)
+
+
+@pytest.mark.asyncio
 async def test_principal_must_be_an_agent_of_the_sessions_team(agent, test_team, test_user):
     # A human principal: refused until web-login sessions (CHT-1524).
     human = await connector_token(test_user, test_team, test_user)
@@ -330,6 +386,16 @@ async def test_rest_over_http(client, agent, connector, test_team, test_user):
     # A failed JWT keeps the bare challenge.
     jwt = await client.get("/api/auth/me", headers={"Authorization": "Bearer not-a-jwt"})
     assert jwt.status_code == 401 and jwt.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.asyncio
+async def test_rest_challenge_with_oauth_off(client, agent, test_team, test_user, monkeypatch):
+    """With the flag off a cat_ bearer gets the bare challenge on REST, as
+    it did before CHT-1576 and as /mcp does (review N3)."""
+    issued, _ = await server_token(agent, test_team, test_user)
+    enable_oauth(monkeypatch, enabled=False)
+    refused = await client.get("/api/auth/me", headers=bearer(issued))
+    assert refused.status_code == 401 and refused.headers["www-authenticate"] == "Bearer"
 
 
 @pytest.mark.asyncio

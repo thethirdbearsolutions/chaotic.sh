@@ -204,7 +204,7 @@ async def test_holder_metadata_is_capped(agent, test_team, test_user, grantee_ke
         await TokenService().start_session(holder={"label": "x" * ts.HOLDER_JSON_MAX}, **common)
 
 
-# A token as a bearer on REST and /mcp (the credential resolver, CHT-1520):
+# A token as a bearer on REST and /mcp (the credential resolver, CHT-1576):
 # tests/test_credential_resolver.py and TestOAuthAccessTokens in
 # tests/test_mcp_endpoint.py.
 
