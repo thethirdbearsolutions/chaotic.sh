@@ -6,9 +6,9 @@ comes back to a listener on a loopback port the OS picked. RFC 8252
 §7.3 requires the authorization server to accept any port on a loopback
 redirect, so the document registers both hosts without one.
 
-The document below is the one claude.ai served on 2026-10-13, byte for
-byte, so a change in its shape (a new field, a different host) is a
-change this test should be updated for on purpose.
+The document is the one claude.ai served on 2026-10-13, byte for byte
+(``tests/claude_code_client.py``, shared with e2e/test_oauth.py), so a
+change in its shape is a change these tests are updated for on purpose.
 """
 import base64
 import hashlib
@@ -21,16 +21,10 @@ from app.oauth import cimd, ratelimit
 from app.oxyde_models.oauth import OxydeOAuthAuthorizationRequest
 from app.services import token_service as ts
 from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
+from tests.claude_code_client import CLAUDE_CODE_CACHE_CONTROL, CLAUDE_CODE_CLIENT_ID, CLAUDE_CODE_DOCUMENT
 
 BASE = "https://tracker.example.com"
 MCP = BASE + "/mcp"
-CLAUDE_CODE_CLIENT_ID = "https://claude.ai/oauth/claude-code-client-metadata"
-CLAUDE_CODE_DOCUMENT = (
-    b'{"client_id":"https://claude.ai/oauth/claude-code-client-metadata","client_name":"Claude Code",'
-    b'"client_uri":"https://claude.ai","redirect_uris":["http://localhost/callback","http://127.0.0.1/callback"],'
-    b'"grant_types":["authorization_code","refresh_token"],"response_types":["code"],'
-    b'"token_endpoint_auth_method":"none"}'
-)
 VERIFIER = "claude-code-verifier-" + "k" * 43
 FORM = {"Content-Type": "application/x-www-form-urlencoded"}
 
@@ -65,7 +59,7 @@ def claude_code(monkeypatch):
     async def fetch(url):
         fetched.append(url)
         assert url == CLAUDE_CODE_CLIENT_ID
-        return cimd.FetchedDocument(CLAUDE_CODE_DOCUMENT, "public, max-age=300")
+        return cimd.FetchedDocument(CLAUDE_CODE_DOCUMENT, CLAUDE_CODE_CACHE_CONTROL)
 
     monkeypatch.setattr(cimd, "fetch", fetch)
     yield fetched

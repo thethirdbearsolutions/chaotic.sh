@@ -20,6 +20,8 @@ import httpx
 import pytest
 
 from conftest import TEST_PORT
+# backend/ is on sys.path (conftest), so its test helpers import as `tests`.
+from tests.claude_code_client import CLAUDE_CODE_CACHE_CONTROL, CLAUDE_CODE_CLIENT_ID, CLAUDE_CODE_DOCUMENT
 
 ORIGIN = f"http://127.0.0.1:{TEST_PORT}"
 MCP_URL = f"{ORIGIN}/mcp"
@@ -139,20 +141,11 @@ def _discover():
     return params["scope"], metadata
 
 
-# Claude Code's client metadata document as claude.ai served it on
-# 2026-10-13 (CHT-1521). The fetch itself is SSRF-guarded to public
-# addresses, which this harness can't offer, so the e2e serves the
-# document in process; backend/tests/test_oauth_registration.py covers
-# the fetch.
-CLAUDE_CODE_CLIENT_ID = "https://claude.ai/oauth/claude-code-client-metadata"
-CLAUDE_CODE_DOCUMENT = (
-    b'{"client_id":"https://claude.ai/oauth/claude-code-client-metadata","client_name":"Claude Code",'
-    b'"client_uri":"https://claude.ai","redirect_uris":["http://localhost/callback","http://127.0.0.1/callback"],'
-    b'"grant_types":["authorization_code","refresh_token"],"response_types":["code"],'
-    b'"token_endpoint_auth_method":"none"}'
-)
-
-
+# Claude Code's client metadata document (CHT-1521), shared with the
+# backend suite in backend/tests/claude_code_client.py. The fetch itself
+# is SSRF-guarded to public addresses, which this harness can't offer,
+# so the e2e serves the document in process;
+# backend/tests/test_oauth_registration.py covers the fetch.
 @pytest.fixture
 def claude_code_document(monkeypatch):
     from app.oauth import cimd
@@ -162,7 +155,7 @@ def claude_code_document(monkeypatch):
     async def fetch(url):
         fetched.append(url)
         assert url == CLAUDE_CODE_CLIENT_ID
-        return cimd.FetchedDocument(CLAUDE_CODE_DOCUMENT, "public, max-age=300")
+        return cimd.FetchedDocument(CLAUDE_CODE_DOCUMENT, CLAUDE_CODE_CACHE_CONTROL)
 
     monkeypatch.setattr(cimd, "fetch", fetch)
     return fetched
@@ -231,11 +224,19 @@ def test_cimd_client_with_loopback_redirect_end_to_end(
     }, timeout=5.0)
     assert refreshed.status_code == 200, refreshed.text
     rotated = refreshed.json()
-    assert _initialize(rotated["access_token"]).status_code == 200
-    # Rotation: the old access token is still valid until it expires, but
-    # the old refresh token is spent (a replay outside the grace window
-    # would revoke the session; that path is covered in the backend tests).
     assert rotated["refresh_token"] != tokens["refresh_token"]
+    assert _initialize(rotated["access_token"]).status_code == 200
+    # Rotation spent the old refresh token. Once the client has used the
+    # new pair (the call above), a replay is refused even inside the 30 s
+    # grace window, without logging the client out. A replay after the
+    # window revokes the whole connection instead:
+    # backend/tests/test_oauth_token.py::TestRefresh::test_reuse_after_grace_revokes_the_session.
+    replay = httpx.post(metadata["token_endpoint"], data={
+        "grant_type": "refresh_token", "client_id": CLAUDE_CODE_CLIENT_ID,
+        "refresh_token": tokens["refresh_token"], "resource": MCP_URL,
+    }, timeout=5.0)
+    assert replay.status_code == 400 and replay.json()["error"] == "invalid_grant", replay.text
+    assert _initialize(rotated["access_token"]).status_code == 200
 
     revoked = httpx.post(metadata["revocation_endpoint"], data={
         "token": rotated["refresh_token"], "client_id": CLAUDE_CODE_CLIENT_ID,

@@ -352,9 +352,10 @@ agent you pick there. The server has to have OAuth turned on first (see
 **claude.ai (web).** Settings > Connectors > *Add custom connector*.
 Name it, paste the URL, leave *Advanced settings* (OAuth client ID and
 secret) empty, and click *Add*, then *Connect*. claude.ai identifies
-itself with a client metadata document (CIMD), so nothing is registered
-by hand. Its redirect is `https://claude.ai/api/mcp/auth_callback`. On a
-Team or Enterprise plan an owner adds the connector under the
+itself with a client metadata document (CIMD) when the server supports
+them, as Chaotic does, and otherwise registers itself; either way
+nothing is registered by hand. Its redirect is
+`https://claude.ai/api/mcp/auth_callback`. On a Team or Enterprise plan an owner adds the connector under the
 organization's settings and each member connects it for themselves.
 The server must be reachable from the public internet over https
 (claude.ai's requests come from Anthropic's addresses,
@@ -388,19 +389,20 @@ headless or CI sessions should use (see "API keys" below).
 **ChatGPT.** In Settings > Apps & Connectors, turn on developer mode
 under *Advanced settings*, then *Create* a connector: give it a name,
 paste the URL as the *MCP server URL*, and choose *OAuth* for
-authentication. ChatGPT uses a metadata document when the server
+authentication. ChatGPT prefers a metadata document when the server
 supports one (Chaotic does) and its shared redirect
 `https://chatgpt.com/connector_platform_oauth_redirect`, because Chaotic
 returns the RFC 9207 `iss` parameter; it also sends the RFC 8707
 `resource` parameter, which Chaotic checks. The menu names above move
 between ChatGPT releases; the fields don't.
 
-**MCP Inspector and older clients.** A client that doesn't do metadata
-documents registers itself with dynamic client registration
-(`POST /oauth/register`, RFC 7591). In the Inspector, pick *Streamable
-HTTP*, paste the URL, and use its OAuth flow. On the consent page these
-clients show as *Unverified app (registered itself)*: the name is
-whatever the client sent, so check the redirect host before approving.
+**MCP Inspector and other clients.** In the Inspector, pick *Streamable
+HTTP*, paste the URL, and use its OAuth flow. A client that doesn't do
+metadata documents (older MCP Inspector builds, for example) registers
+itself with dynamic client registration (`POST /oauth/register`, RFC
+7591) instead. On the consent page such a client shows as *Unverified
+app (registered itself)*: the name is whatever the client sent, so
+check the redirect host before approving.
 
 #### What the consent page shows
 
@@ -456,7 +458,9 @@ they depend on goes: the agent is deactivated or deleted, you leave or
 are removed from the team, or your account is deleted (see "Connected
 apps and revocation" in `docs/self-hosting-security.md`). Disconnecting
 an app does not touch the agent's API keys, and revoking a key does not
-disconnect an app that acts as the same agent.
+disconnect an app you approved on the consent page, even one acting as
+the same agent. (The exception: a connection *claimed with* a key, not
+approved on the consent page, ends when that key is revoked.)
 
 #### Turning OAuth on (self-hosting)
 
@@ -465,11 +469,11 @@ OAuth is off by default. Two settings turn it on:
 - `OAUTH_ENABLED=true`
 - `APP_BASE_URL=https://your-chaotic-host`: the public origin people and
   clients reach the server at. It becomes the OAuth issuer and every
-  advertised URL, so it must be exact: `https`, a bare origin (no path,
-  no trailing slash), in canonical form (lower-case host, no default
-  port). Plain `http` is allowed only on a loopback host, which is
-  enough for Claude Code on the same machine but not for claude.ai or
-  ChatGPT. The server refuses to start if the value can't be an issuer,
+  advertised URL, so it must be exact: `https`, a bare origin with no
+  path (a trailing slash is stripped), in canonical form (lower-case
+  host, no default port). Plain `http` is allowed only on `localhost`,
+  `127.0.0.1` or `[::1]`, which is enough for Claude Code on the same
+  machine but not for claude.ai or ChatGPT. The server refuses to start if the value can't be an issuer,
   and says why.
 
 Usually also:
@@ -480,9 +484,13 @@ Usually also:
   in `docs/self-hosting-security.md`.
 - `MCP_CAPABILITY_URL_ENABLED=false`, once nothing uses the deprecated
   capability URL (below).
-- `OAUTH_DCR_ENABLED=false` if every client you use does metadata
-  documents (claude.ai, Claude Code and ChatGPT do). Leave it on for
-  MCP Inspector and other clients that register themselves.
+- Leave `OAUTH_DCR_ENABLED` on (the default). Only Claude Code's use
+  of a metadata document is confirmed so far; claude.ai falls back to
+  registering itself (DCR) when it can't use one, and ChatGPT and MCP
+  Inspector may do either. Turning DCR off is worth revisiting once the
+  per-client checks on CHT-1521 are recorded: a client that connects
+  without registering shows a badge other than *Unverified* on the
+  consent page.
 
 The server needs direct outbound https to fetch client metadata
 documents (from `claude.ai`, `chatgpt.com`, ...); it ignores
