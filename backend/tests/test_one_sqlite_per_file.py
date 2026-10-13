@@ -18,7 +18,12 @@ import pytest
 from .conftest import _build_schema_template
 
 BACKEND = Path(__file__).resolve().parents[1]
-_SQLITE3_IMPORT = re.compile(r"^\s*(?:import\s+sqlite3\b|from\s+sqlite3\s+import\b)", re.MULTILINE)
+# Any import statement naming the module (`import os, sqlite3` included),
+# or a dynamic import of it.
+_SQLITE3_IMPORT = re.compile(
+    r"^\s*(?:import|from)\s[^\n#]*\bsqlite3\b|import_module\(\s*['\"]sqlite3['\"]",
+    re.MULTILINE,
+)
 
 
 @pytest.mark.parametrize("tree", ["app", "migrations"])
