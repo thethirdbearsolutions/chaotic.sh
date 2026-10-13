@@ -2,15 +2,22 @@
 
 Only install and reconfigure used to write the systemd unit / launchd
 plist, so TimeoutStopSec=30 (CHT-1474) never reached existing installs.
+The rewrite may only ADD settings: anything the file on disk sets that the
+regenerated file would drop or change blocks it (PR #320 review).
 """
+import shlex
 import stat
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cli import system
 from cli.system import (
+    DATABASE_PATH,
+    PROJECT_DIR,
+    SERVICE_BACKUPS_KEPT,
     SYSTEMD_TIMEOUT_STOP_SEC,
     ServiceFileUpdate,
     generate_launchd_plist,
@@ -19,25 +26,70 @@ from cli.system import (
     restore_service_file,
 )
 
-from test_service_stop_start import _flat, _upgrade
+from test_service_stop_start import JUSTFILE, _flat, _upgrade
 
 SECRET = "s3cr3t-0123456789abcdef"
 PORT = 24267
 HOST = "127.0.0.1"
+TIMEOUT_LINE = f"TimeoutStopSec={SYSTEMD_TIMEOUT_STOP_SEC}\n"
 
 
-def _legacy_unit(port=PORT, secret=SECRET, host=HOST):
-    """A unit as install wrote it before CHT-1474: no TimeoutStopSec."""
-    unit = generate_systemd_service(port, secret, host)
-    legacy = unit.replace(f"TimeoutStopSec={SYSTEMD_TIMEOUT_STOP_SEC}\n", "")
-    assert legacy != unit
-    return legacy
+def _current_unit(port=PORT, secret=SECRET, host=HOST):
+    return generate_systemd_service(port, secret, host)
 
 
-def _legacy_plist(port=PORT, secret=SECRET, host=HOST):
+def _unit_before_cht_1474(port=PORT, secret=SECRET, host=HOST):
+    """cb5cc62..cfc4ee9: today's unit without TimeoutStopSec."""
+    unit = _current_unit(port, secret, host)
+    assert TIMEOUT_LINE in unit
+    return unit.replace(TIMEOUT_LINE, "")
+
+
+# The two older unit shapes, as `git log -S "Environment=HOST"` and
+# `-S "Environment=PATH"` on cli/src/cli/system.py find them, rendered with
+# this machine's paths the way those generators rendered them.
+def _unit_3769dba(port=PORT, secret=SECRET):
+    """3769dba (PATH added) .. cb5cc62 (HOST added, CHT-761)."""
+    home = Path.home()
+    return f"""[Unit]
+Description=Chaotic Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory={shlex.quote(str(PROJECT_DIR))}
+ExecStart=/usr/bin/env just serve-prod
+Restart=on-failure
+RestartSec=5
+Environment=PATH={home}/.local/bin:{home}/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DATABASE_URL={shlex.quote(f"sqlite+aiosqlite:///{DATABASE_PATH}")}
+Environment=DATABASE_PATH={shlex.quote(str(DATABASE_PATH))}
+Environment=PORT={port}
+Environment=SECRET_KEY={secret}
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def _unit_40b994d(port=PORT, secret=SECRET):
+    """40b994d, the initial release: no PATH, no HOST."""
+    unit = _unit_3769dba(port, secret)
+    return "\n".join(line for line in unit.split("\n") if not line.startswith("Environment=PATH="))
+
+
+def _plist_before_cht_1474(port=PORT, secret=SECRET, host=HOST):
     plist = generate_launchd_plist(port, secret, host)
     legacy = plist.replace(
         f"    <key>ExitTimeOut</key>\n    <integer>{SYSTEMD_TIMEOUT_STOP_SEC}</integer>\n", "")
+    assert legacy != plist
+    return legacy
+
+
+def _plist_40b994d(port=PORT, secret=SECRET):
+    """40b994d: no HOST and no ExitTimeOut."""
+    plist = _plist_before_cht_1474(port, secret)
+    legacy = plist.replace(f"        <key>HOST</key>\n        <string>{HOST}</string>\n", "")
     assert legacy != plist
     return legacy
 
@@ -48,9 +100,11 @@ def _mode(path):
 
 @pytest.fixture
 def env(tmp_path):
-    """A service file location under tmp_path and a recorded run_command."""
+    """A service file location and backup directory under tmp_path, and a
+    recorded run_command."""
     class Env:
-        path = None
+        path = tmp_path / "chaotic.service"
+        backups = tmp_path / "service-backups"
         os_type = "linux"
         run = None
 
@@ -58,147 +112,227 @@ def env(tmp_path):
             self.os_type = os_type
             name = "chaotic.service" if os_type == "linux" else "com.chaotic.server.plist"
             self.path = tmp_path / name
-            self.path.write_text(content)
+            self.path.write_bytes(content.encode())  # keep CRLF as written
             self.path.chmod(0o600)
             return self.path
+
+        def backup_files(self):
+            return sorted(self.backups.glob("*.bak")) if self.backups.exists() else []
 
         def commands(self):
             return [c.args[0] for c in self.run.call_args_list]
 
     e = Env()
-    e.path = tmp_path / "chaotic.service"
     with patch("cli.system.get_os", side_effect=lambda: e.os_type), \
          patch("cli.system.get_service_file_path", side_effect=lambda: e.path), \
+         patch("cli.system.SERVICE_BACKUP_DIR", e.backups), \
          patch("cli.system.run_command", return_value=MagicMock(returncode=0, stdout="")) as run:
         e.run = run
         yield e
 
 
-class TestLinux:
-    def test_legacy_unit_is_rewritten_with_backup_reload_and_diff(self, env):
-        old = _legacy_unit()
+def _assert_skipped_untouched(env, path, before, result, *in_reason):
+    assert result.status == "skipped", result.reason
+    for text in in_reason:
+        assert text in result.reason
+    assert path.read_bytes() == before.encode()
+    assert env.backup_files() == []
+    env.run.assert_not_called()
+
+
+class TestLinuxRewrites:
+    @pytest.mark.parametrize("old", [
+        _unit_before_cht_1474(), _unit_3769dba(), _unit_40b994d(),
+        _unit_before_cht_1474().replace("\n", "\r\n"),
+        "# managed by chaotic\n" + _unit_before_cht_1474().replace("[Service]\n", "[Service]\n; local note\n"),
+        # One Environment= line may carry several assignments.
+        _unit_before_cht_1474().replace(
+            f"Environment=PORT={PORT}\nEnvironment=SECRET_KEY={SECRET}",
+            f"Environment=PORT={PORT} SECRET_KEY={SECRET}"),
+    ], ids=["before-cht-1474", "3769dba", "40b994d-initial", "crlf", "comments", "multi-assignment"])
+    def test_historical_units_are_rewritten(self, env, old):
         path = env.install(old)
         result = reconcile_service_file(PORT, HOST, SECRET)
-        assert result.status == "updated"
-        assert path.read_text() == generate_systemd_service(PORT, SECRET, HOST)
-        assert result.backup == path.with_name("chaotic.service.bak")
-        assert result.backup.read_text() == old
-        assert _mode(path) == 0o600 and _mode(result.backup) == 0o600
+        assert result.status == "updated", result.reason
+        assert path.read_text() == _current_unit()
+        assert _mode(path) == 0o600
+        assert result.backup.parent == env.backups
+        assert result.backup.read_bytes() == old.encode()
+        assert _mode(result.backup) == 0o600 and _mode(env.backups) == 0o700
         assert env.commands() == [["systemctl", "--user", "daemon-reload"]]
-        assert f"+TimeoutStopSec={SYSTEMD_TIMEOUT_STOP_SEC}" in result.diff
-        assert not any(SECRET in line for line in result.diff)
-        assert not any(line.startswith("-") and not line.startswith("---") for line in result.diff)
+        assert f"+{TIMEOUT_LINE.strip()}" in result.diff
+
+    def test_diff_redacts_every_environment_value(self, env):
+        env.install(_unit_40b994d())
+        diff = reconcile_service_file(PORT, HOST, SECRET).diff
+        assert "+Environment=HOST=<redacted>" in diff
+        assert "+Environment=PATH=<redacted>" in diff
+        text = "\n".join(diff)
+        for value in (SECRET, str(DATABASE_PATH), "/usr/local/bin", f"={PORT}"):
+            assert value not in text
 
     def test_up_to_date_unit_is_left_alone(self, env):
-        path = env.install(generate_systemd_service(PORT, SECRET, HOST))
+        path = env.install(_current_unit())
         before = path.stat().st_mtime_ns
-        result = reconcile_service_file(PORT, HOST, SECRET)
-        assert result.status == "unchanged"
+        assert reconcile_service_file(PORT, HOST, SECRET).status == "unchanged"
         assert path.stat().st_mtime_ns == before
-        assert not path.with_name("chaotic.service.bak").exists()
+        assert env.backup_files() == []
         env.run.assert_not_called()
 
-    @pytest.mark.parametrize("unit, key", [
-        (_legacy_unit(secret="a-different-secret"), "SECRET_KEY"),
-        (_legacy_unit(port=9999), "PORT"),
-        (_legacy_unit(host="0.0.0.0"), "HOST"),
-        # A hand edit our parser does not read as the same setting counts
-        # as a disagreement, not as agreement.
-        (_legacy_unit().replace(f"Environment=SECRET_KEY={SECRET}", f'Environment="SECRET_KEY={SECRET}"'),
+
+class TestLinuxBlockers:
+    """Anything the rewrite would drop or change, or that the parser cannot
+    vouch for, leaves the file alone. Reasons name settings, never values."""
+
+    @pytest.mark.parametrize("old, reason", [
+        (_unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nEnvironment=SMTP_PASSWORD=hunter2\n"),
+         "Environment SMTP_PASSWORD"),
+        (_unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nEnvironment=CORS=a SMTP_PASSWORD=hunter2\n"),
+         "Environment CORS, Environment SMTP_PASSWORD"),
+        (_unit_before_cht_1474().replace(
+            "Environment=PATH=", "Environment=PATH=/opt/hunter2:"), "Environment PATH"),
+        (_unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nEnvironmentFile=/etc/hunter2.env\n"),
+         "EnvironmentFile"),
+        (_unit_before_cht_1474().replace("ExecStart=/usr/bin/env just serve-prod",
+                                         "ExecStart=/usr/bin/env just serve-hunter2"), "ExecStart"),
+        (_unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nExecStartPre=/bin/hunter2\n"),
+         "ExecStartPre"),
+        (_unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nNice=5\n"), "Nice"),
+        (_unit_before_cht_1474().replace("Restart=on-failure", "Restart=always"), "Restart"),
+        (_unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nTimeoutStopSec=90\n"), "TimeoutStopSec"),
+        (_unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nEnvironment=\n"), "empty Environment="),
+    ], ids=["extra-env", "extra-env-multi", "changed-env", "environmentfile", "execstart",
+            "execstartpre", "nice", "restart", "own-timeout", "env-reset"])
+    def test_settings_the_rewrite_would_lose_block_it(self, env, old, reason):
+        path = env.install(old)
+        result = reconcile_service_file(PORT, HOST, SECRET)
+        _assert_skipped_untouched(env, path, old, result, reason)
+        assert "hunter2" not in result.reason
+
+    @pytest.mark.parametrize("old, reason", [
+        (_unit_before_cht_1474(secret="a-different-secret"), "SECRET_KEY"),
+        (_unit_before_cht_1474(port=9999), "PORT"),
+        (_unit_before_cht_1474(host="0.0.0.0"), "HOST"),
+        (_unit_before_cht_1474().replace("WorkingDirectory=", "WorkingDirectory=/elsewhere"), "WorkingDirectory"),
+        # Quoted: systemd unquotes it; we refuse to vouch for it.
+        (_unit_before_cht_1474().replace(f"Environment=SECRET_KEY={SECRET}", f'Environment="SECRET_KEY={SECRET}"'),
+         "SECRET_KEY more than once or quoted"),
+        # The review's case: a later quoted assignment wins in systemd.
+        (_unit_before_cht_1474().replace(
+            f"Environment=SECRET_KEY={SECRET}",
+            f'Environment=SECRET_KEY={SECRET}\nEnvironment="SECRET_KEY=other"'),
          "SECRET_KEY"),
-        (_legacy_unit().replace("WorkingDirectory=", "WorkingDirectory=/elsewhere"), "WorkingDirectory"),
-    ])
-    def test_identity_disagreement_is_never_overwritten(self, env, unit, key):
-        path = env.install(unit)
+        # Duplicated even with the same value.
+        (_unit_before_cht_1474().replace(
+            f"Environment=PORT={PORT}", f"Environment=PORT={PORT}\nEnvironment=PORT={PORT}"),
+         "PORT more than once or quoted"),
+        # A second assignment hidden in a multi-assignment line.
+        (_unit_before_cht_1474().replace(
+            f"Environment=PORT={PORT}", f"Environment=PORT={PORT} SECRET_KEY=other"),
+         "SECRET_KEY"),
+        (_unit_before_cht_1474().replace(
+            "WorkingDirectory=", f"WorkingDirectory={PROJECT_DIR}\nWorkingDirectory="),
+         "WorkingDirectory more than once"),
+    ], ids=["secret", "port", "host", "workdir", "quoted-secret", "later-quoted-secret",
+            "duplicate-port", "multi-assignment-secret", "duplicate-workdir"])
+    def test_identity_doubts_block_it(self, env, old, reason):
+        path = env.install(old)
         result = reconcile_service_file(PORT, HOST, SECRET)
-        assert result.status == "skipped"
-        assert key in result.reason
-        assert path.read_text() == unit
-        assert not path.with_name("chaotic.service.bak").exists()
-        env.run.assert_not_called()
+        _assert_skipped_untouched(env, path, old, result, reason)
+        assert SECRET not in result.reason and "other" not in result.reason
 
-    def test_unit_from_before_host_existed_gets_the_default_host(self, env):
-        """Units written before CHT-761 have no HOST line; the server bound
-        to the justfile default, which is what gets written."""
-        old = _legacy_unit().replace(f"Environment=HOST={HOST}\n", "")
-        env.install(old)
-        result = reconcile_service_file(PORT, HOST, SECRET)
-        assert result.status == "updated"
-        assert f"+Environment=HOST={HOST}" in result.diff
+    @pytest.mark.parametrize("old", [
+        _unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5 \\\n"),
+        _unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nEnvironment=\"UNCLOSED=1\n"),
+        _unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nEnvironment=NOEQUALS\n"),
+        _unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nnot a directive\n"),
+    ], ids=["continuation", "unclosed-quote", "no-equals", "garbage"])
+    def test_unparseable_unit_is_left_alone(self, env, old):
+        path = env.install(old)
+        _assert_skipped_untouched(env, path, old, reconcile_service_file(PORT, HOST, SECRET), "could not parse")
 
     def test_unit_without_host_is_not_moved_to_a_different_one(self, env):
-        old = _legacy_unit().replace(f"Environment=HOST={HOST}\n", "")
+        old = _unit_3769dba()
         path = env.install(old)
-        result = reconcile_service_file(PORT, "0.0.0.0", SECRET)
-        assert result.status == "skipped" and "HOST" in result.reason
-        assert path.read_text() == old
+        _assert_skipped_untouched(env, path, old, reconcile_service_file(PORT, "0.0.0.0", SECRET), "HOST")
 
     def test_justfile_default_host_is_what_the_code_assumes(self):
-        from test_service_stop_start import JUSTFILE
         assert f"--host ${{HOST:-{system._JUSTFILE_DEFAULT_HOST}}}" in JUSTFILE.read_text()
 
-    def test_other_hand_edits_are_replaced_but_kept_in_the_backup(self, env):
-        """Install would not preserve them either; the .bak and the diff do."""
-        old = _legacy_unit().replace("RestartSec=5\n", "RestartSec=5\nNice=5\n")
-        path = env.install(old)
-        result = reconcile_service_file(PORT, HOST, SECRET)
-        assert result.status == "updated"
-        assert "-Nice=5" in result.diff
-        assert result.backup.read_text() == old
-
-    def test_no_secret_in_server_json_skips_without_reading(self, env):
-        path = env.install(_legacy_unit())
-        result = reconcile_service_file(PORT, HOST, "")
-        assert result.status == "skipped"
-        assert "secret_key" in result.reason
-        assert path.read_text() == _legacy_unit()
+    def test_no_secret_in_server_json(self, env):
+        path = env.install(_unit_before_cht_1474())
+        _assert_skipped_untouched(env, path, _unit_before_cht_1474(),
+                                  reconcile_service_file(PORT, HOST, ""), "secret_key")
 
     def test_missing_unit_is_not_created(self, env):
         result = reconcile_service_file(PORT, HOST, SECRET)
-        assert result.status == "skipped"
-        assert "no service file" in result.reason
+        assert result.status == "skipped" and "no service file" in result.reason
         assert not env.path.exists()
 
     def test_symlinked_unit_is_left_alone(self, env, tmp_path):
         target = tmp_path / "dotfiles-chaotic.service"
-        target.write_text(_legacy_unit())
-        env.path = tmp_path / "chaotic.service"
+        target.write_text(_unit_before_cht_1474())
         env.path.symlink_to(target)
         result = reconcile_service_file(PORT, HOST, SECRET)
         assert result.status == "skipped" and "symlink" in result.reason
-        assert env.path.is_symlink()
-        assert target.read_text() == _legacy_unit()
-        assert not env.path.with_name("chaotic.service.bak").exists()
+        assert env.path.is_symlink() and target.read_text() == _unit_before_cht_1474()
+        assert env.backup_files() == []
 
-    def test_restore_with_the_backup_gone_reports_failure(self, env):
-        env.install(_legacy_unit())
-        result = reconcile_service_file(PORT, HOST, SECRET)
-        result.backup.unlink()
-        assert restore_service_file(result) is False
-
-    def test_failed_daemon_reload_still_reports_the_write(self, env):
-        env.install(_legacy_unit())
-        env.run.side_effect = subprocess.CalledProcessError(1, ["systemctl"])
-        result = reconcile_service_file(PORT, HOST, SECRET)
-        assert result.status == "updated"
-
-    def test_unwritable_directory_is_skipped_not_raised(self, env):
-        path = env.install(_legacy_unit())
+    def test_unwritable_is_skipped_not_raised(self, env):
+        path = env.install(_unit_before_cht_1474())
         with patch("cli.system._write_private_file", side_effect=PermissionError("read-only")):
             result = reconcile_service_file(PORT, HOST, SECRET)
-        assert result.status == "skipped"
-        assert "could not write" in result.reason
-        assert path.read_text() == _legacy_unit()
+        assert result.status == "skipped" and "could not write" in result.reason
+        assert path.read_text() == _unit_before_cht_1474()
 
-    def test_restore_puts_the_previous_unit_back(self, env):
-        old = _legacy_unit()
+    def test_failed_daemon_reload_still_reports_the_write(self, env):
+        env.install(_unit_before_cht_1474())
+        env.run.side_effect = subprocess.CalledProcessError(1, ["systemctl"])
+        assert reconcile_service_file(PORT, HOST, SECRET).status == "updated"
+
+
+class TestBackups:
+    def test_backups_accumulate_and_only_the_newest_are_kept(self, env):
+        env.backups.mkdir()
+        for i in range(SERVICE_BACKUPS_KEPT + 2):
+            (env.backups / f"chaotic.service.20200101-00000{i}-000000.bak").write_text(f"old {i}")
+        (env.backups / "com.chaotic.server.plist.20200101-000000-000000.bak").write_text("other file")
+        env.install(_unit_before_cht_1474())
+        result = reconcile_service_file(PORT, HOST, SECRET)
+        kept = sorted(env.backups.glob("chaotic.service.*.bak"))
+        assert len(kept) == SERVICE_BACKUPS_KEPT
+        assert result.backup in kept
+        assert (env.backups / "com.chaotic.server.plist.20200101-000000-000000.bak").exists()
+
+    def test_a_second_rewrite_does_not_clobber_the_first_backup(self, env):
+        first_unit = _unit_40b994d()
+        env.install(first_unit)
+        first = reconcile_service_file(PORT, HOST, SECRET)
+        env.install(_unit_before_cht_1474())
+        second = reconcile_service_file(PORT, HOST, SECRET)
+        assert first.backup != second.backup
+        assert first.backup.read_text() == first_unit
+
+    def test_restore_puts_this_runs_backup_back(self, env):
+        old = _unit_before_cht_1474()
         path = env.install(old)
         result = reconcile_service_file(PORT, HOST, SECRET)
         env.run.reset_mock()
         assert restore_service_file(result) is True
-        assert path.read_text() == old
-        assert _mode(path) == 0o600
+        assert path.read_text() == old and _mode(path) == 0o600
         assert env.commands() == [["systemctl", "--user", "daemon-reload"]]
+
+    def test_restore_is_byte_exact_for_a_crlf_unit(self, env):
+        old = _unit_before_cht_1474().replace("\n", "\r\n")
+        path = env.install(old)
+        assert restore_service_file(reconcile_service_file(PORT, HOST, SECRET)) is True
+        assert path.read_bytes() == old.encode()
+
+    def test_restore_with_the_backup_gone_reports_failure(self, env):
+        env.install(_unit_before_cht_1474())
+        result = reconcile_service_file(PORT, HOST, SECRET)
+        result.backup.unlink()
+        assert restore_service_file(result) is False
 
     def test_restore_of_a_non_update_does_nothing(self, env):
         assert restore_service_file(ServiceFileUpdate("unchanged", env.path)) is True
@@ -206,35 +340,46 @@ class TestLinux:
 
 
 class TestMacOS:
-    def test_legacy_plist_is_rewritten_without_systemctl(self, env):
-        old = _legacy_plist()
+    @pytest.mark.parametrize("old", [_plist_before_cht_1474(), _plist_40b994d()],
+                             ids=["before-cht-1474", "40b994d-initial"])
+    def test_historical_plists_are_rewritten_without_systemctl(self, env, old):
         path = env.install(old, os_type="darwin")
         result = reconcile_service_file(PORT, HOST, SECRET)
-        assert result.status == "updated"
+        assert result.status == "updated", result.reason
         assert path.read_text() == generate_launchd_plist(PORT, SECRET, HOST)
-        assert result.backup.read_text() == old
-        assert _mode(path) == 0o600 and _mode(result.backup) == 0o600
+        assert result.backup.read_text() == old and _mode(result.backup) == 0o600
         assert "+    <key>ExitTimeOut</key>" in result.diff
-        assert not any(SECRET in line for line in result.diff)
+        text = "\n".join(result.diff)
+        assert SECRET not in text and str(DATABASE_PATH) not in text
         env.run.assert_not_called()  # start_service's unload/load picks it up
 
     def test_up_to_date_plist_is_left_alone(self, env):
-        path = env.install(generate_launchd_plist(PORT, SECRET, HOST), os_type="darwin")
+        env.install(generate_launchd_plist(PORT, SECRET, HOST), os_type="darwin")
         assert reconcile_service_file(PORT, HOST, SECRET).status == "unchanged"
-        assert not path.with_name(path.name + ".bak").exists()
+        assert env.backup_files() == []
 
-    def test_plist_with_another_secret_is_left_alone(self, env):
-        unit = _legacy_plist(secret="another")
-        path = env.install(unit, os_type="darwin")
+    @pytest.mark.parametrize("old, reason", [
+        (_plist_before_cht_1474(secret="another"), "SECRET_KEY"),
+        (_plist_before_cht_1474().replace(
+            "        <key>PORT</key>",
+            "        <key>SMTP_PASSWORD</key>\n        <string>hunter2</string>\n        <key>PORT</key>"),
+         "Environment SMTP_PASSWORD"),
+        (_plist_before_cht_1474().replace(
+            "    <key>RunAtLoad</key>", "    <key>UserName</key>\n    <string>hunter2</string>\n    <key>RunAtLoad</key>"),
+         "UserName"),
+        (_plist_before_cht_1474().replace("<string>serve-prod</string>", "<string>serve-hunter2</string>"),
+         "ProgramArguments"),
+    ], ids=["secret", "extra-env", "extra-key", "program"])
+    def test_plist_blockers(self, env, old, reason):
+        path = env.install(old, os_type="darwin")
         result = reconcile_service_file(PORT, HOST, SECRET)
-        assert result.status == "skipped" and "SECRET_KEY" in result.reason
-        assert path.read_text() == unit
+        _assert_skipped_untouched(env, path, old, result, reason)
+        assert "hunter2" not in result.reason
 
     def test_unparseable_plist_is_left_alone(self, env):
         path = env.install("<plist><dict><key>broken", os_type="darwin")
-        result = reconcile_service_file(PORT, HOST, SECRET)
-        assert result.status == "skipped" and "could not parse" in result.reason
-        assert path.read_text() == "<plist><dict><key>broken"
+        _assert_skipped_untouched(env, path, "<plist><dict><key>broken",
+                                  reconcile_service_file(PORT, HOST, SECRET), "could not parse")
 
 
 def test_unsupported_os_is_skipped():
@@ -248,8 +393,9 @@ class TestDuringUpgrade:
     """The rewrite happens while the server is down, before it is started,
     and a rollback starts the old code under the old unit."""
 
-    def _run(self, tmp_path, unit, **overrides):
-        path = tmp_path / "chaotic.service"
+    def _run(self, tmp_path, unit, os_type="linux", **overrides):
+        name = "chaotic.service" if os_type == "linux" else "com.chaotic.server.plist"
+        path = tmp_path / name
         path.write_text(unit)
         seen_at_start = []
 
@@ -259,8 +405,9 @@ class TestDuringUpgrade:
 
         defaults = dict(
             load_server_json=dict(return_value={"port": PORT, "host": HOST, "secret_key": SECRET}),
-            get_os=dict(return_value="linux"),
+            get_os=dict(return_value=os_type),
             get_service_file_path=dict(return_value=path),
+            SERVICE_BACKUP_DIR=dict(new=tmp_path / "service-backups"),
             start_service=dict(side_effect=start),
         )
         defaults.update(overrides)
@@ -268,59 +415,57 @@ class TestDuringUpgrade:
         return result, mocks, path, seen_at_start
 
     def test_stale_unit_is_rewritten_before_start(self, tmp_path):
-        result, m, path, seen = self._run(tmp_path, _legacy_unit())
+        result, m, path, seen = self._run(tmp_path, _unit_before_cht_1474())
         assert result.exit_code == 0, result.output
-        new = generate_systemd_service(PORT, SECRET, HOST)
-        assert seen == [new]
-        assert path.read_text() == new
+        assert seen == [_current_unit()]
         out = _flat(result.output)
         assert "Updated service file" in out
         assert f"+TimeoutStopSec={SYSTEMD_TIMEOUT_STOP_SEC}" in out
         assert SECRET not in result.output
         assert ["systemctl", "--user", "daemon-reload"] in [c.args[0] for c in m["run_command"].call_args_list]
-        # Stopped first: the rewrite comes after the stop.
         m["stop_service"].assert_called_once()
 
     def test_current_unit_is_untouched(self, tmp_path):
-        unit = generate_systemd_service(PORT, SECRET, HOST)
-        result, m, path, _ = self._run(tmp_path, unit)
+        result, m, _, _ = self._run(tmp_path, _current_unit())
         assert result.exit_code == 0, result.output
         assert "Service file is up to date" in _flat(result.output)
-        assert not path.with_name("chaotic.service.bak").exists()
+        assert not (tmp_path / "service-backups").exists()
         assert ["systemctl", "--user", "daemon-reload"] not in [c.args[0] for c in m["run_command"].call_args_list]
 
+    def test_blocked_unit_is_untouched_and_the_upgrade_goes_on(self, tmp_path):
+        old = _unit_before_cht_1474().replace("RestartSec=5\n", "RestartSec=5\nEnvironment=SMTP_PASSWORD=hunter2\n")
+        result, _, path, seen = self._run(tmp_path, old)
+        assert result.exit_code == 0, result.output
+        assert seen == [old]
+        out = _flat(result.output)
+        assert "Service file not updated" in out and "Environment SMTP_PASSWORD" in out
+        assert "hunter2" not in result.output
+
     def test_rollback_restores_the_previous_unit(self, tmp_path):
-        old = _legacy_unit()
+        old = _unit_before_cht_1474()
         result, _, path, seen = self._run(tmp_path, old, health_check=dict(return_value=False))
         assert result.exit_code == 1
-        # First start under the new unit; the rollback start under the old.
-        assert seen == [generate_systemd_service(PORT, SECRET, HOST), old]
+        assert seen == [_current_unit(), old]
         assert path.read_text() == old
         assert "Restored the previous service file" in _flat(result.output)
 
     def test_rollback_that_cannot_restore_the_unit_says_where_it_is(self, tmp_path):
         with patch("cli.system.restore_service_file", return_value=False):
-            result, _, path, _ = self._run(tmp_path, _legacy_unit(), health_check=dict(return_value=False))
+            result, _, _, _ = self._run(tmp_path, _unit_before_cht_1474(), health_check=dict(return_value=False))
         assert result.exit_code == 1
         out = _flat(result.output)
         assert "Could not restore the previous service file" in out
-        assert f"{path}.bak" in out.replace(" ", "")  # rich may wrap the long path
+        assert str(tmp_path / "service-backups") in out.replace(" ", "")  # rich may wrap the path
 
     def test_macos_upgrade_rewrites_the_plist(self, tmp_path):
-        path = tmp_path / "com.chaotic.server.plist"
-        path.write_text(_legacy_plist())
-        result, m = _upgrade(
-            load_server_json=dict(return_value={"port": PORT, "host": HOST, "secret_key": SECRET}),
-            get_os=dict(return_value="darwin"),
-            get_service_file_path=dict(return_value=path),
-        )
+        result, m, path, _ = self._run(tmp_path, _plist_40b994d(), os_type="darwin")
         assert result.exit_code == 0, result.output
         assert path.read_text() == generate_launchd_plist(PORT, SECRET, HOST)
         assert not any(c.args[0][:1] == ["systemctl"] for c in m["run_command"].call_args_list)
 
-    def test_server_json_without_secret_upgrades_and_says_why_unit_was_skipped(self, tmp_path):
+    def test_server_json_without_secret_upgrades_and_says_why(self, tmp_path):
         result, _, path, _ = self._run(
-            tmp_path, _legacy_unit(), load_server_json=dict(return_value={"port": PORT}))
+            tmp_path, _unit_before_cht_1474(), load_server_json=dict(return_value={"port": PORT}))
         assert result.exit_code == 0, result.output
-        assert path.read_text() == _legacy_unit()
+        assert path.read_text() == _unit_before_cht_1474()
         assert "Service file not updated" in _flat(result.output)

@@ -22,11 +22,13 @@ import shutil
 import sqlite3
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
 import click
 from rich.console import Console
+from rich.markup import escape
 
 from .config import GLOBAL_CONFIG_DIR, DEFAULT_PORT, set_api_url
 
@@ -387,45 +389,152 @@ def write_service_file(port: int, secret_key: str, host: str = "127.0.0.1"):
     return service_path
 
 
-# Settings in the service file that say WHICH server it runs and as whom.
-# `system upgrade` regenerates the service file (CHT-1476) but must never
-# change one of these: a different SECRET_KEY logs every session out, a
-# different HOST/PORT moves the server, a different directory points it at
-# another install. If the file on disk disagrees with what server.json
-# would produce for any of them, upgrade leaves the file alone and says so.
+# `system upgrade` regenerates the service file (CHT-1476) so fixes to the
+# generated unit (e.g. TimeoutStopSec) reach existing installs. It only ever
+# ADDS to what the file on disk says: it rewrites when every setting the
+# current file makes survives unchanged in the regenerated one, and
+# otherwise leaves the file alone and says which settings (by name, never
+# value) are in the way. Previous files are kept outside the service
+# manager's directories, newest SERVICE_BACKUPS_KEPT per file.
+SERVICE_BACKUP_DIR = GLOBAL_CONFIG_DIR / "service-backups"
+SERVICE_BACKUPS_KEPT = 5
+
 _JUSTFILE_DEFAULT_HOST = "127.0.0.1"  # serve-prod: --host ${HOST:-127.0.0.1}
-_SERVICE_IDENTITY_KEYS = ("WorkingDirectory", "SECRET_KEY", "HOST", "PORT", "DATABASE_PATH", "DATABASE_URL")
+# Settings that say WHICH server the file runs and as whom. A different
+# SECRET_KEY logs every session out, a different HOST/PORT moves the
+# server, a different directory points it at another install.
+_IDENTITY_ENV_KEYS = ("SECRET_KEY", "HOST", "PORT", "DATABASE_PATH", "DATABASE_URL")
+_SERVICE_IDENTITY_KEYS = ("WorkingDirectory", *_IDENTITY_ENV_KEYS)
 
 
-def _service_identity(content: str, os_type: str) -> dict[str, str] | None:
-    """The identity settings a service file sets, or None if it cannot be
-    parsed. Applied to the file on disk and to the regenerated one alike,
-    so quoting differences between the two cannot cause a false mismatch."""
-    found: dict[str, str] = {}
-    if os_type == "linux":
-        for raw in content.splitlines():
-            line = raw.strip()
-            if line.startswith("WorkingDirectory="):
-                found["WorkingDirectory"] = line.split("=", 1)[1]
-            elif line.startswith("Environment="):
-                key, sep, value = line.split("=", 1)[1].partition("=")
-                if sep:
-                    found[key] = value  # systemd: a later assignment wins
-    elif os_type == "darwin":
-        try:
-            data = plistlib.loads(content.encode())
-        except Exception:  # plistlib raises several types on bad input
-            return None
-        if not isinstance(data, dict):
-            return None
-        if isinstance(data.get("WorkingDirectory"), str):
-            found["WorkingDirectory"] = data["WorkingDirectory"]
-        env = data.get("EnvironmentVariables")
-        if isinstance(env, dict):
-            found.update({k: v for k, v in env.items() if isinstance(v, str)})
-    else:
+class _ParsedService:
+    """What a service file sets: its directives other than Environment
+    (as {(section, key): [values in order]}), the environment the service
+    manager would apply (last assignment wins), and anything that makes
+    the file unsafe to rewrite from here."""
+
+    def __init__(self):
+        self.directives: dict[tuple[str, str], list] = {}
+        self.env: dict[str, str] = {}
+        self.env_counts: dict[str, int] = {}
+        self.quoted_env: set[str] = set()
+        self.unsafe: list[str] = []
+
+    def workdirs(self) -> list:
+        return self.directives.get(("Service", "WorkingDirectory")) or self.directives.get(("", "WorkingDirectory")) or []
+
+    def identity(self) -> dict[str, str]:
+        found = {k: self.env[k] for k in _IDENTITY_ENV_KEYS if k in self.env}
+        workdirs = self.workdirs()
+        if workdirs and isinstance(workdirs[-1], str):
+            found["WorkingDirectory"] = workdirs[-1]
+        return found
+
+
+def _split_environment(value: str) -> list[tuple[str, str]] | None:
+    """An Environment= value as systemd reads it: whitespace-separated
+    KEY=VALUE words, each optionally quoted. None if it cannot be read."""
+    try:
+        words = shlex.split(value)
+    except ValueError:
         return None
-    return {k: found[k] for k in _SERVICE_IDENTITY_KEYS if k in found}
+    pairs = []
+    for word in words:
+        key, sep, val = word.partition("=")
+        if not sep or not key:
+            return None
+        pairs.append((key, val))
+    return pairs
+
+
+def _parse_systemd_unit(content: str) -> _ParsedService | None:
+    unit = _ParsedService()
+    section = ""
+    for raw in content.replace("\r\n", "\n").split("\n"):
+        line = raw.strip()
+        if not line or line[0] in "#;":
+            continue
+        if line.endswith("\\"):
+            return None  # line continuation: not worth guessing at
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+            continue
+        key, sep, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not key:
+            return None
+        if key == "EnvironmentFile":
+            unit.unsafe.append("it sets EnvironmentFile, which this CLI cannot see into")
+        if key != "Environment":
+            unit.directives.setdefault((section, key), []).append(value)
+            continue
+        if not value:
+            unit.unsafe.append("it has an empty Environment= (which resets the environment)")
+            continue
+        pairs = _split_environment(value)
+        if pairs is None:
+            return None
+        quoted = any(c in value for c in "\"'\\")
+        for var, val in pairs:
+            unit.env[var] = val  # systemd: a later assignment wins
+            unit.env_counts[var] = unit.env_counts.get(var, 0) + 1
+            if quoted:
+                unit.quoted_env.add(var)
+    return unit
+
+
+def _parse_launchd_plist(content: str) -> _ParsedService | None:
+    try:
+        data = plistlib.loads(content.encode())
+    except Exception:  # plistlib raises several types on bad input
+        return None
+    if not isinstance(data, dict):
+        return None
+    unit = _ParsedService()
+    for key, value in data.items():
+        if key != "EnvironmentVariables":
+            unit.directives[("", key)] = [value]
+            continue
+        if not isinstance(value, dict) or not all(isinstance(v, str) for v in value.values()):
+            return None
+        unit.env.update(value)
+        unit.env_counts.update({k: 1 for k in value})
+    return unit
+
+
+def _parse_service(content: str, os_type: str) -> _ParsedService | None:
+    if os_type == "linux":
+        return _parse_systemd_unit(content)
+    if os_type == "darwin":
+        return _parse_launchd_plist(content)
+    return None
+
+
+def _rewrite_blockers(have: _ParsedService, want: _ParsedService) -> list[str]:
+    """Why the file on disk must not be replaced by the regenerated one,
+    naming settings but never their values. Empty means the rewrite only
+    adds settings and changes none the file already makes."""
+    reasons = list(have.unsafe)
+    risky = sorted(k for k in _IDENTITY_ENV_KEYS
+                   if have.env_counts.get(k, 0) > 1 or k in have.quoted_env)
+    if len(have.workdirs()) > 1:
+        risky.append("WorkingDirectory")
+    if risky:
+        reasons.append(f"it sets {', '.join(risky)} more than once or quoted")
+    have_id, want_id = have.identity(), want.identity()
+    # Units written before CHT-761 set no HOST: the server bound to the
+    # justfile's ${HOST:-127.0.0.1}, so writing that value changes nothing.
+    have_id.setdefault("HOST", _JUSTFILE_DEFAULT_HOST)
+    differing = [k for k in _SERVICE_IDENTITY_KEYS if have_id.get(k) != want_id.get(k)]
+    if differing:
+        reasons.append(f"it disagrees with server.json about {', '.join(differing)}")
+    changed = {key for (section, key), values in have.directives.items()
+               if key not in _SERVICE_IDENTITY_KEYS and want.directives.get((section, key)) != values}
+    changed |= {f"Environment {var}" for var, value in have.env.items()
+                if var not in _SERVICE_IDENTITY_KEYS and want.env.get(var) != value}
+    if changed:
+        reasons.append(f"the rewrite would drop or change {', '.join(sorted(changed))}")
+    return reasons
 
 
 def _write_private_file(path: Path, content: str) -> None:
@@ -443,12 +552,56 @@ def _write_private_file(path: Path, content: str) -> None:
         raise
 
 
-def _redacted_diff(old: str, new: str, path: Path, secret_key: str) -> list[str]:
-    lines = difflib.unified_diff(
-        old.splitlines(), new.splitlines(),
+def _backup_service_file(path: Path, content: str) -> Path:
+    """Keep `content` as SERVICE_BACKUP_DIR/<name>.<timestamp>.bak (0600,
+    directory 0700), pruning all but the newest SERVICE_BACKUPS_KEPT."""
+    SERVICE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(SERVICE_BACKUP_DIR, 0o700)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    backup = SERVICE_BACKUP_DIR / f"{path.name}.{stamp}.bak"
+    _write_private_file(backup, content)
+    for old in sorted(SERVICE_BACKUP_DIR.glob(f"{path.name}.*.bak"))[:-SERVICE_BACKUPS_KEPT]:
+        if old != backup:
+            try:
+                old.unlink()
+            except OSError:
+                pass  # pruning is best effort
+    return backup
+
+
+_PLIST_STRING = re.compile(r"(<string>).*?(</string>)")
+
+
+def _redact_service_text(content: str, os_type: str, secret_key: str) -> list[str]:
+    """The file's lines with every environment value replaced, so a diff of
+    them can go to a terminal or a deploy log."""
+    out = []
+    in_env = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if os_type == "linux" and stripped.startswith("Environment="):
+            pairs = _split_environment(stripped.partition("=")[2])
+            indent = line[: len(line) - len(line.lstrip())]
+            names = " ".join(f"{k}=<redacted>" for k, _ in pairs) if pairs else "<redacted>"
+            line = f"{indent}Environment={names}"
+        elif os_type == "darwin":
+            if stripped == "<key>EnvironmentVariables</key>":
+                in_env = True
+            elif in_env and stripped == "</dict>":
+                in_env = False
+            elif in_env:
+                line = _PLIST_STRING.sub(r"\1<redacted>\2", line)
+        if secret_key:
+            line = line.replace(secret_key, "<redacted>")
+        out.append(line)
+    return out
+
+
+def _redacted_diff(old: str, new: str, path: Path, os_type: str, secret_key: str) -> list[str]:
+    return list(difflib.unified_diff(
+        _redact_service_text(old, os_type, secret_key), _redact_service_text(new, os_type, secret_key),
         fromfile=f"{path} (before)", tofile=f"{path} (after)", lineterm="", n=1,
-    )
-    return [line.replace(secret_key, "<redacted>") if secret_key else line for line in lines]
+    ))
 
 
 class ServiceFileUpdate:
@@ -479,13 +632,15 @@ def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFile
     `system reconfigure` used to write the file.
 
     Regenerates from server.json's port/host/secret exactly as install
-    does. Writes only when the content differs, keeps the previous file
-    as `<name>.bak` (0600), and on Linux runs `systemctl --user
-    daemon-reload`. Never raises. Leaves the file untouched ("skipped")
-    when there is no secret in server.json, no service file, the file
-    is a symlink or cannot be read or parsed, or it disagrees with server.json about any
-    _SERVICE_IDENTITY_KEYS setting. Customisations belong in a systemd
-    drop-in (chaotic.service.d/), which is never touched.
+    does, and writes only when the content differs AND the rewrite would
+    keep every setting the current file makes (see _rewrite_blockers).
+    The previous file is kept in SERVICE_BACKUP_DIR; on Linux it then runs
+    `systemctl --user daemon-reload`. Never raises. Anything it cannot
+    vouch for (no secret in server.json, no file, a symlink, an
+    unreadable or unparseable file, a blocker) is "skipped" with the
+    reason. Customisations belong in a systemd drop-in
+    (chaotic.service.d/), which is never touched and keeps the file
+    rewritable.
     """
     os_type = get_os()
     if os_type not in ("linux", "darwin"):
@@ -499,7 +654,7 @@ def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFile
         # into a regular file and strand the real target. Leave it alone.
         return ServiceFileUpdate("skipped", path, reason=f"{path} is a symlink")
     try:
-        current = path.read_text()
+        current = path.read_bytes().decode()  # as on disk: a CRLF file is backed up as CRLF
     except FileNotFoundError:
         return ServiceFileUpdate("skipped", path, reason=f"no service file at {path}")
     except (OSError, UnicodeDecodeError) as e:
@@ -512,23 +667,16 @@ def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFile
     if current == desired:
         return ServiceFileUpdate("unchanged", path)
 
-    have = _service_identity(current, os_type)
-    want = _service_identity(desired, os_type)
-    if have is None:
+    have = _parse_service(current, os_type)
+    want = _parse_service(desired, os_type)
+    if have is None or want is None:
         return ServiceFileUpdate("skipped", path, reason=f"could not parse {path}")
-    # Units written before CHT-761 set no HOST: the server bound to the
-    # justfile's ${HOST:-127.0.0.1}, so writing that value changes nothing.
-    have.setdefault("HOST", _JUSTFILE_DEFAULT_HOST)
-    differing = [k for k in _SERVICE_IDENTITY_KEYS if have.get(k) != want.get(k)]
-    if differing:
-        return ServiceFileUpdate(
-            "skipped", path,
-            reason=f"{path} disagrees with server.json about {', '.join(differing)}",
-        )
+    blockers = _rewrite_blockers(have, want)
+    if blockers:
+        return ServiceFileUpdate("skipped", path, reason=f"{path}: {'; '.join(blockers)}")
 
-    backup = path.with_name(path.name + ".bak")
     try:
-        _write_private_file(backup, current)
+        backup = _backup_service_file(path, current)
         _write_private_file(path, desired)
     except OSError as e:
         return ServiceFileUpdate("skipped", path, reason=f"could not write {path}: {e}")
@@ -536,18 +684,19 @@ def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFile
         # Not fatal: start_service() runs daemon-reload again before
         # starting, and fails loudly (with a rollback) if it cannot.
         console.print("[yellow]  systemctl --user daemon-reload failed; it is retried at start.[/yellow]")
-    return ServiceFileUpdate("updated", path, backup, _redacted_diff(current, desired, path, secret_key))
+    return ServiceFileUpdate("updated", path, backup, _redacted_diff(current, desired, path, os_type, secret_key))
 
 
 def restore_service_file(update: ServiceFileUpdate) -> bool:
-    """Undo an "updated" reconcile from its .bak (used by rollback, so a
-    rolled-back server starts under the unit it ran with before). Returns
-    True if there was nothing to undo or the undo worked."""
+    """Undo an "updated" reconcile from this run's backup, byte for byte
+    (used by rollback, so a rolled-back server starts under the unit it
+    ran with before). Returns True if there was nothing to undo or the
+    undo worked."""
     if update.status != "updated" or update.path is None or update.backup is None:
         return True
     try:
-        _write_private_file(update.path, update.backup.read_text())
-    except OSError:
+        _write_private_file(update.path, update.backup.read_bytes().decode())
+    except (OSError, UnicodeDecodeError):
         return False
     if get_os() == "linux":
         _daemon_reload()
@@ -1796,13 +1945,16 @@ def _print_commit_list(rev_range: str, heading: str) -> None:
 
 def _report_service_file_update(update: ServiceFileUpdate) -> None:
     if update.status == "updated":
-        console.print(f"Updated service file {update.path} (previous kept as {update.backup.name}):")
+        console.print(f"Updated service file {update.path} (previous kept at {update.backup}):")
         for line in update.diff:
             console.print(f"  {line}", markup=False, highlight=False)
     elif update.status == "unchanged":
         console.print("  [dim]Service file is up to date.[/dim]")
     else:
-        console.print(f"  [yellow]Service file not updated: {update.reason}.[/yellow]")
+        console.print(f"  [yellow]Service file not updated: {escape(update.reason)}.[/yellow]")
+        console.print("  [dim]It is used as it is. Settings of your own belong in a drop-in "
+                      "(systemctl --user edit chaotic) so future upgrades can update the unit.[/dim]"
+                      if get_os() == "linux" else "  [dim]It is used as it is.[/dim]")
 
 
 def _roll_back(
@@ -1829,7 +1981,7 @@ def _roll_back(
         checkout_version(current_commit, force=True)
     if service_update is not None and service_update.status == "updated":
         if restore_service_file(service_update):
-            console.print(f"Restored the previous service file from {service_update.backup.name}.")
+            console.print(f"Restored the previous service file from {service_update.backup}.")
         else:
             console.print(
                 f"[red]Could not restore the previous service file; it is at {service_update.backup}.[/red]"
@@ -1879,9 +2031,10 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     2. Stops the server
     3. Pulls and checks out the new version
     4. Syncs dependencies and runs database migrations
-    5. Regenerates the systemd unit / launchd plist if what this CLI
-       would write differs (keeping a .bak, printing a diff); restored
-       from the .bak on rollback
+    5. Regenerates the systemd unit / launchd plist when what this CLI
+       would write differs and only adds settings (backing up the old
+       file to ~/.chaotic/service-backups and printing a redacted
+       diff); rollback restores that backup
     6. Starts the server (even if it was stopped beforehand) and verifies
        /health
     7. Rolls back automatically if the health check fails or the process
