@@ -89,3 +89,26 @@ async def test_invalid_and_inactive_carry_kind_and_status(db, test_user):
     with pytest.raises(CredentialError) as exc:
         await rest_resolver.resolve(key)
     assert exc.value.failure is CredentialFailure.INACTIVE and exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_mcp_picks_its_challenge_by_the_failed_kind(monkeypatch):
+    """The CHT-1520 seam: a failed credential of a kind other than an API
+    key (an OAuth access token, once accepted) gets the invalid_token
+    challenge and the resolver's detail; a failed key gets the bare one."""
+    from app.mcp_server import auth
+
+    bare, missing, invalid = {"WWW-Authenticate": "Bearer"}, {"WWW-Authenticate": "m"}, {"WWW-Authenticate": "i"}
+
+    async def failing(kind):
+        async def resolve(token):
+            raise CredentialError(CredentialFailure.INVALID, "Invalid token", kind=kind)
+        return resolve
+
+    monkeypatch.setattr(auth.mcp_resolver, "resolve", await failing(CredentialKind.OAUTH_ACCESS))
+    _, error = await auth._resolve("opaque", missing, invalid)
+    assert (error.status_code, error.headers["www-authenticate"], error.body) == (401, "i", b'{"error":"Invalid token"}')
+
+    monkeypatch.setattr(auth.mcp_resolver, "resolve", await failing(CredentialKind.API_KEY))
+    _, error = await auth._resolve("ck_x", missing, invalid)
+    assert error.headers["www-authenticate"] == bare["WWW-Authenticate"]
