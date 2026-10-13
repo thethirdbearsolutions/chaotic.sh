@@ -1,6 +1,8 @@
 """E2E: the whole OAuth connector flow against the real running server
-(CHT-1520): register a client -> /oauth/authorize -> consent approve ->
-/oauth/token -> /mcp with the cat_ access token, then refresh and revoke.
+(CHT-1520, CHT-1521): discovery from /mcp's 401 -> register a client
+(DCR) or name a metadata document (CIMD) -> /oauth/authorize -> consent
+approve -> /oauth/token -> /mcp with the cat_ access token, then refresh
+and revoke.
 
 Like test_mcp.py, this drives the app's real lifespan and transport, so
 the access-log assertion (CHT-1570) checks the actual uvicorn log line.
@@ -42,10 +44,12 @@ def oauth_on(monkeypatch):
     get_settings.cache_clear()
     token_service._reset_for_tests()
     ratelimit.authorize_requests.clear()
+    ratelimit.cimd_fetches.clear()
     yield
     get_settings.cache_clear()
     token_service._reset_for_tests()
     ratelimit.authorize_requests.clear()
+    ratelimit.cimd_fetches.clear()
 
 
 def _rpc(method, params=None, id=1):
@@ -99,9 +103,159 @@ def web_login_token(test_user):
     return create_access_token(data={"sub": test_user.id, WEB_LOGIN_CLAIM: WEB_LOGIN})
 
 
+def _discover():
+    """What an MCP client does first (MCP authorization spec 2026-07-28):
+    call /mcp with no token, follow the 401's resource_metadata to the
+    RFC 9728 document, take its first authorization server, and read
+    that server's RFC 8414 metadata. Returns (challenge scope, AS
+    metadata)."""
+    unauthenticated = httpx.post(MCP_URL, json=_rpc("initialize"), headers=_MCP_HEADERS, timeout=5.0)
+    assert unauthenticated.status_code == 401
+    challenge = unauthenticated.headers["www-authenticate"]
+    params = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+    assert challenge.startswith("Bearer ")
+    assert params["resource_metadata"] == f"{ORIGIN}/.well-known/oauth-protected-resource/mcp"
+
+    prm = httpx.get(params["resource_metadata"], timeout=5.0)
+    assert prm.status_code == 200, prm.text
+    prm = prm.json()
+    assert prm["resource"] == MCP_URL
+    issuer = prm["authorization_servers"][0]
+    assert issuer == ORIGIN
+
+    metadata = httpx.get(f"{issuer}/.well-known/oauth-authorization-server", timeout=5.0)
+    assert metadata.status_code == 200, metadata.text
+    metadata = metadata.json()
+    assert metadata["issuer"] == issuer  # RFC 8414 §3.3: exact string
+    assert metadata["code_challenge_methods_supported"] == ["S256"]
+    # Claude uses CIMD only when both of these are advertised.
+    assert metadata["client_id_metadata_document_supported"] is True
+    assert "none" in metadata["token_endpoint_auth_methods_supported"]
+    # ChatGPT uses its shared redirect only when RFC 9207 iss is promised.
+    assert metadata["authorization_response_iss_parameter_supported"] is True
+    # ChatGPT asks for every advertised OIDC scope; this is no OpenID provider.
+    assert "openid" not in metadata["scopes_supported"]
+    assert "offline_access" in metadata["scopes_supported"]
+    return params["scope"], metadata
+
+
+# Claude Code's client metadata document as claude.ai served it on
+# 2026-10-13 (CHT-1521). The fetch itself is SSRF-guarded to public
+# addresses, which this harness can't offer, so the e2e serves the
+# document in process; backend/tests/test_oauth_registration.py covers
+# the fetch.
+CLAUDE_CODE_CLIENT_ID = "https://claude.ai/oauth/claude-code-client-metadata"
+CLAUDE_CODE_DOCUMENT = (
+    b'{"client_id":"https://claude.ai/oauth/claude-code-client-metadata","client_name":"Claude Code",'
+    b'"client_uri":"https://claude.ai","redirect_uris":["http://localhost/callback","http://127.0.0.1/callback"],'
+    b'"grant_types":["authorization_code","refresh_token"],"response_types":["code"],'
+    b'"token_endpoint_auth_method":"none"}'
+)
+
+
+@pytest.fixture
+def claude_code_document(monkeypatch):
+    from app.oauth import cimd
+
+    fetched = []
+
+    async def fetch(url):
+        fetched.append(url)
+        assert url == CLAUDE_CODE_CLIENT_ID
+        return cimd.FetchedDocument(CLAUDE_CODE_DOCUMENT, "public, max-age=300")
+
+    monkeypatch.setattr(cimd, "fetch", fetch)
+    return fetched
+
+
+@pytest.mark.parametrize("loopback_host", ["localhost", "127.0.0.1"])
+def test_cimd_client_with_loopback_redirect_end_to_end(
+    test_server, oauth_on, claude_code_document, web_login_token, test_team, test_project, loopback_host,
+):
+    """`claude mcp add --transport http chaotic <url>` with no key header:
+    a CIMD client_id, a loopback redirect on whatever port the client got
+    (RFC 8252 §7.3), and RFC 8707 resource on every request."""
+    challenge_scope, metadata = _discover()
+    # The client listens on an ephemeral port: one the registered URIs
+    # don't name.
+    redirect_uri = f"http://{loopback_host}:{43000 + len(loopback_host)}/callback"
+    scope = f"{challenge_scope} offline_access"
+
+    authorize = httpx.get(metadata["authorization_endpoint"], params={
+        "client_id": CLAUDE_CODE_CLIENT_ID, "redirect_uri": redirect_uri, "response_type": "code",
+        "code_challenge": CHALLENGE, "code_challenge_method": "S256", "state": "cc-state",
+        "scope": scope, "resource": MCP_URL,
+    }, timeout=5.0)
+    assert authorize.status_code == 302, authorize.text
+    assert claude_code_document == [CLAUDE_CODE_CLIENT_ID]
+    request_id = authorize.headers["location"].rsplit("/", 1)[1]
+
+    human = {"Authorization": f"Bearer {web_login_token}"}
+    view = httpx.get(f"{ORIGIN}/api/oauth/requests/{request_id}", headers=human, timeout=5.0)
+    assert view.status_code == 200, view.text
+    view = view.json()
+    assert view["client"]["name"] == "Claude Code" and view["client"]["trust"] == "recognized"
+    assert view["client"]["host"] == "claude.ai"
+    assert view["loopback_redirect"] is True and view["redirect_host"] == loopback_host
+    approved = httpx.post(
+        f"{ORIGIN}/api/oauth/requests/{request_id}/approve", json={"team_id": test_team["id"]},
+        headers=human, timeout=5.0,
+    )
+    assert approved.status_code == 200, approved.text
+    redirect = approved.json()["redirect"]
+    assert redirect.startswith(redirect_uri + "?")
+    query = {k: v[0] for k, v in parse_qs(urlsplit(redirect).query).items()}
+    # RFC 9207: the client checks iss against the issuer it discovered.
+    assert query["state"] == "cc-state" and query["iss"] == metadata["issuer"]
+
+    exchanged = httpx.post(metadata["token_endpoint"], data={
+        "grant_type": "authorization_code", "client_id": CLAUDE_CODE_CLIENT_ID, "code": query["code"],
+        "redirect_uri": redirect_uri, "code_verifier": VERIFIER, "resource": MCP_URL,
+    }, timeout=5.0)
+    assert exchanged.status_code == 200, exchanged.text
+    tokens = exchanged.json()
+    assert tokens["scope"] == scope
+    agent = tokens["chaotic"]["agent"]
+
+    assert _initialize(tokens["access_token"]).status_code == 200
+    created = httpx.post(MCP_URL, json=_rpc("tools/call", {
+        "name": "issue_create", "arguments": {"title": "Filed by a CIMD client", "project": test_project["id"]},
+    }, id=2), headers={**_MCP_HEADERS, "Authorization": f"Bearer {tokens['access_token']}"}, timeout=5.0)
+    assert created.status_code == 200, created.text
+    issue = json.loads(created.json()["result"]["content"][0]["text"])
+    assert issue["creator_id"] == agent["id"]
+
+    refreshed = httpx.post(metadata["token_endpoint"], data={
+        "grant_type": "refresh_token", "client_id": CLAUDE_CODE_CLIENT_ID,
+        "refresh_token": tokens["refresh_token"], "resource": MCP_URL,
+    }, timeout=5.0)
+    assert refreshed.status_code == 200, refreshed.text
+    rotated = refreshed.json()
+    assert _initialize(rotated["access_token"]).status_code == 200
+    # Rotation: the old access token is still valid until it expires, but
+    # the old refresh token is spent (a replay outside the grace window
+    # would revoke the session; that path is covered in the backend tests).
+    assert rotated["refresh_token"] != tokens["refresh_token"]
+
+    revoked = httpx.post(metadata["revocation_endpoint"], data={
+        "token": rotated["refresh_token"], "client_id": CLAUDE_CODE_CLIENT_ID,
+    }, timeout=5.0)
+    assert revoked.status_code == 200
+    after = _initialize(rotated["access_token"])
+    assert after.status_code == 401
+    # A rejected token gets a challenge that tells the client to sign in again.
+    assert 'error="invalid_token"' in after.headers["www-authenticate"]
+    assert "resource_metadata=" in after.headers["www-authenticate"]
+
+
 def test_connector_flow_end_to_end(test_server, oauth_on, web_login_token, test_team, test_project, access_log):
+    # 0. Discovery, from nothing but the /mcp URL.
+    challenge_scope, metadata = _discover()
+    assert challenge_scope == "chaotic:write"
+    assert metadata["registration_endpoint"] == f"{ORIGIN}/oauth/register"
+
     # 1. Dynamic client registration (a public client, loopback redirect).
-    registered = httpx.post(f"{ORIGIN}/oauth/register", json={
+    registered = httpx.post(metadata["registration_endpoint"], json={
         "client_name": "E2E Connector", "redirect_uris": [REDIRECT],
     }, timeout=5.0)
     assert registered.status_code == 201, registered.text
