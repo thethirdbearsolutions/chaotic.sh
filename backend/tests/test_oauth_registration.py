@@ -3,8 +3,12 @@ cache, DCR at /oauth/register, redirect matching, the known-clients
 table, and the CHT-1564 rule that the public OAuth POST endpoints take
 no cookie or session auth.
 """
+import ast
 import asyncio
+import gzip
+import inspect
 import json
+import textwrap
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -12,18 +16,20 @@ import pytest
 
 from app.config import get_settings
 from app.enums import OAuthClientRegistration
-from app.oauth import cimd
+from app.oauth import cimd, ratelimit
 from app.oauth.clients import (
     canonical_resource,
     dcr_redirect_uri_problem,
     known_client_name,
     redirect_uri_matches,
+    redirect_uri_problem,
 )
 from app.oxyde_models.oauth import OxydeOAuthClient
 from app.services.oauth_client_service import (
     OAuthClientError,
     OAuthClientService,
     hash_client_secret,
+    hash_ip,
 )
 
 BASE = "https://tracker.example.com"
@@ -42,8 +48,12 @@ def oauth_settings(monkeypatch):
         get_settings.cache_clear()
 
     _set()
+    ratelimit.cimd_fetches.clear()
+    ratelimit.authorize_requests.clear()
     yield _set
     get_settings.cache_clear()
+    ratelimit.cimd_fetches.clear()
+    ratelimit.authorize_requests.clear()
 
 
 def _doc(client_id=CIMD_URL, **overrides):
@@ -133,16 +143,46 @@ class TestDCRRedirectRules:
         ("https://*.example/cb", "wildcard"),
         ("https://user:pw@app.example/cb", "credentials"),
         ("https://app.example/" + "a" * 600, "512"),
-        ("javascript:alert(1)", "https"),
+        ("javascript:alert(1)", "javascript"),
         ("com.example.app:/cb", "https"),
         ("https:///cb", "https"),
         ("https://app.example/c b", "whitespace"),
         ("https://app.example:99999/cb", "valid URL"),
+        ("https://app.example:0/cb", "port 0"),
+        ("http://localhost:0/cb", "port 0"),
+        ("HTTPS://app.example/cb", "https"),
+        ("Https://app.example/cb", "https"),
+        ("HTTP://localhost/cb", "https"),
+        ("JavaScript:alert(1)", "javascript"),
+        ("data:text/html,x", "data"),
         ("", "non-empty"),
         (42, "non-empty"),
     ])
     def test_refused(self, uri, why):
         assert why in dcr_redirect_uri_problem(uri)
+
+
+class TestDocumentRedirectRules:
+    """What a metadata document's redirect_uris may be (CHT-1518 review
+    S1): the DCR rules plus reverse-domain private-use schemes; never a
+    scheme a browser would execute, in any case."""
+
+    @pytest.mark.parametrize("uri", [
+        "https://app.example/cb", "http://127.0.0.1/cb", "com.example.app:/oauth/cb", "com.example.app://cb",
+    ])
+    def test_allowed(self, uri):
+        assert redirect_uri_problem(uri, allow_private_use=True) is None
+
+    @pytest.mark.parametrize("uri", [
+        "javascript:alert(document.domain)", "JAVASCRIPT:alert(1)", "JavaScript://%0aalert(1)",
+        "data:text/html,<script>alert(1)</script>", "DATA:text/html,x", "vbscript:msgbox", "VBScript:x",
+        "file:///etc/passwd", "blob:https://app.example/x", "about:blank",
+        "http://app.example/cb", "HTTPS://app.example/cb", "Com.Example.App:/cb", "myapp:/cb", "com.example.app:",
+        "https://app.example:0/cb",
+    ])
+    def test_refused(self, uri):
+        assert redirect_uri_problem(uri, allow_private_use=True) is not None
+        assert dcr_redirect_uri_problem(uri) is not None
 
 
 class TestResource:
@@ -164,14 +204,13 @@ class TestKnownClients:
     def test_claude_code(self):
         assert known_client_name(CLAUDE_CODE) == "Claude Code"
 
-    @pytest.mark.parametrize("client_id,name", [
-        ("https://claude.ai/oauth/mcp-oauth-client-metadata", "Claude"),
-        ("https://chatgpt.com/oauth/client.json", "ChatGPT"),
-    ])
-    def test_by_cimd_host(self, client_id, name):
-        assert known_client_name(client_id) == name
-
     @pytest.mark.parametrize("client_id", [
+        # Exact client_ids only (review S2): another document on the same
+        # host is not that client.
+        "https://claude.ai/oauth/mcp-oauth-client-metadata", "https://chatgpt.com/oauth/client.json",
+        "https://claude.ai/user-content/claude-code-client-metadata",
+        CLAUDE_CODE + "/", CLAUDE_CODE + "?x", "https://claude.ai:443/oauth/claude-code-client-metadata",
+        "https://claude.ai:8443/oauth/claude-code-client-metadata",
         "https://claude.ai.evil.example/x", "https://evil.example/claude.ai", "http://claude.ai/x",
         "dcr_0123", "Claude",
     ])
@@ -183,7 +222,7 @@ class TestKnownClients:
 
 
 class TestClientIdURL:
-    @pytest.mark.parametrize("url", [CIMD_URL, "https://app.example:8443/meta", CLAUDE_CODE])
+    @pytest.mark.parametrize("url", [CIMD_URL, "https://app.example:443/meta", CLAUDE_CODE])
     def test_fetchable(self, url):
         cimd.check_client_id_url(url)
 
@@ -195,6 +234,9 @@ class TestClientIdURL:
         ("https://app.example/meta#x", "fragment"),
         ("https://app.example/a/../meta", "dot segments"),
         ("https://app.example:abc/meta", "port"),
+        ("https://app.example:8443/meta", "default https port"),
+        ("https://app.example:22/meta", "default https port"),
+        ("https://app.example:0/meta", "default https port"),
         ("https:///meta", "no host"),
         ("https://app.example/me ta", "whitespace"),
         ("https://app.example/" + "a" * 600, "too long"),
@@ -251,6 +293,18 @@ class TestResolve:
             await cimd.resolve_public("no-such-host.invalid", 443)
 
 
+class _Chunked(httpx.AsyncByteStream):
+    """A body that arrives over the wire, as from a real server (a
+    Response built from bytes counts as already read)."""
+
+    def __init__(self, body):
+        self.body = body
+
+    async def __aiter__(self):
+        for i in range(0, len(self.body), 4096):
+            yield self.body[i:i + 4096]
+
+
 class _Seen(list):
     pass
 
@@ -267,7 +321,12 @@ def mock_network(monkeypatch):
 
     def handler(request):
         seen.append(request)
-        return state["handler"](request)
+        canned = state["handler"](request)
+        if isinstance(canned.stream, _Chunked):
+            return canned
+        # The raw bytes as given (``.content`` would decode them).
+        raw = b"".join(canned.stream)
+        return httpx.Response(canned.status_code, headers=canned.headers, stream=_Chunked(raw))
 
     monkeypatch.setattr(cimd, "_resolve", public)
     monkeypatch.setattr(cimd, "_transport", httpx.MockTransport(handler))
@@ -285,11 +344,65 @@ class TestFetch:
         assert request.headers["host"] == "app.example.org"
         assert request.extensions["sni_hostname"] == "app.example.org"
 
-    async def test_explicit_port_is_kept(self, mock_network):
-        await cimd.fetch("https://app.example.org:8443/meta")
+    async def test_only_the_default_port_is_fetched(self, mock_network):
+        with pytest.raises(cimd.CIMDError, match="default https port"):
+            await cimd.fetch("https://app.example.org:8443/meta")
+        assert mock_network == []
+        await cimd.fetch("https://app.example.org:443/meta")
         (request,) = mock_network
-        assert request.url.port == 8443
-        assert request.headers["host"] == "app.example.org:8443"
+        assert request.url.port in (None, 443)  # httpx drops the default port
+        assert request.headers["host"] == "app.example.org"
+
+    async def test_asks_for_an_uncompressed_body(self, mock_network):
+        await cimd.fetch(CIMD_URL)
+        (request,) = mock_network
+        assert request.headers["accept-encoding"] == "identity"
+
+    @pytest.mark.parametrize("encoding", ["gzip", "deflate", "br", "GZIP", "gzip, identity"])
+    async def test_a_compressed_body_is_refused_unread(self, mock_network, encoding):
+        """A gzip bomb: 16 KB on the wire, megabytes decoded. Refused on
+        the header, so nothing is decompressed (review B1)."""
+        bomb = gzip.compress(b" " * (8 * 1024 * 1024))
+        assert len(bomb) < cimd.MAX_DOCUMENT_BYTES
+        mock_network.set(lambda r: httpx.Response(
+            200, stream=_Chunked(bomb), headers={"Content-Encoding": encoding, "Content-Type": "application/json"},
+        ))
+        with pytest.raises(cimd.CIMDError, match="compressed"):
+            await cimd.fetch(CIMD_URL)
+
+    async def test_raw_bytes_are_what_is_capped(self, mock_network, monkeypatch):
+        """Even if the encoding check were bypassed, the cap counts bytes
+        as received, never as decoded."""
+        monkeypatch.setattr(httpx.Response, "aiter_bytes", None)  # not used
+        body = json.dumps(_doc()).encode()
+        mock_network.set(lambda r: httpx.Response(
+            200, content=body, headers={"Content-Encoding": "identity", "Content-Type": "application/json"},
+        ))
+        assert (await cimd.fetch(CIMD_URL)).body == body
+
+    @pytest.mark.parametrize("content_type", [
+        "application/json", "application/json; charset=utf-8", "Application/JSON",
+        "application/oauth-client-metadata+json",
+    ])
+    async def test_json_content_types(self, mock_network, content_type):
+        mock_network.set(lambda r: httpx.Response(
+            200, content=json.dumps(_doc()).encode(), headers={"Content-Type": content_type},
+        ))
+        await cimd.fetch(CIMD_URL)
+
+    @pytest.mark.parametrize("content_type", [None, "text/html", "text/plain", "application/jsonp", "text/json"])
+    async def test_other_content_types_are_refused(self, mock_network, content_type):
+        headers = {"Content-Type": content_type} if content_type else {}
+        mock_network.set(lambda r: httpx.Response(200, content=json.dumps(_doc()).encode(), headers=headers))
+        with pytest.raises(cimd.CIMDError, match="application/json"):
+            await cimd.fetch(CIMD_URL)
+
+    async def test_declared_length_over_the_cap_is_refused_unread(self, mock_network):
+        mock_network.set(lambda r: httpx.Response(200, content=b"{}", headers={
+            "Content-Type": "application/json", "Content-Length": str(cimd.MAX_DOCUMENT_BYTES + 1),
+        }))
+        with pytest.raises(cimd.CIMDError, match="16 KB"):
+            await cimd.fetch(CIMD_URL)
 
     async def test_redirects_are_not_followed(self, mock_network):
         mock_network.set(lambda r: httpx.Response(302, headers={"Location": "http://169.254.169.254/"}))
@@ -298,7 +411,12 @@ class TestFetch:
         assert len(mock_network) == 1
 
     async def test_size_cap(self, mock_network):
-        mock_network.set(lambda r: httpx.Response(200, content=b"x" * (cimd.MAX_DOCUMENT_BYTES + 1)))
+        def big(request):
+            response = httpx.Response(200, content=b"x" * (cimd.MAX_DOCUMENT_BYTES + 1),
+                                      headers={"Content-Type": "application/json"})
+            del response.headers["content-length"]
+            return response
+        mock_network.set(big)
         with pytest.raises(cimd.CIMDError, match="16 KB"):
             await cimd.fetch(CIMD_URL)
 
@@ -358,6 +476,13 @@ class TestDocument:
         (json.dumps(_doc(token_endpoint_auth_method="private_key_jwt")).encode(), "not supported"),
         (json.dumps(_doc(token_endpoint_auth_method="client_secret_post")).encode(), "not supported"),
         (json.dumps(_doc(client_name=["x"])).encode(), "client_name"),
+        (json.dumps(_doc(redirect_uris=["javascript:alert(1)"])).encode(), "javascript"),
+        (json.dumps(_doc(redirect_uris=["https://app.example.org/cb", "JaVaScRiPt:alert(1)"])).encode(),
+         "javascript"),
+        (json.dumps(_doc(redirect_uris=["data:text/html,x"])).encode(), "data"),
+        (json.dumps(_doc(redirect_uris=["http://app.example.org/cb"])).encode(), "unusable redirect_uri"),
+        (json.dumps(_doc(redirect_uris=[f"https://app.example.org/{i}" for i in range(21)])).encode(),
+         "more than 20"),
     ])
     def test_refused(self, body, why):
         with pytest.raises(cimd.CIMDError, match=why):
@@ -487,6 +612,100 @@ class TestResolveCIMD:
         )
 
 
+class TestCIMDLimits:
+    """CHT-1572 / review S4: an unauthenticated authorize names the URL,
+    so new fetches are rate limited per address and never-authorized
+    CIMD rows are capped."""
+
+    async def test_new_fetches_are_rate_limited_per_address(self, db, oauth_settings, monkeypatch):
+        oauth_settings(oauth_cimd_fetch_max_per_ip_per_hour=2)
+        fake = _FakeFetch()
+        monkeypatch.setattr(cimd, "fetch", fake)
+        service = OAuthClientService()
+        for n in range(2):
+            await service.resolve(f"https://app.example.org/{n}", source_ip="198.51.100.7")
+        with pytest.raises(OAuthClientError) as refused:
+            await service.resolve("https://app.example.org/2", source_ip="198.51.100.7")
+        assert (refused.value.status_code, refused.value.error) == (429, "too_many_requests")
+        assert fake.calls == 2
+        # A cached client costs nothing; another address has its own budget.
+        await service.resolve("https://app.example.org/0", source_ip="198.51.100.7")
+        await service.resolve("https://app.example.org/2", source_ip="198.51.100.8")
+        assert fake.calls == 3
+
+    async def test_failed_fetches_count_too(self, db, oauth_settings, monkeypatch):
+        oauth_settings(oauth_cimd_fetch_max_per_ip_per_hour=1)
+        monkeypatch.setattr(cimd, "fetch", _FakeFetch(error="nope"))
+        service = OAuthClientService()
+        with pytest.raises(OAuthClientError, match="nope"):
+            await service.resolve(CIMD_URL, source_ip="198.51.100.7")
+        with pytest.raises(OAuthClientError) as refused:
+            await service.resolve(CIMD_URL, source_ip="198.51.100.7")
+        assert refused.value.status_code == 429
+
+    async def test_ipv6_addresses_share_their_64(self, db, oauth_settings, monkeypatch):
+        oauth_settings(oauth_cimd_fetch_max_per_ip_per_hour=1)
+        monkeypatch.setattr(cimd, "fetch", _FakeFetch())
+        service = OAuthClientService()
+        await service.resolve("https://app.example.org/a", source_ip="2001:db8:1:2::1")
+        with pytest.raises(OAuthClientError):
+            await service.resolve("https://app.example.org/b", source_ip="2001:db8:1:2:ffff::9")
+        await service.resolve("https://app.example.org/b", source_ip="2001:db8:1:3::1")
+
+    async def test_never_authorized_rows_are_capped(self, db, oauth_settings, monkeypatch):
+        oauth_settings(oauth_cimd_max_pending_clients=2)
+        monkeypatch.setattr(cimd, "fetch", _FakeFetch())
+        service = OAuthClientService()
+        await service.resolve("https://app.example.org/a")
+        await service.resolve("https://app.example.org/b")
+        with pytest.raises(OAuthClientError) as refused:
+            await service.resolve("https://app.example.org/c")
+        assert refused.value.status_code == 429
+        # Rolled back, not left behind.
+        assert await OxydeOAuthClient.objects.filter(id="https://app.example.org/c").count() == 0
+        # A known client is never crowded out; an authorized one frees a slot.
+        await service.resolve(CLAUDE_CODE)
+        await service.mark_authorized("https://app.example.org/a")
+        await service.resolve("https://app.example.org/c")
+
+    async def test_the_cap_holds_under_concurrency(self, db, oauth_settings, monkeypatch):
+        oauth_settings(oauth_cimd_max_pending_clients=3)
+        monkeypatch.setattr(cimd, "fetch", _FakeFetch())
+        service = OAuthClientService()
+        results = await asyncio.gather(
+            *(service.resolve(f"https://app.example.org/{n}") for n in range(8)), return_exceptions=True,
+        )
+        assert sum(not isinstance(r, Exception) for r in results) == 3
+        assert all(isinstance(r, OAuthClientError) for r in results if isinstance(r, Exception))
+        assert await OxydeOAuthClient.objects.count() == 3
+
+
+class TestAddressBucket:
+    @pytest.mark.parametrize("ip,bucket", [
+        ("198.51.100.1", "198.51.100.1"),
+        ("::ffff:198.51.100.1", "198.51.100.1"),
+        ("2001:db8:1:2:3:4:5:6", "2001:db8:1:2::/64"),
+        ("2001:db8:1:2::1%eth0", "2001:db8:1:2::/64"),
+        ("testclient", "testclient"),
+    ])
+    def test_bucket(self, ip, bucket):
+        assert ratelimit.address_bucket(ip) == bucket
+
+    def test_dcr_hash_is_per_bucket(self, oauth_settings):
+        assert hash_ip("2001:db8::1") == hash_ip("2001:db8::ffff:1")
+        assert hash_ip("2001:db8::1") != hash_ip("2001:db8:0:1::1")
+        assert hash_ip("::ffff:198.51.100.1") == hash_ip("198.51.100.1")
+
+    def test_limiter_slides_and_forgets_old_keys(self):
+        limiter = ratelimit.SlidingWindowLimiter(60, max_keys=2)
+        assert limiter.allow("a", 1, now=0)
+        assert not limiter.allow("a", 1, now=30)
+        assert limiter.allow("a", 1, now=61)
+        limiter.allow("b", 1, now=61)
+        limiter.allow("c", 1, now=61)
+        assert len(limiter._hits) == 2 and "a" not in limiter._hits
+
+
 # --- DCR -----------------------------------------------------------------
 
 
@@ -570,6 +789,25 @@ class TestRegisterEndpoint:
         assert response.headers["cache-control"] == "no-store"
         assert await OxydeOAuthClient.objects.count() == 0
 
+    async def test_oversized_declared_length_is_refused_unread(self, client, oauth_settings):
+        response = await client.post(
+            "/oauth/register", content=json.dumps(_registration()),
+            headers={"Content-Type": "application/json", "Content-Length": str(17 * 1024)},
+        )
+        assert response.status_code == 400
+        assert "too large" in response.json()["error_description"]
+
+    async def test_oversized_chunked_body_is_refused(self, client, oauth_settings):
+        async def chunks():
+            yield b'{"redirect_uris": ["https://a.example/cb"], "x": "'
+            for _ in range(20):
+                yield b"y" * 1024
+            yield b'"}'
+        response = await client.post("/oauth/register", content=chunks(),
+                                     headers={"Content-Type": "application/json"})
+        assert response.status_code == 400
+        assert "too large" in response.json()["error_description"]
+
     @pytest.mark.parametrize("content", [b"not json", b"[1]", b"\xff\xfe", b"{" + b" " * (17 * 1024) + b"}"])
     async def test_malformed_body(self, client, oauth_settings, content):
         response = await client.post("/oauth/register", content=content,
@@ -609,6 +847,27 @@ class TestRegisterEndpoint:
         with pytest.raises(OAuthClientError):
             await service.register(_registration(), source_ip="198.51.100.1")
 
+    async def test_ipv6_rate_limit_is_per_64(self, db, oauth_settings):
+        oauth_settings(oauth_dcr_max_per_ip_per_hour=1)
+        service = OAuthClientService()
+        await service.register(_registration(), source_ip="2001:db8:1:2::1")
+        with pytest.raises(OAuthClientError):
+            await service.register(_registration(), source_ip="2001:db8:1:2::2")
+        await service.register(_registration(), source_ip="2001:db8:1:3::1")
+
+    async def test_caps_hold_under_concurrency(self, db, oauth_settings):
+        """Insert-then-count in one transaction: a parallel burst can't
+        all read "one under the limit" (review S4)."""
+        oauth_settings(oauth_dcr_max_per_ip_per_hour=3)
+        service = OAuthClientService()
+        results = await asyncio.gather(
+            *(service.register(_registration(), source_ip="198.51.100.1") for _ in range(8)),
+            return_exceptions=True,
+        )
+        assert sum(not isinstance(r, Exception) for r in results) == 3
+        assert all(isinstance(r, OAuthClientError) for r in results if isinstance(r, Exception))
+        assert await OxydeOAuthClient.objects.count() == 3
+
     async def test_global_cap_counts_only_never_authorized_clients(self, db, oauth_settings):
         oauth_settings(oauth_dcr_max_pending_clients=2, oauth_dcr_max_per_ip_per_hour=100)
         service = OAuthClientService()
@@ -632,10 +891,16 @@ class TestGarbageCollection:
         for row in (stale, used):
             await OxydeOAuthClient.objects.filter(id=row.id).update(created_at=day_ago)
 
-        # Refused even before the sweep reaches it.
+        # Refused at 24 hours, before the sweep reaches it...
         with pytest.raises(OAuthClientError):
             await service.resolve(stale.id)
         assert (await service.resolve(used.id)).id == used.id
+        # ...but kept for a grace period, so a consent begun just before
+        # the deadline doesn't lose its request to the cascade (N6).
+        assert await service.gc_unused() == 0
+        await OxydeOAuthClient.objects.filter(id=stale.id).update(
+            created_at=datetime.now(timezone.utc) - timedelta(hours=24, minutes=16),
+        )
 
         assert await service.gc_unused() == 1
         remaining = {r.id for r in await OxydeOAuthClient.objects.all()}
@@ -722,6 +987,65 @@ class TestNoAmbientAuth:
                 assert dep.cookie_params == [], route.path
                 assert dep.call not in (get_current_user, get_auth_method), route.path
                 assert not isinstance(dep.call, SecurityBase), route.path
+
+    def test_public_oauth_post_handlers_read_no_cookie_or_authorization(self):
+        """Source-level: a handler taking a raw ``Request`` has no
+        dependency to inspect, so read its code (and the module helpers
+        it calls) for ``.cookies`` or an ``authorization`` header name."""
+        for route in self._public_post_routes():
+            endpoint = inspect.unwrap(route.endpoint)
+            module = inspect.getmodule(endpoint)
+            tree = ast.parse(textwrap.dedent(inspect.getsource(module)))
+            functions = {
+                node.name: node for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            todo, seen = [endpoint.__name__], set()
+            while todo:
+                name = todo.pop()
+                if name in seen or name not in functions:
+                    continue
+                seen.add(name)
+                for node in ast.walk(functions[name]):
+                    if isinstance(node, ast.Attribute):
+                        assert node.attr not in ("cookies", "auth", "user"), (route.path, name, node.attr)
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                        assert node.value.lower() not in ("authorization", "cookie"), (route.path, name)
+                    if isinstance(node, ast.Name):
+                        todo.append(node.id)
+            assert endpoint.__name__ in seen
+
+    async def test_register_never_consults_a_credential(self, client, oauth_settings, auth_headers, monkeypatch):
+        """Behavioural: every credential check raises if called, and a
+        request carrying a valid session and cookie gets the same answer
+        as an anonymous one."""
+        import app.auth.credentials as credentials
+        from app.services.api_key_service import APIKeyService
+
+        def tripwire(*args, **kwargs):
+            raise AssertionError("a public OAuth endpoint consulted a credential")
+
+        async def async_tripwire(*args, **kwargs):
+            tripwire()
+
+        monkeypatch.setattr(credentials, "decode_token", tripwire)
+        monkeypatch.setattr(credentials.CredentialResolver, "resolve", async_tripwire)
+        monkeypatch.setattr(APIKeyService, "validate_key", async_tripwire)
+        monkeypatch.setattr(APIKeyService, "find_by_key", async_tripwire)
+        oauth_settings(oauth_dcr_max_per_ip_per_hour=100)
+
+        with_login = await client.post(
+            "/oauth/register", json=_registration(),
+            headers={**auth_headers, "Cookie": f"chaotic_token={auth_headers['Authorization'][7:]}"},
+        )
+        anonymous = await client.post("/oauth/register", json=_registration())
+        assert with_login.status_code == anonymous.status_code == 201, with_login.text
+
+        def shape(body):
+            return {k: v for k, v in body.items() if k not in ("client_id", "client_id_issued_at")}
+        assert shape(with_login.json()) == shape(anonymous.json())
+        rows = [await OxydeOAuthClient.objects.get(id=r.json()["client_id"]) for r in (with_login, anonymous)]
+        assert all(r.last_authorized_at is None for r in rows)
 
     async def test_register_ignores_a_session_and_a_cookie(self, client, oauth_settings, auth_headers):
         response = await client.post(

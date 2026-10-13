@@ -57,11 +57,27 @@ def redirect_uri_matches(registered: list[str] | tuple[str, ...], presented: str
     return any(_loopback_parts(r) == loop for r in registered)
 
 
-def dcr_redirect_uri_problem(uri: object) -> str | None:
-    """Why ``uri`` may not be a dynamically registered redirect URI, or
-    None if it may: ``https://`` with a host, or loopback ``http://``; no
-    fragment, wildcard, userinfo, whitespace or control characters; at
-    most DCR_MAX_REDIRECT_URI_LENGTH characters."""
+# Schemes that run code or read local content wherever a browser is told
+# to navigate to them. None of them has a period, so the private-use rule
+# below already excludes them; listed so that stays true by intent.
+_DANGEROUS_SCHEMES = frozenset({"javascript", "data", "vbscript", "file", "blob", "about", "filesystem"})
+# RFC 8252 §7.1: a native app's private-use scheme is a reverse domain
+# name it controls, so it has at least one period. Lower case only.
+_PRIVATE_USE_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+\-]*(?:\.[a-z0-9+\-]+)+$")
+
+
+def redirect_uri_problem(uri: object, *, allow_private_use: bool = False) -> str | None:
+    """Why ``uri`` may not be a client's redirect URI, or None if it may:
+    ``https://`` with a host, or loopback ``http://``, both spelled in
+    lower case with a port, if any, in 1-65535; no fragment, wildcard,
+    userinfo, whitespace or control characters; at most
+    DCR_MAX_REDIRECT_URI_LENGTH characters.
+
+    With ``allow_private_use`` (metadata documents: a client proven by
+    its https host), also an RFC 8252 §7.1 private-use scheme in reverse
+    domain form (``com.example.app:/callback``). Never ``javascript:``,
+    ``data:`` and the like, in any case: the code is handed to the
+    redirect by a browser navigation (CHT-1518 review S1, CHT-1519 B1)."""
     if not isinstance(uri, str) or not uri:
         return "redirect_uris must be non-empty strings"
     if len(uri) > DCR_MAX_REDIRECT_URI_LENGTH:
@@ -72,18 +88,38 @@ def dcr_redirect_uri_problem(uri: object) -> str | None:
         return "a redirect_uri must not have a fragment"
     if "*" in uri:
         return "a redirect_uri must not contain wildcards"
+    scheme = uri.split(":", 1)[0] if ":" in uri else ""
+    if scheme.lower() in _DANGEROUS_SCHEMES:
+        return f"a redirect_uri must not use the {scheme.lower()}: scheme"
     try:
         parts = urlsplit(uri)
-        parts.port
+        port = parts.port
     except ValueError:
         return "a redirect_uri must be a valid URL"
     if parts.username is not None or parts.password is not None:
         return "a redirect_uri must not carry credentials"
-    if parts.scheme == "https" and parts.hostname:
+    if port == 0:
+        return "a redirect_uri must not use port 0"
+    if uri.startswith("https://") and parts.hostname:
         return None
-    if parts.scheme == "http" and is_loopback_redirect(uri):
+    if uri.startswith("http://") and is_loopback_redirect(uri):
         return None
+    if (
+        allow_private_use
+        and _PRIVATE_USE_SCHEME_RE.match(scheme)
+        and len(uri) > len(scheme) + 1
+    ):
+        return None
+    if allow_private_use:
+        return "a redirect_uri must be https, http on a loopback host, or a reverse-domain private-use scheme"
     return "a redirect_uri must be https, or http on a loopback host"
+
+
+def dcr_redirect_uri_problem(uri: object) -> str | None:
+    """The rule for a dynamically registered redirect URI: ``https`` or
+    loopback ``http`` only (``redirect_uri_problem``). A DCR client is
+    unproven, so it gets no private-use schemes."""
+    return redirect_uri_problem(uri)
 
 
 def redirect_host(uri: str) -> str:
@@ -117,35 +153,28 @@ def canonical_resource(value: str, issuer: str) -> str | None:
 @dataclass(frozen=True)
 class KnownClient:
     name: str
-    # Exact CIMD client_ids, and CIMD hosts whose every document is this
-    # vendor's. A CIMD client_id is proven by the TLS fetch from its host,
-    # so recognising by host can't be spoofed by a third party.
-    client_ids: frozenset[str] = frozenset()
-    hosts: frozenset[str] = frozenset()
+    # Exact CIMD client_ids, compared as strings. Not hosts: a vendor
+    # host can serve documents for things that aren't that vendor's
+    # client (user content, other products), and a badge is a claim
+    # about one specific client.
+    client_ids: frozenset[str]
 
 
 # Advisory only: a match puts a "recognized" badge on the consent page.
 # It never skips consent (design §2.3). DCR clients are never recognized,
-# whatever they call themselves or wherever they redirect.
+# whatever they call themselves or wherever they redirect. Only client_ids
+# their vendor documents: claude.ai's and ChatGPT's connector CIMD URLs
+# are not published, so they get no badge until they are (CHT-1580).
+# check_client_id_url allows only the default port, so an exact match
+# here is always the vendor's own https origin.
 KNOWN_CLIENTS: tuple[KnownClient, ...] = (
     KnownClient("Claude Code", client_ids=frozenset({"https://claude.ai/oauth/claude-code-client-metadata"})),
-    KnownClient("Claude", hosts=frozenset({"claude.ai"})),
-    KnownClient("ChatGPT", hosts=frozenset({"chatgpt.com", "openai.com"})),
 )
 
 
 def known_client_name(client_id: str) -> str | None:
-    """The recognized name of a CIMD client_id, or None."""
+    """The recognized name of a CIMD client_id (an exact match), or None."""
     for known in KNOWN_CLIENTS:
         if client_id in known.client_ids:
-            return known.name
-    try:
-        parts = urlsplit(client_id)
-    except ValueError:
-        return None
-    if parts.scheme != "https" or not parts.hostname:
-        return None
-    for known in KNOWN_CLIENTS:
-        if parts.hostname in known.hosts:
             return known.name
     return None

@@ -42,6 +42,26 @@ def _from_client_error(exc: OAuthClientError) -> OAuthHTTPError:
     return OAuthHTTPError(exc.status_code, exc.error, exc.description)
 
 
+async def _bounded_body(request: Request, limit: int) -> bytes:
+    """The request body, refused (400) without reading past ``limit``
+    bytes: by its declared Content-Length when there is one, and by
+    counting while streaming otherwise (chunked bodies)."""
+    too_large = OAuthHTTPError(400, "invalid_client_metadata", "the registration request is too large")
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        declared = declared.strip()
+        if not declared.isdigit():
+            raise OAuthHTTPError(400, "invalid_request", "invalid Content-Length")
+        if int(declared) > limit:
+            raise too_large
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            raise too_large
+    return bytes(body)
+
+
 public_router = APIRouter(include_in_schema=False)
 
 
@@ -57,9 +77,7 @@ async def register_client(request: Request, response: Response) -> ClientRegistr
     Unauthenticated; rate-limited per source IP and capped globally."""
     if not oauth_enabled() or not get_settings().oauth_dcr_enabled:
         raise _not_found()
-    raw = await request.body()
-    if len(raw) > MAX_REGISTRATION_BYTES:
-        raise OAuthHTTPError(400, "invalid_client_metadata", "the registration request is too large")
+    raw = await _bounded_body(request, MAX_REGISTRATION_BYTES)
     try:
         metadata = json.loads(raw)
     except (ValueError, UnicodeDecodeError):
