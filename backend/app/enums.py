@@ -174,7 +174,7 @@ class InboxEntryKind(str, Enum):
 class AgentKind(str, Enum):
     """What kind of agent a users row is. NULL for a human.
 
-    ASSISTANT is every hand-made agent (0022 backfills it). SERVICE is a
+    ASSISTANT is every hand-made agent (0023 backfills it). SERVICE is a
     registrar: a harness agent with `can_register`, which mints session
     identities and does nothing else (CHT-1498). SESSION is an identity a
     registrar registered for one harness session, keyed by

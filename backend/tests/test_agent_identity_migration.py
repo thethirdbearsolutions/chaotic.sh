@@ -1,7 +1,7 @@
-"""Tests for migrations/0022_agent_identity_columns.py (CHT-1497).
+"""Tests for migrations/0023_agent_identity_columns.py (CHT-1497).
 
-A database at 0021 is seeded with humans, hand-made agents (team- and
-project-scoped, with and without a creator) and their keys. After 0022
+A database at 0022 is seeded with humans, hand-made agents (team- and
+project-scoped, with and without a creator) and their keys. After 0023
 every agent is kind ASSISTANT, every human has no kind, nothing can
 register, nothing has an external_ref or a registrar, and every other
 column of every row is unchanged.
@@ -11,7 +11,7 @@ chain, and a production-shaped one whose `users` table is still the one
 SQLAlchemy's create_all made (VARCHAR(36)/BOOLEAN/DATETIME columns,
 `ix_users_email`, its own foreign-key order), with the REFERENCES clause
 0020 appends to `parent_user_id` in place rather than rebuilding the
-table. 0022 only adds columns and an index, so both must keep every
+table. 0023 only adds columns and an index, so both must keep every
 other column, index and foreign key.
 """
 import sqlite3
@@ -34,7 +34,7 @@ USERS = {
 
 
 # The pre-Oxyde users table as SQLAlchemy created it, with 0020's
-# in-place REFERENCES on parent_user_id (production's shape at 0021).
+# in-place REFERENCES on parent_user_id (production's shape before 0023).
 SQLALCHEMY_USERS = [
     "CREATE TABLE users (\n"
     "\tid VARCHAR(36) NOT NULL, \n"
@@ -69,9 +69,9 @@ def _to_production_users(path: str) -> None:
 
 
 @pytest.fixture(params=["chain", "production"])
-def at_0021(request, tmp_path):
+def at_before(request, tmp_path):
     path = str(tmp_path / f"{request.param}.db")
-    _migrate(path, target="0021_api_key_principal_and_holder")
+    _migrate(path, target="0022_api_key_hash_unique")
     if request.param == "production":
         _to_production_users(path)
     with closing(sqlite3.connect(path)) as c:
@@ -116,14 +116,14 @@ def _indexes_and_fks(path: str):
     return indexes, fks
 
 
-def test_agents_become_assistants_and_nothing_else_changes(at_0021):
-    before = _users(at_0021)
-    indexes_before, fks_before = _indexes_and_fks(at_0021)
+def test_agents_become_assistants_and_nothing_else_changes(at_before):
+    before = _users(at_before)
+    indexes_before, fks_before = _indexes_and_fks(at_before)
 
-    _migrate(at_0021)
+    _migrate(at_before)
 
-    after = _users(at_0021)
-    indexes_after, fks_after = _indexes_and_fks(at_0021)
+    after = _users(at_before)
+    indexes_after, fks_after = _indexes_and_fks(at_before)
     assert fks_after == fks_before and len(fks_after) == 3
     new_indexes = {"users_team_external_ref_uq", "ix_users_registered_by_id"}
     assert {k: v for k, v in indexes_after.items() if k not in new_indexes} == indexes_before
@@ -134,18 +134,18 @@ def test_agents_become_assistants_and_nothing_else_changes(at_0021):
         assert row["kind"] == ("ASSISTANT" if USERS[user_id][0] else None), user_id
         assert row["external_ref"] is None and row["registered_by_id"] is None
         assert row["can_register"] == 0
-    with closing(sqlite3.connect(at_0021)) as c:
+    with closing(sqlite3.connect(at_before)) as c:
         assert c.execute("SELECT count(*) FROM api_keys").fetchone() == (1,)
         assert c.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
         assert c.execute("PRAGMA foreign_key_check").fetchall() == []
         assert c.execute(
-            "SELECT 1 FROM oxyde_migrations WHERE name = '0022_agent_identity_columns'"
+            "SELECT 1 FROM oxyde_migrations WHERE name = '0023_agent_identity_columns'"
         ).fetchone()
 
 
-def test_the_index_makes_an_address_unique_per_team_only(at_0021):
-    _migrate(at_0021)
-    with closing(sqlite3.connect(at_0021)) as c:
+def test_the_index_makes_an_address_unique_per_team_only(at_before):
+    _migrate(at_before)
+    with closing(sqlite3.connect(at_before)) as c:
         sql = c.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'users_team_external_ref_uq'"
         ).fetchone()[0]

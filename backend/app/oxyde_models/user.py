@@ -28,7 +28,7 @@ class OxydeUser(Model):
     agent_team_id: str | None = Field(default=None)
     agent_project_id: str | None = Field(default=None)
 
-    # Agent identity (CHT-1497, migration 0022). All NULL/false for a human.
+    # Agent identity (CHT-1497, migration 0023). All NULL/false for a human.
     # `kind`: assistant (hand-made), service (a registrar), session (an
     # identity a registrar registered).
     kind: DbEnum(AgentKind) | None = Field(default=None)
@@ -53,7 +53,7 @@ class OxydeUser(Model):
         indexes = [
             # One identity per address per team. SQLite treats NULLs as
             # distinct, so humans and hand-made agents (no external_ref)
-            # never collide. Created by migration 0022.
+            # never collide. Created by migration 0023.
             Index(("agent_team_id", "external_ref"), name="users_team_external_ref_uq", unique=True),
             # A registrar's identities: its two caps count by this (CHT-1498).
             Index(("registered_by_id",), name="ix_users_registered_by_id"),
