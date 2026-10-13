@@ -1,8 +1,9 @@
-"""One credential resolver for every edge (CHT-1560).
+"""One credential resolver for REST and /mcp (CHT-1560).
 
 A presented bearer string becomes a ``Principal``, or a
 ``CredentialError`` that says what went wrong. REST (``app.api.deps``)
-and /mcp (``app.mcp_server.auth``) are thin adapters over this module:
+and /mcp (``app.mcp_server.auth``) are thin adapters over this module
+(the /ws WebSocket still checks its JWT itself, CHT-1567):
 each maps a ``CredentialError`` to its own response shape and
 WWW-Authenticate challenge, and neither looks at the token itself.
 
@@ -17,8 +18,10 @@ Kinds of credential, decided by the token's shape (``classify``):
   ``classify``, add a verifier to ``_VERIFIERS`` that returns a
   ``Principal`` with the token's granted scopes, and accept the kind at
   the edges that should take it (``MCP_KINDS``). Neither adapter needs a
-  new branch; the /mcp adapter already picks its challenge from
-  ``CredentialError.kind``.
+  new branch: the /mcp adapter picks its challenge from
+  ``CredentialError.kind`` (a failed API key gets the bare ``Bearer``
+  challenge, a failed token of any other kind the ``invalid_token``
+  one), so a failed access token is answered correctly as it stands.
 
 An edge says which kinds it accepts. A token of a kind the edge does not
 accept fails with ``CredentialFailure.UNSUPPORTED`` before anything is
@@ -68,7 +71,12 @@ class Principal:
 
     user: User  # the user the request acts as (``principal_user_id``)
     # The human who answers for this credential (ADR-0008): the holder of
-    # an API key, the user themself for a session JWT.
+    # an API key, the user themself for a session JWT. For an API key it
+    # is the row's `holder_user_id` as stored, so None is possible only
+    # for a row with no holder on record. ADR-0008 allows that only for
+    # a legacy agent key with no creator, which never resolves (refused
+    # above); a human's key has had its holder set since 0021. A reader
+    # must still treat None as "no holder on record", never as "self".
     holder_user_id: str | None
     kind: CredentialKind
     scopes: frozenset[str] = field(default=ALL_SCOPES)
@@ -194,7 +202,7 @@ class CredentialResolver:
         if kind not in self.accepts:
             raise CredentialError(
                 CredentialFailure.UNSUPPORTED,
-                f"This endpoint does not accept a {kind.value} credential",
+                "Unsupported credential",
                 kind=kind,
             )
         return await _VERIFIERS[kind](token)

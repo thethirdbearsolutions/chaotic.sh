@@ -50,7 +50,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.auth.credentials import CredentialError, CredentialFailure, mcp_resolver
+from app.auth.credentials import CredentialError, CredentialFailure, CredentialKind, mcp_resolver
 from app.mcp_server.context import current_mcp_user
 from app.oauth.discovery import www_authenticate_challenge
 
@@ -135,8 +135,9 @@ async def _resolve(
     Returns (user, None) on success or (None, error_response).
 
     ``challenge`` is the WWW-Authenticate header when no token was sent,
-    ``invalid_token_challenge`` (default: the same) when a token of a kind
-    /mcp does not accept was; a failed ``ck_`` key always gets the bare one.
+    ``invalid_token_challenge`` (default: the same) when a token of any
+    kind but an API key failed (picked by ``CredentialError.kind``); a
+    failed ``ck_`` key always gets the bare one.
     """
     try:
         principal = await mcp_resolver.resolve(api_key)
@@ -147,13 +148,18 @@ async def _resolve(
                 status_code=401,
                 headers=challenge,
             )
-        if exc.failure is CredentialFailure.UNSUPPORTED:
-            return None, JSONResponse(
-                {"error": "Not a chaotic API key (expected a `ck_...` token)."},
-                status_code=401,
-                headers=invalid_token_challenge or challenge,
-            )
-        return None, JSONResponse({"error": exc.detail}, status_code=exc.status_code, headers=_WWW_AUTHENTICATE)
+        if exc.kind is CredentialKind.API_KEY:
+            # An API-key user: the OAuth hint would only mislead them.
+            return None, JSONResponse({"error": exc.detail}, status_code=exc.status_code, headers=_WWW_AUTHENTICATE)
+        # Any other kind: today a JWT, which /mcp does not accept; from
+        # CHT-1520 also an OAuth access token that failed verification.
+        message = (
+            "Not a chaotic API key (expected a `ck_...` token)."
+            if exc.failure is CredentialFailure.UNSUPPORTED else exc.detail
+        )
+        return None, JSONResponse(
+            {"error": message}, status_code=exc.status_code, headers=invalid_token_challenge or challenge,
+        )
     return principal.user, None
 
 
