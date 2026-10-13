@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in the server, CLI, MCP tools or web UI does not work as it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Paste commands and error output as text.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. chaotic issue create "..."
+        2. ...
+  - type: input
+    id: version
+    attributes:
+      label: Versions
+      description: "Output of `chaotic --version`, and the server commit from `/api/version` if you know it."
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      multiple: true
+      options:
+        - CLI
+        - MCP tools
+        - Web UI
+        - Server / API
+        - Install or upgrade
+        - Other
