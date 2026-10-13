@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.oxyde_models.user import OxydeUser as User
-from app.auth.access import refuse_registrar_write
+from app.auth.access import authorize
 from app.auth.credentials import CredentialError, CredentialKind, classify, rest_resolver
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
@@ -22,14 +22,13 @@ async def get_current_user(
         principal = await rest_resolver.resolve(credentials.credentials if credentials else None)
     except CredentialError as exc:
         raise _http_error(exc) from None
-    user = principal.user
-
     # The matched route's endpoint function (Starlette puts it in the
     # scope when routing), classified @reads/@writes/@registers
     # (app.auth.access, CHT-1561). Every authenticated REST route depends
-    # on this function, so this is the one place the registrar rule needs.
-    refuse_registrar_write(user, request.scope.get("endpoint"))
-    return user
+    # on this function, so this is the one place the registrar rule and
+    # the scope rule (CHT-1562) need.
+    authorize(principal, request.scope.get("endpoint"))
+    return principal.user
 
 
 def _http_error(exc: CredentialError) -> HTTPException:
