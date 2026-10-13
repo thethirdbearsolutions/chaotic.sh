@@ -530,6 +530,12 @@ class TestAnswers:
 
 
 class TestLiveDevicesOnly:
+    """A device row that outlived its credential gets nothing. Revoking a
+    key or session deletes its devices, but since PR #356 that cleanup
+    runs after commit and can fail, leaving the row until the startup
+    sweep (CHT-1627). These tests keep the row and change only the
+    credential, which is that window."""
+
     async def _nothing_sent(self, push, test_user, test_user2, test_issue, test_project):
         await _assign(test_issue, test_project, test_user, test_user2)
         assert push.requests == []
@@ -554,8 +560,13 @@ class TestLiveDevicesOnly:
     async def test_inactive_or_expired_key(self, change, push, test_user, test_user2, test_issue, test_project):
         key, _ = await APIKeyService().create(test_user.id, APIKeyCreate(name="phone"))
         await _device(test_user, Phone(), credential_id=key.id)
+        # Live first: one push gets through.
+        await _assign(test_issue, test_project, test_user, test_user2)
+        assert len(push.requests) == 1
+        push.requests.clear()
         await OxydeAPIKey.objects.filter(id=key.id).update(**change)
         await self._nothing_sent(push, test_user, test_user2, test_issue, test_project)
+        assert await OxydePushDevice.objects.filter(credential_id=key.id).count() == 1  # the window CHT-1627 names
 
     @pytest.mark.parametrize("field", ["revoked_at", "idle_expires_at", "absolute_expires_at"])
     async def test_revoked_or_expired_session(

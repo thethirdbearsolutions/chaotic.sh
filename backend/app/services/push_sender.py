@@ -30,7 +30,10 @@ at all; a person without one costs nothing more.
 At send time a device must still be live: ``push_service.device_status``
 is ``active`` (its credential has not expired, and it subscribed under
 the current VAPID key), the session or API key it was registered with
-is neither revoked nor expired, and its user is active. The endpoint's
+is neither revoked nor expired, and its user is active. Revoking a key
+or session deletes its devices, but after commit and best effort, so a
+row can outlive its credential for a while (CHT-1627); this check is
+what keeps that row from getting anything. The endpoint's
 host is resolved again and checked under the current policy
 (``push_service.permitted_addresses``), and the POST goes to the
 address that was checked, with the name kept for SNI, the certificate
