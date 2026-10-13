@@ -1258,6 +1258,26 @@ describe('ApiClient', () => {
         );
       });
     });
+
+    describe('getConnections', () => {
+      it('sends GET request', async () => {
+        await client.getConnections();
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/oauth/connections',
+          expect.objectContaining({ method: 'GET' })
+        );
+      });
+    });
+
+    describe('revokeConnection', () => {
+      it('sends DELETE request', async () => {
+        await client.revokeConnection('hs-1');
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/oauth/connections/hs-1',
+          expect.objectContaining({ method: 'DELETE' })
+        );
+      });
+    });
   });
 
   describe('Agent Endpoints', () => {

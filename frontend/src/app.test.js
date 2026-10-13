@@ -149,6 +149,9 @@ vi.mock('./api-keys.js', () => ({
     loadApiKeys: vi.fn(),
     showCreateApiKeyModal: vi.fn(),
 }));
+vi.mock('./connected-apps.js', () => ({
+    loadConnections: vi.fn(),
+}));
 vi.mock('./command-palette.js', () => ({
     setCommands: vi.fn((cmds) => { commandPaletteCommands = cmds; }),
     open: vi.fn(),

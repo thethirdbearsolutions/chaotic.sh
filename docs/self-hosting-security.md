@@ -278,6 +278,30 @@ tokens and client secrets therefore never appear in a URL, and so never
 in uvicorn's access log or a reverse proxy's. Responses are sent with
 `Cache-Control: no-store`.
 
+## Connected apps and revocation
+
+Each person sees the OAuth connections they approved under **Settings >
+Connected Apps** in the web app, or with `chaotic auth connections list`,
+and can disconnect any of them (`chaotic auth connections revoke <id>`;
+REST: `GET` and `DELETE /api/oauth/connections`). Only their own: someone
+else's connection is a 404, and an agent cannot list or revoke any. This
+works with `OAUTH_ENABLED` off too, so turning OAuth off never stops
+anyone ending a connection. A disconnected app's next request fails.
+
+Connections also end on their own when what they depended on goes
+(CHT-1523), in the same transaction as the change:
+
+- **An API key revoked**: the connections claimed with that key, and the
+  unused claim tickets it minted.
+- **An agent deactivated, retired with its registrar, or deleted**: every
+  connection acting as it.
+- **A member removed from a team, or leaving it**: every connection they
+  approved in that team, the ones claimed with their keys there, and the
+  keys themselves (as before).
+- **A person's account deleted**: every connection they approved.
+
+Each one is recorded in the `revocation_events` table, with counts.
+
 ## Firewall example (ufw)
 
 If you're running the server on a VPS/box with a public IP and you've
