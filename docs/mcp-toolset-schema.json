@@ -478,7 +478,7 @@
       }
     },
     "issue_block": {
-      "description": "Relate two issues: by default, `identifier` blocks `blocked`.\n\n    Direction matters for `blocks` -- the issue named first is the one\n    holding the other up, and it's the second one that stops showing up\n    in issue_ready.\n\n    Re-relating an already-related pair is a no-op that returns the\n    EXISTING relation -- including when you pass a different\n    relation_type, which is silently not applied. To change the type,\n    issue_unblock the pair first, then relate it again.\n    ",
+      "description": "Relate two issues: by default, `identifier` blocks `blocked`.\n\n    Direction matters for `blocks` -- the issue named first is the one\n    holding the other up, and it's the second one that stops showing up\n    in issue_ready.\n\n    For closing a duplicate there is no single MCP tool: the CLI's\n    `chaotic issue duplicate DUP ORIGINAL` does it in one step. Over MCP,\n    relate with relation_type='duplicates', then issue_comment, then\n    issue_update status='canceled'.\n\n    Re-relating an already-related pair is a no-op that returns the\n    EXISTING relation -- including when you pass a different\n    relation_type, which is silently not applied. To change the type,\n    issue_unblock the pair first, then relate it again.\n    ",
       "inputSchema": {
         "properties": {
           "blocked": {
@@ -650,7 +650,7 @@
       }
     },
     "issue_label": {
-      "description": "Add and/or remove labels on an issue.\n\n    Additive and subtractive rather than replacing the whole set, so\n    labelling an issue never silently drops someone else's label. Labels\n    must already exist -- this does not create them. Use label_list to\n    see them, or pass a label id directly if your key is project-scoped\n    (label_list is team-scoped and needs a team-scoped key).\n\n    Adding a label the issue already has, or removing one it doesn't\n    have, is a no-op rather than an error, so the same call is safe to\n    repeat.\n    ",
+      "description": "Add and/or remove labels on an issue.\n\n    Additive and subtractive rather than replacing the whole set, so\n    labelling an issue never silently drops someone else's label. Labels\n    must already exist -- this does not create them, and no MCP tool\n    does: create one with the CLI, `chaotic label create NAME`. Use label_list to\n    see them, or pass a label id directly if your key is project-scoped\n    (label_list is team-scoped and needs a team-scoped key).\n\n    Adding a label the issue already has, or removing one it doesn't\n    have, is a no-op rather than an error, so the same call is safe to\n    repeat.\n    ",
       "inputSchema": {
         "properties": {
           "add": {
@@ -1087,7 +1087,7 @@
       }
     },
     "issue_update": {
-      "description": "Update an issue's status, priority, estimate, assignee, title, and/or description.\n\n    An `estimate` off the project's declared estimate_scale is stored as\n    given and reported back in `warnings` (absent otherwise).\n\n    Only fields explicitly passed are changed. Returns the updated issue.\n    Pass `attest` to satisfy pending close/claim rituals in the same call.\n    ",
+      "description": "Update an issue's status, priority, estimate, assignee, title, description, and/or parent.\n\n    `parent` re-parents an existing issue (or makes it a sub-issue);\n    `no_parent` detaches it. Labels go through issue_label, relations\n    through issue_block/issue_unblock, and sprint membership through\n    sprint_add/sprint_remove. Changing the issue type has no MCP tool\n    yet; the CLI does it with `chaotic issue update ID --type TYPE`.\n\n    An `estimate` off the project's declared estimate_scale is stored as\n    given and reported back in `warnings` (absent otherwise).\n\n    Only fields explicitly passed are changed. Returns the updated issue.\n    Pass `attest` to satisfy pending close/claim rituals in the same call.\n    ",
       "inputSchema": {
         "properties": {
           "assignee": {
@@ -1149,6 +1149,25 @@
             "description": "Issue identifier, e.g. CHT-123.",
             "title": "Identifier",
             "type": "string"
+          },
+          "no_parent": {
+            "default": false,
+            "description": "Detach this issue from its parent. Cannot be combined with `parent`.",
+            "title": "No Parent",
+            "type": "boolean"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Parent issue identifier (e.g. CHT-12): moves this issue under it as a sub-issue, replacing any current parent. Works on existing issues, not only at creation.",
+            "title": "Parent"
           },
           "priority": {
             "anyOf": [

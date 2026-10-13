@@ -578,6 +578,28 @@ class TestIssueUpdate:
 
         client.update_issue.assert_called_once_with("issue-uuid-1", assignee_id=None)
 
+    async def test_update_parent_resolves_and_patches(self, mcp_mod, mock_issue):
+        """CHT-1460: stdio transport re-parents like `issue update --parent`."""
+        from cli.main import client
+        parent = dict(mock_issue, id="parent-uuid", identifier="CHT-7")
+        client.get_issue_by_identifier = MagicMock(
+            side_effect=lambda ident: parent if ident == "CHT-7" else dict(mock_issue))
+        client.update_issue = MagicMock(return_value=dict(mock_issue, parent_id="parent-uuid"))
+
+        await mcp_mod.issue_update(identifier="CHT-100", parent="CHT-7")
+
+        client.update_issue.assert_called_once_with("issue-uuid-1", parent_id="parent-uuid")
+
+    async def test_update_no_parent_patches_explicit_null(self, mcp_mod, mock_issue):
+        """`no_parent` must send parent_id=None (like `--no-parent`), not omit it."""
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
+        client.update_issue = MagicMock(return_value=dict(mock_issue, parent_id=None))
+
+        await mcp_mod.issue_update(identifier="CHT-100", no_parent=True)
+
+        client.update_issue.assert_called_once_with("issue-uuid-1", parent_id=None)
+
     async def test_update_no_fields_is_an_error(self, mcp_mod, mock_issue):
         from cli.main import client
         client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))

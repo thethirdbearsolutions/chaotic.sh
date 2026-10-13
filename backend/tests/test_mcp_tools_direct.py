@@ -84,6 +84,40 @@ class TestIssueCreateParent:
         assert child["parent_id"] == parent["id"]
 
 
+class TestIssueUpdateParent:
+    """CHT-1460: re-parenting an existing issue over MCP, end to end."""
+
+    async def test_set_move_and_clear_parent(self, test_project):
+        epic = await tools.issue_create(title="Epic")
+        other = await tools.issue_create(title="Other epic")
+        child = await tools.issue_create(title="Existing issue")
+        assert child["parent_id"] is None
+
+        result = await tools.issue_update(child["identifier"], parent=epic["identifier"])
+        assert result["parent_id"] == epic["id"]
+        assert result["parent_identifier"] == epic["identifier"]
+        listed = await tools.issue_list(epic=epic["identifier"])
+        assert [i["identifier"] for i in listed["issues"]] == [child["identifier"]]
+
+        result = await tools.issue_update(child["identifier"], parent=other["identifier"])
+        assert result["parent_id"] == other["id"]
+
+        result = await tools.issue_update(child["identifier"], no_parent=True)
+        assert result["parent_id"] is None
+        assert result["parent_identifier"] is None
+
+    async def test_cycle_is_refused_by_the_api(self, test_project):
+        parent = await tools.issue_create(title="Parent")
+        child = await tools.issue_create(title="Child", parent=parent["identifier"])
+        result = await tools.issue_update(parent["identifier"], parent=child["identifier"])
+        assert "error" in result
+        assert (await tools.issue_view(parent["identifier"]))["parent_id"] is None
+
+    async def test_parent_and_no_parent_together_is_error(self, test_issue):
+        result = await tools.issue_update(test_issue.identifier, parent="CHT-1", no_parent=True)
+        assert result["error"]["error_code"] == "tool_input"
+
+
 class TestIssueUpdateBranches:
     async def test_update_all_fields(self, test_issue, test_user2, test_team):
         from app.oxyde_models.team import OxydeTeamMember

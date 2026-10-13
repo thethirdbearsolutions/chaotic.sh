@@ -664,6 +664,40 @@ class TestIssueUpdateBody:
         (_, kwargs), = fake.calls_to("update_issue")
         assert kwargs == {"title": "New", "description": "Body"}
 
+    async def test_parent_resolves_identifier_to_id(self, fake):
+        await _tools(fake)["issue_update"]("CHT-1", parent=" CHT-2 ")
+        assert ("CHT-2",) in [args for args, _ in fake.calls_to("get_issue")]
+        (_, kwargs), = fake.calls_to("update_issue")
+        assert kwargs == {"parent_id": "i2"}
+
+    async def test_no_parent_sends_explicit_null(self, fake):
+        await _tools(fake)["issue_update"]("CHT-1", no_parent=True)
+        (_, kwargs), = fake.calls_to("update_issue")
+        assert kwargs == {"parent_id": None}
+
+    async def test_parent_and_no_parent_together_is_an_input_error(self, fake):
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="CHT-2", no_parent=True)
+        assert result["error"]["error_code"] == "tool_input"
+        assert fake.calls_to("update_issue") == []
+
+    async def test_blank_parent_is_an_input_error_not_a_detach(self, fake):
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="  ")
+        assert result["error"]["error_code"] == "tool_input"
+        assert fake.calls_to("update_issue") == []
+
+    async def test_self_parent_is_an_input_error(self, fake):
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="CHT-1")
+        assert result["error"]["error_code"] == "tool_input"
+        assert fake.calls_to("update_issue") == []
+
+    async def test_unknown_parent_fails_before_any_write(self, fake):
+        fake.pending_issue_rituals = {"pending_rituals": [
+            {"id": "r-ticket", "name": "close-gate", "approval_mode": "auto"}], "completed_rituals": []}
+        result = await _tools(fake)["issue_update"]("CHT-1", parent="CHT-404", attest={"close-gate": "x"})
+        assert "error" in result
+        assert fake.calls_to("attest_ritual_for_issue") == []
+        assert fake.calls_to("update_issue") == []
+
 
 class TestIssueStartBody:
     async def test_claims_as_me(self, fake):
