@@ -32,11 +32,11 @@ class OxydeOAuthClient(Model):
     token_endpoint_auth_method: str
     client_secret_hash: str | None
     metadata_json: str | None
-    fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None
-    cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None
+    fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None
+    cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None
     registered_ip_hash: str | None
     created_at: datetime
-    last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None
+    last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None
     is_active: bool
     objects: ClassVar["OxydeOAuthClientManager"]
 
@@ -49,8 +49,8 @@ class OxydeOAuthClientQuery(Query[OxydeOAuthClient]):
     def filter(
         self,
         *args: Any,
-        cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cache_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cache_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cache_expires_at__isnull: bool | None = None,
         client_name: str | None = None,
         client_name__contains: str | None = None,
@@ -84,8 +84,8 @@ class OxydeOAuthClientQuery(Query[OxydeOAuthClient]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
-        fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        fetched_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        fetched_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         fetched_at__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
@@ -100,8 +100,8 @@ class OxydeOAuthClientQuery(Query[OxydeOAuthClient]):
         is_active: bool | None = None,
         is_active__in: list[bool] | None = None,
         is_active__isnull: bool | None = None,
-        last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_authorized_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_authorized_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_authorized_at__isnull: bool | None = None,
         metadata_json: str | None = None,
         metadata_json__contains: str | None = None,
@@ -153,8 +153,8 @@ class OxydeOAuthClientQuery(Query[OxydeOAuthClient]):
     def exclude(
         self,
         *args: Any,
-        cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cache_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cache_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cache_expires_at__isnull: bool | None = None,
         client_name: str | None = None,
         client_name__contains: str | None = None,
@@ -188,8 +188,8 @@ class OxydeOAuthClientQuery(Query[OxydeOAuthClient]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
-        fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        fetched_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        fetched_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         fetched_at__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
@@ -204,8 +204,8 @@ class OxydeOAuthClientQuery(Query[OxydeOAuthClient]):
         is_active: bool | None = None,
         is_active__in: list[bool] | None = None,
         is_active__isnull: bool | None = None,
-        last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_authorized_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_authorized_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_authorized_at__isnull: bool | None = None,
         metadata_json: str | None = None,
         metadata_json__contains: str | None = None,
@@ -430,8 +430,8 @@ class OxydeOAuthClientManager(QueryManager[OxydeOAuthClient]):
     def filter(
         self,
         *args: Any,
-        cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cache_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cache_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cache_expires_at__isnull: bool | None = None,
         client_name: str | None = None,
         client_name__contains: str | None = None,
@@ -465,8 +465,8 @@ class OxydeOAuthClientManager(QueryManager[OxydeOAuthClient]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
-        fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        fetched_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        fetched_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         fetched_at__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
@@ -481,8 +481,8 @@ class OxydeOAuthClientManager(QueryManager[OxydeOAuthClient]):
         is_active: bool | None = None,
         is_active__in: list[bool] | None = None,
         is_active__isnull: bool | None = None,
-        last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_authorized_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_authorized_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_authorized_at__isnull: bool | None = None,
         metadata_json: str | None = None,
         metadata_json__contains: str | None = None,
@@ -534,8 +534,8 @@ class OxydeOAuthClientManager(QueryManager[OxydeOAuthClient]):
     def exclude(
         self,
         *args: Any,
-        cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cache_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cache_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cache_expires_at__isnull: bool | None = None,
         client_name: str | None = None,
         client_name__contains: str | None = None,
@@ -569,8 +569,8 @@ class OxydeOAuthClientManager(QueryManager[OxydeOAuthClient]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
-        fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        fetched_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        fetched_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         fetched_at__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
@@ -585,8 +585,8 @@ class OxydeOAuthClientManager(QueryManager[OxydeOAuthClient]):
         is_active: bool | None = None,
         is_active__in: list[bool] | None = None,
         is_active__isnull: bool | None = None,
-        last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_authorized_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_authorized_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_authorized_at__isnull: bool | None = None,
         metadata_json: str | None = None,
         metadata_json__contains: str | None = None,
@@ -790,14 +790,14 @@ class OxydeOAuthClientManager(QueryManager[OxydeOAuthClient]):
         instance: OxydeOAuthClient | None = None,
         client: Any | None = None,
         using: str | None = None,
-        cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cache_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
         client_name: str | None = None,
         client_secret_hash: str | None = None,
         created_at: datetime | None = None,
-        fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        fetched_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
         id: str | None = None,
         is_active: bool | None = None,
-        last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_authorized_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
         metadata_json: str | None = None,
         redirect_uris: str | None = None,
         registered_ip_hash: str | None = None,
@@ -835,7 +835,7 @@ class OxydeOAuthAuthorizationRequest(Model):
         is_table: bool
         table_name: str
     id: str
-    client: OxydeOAuthClient
+    client: OxydeOAuthClient | None
     redirect_uri: str
     state: str | None
     code_challenge: str
@@ -844,8 +844,8 @@ class OxydeOAuthAuthorizationRequest(Model):
     bound_user: OxydeUser | None
     created_at: datetime
     expires_at: datetime
-    consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None
-    client_id: str
+    consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None
+    client_id: str | None
     bound_user_id: str | None
     objects: ClassVar["OxydeOAuthAuthorizationRequestManager"]
 
@@ -894,8 +894,8 @@ class OxydeOAuthAuthorizationRequestQuery(Query[OxydeOAuthAuthorizationRequest])
         code_challenge__iexact: str | None = None,
         code_challenge__in: list[str] | None = None,
         code_challenge__isnull: bool | None = None,
-        consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        consumed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        consumed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         consumed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -1014,8 +1014,8 @@ class OxydeOAuthAuthorizationRequestQuery(Query[OxydeOAuthAuthorizationRequest])
         code_challenge__iexact: str | None = None,
         code_challenge__in: list[str] | None = None,
         code_challenge__isnull: bool | None = None,
-        consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        consumed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        consumed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         consumed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -1307,8 +1307,8 @@ class OxydeOAuthAuthorizationRequestManager(QueryManager[OxydeOAuthAuthorization
         code_challenge__iexact: str | None = None,
         code_challenge__in: list[str] | None = None,
         code_challenge__isnull: bool | None = None,
-        consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        consumed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        consumed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         consumed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -1427,8 +1427,8 @@ class OxydeOAuthAuthorizationRequestManager(QueryManager[OxydeOAuthAuthorization
         code_challenge__iexact: str | None = None,
         code_challenge__in: list[str] | None = None,
         code_challenge__isnull: bool | None = None,
-        consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        consumed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        consumed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         consumed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -1668,7 +1668,7 @@ class OxydeOAuthAuthorizationRequestManager(QueryManager[OxydeOAuthAuthorization
         client: OxydeOAuthClient | None = None,
         client_id: str | None = None,
         code_challenge: str | None = None,
-        consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        consumed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
         created_at: datetime | None = None,
         expires_at: datetime | None = None,
         id: str | None = None,
@@ -1708,9 +1708,9 @@ class OxydeHolderSession(Model):
         is_table: bool
         table_name: str
     id: str
-    team: OxydeTeam
-    principal_user: OxydeUser
-    holder_user: OxydeUser
+    team: OxydeTeam | None
+    principal_user: OxydeUser | None
+    holder_user: OxydeUser | None
     via: HolderVia
     oauth_client: OxydeOAuthClient | None
     credential: OxydeAPIKey | None
@@ -1721,17 +1721,17 @@ class OxydeHolderSession(Model):
     scopes: str
     holder: str | None
     created_at: datetime
-    last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None
-    last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None
+    last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None
+    last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None
     idle_expires_at: datetime
     absolute_expires_at: datetime
-    revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None
+    revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None
     revoked_by: OxydeUser | None
     revoked_reason: str | None
     superseded_by_id: str | None
-    team_id: str
-    principal_user_id: str
-    holder_user_id: str
+    team_id: str | None
+    principal_user_id: str | None
+    holder_user_id: str | None
     oauth_client_id: str | None
     credential_id: str | None
     revoked_by_id: str | None
@@ -1838,11 +1838,11 @@ class OxydeHolderSessionQuery(Query[OxydeHolderSession]):
         idle_expires_at__day: int | None = None,
         idle_expires_at__in: list[datetime] | None = None,
         idle_expires_at__isnull: bool | None = None,
-        last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_refreshed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_refreshed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_refreshed_at__isnull: bool | None = None,
-        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_used_at__isnull: bool | None = None,
         oauth_client: OxydeOAuthClient | None = None,
         oauth_client__in: list[OxydeOAuthClient] | None = None,
@@ -1890,8 +1890,8 @@ class OxydeHolderSessionQuery(Query[OxydeHolderSession]):
         resource__iexact: str | None = None,
         resource__in: list[str] | None = None,
         resource__isnull: bool | None = None,
-        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         revoked_at__isnull: bool | None = None,
         revoked_by: OxydeUser | None = None,
         revoked_by__in: list[OxydeUser] | None = None,
@@ -2061,11 +2061,11 @@ class OxydeHolderSessionQuery(Query[OxydeHolderSession]):
         idle_expires_at__day: int | None = None,
         idle_expires_at__in: list[datetime] | None = None,
         idle_expires_at__isnull: bool | None = None,
-        last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_refreshed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_refreshed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_refreshed_at__isnull: bool | None = None,
-        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_used_at__isnull: bool | None = None,
         oauth_client: OxydeOAuthClient | None = None,
         oauth_client__in: list[OxydeOAuthClient] | None = None,
@@ -2113,8 +2113,8 @@ class OxydeHolderSessionQuery(Query[OxydeHolderSession]):
         resource__iexact: str | None = None,
         resource__in: list[str] | None = None,
         resource__isnull: bool | None = None,
-        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         revoked_at__isnull: bool | None = None,
         revoked_by: OxydeUser | None = None,
         revoked_by__in: list[OxydeUser] | None = None,
@@ -2457,11 +2457,11 @@ class OxydeHolderSessionManager(QueryManager[OxydeHolderSession]):
         idle_expires_at__day: int | None = None,
         idle_expires_at__in: list[datetime] | None = None,
         idle_expires_at__isnull: bool | None = None,
-        last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_refreshed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_refreshed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_refreshed_at__isnull: bool | None = None,
-        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_used_at__isnull: bool | None = None,
         oauth_client: OxydeOAuthClient | None = None,
         oauth_client__in: list[OxydeOAuthClient] | None = None,
@@ -2509,8 +2509,8 @@ class OxydeHolderSessionManager(QueryManager[OxydeHolderSession]):
         resource__iexact: str | None = None,
         resource__in: list[str] | None = None,
         resource__isnull: bool | None = None,
-        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         revoked_at__isnull: bool | None = None,
         revoked_by: OxydeUser | None = None,
         revoked_by__in: list[OxydeUser] | None = None,
@@ -2680,11 +2680,11 @@ class OxydeHolderSessionManager(QueryManager[OxydeHolderSession]):
         idle_expires_at__day: int | None = None,
         idle_expires_at__in: list[datetime] | None = None,
         idle_expires_at__isnull: bool | None = None,
-        last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_refreshed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_refreshed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_refreshed_at__isnull: bool | None = None,
-        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_used_at__isnull: bool | None = None,
         oauth_client: OxydeOAuthClient | None = None,
         oauth_client__in: list[OxydeOAuthClient] | None = None,
@@ -2732,8 +2732,8 @@ class OxydeHolderSessionManager(QueryManager[OxydeHolderSession]):
         resource__iexact: str | None = None,
         resource__in: list[str] | None = None,
         resource__isnull: bool | None = None,
-        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         revoked_at__isnull: bool | None = None,
         revoked_by: OxydeUser | None = None,
         revoked_by__in: list[OxydeUser] | None = None,
@@ -2973,15 +2973,15 @@ class OxydeHolderSessionManager(QueryManager[OxydeHolderSession]):
         holder_user_id: str | None = None,
         id: str | None = None,
         idle_expires_at: datetime | None = None,
-        last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_refreshed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
         oauth_client: OxydeOAuthClient | None = None,
         oauth_client_id: str | None = None,
         policy_name: str | None = None,
         principal_user: OxydeUser | None = None,
         principal_user_id: str | None = None,
         resource: str | None = None,
-        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
         revoked_by: OxydeUser | None = None,
         revoked_by_id: str | None = None,
         revoked_reason: str | None = None,
@@ -3027,9 +3027,9 @@ class OxydeAuthToken(Model):
     token_hash: str
     display_prefix: str
     holder_session: OxydeHolderSession | None
-    team: OxydeTeam
-    principal_user: OxydeUser
-    holder_user: OxydeUser
+    team: OxydeTeam | None
+    principal_user: OxydeUser | None
+    holder_user: OxydeUser | None
     oauth_client: OxydeOAuthClient | None
     minted_by_credential: OxydeAPIKey | None
     resource: str
@@ -3042,12 +3042,12 @@ class OxydeAuthToken(Model):
     replaces_id: str | None
     created_at: datetime
     expires_at: datetime
-    used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None
-    revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None
+    used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None
+    revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None
     holder_session_id: str | None
-    team_id: str
-    principal_user_id: str
-    holder_user_id: str
+    team_id: str | None
+    principal_user_id: str | None
+    holder_user_id: str | None
     oauth_client_id: str | None
     minted_by_credential_id: str | None
     objects: ClassVar["OxydeAuthTokenManager"]
@@ -3233,8 +3233,8 @@ class OxydeAuthTokenQuery(Query[OxydeAuthToken]):
         resource__iexact: str | None = None,
         resource__in: list[str] | None = None,
         resource__isnull: bool | None = None,
-        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         revoked_at__isnull: bool | None = None,
         scope_project_ids: str | None = None,
         scope_project_ids__contains: str | None = None,
@@ -3279,8 +3279,8 @@ class OxydeAuthTokenQuery(Query[OxydeAuthToken]):
         token_hash__iexact: str | None = None,
         token_hash__in: list[str] | None = None,
         token_hash__isnull: bool | None = None,
-        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         used_at__isnull: bool | None = None,
     ) -> "OxydeAuthTokenQuery":
         """Filter by Q-expressions or field lookups."""
@@ -3461,8 +3461,8 @@ class OxydeAuthTokenQuery(Query[OxydeAuthToken]):
         resource__iexact: str | None = None,
         resource__in: list[str] | None = None,
         resource__isnull: bool | None = None,
-        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         revoked_at__isnull: bool | None = None,
         scope_project_ids: str | None = None,
         scope_project_ids__contains: str | None = None,
@@ -3507,8 +3507,8 @@ class OxydeAuthTokenQuery(Query[OxydeAuthToken]):
         token_hash__iexact: str | None = None,
         token_hash__in: list[str] | None = None,
         token_hash__isnull: bool | None = None,
-        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         used_at__isnull: bool | None = None,
     ) -> "OxydeAuthTokenQuery":
         """Exclude objects matching field lookups."""
@@ -3862,8 +3862,8 @@ class OxydeAuthTokenManager(QueryManager[OxydeAuthToken]):
         resource__iexact: str | None = None,
         resource__in: list[str] | None = None,
         resource__isnull: bool | None = None,
-        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         revoked_at__isnull: bool | None = None,
         scope_project_ids: str | None = None,
         scope_project_ids__contains: str | None = None,
@@ -3908,8 +3908,8 @@ class OxydeAuthTokenManager(QueryManager[OxydeAuthToken]):
         token_hash__iexact: str | None = None,
         token_hash__in: list[str] | None = None,
         token_hash__isnull: bool | None = None,
-        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         used_at__isnull: bool | None = None,
     ) -> OxydeAuthTokenQuery:
         """Filter by Q-expressions or field lookups."""
@@ -4090,8 +4090,8 @@ class OxydeAuthTokenManager(QueryManager[OxydeAuthToken]):
         resource__iexact: str | None = None,
         resource__in: list[str] | None = None,
         resource__isnull: bool | None = None,
-        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        revoked_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         revoked_at__isnull: bool | None = None,
         scope_project_ids: str | None = None,
         scope_project_ids__contains: str | None = None,
@@ -4136,8 +4136,8 @@ class OxydeAuthTokenManager(QueryManager[OxydeAuthToken]):
         token_hash__iexact: str | None = None,
         token_hash__in: list[str] | None = None,
         token_hash__isnull: bool | None = None,
-        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
+        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)]] | None = None,
         used_at__isnull: bool | None = None,
     ) -> OxydeAuthTokenQuery:
         """Exclude objects matching field lookups."""
@@ -4319,13 +4319,13 @@ class OxydeAuthTokenManager(QueryManager[OxydeAuthToken]):
         redirect_uri: str | None = None,
         replaces_id: str | None = None,
         resource: str | None = None,
-        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        revoked_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
         scope_project_ids: str | None = None,
         scopes: str | None = None,
         team: OxydeTeam | None = None,
         team_id: str | None = None,
         token_hash: str | None = None,
-        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f853b9d02c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f410cc1b100>, json_schema_input_type=PydanticUndefined)] | None = None,
     ) -> OxydeAuthToken:
         """Create new object."""
         ...

@@ -29,6 +29,11 @@ audit survives the user. `grant_id` (CHT-1442), `superseded_by_id`,
 `replaces_id` and `auth_request_id` have no foreign key: the first has
 no table yet, and the others name rows a GC may remove first.
 
+A required reference is declared `X | None = Field(default=None,
+db_nullable=False)`: the column is NOT NULL, but the model can be built
+from the `<name>_id` alone, as every insert here does (a required relation
+field would demand the related object).
+
 JSON columns are strings, as `OxydeTemplate.body` (Oxyde has no JSON
 column type here). Every index is declared in `Meta.indexes` under the
 name 0024 creates it with (CHT-1410).
@@ -84,7 +89,7 @@ class OxydeOAuthAuthorizationRequest(Model):
 
     # 128-bit random, used in the consent URL.
     id: str = Field(db_pk=True)
-    client: OxydeOAuthClient = Field(db_on_delete="CASCADE")
+    client: OxydeOAuthClient | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     redirect_uri: str = Field()
     state: str | None = Field(default=None)
     code_challenge: str = Field()
@@ -111,14 +116,14 @@ class OxydeHolderSession(Model):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     # The team the principal acts in. Also the session's scope: the
     # session reaches at most this team, narrowed by scope_project_ids.
-    team: OxydeTeam = Field(db_on_delete="CASCADE")
+    team: OxydeTeam | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     # The user every request on this session acts as (ADR-0008).
-    principal_user: OxydeUser = Field(db_on_delete="CASCADE")
+    principal_user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     # The human who answers for it: the consenting human (OAUTH), or the
     # holder of the credential that claimed it. An agent principal's
     # session works only while this human is in the agent's team, as for
     # an agent key (CHT-1508/CHT-1510).
-    holder_user: OxydeUser = Field(db_on_delete="CASCADE")
+    holder_user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     via: DbEnum(HolderVia) = Field()
     oauth_client: OxydeOAuthClient | None = Field(default=None, db_on_delete="CASCADE")
     # The `api_keys` row a grantee-credential claim, or a claim ticket's
@@ -164,9 +169,9 @@ class OxydeAuthToken(Model):
     # NULL for authorization codes and claim tickets, which have no
     # session until they are redeemed.
     holder_session: OxydeHolderSession | None = Field(default=None, db_on_delete="CASCADE")
-    team: OxydeTeam = Field(db_on_delete="CASCADE")
-    principal_user: OxydeUser = Field(db_on_delete="CASCADE")
-    holder_user: OxydeUser = Field(db_on_delete="CASCADE")
+    team: OxydeTeam | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
+    principal_user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
+    holder_user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     oauth_client: OxydeOAuthClient | None = Field(default=None, db_on_delete="CASCADE")
     minted_by_credential: OxydeAPIKey | None = Field(default=None, db_on_delete="CASCADE")
     resource: str = Field()
