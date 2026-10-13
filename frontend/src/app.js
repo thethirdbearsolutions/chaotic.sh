@@ -665,6 +665,7 @@ document.addEventListener('keydown', createInboxNavigationHandler({
     toggleInboxExpand: toggleInboxEntryElementExpand,
     collapseInboxExpand,
     archiveInboxEntry: archiveInboxEntryElement,
+    isInlineDropdownOpen,
     isModalOpen,
     isCommandPaletteOpen,
 }));

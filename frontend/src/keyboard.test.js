@@ -1724,6 +1724,34 @@ describe('Inbox Navigation Handler', () => {
             expect(event.preventDefault).toHaveBeenCalled();
             expect(actions.setSelectedIndex).not.toHaveBeenCalledWith(-1);
         });
+
+        it('yields Escape to an open inline dropdown: no collapse, no deselect (CHT-1231)', () => {
+            actions.isInlineDropdownOpen = vi.fn().mockReturnValue(true);
+            handler = createInboxNavigationHandler(actions);
+            actions.getSelectedIndex.mockReturnValue(1);
+            const event = makeEvent('Escape');
+            handler(event);
+            expect(actions.collapseInboxExpand).not.toHaveBeenCalled();
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            expect(event.preventDefault).not.toHaveBeenCalled();
+        });
+
+        it('yields j/k/Enter to an open inline dropdown too', () => {
+            actions.isInlineDropdownOpen = vi.fn().mockReturnValue(true);
+            handler = createInboxNavigationHandler(actions);
+            ['j', 'k', 'Enter', 'e'].forEach(key => handler(makeEvent(key)));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            expect(actions.toggleInboxExpand).not.toHaveBeenCalled();
+            expect(actions.archiveInboxEntry).not.toHaveBeenCalled();
+            expect(actions.collapseInboxExpand).not.toHaveBeenCalled();
+        });
+
+        it('ignores Escape during IME composition (CHT-1231)', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            handler(makeEvent('Escape', { isComposing: true }));
+            expect(actions.collapseInboxExpand).not.toHaveBeenCalled();
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
     });
 
     describe('unrecognized keys', () => {
@@ -1732,6 +1760,140 @@ describe('Inbox Navigation Handler', () => {
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
             expect(actions.toggleInboxExpand).not.toHaveBeenCalled();
         });
+    });
+});
+
+// ============================================================================
+// Inbox + global Escape layering through the real listener order
+// (CHT-1320 x CHT-1231). app.js registers the inbox handler BEFORE the global
+// one, so both see every Escape. Topmost layer first: IME composition, inline
+// dropdown, modal (dirty never closes), then expanded row, then selection.
+// ============================================================================
+
+describe('Inbox Escape layering with the global handler (CHT-1320 x CHT-1231)', () => {
+    let state;
+    let inboxActions;
+    let globalActions;
+    let stack;
+
+    function press(key, overrides = {}) {
+        const event = makeEvent(key, overrides);
+        stack.forEach(h => h(event));
+        return event;
+    }
+
+    beforeEach(() => {
+        Element.prototype.scrollIntoView = vi.fn();
+        document.body.className = '';
+        document.body.innerHTML = `
+            <div id="inbox-list">
+                <div class="inbox-row" data-entry-id="e1">Entry 1</div>
+                <div class="inbox-row keyboard-selected" data-entry-id="e2">Entry 2</div>
+            </div>
+        `;
+        state = { dropdown: false, modal: false, dirty: false, expanded: 'e2', selected: 1 };
+        const isInlineDropdownOpen = () => state.dropdown;
+        const isModalOpen = () => state.modal;
+        inboxActions = {
+            getCurrentView: () => 'inbox',
+            getSelectedIndex: () => state.selected,
+            setSelectedIndex: vi.fn(i => { state.selected = i; }),
+            toggleInboxExpand: vi.fn(),
+            collapseInboxExpand: vi.fn(() => {
+                if (state.expanded === null) return false;
+                state.expanded = null;
+                return true;
+            }),
+            archiveInboxEntry: vi.fn(),
+            isInlineDropdownOpen,
+            isModalOpen,
+            isCommandPaletteOpen: () => false,
+        };
+        globalActions = {
+            closeModal: vi.fn(() => { state.modal = false; }),
+            closeSidebar: vi.fn(),
+            navigateTo: vi.fn(),
+            showCreateIssueModal: vi.fn(),
+            showKeyboardShortcutsHelp: vi.fn(),
+            isModalOpen,
+            focusSearch: vi.fn(),
+            closeDropdowns: vi.fn(),
+            isDetailViewActive: () => false,
+            isInlineDropdownOpen,
+            closeInlineDropdowns: vi.fn(() => { state.dropdown = false; }),
+            isModalDirty: () => state.dirty,
+            focusModalField: vi.fn(),
+        };
+        // Same order as app.js: inbox list handler, then global shortcuts.
+        stack = [createInboxNavigationHandler(inboxActions), createKeyboardHandler(globalActions)];
+    });
+
+    it('dropdown, then expanded row, then selection: one layer per Escape', () => {
+        state.dropdown = true;
+
+        press('Escape');
+        expect(globalActions.closeInlineDropdowns).toHaveBeenCalledTimes(1);
+        expect(state.expanded).toBe('e2');
+        expect(state.selected).toBe(1);
+
+        press('Escape');
+        expect(state.expanded).toBe(null);
+        expect(state.selected).toBe(1);
+
+        press('Escape');
+        expect(state.selected).toBe(-1);
+        expect(document.querySelectorAll('.keyboard-selected')).toHaveLength(0);
+        expect(globalActions.closeInlineDropdowns).toHaveBeenCalledTimes(1);
+        expect(globalActions.closeModal).not.toHaveBeenCalled();
+    });
+
+    it('a dirty modal over the inbox never closes and leaves the row expanded', () => {
+        state.modal = true;
+        state.dirty = true;
+
+        press('Escape', { target: { tagName: 'BUTTON' } });
+        press('Escape', { target: { tagName: 'BODY' } });
+        expect(globalActions.closeModal).not.toHaveBeenCalled();
+        expect(globalActions.focusModalField).toHaveBeenCalledTimes(2);
+        expect(inboxActions.collapseInboxExpand).not.toHaveBeenCalled();
+        expect(state.expanded).toBe('e2');
+        expect(state.selected).toBe(1);
+    });
+
+    it('a clean modal closes first, then the row collapses, then deselects', () => {
+        state.modal = true;
+
+        press('Escape', { target: { tagName: 'BUTTON' } });
+        expect(globalActions.closeModal).toHaveBeenCalledTimes(1);
+        expect(state.expanded).toBe('e2');
+
+        press('Escape');
+        expect(state.expanded).toBe(null);
+        expect(state.selected).toBe(1);
+
+        press('Escape');
+        expect(state.selected).toBe(-1);
+    });
+
+    it('a dropdown inside a dirty modal closes alone; the modal and row survive', () => {
+        state.modal = true;
+        state.dirty = true;
+        state.dropdown = true;
+
+        press('Escape', { target: { tagName: 'INPUT', blur: vi.fn() } });
+        expect(globalActions.closeInlineDropdowns).toHaveBeenCalledTimes(1);
+        expect(globalActions.closeModal).not.toHaveBeenCalled();
+        expect(state.modal).toBe(true);
+        expect(state.expanded).toBe('e2');
+    });
+
+    it('Escape during IME composition touches no layer', () => {
+        state.dropdown = true;
+        press('Escape', { isComposing: true });
+        expect(globalActions.closeInlineDropdowns).not.toHaveBeenCalled();
+        expect(inboxActions.collapseInboxExpand).not.toHaveBeenCalled();
+        expect(state.expanded).toBe('e2');
+        expect(state.selected).toBe(1);
     });
 });
 

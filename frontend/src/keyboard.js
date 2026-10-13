@@ -467,6 +467,13 @@ export function createInboxNavigationHandler(actions) {
         if (e.target.closest?.('.sidebar-nav')) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
+        // CHT-1231 / CHT-1320: this handler registers before the global one,
+        // so it must honour the same Escape layering. An IME composition owns
+        // Escape, and an open inline dropdown is the topmost layer: the global
+        // handler closes it alone, and the row stays expanded until the next
+        // press. Yielding for every key also keeps j/k/Enter for the dropdown.
+        if (e.isComposing) return;
+        if (actions.isInlineDropdownOpen?.()) return;
 
         const items = document.querySelectorAll(selector);
         if (items.length === 0) return;
