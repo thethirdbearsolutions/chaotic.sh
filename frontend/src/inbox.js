@@ -50,7 +50,8 @@ const reassignInFlight = new Set();
 // action is skipped as already applied, so nothing would correct it. These
 // overlays are laid over every fetch result until a fetch that started after
 // the server confirmed the action (by answering the request or by sending its
-// event) comes back: from then on the server's answer is authoritative.
+// event) comes back: that fetch, and every later one, is taken as the
+// server's answer.
 //
 // id -> request id of the last load started before the server confirmed the
 // action, or null while unconfirmed. A load whose request id is greater
@@ -59,14 +60,13 @@ const archivedLocally = new Map();
 // id -> { readAt, confirmedAfter } (confirmedAfter as above)
 const readLocally = new Map();
 
-function confirmOverlay(map, entryId) {
-    if (!map.has(entryId)) return;
-    if (map === archivedLocally) {
-        if (archivedLocally.get(entryId) === null) archivedLocally.set(entryId, loadInboxRequestId);
-    } else {
-        const read = readLocally.get(entryId);
-        if (read.confirmedAfter === null) read.confirmedAfter = loadInboxRequestId;
-    }
+function confirmArchived(entryId) {
+    if (archivedLocally.get(entryId) === null) archivedLocally.set(entryId, loadInboxRequestId);
+}
+
+function confirmRead(entryId) {
+    const read = readLocally.get(entryId);
+    if (read && read.confirmedAfter === null) read.confirmedAfter = loadInboxRequestId;
 }
 
 /** Forget every local overlay (test isolation; module state outlives a test). */
@@ -115,9 +115,9 @@ export function recordInboxEvent(type, data) {
     if (!data?.id) return;
     if (type === 'archived') {
         if (!archivedLocally.has(data.id)) archivedLocally.set(data.id, null);
-        confirmOverlay(archivedLocally, data.id);
+        confirmArchived(data.id);
     } else if (type === 'read') {
-        confirmOverlay(readLocally, data.id);
+        confirmRead(data.id);
     }
 }
 
@@ -177,15 +177,19 @@ export async function loadInbox({ focusFirst = false, background = false } = {})
     try {
         const fetched = await api.getInbox(team.id, { unread: showUnreadOnly, limit: 100 });
         if (requestId !== loadInboxRequestId) return; // a newer loadInbox() has since started
+        // What was archived when this fetch started, before pruning: an open
+        // row archived elsewhere must not be held on to (see
+        // applyBackgroundRefresh). Then drop what this fetch already
+        // reflects, and lay the rest over it.
+        const archivedIds = new Set(archivedLocally.keys());
+        pruneLocalState(requestId);
         const entries = overlayLocalState(fetched || []);
 
         const intent = pendingLoadIntent;
         pendingLoadIntent = null;
         if (!intent) {
-            applyBackgroundRefresh(entries);
-            pruneLocalState(requestId);
+            applyBackgroundRefresh(entries, archivedIds);
         } else {
-            pruneLocalState(requestId);
             setInboxEntries(entries);
             renderInbox();
             // CHT-1250 UX: keyboard nav "didn't kick in right away" because
@@ -278,7 +282,7 @@ function restoreListFocus(saved, fallbackRow) {
  * scroll. The expanded entry stays even if it no longer matches the
  * unread-only filter (expanding marked it read), until the user moves on.
  */
-function applyBackgroundRefresh(fresh) {
+function applyBackgroundRefresh(fresh, archivedIds) {
     const container = document.getElementById('inbox-list');
     if (!container) return;
     const old = getInboxEntries();
@@ -295,7 +299,7 @@ function applyBackgroundRefresh(fresh) {
         const kept = old.find(e => e.id === expandedEntryId);
         // Kept only when it merely stopped matching the filter; one archived
         // here or in another tab really is gone (CHT-1514).
-        if (kept && showUnreadOnly && !archivedLocally.has(expandedEntryId)) {
+        if (kept && showUnreadOnly && !archivedIds.has(expandedEntryId)) {
             next = [...fresh];
             next.splice(Math.min(old.indexOf(kept), next.length), 0, kept);
         } else {
@@ -411,7 +415,7 @@ export async function archiveInboxEntry(entryId) {
     // would un-hide.
     try {
         await api.archiveInbox(entryId);
-        confirmOverlay(archivedLocally, entryId);
+        confirmArchived(entryId);
     } catch (e) {
         // Not archived after all: let the next fetch show it again.
         archivedLocally.delete(entryId);
@@ -459,7 +463,7 @@ function markEntryReadOptimistic(entryId) {
     setInboxEntries([...entries]);
     setInboxUnreadCount(Math.max(0, getInboxUnreadCount() - 1));
     renderInboxBadge();
-    api.markInboxRead(entryId).then(() => confirmOverlay(readLocally, entryId), e => {
+    api.markInboxRead(entryId).then(() => confirmRead(entryId), e => {
         if (readLocally.get(entryId)?.readAt === stamp) readLocally.delete(entryId);
         const current = getInboxEntries().find(x => x.id === entryId);
         if (current && current.read_at === stamp) {
@@ -650,25 +654,41 @@ export function renderInbox() {
  * so the badge/list stay correct without a full reload.
  */
 async function markEntryRead(entryId) {
-    const entries = getInboxEntries();
-    const entry = entries.find(e => e.id === entryId);
+    const entry = getInboxEntries().find(e => e.id === entryId);
     if (!entry || entry.read_at) return; // already read (or unknown) -- no-op
 
+    // Overlay first (CHT-1514 review): a fetch landing while the request is
+    // in flight must not show the row unread again. The list itself is
+    // updated only once the server agrees, and from whatever it holds THEN:
+    // a background refresh may have replaced it during the await.
+    const stamp = new Date().toISOString();
+    readLocally.set(entryId, { readAt: stamp, confirmedAfter: null });
     try {
         await api.markInboxRead(entryId);
-        entry.read_at = new Date().toISOString();
-        readLocally.set(entryId, { readAt: entry.read_at, confirmedAfter: loadInboxRequestId });
-        setInboxEntries([...entries]);
+    } catch (e) {
+        if (readLocally.get(entryId)?.readAt === stamp) readLocally.delete(entryId);
+        // A refresh during the await may have laid the overlay on the row.
+        const current = getInboxEntries().find(x => x.id === entryId);
+        if (current && current.read_at === stamp) {
+            current.read_at = null;
+            setInboxEntries([...getInboxEntries()]);
+            rerenderInboxRows([entryId]);
+        }
+        console.error('Failed to mark inbox entry read:', e);
+        return;
+    }
+    confirmRead(entryId);
+    const current = getInboxEntries().find(x => x.id === entryId);
+    if (current && !current.read_at) {
+        current.read_at = stamp;
+        setInboxEntries([...getInboxEntries()]);
         setInboxUnreadCount(Math.max(0, getInboxUnreadCount() - 1));
         renderInboxBadge();
-        // Only re-render the row itself when visible, to avoid clobbering
-        // keyboard-selection state on a full re-render. entryId is always
-        // a server-generated UUID (no quotes/brackets possible), so no
-        // CSS.escape is needed for this attribute selector.
-        const row = document.querySelector(`.inbox-row[data-entry-id="${entryId}"]`);
-        if (row) row.classList.remove('inbox-row-unread');
-    } catch (e) {
-        console.error('Failed to mark inbox entry read:', e);
+        rerenderInboxRows([entryId]);
+    } else {
+        // A refresh already showed it read; its badge count may predate
+        // the read, so re-sync.
+        refreshInboxUnreadCount();
     }
 }
 

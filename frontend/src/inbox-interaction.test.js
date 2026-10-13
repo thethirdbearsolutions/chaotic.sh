@@ -624,6 +624,17 @@ describe('CHT-1514: a fetch already in flight cannot undo a local archive or rea
         expect(rowById('assign-1')).toBeUndefined();
         archived({});
         await flush();
+        // Confirmed now, but still hidden on screen.
+        expect(rowById('assign-1')).toBeUndefined();
+        // Our echo, late: skipped, nothing reloads.
+        dispatch({ type: 'archived', entity: 'inbox', data: { id: 'assign-1', recipient_user_id: 'me' } });
+        expect(api.getInbox).toHaveBeenCalledTimes(1);
+        // The first fetch started after confirmation is the server's answer
+        // and retires the tombstone: a later stale-looking result shows it.
+        api.getInbox.mockResolvedValueOnce([{ ...UNREAD }, { ...UNREAD2 }]);
+        dispatch({ type: 'created', entity: 'inbox', data: { id: 'z', recipient_user_id: 'me' } });
+        await flush();
+        expect(rowById('assign-1')).toBeTruthy();
     });
 
     it('a row read here keeps its read state and the badge is not lowered twice', async () => {
@@ -653,11 +664,8 @@ describe('CHT-1514: a fetch already in flight cannot undo a local archive or rea
     it('once a fetch started after the server confirmed, the server is trusted again', async () => {
         key(toggleOf(row()), 'e');
         await flush(); // archive confirmed
-        api.getInbox.mockResolvedValueOnce([{ ...UNREAD2 }]);
-        dispatch({ type: 'created', entity: 'inbox', data: { id: 'z', recipient_user_id: 'me' } });
-        await flush();
-        // A later fetch that (for whatever reason) has the entry shows it:
-        // the local tombstone did not outlive the confirming fetch.
+        // The very first fetch started after confirmation is authoritative:
+        // if (for whatever reason) it has the entry, the entry shows.
         api.getInbox.mockResolvedValueOnce([{ ...UNREAD }, { ...UNREAD2 }]);
         dispatch({ type: 'created', entity: 'inbox', data: { id: 'z', recipient_user_id: 'me' } });
         await flush();
@@ -693,6 +701,142 @@ describe('CHT-1514: a fetch already in flight cannot undo a local archive or rea
 
             expect(rowById('assign-1')).toBeUndefined();
             expect(isExpanded()).toBe(false);
+        } finally {
+            api.getInbox.mockResolvedValue([]);
+            toggleInboxUnreadFilter();
+            await flush();
+        }
+    });
+});
+
+describe('CHT-1514 review: the other read paths keep the overlay too', () => {
+    const UNREAD = { ...ASSIGN, read_at: null };
+    const UNREAD2 = { ...OTHER, read_at: null };
+    const created = () => dispatch({ type: 'created', entity: 'inbox', data: { id: 'z', recipient_user_id: 'me' } });
+    let release;
+    function startStaleRefresh() {
+        api.getInbox.mockImplementationOnce(() => new Promise(r => { release = r; }));
+        created();
+    }
+    const dot = (id) => rowById(id)?.querySelector('.inbox-row-unread-dot') ?? null;
+
+    beforeEach(() => {
+        api.getInbox.mockResolvedValue([]);
+        setInboxEntries([{ ...UNREAD }, { ...UNREAD2 }]);
+        setInboxUnreadCount(2);
+        renderInbox();
+        selectInboxRow(0);
+    });
+
+    // markInboxRead answers only when the test says so.
+    function holdRead() {
+        const answer = {};
+        api.markInboxRead.mockImplementationOnce(() => new Promise((ok, fail) => {
+            answer.ok = ok;
+            answer.fail = fail;
+        }));
+        return answer;
+    }
+
+    // "Open" (markEntryRead) on a row that is still unread. Expanding a row
+    // marks it read on its own, so press an Open button for the unread
+    // entry the way the action bar renders it.
+    function clickOpen(entryId) {
+        const btn = document.createElement('button');
+        btn.dataset.action = 'open-inbox-full';
+        btn.dataset.entryId = entryId;
+        btn.dataset.issueId = 'issue-9';
+        document.getElementById('inbox-list').appendChild(btn);
+        click(btn);
+        expect(api.markInboxRead).toHaveBeenCalledWith(entryId);
+    }
+
+    it('Open: a stale fetch landing during the request does not show the row unread', async () => {
+        const answer = holdRead();
+        clickOpen('assign-2');
+
+        startStaleRefresh();
+        release([{ ...UNREAD }, { ...UNREAD2 }]);
+        await flush();
+        expect(getInboxEntries().find(e => e.id === 'assign-2').read_at).not.toBeNull();
+        expect(dot('assign-2')).toBeNull();
+
+        answer.ok({});
+        await flush();
+        expect(getInboxEntries().find(e => e.id === 'assign-2').read_at).not.toBeNull();
+    });
+
+    it('Open: a refresh during the request is not overwritten by the list from before it', async () => {
+        const answer = holdRead();
+        clickOpen('assign-2');
+
+        // Another tab archives assign-1 meanwhile; the refresh drops it.
+        api.getInbox.mockResolvedValueOnce([{ ...UNREAD2 }]);
+        dispatch({ type: 'archived', entity: 'inbox', data: { id: 'assign-1', recipient_user_id: 'me' } });
+        await flush();
+        expect(getInboxEntries().map(e => e.id)).toEqual(['assign-2']);
+
+        answer.ok({});
+        await flush();
+        expect(getInboxEntries().map(e => e.id)).toEqual(['assign-2']);
+        expect(rowById('assign-1')).toBeUndefined();
+    });
+
+    it('Open: a failed request lets the next fetch show the row unread again', async () => {
+        api.markInboxRead.mockRejectedValueOnce(new Error('nope'));
+        const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+        clickOpen('assign-2');
+        await flush();
+        err.mockRestore();
+        api.getInbox.mockResolvedValueOnce([{ ...UNREAD }, { ...UNREAD2 }]);
+        created();
+        await flush();
+        expect(dot('assign-2')).not.toBeNull();
+    });
+
+    it('expand: a failed optimistic read lets the next fetch show the row unread again', async () => {
+        const answer = holdRead();
+        key(toggleOf(row()), 'Enter'); // expand: optimistic read
+        startStaleRefresh();
+        answer.fail(new Error('404'));
+        await flush();
+        release([{ ...UNREAD }, { ...UNREAD2 }]);
+        await flush();
+        expect(getInboxEntries().find(e => e.id === 'assign-1').read_at).toBeNull();
+        expect(dot('assign-1')).not.toBeNull();
+    });
+
+    it('mark all read: a stale fetch does not bring the unread dots back', async () => {
+        startStaleRefresh();
+        const btn = document.createElement('button');
+        btn.dataset.action = 'mark-all-inbox-read';
+        document.body.appendChild(btn);
+        click(btn);
+        await flush();
+        expect(api.markAllInboxRead).toHaveBeenCalledWith('team-1');
+        release([{ ...UNREAD }, { ...UNREAD2 }]);
+        await flush();
+        expect(dot('assign-1')).toBeNull();
+        expect(dot('assign-2')).toBeNull();
+    });
+
+    it('unread-only: a row read here and collapsed leaves on the next refresh, even a stale one', async () => {
+        api.getInbox.mockResolvedValueOnce([{ ...UNREAD }, { ...UNREAD2 }]);
+        toggleInboxUnreadFilter();
+        try {
+            await flush();
+            await flush();
+            selectInboxRow(0);
+            key(toggleOf(row()), 'Enter'); // read
+            key(document.activeElement, 'Escape'); // collapse
+            expect(isExpanded()).toBe(false);
+            expect(rowById('assign-1')).toBeTruthy();
+
+            startStaleRefresh();
+            release([{ ...UNREAD }, { ...UNREAD2 }]); // still lists it as unread
+            await flush();
+            expect(rowById('assign-1')).toBeUndefined();
+            expect(rowById('assign-2')).toBeTruthy();
         } finally {
             api.getInbox.mockResolvedValue([]);
             toggleInboxUnreadFilter();
