@@ -274,7 +274,7 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                 </div>
                 <div class="feature-card">
                     <h3 class="feature-title">Remote: add by URL <span class="badge-next">Next release</span></h3>
-                    <p class="feature-description">The server speaks MCP over Streamable HTTP at <code>/mcp</code>. Give a client the URL and nothing else: it finds Chaotic's sign-in (OAuth), opens a consent page in your browser, and you approve it there. Works with claude.ai custom connectors, Claude Desktop, ChatGPT, Claude Code and MCP Inspector.</p>
+                    <p class="feature-description">The server speaks MCP over Streamable HTTP at <code>/mcp</code>. Give a client the URL and nothing else: it finds Chaotic's sign-in (OAuth), opens a consent page in your browser, and you approve it there. Setup is documented for claude.ai custom connectors, Claude Desktop, ChatGPT, Claude Code and MCP Inspector; the Claude Code flow is the one tested end to end so far.</p>
                     <pre class="code-block"><code>claude mcp add --transport http chaotic \
   https://your-chaotic-host/mcp
 # then /mcp in a session → Authenticate</code></pre>
@@ -305,7 +305,7 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                     </li>
                     <li>
                         <h4>A human behind every agent</h4>
-                        <p>Every agent and key has a human owner. Remove someone from the team and the agent keys they hold stop working; <code>chaotic agent deactivate</code> retires an agent while keeping its work attributed to it.</p>
+                        <p>Each agent has a human owner, and each agent key a human holder. Remove someone from the team and the agent keys they hold stop working; <code>chaotic agent deactivate</code> retires an agent while keeping its work attributed to it.</p>
                     </li>
                 </ul>
             </div>
