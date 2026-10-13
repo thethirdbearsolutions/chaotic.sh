@@ -1,6 +1,8 @@
 """Application configuration."""
 import os
-from pydantic import Field
+from urllib.parse import urlsplit
+
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -53,6 +55,18 @@ class Settings(BaseSettings):
     # explicit env var, same as everything else here.
     app_base_url: str = "http://localhost:24267"
 
+    # OAuth 2.1 for remote MCP clients (CHT-1368; design doc "MCP OAuth
+    # and token service: design" §2). Off by default: until the
+    # authorize/token/revoke/register endpoints land (CHT-1518..1520),
+    # turning it on would advertise endpoints that 404. When on, the
+    # RFC 9728 / RFC 8414 discovery documents are served and a 401 on
+    # /mcp points at them; the issuer is exactly APP_BASE_URL (never the
+    # request Host), so APP_BASE_URL must then be an https origin, or a
+    # loopback http one for a same-machine client (checked below).
+    # When off, /mcp and both discovery paths behave as before CHT-1517
+    # except that the discovery paths 404 instead of serving the SPA.
+    oauth_enabled: bool = False
+
     # Email (SMTP) -- CHT-1251. Empty smtp_host means "unconfigured": the
     # mutating paths that would send email (gate-pending, invitations) log
     # and skip rather than erroring. See EmailService.is_configured().
@@ -72,6 +86,44 @@ class Settings(BaseSettings):
     bcrypt_rounds: int = Field(12, ge=4, le=31)
 
     model_config = SettingsConfigDict(env_file=".env")
+
+    @model_validator(mode="after")
+    def _check_oauth_issuer(self) -> "Settings":
+        """With OAUTH_ENABLED, APP_BASE_URL becomes the OAuth issuer, so it
+        must be one (RFC 8414 §2 / OAuth 2.1 §1.5): https, or http on a
+        loopback host; no query or fragment; and no path, since the
+        discovery documents are served at this origin's root
+        (``/.well-known/...``). Fails when Settings is built, at import,
+        rather than as a client-side discovery error much later.
+        """
+        if not self.oauth_enabled:
+            return self
+        problem = oauth_issuer_problem(self.app_base_url)
+        if problem:
+            raise ValueError(f"OAUTH_ENABLED requires APP_BASE_URL to be an OAuth issuer: {problem}")
+        return self
+
+    @property
+    def oauth_issuer(self) -> str:
+        """APP_BASE_URL exactly, minus any trailing slash (CHT-1517)."""
+        return self.app_base_url.rstrip("/")
+
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def oauth_issuer_problem(base_url: str) -> str | None:
+    """Why ``base_url`` can't be an OAuth issuer, or None if it can."""
+    parsed = urlsplit(base_url.rstrip("/"))
+    if parsed.scheme not in ("https", "http") or not parsed.hostname:
+        return f"{base_url!r} is not an absolute http(s) URL"
+    if parsed.scheme == "http" and parsed.hostname not in _LOOPBACK_HOSTS:
+        return f"{base_url!r} must use https (plain http is allowed only on a loopback host)"
+    if parsed.path or parsed.query or parsed.fragment:
+        return f"{base_url!r} must be a bare origin, with no path, query or fragment"
+    if parsed.username or parsed.password:
+        return f"{base_url!r} must not carry credentials"
+    return None
 
 
 @lru_cache

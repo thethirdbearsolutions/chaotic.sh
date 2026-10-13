@@ -256,6 +256,71 @@ class TestAuth:
         assert (await client.post(f"/mcp/{key}", json=init, headers=_MCP_HEADERS)).status_code == 403
 
 
+class TestOAuthChallenge:
+    """CHT-1517: with OAUTH_ENABLED, a 401 on bare /mcp for a missing or
+    non-ck_ bearer points at the RFC 9728 metadata. ck_ callers (a failed
+    key, the capability URL) keep the bare challenge, and with the flag off
+    every 401 is exactly the pre-CHT-1517 bare ``Bearer``.
+    """
+
+    _CHALLENGE = (
+        'Bearer resource_metadata="https://tracker.example.com/.well-known/oauth-protected-resource/mcp", '
+        'scope="chaotic:write offline_access"'
+    )
+
+    @pytest.fixture
+    def oauth(self, monkeypatch):
+        from app.config import get_settings
+
+        def _set(enabled: bool):
+            monkeypatch.setenv("OAUTH_ENABLED", "true" if enabled else "false")
+            monkeypatch.setenv("APP_BASE_URL", "https://tracker.example.com/")
+            get_settings.cache_clear()
+
+        yield _set
+        get_settings.cache_clear()
+
+    async def _init(self, client, headers, url="/mcp"):
+        return await client.post(url, json=_rpc("initialize", _init_params()), headers=headers)
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    async def test_missing_auth(self, client, oauth, enabled):
+        oauth(enabled)
+        resp = await self._init(client, _MCP_HEADERS)
+        assert resp.status_code == 401
+        assert resp.headers["www-authenticate"] == (self._CHALLENGE if enabled else "Bearer")
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    async def test_non_ck_bearer(self, client, oauth, enabled):
+        # e.g. an OAuth access token, which /mcp can't validate until
+        # CHT-1516; the client is pointed at discovery either way.
+        oauth(enabled)
+        resp = await self._init(client, {**_MCP_HEADERS, "Authorization": "Bearer cat_somethingelse"})
+        assert resp.status_code == 401
+        assert resp.headers["www-authenticate"] == (self._CHALLENGE if enabled else "Bearer")
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    async def test_bad_ck_key_stays_bare(self, client, oauth, enabled):
+        oauth(enabled)
+        resp = await self._init(client, {**_MCP_HEADERS, "Authorization": "Bearer ck_" + "0" * 64})
+        assert resp.status_code == 401
+        assert resp.headers["www-authenticate"] == "Bearer"
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    async def test_capability_url_stays_bare(self, client, oauth, enabled):
+        oauth(enabled)
+        for key in ("ck_" + "0" * 64, "notakey"):
+            resp = await self._init(client, _MCP_HEADERS, url=f"/mcp/{key}")
+            assert resp.status_code == 401
+            assert resp.headers["www-authenticate"] == "Bearer"
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    async def test_api_key_auth_unchanged(self, client, oauth, api_key, bearer_headers, enabled):
+        oauth(enabled)
+        assert (await self._init(client, bearer_headers)).status_code == 200
+        assert (await self._init(client, _MCP_HEADERS, url=f"/mcp/{api_key}")).status_code == 200
+
+
 class TestExpiredKeys:
     """PR #219 review finding 2: expiring keys. Enforcement itself
     predates this PR (APIKeyService.validate_key), but /mcp is a new

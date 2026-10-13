@@ -31,6 +31,15 @@ UX is an explicit, separate follow-up):
    process (reverse proxies, CDNs) or client-side history -- hence the
    dedicated-expiring-key advice above.
 
+OAuth discovery (CHT-1517): with ``OAUTH_ENABLED`` on, a 401 on bare
+/mcp for a missing or non-``ck_`` bearer carries the RFC 9728
+``resource_metadata`` and ``scope`` challenge parameters, which is how an
+OAuth MCP client finds the authorization server (see
+``app.oauth.discovery``). A presented ``ck_`` key that fails, and every
+401 on the capability URL, keep the bare ``Bearer`` challenge: those
+callers are API-key users, and the OAuth hint would only mislead them.
+With the flag off every 401 is the bare challenge, as before.
+
 Either way, the resolved user is stashed in
 ``context.current_mcp_user`` for the life of the request; the
 ``InProcessBackend`` adapter (backend.py) reads it back out on every call.
@@ -44,6 +53,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.deps import _authenticate_with_api_key
 from app.mcp_server.context import current_mcp_user
+from app.oauth.discovery import www_authenticate_challenge
 
 _WWW_AUTHENTICATE = {"WWW-Authenticate": "Bearer"}
 
@@ -116,21 +126,25 @@ class CapabilityPathRedaction:
         await self._app(scope, receive, send)
 
 
-async def _resolve(api_key: str | None):
+async def _resolve(api_key: str | None, challenge: dict[str, str] = _WWW_AUTHENTICATE):
     """Validate `api_key` exactly the way the REST API's `ck_...` bearer
     path does. Returns (user, None) on success or (None, error_response).
+
+    ``challenge`` is the WWW-Authenticate header for the two cases where
+    no ``ck_`` key was presented (missing, or some other token); a failed
+    ``ck_`` key always gets the bare one.
     """
     if not api_key:
         return None, JSONResponse(
             {"error": "Missing API key. Send `Authorization: Bearer ck_...`, or use the /mcp/<key> capability URL."},
             status_code=401,
-            headers=_WWW_AUTHENTICATE,
+            headers=challenge,
         )
     if not api_key.startswith("ck_"):
         return None, JSONResponse(
             {"error": "Not a chaotic API key (expected a `ck_...` token)."},
             status_code=401,
-            headers=_WWW_AUTHENTICATE,
+            headers=challenge,
         )
     try:
         user = await _authenticate_with_api_key(api_key)
@@ -151,12 +165,15 @@ class _AuthWrapperBase:
     def _extract_key(self, scope: Scope) -> str | None:
         raise NotImplementedError
 
+    def _challenge(self) -> dict[str, str]:
+        return _WWW_AUTHENTICATE
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":  # pragma: no cover -- Route only ever matches "http" scopes
             await self._app(scope, receive, send)
             return
 
-        user, error = await _resolve(self._extract_key(scope))
+        user, error = await _resolve(self._extract_key(scope), self._challenge())
         if error is not None:
             await error(scope, receive, send)
             return
@@ -176,6 +193,10 @@ class BearerHeaderAuth(_AuthWrapperBase):
         if auth_header and auth_header.lower().startswith("bearer "):
             return auth_header[7:].strip()
         return None
+
+    def _challenge(self) -> dict[str, str]:
+        # Read per request, so OAUTH_ENABLED needs no remount (CHT-1517).
+        return {"WWW-Authenticate": www_authenticate_challenge()}
 
 
 class CapabilityURLAuth(_AuthWrapperBase):
