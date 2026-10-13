@@ -246,7 +246,10 @@ With `OAUTH_ENABLED` on, MCP clients register in one of two ways
   per source address, and at most `OAUTH_CIMD_MAX_PENDING_CLIENTS`
   (default 500) never-authorized documents are kept. Both in-memory
   limits here, and `OAUTH_AUTHORIZE_MAX_PER_IP_PER_MINUTE` (default 30)
-  on `/oauth/authorize`, are per server process.
+  on `/oauth/authorize`, are per server process, and each remembers
+  at most 10,000 addresses, so an attacker with more addresses than that
+  (IPv4 addresses or IPv6 /64s) can outrun them; the caps on stored
+  clients still hold.
 - **Dynamic client registration** (`POST /oauth/register`, RFC 7591), for
   older clients. It is unauthenticated by design, so it is limited:
   `OAUTH_DCR_MAX_PER_IP_PER_HOUR` (default 10) registrations per source

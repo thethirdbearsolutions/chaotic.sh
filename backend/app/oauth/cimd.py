@@ -52,7 +52,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from app.oauth.clients import redirect_uri_problem
+from app.oauth.clients import has_only_uri_characters, redirect_uri_problem
 
 FETCH_TIMEOUT_SECONDS = 3.0
 MAX_DOCUMENT_BYTES = 16 * 1024
@@ -98,6 +98,10 @@ def check_client_id_url(client_id: str) -> None:
         raise CIMDError("the client_id URL is too long")
     if not client_id.isascii() or any(c.isspace() or ord(c) < 0x20 or ord(c) == 0x7F for c in client_id):
         raise CIMDError("the client_id URL contains whitespace, control or non-ASCII characters")
+    if not has_only_uri_characters(client_id):
+        # A backslash above all: a browser reads it as "/", so the host
+        # the consent page names could differ from the one fetched.
+        raise CIMDError("the client_id URL may contain only RFC 3986 characters")
     parts = urlsplit(client_id)
     if parts.scheme != "https":
         raise CIMDError("a client_id URL must use https")
