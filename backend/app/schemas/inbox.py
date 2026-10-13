@@ -1,7 +1,7 @@
 """Inbox schemas (CHT-1250)."""
-from typing import ClassVar
+from typing import ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, field_validator
-from app.enums import InboxEntryKind
+from app.enums import InboxActionKind, InboxActionNote, InboxEntryKind, InboxEntryState
 from app.schemas.principal import HasPrincipals, PrincipalSummary
 from app.utils import DateTimeUTC
 
@@ -16,6 +16,19 @@ def _coerce_enum(enum_cls, v):
         except KeyError:
             return enum_cls(v)  # by value: "gate_pending"
     return v
+
+
+class InboxEntryAction(BaseModel):
+    """One call the recipient can make on this entry, spelled out so a
+    client (and a notification button) never builds a URL (CHT-1607).
+    `path` is absolute from the server root and already carries the ids;
+    send the request with the user's own credentials. `note` says whether
+    the JSON body takes {"note": "..."}."""
+
+    kind: InboxActionKind
+    method: Literal["POST"] = "POST"
+    path: str
+    note: InboxActionNote = InboxActionNote.NONE
 
 
 class InboxEntryResponse(HasPrincipals, BaseModel):
@@ -41,6 +54,16 @@ class InboxEntryResponse(HasPrincipals, BaseModel):
     body: str | None = None
     created_at: DateTimeUTC
     read_at: DateTimeUTC | None = None
+    # Sync fields (CHT-1607). `state` is derived from the timestamps: a
+    # RESOLVED or ARCHIVED entry is a tombstone a syncing device drops.
+    archived_at: DateTimeUTC | None = None
+    resolved_at: DateTimeUTC | None = None
+    updated_at: DateTimeUTC
+    state: InboxEntryState = InboxEntryState.OPEN
+    # What the recipient can do about it in one call: archive only on a
+    # resolved entry, nothing on an archived one, and nothing at all for a
+    # credential that cannot write.
+    actions: list[InboxEntryAction] = []
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,6 +71,38 @@ class InboxEntryResponse(HasPrincipals, BaseModel):
     @classmethod
     def coerce_kind(cls, v):
         return _coerce_enum(InboxEntryKind, v)
+
+
+class InboxSyncResponse(BaseModel):
+    """One page of GET /inbox/sync (CHT-1607). The client contract:
+
+    * Store `next_cursor` and send it back as `since` next time. While
+      `has_more` is true, fetch again at once; otherwise wait for the next
+      poll or push.
+    * Upsert every entry by `id`; drop it when `state` is `resolved` or
+      `archived`. The same entry can come more than once: the cursor stays
+      a few seconds behind the newest change, so recent changes are sent
+      again on the next sync.
+    * When `retry_after` is set, the cursor is being held back behind
+      rows just sent: syncing again sooner than that many seconds returns
+      the same rows. Push or user action may still sync earlier.
+    * When `reset` is true, the server restarted the sync (the caller's
+      teams changed since the cursor was issued): clear the cache before
+      applying this page, then page on as usual.
+    * Drop any held entry whose team is not in `team_ids` (a left or
+      deleted team sends no tombstones).
+    * Display fields (`issue_identifier`, `document_title`, `source_user`)
+      are resolved when sent. A document title or a person's name change
+      re-sends the open entries that show it; anything else that changes
+      them does not, so treat them as a snapshot.
+    """
+
+    entries: list[InboxEntryResponse]
+    next_cursor: str | None = None
+    has_more: bool = False
+    retry_after: int | None = None
+    reset: bool = False
+    team_ids: list[str]
 
 
 class MarkAllReadResponse(BaseModel):

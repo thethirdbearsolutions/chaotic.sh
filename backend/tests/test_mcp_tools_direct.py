@@ -1153,6 +1153,9 @@ class TestNoLeakedEnumNames:
         # a pre-existing leak, tracked separately, not this sweep's business.
         "old_value", "new_value",
     }
+    # Keys ignored only at one place in the output, by path suffix: an
+    # inbox entry action's HTTP method, typed Literal["POST"] (CHT-1607).
+    IGNORE_AT = re.compile(r"\.actions\[\d+\]\.method$")
     # "BACKLOG" (the enum NAME) and "IssueStatus.BACKLOG" (str() of a
     # member -- a third form that reached production once already; the
     # frontend's cleanValue() still strips that prefix today).
@@ -1162,7 +1165,7 @@ class TestNoLeakedEnumNames:
         found = []
         if isinstance(obj, dict):
             for k, v in obj.items():
-                if k not in self.IGNORE:
+                if k not in self.IGNORE and not self.IGNORE_AT.search(f"{path}.{k}"):
                     found += self._leaks(v, f"{path}.{k}")
         elif isinstance(obj, list):
             for i, v in enumerate(obj):

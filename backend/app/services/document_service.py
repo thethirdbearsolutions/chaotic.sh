@@ -202,6 +202,10 @@ class DocumentService:
                 document_icon=document.icon,
             )
 
+        if "title" in update_data and document.title != prev_title:
+            from app.services.inbox_service import InboxService
+            await InboxService().touch_safely(document_id=document.id)
+
         await document.refresh()
         return await self.get_by_id(document.id)
 
@@ -224,6 +228,13 @@ class DocumentService:
             await OxydeDocumentActivity.objects.filter(document_id=document.id).delete()
             await OxydeDocumentRevision.objects.filter(document_id=document.id).delete()
             await document.delete()
+
+        # Its inbox entries point at nothing now (CHT-1607). Best-effort.
+        try:
+            from app.services.inbox_service import InboxService
+            await InboxService().resolve_for_document(document.id)
+        except Exception:
+            logger.exception("Failed to resolve inbox entries of deleted document=%s", document.id)
 
     async def list_by_team(
         self, team_id: str, skip: int = 0, limit: int = 100

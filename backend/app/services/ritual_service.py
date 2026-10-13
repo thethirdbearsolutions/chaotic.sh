@@ -415,8 +415,21 @@ class RitualService:
             changed_fields = set(update_data.keys()) | {"updated_at"}
             await ritual.save(update_fields=changed_fields)
 
+        if deactivating:
+            await self._resolve_inbox_for_ritual(ritual.id)
+
         # Reload to get fresh data
         return await self.get_by_id(ritual.id, include_inactive=True)
+
+    async def _resolve_inbox_for_ritual(self, ritual_id: str) -> None:
+        """A deleted or deactivated ritual waits on nobody: settle its
+        gate/review inbox entries so a syncing client drops them
+        (CHT-1607). Best-effort, after commit."""
+        try:
+            from app.services.inbox_service import InboxService
+            await InboxService().resolve_for_ritual(ritual_id)
+        except Exception:
+            logger.exception("Failed to resolve inbox entries of inactive ritual=%s", ritual_id)
 
     async def delete(self, ritual: OxydeRitual, deleted_by_id: str | None = None) -> None:
         """Soft-delete a ritual by marking it inactive.
@@ -470,6 +483,8 @@ class RitualService:
                     activity_type=ActivityType.INTENT_CANCELED,
                     new_value=f"ritual '{ritual.name}' deleted",
                 )
+
+        await self._resolve_inbox_for_ritual(ritual.id)
 
     async def list_by_project(self, project_id: str, include_inactive: bool = False) -> list[OxydeRitual]:
         """List all rituals for a project."""

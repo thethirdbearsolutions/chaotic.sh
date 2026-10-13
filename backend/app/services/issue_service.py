@@ -1509,6 +1509,14 @@ class IssueService:
             await OxydeTicketLimbo.objects.filter(issue_id=issue.id).delete()
             await issue.delete()
 
+        # The issue's inbox entries point at nothing now: settle them so a
+        # syncing client drops them (CHT-1607). Best-effort, after commit.
+        try:
+            from app.services.inbox_service import InboxService
+            await InboxService().resolve_for_issue(issue.id)
+        except Exception:
+            logger.exception("Failed to resolve inbox entries of deleted issue=%s", issue.id)
+
     async def list_issues(
         self,
         project_id: str | None = None,

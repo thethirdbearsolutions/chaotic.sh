@@ -22,6 +22,8 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from oxyde import execute_raw
+
 from app.enums import ActivityType, ApprovalMode, InboxEntryKind, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
@@ -435,14 +437,85 @@ class InboxService:
         reject settles the rejecter's prompt while the gate stays pending
         for the other approvers (CHT-1606).
         """
-        now = datetime.now(timezone.utc)
         filters = dict(
-            ritual_id=ritual_id, issue_id=issue_id, read_at=None,
+            ritual_id=ritual_id, issue_id=issue_id,
             kind__in=[InboxEntryKind.GATE_PENDING.name, InboxEntryKind.REVIEW_REQUESTED.name],
         )
         if recipient_user_id is not None:
             filters["recipient_user_id"] = recipient_user_id
-        return await OxydeInboxEntry.objects.filter(**filters).update(read_at=now)
+        return await self._resolve(filters)
+
+    # The kinds that ask a human to decide a ritual on an issue, and the
+    # answer to such a decision: what goes stale when the ritual or the
+    # gate goes away.
+    _DECISION_KINDS = (
+        InboxEntryKind.GATE_PENDING, InboxEntryKind.REVIEW_REQUESTED, InboxEntryKind.GATE_REJECTED,
+    )
+
+    async def resolve_for_issue(self, issue_id: str, *, decisions_only: bool = False) -> int:
+        """Settle the entries about `issue_id` (CHT-1607 review, finding 4):
+        every kind when the issue is deleted (the entry points at nothing),
+        only the gate/review kinds when its pending rituals were cleared
+        some other way (an admin force-clear). Without this a synced
+        device would keep an approve button whose call 404s or 400s."""
+        filters: dict = {"issue_id": issue_id}
+        if decisions_only:
+            filters["kind__in"] = [k.name for k in self._DECISION_KINDS]
+        return await self._resolve(filters)
+
+    async def resolve_for_ritual(self, ritual_id: str) -> int:
+        """Settle the gate/review entries of a ritual that was deleted or
+        deactivated: nothing is waiting on it any more (finding 4)."""
+        return await self._resolve({
+            "ritual_id": ritual_id, "kind__in": [k.name for k in self._DECISION_KINDS],
+        })
+
+    async def resolve_for_document(self, document_id: str) -> int:
+        """Settle the entries about a deleted document (CHT-1607)."""
+        return await self._resolve({"document_id": document_id})
+
+    async def touch(self, **filters) -> int:
+        """Bump updated_at on the open entries matching `filters`: text an
+        entry shows changed (a document title, a person's name) though the
+        entry itself did not, and a synced device should re-fetch it
+        (CHT-1607 review, finding 6). Tombstones are left alone."""
+        return await OxydeInboxEntry.objects.filter(
+            **filters, resolved_at=None, archived_at=None,
+        ).update(updated_at=datetime.now(timezone.utc))
+
+    async def touch_safely(self, **filters) -> None:
+        """touch(), best-effort, for the rename paths: a failure here must
+        not fail the rename."""
+        try:
+            await self.touch(**filters)
+        except Exception:
+            logger.exception("Failed to bump inbox entries %s", filters)
+
+    async def _resolve(self, filters: dict) -> int:
+        """Settle the unresolved entries matching `filters` (CHT-1607):
+        each gets resolved_at, and read_at if it had none, and a fresh
+        updated_at so a syncing client sees the change. An entry the
+        recipient already read is resolved too: the device still holds
+        it and must learn to drop it. Returns how many were unread, which
+        is what callers have always been told.
+
+        Two statements, and only the second touches what a sync reads
+        (updated_at): every row it settles changes in that one statement,
+        so a sync can never see some of them at an instant and miss the
+        rest at the same instant (PR #355 review, finding 1). The first
+        only fills read_at, which moves no cursor."""
+        unread = await self._mark_read_for_resolve(filters)
+        now = datetime.now(timezone.utc)
+        await OxydeInboxEntry.objects.filter(
+            **filters, resolved_at=None,
+        ).update(resolved_at=now, updated_at=now)
+        return unread
+
+    async def _mark_read_for_resolve(self, filters: dict) -> int:
+        """Step one of _resolve: read_at on the unread rows, nothing else."""
+        return await OxydeInboxEntry.objects.filter(
+            **filters, resolved_at=None, read_at=None,
+        ).update(read_at=datetime.now(timezone.utc))
 
     async def resolve_rejected(
         self, *, ritual_id: str, issue_id: str, recipient_user_ids: list[str],
@@ -453,11 +526,11 @@ class InboxService:
         """
         if not recipient_user_ids:
             return 0
-        return await OxydeInboxEntry.objects.filter(
-            ritual_id=ritual_id, issue_id=issue_id, read_at=None,
+        return await self._resolve(dict(
+            ritual_id=ritual_id, issue_id=issue_id,
             kind=InboxEntryKind.GATE_REJECTED.name,
             recipient_user_id__in=list(recipient_user_ids),
-        ).update(read_at=datetime.now(timezone.utc))
+        ))
 
     # ------------------------------------------------------------------
     # Readers
@@ -529,6 +602,63 @@ class InboxService:
             query = query.filter(read_at=None)
         return await query.order_by("-created_at").offset(skip).limit(limit).all()
 
+    async def sync_for_user(
+        self, user_id: str, *, since: tuple[datetime, str] | None, limit: int,
+        team_ids: list[str] | None = None,
+    ) -> list[OxydeInboxEntry]:
+        """One page of the user's entries in (updated_at, id) order, after
+        the position `since` (CHT-1607). Up to `limit` + 1 rows, so the
+        caller can tell whether another page follows.
+
+        With no position (a first sync) only open entries come back: a
+        device that holds nothing needs no tombstones. After a position,
+        archived and resolved entries come back too, so the device drops
+        its copy. Scoped to the teams the user can read now, like every
+        other read (CHT-1274); the caller hands back that team list so the
+        device can drop entries from a team it lost.
+        """
+        if team_ids is None:
+            team_ids = await self.current_team_ids(user_id)
+        if not team_ids:
+            return []
+        # Raw because Oxyde has no ordering lookups (__gt) on a str column,
+        # and the tie-break on id is what keeps a bulk update (mark-all-read,
+        # a resolve), which stamps many rows with one instant, from losing
+        # rows at a page boundary. Datetimes bind as the same text Oxyde
+        # stores, so they compare in time order.
+        sql = (
+            "SELECT id FROM inbox_entries WHERE recipient_user_id = ? "
+            f"AND team_id IN ({', '.join('?' for _ in team_ids)}) "
+        )
+        params: list = [user_id, *team_ids]
+        if since is None:
+            sql += "AND archived_at IS NULL AND resolved_at IS NULL "
+        else:
+            at, row_id = since
+            sql += "AND (updated_at > ? OR (updated_at = ? AND id > ?)) "
+            params += [at, at, row_id]
+        sql += "ORDER BY updated_at, id LIMIT ?"
+        params.append(limit + 1)
+        ids = [row["id"] for row in await execute_raw(sql, params)]
+        if not ids:
+            return []
+        rows = {e.id: e for e in await OxydeInboxEntry.objects.filter(id__in=ids).all()}
+        return [rows[i] for i in ids if i in rows]
+
+    async def admin_team_ids(self, user_id: str, team_ids: set[str]) -> set[str]:
+        """Which of `team_ids` the user is an OWNER or ADMIN of now: the
+        teams where a gate or review entry may offer approve and reject
+        (CHT-1607). One query for the whole page, mirroring
+        TeamService.is_team_admin, which the ritual endpoints check."""
+        if not team_ids:
+            return set()
+        from app.oxyde_models.team import OxydeTeamMember
+
+        members = await OxydeTeamMember.objects.filter(
+            user_id=user_id, team_id__in=sorted(team_ids),
+        ).all()
+        return {m.team_id for m in members if m.role in (TeamRole.OWNER, TeamRole.ADMIN)}
+
     async def unread_count(self, user_id: str, *, team_id: str | None = None) -> int:
         query = OxydeInboxEntry.objects.filter(
             recipient_user_id=user_id, read_at=None,
@@ -544,8 +674,8 @@ class InboxService:
 
     async def mark_read(self, entry: OxydeInboxEntry) -> OxydeInboxEntry:
         if entry.read_at is None:
-            entry.read_at = datetime.now(timezone.utc)
-            await entry.save(update_fields={"read_at"})
+            entry.read_at = entry.updated_at = datetime.now(timezone.utc)
+            await entry.save(update_fields={"read_at", "updated_at"})
         return entry
 
     async def archive(self, entry: OxydeInboxEntry) -> OxydeInboxEntry:
@@ -553,8 +683,8 @@ class InboxService:
         count. Archiving implies handled, so also mark it read if it wasn't."""
         if entry.archived_at is None:
             now = datetime.now(timezone.utc)
-            entry.archived_at = now
-            fields = {"archived_at"}
+            entry.archived_at = entry.updated_at = now
+            fields = {"archived_at", "updated_at"}
             if entry.read_at is None:
                 entry.read_at = now
                 fields.add("read_at")
@@ -568,4 +698,5 @@ class InboxService:
         )
         if team_id:
             query = query.filter(team_id=team_id)
-        return await query.update(read_at=datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        return await query.update(read_at=now, updated_at=now)
