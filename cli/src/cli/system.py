@@ -1280,6 +1280,7 @@ def restore_backup(backup_path: Path, port: int | None = None, host: str = "127.
     try:
         for sidecar in _sidecars(DATABASE_PATH):
             sidecar.unlink(missing_ok=True)
+        _fsync_dir(DATABASE_PATH.parent)  # or a power loss can bring back the stale WAL
     except OSError as e:
         console.print(f"[red]The backup was copied in, but a stale sidecar could not be removed ({e}). "
                       f"Remove {DATABASE_PATH.name}-wal and {DATABASE_PATH.name}-shm before starting the server, "

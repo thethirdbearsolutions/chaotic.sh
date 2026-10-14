@@ -641,7 +641,8 @@ class TestRestoreDurability:
         monkeypatch.setattr(system, "_fsync_dir", lambda d: order.append(("fsync_dir", d)))
 
         assert system.restore_backup(backup) is True
-        assert order == ["replace", ("fsync_dir", tmp_path)]
+        # After the rename, and again after the stale sidecars are removed.
+        assert order == ["replace", ("fsync_dir", tmp_path), ("fsync_dir", tmp_path)]
         assert _rows(db) == 10
 
     def test_fsync_dir_is_best_effort(self, tmp_path):
