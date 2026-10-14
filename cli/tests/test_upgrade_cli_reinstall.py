@@ -55,16 +55,54 @@ def _commit(repo: Path, marker: str, message: str) -> None:
     _git(repo, "commit", "-q", "-m", message)
 
 
+# The oldest uv the CLI's lockfile supports (cli/pyproject.toml
+# required-version), which still reuses a cached same-version wheel on a
+# plain `--force`: the prod failure reproduces on it, not on current uv.
+OLD_UV = "0.5.31"
+
+
+@pytest.fixture(scope="session")
+def old_uv_bin(tmp_path_factory):
+    """A directory whose `uv` is OLD_UV, installed from PyPI into a venv of
+    its own. Skips (only this variant) when it cannot be installed."""
+    root = tmp_path_factory.mktemp("old-uv")
+    venv = root / "venv"
+    try:
+        subprocess.run(["uv", "venv", "-q", "--python", sys.executable, str(venv)],
+                       check=True, capture_output=True, timeout=120)
+        subprocess.run(["uv", "pip", "install", "-q", "--python", str(venv / "bin" / "python"), f"uv=={OLD_UV}"],
+                       check=True, capture_output=True, timeout=300)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        pytest.skip(f"could not install uv {OLD_UV} to test against: {e}")
+    return venv / "bin"
+
+
+@pytest.fixture(params=["current-uv", f"uv-{OLD_UV}"])
+def uv_on_path(request, monkeypatch):
+    if request.param != "current-uv":
+        bin_dir = request.getfixturevalue("old_uv_bin")
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+        version = subprocess.run(["uv", "--version"], check=True, capture_output=True, text=True).stdout
+        assert OLD_UV in version
+    return request.param
+
+
 @pytest.fixture
-def server_checkout(tmp_path, monkeypatch):
+def server_checkout(tmp_path, monkeypatch, uv_on_path):
     """A server checkout whose CLI is a minimal chaotic-cli at an unchanging
-    version, installed into a uv tool dir and cache of its own."""
+    version, installed into a uv tool dir and cache of its own (so the
+    tests download hatchling, and need network, as an upgrade does)."""
     if shutil.which("uv") is None or shutil.which("git") is None:
         pytest.fail("this test needs uv and git on PATH, as `system upgrade` does")
     repo = tmp_path / "server"
     for package in ("cli", "chaotic_mcp_tools"):
         (repo / "cli" / "src" / package).mkdir(parents=True)
     (repo / "cli" / "pyproject.toml").write_text(PYPROJECT)
+    # A gitignored module: hatch leaves it out of the wheel, so the
+    # verification must not count it as missing (review L1).
+    (repo / "cli" / ".gitignore").write_text("build/\n")
+    (repo / "cli" / "src" / "cli" / "build").mkdir()
+    (repo / "cli" / "src" / "cli" / "build" / "helper.py").write_text("X = 1\n")
     _git(repo, "init", "-q", "-b", "main")
     _commit(repo, "commit-A", "A")
 
@@ -168,3 +206,35 @@ class TestReinstallCommand:
     def test_installed_dirs_none_when_uv_cannot_name_the_tool_dir(self):
         with patch.object(system, "run_command", side_effect=OSError("no uv")):
             assert system._installed_cli_dirs() is None
+
+
+class TestSystemInstallVerifiesTheCli:
+    """Review L3: install reinstalls the CLI through run_migrations too, so
+    it gets the same check, and a failure stops the install."""
+
+    def test_install_fails_when_the_installed_cli_is_not_the_checkout(self, tmp_path):
+        from unittest.mock import MagicMock
+        from click.testing import CliRunner
+        from cli.main import cli
+        from test_system_install import _install_patches
+
+        patches = _install_patches(
+            GLOBAL_CONFIG_DIR=tmp_path,
+            SERVER_DIR=tmp_path / "server",
+            PROJECT_DIR=tmp_path / "server",
+            DATA_DIR=tmp_path / "data",
+            LOGS_DIR=tmp_path / "logs",
+            run_migrations=system.run_migrations,
+            run_command=MagicMock(return_value=subprocess.CompletedProcess([], 0, "", "")),
+            verify_installed_cli=MagicMock(return_value=(False, "CLI reinstall did not take: cli/system.py")),
+            start_service=MagicMock(return_value=True),
+            health_check=MagicMock(return_value=True),
+            is_port_in_use=MagicMock(return_value=False),
+        )
+        with patch.multiple("cli.system", **patches):
+            result = CliRunner().invoke(cli, ["system", "install", "--yes"])
+
+        assert result.exit_code == 1
+        assert "CLI reinstall did not take" in result.output
+        patches["verify_installed_cli"].assert_called_once_with(tmp_path / "server" / "cli")
+        patches["start_service"].assert_not_called()
