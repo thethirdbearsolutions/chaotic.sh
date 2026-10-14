@@ -694,13 +694,64 @@ class TestReferentsGoAway:
         await RitualService().reject_for_issue(ritual, test_issue.id, test_user.id, "evidence is wrong")
         assert await OxydeRitualAttestation.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).count() == 0
         [rejection] = await OxydeRitualRejection.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).all()
-        assert (rejection.attestation_note, rejection.attested_by_id) == ("done", test_user.id)
+        assert rejection.attestation_note == "done"
 
         await RitualService().complete_gate_ritual_for_issue(ritual, test_issue.id, test_user.id, note="I checked")
         [attestation] = await OxydeRitualAttestation.objects.filter(
             ritual_id=ritual.id, issue_id=test_issue.id,
         ).all()
         assert attestation.note == "I checked" and attestation.approved_at is not None
+
+    async def test_a_reject_racing_a_carried_completion_lets_the_completion_through(
+        self, db, test_issue, test_user, review_close_ritual, monkeypatch,
+    ):
+        """Re-review 2, R1: a reject deletes the carried attestation
+        between complete's read and its compare-and-set. The completion
+        is then a fresh one (no 500), and supersedes the rejection."""
+        from app.oxyde_models.ritual import OxydeRitualAttestation, OxydeRitualRejection
+
+        ritual = await self._review_turned_gate(test_issue, test_user, review_close_ritual)
+        service = RitualService()
+        real = RitualService.get_issue_attestation
+        calls = []
+
+        async def read_then_reject(self, ritual_id, issue_id):
+            row = await real(self, ritual_id, issue_id)
+            calls.append(row)
+            if len(calls) == 1:
+                await real_reject(ritual, issue_id, test_user.id, "evidence is wrong")
+            return row
+
+        real_reject = service.reject_for_issue
+        monkeypatch.setattr(RitualService, "get_issue_attestation", read_then_reject)
+        attestation = await service.complete_gate_ritual_for_issue(
+            ritual, test_issue.id, test_user.id, note="mine",
+        )
+        assert attestation is not None and attestation.note == "mine" and attestation.approved_at is not None
+        assert await OxydeRitualAttestation.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).count() == 1
+        [rejection] = await OxydeRitualRejection.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).all()
+        assert rejection.superseded_at is not None
+
+    async def test_a_carried_gate_rejection_goes_to_the_requester(
+        self, db, test_team, test_issue, test_user, test_user2, review_close_ritual,
+    ):
+        """Re-review 2, R2: a human attested in REVIEW mode, someone
+        else asked to close; the rejection is addressed to who asked."""
+        from app.enums import ApprovalMode
+        from app.oxyde_models.ritual import OxydeRitualRejection
+
+        await RitualService().attest_for_issue(
+            ritual=review_close_ritual, issue_id=test_issue.id, user_id=test_user2.id, note="done",
+        )
+        with pytest.raises(TicketRitualsError):
+            await IssueService().update(
+                test_issue, IssueUpdate(status=IssueStatus.DONE), user_id=test_user.id, is_human_request=False,
+            )
+        await self._switch(review_close_ritual, ApprovalMode.GATE)
+        ritual = await RitualService().get_by_id(review_close_ritual.id)
+        await RitualService().reject_for_issue(ritual, test_issue.id, test_user.id, "no")
+        [rejection] = await OxydeRitualRejection.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).all()
+        assert (rejection.attested_by_id, rejection.attestation_note) == (test_user.id, "done")
 
     async def test_a_plain_gate_completion_keeps_the_note(
         self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,

@@ -1417,15 +1417,22 @@ class RitualService:
             updated = await OxydeRitualAttestation.objects.filter(
                 id=existing.id, approved_at=None,
             ).update(**completion)
-            if not updated:
-                return await self.get_issue_attestation(ritual_id, issue_id)
-            for field, value in completion.items():
-                setattr(existing, field, value)
-            await OxydeIssueActivity.objects.create(
-                issue_id=issue_id, user_id=user_id,
-                activity_type=ActivityType.RITUAL_ATTESTED, field_name=ritual_name, new_value=note,
-            )
-            return await self._after_gate_completed(ritual, issue_id, user_id, existing)
+            if updated:
+                for field, value in completion.items():
+                    setattr(existing, field, value)
+                await OxydeIssueActivity.objects.create(
+                    issue_id=issue_id, user_id=user_id,
+                    activity_type=ActivityType.RITUAL_ATTESTED, field_name=ritual_name, new_value=note,
+                )
+                return await self._after_gate_completed(ritual, issue_id, user_id, existing)
+            # Lost the race. An approver who won is answered with their
+            # row. A reject that deleted the attestation in between leaves
+            # nothing, and the completion goes ahead as a fresh one below:
+            # a human may complete a gate after a rejection, which it then
+            # supersedes (PR #358 re-review 2, R1).
+            fresh = await self.get_issue_attestation(ritual_id, issue_id)
+            if fresh is not None:
+                return fresh
 
         try:
             attestation = await OxydeRitualAttestation.objects.create(
@@ -1819,9 +1826,10 @@ class RitualService:
                                 fresh.approved_by if fresh else None,
                                 fresh.approved_at if fresh else None,
                             )
-                        record = dict(
-                            attested_by_id=attestation.attested_by,
-                            attested_at=attestation.attested_at,
+                        # Still addressed to the requester, who has to
+                        # answer it (re-review 2, R2); what the attestation
+                        # said is kept with it.
+                        record.update(
                             attestation_note=attestation.note,
                             artifact_ref=attestation.artifact_ref,
                         )
