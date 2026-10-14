@@ -262,3 +262,227 @@ class TestGitIgnoredMatchesHatch:
         (repo / ".gitignore").write_text("build/\n")  # the pattern comes after the commit
 
         assert system._git_ignored(repo, [tracked, plain]) == {tracked}
+
+
+class TestPathCliWarning:
+    """CHT-1695: the verified uv tool is not necessarily the `chaotic` the
+    shell runs. A warning, never a failure."""
+
+    @pytest.fixture(autouse=True)
+    def _as_a_plain_user(self, monkeypatch):
+        monkeypatch.delenv("SUDO_USER", raising=False)
+        monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+        monkeypatch.setattr(system.os, "geteuid", lambda: 1000, raising=False)
+
+    def _exe(self, directory):
+        directory.mkdir(parents=True)
+        exe = directory / "chaotic"
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+        return exe
+
+    def _bin(self, tmp_path):
+        return self._exe(tmp_path / "uv-bin").parent
+
+    def _uv_bin(self, stdout):
+        return patch.object(system, "run_command",
+                            return_value=subprocess.CompletedProcess([], 0, f"{stdout}\n", ""))
+
+    def _path(self, monkeypatch, *dirs):
+        monkeypatch.setenv("PATH", os.pathsep.join(str(d) for d in dirs))
+
+    def test_the_tools_own_chaotic_first_on_path_is_quiet(self, tmp_path, monkeypatch):
+        bin_dir = self._bin(tmp_path)
+        self._path(monkeypatch, bin_dir, os.environ["PATH"])
+        with self._uv_bin(bin_dir):
+            assert system.path_cli_warning() is None
+
+    def test_a_symlink_to_the_tools_chaotic_is_quiet(self, tmp_path, monkeypatch):
+        bin_dir = self._bin(tmp_path)
+        other = tmp_path / "other"
+        other.mkdir()
+        (other / "chaotic").symlink_to(bin_dir / "chaotic")
+        self._path(monkeypatch, other, os.environ["PATH"])
+        with self._uv_bin(bin_dir):
+            assert system.path_cli_warning() is None
+
+    def test_another_chaotic_first_on_path_names_both(self, tmp_path, monkeypatch):
+        bin_dir = self._bin(tmp_path)
+        shadow = self._exe(tmp_path / "elsewhere").parent
+        self._path(monkeypatch, shadow, bin_dir)
+        with self._uv_bin(bin_dir):
+            warning = system.path_cli_warning()
+        assert str(shadow / "chaotic") in warning
+        assert f"the CLI just installed at {bin_dir / 'chaotic'}" in warning
+        assert f"put {bin_dir} first on PATH" in warning
+        # Review L1: also true for install and for a rollback's re-sync.
+        assert "upgraded" not in warning and "older" not in warning
+
+    def test_a_pipx_install_first_on_path_says_how_to_remove_it(self, tmp_path, monkeypatch):
+        bin_dir = self._bin(tmp_path)
+        pipx = self._exe(tmp_path / ".local" / "pipx" / "venvs" / "chaotic-cli" / "bin")
+        self._path(monkeypatch, pipx.parent, bin_dir)
+        with self._uv_bin(bin_dir):
+            warning = system.path_cli_warning()
+        assert str(pipx) in warning and "pipx uninstall chaotic-cli" in warning
+
+    def test_an_active_virtualenv_says_deactivate(self, tmp_path, monkeypatch):
+        """The common case (review L2): a developer upgrading with
+        cli/.venv activated, as CLAUDE.md says to. Removing it is wrong."""
+        bin_dir = self._bin(tmp_path)
+        venv = tmp_path / "dev" / "cli" / ".venv"
+        venv_exe = self._exe(venv / "bin")
+        monkeypatch.setenv("VIRTUAL_ENV", str(venv))
+        self._path(monkeypatch, venv_exe.parent, bin_dir)
+        with self._uv_bin(bin_dir):
+            warning = system.path_cli_warning()
+        assert "virtualenv is active" in warning and "`deactivate`" in warning
+        assert "Remove the other install" not in warning
+
+    def test_no_chaotic_on_path_says_where_it_is(self, tmp_path, monkeypatch):
+        bin_dir = self._bin(tmp_path)
+        self._path(monkeypatch, tmp_path / "empty")
+        with self._uv_bin(bin_dir):
+            warning = system.path_cli_warning()
+        assert "not on this shell's PATH" in warning and str(bin_dir / "chaotic") in warning
+        assert "uv tool update-shell" in warning and "new shells" in warning
+
+    def test_sudo_with_no_chaotic_on_path_says_so_instead_of_editing_path(self, tmp_path, monkeypatch):
+        """Review L4: under sudo, uv installs as root and secure_path leaves
+        its bin dir out; adding it to PATH is the wrong fix."""
+        bin_dir = self._bin(tmp_path)
+        monkeypatch.setenv("SUDO_USER", "deploy")
+        monkeypatch.setattr(system.os, "geteuid", lambda: 0, raising=False)
+        self._path(monkeypatch, tmp_path / "empty")
+        with self._uv_bin(bin_dir):
+            warning = system.path_cli_warning()
+        assert "under sudo" in warning and "installed as root" in warning and "secure_path" in warning
+        assert "update-shell" not in warning and "first on PATH" not in warning
+
+    def test_plain_root_gets_the_ordinary_advice(self, tmp_path, monkeypatch):
+        """Review M2: root without sudo (a container, a VPS) owns the
+        install; the fix is the PATH, not sudo."""
+        bin_dir = self._bin(tmp_path)
+        monkeypatch.setattr(system.os, "geteuid", lambda: 0, raising=False)
+        self._path(monkeypatch, tmp_path / "empty")
+        with self._uv_bin(bin_dir):
+            warning = system.path_cli_warning()
+        assert "not on this shell's PATH" in warning and "uv tool update-shell" in warning
+        assert "sudo" not in warning
+
+    def test_a_shadowing_install_under_sudo_keeps_its_specific_advice(self, tmp_path, monkeypatch):
+        """Review M2: the sudo text is only for `chaotic` missing from PATH."""
+        bin_dir = self._bin(tmp_path)
+        pipx = self._exe(tmp_path / "pipx" / "bin")
+        monkeypatch.setenv("SUDO_USER", "deploy")
+        self._path(monkeypatch, pipx.parent, bin_dir)
+        with self._uv_bin(bin_dir):
+            warning = system.path_cli_warning()
+        assert "pipx uninstall chaotic-cli" in warning and "sudo" not in warning
+
+    def test_a_relative_path_entry_resolves_against_the_cwd(self, tmp_path, monkeypatch):
+        bin_dir = self._bin(tmp_path)
+        self._exe(tmp_path / "rel")
+        monkeypatch.chdir(tmp_path)
+        self._path(monkeypatch, "rel", bin_dir)
+        with self._uv_bin(bin_dir):
+            assert str(Path("rel") / "chaotic") in system.path_cli_warning()
+        self._path(monkeypatch, "uv-bin")  # the tool's own dir, spelled relatively
+        with self._uv_bin(bin_dir):
+            assert system.path_cli_warning() is None
+
+    @pytest.mark.parametrize("failure", [
+        OSError("no uv"),
+        subprocess.CalledProcessError(2, ["uv", "tool", "dir", "--bin"], "", "error: unknown flag"),
+        subprocess.TimeoutExpired(["uv"], 30),
+    ])
+    def test_uv_unable_to_name_its_bin_dir_is_quiet(self, failure):
+        with patch.object(system, "run_command", side_effect=failure):
+            assert system.path_cli_warning() is None
+
+    def test_empty_uv_output_is_quiet(self, tmp_path, monkeypatch):
+        self._path(monkeypatch, tmp_path / "empty")  # would warn, given a bin dir
+        with self._uv_bin("   "):
+            assert system.path_cli_warning() is None
+
+    def test_any_error_in_the_check_is_quiet(self, tmp_path, monkeypatch):
+        """Review L3: best-effort. Path.resolve() raises RuntimeError on a
+        symlink loop before Python 3.13; nothing may escape."""
+        bin_dir = self._bin(tmp_path)
+        self._path(monkeypatch, bin_dir)
+        with self._uv_bin(bin_dir), \
+                patch.object(system.Path, "resolve", side_effect=RuntimeError("Symlink loop")):
+            assert system.path_cli_warning() is None
+
+    def test_reinstall_cli_itself_does_not_check(self):
+        """The check runs after cli_installed is recorded (review L3), so a
+        Ctrl-C during it cannot roll back a verified install."""
+        with patch.object(system, "run_command", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+                patch.object(system, "verify_installed_cli", return_value=(True, "CLI reinstalled (verified)")), \
+                patch.object(system, "path_cli_warning") as warn:
+            assert system.reinstall_cli() == (True, "CLI reinstalled (verified)")
+        warn.assert_not_called()
+
+
+class TestRunMigrationsCarriesThePathWarning:
+    """Review M1: the warning is printed where it happens and kept in
+    progress, for install and upgrade to repeat at the end."""
+
+    def _run(self, warn):
+        """run_migrations with path_cli_warning replaced by warn(progress)."""
+        progress = {}
+        with patch.object(system, "run_command", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+                patch.object(system, "reinstall_cli", return_value=(True, "ok")), \
+                patch.object(system, "path_cli_warning", side_effect=lambda: warn(progress)), \
+                patch.object(system, "console") as console:
+            try:
+                result = system.run_migrations(progress=progress)
+            except KeyboardInterrupt:
+                result = "interrupted"
+        printed = " ".join(str(c.args[0]) for c in console.print.call_args_list if c.args)
+        return result, progress, printed
+
+    def test_the_warning_is_printed_and_kept(self):
+        at_check = []
+
+        def warn(progress):
+            at_check.append(dict(progress))
+            return "`chaotic` on this shell's PATH is /x"
+
+        (ok, _), progress, printed = self._run(warn)
+        assert ok is True
+        assert at_check[0]["cli_installed"] is True, "checked before the install was recorded"
+        assert progress["cli_path_warning"] == "`chaotic` on this shell's PATH is /x"
+        assert "[yellow]" in printed and "/x" in printed
+
+    def test_a_ctrl_c_during_the_check_keeps_the_install(self):
+        def warn(progress):
+            raise KeyboardInterrupt
+
+        result, progress, _ = self._run(warn)
+        assert result == "interrupted"
+        assert system._cli_state(progress) == "new"
+        assert progress["migrate_started"] is False
+
+    def test_no_warning_is_none(self):
+        (ok, _), progress, printed = self._run(lambda progress: None)
+        assert ok is True and progress["cli_path_warning"] is None
+        assert "[yellow]" not in printed
+
+    def test_a_ctrl_c_during_the_resync_check_keeps_the_verified_reinstall(self):
+        """A Ctrl-C during the rollback re-sync's check skips only the
+        warning: the reinstall verified, so the re-sync still succeeded."""
+        with patch.object(system, "run_command", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+                patch.object(system, "reinstall_cli", return_value=(True, "CLI reinstalled (verified)")), \
+                patch.object(system, "path_cli_warning", side_effect=KeyboardInterrupt):
+            ok, message = system.resync_checkout()
+        assert ok is True and message.endswith("CLI reinstalled (verified)")
+
+    def test_a_rollback_resync_prints_it_too(self):
+        with patch.object(system, "run_command", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+                patch.object(system, "reinstall_cli", return_value=(True, "CLI reinstalled (verified)")), \
+                patch.object(system, "path_cli_warning", return_value="`chaotic` on this shell's PATH is /x"), \
+                patch.object(system, "console") as console:
+            assert system.resync_checkout()[0] is True
+        printed = " ".join(str(c.args[0]) for c in console.print.call_args_list if c.args)
+        assert "/x" in printed
