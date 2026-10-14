@@ -14105,6 +14105,11 @@
             ],
             "title": "Budget"
           },
+          "budget_explicit": {
+            "type": "boolean",
+            "title": "Budget Explicit",
+            "default": false
+          },
           "points_spent": {
             "type": "integer",
             "title": "Points Spent"

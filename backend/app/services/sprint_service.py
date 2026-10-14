@@ -48,6 +48,23 @@ class SprintService:
             return project.default_sprint_budget
         return None
 
+    async def adopt_default_budget(self, project_id: str) -> None:
+        """Give the project's PLANNED sprints its current default budget.
+
+        Called when ``default_sprint_budget`` changes (CHT-1495), so a
+        planned sprint shows the budget it will open with. Sprints whose
+        budget was set by hand (``budget_explicit``) keep it, and ACTIVE
+        and COMPLETED sprints are never touched. Activation re-reads the
+        default as well, so a path that changes the default without
+        calling this still opens the sprint at the right budget.
+        """
+        default_budget = await self._get_project_default_budget(project_id)
+        await OxydeSprint.objects.filter(
+            project_id=project_id,
+            status=SprintStatus.PLANNED,
+            budget_explicit=False,
+        ).update(budget=default_budget)
+
     async def ensure_sprints_exist(self, project_id: str) -> tuple[OxydeSprint, OxydeSprint]:
         """Ensure Current and Next sprints exist for a project. Returns (current, next)."""
         current = await self.get_current_sprint(project_id)
@@ -210,10 +227,37 @@ class SprintService:
         return sprint
 
     async def _activate_next_sprint(self, next_sprint: OxydeSprint) -> None:
-        """Activate the next sprint and create a new next."""
+        """Activate the next sprint and create a new next.
+
+        Budget rule (CHT-1495): the activating sprint takes the project's
+        default as it is now unless its budget was set by hand, and the new
+        planned sprint starts at the default. A null ("unlimited") default
+        is the exception, so that rotation cannot silently switch arrears
+        off: at activation a null default never overwrites a budget, and
+        the new planned sprint carries the activating sprint's budget
+        forward. The carried budget is *not* marked as set by hand, so a
+        default set later (unlimited -> 30, or a later change) still
+        reaches it. Clearing the default to null does reach planned
+        sprints, through adopt_default_budget: that is a deliberate change
+        of default, not a rotation.
+        """
         next_sprint.status = SprintStatus.ACTIVE
         next_sprint.activated_at = datetime.now(timezone.utc)
         await next_sprint.save(update_fields={"status", "activated_at"})
+
+        # This is the last moment the budget follows the default: an active
+        # sprint's budget only changes by hand. The write is conditional on
+        # the row, not on this copy of it: complete_limbo reaches here
+        # outside a transaction, so a PATCH that set the budget by hand
+        # after next_sprint was read must not be overwritten (PR #384
+        # review M3).
+        default_budget = await self._get_project_default_budget(next_sprint.project_id)
+        if default_budget is not None:
+            await execute_raw(
+                "UPDATE sprints SET budget = ? WHERE id = ? AND budget_explicit = 0",
+                [default_budget, next_sprint.id],
+            )
+        await next_sprint.refresh()
 
         # Only create a new PLANNED sprint if one doesn't already exist
         existing_planned = await OxydeSprint.objects.filter(
@@ -223,10 +267,11 @@ class SprintService:
         if existing_planned:
             return
 
-        # Determine budget for new sprint: inherit from previous Next, or fall back to project default
-        new_budget = next_sprint.budget
-        if new_budget is None:
-            new_budget = await self._get_project_default_budget(next_sprint.project_id)
+        # The new Next sprint starts at the project's current default. It
+        # used to copy the sprint being activated, which was itself a
+        # snapshot of the default from when *it* was created, so a changed
+        # default never reached a rotation.
+        new_budget = default_budget if default_budget is not None else next_sprint.budget
 
         # Create new Next sprint
         sprint_num = await self._get_next_sprint_number(next_sprint.project_id)
@@ -305,6 +350,11 @@ class SprintService:
         dates would be outputs of two code paths and a NULL on the third.
         """
         update_data = sprint_in.model_dump(exclude_unset=True)
+        # A budget given here, a number or null for "unlimited", is a
+        # deliberate choice: it stops following the project default
+        # (CHT-1495).
+        if "budget" in update_data:
+            update_data["budget_explicit"] = True
         new_status = update_data.get("status")
         if new_status is not None and new_status != sprint.status:
             now = datetime.now(timezone.utc)

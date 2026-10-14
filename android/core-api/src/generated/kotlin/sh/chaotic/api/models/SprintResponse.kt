@@ -49,6 +49,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param limbo 
  * @param createdAt 
  * @param updatedAt 
+ * @param budgetExplicit 
  */
 @Serializable
 
@@ -88,7 +89,10 @@ data class SprintResponse (
     val createdAt: kotlin.String,
 
     @SerialName(value = "updated_at")
-    val updatedAt: kotlin.String
+    val updatedAt: kotlin.String,
+
+    @SerialName(value = "budget_explicit")
+    val budgetExplicit: kotlin.Boolean? = false
 
 ) {
 

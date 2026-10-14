@@ -28,6 +28,7 @@ class OxydeSprint(Model):
     activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None
     closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None
     budget: int | None
+    budget_explicit: bool
     points_spent: int
     limbo: bool
     created_at: datetime
@@ -61,6 +62,9 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
+        budget_explicit: bool | None = None,
+        budget_explicit__in: list[bool] | None = None,
+        budget_explicit__isnull: bool | None = None,
         closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         closed_at__isnull: bool | None = None,
@@ -162,6 +166,9 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
+        budget_explicit: bool | None = None,
+        budget_explicit__in: list[bool] | None = None,
+        budget_explicit__isnull: bool | None = None,
         closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         closed_at__isnull: bool | None = None,
@@ -248,7 +255,7 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["activated_at", "-activated_at", "budget", "-budget", "closed_at", "-closed_at", "created_at", "-created_at", "description", "-description", "id", "-id", "limbo", "-limbo", "name", "-name", "points_spent", "-points_spent", "project_id", "-project_id", "status", "-status", "updated_at", "-updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["activated_at", "-activated_at", "budget", "-budget", "budget_explicit", "-budget_explicit", "closed_at", "-closed_at", "created_at", "-created_at", "description", "-description", "id", "-id", "limbo", "-limbo", "name", "-name", "points_spent", "-points_spent", "project_id", "-project_id", "status", "-status", "updated_at", "-updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -264,7 +271,7 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["activated_at", "budget", "budget_explicit", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -288,7 +295,7 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["activated_at", "budget", "budget_explicit", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -296,11 +303,11 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["activated_at", "budget", "budget_explicit", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"], flat: bool = False) -> "OxydeSprintQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["activated_at", "budget", "budget_explicit", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"], flat: bool = False) -> "OxydeSprintQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -436,6 +443,9 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
+        budget_explicit: bool | None = None,
+        budget_explicit__in: list[bool] | None = None,
+        budget_explicit__isnull: bool | None = None,
         closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         closed_at__isnull: bool | None = None,
@@ -537,6 +547,9 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
+        budget_explicit: bool | None = None,
+        budget_explicit__in: list[bool] | None = None,
+        budget_explicit__isnull: bool | None = None,
         closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         closed_at__isnull: bool | None = None,
@@ -623,11 +636,11 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> OxydeSprintQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["activated_at", "budget", "budget_explicit", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> OxydeSprintQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"], flat: bool = False) -> OxydeSprintQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["activated_at", "budget", "budget_explicit", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"], flat: bool = False) -> OxydeSprintQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -780,6 +793,7 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         using: str | None = None,
         activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         budget: int | None = None,
+        budget_explicit: bool | None = None,
         closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         created_at: datetime | None = None,
         description: str | None = None,

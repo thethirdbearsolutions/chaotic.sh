@@ -44,6 +44,7 @@ from app.schemas.template import (
     TemplateSettings,
 )
 from app.services.ritual_service import RitualService
+from app.services.sprint_service import SprintService
 
 # Ritual fields a template pins. group/conditions/weight/percentage are
 # deliberately not part of the portable snapshot (they reference
@@ -288,6 +289,9 @@ class TemplateService:
                     setattr(project, field, value)
                 project.updated_at = datetime.now(timezone.utc)
                 await project.save(update_fields=set(to_set) | {"updated_at"})
+                if "default_sprint_budget" in to_set:
+                    # Planned sprints follow the default (CHT-1495).
+                    await SprintService().adopt_default_budget(project.id)
 
         return TemplateApplyReport(
             template=template.name,

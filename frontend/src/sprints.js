@@ -575,7 +575,7 @@ export function showEditBudgetModal(sprintId, sprintName, currentBudget, project
     const scaleHint = projectId ? getEstimateScaleHint(projectId) : '';
     document.getElementById('modal-title').textContent = `Edit Sprint: ${sprintName}`;
     document.getElementById('modal-content').innerHTML = `
-        <form data-action="handle-update-budget" data-sprint-id="${escapeAttr(sprintId)}" data-project-id="${escapeAttr(projectId)}">
+        <form data-action="handle-update-budget" data-sprint-id="${escapeAttr(sprintId)}" data-project-id="${escapeAttr(projectId)}" data-current-budget="${escapeAttr(currentBudget ?? '')}">
             <div class="form-group">
                 <label for="sprint-name">Name</label>
                 <input type="text" id="sprint-name" value="${escapeAttr(sprintName)}" placeholder="Sprint name">
@@ -615,24 +615,42 @@ export async function handleUpdateBudget(event, sprintId, projectId) {
     const budgetInput = document.getElementById('sprint-budget').value;
     const budget = budgetInput ? parseInt(budgetInput) : null;
     const scope = document.querySelector('input[name="budget-scope"]:checked')?.value || 'this';
+    // The budget the modal opened with. Sending `budget` marks a sprint's
+    // budget as set by hand, which stops a planned sprint from following
+    // the project default (CHT-1495), so it is sent only when it changed.
+    const openedWith = document.querySelector('form[data-action="handle-update-budget"]')?.dataset.currentBudget;
+    const originalBudget = openedWith ? parseInt(openedWith) : null;
+    const budgetChanged = budget !== originalBudget;
+    const sprint = sprints.find(s => s.id === sprintId);
 
     try {
-        // Always update this sprint (name + budget)
-        const updateData = { budget };
+        const updateData = {};
         if (nameInput) updateData.name = nameInput;
-        await api.updateSprint(sprintId, updateData);
+        // Setting the project default already moves every planned sprint
+        // that follows it, this one included, so such a sprint is not
+        // pinned to the value as well. A planned sprint whose budget was
+        // already set by hand (budget_explicit) does not follow the
+        // default, so it still gets the budget sent.
+        const followsDefault = scope === 'default'
+            && sprint?.status === 'planned'
+            && sprint?.budget_explicit === false;
+        if (budgetChanged && !followsDefault) updateData.budget = budget;
+        if (Object.keys(updateData).length) {
+            await api.updateSprint(sprintId, updateData);
+        }
 
-        // Handle cascade options
-        if (scope === 'planned' || scope === 'default') {
-            // Update planned sprints too
+        if (scope === 'planned') {
+            // An explicit choice to give the other planned sprints this
+            // budget by hand.
             const plannedSprints = sprints.filter(s => s.status === 'planned' && s.id !== sprintId);
-            for (const sprint of plannedSprints) {
-                await api.updateSprint(sprint.id, { budget });
+            for (const planned of plannedSprints) {
+                await api.updateSprint(planned.id, { budget });
             }
         }
 
         if (scope === 'default' && projectId) {
-            // Also update project default
+            // The server gives the new default to every planned sprint
+            // whose budget was not set by hand.
             await api.updateProject(projectId, { default_sprint_budget: budget });
         }
 
