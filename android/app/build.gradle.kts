@@ -126,6 +126,7 @@ dependencies {
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
+    testImplementation(libs.tink)
     testImplementation(libs.androidx.test.core)
     // CacheStoreContract, which the Room store must pass like the in-memory one.
     testImplementation(testFixtures(project(":core-sync")))
