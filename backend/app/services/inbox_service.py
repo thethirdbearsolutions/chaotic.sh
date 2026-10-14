@@ -501,6 +501,27 @@ class InboxService:
             "ritual_id": ritual_id, "kind__in": [k.name for k in self._DECISION_KINDS],
         })
 
+    # Ids per IN (...) list: well under SQLite's bound-variable limit.
+    _RESOLVE_CHUNK = 500
+
+    async def resolve_for_project(self, project_id: str) -> int:
+        """Settle the entries about the issues and documents of a project
+        about to be deleted (CHT-1626). The database cascade removes the
+        issues without going through ``IssueService.delete``, and an
+        entry's ``issue_id`` has no foreign key, so without this their
+        entries would stay open with approve/reject actions that 404.
+        Call it inside the delete's transaction, before the rows go:
+        the push withdrawals wait for the commit."""
+        from app.oxyde_models.document import OxydeDocument
+        from app.oxyde_models.issue import OxydeIssue
+
+        unread = 0
+        for model, column in ((OxydeIssue, "issue_id"), (OxydeDocument, "document_id")):
+            ids = [row["id"] for row in await model.objects.filter(project_id=project_id).values("id").all()]
+            for start in range(0, len(ids), self._RESOLVE_CHUNK):
+                unread += await self._resolve({f"{column}__in": ids[start:start + self._RESOLVE_CHUNK]})
+        return unread
+
     async def resolve_for_document(self, document_id: str) -> int:
         """Settle the entries about a deleted document (CHT-1607)."""
         return await self._resolve({"document_id": document_id})

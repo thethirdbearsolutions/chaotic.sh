@@ -595,6 +595,98 @@ class TestReferentsGoAway:
         later = await _sync(client, auth_headers, since=cursor)
         assert [(e["id"], e["state"]) for e in later["entries"]] == [(entry["id"], "resolved")]
 
+    async def _to_auto(self, client, auth_headers, ritual, entry_id, cursor):
+        """CHT-1626: an AUTO ritual waits on nobody; its approve/reject
+        actions would answer 400."""
+        from app.enums import ApprovalMode
+        from app.schemas.ritual import RitualUpdate
+
+        await RitualService().update(ritual, RitualUpdate(approval_mode=ApprovalMode.AUTO))
+        later = await _sync(client, auth_headers, since=cursor)
+        assert [(e["id"], e["state"]) for e in later["entries"]] == [(entry_id, "resolved")]
+
+    async def test_gate_ritual_turning_auto_sends_a_tombstone(
+        self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
+    ):
+        entry, cursor = await self._gate(client, auth_headers, test_issue, test_user)
+        await self._to_auto(client, auth_headers, gate_claim_ritual, entry["id"], cursor)
+
+    async def test_review_ritual_turning_auto_sends_a_tombstone(
+        self, client, db, test_issue, test_user, auth_headers, review_close_ritual,
+    ):
+        await _close_review(test_issue, test_user.id, review_close_ritual)
+        body = await _sync(client, auth_headers)
+        [entry] = [e for e in body["entries"] if e["kind"] == "review_requested"]
+        await self._to_auto(client, auth_headers, review_close_ritual, entry["id"], body["next_cursor"])
+
+    async def test_other_ritual_edits_leave_the_entry_open(
+        self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
+    ):
+        from app.enums import ApprovalMode
+        from app.schemas.ritual import RitualUpdate
+
+        entry, cursor = await self._gate(client, auth_headers, test_issue, test_user)
+        await RitualService().update(
+            gate_claim_ritual, RitualUpdate(prompt="reworded", approval_mode=ApprovalMode.GATE),
+        )
+        assert (await _sync(client, auth_headers, since=cursor))["entries"] == []
+        row = await OxydeInboxEntry.objects.get(id=entry["id"])
+        assert row.resolved_at is None
+
+    async def test_deleting_the_project_sends_tombstones(
+        self, client, db, test_team, test_project, test_issue, test_user, auth_headers, gate_claim_ritual,
+        monkeypatch,
+    ):
+        """CHT-1626: the issues go by database cascade, past
+        IssueService.delete; their entries and the documents' are settled,
+        and a withdrawal is pushed for each once the delete commits."""
+        from app.oxyde_models.document import OxydeDocument
+        from app.oxyde_models.project import OxydeProject
+        from app.services import push_sender
+        from app.services.project_service import ProjectService
+
+        flushed = []
+
+        async def capture(items):
+            flushed.append(sorted(i[0] for i in items))
+        monkeypatch.setattr(push_sender, "_flush_resolved", capture)
+
+        gate, _ = await self._gate(client, auth_headers, test_issue, test_user)
+        doc = await OxydeDocument.objects.create(
+            team_id=test_team.id, project_id=test_project.id, title="D", content="", author_id=test_user.id,
+        )
+        on_doc = await _entry(test_user.id, test_team.id, document_id=doc.id, project_id=test_project.id)
+        elsewhere = await _entry(test_user.id, test_team.id, issue_id="another-projects-issue")
+        cursor = (await _sync(client, auth_headers))["next_cursor"]
+
+        await ProjectService().delete(await OxydeProject.objects.get(id=test_project.id))
+
+        later = await _sync(client, auth_headers, since=cursor)
+        assert sorted((e["id"], e["state"]) for e in later["entries"]) == sorted(
+            [(gate["id"], "resolved"), (on_doc.id, "resolved")]
+        )
+        assert (await OxydeInboxEntry.objects.get(id=elsewhere.id)).resolved_at is None
+        assert flushed == [sorted([gate["id"], on_doc.id])]
+
+    async def test_resolving_inside_a_rolled_back_delete_pushes_nothing(
+        self, client, db, test_project, test_issue, test_user, auth_headers, gate_claim_ritual, monkeypatch,
+    ):
+        from app.db.transactions import atomic
+        from app.services import push_sender
+
+        flushed = []
+
+        async def capture(items):
+            flushed.append(items)
+        monkeypatch.setattr(push_sender, "_flush_resolved", capture)
+        gate, _ = await self._gate(client, auth_headers, test_issue, test_user)
+        with pytest.raises(RuntimeError):
+            async with atomic():
+                await InboxService().resolve_for_project(test_project.id)
+                raise RuntimeError("the delete failed")
+        assert flushed == []
+        assert (await OxydeInboxEntry.objects.get(id=gate["id"])).resolved_at is None
+
     async def test_force_clearing_the_ticket_sends_a_tombstone(
         self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
     ):

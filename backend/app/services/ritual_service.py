@@ -407,6 +407,12 @@ class RitualService:
         leaving = bool(ritual.group_id) and new_group_id != ritual.group_id
         deactivating = update_data.get("is_active") is False and ritual.is_active
 
+        # A ritual that leaves GATE or REVIEW mode no longer waits on a
+        # human: its approve/reject actions would now answer 400 (CHT-1626).
+        human_modes = (ApprovalMode.GATE, ApprovalMode.REVIEW)
+        new_mode = update_data.get("approval_mode", ritual.approval_mode)
+        leaving_human_mode = ritual.approval_mode in human_modes and new_mode != ritual.approval_mode
+
         async with atomic():
             if leaving or deactivating:
                 await self._repoint_group_past(ritual)
@@ -416,7 +422,7 @@ class RitualService:
             changed_fields = set(update_data.keys()) | {"updated_at"}
             await ritual.save(update_fields=changed_fields)
 
-        if deactivating:
+        if deactivating or leaving_human_mode:
             await self._resolve_inbox_for_ritual(ritual.id)
 
         # Reload to get fresh data
