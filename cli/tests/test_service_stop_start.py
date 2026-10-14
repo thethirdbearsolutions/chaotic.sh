@@ -7,12 +7,19 @@ so the upgrade died on a raw TimeoutExpired traceback and left prod down.
 CHT-1475: an upgrade that found the service already stopped checked out,
 migrated, and printed "Upgraded to ..." without ever starting it.
 """
+import os
 import re
+import shutil
+import signal
+import sqlite3
 import subprocess
+import sys
+import time
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from cli import system
@@ -333,6 +340,383 @@ class TestUpgradeFromStopped:
         )
 
         assert "0021: deleting API key ck_dead0000... [x]" in result.output
+
+
+def _migrate_fails(message="Migration failed:\n0030 boom", started=True, raises=None):
+    """A run_migrations stand-in that records how far it got, as the real
+    one does, then fails (or raises)."""
+    def run(fake_initial=False, progress=None):
+        if progress is not None:
+            progress["migrate_started"] = started
+        if raises is not None:
+            raise raises
+        return False, message
+    return dict(side_effect=run)
+
+
+def _sqlite_db(path: Path, rows: int) -> None:
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE IF NOT EXISTS t (x)")
+    conn.execute("DELETE FROM t")
+    conn.executemany("INSERT INTO t VALUES (?)", [(i,) for i in range(rows)])
+    conn.commit()
+    conn.close()
+
+
+def _rows(path: Path) -> int:
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute("SELECT count(*) FROM t").fetchone()[0]
+    finally:
+        conn.close()
+
+
+class TestFailedMigrationRollsBack:
+    """CHT-1477: a sync/migrate failure used to restart the NEW code against
+    a database the failed run may have left between schemas. It is now
+    undone like every other post-checkout failure, through _roll_back."""
+
+    def _with_backup(self, tmp_path, **overrides):
+        (tmp_path / "chaotic.db").write_bytes(b"")
+        backup = tmp_path / "chaotic.db.backup-20261014-000000"
+        backup.write_bytes(b"")
+        result, m = _upgrade(
+            args=(),
+            **{
+                "run_migrations": _migrate_fails(),
+                "create_backup": dict(return_value=backup),
+                "cleanup_old_backups": dict(return_value=None),
+                "DATABASE_PATH": dict(new=tmp_path / "chaotic.db"),
+                "is_port_in_use": dict(return_value=False),
+                **overrides,
+            },
+        )
+        return result, m, backup
+
+    def test_rolls_back_checkout_restores_backup_and_restarts_old_code(self, tmp_path):
+        stopped = iter([True, False])  # was_running; down at the restore; then up again
+        result, m, backup = self._with_backup(
+            tmp_path,
+            is_service_running=dict(side_effect=lambda: next(stopped, True)),
+            wait_for_service_settled=dict(return_value="inactive"),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "0030 boom" in out
+        assert "Rolling back" in out
+        assert "Restarting server on new code" not in out
+        assert "Rolled back to previous version" in out
+        # Previous checkout, then the backup, then the previous code started and checked.
+        assert m["checkout_version"].call_args_list[-1].args == (_COMMITS[0],)
+        m["restore_backup"].assert_called_once_with(backup, port=24267, host="127.0.0.1")
+        m["start_service"].assert_called_once()
+        assert out.rindex("Server is RUNNING and answering /health") > out.index("Rolled back")
+        assert "partially migrated" not in out
+        assert "Upgraded to" not in out
+        m["rebuild_frontend"].assert_not_called()
+
+    def test_backup_is_not_restored_under_a_process_still_on_the_port(self, tmp_path):
+        """_roll_back's guard applies here too (CHT-1363)."""
+        result, m, backup = self._with_backup(
+            tmp_path,
+            is_service_running=dict(side_effect=iter([True] + [False] * 20).__next__),
+            wait_for_service_settled=dict(return_value="inactive"),
+            is_port_in_use=dict(return_value=True),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "NOT restoring the database backup" in out
+        assert f"--restore {backup.name}" in out
+        m["restore_backup"].assert_not_called()
+        assert m["checkout_version"].call_args_list[-1].args == (_COMMITS[0],)
+
+    def test_no_backup_says_the_database_may_be_partially_migrated_before_the_state_line(self, tmp_path):
+        (tmp_path / "chaotic.db").write_bytes(b"")
+        result, m = _upgrade(
+            run_migrations=_migrate_fails(started=True),
+            DATABASE_PATH=dict(new=tmp_path / "chaotic.db"),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "No database backup was taken (--no-backup), so the database will NOT be restored" in out
+        assert "may be partially migrated" in out
+        assert "chaotic system backup --restore <timestamp>" in out
+        assert "oxyde showmigrations" in out
+        # The warning comes before the rollback, and the server's state is the last word.
+        assert out.index("partially migrated") < out.index("Rolling back")
+        assert out.rindex("Server is") > max(out.index("Fix the issue above"), out.index("Rolled back"))
+        m["restore_backup"].assert_not_called()
+        assert m["checkout_version"].call_args_list[-1].args == (_COMMITS[0],)
+        m["start_service"].assert_called_once()
+
+    def test_no_backup_and_no_migration_ran_says_the_database_is_untouched(self, tmp_path):
+        """A failed `just sync` or CLI reinstall never touched the database."""
+        (tmp_path / "chaotic.db").write_bytes(b"")
+        result, _ = _upgrade(
+            run_migrations=_migrate_fails("Migration failed:\nerror: lock out of date", started=False),
+            DATABASE_PATH=dict(new=tmp_path / "chaotic.db"),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "partially migrated" not in out
+        assert "No migration ran, so the database was not changed" in out
+        assert "Rolled back to previous version" in out
+
+    def test_no_database_at_all_has_nothing_to_warn_about(self, tmp_path):
+        result, _ = _upgrade(
+            run_migrations=_migrate_fails(),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+        )
+
+        assert result.exit_code == 1
+        assert "partially migrated" not in _flat(result.output)
+
+    def test_ctrl_c_during_migrate_rolls_back_then_exits_nonzero(self, tmp_path):
+        """Review M1: an operator's Ctrl-C used to escape as a traceback with
+        the new checkout in place and the server down."""
+        result, m, backup = self._with_backup(
+            tmp_path,
+            run_migrations=_migrate_fails(raises=KeyboardInterrupt()),
+            is_service_running=dict(side_effect=iter([True] + [False] * 20).__next__),
+            wait_for_service_settled=dict(return_value="inactive"),
+        )
+
+        assert result.exit_code == 130
+        assert isinstance(result.exception, SystemExit)
+        out = _flat(result.output)
+        assert "Interrupted (Ctrl-C)" in out
+        assert m["checkout_version"].call_args_list[-1].args == (_COMMITS[0],)
+        m["restore_backup"].assert_called_once()
+        m["start_service"].assert_called_once()
+
+    def test_a_missing_command_rolls_back(self, tmp_path):
+        """Review M1: `just` or `uv` not on a non-login shell's PATH."""
+        result, m = _upgrade(
+            run_migrations=_migrate_fails(raises=FileNotFoundError(2, "No such file or directory", "just")),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+        )
+
+        assert result.exit_code == 1
+        assert "Could not run a command" in _flat(result.output)
+        assert m["checkout_version"].call_args_list[-1].args == (_COMMITS[0],)
+        m["start_service"].assert_called_once()
+
+    def test_a_cli_reinstall_that_did_not_take_rolls_back_before_migrating(self, tmp_path):
+        """CHT-1675's verification fails inside run_migrations, before
+        `oxyde migrate`: same rollback, database untouched."""
+        ran = []
+
+        def run(cmd, **kwargs):
+            ran.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        progress = {}
+        with patch.object(system, "run_command", side_effect=run), \
+                patch.object(system, "verify_installed_cli", return_value=(False, "CLI reinstall did not take: cli/system.py")):
+            ok, message = system.run_migrations(progress=progress)
+        assert ok is False and "did not take" in message
+        assert progress == {"migrate_started": False}
+        assert not [c for c in ran if "oxyde" in c], "migrated after a CLI reinstall that did not take"
+
+        result, m = _upgrade(
+            run_migrations=_migrate_fails(message, started=False),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+        )
+        assert result.exit_code == 1
+        assert "CLI reinstall did not take" in _flat(result.output)
+        assert m["checkout_version"].call_args_list[-1].args == (_COMMITS[0],)
+
+
+class TestFailedMigrationRealRestore:
+    """The rollback with the real restore_backup (review M2): the database
+    a failed migration changed is put back, a restore that cannot complete
+    leaves the file as it was and the old code is still restarted, and a
+    process holding a SQLite lock blocks the restore (review H1)."""
+
+    def _run(self, tmp_path, **overrides):
+        db = tmp_path / "chaotic.db"
+        _sqlite_db(db, 10)
+        backup = tmp_path / "chaotic.db.backup-20261014-000000"
+        backup.write_bytes(db.read_bytes())
+
+        def half_migrate(fake_initial=False, progress=None):
+            progress["migrate_started"] = True
+            _sqlite_db(db, 3)  # what a migration that failed partway left behind
+            return False, "Migration failed:\n0030 boom"
+
+        result, m = _upgrade(
+            args=(),
+            **{
+                "run_migrations": dict(side_effect=half_migrate),
+                "create_backup": dict(return_value=backup),
+                "cleanup_old_backups": dict(return_value=None),
+                "DATABASE_PATH": dict(new=db),
+                "is_service_running": dict(side_effect=iter([True] + [False] * 20).__next__),
+                "wait_for_service_settled": dict(return_value="inactive"),
+                "is_port_in_use": dict(return_value=False),
+                "restore_backup": dict(wraps=system.restore_backup),
+                **overrides,
+            },
+        )
+        return result, m, db, backup
+
+    def test_the_backup_is_put_back(self, tmp_path):
+        (tmp_path / "chaotic.db-wal").write_bytes(b"")  # a sidecar of the migrated file
+        result, m, db, _ = self._run(tmp_path)
+
+        assert result.exit_code == 1
+        assert _rows(db) == 10
+        assert not (tmp_path / "chaotic.db-wal").exists()
+        assert not (tmp_path / "chaotic.db.restoring").exists()
+        assert "Rolled back to previous version" in _flat(result.output)
+
+    def test_a_restore_that_cannot_copy_leaves_the_database_and_still_restarts(self, tmp_path):
+        real_copy = shutil.copy2
+
+        def disk_full(src, dst, *a, **kw):
+            real_copy(src, dst, *a, **kw)
+            raise OSError(28, "No space left on device")
+
+        with patch("cli.system.shutil.copy2", side_effect=disk_full):
+            result, m, db, backup = self._run(tmp_path)
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "No space left on device" in out
+        assert "was left as it was" in out
+        assert "Database restore failed. Backup is at" in out
+        assert _rows(db) == 3, "the live file was not touched"
+        assert not (tmp_path / "chaotic.db.restoring").exists()
+        m["start_service"].assert_called_once()
+        assert out.rindex("Server is") > out.index("Database restore failed")
+
+    def test_a_process_holding_the_database_lock_blocks_the_restore(self, tmp_path):
+        """The service and port checks cannot see an orphaned migrate; the
+        SQLite lock can."""
+        db = tmp_path / "chaotic.db"
+        holder = {}
+
+        def half_migrate_and_hang_on(fake_initial=False, progress=None):
+            progress["migrate_started"] = True
+            _sqlite_db(db, 3)
+            conn = sqlite3.connect(db, isolation_level=None)
+            conn.execute("BEGIN EXCLUSIVE")
+            holder["conn"] = conn
+            return False, "Migration timed out"
+
+        with patch.object(system, "RESTORE_LOCK_TIMEOUT", 0.2):
+            try:
+                result, m, db, backup = self._run(tmp_path, run_migrations=dict(side_effect=half_migrate_and_hang_on))
+            finally:
+                if "conn" in holder:
+                    holder["conn"].close()
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "Refusing to restore: the database is locked" in out
+        assert "Database restore failed. Backup is at" in out
+        assert _rows(db) == 3
+        m["start_service"].assert_called_once()
+
+
+class TestOwnProcessGroup:
+    """Review H1: subprocess.run's timeout killed `uv` and left the Python
+    process it ran (the one writing the database) running."""
+
+    SCRIPT = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "open(sys.argv[1], 'w').write(str(child.pid))\n"
+        "time.sleep(60)\n"
+    )
+
+    def _alive(self, pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        # A zombie is dead; only its parent has not reaped it yet.
+        try:
+            with open(f"/proc/{pid}/stat") as f:
+                return f.read().split(")")[-1].split()[0] != "Z"
+        except OSError:
+            return True
+
+    def _grandchild(self, pidfile: Path) -> int:
+        deadline = time.time() + 10
+        while not (pidfile.exists() and pidfile.read_text()):
+            assert time.time() < deadline, "the grandchild never started"
+            time.sleep(0.05)
+        return int(pidfile.read_text())
+
+    def test_a_timeout_kills_the_grandchild_too(self, tmp_path):
+        pidfile = tmp_path / "pid"
+        with pytest.raises(subprocess.TimeoutExpired):
+            system.run_command([sys.executable, "-c", self.SCRIPT, str(pidfile)], timeout=2, own_group=True)
+        pid = self._grandchild(pidfile)
+        deadline = time.time() + 5
+        while self._alive(pid) and time.time() < deadline:
+            time.sleep(0.05)
+        assert not self._alive(pid), "the grandchild outlived the timeout"
+
+    def test_ctrl_c_kills_the_group_before_it_propagates(self, tmp_path):
+        pidfile = tmp_path / "pid"
+
+        def interrupt(signum, frame):
+            raise KeyboardInterrupt
+
+        previous = signal.signal(signal.SIGALRM, interrupt)
+        signal.alarm(2)
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                system.run_command([sys.executable, "-c", self.SCRIPT, str(pidfile)], timeout=30, own_group=True)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+        pid = self._grandchild(pidfile)
+        deadline = time.time() + 5
+        while self._alive(pid) and time.time() < deadline:
+            time.sleep(0.05)
+        assert not self._alive(pid)
+
+    def test_output_and_failure_behave_like_subprocess_run(self):
+        ok = system.run_command([sys.executable, "-c", "print('hi')"], own_group=True)
+        assert ok.returncode == 0 and ok.stdout == "hi\n"
+        with pytest.raises(subprocess.CalledProcessError) as e:
+            system.run_command([sys.executable, "-c", "import sys; print('out'); sys.exit(3)"], own_group=True)
+        assert e.value.returncode == 3 and e.value.stdout == "out\n"
+        assert system.run_command([sys.executable, "-c", "raise SystemExit(4)"],
+                                  check=False, own_group=True).returncode == 4
+
+    def test_migrate_timeout_is_reported_as_a_stopped_migration(self):
+        def run(cmd, **kwargs):
+            if cmd[:4] == ["uv", "run", "--frozen", "oxyde"]:
+                assert kwargs.get("own_group") is True
+                raise subprocess.TimeoutExpired(cmd, 120)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        progress = {}
+        with patch.object(system, "run_command", side_effect=run), \
+                patch.object(system, "reinstall_cli", return_value=(True, "ok")):
+            ok, message = system.run_migrations(progress=progress)
+        assert ok is False
+        assert message == "Migration timed out (the migration process was stopped)"
+        assert progress["migrate_started"] is True
+
+    def test_sync_runs_in_its_own_group_and_its_timeout_says_so(self):
+        def run(cmd, **kwargs):
+            assert kwargs.get("own_group") is True
+            raise subprocess.TimeoutExpired(cmd, 300)
+
+        progress = {}
+        with patch.object(system, "run_command", side_effect=run):
+            ok, message = system.run_migrations(progress=progress)
+        assert (ok, message) == (False, "Dependency sync timed out")
+        assert progress["migrate_started"] is False
 
 
 class TestRunMigrationsReportsOxydesOutput:

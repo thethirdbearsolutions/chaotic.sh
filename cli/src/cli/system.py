@@ -19,6 +19,7 @@ import re
 import secrets
 import shlex
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -177,6 +178,7 @@ def run_command(
     check: bool = True,
     timeout: int = 60,
     env: dict | None = None,
+    own_group: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run a shell command with optional output capture.
 
@@ -187,10 +189,15 @@ def run_command(
         check: Whether to raise on non-zero exit
         timeout: Maximum seconds to wait (default 60, None for no timeout)
         env: Optional environment overrides (defaults to parent env)
+        own_group: Run it in a process group of its own and, on a timeout
+            or Ctrl-C, kill the whole group before returning (see
+            _run_in_own_group).
 
     Raises:
         subprocess.TimeoutExpired: If command exceeds timeout
     """
+    if own_group:
+        return _run_in_own_group(cmd, cwd=cwd, check=check, timeout=timeout, env=env)
     return subprocess.run(
         cmd,
         cwd=cwd,
@@ -200,6 +207,85 @@ def run_command(
         timeout=timeout,
         env=env,
     )
+
+
+GROUP_KILL_GRACE = 5.0
+
+
+def _kill_group(proc: subprocess.Popen) -> bool:
+    """SIGTERM the process group `proc` leads, SIGKILL whatever is left
+    after GROUP_KILL_GRACE, and wait (bounded) for the group to be gone.
+    Returns True when no member of the group is left."""
+    pgid = proc.pid
+    for sig, grace in ((signal.SIGTERM, GROUP_KILL_GRACE), (signal.SIGKILL, GROUP_KILL_GRACE)):
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            break
+        except OSError:
+            pass
+        deadline = time.time() + grace
+        while time.time() < deadline:
+            try:
+                proc.wait(timeout=0.1)  # reap our own child so it is not a zombie member
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                os.killpg(pgid, 0)
+            except ProcessLookupError:
+                return True
+            except OSError:
+                break
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        pass
+    return False
+
+
+def _run_in_own_group(cmd: list[str], cwd: Path | None, check: bool, timeout: int | None,
+                      env: dict | None) -> subprocess.CompletedProcess:
+    """subprocess.run, but the command leads a new session, and a timeout or
+    Ctrl-C kills the whole group, not just the direct child.
+
+    subprocess.run's timeout kills only the process it started. For
+    `uv run oxyde migrate` that is uv, and the Python process actually
+    writing the database lived on: a rollback after "Migration timed out"
+    then restored the backup underneath it (PR #374 review, H1). Being in
+    a session of its own also keeps the terminal's Ctrl-C from reaching
+    the migration mid-write; the CLI stops it here instead, then rolls back.
+    """
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, env=env, text=True, start_new_session=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        gone = _kill_group(proc)
+        stdout, stderr = _drain(proc)
+        if not gone:
+            console.print(f"[red]Could not stop every process started by: {escape(' '.join(cmd))} "
+                          f"(process group {proc.pid}).[/red]")
+        raise subprocess.TimeoutExpired(cmd, timeout, output=stdout, stderr=stderr) from None
+    except BaseException:  # KeyboardInterrupt above all
+        _kill_group(proc)
+        _drain(proc)
+        raise
+    if check and proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
+def _drain(proc: subprocess.Popen) -> tuple[str, str]:
+    """What a killed process printed, without waiting on a pipe a surviving
+    grandchild may still hold open."""
+    try:
+        return proc.communicate(timeout=1)
+    except (subprocess.TimeoutExpired, ValueError, OSError):
+        return "", ""
 
 
 def load_server_json() -> dict:
@@ -1164,10 +1250,78 @@ def restore_backup(backup_path: Path, port: int | None = None, host: str = "127.
         )
         return False
 
-    for sidecar in _sidecars(DATABASE_PATH):
-        sidecar.unlink(missing_ok=True)
-    shutil.copy2(backup_path, DATABASE_PATH)
+    holder = _database_lock_holder(DATABASE_PATH)
+    if holder:
+        console.print(
+            f"[red]Refusing to restore: {holder}. Some process the service manager does not "
+            "know about still has the database open; stop it first.[/red]"
+        )
+        return False
+
+    # Copy beside the database, then rename over it: a copy that fails
+    # partway (a full disk is the likely case right after a failed
+    # migration) leaves the live file exactly as it was (PR #374 review).
+    staging = DATABASE_PATH.with_name(DATABASE_PATH.name + ".restoring")
+    try:
+        shutil.copy2(backup_path, staging)
+        with open(staging, "rb") as f:
+            os.fsync(f.fileno())
+        os.replace(staging, DATABASE_PATH)
+    except OSError as e:
+        staging.unlink(missing_ok=True)
+        console.print(f"[red]Could not restore {backup_path.name}: {e}. "
+                      f"The database at {DATABASE_PATH} was left as it was.[/red]")
+        return False
+    # Only after the replace: the sidecars belong to the old file, and a
+    # WAL replayed onto the restored one would undo the restore.
+    try:
+        for sidecar in _sidecars(DATABASE_PATH):
+            sidecar.unlink(missing_ok=True)
+    except OSError as e:
+        console.print(f"[red]The backup was copied in, but a stale sidecar could not be removed ({e}). "
+                      f"Remove {DATABASE_PATH.name}-wal and {DATABASE_PATH.name}-shm before starting the server, "
+                      "or the old WAL is replayed onto the restored database.[/red]")
+        return False
     return True
+
+
+RESTORE_LOCK_TIMEOUT = 2.0
+
+
+def _database_lock_holder(db_path: Path, timeout: float = RESTORE_LOCK_TIMEOUT) -> str | None:
+    """None if no other connection is using the database, else what was
+    found. The second guard before a restore (PR #374 review, H1): the
+    service and port checks cannot see a process like an orphaned `oxyde
+    migrate`, but SQLite's own locks can. Takes an exclusive write lock and,
+    in WAL mode, a truncating checkpoint, which reports busy while any
+    other connection is still reading. Errors other than "locked/busy"
+    (say, a file that is no longer a database) do not block: replacing
+    that file is the point of a restore."""
+    if not db_path.exists():
+        return None
+    try:
+        conn = sqlite3.connect(f"{db_path.as_uri()}?mode=rw", uri=True, timeout=timeout,
+                               isolation_level=None)
+    except sqlite3.Error:
+        return None
+    try:
+        conn.execute("BEGIN EXCLUSIVE")
+        conn.execute("ROLLBACK")
+        mode = (conn.execute("PRAGMA journal_mode").fetchone() or [""])[0]
+        if str(mode).lower() == "wal":
+            busy = (conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() or [0])[0]
+            if busy:
+                return "another connection is still reading the database (WAL checkpoint busy)"
+        return None
+    except sqlite3.OperationalError as e:
+        text = str(e).lower()
+        if "locked" in text or "busy" in text:
+            return f"the database is locked ({e})"
+        return None
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
 
 
 def cleanup_old_backups(keep: int = MAX_BACKUPS):
@@ -1357,24 +1511,133 @@ def checkout_version(version: str, force: bool = False) -> tuple[bool, str]:
         return False, (e.stderr or e.stdout or "Unknown error").strip()
 
 
+CLI_TOOL_NAME = "chaotic-cli"
+# The importable packages the CLI wheel ships (cli/pyproject.toml's
+# [tool.hatch.build.targets.wheel] packages), each under cli/src/.
+CLI_PACKAGES = ("cli", "chaotic_mcp_tools")
+
+
 def reinstall_cli() -> tuple[bool, str]:
-    """Reinstall the CLI binary from the server repo so it picks up new code."""
+    """Reinstall the CLI binary from the server repo so it picks up new code,
+    then check that it did.
+
+    `--reinstall-package` forces uv to rebuild the CLI from the checkout
+    (it implies `--refresh-package`). Without it uv may reuse a wheel it
+    cached for the same name and version, built from an earlier commit:
+    prod deploys main by sha between CLI releases, so the version string
+    usually does not change, and prod once got a CLI with no
+    `system config` after an upgrade that included it (CHT-1675).
+    Dependencies are left alone; only the CLI itself is rebuilt.
+    """
     cli_dir = PROJECT_DIR / "cli"
     try:
         run_command(
-            ["uv", "tool", "install", "--force", str(cli_dir)],
+            ["uv", "tool", "install", "--force", "--reinstall-package", CLI_TOOL_NAME, str(cli_dir)],
             cwd=PROJECT_DIR,
             timeout=120,
+            own_group=True,
         )
-        return True, "CLI reinstalled"
     except subprocess.CalledProcessError as e:
-        return False, f"CLI reinstall failed: {e.stderr}"
+        return False, f"CLI reinstall failed:\n{_command_output(e)}"
     except subprocess.TimeoutExpired:
         return False, "CLI reinstall timed out"
+    except OSError as e:  # e.g. uv not on this shell's PATH
+        return False, f"CLI reinstall failed: {e}"
+    return verify_installed_cli(cli_dir)
 
 
-def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
-    """Run pending database migrations using Oxyde. Returns (success, message)."""
+def _installed_cli_dirs() -> dict[str, Path] | None:
+    """Where the installed `chaotic` tool imports each CLI package from,
+    asked of the tool's own interpreter (-I: not from the cwd or
+    PYTHONPATH). None if that cannot be determined."""
+    try:
+        tool_dir = run_command(["uv", "tool", "dir"], timeout=30).stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+    python = Path(tool_dir) / CLI_TOOL_NAME / "bin" / "python"
+    script = (
+        "import importlib, pathlib\n"
+        f"for name in {CLI_PACKAGES!r}:\n"
+        "    print(name, pathlib.Path(importlib.import_module(name).__file__).parent)\n"
+    )
+    try:
+        result = run_command([str(python), "-I", "-c", script], timeout=30)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+    dirs = {}
+    for line in (result.stdout or "").splitlines():
+        name, _, path = line.partition(" ")
+        if name in CLI_PACKAGES and path:
+            dirs[name] = Path(path)
+    return dirs if set(dirs) == set(CLI_PACKAGES) else None
+
+
+def _git_ignored(repo_dir: Path, paths: list[Path]) -> set[Path]:
+    """The subset of `paths` git ignores (hatch builds the wheel without
+    them). Empty if git cannot say, so every file is compared."""
+    if not paths:
+        return set()
+    try:
+        result = run_command(["git", "check-ignore", "--", *map(str, paths)], cwd=repo_dir,
+                             check=False, timeout=30)
+    except (subprocess.TimeoutExpired, OSError):
+        return set()
+    if result.returncode != 0 or not isinstance(result.stdout, str):
+        return set()  # 1: nothing ignored; anything else: git could not tell
+    return {Path(line) if Path(line).is_absolute() else repo_dir / line
+            for line in result.stdout.splitlines() if line}
+
+
+def verify_installed_cli(cli_dir: Path) -> tuple[bool, str]:
+    """Check that the installed CLI is the checkout's code (CHT-1675):
+    every .py file of each package under cli/src must be in the installed
+    package with the same bytes. Returns (ok, message); a mismatch names
+    the files and the command that fixes it."""
+    fix = f"Reinstall it by hand: uv tool install --force --reinstall {cli_dir}"
+    installed = _installed_cli_dirs()
+    if installed is None:
+        return False, (
+            f"CLI reinstall could not be verified: could not find where the installed "
+            f"{CLI_TOOL_NAME} tool imports its code from. {fix}"
+        )
+    differing = []
+    for name in CLI_PACKAGES:
+        source_root = cli_dir / "src" / name
+        sources = sorted(source_root.rglob("*.py"))
+        ignored = _git_ignored(cli_dir, sources)
+        for source in sources:
+            if source in ignored:
+                continue  # hatch leaves gitignored files out of the wheel
+            rel = source.relative_to(source_root)
+            target = installed[name] / rel
+            try:
+                same = target.read_bytes() == source.read_bytes()
+            except OSError:
+                same = False
+            if not same:
+                differing.append(f"{name}/{rel.as_posix()}")
+    if differing:
+        shown = ", ".join(differing[:5]) + (f" and {len(differing) - 5} more" if len(differing) > 5 else "")
+        return False, (
+            f"CLI reinstall did not take: the installed CLI differs from the checkout in "
+            f"{shown}. {fix}. If that does not help, check whether those files are left "
+            f"out of the wheel (cli/pyproject.toml's hatch build targets)."
+        )
+    return True, "CLI reinstalled (verified against the checkout)"
+
+
+def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> tuple[bool, str]:
+    """Sync dependencies, reinstall the CLI and run pending database
+    migrations using Oxyde. Returns (success, message).
+
+    `progress["migrate_started"]` is set to True just before the first
+    command that can write to the database runs, so a caller can tell
+    "the database was never touched" from "it may be partially migrated"
+    whether this returns or is interrupted (CHT-1477).
+    """
+    if progress is None:
+        progress = {}
+    progress["migrate_started"] = False
     backend_dir = PROJECT_DIR / "backend"
     # Point Oxyde at the same database file the running server opens
     # (set by the systemd unit / launchd plist). Without this, oxyde_config.py
@@ -1384,7 +1647,7 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
     migration_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{DATABASE_PATH}"
     try:
         # Sync dependencies first (may download packages)
-        run_command(["just", "sync"], cwd=PROJECT_DIR, timeout=300)
+        run_command(["just", "sync"], cwd=PROJECT_DIR, timeout=300, own_group=True)
 
         # Reinstall CLI binary so it picks up code changes
         ok, msg = reinstall_cli()
@@ -1393,12 +1656,14 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
 
         # If user specified --fake-initial, mark the initial schema migration
         # as applied without running it (for pre-Oxyde databases)
+        progress["migrate_started"] = True
         if fake_initial:
             run_command(
                 ["uv", "run", "--frozen", "oxyde", "migrate", "0001_initial", "--fake"],
                 cwd=backend_dir,
                 timeout=30,
                 env=migration_env,
+                own_group=True,
             )
 
         # Run Oxyde migrations. --frozen (here and above): use the env
@@ -1409,6 +1674,7 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
             cwd=backend_dir,
             timeout=120,
             env=migration_env,
+            own_group=True,
         )
         # What oxyde printed: the migrations it applied, and anything a
         # migration reports as it runs (0021 lists the dead API keys it
@@ -1416,7 +1682,11 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
         output = result.stdout.strip() if isinstance(result.stdout, str) else ""
         return True, "Migrations applied" + (f"\n{output}" if output else "")
     except subprocess.TimeoutExpired:
-        return False, "Migration timed out"
+        if progress["migrate_started"]:
+            return False, "Migration timed out (the migration process was stopped)"
+        return False, "Dependency sync timed out"
+    except OSError as e:  # e.g. just or uv not on this shell's PATH
+        return False, f"Could not run a command: {e}"
     except subprocess.CalledProcessError as e:
         output = (e.stderr or "") + (e.stdout or "")
         if "already exists" in output:
@@ -2199,8 +2469,14 @@ def _roll_back(
                 f"(service state '{state}'), so it may still have the database open. "
                 f"Stop it, then restore by hand: chaotic system backup --restore {backup_path.name}[/red]"
             )
-        elif not restore_backup(backup_path, port=port, host=host):
-            console.print(f"[red]Database restore failed. Backup is at {backup_path}[/red]")
+        else:
+            try:
+                restored = restore_backup(backup_path, port=port, host=host)
+            except Exception as e:  # noqa: BLE001 -- the old code must still be restarted
+                console.print(f"[red]{escape(f'{type(e).__name__}: {e}')}[/red]")
+                restored = False
+            if not restored:
+                console.print(f"[red]Database restore failed. Backup is at {backup_path}[/red]")
     if not was_running:
         console.print(
             "[yellow]The server was not running before this upgrade; starting the previous "
@@ -2237,7 +2513,9 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
        diff); rollback restores that backup
     6. Starts the server (even if it was stopped beforehand) and verifies
        /health
-    7. Rolls back automatically if the health check fails or the process
+    7. Rolls back automatically (previous checkout, database backup,
+       previous code restarted) if syncing, reinstalling the CLI or
+       migrating fails, if the health check fails, or if the process
        answering the port is not running the new commit
 
     Refuses to move the server to an older or diverged commit unless
@@ -2420,18 +2698,47 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
 
     # Sync dependencies and run database migrations
     console.print("Syncing dependencies and running migrations...")
-    success, message = run_migrations(fake_initial=fake_initial)
+    progress: dict = {}
+    interrupted = False
+    try:
+        success, message = run_migrations(fake_initial=fake_initial, progress=progress)
+    except KeyboardInterrupt:
+        # run_command has already stopped the command's whole process
+        # group; undo the rest like any other failure (review M1).
+        success, message, interrupted = False, "Interrupted (Ctrl-C).", True
+    except OSError as e:
+        success, message = False, f"Could not run a command: {e}"
     if not success:
         # escape(): the message carries the command's own output.
         console.print(f"[red]{escape(message)}[/red]")
-        console.print("[yellow]Code has been updated but migrations did not complete.[/yellow]")
-        console.print("[yellow]Fix the issue above, then run 'chaotic system upgrade --yes' again.[/yellow]")
-        if was_running:
-            console.print("Restarting server on new code...")
-            if not start_service():
-                console.print("[red]Failed to restart server. Run 'chaotic system start' manually.[/red]")
-        _print_service_state(port, host)
-        raise SystemExit(1)
+        # CHT-1477: a migration run that failed partway can leave the
+        # database between schemas (each migration is transactional, a run
+        # of several is not), and neither the new code nor the old one
+        # serves that. Undo it like any other post-checkout failure: the
+        # previous checkout, the backup (under _roll_back's guards), the
+        # previous code restarted and checked. What to do next is said
+        # first, so the last line is the server's state.
+        migrate_started = progress.get("migrate_started", False)
+        if backup_path is None and DATABASE_PATH.exists():
+            if migrate_started:
+                console.print(
+                    "[red]No database backup was taken (--no-backup), so the database will NOT be "
+                    "restored and may be partially migrated. The previous code refuses to start against "
+                    "migrations it does not know, and the new code against missing ones.[/red]"
+                )
+                console.print(
+                    "To recover, either restore a backup you trust "
+                    "('chaotic system backup --list', then 'chaotic system backup --restore <timestamp>'), "
+                    "or fix the cause above and run the upgrade again to finish migrating forward. "
+                    f"'uv run --frozen oxyde showmigrations' in {PROJECT_DIR / 'backend'} "
+                    f"(with DATABASE_URL=sqlite+aiosqlite:///{DATABASE_PATH}) shows what was applied."
+                )
+            else:
+                console.print("No migration ran, so the database was not changed.")
+        console.print("Fix the issue above, then run 'chaotic system upgrade --yes' again.")
+        console.print("Rolling back...")
+        _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running)
+        raise SystemExit(130 if interrupted else 1)
     console.print(f"  [dim]{escape(message)}[/dim]")
 
     # Rebuild frontend bundle so it matches the updated src/. Non-fatal: the
