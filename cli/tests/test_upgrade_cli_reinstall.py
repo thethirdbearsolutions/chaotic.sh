@@ -64,7 +64,9 @@ OLD_UV = "0.5.31"
 @pytest.fixture(scope="session")
 def old_uv_bin(tmp_path_factory):
     """A directory whose `uv` is OLD_UV, installed from PyPI into a venv of
-    its own. Skips (only this variant) when it cannot be installed."""
+    its own. Skips (only this variant) when it cannot be installed, except
+    on CI, where a silent skip would drop the only regression test that
+    reproduces CHT-1675 (CHT-1696)."""
     root = tmp_path_factory.mktemp("old-uv")
     venv = root / "venv"
     try:
@@ -73,7 +75,10 @@ def old_uv_bin(tmp_path_factory):
         subprocess.run(["uv", "pip", "install", "-q", "--python", str(venv / "bin" / "python"), f"uv=={OLD_UV}"],
                        check=True, capture_output=True, timeout=300)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
-        pytest.skip(f"could not install uv {OLD_UV} to test against: {e}")
+        reason = f"could not install uv {OLD_UV} to test against: {e}"
+        if os.environ.get("CI"):
+            pytest.fail(reason)
+        pytest.skip(reason)
     return venv / "bin"
 
 
@@ -238,3 +243,22 @@ class TestSystemInstallVerifiesTheCli:
         assert "CLI reinstall did not take" in result.output
         patches["verify_installed_cli"].assert_called_once_with(tmp_path / "server" / "cli")
         patches["start_service"].assert_not_called()
+
+
+class TestGitIgnoredMatchesHatch:
+    """CHT-1696: hatch excludes by ignore pattern whether or not a file is
+    committed, so the check must too (`git check-ignore --no-index`)."""
+
+    def test_a_committed_file_matching_an_ignore_pattern_counts_as_ignored(self, tmp_path):
+        repo = tmp_path / "repo"
+        (repo / "src" / "cli" / "build").mkdir(parents=True)
+        tracked = repo / "src" / "cli" / "build" / "helper.py"
+        tracked.write_text("X = 1\n")
+        plain = repo / "src" / "cli" / "main.py"
+        plain.write_text("Y = 1\n")
+        _git(repo, "init", "-q", "-b", "main")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "files first")
+        (repo / ".gitignore").write_text("build/\n")  # the pattern comes after the commit
+
+        assert system._git_ignored(repo, [tracked, plain]) == {tracked}

@@ -588,7 +588,7 @@ class TestFailedMigrationRealRestore:
         assert result.exit_code == 1
         out = _flat(result.output)
         assert "No space left on device" in out
-        assert "was left as it was" in out
+        assert "was not replaced" in out
         assert "Database restore failed. Backup is at" in out
         assert _rows(db) == 3, "the live file was not touched"
         assert not (tmp_path / "chaotic.db.restoring").exists()
@@ -622,6 +622,64 @@ class TestFailedMigrationRealRestore:
         assert "Database restore failed. Backup is at" in out
         assert _rows(db) == 3
         m["start_service"].assert_called_once()
+
+
+class TestRestoreDurability:
+    """CHT-1696: the directory is fsynced after the rename, so a power loss
+    right after a restore cannot bring the old file back."""
+
+    def test_sidecars_go_durably_before_the_rename_and_the_rename_is_fsynced(self, tmp_path, monkeypatch):
+        db = tmp_path / "chaotic.db"
+        _sqlite_db(db, 3)
+        (tmp_path / "chaotic.db-wal").write_bytes(b"stale")
+        (tmp_path / "chaotic.db-shm").write_bytes(b"stale")
+        backup = tmp_path / "chaotic.db.backup-20261014-000000"
+        _sqlite_db(backup, 10)
+        monkeypatch.setattr(system, "DATABASE_PATH", db)
+        monkeypatch.setattr(system, "is_service_running", lambda: False)
+        monkeypatch.setattr(system, "_database_lock_holder", lambda path: None)
+        order = []
+        real_replace, real_unlink = os.replace, Path.unlink
+        monkeypatch.setattr(system.os, "replace", lambda a, b: order.append("replace") or real_replace(a, b))
+        monkeypatch.setattr(Path, "unlink", lambda self, missing_ok=False: (
+            order.append(("unlink", self.name)), real_unlink(self, missing_ok=missing_ok))[1])
+        monkeypatch.setattr(system, "_fsync_dir", lambda d: order.append(("fsync_dir", d)))
+
+        assert system.restore_backup(backup) is True
+        assert order == [
+            ("unlink", "chaotic.db-wal"), ("unlink", "chaotic.db-shm"), ("fsync_dir", tmp_path),
+            "replace", ("fsync_dir", tmp_path),
+        ]
+        assert _rows(db) == 10
+        assert not (tmp_path / "chaotic.db-wal").exists()
+
+    def test_a_wal_that_survives_removal_refuses_the_restore(self, tmp_path, monkeypatch):
+        db = tmp_path / "chaotic.db"
+        _sqlite_db(db, 3)
+        wal = tmp_path / "chaotic.db-wal"
+        wal.write_bytes(b"stale")
+        backup = tmp_path / "chaotic.db.backup-20261014-000000"
+        _sqlite_db(backup, 10)
+        monkeypatch.setattr(system, "DATABASE_PATH", db)
+        monkeypatch.setattr(system, "is_service_running", lambda: False)
+        monkeypatch.setattr(system, "_database_lock_holder", lambda path: None)
+        real_unlink = Path.unlink
+        monkeypatch.setattr(Path, "unlink", lambda self, missing_ok=False: (
+            None if self.name == "chaotic.db-wal" else real_unlink(self, missing_ok=missing_ok)))
+
+        with patch.object(system, "console") as console:
+            assert system.restore_backup(backup) is False
+        printed = " ".join(str(c.args[0]) for c in console.print.call_args_list)
+        assert "chaotic.db-wal is still there" in printed
+        assert "was not replaced" in printed
+        assert _rows(db) == 3
+        assert not (tmp_path / "chaotic.db.restoring").exists()
+
+    def test_fsync_dir_is_best_effort(self, tmp_path):
+        system._fsync_dir(tmp_path)  # a real directory: no error
+        system._fsync_dir(tmp_path / "missing")  # cannot open: ignored
+        with patch.object(system.os, "fsync", side_effect=OSError("unsupported")):
+            system._fsync_dir(tmp_path)
 
 
 class TestOwnProcessGroup:
@@ -683,6 +741,20 @@ class TestOwnProcessGroup:
         while self._alive(pid) and time.time() < deadline:
             time.sleep(0.05)
         assert not self._alive(pid)
+
+    def test_an_unconfirmed_group_exit_is_a_note_not_an_alarm(self):
+        """CHT-1696: unreaped zombies (a container whose PID 1 does not reap)
+        look like survivors; the message must not claim processes are
+        still running."""
+        with patch.object(system, "_kill_group", side_effect=lambda proc: proc.kill() or False), \
+                patch.object(system, "console") as console:
+            with pytest.raises(subprocess.TimeoutExpired):
+                system.run_command([sys.executable, "-c", "import time; time.sleep(30)"],
+                                   timeout=1, own_group=True)
+        printed = " ".join(str(c.args[0]) for c in console.print.call_args_list)
+        assert "Could not confirm that every process started by" in printed
+        assert "has exited" in printed
+        assert "[yellow]" in printed and "[red]" not in printed
 
     def test_output_and_failure_behave_like_subprocess_run(self):
         ok = system.run_command([sys.executable, "-c", "print('hi')"], own_group=True)
@@ -894,6 +966,43 @@ class TestRollbackResync:
         m["resync_checkout"].assert_not_called()
         assert m["start_service"].call_count == 2
 
+    def test_a_failed_checkout_keeps_the_service_file_the_new_code_got(self, tmp_path):
+        """CHT-1696: like the database, the unit stays the one written for
+        the code that will actually run."""
+        update = system.ServiceFileUpdate("updated", tmp_path / "chaotic.service", tmp_path / "chaotic.service.bak")
+        with patch.object(system, "stop_service", return_value=True), \
+                patch.object(system, "wait_for_service_settled", return_value="inactive"), \
+                patch.object(system, "get_current_commit", return_value=_COMMITS[1]), \
+                patch.object(system, "checkout_version", return_value=(False, "git timed out")), \
+                patch.object(system, "restore_service_file") as restore_unit, \
+                patch.object(system, "resync_checkout") as resync, \
+                patch.object(system, "start_service", return_value=True) as start, \
+                patch.object(system, "is_service_running", return_value=True), \
+                patch.object(system, "health_check", return_value=True), \
+                patch.object(system, "console") as console:
+            system._roll_back(_COMMITS[0], None, port=24267, service_update=update)
+        out = _flat(" ".join(str(c.args[0]) for c in console.print.call_args_list if c.args))
+        assert "NOT restoring the previous service file: the checkout is still on the new code" in out
+        assert "chaotic.service.bak" in out
+        restore_unit.assert_not_called()
+        resync.assert_not_called()
+        start.assert_called_once()
+
+    def test_the_service_file_is_restored_after_a_successful_checkout(self, tmp_path):
+        update = system.ServiceFileUpdate("updated", tmp_path / "chaotic.service", tmp_path / "chaotic.service.bak")
+        with patch.object(system, "stop_service", return_value=True), \
+                patch.object(system, "wait_for_service_settled", return_value="inactive"), \
+                patch.object(system, "get_current_commit", return_value=_COMMITS[1]), \
+                patch.object(system, "checkout_version", return_value=(True, "")), \
+                patch.object(system, "restore_service_file", return_value=True) as restore_unit, \
+                patch.object(system, "resync_checkout", return_value=(True, "ok")), \
+                patch.object(system, "start_service", return_value=True), \
+                patch.object(system, "is_service_running", return_value=True), \
+                patch.object(system, "health_check", return_value=True), \
+                patch.object(system, "console"):
+            system._roll_back(_COMMITS[0], None, port=24267, service_update=update)
+        restore_unit.assert_called_once_with(update)
+
     def test_a_checkout_that_times_out_still_restarts(self):
         """Review M2: checkout_version caught only CalledProcessError, so a
         git timeout escaped _roll_back without a restart."""
@@ -958,7 +1067,7 @@ class TestResyncCheckout:
                 True, "Server dependencies synced")
         diff, sync = calls
         assert diff[0] == ["git", "diff", "--quiet", "ab71cd5", "HEAD", "--",
-                           "backend/uv.lock", "backend/pyproject.toml"]
+                           "backend/uv.lock", "backend/pyproject.toml", "cli/pyproject.toml"]
         assert sync == (["just", "sync-backend"], dict(cwd=system.PROJECT_DIR, timeout=300, own_group=True))
         reinstall.assert_not_called()
 
