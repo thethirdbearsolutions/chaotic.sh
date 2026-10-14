@@ -340,13 +340,14 @@ def valid_settings(server_info: dict) -> dict[str, str]:
     return {name: value for name, value in stored_settings(server_info).items() if name not in bad}
 
 
-def check(server_info: dict) -> tuple[list[str], list[str]]:
+def check(server_info: dict, combination: bool = True) -> tuple[list[str], list[str]]:
     """(errors, warnings) for the settings in server.json taken
     together. An error is something the server would refuse to start
     with, or a stored entry that cannot be written to the service file;
-    a warning is a likely mistake. Neither ever holds a secret value."""
+    a warning is a likely mistake. Neither ever holds a secret value.
+    combination=False leaves out check_combination(), for a caller that
+    judges the combination on another view of the settings."""
     errors: list[str] = []
-    warnings: list[str] = []
     raw = server_info.get(SETTINGS_KEY)
     if raw is not None and not isinstance(raw, dict):
         return [f"server.json's \"{SETTINGS_KEY}\" is not an object; it is ignored"], []
@@ -358,12 +359,28 @@ def check(server_info: dict) -> tuple[list[str], list[str]]:
             errors.append(f"server.json setting {name!r} is not a valid name or value; it is left out of the service file")
         else:
             errors.append(_problem(name, settings.pop(name)) or f"{name} could not be checked")
+    if not combination:
+        return errors, []
+    combined_errors, warnings = check_combination(settings, skip=frozenset(bad))
+    return errors + combined_errors, warnings
+
+
+def check_combination(settings: dict[str, str], skip: frozenset[str] = frozenset()) -> tuple[list[str], list[str]]:
+    """(errors, warnings) for how `settings` work together, judging each
+    value as the server would ("True" is true). `skip` names settings
+    already reported as invalid, which are not reported again as missing.
+    Used on server.json's settings, and by `system config check` on the
+    environment the service actually gets (CHT-1676). Never raises."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    settings = {name: value for name, value in settings.items() if name not in skip}
     for name in settings:
-        settings[name] = normalize(name, settings[name])[0]  # judge "True" as the server would: true
+        if name in KNOWN and not _problem(name, settings[name]):
+            settings[name] = normalize(name, settings[name])[0]
 
     if settings.get("OAUTH_ENABLED") == "true":
         base = settings.get("APP_BASE_URL")
-        if not base and "APP_BASE_URL" in bad:
+        if not base and "APP_BASE_URL" in skip:
             pass  # already reported as invalid
         elif not base:
             errors.append("OAUTH_ENABLED is true but APP_BASE_URL is not set: the server will not start. "

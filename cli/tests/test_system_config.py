@@ -929,3 +929,190 @@ class TestVapidSetting:
     def test_private_endpoints_is_a_bool(self):
         assert ss.normalize("PUSH_ALLOW_PRIVATE_ENDPOINTS", "YES") == ("true", None)
         assert ss.normalize("PUSH_ALLOW_PRIVATE_ENDPOINTS", "maybe")[1]
+
+
+# --- drift between server.json, the unit and its drop-ins (CHT-1676) --------
+#
+# Found on prod: server.json said HOST 0.0.0.0 while the unit bound
+# 127.0.0.1; CORS_ORIGINS, APP_BASE_URL and OAUTH_ENABLED were set by hand
+# in the unit and MCP_CAPABILITY_URL_ENABLED=false in a drop-in, and
+# `config check` still said the capability URL was served.
+
+HAND = {**OAUTH, "CORS_ORIGINS": "https://chaotic.example.com"}
+
+
+def _hand_unit(server, env=HAND, host=HOST):
+    """The unit as install wrote it, with `env` added by hand."""
+    lines = "".join(f"Environment={k}={v}\n" for k, v in env.items())
+    server.unit.write_text(generate_systemd_service(PORT, SECRET, host).replace("[Install]", lines + "[Install]"))
+
+
+def _dropin(server, body="[Service]\nTimeoutStopSec=30\nEnvironment=MCP_CAPABILITY_URL_ENABLED=false\n"):
+    d = server.systemd_dir / "chaotic.service.d"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "override.conf").write_text(body)
+    return d / "override.conf"
+
+
+def _reconfigure(*args):
+    with patch("cli.system.validate_host", return_value=True), patch("cli.system.set_api_url"):
+        result = CliRunner().invoke(cli, ["system", "reconfigure", *args, "--yes"])
+    return SimpleNamespace(exit_code=result.exit_code, output=_flat(result.output))
+
+
+class TestCheckJudgesWhatTheServerGets:
+    def test_host_drift_is_an_error(self, server):
+        server.json.write_text(json.dumps({"host": "0.0.0.0", "port": PORT, "secret_key": SECRET}))
+        result = server.invoke("check")
+        assert result.exit_code == 1
+        assert "server.json says HOST 0.0.0.0 but the service file says 127.0.0.1" in result.output
+        assert "reconfigure --host" in result.output
+        assert "server.json says HOST" in server.invoke("list").output
+
+    def test_other_identity_drift_is_named_not_shown(self, server):
+        server.json.write_text(json.dumps({"host": HOST, "port": PORT, "secret_key": "another-secret"}))
+        result = server.invoke("check")
+        assert result.exit_code == 1 and "disagree about SECRET_KEY" in result.output
+        assert SECRET not in result.output and "another-secret" not in result.output
+
+    def test_capability_url_turned_off_in_a_dropin_is_not_reported_as_served(self, server):
+        server.write(dict(OAUTH))
+        assert "still served" in server.invoke("check").output
+        _dropin(server)
+        result = server.invoke("check")
+        assert result.exit_code == 0, result.output
+        assert "still served" not in result.output
+        assert "MCP_CAPABILITY_URL_ENABLED: set in drop-in override.conf, not in server.json" in result.output
+
+    def test_settings_set_by_hand_in_the_unit_are_judged(self, server):
+        _hand_unit(server, {"OAUTH_ENABLED": "true"})
+        result = server.invoke("check")
+        assert result.exit_code == 1 and "APP_BASE_URL is not set" in result.output
+        assert "Once server.json" not in result.output
+
+    def test_what_a_rewrite_would_break_is_reported_as_such(self, server):
+        server.write({"OAUTH_ENABLED": "true"}, unit_settings={})
+        result = server.invoke("check")
+        assert result.exit_code == 1
+        assert "Once server.json is written to the service file: OAUTH_ENABLED is true" in result.output
+
+    def test_a_dropin_holding_the_same_value(self, server):
+        server.write({"MCP_CAPABILITY_URL_ENABLED": "false"})
+        _dropin(server)
+        assert "to the same value. Delete it there" in server.invoke("list").output
+
+    def test_hand_set_lines_point_at_adopt(self, server):
+        _hand_unit(server, {"OAUTH_DCR_ENABLED": "false", "FOO": "1"})
+        out = server.invoke("list").output
+        assert "Adopt it with 'chaotic system config adopt'" in out
+        assert "'chaotic system config adopt FOO --force'" in out
+
+
+class TestAdopt:
+    def test_the_prod_case(self, server):
+        _hand_unit(server)
+        conf = _dropin(server)
+        dropin_before = conf.read_text()
+        result = server.invoke("adopt")
+        assert result.exit_code == 0, result.output
+        adopted = {**HAND, "MCP_CAPABILITY_URL_ENABLED": "false"}
+        assert server.info()["settings"] == adopted
+        assert server.unit.read_text() == generate_systemd_service(PORT, SECRET, HOST, adopted)
+        assert "MCP_CAPABILITY_URL_ENABLED = false (from drop-in override.conf)" in result.output
+        assert "OAUTH_ENABLED = true (from the service file)" in result.output
+        assert "delete it from drop-in override.conf" in result.output
+        assert conf.read_text() == dropin_before  # drop-ins are never edited
+        check = server.invoke("check")
+        assert check.exit_code == 0 and "still served" not in check.output
+        assert reconcile_service_file(PORT, HOST, SECRET, settings=adopted).status == "unchanged"
+
+    def test_with_host_drift_it_saves_and_says_how_to_finish(self, server):
+        _hand_unit(server)
+        server.json.write_text(json.dumps({"host": "0.0.0.0", "port": PORT, "secret_key": SECRET}))
+        result = server.invoke("adopt")
+        assert result.exit_code == 1
+        assert "Service file not updated" in result.output and "reconfigure --host" in result.output
+        assert server.info()["settings"] == HAND
+        # Then reconfigure to the unit's host: nothing hand-set is lost now.
+        server.running = False
+        done = _reconfigure("--host", HOST)
+        assert done.exit_code == 0, done.output
+        assert server.unit.read_text() == generate_systemd_service(PORT, SECRET, HOST, HAND)
+        assert server.invoke("check").exit_code == 0
+
+    def test_a_differing_value_is_adopted_only_when_named(self, server):
+        server.write({"OAUTH_DCR_ENABLED": "true"}, unit_settings={"OAUTH_DCR_ENABLED": "false"})
+        result = server.invoke("adopt")
+        assert result.exit_code == 0 and "server.json holds another value" in result.output
+        assert server.info()["settings"] == {"OAUTH_DCR_ENABLED": "true"}
+        named = server.invoke("adopt", "oauth_dcr_enabled")
+        assert named.exit_code == 0, named.output
+        assert server.info()["settings"] == {"OAUTH_DCR_ENABLED": "false"}
+
+    def test_unknown_names_need_force(self, server):
+        _hand_unit(server, {"FOO": "1"})
+        assert "adopt FOO --force" in server.invoke("adopt").output
+        refused = server.invoke("adopt", "FOO")
+        assert refused.exit_code == 1 and "--force" in refused.output
+        forced = server.invoke("adopt", "FOO", "--force")
+        assert forced.exit_code == 0, forced.output
+        assert server.info()["settings"] == {"FOO": "1"}
+
+    def test_a_name_set_nowhere(self, server):
+        result = server.invoke("adopt", "OAUTH_ENABLED")
+        assert result.exit_code == 1 and "not set in the service file or a drop-in" in result.output
+
+    def test_nothing_to_adopt(self, server):
+        result = server.invoke("adopt")
+        assert result.exit_code == 0 and "Nothing to adopt" in result.output
+
+    def test_an_unusable_value_changes_nothing(self, server):
+        _hand_unit(server, {"OAUTH_ENABLED": "maybe"})
+        before = server.unit.read_text()
+        result = server.invoke("adopt")
+        assert result.exit_code == 1 and "Nothing was changed" in result.output
+        assert "settings" not in server.info() and server.unit.read_text() == before
+
+    def test_secrets_are_not_shown(self, server):
+        _hand_unit(server, {"SMTP_PASSWORD": PASSWORD})
+        result = server.invoke("adopt")
+        assert result.exit_code == 0, result.output
+        assert PASSWORD not in result.output and "SMTP_PASSWORD = <hidden>" in result.output
+
+
+class TestReconfigureKeepsHandSetLines:
+    def test_refuses_to_drop_a_hand_set_line(self, server):
+        _hand_unit(server)
+        before, info = server.unit.read_text(), server.info()
+        server.running = False
+        result = _reconfigure("--port", "24300")
+        assert result.exit_code == 1, result.output
+        assert "Not replacing the service file" in result.output and "OAUTH_ENABLED" in result.output
+        assert "config adopt" in result.output
+        assert server.unit.read_text() == before and server.info() == info
+
+    def test_force_replaces_it_and_keeps_the_old_file(self, server, tmp_path):
+        _hand_unit(server)
+        before = server.unit.read_text()
+        server.running = False
+        result = _reconfigure("--port", "24300", "--force")
+        assert result.exit_code == 0, result.output
+        assert server.unit.read_text() == generate_systemd_service(24300, SECRET, HOST)
+        backups = list((tmp_path / "backups").glob("chaotic.service.*.bak"))
+        assert [b.read_text() for b in backups] == [before]
+
+    def test_rewrites_a_unit_that_disagrees_even_when_server_json_agrees(self, server):
+        server.unit.write_text(generate_systemd_service(PORT, SECRET, "0.0.0.0"))
+        server.running = False
+        result = _reconfigure("--host", HOST)
+        assert result.exit_code == 0, result.output
+        assert "No changes" not in result.output and "The service file says host 0.0.0.0" in result.output
+        assert server.unit.read_text() == generate_systemd_service(PORT, SECRET, HOST)
+
+    def test_a_missing_secret_does_not_replace_the_units(self, server):
+        server.json.write_text(json.dumps({"host": HOST, "port": PORT}))
+        before = server.unit.read_text()
+        server.running = False
+        result = _reconfigure("--port", "24300")
+        assert result.exit_code == 1 and "SECRET_KEY" in result.output
+        assert server.unit.read_text() == before
