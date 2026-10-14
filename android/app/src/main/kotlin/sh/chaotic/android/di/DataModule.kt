@@ -12,6 +12,8 @@ import sh.chaotic.android.data.CacheDao
 import sh.chaotic.android.data.ChaoticDatabase
 import sh.chaotic.android.data.RoomCacheStore
 import sh.chaotic.android.data.SessionRemote
+import sh.chaotic.android.writes.WriteActions
+import sh.chaotic.android.writes.WriteRunner
 import sh.chaotic.auth.AuthState
 import sh.chaotic.auth.SessionManager
 import sh.chaotic.sync.CacheRefresher
@@ -20,6 +22,7 @@ import sh.chaotic.sync.CacheStore
 import sh.chaotic.sync.ChaoticRemote
 import sh.chaotic.sync.InboxSyncer
 import sh.chaotic.sync.SyncTrigger
+import sh.chaotic.sync.WriteQueue
 import javax.inject.Singleton
 
 /** Whose the cache is now: the person signed in, on their server; null when signed out. */
@@ -67,4 +70,13 @@ object DataModule {
     @Provides
     @Singleton
     fun provideSyncTrigger(): SyncTrigger = SyncTrigger()
+
+    /** The offline write queue (CHT-1613), in the same cache and fenced by the same session. */
+    @Provides
+    @Singleton
+    fun provideWriteQueue(remote: ChaoticRemote, session: CacheSession): WriteQueue = WriteQueue(remote, session)
+
+    @Provides
+    @Singleton
+    fun provideWriteActions(queue: WriteQueue, runner: WriteRunner): WriteActions = WriteActions(queue, runner::kick)
 }

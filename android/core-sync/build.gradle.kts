@@ -39,4 +39,7 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.client.mock)
+    // WriteWireTest: a write through the app's real stack, OkHttp and AuthInterceptor.
+    testImplementation(libs.ktor.client.okhttp)
+    testImplementation(libs.okhttp.mockwebserver)
 }

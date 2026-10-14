@@ -1,5 +1,7 @@
 package sh.chaotic.sync
 
+import kotlinx.serialization.json.JsonObject
+
 /** What one call to the server came back with. */
 sealed interface Remote<out T> {
     data class Ok<T>(val value: T) : Remote<T>
@@ -11,15 +13,28 @@ sealed interface Remote<out T> {
      * The server answered with a non-2xx [status]. [errorCode] is the
      * `detail.error_code` of a structured refusal, when there is one;
      * [retryAfterMillis] is its `Retry-After` header, 0 when absent.
+     * [message] is the server's own explanation (`detail.message`, a
+     * plain-string `detail`, or a validation error's first `msg`), for
+     * showing a refused write to the person (CHT-1613).
      */
-    data class HttpError(val status: Int, val errorCode: String? = null, val retryAfterMillis: Long = 0) :
-        Failure
+    data class HttpError(
+        val status: Int,
+        val errorCode: String? = null,
+        val retryAfterMillis: Long = 0,
+        val message: String? = null,
+    ) : Failure
 
     /** No answer: offline, a timeout, DNS. Nothing about the cache changes. */
     data class Unreachable(val cause: Throwable) : Failure
 
     /** An answer that is not the JSON this app expects (a captive portal's page, say). */
     data class Unreadable(val cause: Throwable) : Failure
+}
+
+/** [Remote.Ok]'s value through [transform]; a failure as it is. */
+inline fun <T, R> Remote<T>.map(transform: (T) -> R): Remote<R> = when (this) {
+    is Remote.Ok -> Remote.Ok(transform(value))
+    is Remote.Failure -> this
 }
 
 /** One page of GET /api/inbox/sync, in cache terms. */
@@ -58,6 +73,7 @@ data class CurrentSprint(
  * The server calls the cache needs, as the signed-in person. [ApiRemote]
  * is the real one, on the generated client; tests use a fake.
  */
+@Suppress("TooManyFunctions") // one function per server call
 interface ChaoticRemote {
     suspend fun syncInbox(since: String?, limit: Int): Remote<SyncPage>
 
@@ -75,4 +91,39 @@ interface ChaoticRemote {
     suspend fun comments(issueId: String): Remote<List<Comment>>
 
     suspend fun activity(issueId: String): Remote<List<Activity>>
+
+    /** The people [teamId]'s issues can be assigned to. */
+    suspend fun members(teamId: String): Remote<List<Principal>>
+
+    // Writes (CHT-1613), each sent as its [WriteOrigin] says.
+
+    /** POST one of an inbox entry's actions ([InboxAction.path]) with [body]. */
+    suspend fun act(path: String, body: JsonObject, origin: WriteOrigin): Remote<Unit>
+
+    /**
+     * PATCH [issueId] with [fields]; the answer is the issue as the server
+     * now has it, known in [teamId] (null when a 2xx answer could not be
+     * read: the write was taken all the same).
+     */
+    suspend fun updateIssue(issueId: String, teamId: String, fields: JsonObject, origin: WriteOrigin): Remote<Issue?>
+
+    /** Comment on [issueId]; the answer is the comment as stored (null as for [updateIssue]). */
+    suspend fun addComment(issueId: String, content: String, origin: WriteOrigin): Remote<Comment?>
+
+    /**
+     * Whether the server answers at all (any status): after a write got no
+     * answer, this tells a network that is down from a write that cannot
+     * get through on its own (CHT-1670).
+     */
+    suspend fun reachable(): Boolean
 }
+
+/**
+ * Where a queued write comes from. [idempotencyKey] is the queue's client
+ * key, sent as the Idempotency-Key header so a resend of a write the
+ * server already took is answered from the first time (CHT-1621).
+ * [owner] is who queued it ([CacheSession.ownerKey]): the write goes out
+ * as that person or not at all, never as whoever is signed in by the time
+ * it is sent.
+ */
+data class WriteOrigin(val idempotencyKey: String, val owner: String)

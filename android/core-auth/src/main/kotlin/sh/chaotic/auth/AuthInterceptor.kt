@@ -2,8 +2,10 @@ package sh.chaotic.auth
 
 import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import java.io.IOException
 
 /**
@@ -14,15 +16,25 @@ import java.io.IOException
  * sees a token) that does not already carry `Authorization`:
  *
  * - adds `Authorization: Bearer <access token>`, refreshing first when it
- *   is about to expire ([SessionManager.accessToken]);
+ *   is about to expire ([SessionManager.grant]);
  * - on a 401, refreshes once (single-flight, [SessionManager.refreshAfterRejection])
- *   and retries once with the new token. A second 401 is returned as is;
+ *   and retries once with the new token, but only a token of the same
+ *   person on the same server: if someone else signed in meanwhile, the
+ *   401 is returned as is. A second 401 is returned as is too;
  * - when [interactive], adds `X-Chaotic-Interactive: 1` to writes (any
- *   method but GET, HEAD and OPTIONS). Everything the app does today is
- *   a person tapping a button; a background writer (an offline queue, a
- *   notification action) should get its own client built with
- *   `interactive = false`, so the server gates it as the agent-like
- *   traffic it is.
+ *   method but GET, HEAD and OPTIONS). Every write the app sends is a
+ *   person's own tap: the offline write queue (CHT-1613) only delays
+ *   sending one, so it goes out on this client too. Something that
+ *   writes on its own, with no tap behind it, should get its own client
+ *   built with `interactive = false`, so the server gates it as the
+ *   agent-like traffic it is.
+ *
+ * A request can name the one person it may go out as, in
+ * [EXPECT_OWNER_HEADER] (an owner key, [SessionManager.ownerKey]); the
+ * header is removed before sending. The write queue does: a write was
+ * queued by one person and must never be sent as another. When the
+ * signed-in person is anyone else, or nobody, such a request is not sent
+ * at all and gets a 401 here.
  *
  * OkHttp runs interceptors on its own threads, so blocking on the session
  * here does not block the UI.
@@ -30,32 +42,56 @@ import java.io.IOException
 class AuthInterceptor(private val sessions: SessionManager, private val interactive: Boolean) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
+        val expected = original.header(EXPECT_OWNER_HEADER)
+        val request = original.newBuilder().removeHeader(EXPECT_OWNER_HEADER).build()
         val baseUrl = fromSession { sessions.server() }?.baseUrl
-        val ours = baseUrl != null && ServerUrl.isSameOrigin(original.url, baseUrl)
-        return if (ours) authenticated(chain, markInteractive(original)) else chain.proceed(original)
+        val ours = baseUrl != null && ServerUrl.isSameOrigin(request.url, baseUrl)
+        return when {
+            ours -> authenticated(chain, markInteractive(request), expected)
+            expected != null -> notSignedInAs(request)
+            else -> chain.proceed(request)
+        }
     }
 
-    private fun authenticated(chain: Interceptor.Chain, request: Request): Response {
-        val token =
-            if (request.header(AUTHORIZATION) == null) fromSession { sessions.accessToken() } else null
-        return if (token == null) chain.proceed(request) else withRetryOn401(chain, request, token)
+    private fun authenticated(chain: Interceptor.Chain, request: Request, expected: String?): Response {
+        if (request.header(AUTHORIZATION) != null) {
+            return if (expected == null) chain.proceed(request) else notSignedInAs(request)
+        }
+        val grant = fromSession { sessions.grant() }
+        // The session can have changed since the origin check: a token only
+        // ever goes to its own server, and a pinned request only as its owner.
+        val usable = grant != null && ServerUrl.isSameOrigin(request.url, grant.baseUrl)
+        return when {
+            expected != null && (!usable || grant?.owner != expected) -> notSignedInAs(request)
+            usable && grant != null -> withRetryOn401(chain, request, grant)
+            else -> chain.proceed(request)
+        }
     }
 
-    private fun withRetryOn401(chain: Interceptor.Chain, request: Request, token: String): Response {
-        val response = chain.proceed(request.withBearer(token))
+    private fun withRetryOn401(chain: Interceptor.Chain, request: Request, grant: Grant): Response {
+        val response = chain.proceed(request.withBearer(grant.token))
         // A one-shot body has been consumed and cannot be sent again.
         val retryable = response.code == HTTP_UNAUTHORIZED && request.body?.isOneShot() != true
-        val retryToken =
+        val retry =
             try {
-                if (retryable) fromSession { sessions.refreshAfterRejection(token) } else null
+                if (retryable) fromSession { sessions.refreshAfterRejection(grant) } else null
             } catch (e: IOException) {
                 response.close()
                 throw e
             }
-        if (retryToken == null) return response
+        if (retry == null) return response
         response.close()
-        return chain.proceed(request.withBearer(retryToken))
+        return chain.proceed(request.withBearer(retry.token))
     }
+
+    /** The answer to a request pinned to someone who is not signed in: never sent. */
+    private fun notSignedInAs(request: Request): Response = Response.Builder()
+        .request(request)
+        .protocol(Protocol.HTTP_1_1)
+        .code(HTTP_UNAUTHORIZED)
+        .message("Not signed in as the person this request belongs to")
+        .body("".toResponseBody(null))
+        .build()
 
     /**
      * Runs a session call on this OkHttp thread. Anything it throws reaches
@@ -80,9 +116,12 @@ class AuthInterceptor(private val sessions: SessionManager, private val interact
 
     private fun Request.withBearer(token: String): Request = newBuilder().header(AUTHORIZATION, "Bearer $token").build()
 
-    private companion object {
-        const val AUTHORIZATION = "Authorization"
-        const val HTTP_UNAUTHORIZED = 401
-        val SAFE_METHODS = setOf("GET", "HEAD", "OPTIONS")
+    companion object {
+        /** The owner key ([SessionManager.ownerKey]) a request may go out as; never sent. */
+        const val EXPECT_OWNER_HEADER = "X-Chaotic-Client-Owner"
+
+        private const val AUTHORIZATION = "Authorization"
+        private const val HTTP_UNAUTHORIZED = 401
+        private val SAFE_METHODS = setOf("GET", "HEAD", "OPTIONS")
     }
 }

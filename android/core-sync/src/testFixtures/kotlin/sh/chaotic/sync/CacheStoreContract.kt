@@ -54,6 +54,11 @@ abstract class CacheStoreContract {
             documentTitle = "Doc",
             source = Principal("a1", "Claude", isAgent = true, ownerName = "ethan"),
             read = true,
+            actions = listOf(
+                InboxAction(InboxAction.APPROVE, "/api/rituals/r1/complete-issue/i1", "optional"),
+                InboxAction(InboxAction.REJECT, "/api/rituals/r1/reject-issue/i1", "required"),
+                InboxAction(InboxAction.ARCHIVE, "/api/inbox/e1/archive"),
+            ),
         )
         val bare = entry("e2", 6_000)
 
@@ -242,6 +247,9 @@ abstract class CacheStoreContract {
         store.applyInbox(change(upserts = listOf(entry("a1")), cursor = "c1"))
         store.saveIssue(detail(issue("i1"), comment("c1", "i1", 1)))
         store.replaceSprintCards(TEAM_A, listOf(card("p1")))
+        store.queueWrite(write("w1"))
+        store.queueWrite(write("w2"))
+        store.refuseWrite(refusal("w2"))
 
         store.clearAll()
 
@@ -269,6 +277,9 @@ abstract class CacheStoreContract {
         store.applyInbox(change(upserts = listOf(entry("a1")), cursor = "c1"))
         store.saveIssue(detail(issue("i1"), comment("c1", "i1", 1)))
         store.replaceSprintCards(TEAM_A, listOf(card("p1")))
+        store.queueWrite(write("w1"))
+        store.queueWrite(write("w2"))
+        store.refuseWrite(refusal("w2"))
 
         store.claim(OTHER_OWNER)
 
@@ -295,5 +306,146 @@ abstract class CacheStoreContract {
         store.clearAll()
 
         assertNull(store.owner())
+    }
+
+    private fun write(key: String, kind: WriteKind = WriteKind.COMMENT, at: Long = 1) = PendingWrite(
+        key = key,
+        kind = kind,
+        path = "/api/inbox/e1/read",
+        entryId = "e1",
+        issueId = "i1",
+        teamId = TEAM_A,
+        field = IssueFields.ASSIGNEE,
+        value = "value $key",
+        valueLabel = "Grace",
+        label = "CHT-1",
+        createdAtMillis = at,
+        notBeforeMillis = at + 4_000,
+        attempts = 2,
+    )
+
+    private fun refusal(key: String, at: Long = 1) = WriteRefusal(
+        key = key,
+        kind = WriteKind.UPDATE_ISSUE,
+        label = "CHT-1",
+        status = 409,
+        errorCode = "sprint_in_arrears",
+        message = "Sprint is in arrears.",
+        entryId = "e1",
+        issueId = "i1",
+        atMillis = at,
+        value = "what was written",
+    )
+
+    @Test
+    fun writesKeepEveryFieldAndTheOrderTheyWereQueuedIn() = runTest {
+        val store = createStore()
+        val bare = PendingWrite(
+            key = "w0",
+            kind = WriteKind.UPDATE_ISSUE,
+            label = "CHT-2",
+            createdAtMillis = 9,
+            notBeforeMillis = 9,
+        )
+        // Queued later but made earlier: the queue's order is the order of queueing.
+        store.queueWrite(write("w2", at = 5))
+        store.queueWrite(write("w1", WriteKind.REJECT, at = 3))
+        store.queueWrite(bare)
+
+        assertEquals(listOf(write("w2", at = 5), write("w1", WriteKind.REJECT, at = 3), bare), store.pendingWrites())
+        assertEquals(store.pendingWrites(), store.snapshot().writes)
+    }
+
+    @Test
+    fun rescheduleWriteKeepsItsPlaceInTheQueue() = runTest {
+        val store = createStore()
+        listOf("w1", "w2", "w3").forEach { store.queueWrite(write(it)) }
+
+        assertTrue(store.rescheduleWrite("w2", attempts = 7, notBeforeMillis = 99))
+        assertEquals(false, store.rescheduleWrite("nope", attempts = 1, notBeforeMillis = 1))
+
+        assertEquals(
+            listOf(write("w1"), write("w2").copy(attempts = 7, notBeforeMillis = 99), write("w3")),
+            store.pendingWrites(),
+        )
+    }
+
+    @Test
+    fun removeWriteSaysWhetherItWasThere() = runTest {
+        val store = createStore()
+        store.queueWrite(write("w1"))
+        store.queueWrite(write("w2"))
+
+        assertTrue(store.removeWrite("w1"))
+        assertEquals(false, store.removeWrite("w1"))
+        assertEquals(listOf("w2"), store.pendingWrites().map { it.key })
+    }
+
+    @Test
+    fun completeWriteDropsItAndAppliesItsEffect() = runTest {
+        val store = createStore()
+        store.applyInbox(change(upserts = listOf(entry("e1"), entry("e2"), entry("e3"))))
+        val opened = issue("i1", openedAtMillis = 77)
+        store.saveIssue(detail(opened, comment("c1", "i1", 1), comment("c3", "i1", 3)))
+        listOf("w1", "w2", "w3", "w4", "w5").forEach { store.queueWrite(write(it)) }
+
+        store.completeWrite("w1", WriteEffect.DropEntry("e1"))
+        store.completeWrite("w2", WriteEffect.MarkRead("e2"))
+        store.completeWrite("w3", WriteEffect.AddComment(comment("c2", "i1", 2)))
+        // As the server answers: it knows nothing of when this device opened the issue.
+        store.completeWrite("w4", WriteEffect.UpdateIssue(opened.copy(status = "done", openedAtMillis = 0)))
+        store.completeWrite("w5", effect = null)
+
+        val snapshot = store.snapshot()
+        assertEquals(emptyList(), snapshot.writes)
+        assertEquals(listOf("e2" to true, "e3" to false), snapshot.inbox.map { it.id to it.read })
+        val saved = snapshot.issues.single()
+        assertEquals(listOf("c1", "c2", "c3"), saved.comments.map { it.id })
+        assertEquals("done", saved.issue.status)
+        assertEquals(77, saved.issue.openedAtMillis)
+    }
+
+    @Test
+    fun anEffectOnSomethingNotCachedChangesNothing() = runTest {
+        val store = createStore()
+        store.queueWrite(write("w1"))
+        store.queueWrite(write("w2"))
+        store.queueWrite(write("w3"))
+
+        store.completeWrite("w1", WriteEffect.MarkRead("nope"))
+        store.completeWrite("w2", WriteEffect.AddComment(comment("c1", "nope", 1)))
+        store.completeWrite("w3", WriteEffect.UpdateIssue(issue("nope")))
+
+        assertEquals(CacheSnapshot(null, emptyList(), emptyList(), emptyList(), emptyList()), store.snapshot())
+    }
+
+    @Test
+    fun refuseWriteDropsItAndKeepsTheRefusalUntilDismissed() = runTest {
+        val store = createStore()
+        store.queueWrite(write("w1"))
+        store.queueWrite(write("w2"))
+        val bare = WriteRefusal(key = "w2", kind = WriteKind.APPROVE, label = "CHT-2", status = 403, atMillis = 2)
+
+        store.refuseWrite(refusal("w1"))
+        store.refuseWrite(bare)
+
+        assertEquals(emptyList(), store.pendingWrites())
+        assertEquals(listOf(refusal("w1"), bare), store.refusals())
+        assertEquals(store.refusals(), store.snapshot().refusals)
+
+        store.dismissRefusal("w1")
+        assertEquals(listOf(bare), store.refusals())
+    }
+
+    @Test
+    fun onlyTheNewestRefusalsAreKept() = runTest {
+        val store = createStore()
+
+        repeat(WriteQueue.MAX_REFUSALS + 3) { store.refuseWrite(refusal("r$it", at = it.toLong())) }
+
+        val kept = store.refusals()
+        assertEquals(WriteQueue.MAX_REFUSALS, kept.size)
+        assertEquals("r3", kept.first().key)
+        assertEquals("r${WriteQueue.MAX_REFUSALS + 2}", kept.last().key)
     }
 }

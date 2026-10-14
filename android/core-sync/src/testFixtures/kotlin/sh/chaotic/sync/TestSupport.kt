@@ -1,5 +1,7 @@
 package sh.chaotic.sync
 
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.IOException
 import java.util.Collections
 
@@ -129,4 +131,56 @@ class FakeRemote : ChaoticRemote {
     override suspend fun comments(issueId: String) = comments
 
     override suspend fun activity(issueId: String) = activity
+
+    var members: MutableMap<String, Remote<List<Principal>>> = mutableMapOf()
+
+    /** Every write sent, in order. Synchronized, like [sinceSent]. */
+    val writesSent: MutableList<SentWrite> = Collections.synchronizedList(mutableListOf())
+
+    /** The answer to each write; Ok with no value unless a test says otherwise. */
+    var answerWrite: suspend (SentWrite) -> Remote<Any?> = { Remote.Ok(null) }
+
+    override suspend fun members(teamId: String) = members[teamId] ?: Remote.HttpError(403)
+
+    override suspend fun act(path: String, body: JsonObject, origin: WriteOrigin): Remote<Unit> =
+        sent(SentWrite("POST", path, body, origin.idempotencyKey, origin.owner)).map { }
+
+    override suspend fun updateIssue(
+        issueId: String,
+        teamId: String,
+        fields: JsonObject,
+        origin: WriteOrigin,
+    ): Remote<Issue?> = sent(SentWrite("PATCH", WritePaths.issue(issueId), fields, origin.idempotencyKey, origin.owner))
+        .map { it as? Issue }
+
+    override suspend fun addComment(issueId: String, content: String, origin: WriteOrigin): Remote<Comment?> {
+        val body = JsonObject(mapOf("content" to JsonPrimitive(content)))
+        return sent(SentWrite("POST", WritePaths.comments(issueId), body, origin.idempotencyKey, origin.owner))
+            .map { it as? Comment }
+    }
+
+    /** What [reachable] answers: false, offline, unless a test says otherwise. */
+    var answersProbe = false
+
+    /** How many times [reachable] was asked. */
+    var probes = 0
+
+    override suspend fun reachable(): Boolean {
+        probes++
+        return answersProbe
+    }
+
+    private suspend fun sent(write: SentWrite): Remote<Any?> {
+        writesSent += write
+        return answerWrite(write)
+    }
 }
+
+/** One write as [FakeRemote] received it; [owner] is who it may go out as. */
+data class SentWrite(
+    val method: String,
+    val path: String,
+    val body: JsonObject,
+    val idempotencyKey: String,
+    val owner: String = "",
+)
