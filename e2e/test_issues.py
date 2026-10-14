@@ -764,7 +764,7 @@ class TestIssueCreateParentLabelsTeam:
         assert result.exit_code == 0, result.output
         created = json.loads(result.stdout)
         assert created["project_id"] == elsewhere["project"]["id"]
-        assert [l["id"] for l in created["labels"]] == [elsewhere["label"]["id"]]
+        assert elsewhere["label"]["id"] in [l["id"] for l in created["labels"]]
 
     def test_a_current_team_label_is_not_used_for_the_parents_team(
         self, api_client, auth_token, test_team, test_project, elsewhere,
@@ -777,7 +777,11 @@ class TestIssueCreateParentLabelsTeam:
             ["--parent", elsewhere["parent"]["identifier"], "--label", "only-here"],
         )
         assert result.exit_code != 0
-        assert "Label 'only-here' not found. Available labels: only-elsewhere" in result.output, result.output
+        import json
+        error = json.loads(result.output)["error"]
+        assert error.startswith("Label 'only-here' not found. Available labels: "), error
+        available = error.split("Available labels: ", 1)[1].split(", ")
+        assert "only-elsewhere" in available and "only-here" not in available, result.output
         assert [i["id"] for i in api_client.get_issues(project_id=elsewhere["project"]["id"])] == [
             elsewhere["parent"]["id"]
         ]

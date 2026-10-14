@@ -652,6 +652,23 @@ class TestIssueCreate:
         client.get_labels.assert_called_once_with("other-team")
         assert client.create_issue.call_args.kwargs["label_ids"] == ["label-there"]
 
+    def test_create_with_project_resolves_labels_in_that_projects_team(self, cli_runner):
+        """CHT-1709 (PR #394 review): --project naming a project in another
+        team looks labels up in that team too."""
+        from cli.main import cli, client
+
+        client.get_project = MagicMock(return_value={"id": "other-project", "team_id": "other-team"})
+        client.get_labels = MagicMock(return_value=[{"id": "label-there", "name": "Bug"}])
+        client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "OTH-2", "title": "X"})
+
+        with patch('cli.main.resolve_project_id', return_value='other-project'):
+            result = cli_runner.invoke(cli, ['issue', 'create', 'X', '--project', 'OTH', '--label', 'bug'])
+
+        assert result.exit_code == 0, result.output
+        client.get_project.assert_called_once_with("other-project")
+        client.get_labels.assert_called_once_with("other-team")
+        assert client.create_issue.call_args.kwargs["label_ids"] == ["label-there"]
+
     def test_create_with_parent_needs_no_current_project(self, cli_runner):
         from cli.main import cli, client
 

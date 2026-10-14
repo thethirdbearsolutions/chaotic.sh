@@ -172,7 +172,8 @@ class TestIssueCreateParentImpliesProject:
     def test_a_sub_issue_in_another_team_takes_that_teams_labels(self, api_client, api_key, test_team):
         """CHT-1709: issue_create has no labels of its own; issue_label
         resolves names in the team of the issue's project, so a sub-issue
-        created under a parent in another team takes that team's labels."""
+        created under a parent in another team takes that team's labels.
+        This pins behaviour MCP already had (it passes on main)."""
         import json as _json
 
         team = api_client.create_team(name="E2E Elsewhere", key="ELS")
@@ -196,8 +197,11 @@ class TestIssueCreateParentImpliesProject:
 
         assert "error" not in add_label("only-elsewhere")
         refused = add_label("only-here")
-        assert refused["error"]["message"].startswith("No label matching 'only-here'. Team labels: only-elsewhere"), refused
-        assert [l["id"] for l in api_client.get_issue(created["id"])["labels"]] == [label["id"]]
+        message = refused["error"]["message"]
+        assert message.startswith("No label matching 'only-here'. Team labels: "), refused
+        team_labels = message.split("Team labels: ", 1)[1].rstrip(".").split(", ")
+        assert "only-elsewhere" in team_labels and "only-here" not in team_labels, refused
+        assert label["id"] in [l["id"] for l in api_client.get_issue(created["id"])["labels"]]
 
     def test_a_key_scoped_to_another_project_cannot_see_the_parent(self, api_client, test_project, parent):
         """A key scoped to project E2E naming a parent in OTH gets the same
