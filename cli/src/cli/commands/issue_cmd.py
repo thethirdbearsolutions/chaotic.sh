@@ -13,6 +13,7 @@ from .shared import (
     _client,
     apply_ritual_attestations,
     console,
+    fetch_all_labels,
     parse_duration,
     print_ritual_prompt,
     resolve_content_value,
@@ -564,7 +565,7 @@ def register(cli):
                 _client().get_project(project_id)["team_id"] if parent_project or project_key
                 else m.get_current_team()
             )
-            all_labels = _client().get_labels(team_id)
+            all_labels = fetch_all_labels(team_id)
             label_ids = []
             for label_name in labels:
                 label = next((l for l in all_labels if l["name"].lower() == label_name.lower()), None)
@@ -880,9 +881,12 @@ def register(cli):
         # Handle label add/remove operations (CHT-697)
         labels_modified = False
         if add_labels or remove_labels:
-            # Get all labels for the team to resolve names to IDs
-            team_id = m.get_current_team()
-            all_labels = _client().get_labels(team_id)
+            # Resolve names among the labels of the issue's own project
+            # team (CHT-1711): the identifier can name an issue in another
+            # team than the current one, and the server only accepts a
+            # label from the issue's team.
+            team_id = _client().get_project(iss["project_id"])["team_id"]
+            all_labels = fetch_all_labels(team_id)
             label_lookup = {l["name"].lower(): l["id"] for l in all_labels}
 
             # Add labels

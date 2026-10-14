@@ -445,6 +445,27 @@ def resolve_document_id(doc_value: str, team_id: str) -> str:
     raise click.ClickException(f"Document '{doc_value}' not found. Use 'chaotic doc list' to see available documents.")
 
 
+LABEL_PAGE_SIZE = 1000
+
+
+def fetch_all_labels(team_id: str) -> list:
+    """Every label of a team, paging past the API's default of 100.
+
+    No endpoint resolves a label by name, so name lookups need the whole
+    list: a label beyond the first page would otherwise read as "not
+    found" (CHT-1351, CHT-1711). Pages until one comes back short.
+    """
+    labels: list = []
+    while True:
+        kwargs = {"limit": LABEL_PAGE_SIZE}
+        if labels:
+            kwargs["skip"] = len(labels)
+        page = _client().get_labels(team_id, **kwargs) or []
+        labels.extend(page)
+        if len(page) < LABEL_PAGE_SIZE:
+            return labels
+
+
 def resolve_label_id(label_value: str, team_id: str) -> str:
     """Resolve a label value to a label ID.
 
@@ -455,11 +476,10 @@ def resolve_label_id(label_value: str, team_id: str) -> str:
 
     Raises ClickException on ambiguity or not found.
     """
-    # Fetch all labels for resolution. limit=1000 because the API default
-    # is 100: past that, a real label becomes unresolvable and the failure
-    # surfaces as "no label matching 'x'" -- a false negative that reads
-    # like user error (CHT-1351).
-    labels = _client().get_labels(team_id, limit=1000)
+    # Fetch all labels for resolution: the API default page is 100, and a
+    # real label past it would surface as "no label matching 'x'" -- a
+    # false negative that reads like user error (CHT-1351, CHT-1711).
+    labels = fetch_all_labels(team_id)
     if not labels:
         raise click.ClickException("No labels exist. Create one with 'chaotic label create'.")
 

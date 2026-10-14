@@ -649,7 +649,7 @@ class TestIssueCreate:
 
         assert result.exit_code == 0, result.output
         client.get_project.assert_called_once_with("other-project")
-        client.get_labels.assert_called_once_with("other-team")
+        client.get_labels.assert_called_once_with("other-team", limit=1000)
         assert client.create_issue.call_args.kwargs["label_ids"] == ["label-there"]
 
     def test_create_with_project_resolves_labels_in_that_projects_team(self, cli_runner):
@@ -666,7 +666,7 @@ class TestIssueCreate:
 
         assert result.exit_code == 0, result.output
         client.get_project.assert_called_once_with("other-project")
-        client.get_labels.assert_called_once_with("other-team")
+        client.get_labels.assert_called_once_with("other-team", limit=1000)
         assert client.create_issue.call_args.kwargs["label_ids"] == ["label-there"]
 
     def test_create_with_parent_needs_no_current_project(self, cli_runner):

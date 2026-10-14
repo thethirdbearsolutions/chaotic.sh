@@ -1,7 +1,7 @@
 """Tests for ID resolution functions (document, label, team)."""
 import pytest
 import click
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch, MagicMock
 
 
 @pytest.fixture(autouse=True)
@@ -193,6 +193,41 @@ class TestResolveLabelIdEmptyLabels:
 
         assert "No labels exist" in str(exc_info.value)
         assert "chaotic label create" in str(exc_info.value)
+
+
+class TestFetchAllLabels:
+    """CHT-1711: label lookups page past the API's default page size."""
+
+    def test_pages_until_a_short_page(self):
+        from cli.main import client
+        from cli.commands.shared import fetch_all_labels, LABEL_PAGE_SIZE
+
+        first = [{"id": f"l{i}", "name": f"n{i}"} for i in range(LABEL_PAGE_SIZE)]
+        second = [{"id": "last", "name": "zz"}]
+        client.get_labels = MagicMock(side_effect=[first, second])
+
+        assert fetch_all_labels("team-123") == first + second
+        assert client.get_labels.call_args_list == [
+            call("team-123", limit=LABEL_PAGE_SIZE),
+            call("team-123", limit=LABEL_PAGE_SIZE, skip=LABEL_PAGE_SIZE),
+        ]
+
+    def test_a_full_last_page_costs_one_empty_request(self):
+        from cli.main import client
+        from cli.commands.shared import fetch_all_labels, LABEL_PAGE_SIZE
+
+        full = [{"id": f"l{i}", "name": f"n{i}"} for i in range(LABEL_PAGE_SIZE)]
+        client.get_labels = MagicMock(side_effect=[full, []])
+
+        assert fetch_all_labels("team-123") == full
+        assert client.get_labels.call_count == 2
+
+    def test_none_reads_as_no_labels(self):
+        from cli.main import client
+        from cli.commands.shared import fetch_all_labels
+
+        client.get_labels = MagicMock(return_value=None)
+        assert fetch_all_labels("team-123") == []
 
 
 class TestResolveLabelIdExactMatch:
