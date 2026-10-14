@@ -148,6 +148,26 @@ class TestProjectScopedKey:
             await backend.resolve_project(None, None)
         assert await backend.resolve_project(None, None) == ("p-1", "t-1")
 
+    async def test_optional_project_keeps_the_team_when_the_lookup_fails(self, backend):
+        """Review L1: optional_project made no request before CHT-1690, so
+        a 5xx on /auth/me or the project falls back to the team-wide
+        answer instead of failing the call, and is asked again later."""
+        self.me.side_effect = [APIError("boom", status_code=503), self.me.return_value]
+        assert await backend.optional_project(None, None) == (None, "t-1")
+        assert await backend.optional_project(None, None) == ("p-1", "t-1")
+        self.me.side_effect = None
+        self.project.side_effect = APIError("boom", status_code=502)
+        from cli import mcp_backend
+        mcp_backend._key_projects.clear()
+        assert await backend.optional_project(None, None) == (None, "t-1")
+
+    async def test_a_deleted_project_says_so(self, backend):
+        """Review N2: the HTTP /mcp's message, not a bare 404."""
+        self.project.side_effect = APIError("Project not found", status_code=404)
+        for call in (backend.resolve_project, backend.optional_project):
+            with pytest.raises(ToolInputError, match="scoped project no longer exists"):
+                await call(None, None)
+
     async def test_a_passed_project_does_not_ask_who_the_key_is(self, backend, monkeypatch):
         monkeypatch.setattr("cli.main.resolve_project_id", lambda v: f"resolved-{v}")
         assert await backend.resolve_project("DEMO", None) == ("resolved-DEMO", "t-1")
@@ -179,6 +199,12 @@ class TestProjectScopedKey:
         with pytest.raises(ToolInputError, match="scoped to a single project, not a team") as e:
             await backend.resolve_team(None)
         assert "team list" not in str(e.value) and "quickstart" not in str(e.value)
+
+    async def test_a_failed_safeguard_lookup_keeps_the_no_team_message(self, backend):
+        self.teams.return_value = []
+        self.me.side_effect = APIError("boom", status_code=503)
+        with pytest.raises(ToolInputError, match="No team selected"):
+            await backend.resolve_team(None)
 
 
 class TestDefaultTeam:

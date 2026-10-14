@@ -63,6 +63,9 @@ PROJECT_SCOPED_TEAM_WIDE = (
     "instead, or use a team-scoped or human API key."
 )
 
+# The HTTP /mcp's words for a project-scoped key whose project was deleted.
+PROJECT_SCOPE_GONE = "This API key's scoped project no longer exists."
+
 
 class RestBackend:
     capabilities = Capabilities(team_param=False)
@@ -109,7 +112,9 @@ class RestBackend:
             config.set_process_team(teams[0]["id"])
             return teams[0]["id"]
         if not teams:
-            if await self._key_project():
+            # A failed scope lookup leaves the general message (CHT-1690
+            # review L1): the safeguard must not turn it into an outage.
+            if await self._key_project_or_none():
                 raise ToolInputError(PROJECT_SCOPED_TEAM_WIDE)
             raise ToolInputError(
                 "No team selected. Run 'chaotic team list' to see available teams, "
@@ -134,9 +139,24 @@ class RestBackend:
         me = await self._call(functools.partial(self._client().get_me, as_configured=True)) or {}
         project = None
         if me.get("is_agent") and me.get("agent_project_id"):
-            project = await self._call(self._client().get_project, me["agent_project_id"])
+            try:
+                project = await self._call(self._client().get_project, me["agent_project_id"])
+            except BackendError as e:
+                if e.http_status == 404:
+                    raise ToolInputError(PROJECT_SCOPE_GONE) from e
+                raise
         _key_projects[slot] = project
         return project
+
+    async def _key_project_or_none(self) -> dict | None:
+        """_key_project for callers that have a pre-CHT-1690 answer to
+        fall back on: a failed lookup (5xx, network) counts as "not
+        project-scoped" for this call and is asked again next time. A
+        deleted project still says so."""
+        try:
+            return await self._key_project()
+        except (BackendError, TransportError):
+            return None
 
     async def _call(self, fn, *args, **kwargs):
         """Run a blocking client/resolver call off the event loop and
@@ -192,7 +212,9 @@ class RestBackend:
         if project_id:
             return project_id, team_id
         # As in resolve_project: a project-scoped key is never team-wide.
-        key_project = await self._key_project()
+        # Unlike there, a failed lookup keeps the old answer, the team
+        # (CHT-1690 review L1): this call used to make no request at all.
+        key_project = await self._key_project_or_none()
         if key_project:
             return key_project["id"], key_project["team_id"]
         return None, team_id
