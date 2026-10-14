@@ -382,7 +382,7 @@ def register(cli):
     @click.option("--mode", default="auto", type=click.Choice(["auto", "review", "gate"]),
                   help="Approval mode: auto (agent clears), review (human approves), gate (human only)")
     @click.option("--trigger", default="every_sprint", type=click.Choice(["every_sprint", "ticket_close", "ticket_claim"]),
-                  help="When ritual is required: every_sprint, ticket_close (when closing), or ticket_claim (when claiming)")
+                  help="When ritual is required: every_sprint, ticket_close (when closing), or ticket_claim (when claiming, or closing a never-claimed ticket)")
     @click.option("--note-required/--no-note-required", default=True,
                   help="Require a note when attesting (default: required)")
     @click.option("--artifact", type=click.Choice(["document", "url"]),
@@ -397,8 +397,9 @@ def register(cli):
 
         Triggers:
           every_sprint - Required when closing a sprint (default)
-          ticket_close - Required when closing/canceling tickets
-          ticket_claim - Required when claiming tickets (moving to in_progress)
+          ticket_close - Required when closing tickets (moving to done)
+          ticket_claim - Required when claiming tickets (moving to in_progress),
+                         and when closing a ticket that was never claimed
 
         Modes:
           auto   - Agent attestation clears immediately (default)

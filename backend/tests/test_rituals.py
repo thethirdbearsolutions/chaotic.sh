@@ -6538,6 +6538,67 @@ class TestRoundRobinContinuity:
         # is only what it would be gated on if it were claimed again.
         assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, first.id)] == ["b"]
 
+    async def test_closing_an_unclaimed_ticket_advances_the_claim_rotation_once(
+        self, db, test_project, test_user,
+    ):
+        """A backlog -> done close is gated by the claim rituals (CHT-1672),
+        so it records the claim rotation as a claim would. Closing the
+        already-claimed ticket does not gate on (or advance) it again,
+        although its listing has moved on to `b`."""
+        from app.enums import IssueStatus
+        from app.schemas.issue import IssueCreate, IssueUpdate
+        from app.services.issue_service import IssueService
+
+        group, (a, b) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLAIM, ["a", "b"])
+        rituals, issues = RitualService(), IssueService()
+        unclaimed = await issues.create(IssueCreate(title="u", project_id=test_project.id), test_project, test_user.id)
+        await rituals.attest_for_issue(a, unclaimed.id, test_user.id, note="done")
+        closed = await issues.update(
+            unclaimed, IssueUpdate(status=IssueStatus.DONE), user_id=test_user.id, is_human_request=False,
+        )
+        assert closed.status == IssueStatus.DONE
+        assert await self._pointer(group) == a.id
+
+        claimed = await issues.create(IssueCreate(title="c", project_id=test_project.id), test_project, test_user.id)
+        await rituals.attest_for_issue(b, claimed.id, test_user.id, note="done")
+        claimed = await issues.update(
+            claimed, IssueUpdate(status=IssueStatus.IN_PROGRESS), user_id=test_user.id, is_human_request=False,
+        )
+        assert await self._pointer(group) == b.id
+        # Its listing now says `a` (unattested), but a claimed ticket's close is not re-gated.
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, claimed.id)] == ["a"]
+        closed = await issues.update(
+            claimed, IssueUpdate(status=IssueStatus.DONE), user_id=test_user.id, is_human_request=False,
+        )
+        assert closed.status == IssueStatus.DONE
+        assert await self._pointer(group) == b.id
+
+    async def test_unclaimed_close_advances_claim_and_close_rotations_once_each(
+        self, db, test_project, test_user,
+    ):
+        """One backlog -> done passes both gates, so it records both
+        rotations (CHT-1672): the claim group and the close group each
+        move once, to the member this ticket was gated on."""
+        from app.enums import IssueStatus
+        from app.schemas.issue import IssueCreate, IssueUpdate
+        from app.services.issue_service import IssueService
+
+        claim_group, (ca, _cb) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLAIM, ["ca", "cb"])
+        close_group, (xa, _xb) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLOSE, ["xa", "xb"])
+        rituals, issues = RitualService(), IssueService()
+        issue = await issues.create(IssueCreate(title="u", project_id=test_project.id), test_project, test_user.id)
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, issue.id)] == ["ca"]
+        assert [r.name for r in await rituals.get_pending_ticket_rituals(test_project.id, issue.id)] == ["xa"]
+        await rituals.attest_for_issue(ca, issue.id, test_user.id, note="done")
+        await rituals.attest_for_issue(xa, issue.id, test_user.id, note="done")
+
+        closed = await issues.update(
+            issue, IssueUpdate(status=IssueStatus.DONE), user_id=test_user.id, is_human_request=False,
+        )
+        assert closed.status == IssueStatus.DONE
+        assert await self._pointer(claim_group) == ca.id
+        assert await self._pointer(close_group) == xa.id
+
     async def _issue(self, project, user, title, **fields):
         from app.schemas.issue import IssueCreate
         from app.services.issue_service import IssueService

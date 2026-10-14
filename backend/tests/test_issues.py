@@ -4280,7 +4280,8 @@ async def test_create_refusal_rows_carry_approval_mode(client, auth_headers, tes
     assert detail["gate"] == ["claim-gate"]
     assert detail["unattested"] == [] and detail["awaiting_approval"] == []
     assert "1 gate ritual only a human can complete (claim-gate)" in detail["message"]
-    assert "a human must complete the gate ritual before claiming" in detail["message"]
+    # There is no issue to act on yet, so the action is "create it first" (CHT-1672).
+    assert "create it without status in_progress, satisfy its rituals" in detail["message"]
 
 
 @pytest.mark.asyncio

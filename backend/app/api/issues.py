@@ -37,6 +37,7 @@ from app.services.issue_service import (
     SprintInLimboError,
     TicketRitualsError,
     ClaimRitualsError,
+    UnclaimedCloseRitualsError,
     IntentInFlightError,
     EstimateRequiredError,
     IssueAlreadyClaimedError,
@@ -323,7 +324,9 @@ def _limbo_detail(e: SprintInLimboError) -> dict:
     }
 
 
-async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> dict:
+async def _ritual_refusal_detail(
+    e, error_code: str, lead: str, verb: str, on_create: str | None = None,
+) -> dict:
     """The 409 detail for a claim/close refused by pending ticket rituals
     (CHT-1360). Rows are the same PendingRitualResponse shape ritual_pending
     returns -- approval_mode and attestation included -- and three name
@@ -342,6 +345,10 @@ async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> di
     queries for all of them, CHT-1500) on top of the gating queries the
     service already ran;
     fine at today's ritual counts, revisit if projects grow dozens.
+
+    ``on_create`` names the status a create asked for: there is no issue
+    yet to attest against, so the action becomes "create it first"
+    (CHT-1672).
     """
     rows = await pending_ritual_responses(e.issue_pk, e.rituals) if e.rituals else []
     if rows:
@@ -386,7 +393,13 @@ async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> di
             + (" (asked again; the approvers were notified)" if x["asked_again"] else "")
             for x in rejections
         )
-    if unattested:
+    if on_create:
+        action = (
+            f"The issue does not exist yet, so nothing can be attested: create it without "
+            f"status {on_create}, satisfy its rituals (ritual_pending lists the ones that apply "
+            f"to it and what each needs), then move it to {on_create}."
+        )
+    elif unattested:
         action = f"Attest the unattested ones before {verb}."
     else:
         human = []
@@ -484,14 +497,17 @@ async def create_issue(
             status_code=status.HTTP_409_CONFLICT,
             detail=await _ritual_refusal_detail(
                 e, "ticket_rituals_pending", "Cannot create issue as done - ticket has pending rituals", "closing",
+                on_create="done",
             ),
         )
     except ClaimRitualsError as e:
+        asked = "done" if isinstance(e, UnclaimedCloseRitualsError) else "in_progress"
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=await _ritual_refusal_detail(
                 e, "claim_rituals_pending",
-                "Cannot create issue as in_progress - ticket has pending claim rituals", "claiming",
+                f"Cannot create issue as {asked} - ticket has pending claim rituals",
+                e.verb, on_create=asked,
             ),
         )
     except IntentInFlightError as e:
@@ -1166,7 +1182,10 @@ async def update_issue(
     except ClaimRitualsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=await _ritual_refusal_detail(e, "claim_rituals_pending", "Ticket has pending claim rituals", "claiming"),
+            detail=await _ritual_refusal_detail(
+                e, "claim_rituals_pending", "Ticket has pending claim rituals",
+                e.verb,
+            ),
         )
     except IntentInFlightError as e:
         raise HTTPException(

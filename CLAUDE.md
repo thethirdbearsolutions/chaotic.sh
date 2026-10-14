@@ -87,7 +87,13 @@ smell — treat the following as invariants:
   `chaotic sprint close`. If the project has per-sprint (`EVERY_SPRINT`)
   rituals, close enters **limbo** until you complete them
   (`chaotic ritual pending`); otherwise close rotates to the next sprint
-  immediately.
+  immediately. Arrears and limbo are checked before any ticket ritual gate.
+- **A claim gate is passed once per ticket** (CHT-1672). `issues.claimed_at`
+  is stamped the first time a ticket enters `in_progress` and is never
+  cleared. Moving a ticket with no `claimed_at` to `done` (from backlog, todo,
+  in_review, anywhere) must pass its pending `ticket_claim` rituals first;
+  once claimed, closes never re-check them, even after the ticket is reopened.
+  Canceling is never claim-gated.
 
 If a budget number surprises you, reconcile it against *"points from tickets
 closed while this sprint was active (unestimated = 1)"* before suspecting a bug.
