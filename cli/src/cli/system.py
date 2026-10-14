@@ -2582,7 +2582,7 @@ def _report_service_file_update(update: ServiceFileUpdate) -> None:
     if update.status == "updated":
         console.print(f"Updated service file {esc(update.path)} (previous kept at {esc(update.backup)}):")
         for line in update.diff:
-            console.print(f"  {esc(line)}", markup=False, highlight=False)
+            console.print(f"  {line}", markup=False, highlight=False)
     elif update.status == "unchanged":
         console.print("  [dim]Service file is up to date.[/dim]")
     else:
@@ -2679,7 +2679,7 @@ def _roll_back(
             try:
                 restored = restore_backup(backup_path, port=port, host=host)
             except Exception as e:  # noqa: BLE001 -- the old code must still be restarted
-                console.print(f"[red]{escape(f'{esc(type(e).__name__)}: {esc(e)}')}[/red]")
+                console.print(f"[red]{escape(f'{type(e).__name__}: {e}')}[/red]")
                 restored = False
             if not restored:
                 console.print(f"[red]Database restore failed. Backup is at {esc(backup_path)}[/red]")

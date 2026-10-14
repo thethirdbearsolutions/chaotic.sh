@@ -126,3 +126,128 @@ class TestCommands:
         with patch.object(client, "get_projects", MagicMock(side_effect=APIError(f"Attested by {EVIL}"))):
             result = self._invoke(cli_runner, ["project", "list"])
         assert result.exit_code == 1 and f"Attested by {EVIL}" in result.output, result.output
+
+
+# ── Show-style commands (review 7) ────────────────────────────────────────────
+
+LINK = "[link=https://x]click[/link]"
+
+
+def _person(name):
+    return {"id": "u1", "name": name, "is_agent": False}
+
+
+def _issue_show(client, payload):
+    issue = {"id": "i1", "identifier": "CHT-1", "title": payload, "status": "todo", "priority": "high",
+             "issue_type": "task", "estimate": None, "description": None,
+             "assignee_id": "u1", "assignee": _person(payload), "assignee_name": payload,
+             "creator": _person(payload), "creator_name": payload, "parent_id": None}
+    client.get_issue_by_identifier.return_value = issue
+    client.get_comments.return_value = [
+        {"author": _person(payload), "author_name": payload, "created_at": "2026-10-14T10:00:00Z", "content": "hi"},
+    ]
+    client.get_sub_issues.return_value = []
+    client.get_relations.return_value = [{
+        "id": "rel-123456789", "relation_type": "blocks", "related_issue_identifier": "CHT-2",
+        "related_issue_title": payload, "related_issue_status": "todo", "direction": "outgoing",
+    }]
+    client.get_pending_issue_rituals.return_value = {"completed_rituals": [{
+        "name": payload, "attestation": {"note": payload, "attester": _person(payload),
+                                         "attested_by_name": payload},
+    }]}
+    return ["issue", "show", "CHT-1"]
+
+
+def _doc_show(client, payload):
+    client.get_document.return_value = {"id": "d1", "title": payload, "icon": None, "content": "body",
+                                        "author": _person(payload), "author_name": payload}
+    client.get_document_issues.return_value = [{"identifier": "CHT-1", "title": payload, "status": "todo"}]
+    client.get_document_comments.return_value = [
+        {"author": _person(payload), "author_name": payload, "created_at": "2026-10-14T10:00:00Z", "content": "x"},
+    ]
+    return ["doc", "show", "d1"]
+
+
+def _agent_list(client, payload):
+    client.get_team_agents.return_value = [{
+        "id": "a1-123456789", "name": payload, "kind": "agent", "is_active": False, "idle": True,
+        "parent_user_name": payload, "created_at": "2026-10-14T10:00:00Z",
+    }]
+    return ["agent", "list"]
+
+
+def _ritual_history(client, payload):
+    client.get_ritual_history.return_value = [{
+        "attested_at": "2026-10-14T10:00:00Z", "ritual_name": payload, "ritual_trigger": "ticket_close",
+        "issue_identifier": "CHT-1", "attester": _person(payload), "attested_by_name": payload,
+        "rejected_at": "2026-10-14T11:00:00Z", "rejecter": _person(payload), "rejected_by_name": payload,
+        "rejection_note": "no",
+    }]
+    return ["ritual", "history"]
+
+
+def _activity(client, payload):
+    client.get_team_activities.return_value = [{
+        "created_at": "2026-10-14T10:00:00Z", "issue_identifier": "CHT-1", "activity_type": "updated",
+        "user": _person(payload), "user_name": payload,
+        "field_name": "title", "old_value": payload, "new_value": payload,
+    }]
+    return ["activity"]
+
+
+@pytest.mark.parametrize("payload", [EVIL, LINK], ids=["tags", "link"])
+@pytest.mark.parametrize("setup", [_issue_show, _doc_show, _agent_list, _ritual_history, _activity],
+                         ids=["issue show", "doc show", "agent list", "ritual history", "activity"])
+def test_show_commands_print_server_text_verbatim(cli_runner, deps, setup, payload):
+    from cli.main import cli
+    fake = MagicMock()
+    args = setup(fake, payload)
+    with patch("cli.main.client", fake), \
+            patch("cli.main.resolve_document_id", return_value="d1"):
+        result = cli_runner.invoke(cli, args)
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert payload in result.output, result.output
+    # Escaped twice, a bracket would print with its backslash.
+    assert "\\[" not in result.output, result.output
+
+
+# ── Paths where escaping must NOT happen (review 1 and 2) ─────────────────────
+
+def test_a_service_file_diff_prints_without_backslashes():
+    """The diff is printed with markup=False: escaping it there printed the
+    backslashes (`-ExecStart=/x \\[a] y`)."""
+    from cli import system
+    recording = Console(record=True, width=250, color_system=None)
+    update = system.ServiceFileUpdate("updated", path="unit", backup="unit.bak",
+                                      diff=["-ExecStart=/x [a] y", "+ExecStart=/x [b] y"])
+    with patch.object(system, "console", recording):
+        system._report_service_file_update(update)
+    text = recording.export_text()
+    assert "-ExecStart=/x [a] y" in text and "\\[" not in text
+
+
+def test_a_restore_error_is_escaped_once(tmp_path):
+    from cli import system
+    backup = tmp_path / "chaotic.db.backup-20261013-000000"
+    backup.write_bytes(b"")
+    recording = Console(record=True, width=250, color_system=None)
+    with patch.object(system, "stop_service", return_value=True), \
+            patch.object(system, "wait_for_service_settled", return_value="inactive"), \
+            patch.object(system, "checkout_version", return_value=(True, None)), \
+            patch.object(system, "is_service_running", return_value=False), \
+            patch.object(system, "is_port_in_use", return_value=False), \
+            patch.object(system, "restore_backup", side_effect=OSError("bad [x] thing")), \
+            patch.object(system, "resync_checkout", return_value=(True, "re-synced")), \
+            patch.object(system, "start_service", return_value=True), \
+            patch.object(system, "health_check", return_value=True), \
+            patch.object(system, "console", recording):
+        system._roll_back("19ae385deployed", backup, port=24267, host="127.0.0.1")
+    text = recording.export_text()
+    assert "OSError: bad [x] thing" in text and "\\[" not in text
+
+
+def test_table_title_and_caption_are_text_unless_markup():
+    table = Table(title=EVIL, caption=Markup("[bold]ok[/bold]"))
+    table.add_column("A column wider than the title")
+    text = _render(table)
+    assert EVIL in text and "[bold]" not in text and "ok" in text

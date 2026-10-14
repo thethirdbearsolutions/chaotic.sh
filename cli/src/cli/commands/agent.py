@@ -449,7 +449,7 @@ def register(cli):
             console.print(f"[yellow]Agent '{esc(agent_obj['name'])}' has no API keys.[/yellow]")
             return
 
-        table = Table(title=f"API keys for {esc(agent_obj['name'])}")
+        table = Table(title=f"API keys for {agent_obj['name']}")
         table.add_column("ID", style="dim")
         table.add_column("Name")
         table.add_column("Prefix")

@@ -476,7 +476,7 @@ def register(cli):
             console.print(f"[yellow]No issues found matching '{esc(query)}'{esc(scope)}.[/yellow]")
             return
 
-        title = f"Search Results: '{esc(query)}'" + (" (all projects)" if search_all else "")
+        title = f"Search Results: '{query}'" + (" (all projects)" if search_all else "")
         table = Table(title=title)
         table.add_column("ID")
         table.add_column("Title")
@@ -1050,7 +1050,7 @@ def register(cli):
             console.print(f"[yellow]No sub-issues found for {esc(identifier)}.[/yellow]")
             return
 
-        table = Table(title=f"Sub-issues of {esc(identifier)}")
+        table = Table(title=f"Sub-issues of {identifier}")
         table.add_column("ID")
         table.add_column("Title")
         table.add_column("Status")
@@ -1086,7 +1086,7 @@ def register(cli):
             console.print(f"[yellow]No relations found for {esc(identifier)}.[/yellow]")
             return
 
-        table = Table(title=f"Relations for {esc(identifier)}")
+        table = Table(title=f"Relations for {identifier}")
         table.add_column("Relation ID", style="dim")
         table.add_column("Type")
         table.add_column("Related Issue")
@@ -1139,7 +1139,7 @@ def register(cli):
             console.print(f"[yellow]No description revisions found for {esc(identifier)}.[/yellow]")
             return
 
-        table = Table(title=f"Description history for {esc(identifier)}")
+        table = Table(title=f"Description history for {identifier}")
         table.add_column("Version")
         table.add_column("Author")
         table.add_column("Date", style="dim")
