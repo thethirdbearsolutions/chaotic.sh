@@ -1626,12 +1626,12 @@ def verify_installed_cli(cli_dir: Path) -> tuple[bool, str]:
     return True, "CLI reinstalled (verified against the checkout)"
 
 
-def resync_checkout() -> tuple[bool, str]:
+def resync_checkout(reinstall: bool = True) -> tuple[bool, str]:
     """Bring the environments back in line with the code now checked out:
-    `just sync` and the verified CLI reinstall, with the same process-group
-    handling and timeouts as the upgrade's own (CHT-1694). Returns
-    (success, message). Used by a rollback, after the upgrade had already
-    synced the venvs and installed the CLI for the commit it abandoned."""
+    `just sync` and (if `reinstall`) the verified CLI reinstall, with the
+    same process-group handling and timeouts as the upgrade's own
+    (CHT-1694). Returns (success, message). Used by a rollback, after the
+    upgrade had already synced the venvs for the commit it abandoned."""
     try:
         run_command(["just", "sync"], cwd=PROJECT_DIR, timeout=300, own_group=True)
     except subprocess.CalledProcessError as e:
@@ -1640,6 +1640,8 @@ def resync_checkout() -> tuple[bool, str]:
         return False, "Dependency sync timed out"
     except OSError as e:  # e.g. just not on this shell's PATH
         return False, f"Dependency sync failed: {e}"
+    if not reinstall:
+        return True, "Dependencies synced"
     return reinstall_cli()
 
 
@@ -1647,7 +1649,9 @@ def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> 
     """Sync dependencies, reinstall the CLI and run pending database
     migrations using Oxyde. Returns (success, message).
 
-    `progress["migrate_started"]` is set to True just before the first
+    `progress["cli_installed"]` is set to True once the CLI reinstall and
+    its verification succeeded. `progress["migrate_started"]` is set to
+    True just before the first
     command that can write to the database runs, so a caller can tell
     "the database was never touched" from "it may be partially migrated"
     whether this returns or is interrupted (CHT-1477).
@@ -1655,6 +1659,7 @@ def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> 
     if progress is None:
         progress = {}
     progress["migrate_started"] = False
+    progress["cli_installed"] = False
     backend_dir = PROJECT_DIR / "backend"
     # Point Oxyde at the same database file the running server opens
     # (set by the systemd unit / launchd plist). Without this, oxyde_config.py
@@ -1670,6 +1675,7 @@ def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> 
         ok, msg = reinstall_cli()
         if not ok:
             return ok, msg
+        progress["cli_installed"] = True
 
         # If user specified --fake-initial, mark the initial schema migration
         # as applied without running it (for pre-Oxyde databases)
@@ -2448,11 +2454,17 @@ def _roll_back(
     current_commit: str | None, backup_path: Path | None,
     port: int | None = None, host: str = "127.0.0.1", was_running: bool = True,
     service_update: ServiceFileUpdate | None = None,
+    keep_new_cli: bool = False,
 ) -> None:
     """Undo a failed upgrade: stop whatever is running, restore the previous
     checkout, the previous service file (if the upgrade rewrote it) and (if
-    one was taken) the database backup, re-sync the venvs and the CLI for
-    the restored checkout (CHT-1694), restart.
+    one was taken) the database backup, re-sync the venvs for the restored
+    checkout (CHT-1694), restart.
+
+    `keep_new_cli`: the upgrade's CLI reinstall and its verification
+    succeeded, so that CLI (the upgrade tool, newer than the server it
+    now talks to) stays installed. Otherwise the CLI may be half
+    installed, and the previous commit's is reinstalled.
 
     The database step is skipped, loudly, if something still holds the port
     after the service was told to stop: that is exactly the CHT-1363 case
@@ -2502,7 +2514,7 @@ def _roll_back(
             if not restored:
                 console.print(f"[red]Database restore failed. Backup is at {backup_path}[/red]")
     if checked_out:
-        _resync_for_rollback()
+        _resync_for_rollback(current_commit, keep_new_cli)
     if not was_running:
         console.print(
             "[yellow]The server was not running before this upgrade; starting the previous "
@@ -2515,33 +2527,46 @@ def _roll_back(
     _print_service_state(port, host)
 
 
-def _resync_for_rollback() -> None:
-    """The upgrade synced the venvs and installed the CLI for the commit
-    being abandoned; put them back for the previous one before it is
-    restarted (CHT-1694). A failure here, a Ctrl-C included, is reported
-    and the restart still happens: the server back on the old code is
-    worth more than a clean environment, and a rollback must never start
-    another rollback."""
-    console.print("Re-syncing dependencies and the CLI for the previous version...")
+def _resync_for_rollback(previous_commit: str, keep_new_cli: bool) -> None:
+    """The upgrade synced the venvs for the commit being abandoned; put them
+    back for the previous one before it is restarted (CHT-1694), and say
+    which CLI is installed afterwards. The CLI the upgrade installed stays
+    when its reinstall was verified: it is the upgrade tool, and rolling it
+    back would hand the operator's retry an older `system upgrade`. When
+    that reinstall failed or never ran, the previous commit's CLI is
+    reinstalled so the box is not left with a half-installed one.
+
+    A failure here, a Ctrl-C included, is reported and the restart still
+    happens: the server back on the old code is worth more than a clean
+    environment, and a rollback must never start another rollback."""
+    what = "dependencies" if keep_new_cli else "dependencies and the CLI"
+    console.print(f"Re-syncing {what} for the previous version...")
     try:
-        ok, message = resync_checkout()
+        ok, message = resync_checkout(reinstall=not keep_new_cli)
     except KeyboardInterrupt:
         ok, message = False, "Interrupted (Ctrl-C)."
     except Exception as e:  # noqa: BLE001 -- the old code must still be restarted
         ok, message = False, f"{type(e).__name__}: {e}"
     if ok:
         console.print(f"  [dim]{escape(message)}[/dim]")
-        return
-    console.print(f"[red]{escape(message)}[/red]")
-    console.print(
-        "[red]The re-sync for the previous version did not complete, so its virtualenvs and the "
-        "installed CLI may not match the code. Starting it anyway.[/red]"
-    )
-    console.print(
-        f"Once the cause is fixed, run 'just sync' in {PROJECT_DIR} and "
-        f"'uv tool install --force --reinstall {PROJECT_DIR / 'cli'}', "
-        "then 'chaotic system stop' and 'chaotic system start'."
-    )
+    else:
+        console.print(f"[red]{escape(message)}[/red]")
+        console.print(
+            f"[red]The re-sync for the previous version did not complete, so its virtualenvs"
+            f"{'' if keep_new_cli else ' and the installed CLI'} may not match the code. "
+            "Starting it anyway.[/red]"
+        )
+        reinstall_hint = "" if keep_new_cli else f" and 'uv tool install --force --reinstall {PROJECT_DIR / 'cli'}'"
+        console.print(
+            f"Once the cause is fixed, run 'just sync' in {PROJECT_DIR}{reinstall_hint}, "
+            "then 'chaotic system stop' and 'chaotic system start'."
+        )
+    if keep_new_cli:
+        console.print("CLI: keeping the version this upgrade installed and verified (the newer upgrade tool).")
+    elif ok:
+        console.print(f"CLI: reinstalled from the previous version ({previous_commit[:7]}) and verified.")
+    else:
+        console.print("[red]CLI: may be half-installed; reinstall it with the command above.[/red]")
 
 
 @system.command("upgrade")
@@ -2792,7 +2817,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                 console.print("No migration ran, so the database was not changed.")
         console.print("Fix the issue above, then run 'chaotic system upgrade --yes' again.")
         console.print("Rolling back...")
-        _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running)
+        _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running,
+                   keep_new_cli=progress.get("cli_installed", False))
         raise SystemExit(130 if interrupted else 1)
     console.print(f"  [dim]{escape(message)}[/dim]")
 
@@ -2842,7 +2868,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print("[red]Failed to start server.[/red]")
         console.print("Rolling back...")
         _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running,
-                   service_update=service_update)
+                   service_update=service_update, keep_new_cli=True)
         raise SystemExit(1)
 
     # Health check
@@ -2851,7 +2877,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print("[red]FAILED[/red]")
         console.print("\nHealth check failed. Rolling back...")
         _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running,
-                   service_update=service_update)
+                   service_update=service_update, keep_new_cli=True)
         raise SystemExit(1)
     console.print("[green]OK[/green]")
 
@@ -2871,7 +2897,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                 f"{new_commit[:7]}: the new process did not take over. Rolling back..."
             )
             _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running,
-                       service_update=service_update)
+                       service_update=service_update, keep_new_cli=True)
             raise SystemExit(1)
         if matched is None:
             # A server too old to report git_sha (before 4a9db89) or a

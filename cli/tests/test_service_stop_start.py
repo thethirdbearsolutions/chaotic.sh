@@ -520,7 +520,7 @@ class TestFailedMigrationRollsBack:
                 patch.object(system, "verify_installed_cli", return_value=(False, "CLI reinstall did not take: cli/system.py")):
             ok, message = system.run_migrations(progress=progress)
         assert ok is False and "did not take" in message
-        assert progress == {"migrate_started": False}
+        assert progress == {"migrate_started": False, "cli_installed": False}
         assert not [c for c in ran if "oxyde" in c], "migrated after a CLI reinstall that did not take"
 
         result, m = _upgrade(
@@ -731,28 +731,67 @@ class TestRollbackResync:
         result, m = _upgrade(
             health_check=dict(return_value=False),
             checkout_version=dict(side_effect=lambda *a, **k: calls.append(("checkout", a)) or (True, None)),
-            resync_checkout=dict(side_effect=lambda: calls.append(("resync",)) or (True, "CLI reinstalled")),
+            resync_checkout=dict(side_effect=lambda **k: calls.append(("resync", k)) or (True, "Dependencies synced")),
             start_service=dict(side_effect=lambda: calls.append(("start",)) or True),
         )
 
         assert result.exit_code == 1
         assert calls == [
             ("checkout", ("v0.1.0a20",)), ("start",),               # the upgrade
-            ("checkout", (_COMMITS[0],)), ("resync",), ("start",),  # the rollback
+            ("checkout", (_COMMITS[0],)), ("resync", {"reinstall": False}), ("start",),  # the rollback
         ]
         out = _flat(result.output)
-        assert "Re-syncing dependencies and the CLI for the previous version" in out
+        # The upgrade's CLI was installed and verified: it stays.
+        assert "Re-syncing dependencies for the previous version" in out
+        assert "CLI: keeping the version this upgrade installed and verified" in out
         assert "may not match" not in out
         assert "Rolled back to previous version" in out
 
-    def test_failed_migration_rollback_resyncs_too(self, tmp_path):
+    @staticmethod
+    def _fails_after(cli_installed):
+        def run(fake_initial=False, progress=None):
+            progress.update(migrate_started=cli_installed, cli_installed=cli_installed)
+            return False, "Migration failed:\n0030 boom" if cli_installed else "CLI reinstall did not take: cli/x.py"
+        return dict(side_effect=run)
+
+    def test_migrate_failure_after_a_verified_cli_keeps_that_cli(self, tmp_path):
         result, m = _upgrade(
-            run_migrations=dict(return_value=(False, "Migration failed:\n0030 boom")),
+            run_migrations=self._fails_after(cli_installed=True),
             DATABASE_PATH=dict(new=tmp_path / "missing.db"),
         )
 
         assert result.exit_code == 1
-        m["resync_checkout"].assert_called_once_with()
+        m["resync_checkout"].assert_called_once_with(reinstall=False)
+        out = _flat(result.output)
+        assert "CLI: keeping the version this upgrade installed and verified" in out
+
+    def test_a_cli_reinstall_that_failed_is_replaced_by_the_previous_cli(self, tmp_path):
+        """Never leave a half-installed CLI behind."""
+        result, m = _upgrade(
+            run_migrations=self._fails_after(cli_installed=False),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+            resync_checkout=dict(return_value=(True, "CLI reinstalled (verified against the checkout)")),
+        )
+
+        assert result.exit_code == 1
+        m["resync_checkout"].assert_called_once_with(reinstall=True)
+        out = _flat(result.output)
+        assert "Re-syncing dependencies and the CLI for the previous version" in out
+        assert "CLI: reinstalled from the previous version (19ae385) and verified" in out
+
+    def test_a_failed_resync_of_the_previous_cli_says_it_may_be_half_installed(self, tmp_path):
+        result, m = _upgrade(
+            run_migrations=self._fails_after(cli_installed=False),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+            resync_checkout=dict(return_value=(False, "CLI reinstall timed out")),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "virtualenvs and the installed CLI may not match the code" in out
+        assert "uv tool install --force --reinstall" in out
+        assert "CLI: may be half-installed" in out
+        m["start_service"].assert_called_once()
 
     def test_a_failed_resync_is_reported_and_the_old_code_still_restarts_once(self):
         result, m = _upgrade(
@@ -763,11 +802,12 @@ class TestRollbackResync:
         assert result.exit_code == 1
         out = _flat(result.output)
         assert "Dependency sync failed: error: no network" in out
-        assert "virtualenvs and the installed CLI may not match the code. Starting it anyway" in out
-        assert "just sync" in out and "uv tool install --force --reinstall" in out
+        assert "its virtualenvs may not match the code. Starting it anyway" in out
+        assert "just sync" in out and "uv tool install" not in out  # the verified new CLI stays
+        assert "CLI: keeping the version this upgrade installed" in out
         # No second rollback: one checkout back, one re-sync, one restart.
         assert [c.args for c in m["checkout_version"].call_args_list] == [("v0.1.0a20",), (_COMMITS[0],)]
-        m["resync_checkout"].assert_called_once_with()
+        m["resync_checkout"].assert_called_once_with(reinstall=False)
         assert m["start_service"].call_count == 2  # new code, then the rollback's
         assert "Rolled back to previous version" in out
         assert out.rindex("Server is") > out.index("may not match")
@@ -829,6 +869,13 @@ class TestResyncCheckout:
             assert system.resync_checkout() == (True, "CLI reinstalled (verified)")
         run.assert_called_once_with(["just", "sync"], cwd=system.PROJECT_DIR, timeout=300, own_group=True)
         reinstall.assert_called_once_with()
+
+    def test_without_reinstall_only_syncs(self):
+        with patch.object(system, "run_command") as run, \
+                patch.object(system, "reinstall_cli") as reinstall:
+            assert system.resync_checkout(reinstall=False) == (True, "Dependencies synced")
+        run.assert_called_once_with(["just", "sync"], cwd=system.PROJECT_DIR, timeout=300, own_group=True)
+        reinstall.assert_not_called()
 
     def test_a_cli_reinstall_failure_is_the_result(self):
         with patch.object(system, "run_command"), \
