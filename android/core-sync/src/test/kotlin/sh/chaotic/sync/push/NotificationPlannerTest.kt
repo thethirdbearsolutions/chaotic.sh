@@ -75,7 +75,9 @@ class NotificationPlannerTest {
 
     @Test
     fun resolvedForSomethingNotOnScreenDoesNothing() {
-        assertTrue(NotificationPlanner.onResolved(PushPayload.Resolved("gone", "issue:i1"), listOf(shown("e1"))).isEmpty())
+        assertTrue(
+            NotificationPlanner.onResolved(PushPayload.Resolved("gone", "issue:i1"), listOf(shown("e1"))).isEmpty(),
+        )
     }
 
     @Test
@@ -88,11 +90,34 @@ class NotificationPlannerTest {
     @Test
     fun reconcileWithdrawsWhatIsNoLongerWaiting() {
         val shown = listOf(shown("e1"), shown("e2"), shown("e3", group = "issue:i2"), shown("e4", group = "issue:i2"))
-        val actions = NotificationPlanner.reconcile(shown) { it in setOf("e2", "e4") }
+        val actions = NotificationPlanner.reconcile(shown) { it.entryId in setOf("e2", "e4") }
         assertEquals(
             listOf(Cancel("e1"), Cancel("e3"), CancelSummary("issue:i1"), CancelSummary("issue:i2")),
             actions,
         )
         assertTrue(NotificationPlanner.reconcile(shown) { true }.isEmpty())
+    }
+
+    @Test
+    fun reconcilingWithTheCache() {
+        val synced = 1_000_000L
+        val before = synced - NotificationPlanner.MISSING_GRACE_MILLIS
+        val after = synced - NotificationPlanner.MISSING_GRACE_MILLIS + 1
+        val shown = listOf(
+            ShownNotification("unread", "entry:unread", PushChannel.MENTIONS, before),
+            ShownNotification("read", "entry:read", PushChannel.MENTIONS, after),
+            ShownNotification("not-synced-yet", "entry:not-synced-yet", PushChannel.MENTIONS, after),
+            ShownNotification("gone", "entry:gone", PushChannel.MENTIONS, before),
+        )
+        val cached = mapOf("unread" to false, "read" to true)
+        assertEquals(
+            listOf(Cancel("read"), Cancel("gone"), CancelSummary("entry:read"), CancelSummary("entry:gone")),
+            NotificationPlanner.reconcileWithCache(shown, cached, synced),
+        )
+        // No sync completed yet: only what the cache says was read goes.
+        assertEquals(
+            listOf(Cancel("read"), CancelSummary("entry:read")),
+            NotificationPlanner.reconcileWithCache(shown, cached, null),
+        )
     }
 }

@@ -37,9 +37,11 @@ class FakePushRemote : PushRemote {
 
 class FakeDistributor : PushDistributor {
     val calls = mutableListOf<String>()
+    var accepts = true
 
-    override fun register(vapidPublicKey: String) {
+    override fun register(vapidPublicKey: String): Boolean {
         calls += "register:$vapidPublicKey"
+        return accepts
     }
 
     override fun unregister() {
@@ -88,6 +90,13 @@ class PushRegistrarTest {
     }
 
     @Test
+    fun aDistributorThatCannotBeAskedIsAFailure() = runTest {
+        distributor.accepts = false
+        assertEquals(PushStatus.FAILED, registrar.start(distributorAvailable = true))
+        assertTrue(PushRegistrar.pollFallback(store.read(), OWNER))
+    }
+
+    @Test
     fun anUnreachableServerLeavesThingsAsTheyWere() = runTest {
         remote.vapid = Remote.Unreachable(IOException("offline"))
         assertEquals(PushStatus.NOT_STARTED, registrar.start(distributorAvailable = true))
@@ -99,7 +108,10 @@ class PushRegistrarTest {
         registrar.start(distributorAvailable = true)
         val result = registrar.onEndpoint("https://ntfy.example/up1", "p256", "auth")
         assertEquals(PushRegistrar.FlushResult.REGISTERED, result)
-        assertEquals(listOf("install-1" to PushDevice("https://ntfy.example/up1", "p256", "auth", "Pixel")), remote.registered)
+        assertEquals(
+            listOf("install-1" to PushDevice("https://ntfy.example/up1", "p256", "auth", "Pixel")),
+            remote.registered,
+        )
         val state = store.read()
         assertEquals(PushStatus.ACTIVE, state.status)
         assertEquals(OWNER, state.owner)
@@ -153,7 +165,10 @@ class PushRegistrarTest {
     fun anAccountSwitchDuringThePutDoesNotRegisterTheNextPerson() = runTest {
         registrar.start(distributorAvailable = true)
         remote.onRegister = { owner = OTHER_OWNER }
-        assertEquals(PushRegistrar.FlushResult.NOT_SIGNED_IN, registrar.onEndpoint("https://ntfy.example/up1", "p", "a"))
+        assertEquals(
+            PushRegistrar.FlushResult.NOT_SIGNED_IN,
+            registrar.onEndpoint("https://ntfy.example/up1", "p", "a"),
+        )
         assertNotEquals(PushStatus.ACTIVE, store.read().status)
         assertTrue(PushRegistrar.pollFallback(store.read(), OTHER_OWNER))
     }

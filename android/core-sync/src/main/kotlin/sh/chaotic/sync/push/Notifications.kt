@@ -49,7 +49,12 @@ fun InboxEntry.collapseKey(): String = when {
 }
 
 /** A notification on screen now, as the notification manager reports it. */
-data class ShownNotification(val entryId: String, val group: String, val channel: PushChannel)
+data class ShownNotification(
+    val entryId: String,
+    val group: String,
+    val channel: PushChannel,
+    val postedAtMillis: Long = 0,
+)
 
 /** What to do to the notifications on screen. The Android side carries these out in order. */
 sealed interface NotificationAction {
@@ -89,12 +94,42 @@ object NotificationPlanner {
         withdraw(setOf(resolved.id), shown)
 
     /**
-     * After a sync: withdraw every notification whose entry is no longer
-     * waiting ([stillWaiting] false: resolved, archived or read
-     * elsewhere), whether or not its `resolved` message ever arrived.
+     * Withdraw every notification whose entry is no longer waiting
+     * ([stillWaiting] false), whether or not its `resolved` message ever
+     * arrived.
      */
-    fun reconcile(shown: List<ShownNotification>, stillWaiting: (String) -> Boolean): List<NotificationAction> =
-        withdraw(shown.map { it.entryId }.filterNot(stillWaiting).toSet(), shown)
+    fun reconcile(
+        shown: List<ShownNotification>,
+        stillWaiting: (ShownNotification) -> Boolean,
+    ): List<NotificationAction> = withdraw(shown.filterNot(stillWaiting).map { it.entryId }.toSet(), shown)
+
+    /**
+     * How long after a notification was posted a completed sync must have
+     * been, for its entry's absence from the cache to mean it is gone: the
+     * push arrives before the sync it asks for brings the entry in, and the
+     * sync cursor trails the newest change by the server's safety lag.
+     */
+    const val MISSING_GRACE_MILLIS = 5 * 60_000L
+
+    /**
+     * [reconcile] against the synced cache, whenever it changes: an entry
+     * the cache holds is waiting until it is read (on any device). One it
+     * does not hold was resolved or archived, but only once a sync has
+     * completed ([lastSyncedAtMillis]) [MISSING_GRACE_MILLIS] after its
+     * notification was posted; before that the cache may simply not have
+     * caught up (a failed sync, or none yet since the app started).
+     * [cachedRead] maps each cached entry's id to whether it is read.
+     */
+    fun reconcileWithCache(
+        shown: List<ShownNotification>,
+        cachedRead: Map<String, Boolean>,
+        lastSyncedAtMillis: Long?,
+    ): List<NotificationAction> = reconcile(shown) {
+        when (val read = cachedRead[it.entryId]) {
+            null -> lastSyncedAtMillis == null || lastSyncedAtMillis - it.postedAtMillis < MISSING_GRACE_MILLIS
+            else -> !read
+        }
+    }
 
     private fun withdraw(ids: Set<String>, shown: List<ShownNotification>): List<NotificationAction> {
         val gone = shown.filter { it.entryId in ids }

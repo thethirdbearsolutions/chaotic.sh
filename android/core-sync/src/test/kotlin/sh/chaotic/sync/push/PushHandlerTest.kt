@@ -26,7 +26,9 @@ class FakeNotifier : Notifier {
                     ShownNotification(action.entry.id, action.group, action.channel)
 
                 is NotificationAction.Cancel -> onScreen.remove(action.entryId)
+
                 is NotificationAction.Summarize -> summaries[action.group] = action.count
+
                 is NotificationAction.CancelSummary -> summaries.remove(action.group)
             }
         }
@@ -98,12 +100,17 @@ class PushHandlerTest {
 class PollNotificationsTest {
     private val now = 10L * 24 * 60 * 60 * 1_000
 
-    private fun added(id: String, kind: String = "mention", ageMillis: Long = 0, read: Boolean = false, by: String? = "bob") =
-        entry(id, kind = kind, read = read, createdAtMillis = now - ageMillis).copy(
-            source = by?.let { Principal(it, it) },
-            issueId = "i-$id",
-            issueIdentifier = "CHT-$id",
-        )
+    private fun added(
+        id: String,
+        kind: String = "mention",
+        ageMillis: Long = 0,
+        read: Boolean = false,
+        by: String? = "bob",
+    ) = entry(id, kind = kind, read = read, createdAtMillis = now - ageMillis).copy(
+        source = by?.let { Principal(it, it) },
+        issueId = "i-$id",
+        issueIdentifier = "CHT-$id",
+    )
 
     @Test
     fun whatAPushWouldHaveSaid() {

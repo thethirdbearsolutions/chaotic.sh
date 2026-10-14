@@ -709,3 +709,18 @@ notice is always pushed to the person's devices: its preference cannot
 be turned off, so the stolen credential cannot mute it first. A
 `chaotic system config check` and the server's startup both refuse a
 `VAPID_PRIVATE_KEY` that is not a P-256 key.
+
+On the phone (CHT-1612), the app registers with whichever UnifiedPush
+distributor the person has installed (ntfy, NextPush, Sunup and others;
+the Android build has no Google code), each time it comes on screen. It
+re-registers under a new subscription when the server's VAPID key
+changes, which is what brings a paused device back. The subscription's
+private key is made and kept by the UnifiedPush connector library,
+sealed with an Android Keystore key; the app never logs an endpoint, a
+key or a message. Notifications are private on the lock screen: one
+that hides sensitive content shows only that something is waiting. On a
+phone with no distributor the app says so once, and syncs the inbox in
+the background every 15 minutes instead, notifying about what that
+brings in. The app's tests decrypt bodies made by the server's own
+encryption (`android/testdata/web-push-vectors.json`, which
+`backend/tests/test_push_vectors.py` keeps in step with the server).

@@ -115,7 +115,9 @@ class PushPayloadTest {
         assertNull(parse("""{"v": 1, "type": "entry", "id": "e1", "kind": "Mention!"}"""), "a malformed kind")
         assertNull(parse("""{"v": 1, "type": "resolved", "id": ""}"""), "an empty id")
         val entry = assertIs<PushPayload.Entry>(
-            parse("""{"v": 1, "type": "entry", "id": "e1", "kind": "mention", "collapse": "team:t1", "issue": "x y"}"""),
+            parse(
+                """{"v": 1, "type": "entry", "id": "e1", "kind": "mention", "collapse": "team:t1", "issue": "x y"}""",
+            ),
         )
         assertEquals("entry:e1", entry.collapse, "a collapse key the server does not make falls back to the entry")
         assertNull(entry.issueIdentifier)
@@ -125,7 +127,9 @@ class PushPayloadTest {
 
     @Test
     fun aMissingTitleIsEmptyAndALongOneIsClippedOnCodePoints() {
-        val untitled = assertIs<PushPayload.Entry>(parse("""{"v": 1, "type": "entry", "id": "e1", "kind": "mention"}"""))
+        val untitled = assertIs<PushPayload.Entry>(
+            parse("""{"v": 1, "type": "entry", "id": "e1", "kind": "mention"}"""),
+        )
         assertEquals("", untitled.title)
         val emoji = "😀" // one code point, two UTF-16 units
         val long = assertIs<PushPayload.Entry>(

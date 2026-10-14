@@ -1,5 +1,8 @@
 package sh.chaotic.sync
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -61,21 +64,29 @@ class InboxSyncer(
     private val session: CacheSession,
     private val pageSize: Int = DEFAULT_PAGE_SIZE,
     private val maxPages: Int = DEFAULT_MAX_PAGES,
+    private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
     private val mutex = Mutex()
     private val store get() = session.store
+    private val synced = MutableStateFlow<Long?>(null)
+
+    /**
+     * When a run last brought the cache fully up to date (in this process;
+     * null before the first): the notifications use it to tell an entry
+     * that is gone from one the cache has not caught up with (CHT-1612).
+     */
+    val lastSyncedAtMillis: StateFlow<Long?> = synced.asStateFlow()
 
     suspend fun sync(): SyncOutcome = mutex.withLock {
         val ticket = session.begin() ?: return@withLock SyncOutcome.Unauthorized
-        syncLocked(ticket)
+        syncLocked(ticket).also { if (it is SyncOutcome.Synced && !it.morePending) synced.value = nowMillis() }
     }
 
     @Suppress("ReturnCount") // each way a run ends is an early return
     private suspend fun syncLocked(ticket: Long): SyncOutcome {
         var cursor = store.inboxCursor()
         // A first sync (or one after a sign-in) brings in the whole inbox: none of it is news.
-        var mayNotify = cursor != null
-        val added = linkedMapOf<String, InboxEntry>()
+        val added = NewEntries(news = cursor != null)
         var restartedForBadCursor = false
         var clearNext = false
         var pages = 0
@@ -93,24 +104,30 @@ class InboxSyncer(
             pages++
             val clear = clearNext || page.reset
             clearNext = false
-            if (clear) mayNotify = false
             cursor = page.nextCursor ?: if (clear) null else cursor
             val (change, new) = merge(page, clear, cursor)
             // Signed out, or someone else signed in, while the page was on its way.
             session.write(ticket) { applyInbox(change) } ?: return SyncOutcome.Unauthorized
-            change.deletes.forEach { added.remove(it) }
-            // A later page's newer copy of an entry an earlier page brought in.
-            change.upserts.forEach { if (it.id in added) added[it.id] = it }
-            new.forEach { added[it.id] = it }
-            if (!page.hasMore) {
-                return SyncOutcome.Synced(pages, page.retryAfterSeconds, added = addedIf(mayNotify, added))
-            }
+            added.record(change, new)
+            if (!page.hasMore) return SyncOutcome.Synced(pages, page.retryAfterSeconds, added = added.list())
         }
-        return SyncOutcome.Synced(pages, morePending = true, added = addedIf(mayNotify, added))
+        return SyncOutcome.Synced(pages, morePending = true, added = added.list())
     }
 
-    private fun addedIf(mayNotify: Boolean, added: Map<String, InboxEntry>) =
-        if (mayNotify) added.values.toList() else emptyList()
+    /** What [SyncOutcome.Synced.added] reports for a run: nothing once a page cleared the inbox. */
+    private class NewEntries(private var news: Boolean) {
+        private val entries = linkedMapOf<String, InboxEntry>()
+
+        fun record(change: InboxChange, new: List<InboxEntry>) {
+            if (change.clear) news = false
+            change.deletes.forEach { entries.remove(it) }
+            // A later page's newer copy of an entry an earlier page brought in.
+            change.upserts.filter { it.id in entries }.forEach { entries[it.id] = it }
+            new.forEach { entries[it.id] = it }
+        }
+
+        fun list(): List<InboxEntry> = if (news) entries.values.toList() else emptyList()
+    }
 
     /** The page as a change to the cache, and the open entries in it the cache did not hold at all. */
     private suspend fun merge(page: SyncPage, clear: Boolean, cursor: String?): Pair<InboxChange, List<InboxEntry>> {

@@ -62,37 +62,39 @@ sealed interface PushPayload {
          */
         @Suppress("ReturnCount") // each way a message can be unreadable is an early return
         fun parse(bytes: ByteArray): PushPayload? {
-            if (bytes.isEmpty() || bytes.size > MAX_BYTES) return null
-            val root = try {
-                ChaoticApi.json.parseToJsonElement(bytes.decodeToString(throwOnInvalidSequence = true))
-            } catch (_: SerializationException) {
-                return null
-            } catch (_: CharacterCodingException) {
-                return null
-            } as? JsonObject ?: return null
+            val root = json(bytes) ?: return null
             val version = (root["v"] as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull ?: return null
             if (version != VERSION) return Unknown
             val id = root.string("id")?.takeIf { ID.matches(it) }
             return when (root.string("type")) {
-                "entry" -> {
-                    id ?: return null
-                    val kind = root.string("kind")?.takeIf { KIND.matches(it) } ?: return null
-                    Entry(
-                        id = id,
-                        kind = kind,
-                        issueIdentifier = root.string("issue")?.takeIf { IDENTIFIER.matches(it) },
-                        title = clip(root.string("title").orEmpty(), MAX_TITLE_CHARS),
-                        ritualId = root.string("ritual_id")?.takeIf { ID.matches(it) },
-                        collapse = root.collapse(id),
-                    )
-                }
-
-                "resolved" -> Resolved(id ?: return null, root.collapse(id))
-
+                "entry" -> id?.let { entry(root, it) }
+                "resolved" -> id?.let { Resolved(it, root.collapse(it)) }
                 null -> null
-
                 else -> Unknown
             }
+        }
+
+        private fun json(bytes: ByteArray): JsonObject? {
+            if (bytes.isEmpty() || bytes.size > MAX_BYTES) return null
+            return try {
+                ChaoticApi.json.parseToJsonElement(bytes.decodeToString(throwOnInvalidSequence = true)) as? JsonObject
+            } catch (_: SerializationException) {
+                null
+            } catch (_: CharacterCodingException) {
+                null
+            }
+        }
+
+        private fun entry(root: JsonObject, id: String): Entry? {
+            val kind = root.string("kind")?.takeIf { KIND.matches(it) } ?: return null
+            return Entry(
+                id = id,
+                kind = kind,
+                issueIdentifier = root.string("issue")?.takeIf { IDENTIFIER.matches(it) },
+                title = clip(root.string("title").orEmpty(), MAX_TITLE_CHARS),
+                ritualId = root.string("ritual_id")?.takeIf { ID.matches(it) },
+                collapse = root.collapse(id),
+            )
         }
 
         private fun JsonObject.string(name: String): String? =

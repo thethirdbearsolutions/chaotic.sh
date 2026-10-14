@@ -68,8 +68,11 @@ class InMemoryPushStateStore(private var state: PushState = PushState()) : PushS
 
 /** The UnifiedPush distributor as the registrar drives it. */
 interface PushDistributor {
-    /** Ask for an endpoint (again); the answer comes to [PushRegistrar.onEndpoint]. */
-    fun register(vapidPublicKey: String)
+    /**
+     * Ask for an endpoint (again); the answer comes to [PushRegistrar.onEndpoint].
+     * False when the request could not even be made.
+     */
+    fun register(vapidPublicKey: String): Boolean
 
     /** Stop: the distributor drops the endpoint, and the connector its keys. */
     fun unregister()
@@ -107,12 +110,18 @@ class PushRegistrar(
     private val flushLock = Mutex()
 
     suspend fun start(distributorAvailable: Boolean): PushStatus {
-        val owner = currentOwner() ?: return PushStatus.NOT_STARTED
-        if (!distributorAvailable) {
-            return store.update { it.copy(status = PushStatus.NO_DISTRIBUTOR) }.status
+        val owner = currentOwner()
+        return when {
+            owner == null -> PushStatus.NOT_STARTED
+
+            !distributorAvailable -> store.update { it.copy(status = PushStatus.NO_DISTRIBUTOR) }.status
+
+            // Not reachable now: keep what there is; the next start tries again.
+            else -> (remote.vapidKey() as? Remote.Ok)?.value?.let { subscribe(owner, it) } ?: store.read().status
         }
-        // Not reachable now: keep what there is; the next start tries again.
-        val key = (remote.vapidKey() as? Remote.Ok)?.value ?: return store.read().status
+    }
+
+    private suspend fun subscribe(owner: String, key: VapidKey): PushStatus {
         val before = store.read()
         if (before.vapidKeyId != null && before.vapidKeyId != key.keyId) distributor.unregister()
         val state = store.update {
@@ -123,8 +132,11 @@ class PushRegistrar(
                 vapidKeyId = key.keyId,
             )
         }
-        distributor.register(key.publicKey)
-        return state.status
+        return if (distributor.register(key.publicKey)) {
+            state.status
+        } else {
+            store.update { it.copy(status = PushStatus.FAILED) }.status
+        }
     }
 
     /** The distributor's endpoint: kept, then registered with the server. */
@@ -147,9 +159,7 @@ class PushRegistrar(
             currentOwner() != owner -> FlushResult.NOT_SIGNED_IN
 
             result is Remote.Ok -> {
-                store.update {
-                    if (it.pending != pending) it else it.copy(status = PushStatus.ACTIVE, owner = owner, pending = null)
-                }
+                settle(pending) { it.copy(status = PushStatus.ACTIVE, owner = owner, pending = null) }
                 FlushResult.REGISTERED
             }
 
@@ -157,7 +167,7 @@ class PushRegistrar(
 
             // 409 too many devices, 422 an endpoint or keys the server will not take: retrying will not help.
             result is Remote.HttpError && result.status in HTTP_CLIENT_ERRORS && result.status !in HTTP_RETRYABLE -> {
-                store.update { if (it.pending != pending) it else it.copy(status = PushStatus.FAILED, pending = null) }
+                settle(pending) { it.copy(status = PushStatus.FAILED, pending = null) }
                 FlushResult.REFUSED
             }
 
@@ -165,12 +175,19 @@ class PushRegistrar(
         }
     }
 
+    /** Apply [change] unless another endpoint replaced [pending] while it was being registered. */
+    private suspend fun settle(pending: PendingEndpoint, change: (PushState) -> PushState) {
+        store.update { if (it.pending == pending) change(it) else it }
+    }
+
     suspend fun onRegistrationFailed() {
         store.update { it.copy(status = PushStatus.FAILED, pending = null) }
     }
 
     suspend fun onTemporarilyUnavailable() {
-        store.update { if (it.status == PushStatus.ACTIVE) it.copy(status = PushStatus.TEMPORARILY_UNAVAILABLE) else it }
+        store.update {
+            if (it.status == PushStatus.ACTIVE) it.copy(status = PushStatus.TEMPORARILY_UNAVAILABLE) else it
+        }
     }
 
     /** The distributor dropped this app (uninstalled, or the person removed it): tell the server too. */

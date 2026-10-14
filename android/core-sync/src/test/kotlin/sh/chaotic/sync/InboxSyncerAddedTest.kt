@@ -11,7 +11,8 @@ class InboxSyncerAddedTest {
     private val remote = FakeRemote()
     private val store = InMemoryCacheStore()
     private val session = CacheSession(store) { OWNER }
-    private val syncer = InboxSyncer(remote, session)
+    private var now = 5_000L
+    private val syncer = InboxSyncer(remote, session, nowMillis = { now })
 
     init {
         runBlocking { store.claim(OWNER) }
@@ -44,11 +45,24 @@ class InboxSyncerAddedTest {
     @Test
     fun anEntryOpenedAndClosedInOneRunIsNotReported() = runTest {
         remote.syncAnswers += Remote.Ok(page(open(entry("e1")), cursor = "c1"))
-        remote.syncAnswers += Remote.Ok(page(open(entry("e2", 2_000)), open(entry("e3", 2_000)), cursor = "c2", hasMore = true))
+        remote.syncAnswers += Remote.Ok(
+            page(open(entry("e2", 2_000)), open(entry("e3", 2_000)), cursor = "c2", hasMore = true),
+        )
         remote.syncAnswers += Remote.Ok(page(tombstone(entry("e2", 3_000)), open(entry("e3", 3_000)), cursor = "c3"))
         added()
         val outcome = assertIs<SyncOutcome.Synced>(syncer.sync())
         assertEquals(listOf("e3"), outcome.added.map { it.id })
         assertEquals(3_000, outcome.added.single().updatedAtMicros, "the newest copy")
+    }
+
+    @Test
+    fun lastSyncedIsWhenARunLastCompleted() = runTest {
+        assertEquals(null, syncer.lastSyncedAtMillis.value)
+        remote.syncAnswers += Remote.Ok(page(open(entry("e1")), cursor = "c1"))
+        syncer.sync()
+        assertEquals(5_000L, syncer.lastSyncedAtMillis.value)
+        now = 9_000L
+        syncer.sync() // nothing queued: unreachable
+        assertEquals(5_000L, syncer.lastSyncedAtMillis.value, "a failed run is not a sync")
     }
 }
