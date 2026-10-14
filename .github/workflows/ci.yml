@@ -212,12 +212,14 @@ jobs:
       # file, which has to be committed.
       - name: The committed Room schema is current
         run: |
-          if [ -n "$(git status --porcelain -- app/schemas)" ]; then
-            git status --porcelain -- app/schemas
-            git diff -- app/schemas
-            git ls-files --others --exclude-standard -- app/schemas | while read -r f; do
-              echo "--- new file: $f"; cat "$f"
-            done
+          # Compared as JSON, so formatting (a final newline) is not a change.
+          changed=""
+          for f in $(git ls-files --modified -- app/schemas); do
+            if ! diff <(git show "HEAD:./$f" | jq -S .) <(jq -S . "$f"); then changed="$changed $f"; fi
+          done
+          added=$(git ls-files --others --exclude-standard -- app/schemas)
+          for f in $added; do echo "--- new file: $f"; cat "$f"; echo; done
+          if [ -n "$changed$added" ]; then
             echo "The Room schema changed: bump ChaoticDatabase's version and commit app/schemas." >&2
             exit 1
           fi
