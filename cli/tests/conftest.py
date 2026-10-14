@@ -18,6 +18,16 @@ class _FakeAPIError(Exception):
     pass
 
 
+@pytest.fixture(autouse=True)
+def _no_session_identity(monkeypatch):
+    """Session identity (CHT-1499) is off unless a test turns it on: a
+    developer's own CHAOTIC_SESSION_IDENTITY, or the CLAUDE_CODE_SESSION_ID
+    of the Claude Code session running the suite, must not change what
+    the CLI sends."""
+    monkeypatch.delenv("CHAOTIC_SESSION_IDENTITY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+
+
 @pytest.fixture
 def cli_runner():
     """Create a Click test runner with profile set."""

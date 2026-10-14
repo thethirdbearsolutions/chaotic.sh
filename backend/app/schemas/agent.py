@@ -64,6 +64,9 @@ class AgentCreated(BaseModel):
     api_key: str  # Full API key - only returned at creation time
     api_key_id: str
     created_at: DateTimeUTC
+    # Echoed so a client can confirm a registrar was made (CHT-1600).
+    kind: AgentKind | None = None
+    can_register: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

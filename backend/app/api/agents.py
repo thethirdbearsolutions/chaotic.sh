@@ -128,6 +128,8 @@ async def create_team_agent(
         api_key=api_key,
         api_key_id=api_key_id,
         created_at=agent.created_at,
+        kind=agent.kind,
+        can_register=agent.can_register,
     )
 
 
@@ -187,6 +189,8 @@ async def create_project_agent(
         api_key=api_key,
         api_key_id=api_key_id,
         created_at=agent.created_at,
+        kind=agent.kind,
+        can_register=agent.can_register,
     )
 
 

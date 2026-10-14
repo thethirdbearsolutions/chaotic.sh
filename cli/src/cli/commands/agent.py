@@ -2,7 +2,10 @@
 import sys
 
 import click
+from rich.markup import escape
 from rich.table import Table
+
+from cli import session_identity
 
 from .shared import _client, console
 
@@ -49,9 +52,13 @@ def register(cli):
     @agent.command("create")
     @click.argument("name")
     @click.option("--project", "-p", is_flag=True, help="Create project-scoped agent (otherwise team-scoped)")
+    @click.option(
+        "--registrar", is_flag=True,
+        help="Make it a registrar: its key may only register session identities and read (see docs/agents.md)",
+    )
     @_main().require_team
     @_main().handle_error
-    def agent_create(name, project):
+    def agent_create(name, project, registrar):
         """Create a new agent.
 
         NAME is the display name for the agent (e.g., 'claude-bot').
@@ -59,11 +66,16 @@ def register(cli):
         By default, creates a team-scoped agent that can access all projects in the team.
         Use --project to create a project-scoped agent that can only access the current project.
 
+        --registrar makes it a registrar (CHT-1498): a harness's own agent
+        that registers one identity per session (`chaotic agent register`,
+        or `session_identity: auto`) and cannot write as itself.
+
         The API key is displayed only once - save it immediately!
 
         Examples:
             chaotic agent create claude-bot
             chaotic agent create ci-bot --project
+            chaotic agent create "Claude Code" --registrar
         """
         m = _main()
         team_id = m.get_current_team()
@@ -73,19 +85,133 @@ def register(cli):
             if not project_id:
                 console.print("[red]No project selected. Run 'chaotic project use <project_id>' first.[/red]")
                 raise SystemExit(1)
-            result = _client().create_project_agent(project_id, name)
+            result = _client().create_project_agent(project_id, name, can_register=registrar)
             scope_msg = f"project-scoped (project: {project_id[:8]}...)"
         else:
-            result = _client().create_team_agent(team_id, name)
+            result = _client().create_team_agent(team_id, name, can_register=registrar)
             scope_msg = "team-scoped"
 
-        console.print(f"[green]Agent '{result['name']}' created ({scope_msg}).[/green]")
+        if registrar and not result.get("can_register"):
+            # A server older than CHT-1498 ignores the field: say so
+            # rather than hand out a key that is not a registrar's.
+            console.print(
+                f"[yellow]Agent '{escape(result['name'])}' was created, but the server did not make it "
+                "a registrar (it may predate registrars).[/yellow]"
+            )
+        kind_msg = ", registrar" if result.get("can_register") else ""
+        console.print(f"[green]Agent '{escape(result['name'])}' created ({scope_msg}{kind_msg}).[/green]")
         console.print()
         console.print("[bold yellow]API Key (save this - it won't be shown again!):[/bold yellow]")
         console.print(f"[cyan]{result['api_key']}[/cyan]")
         console.print()
         console.print("To configure the CLI with this agent's key:")
         console.print(f"  chaotic auth set-key {result['api_key']}")
+        if result.get("can_register"):
+            console.print("Then give each Claude Code session its own identity with:")
+            console.print("  chaotic config set-session-identity auto   [dim](or CHAOTIC_SESSION_IDENTITY=auto)[/dim]")
+
+    @agent.command("update")
+    @click.argument("agent_ref", metavar="AGENT")
+    @click.option("--name", default=None, help="New display name")
+    @click.option(
+        "--registrar/--no-registrar", default=None,
+        help="Turn the registrar capability on or off (CHT-1498)",
+    )
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def agent_update(agent_ref, name, registrar):
+        """Rename an agent, or make it a registrar or stop it being one.
+
+        A registrar's key may only register session identities
+        (`chaotic agent register`) and read; it cannot write as itself.
+        --no-registrar does not retire the identities it registered: they
+        keep working until their keys expire, but it can no longer renew them.
+        Allowed to the agent's creator (while in its team) and team admins.
+        A registered session identity cannot be made a registrar.
+
+        AGENT can be the agent's full ID, an ID prefix, or its exact name.
+
+        Examples:
+            chaotic agent update "Claude Code" --registrar
+            chaotic agent update claude-bot --name "Claude Bot"
+        """
+        m = _main()
+        agent_ref = _require_ref(agent_ref)
+        if name is None and registrar is None:
+            raise click.UsageError("Nothing to change: pass --name, --registrar or --no-registrar.")
+        agent_obj = _resolve_agent(_client().get_team_agents(m.get_current_team()), agent_ref)
+        changes = {}
+        if name is not None:
+            changes["name"] = name
+        if registrar is not None:
+            changes["can_register"] = registrar
+        result = _client().update_agent(agent_obj["id"], **changes)
+        if registrar is not None and bool(result.get("can_register")) != registrar:
+            raise click.ClickException(
+                "The server did not change the registrar capability (it may predate registrars)."
+            )
+        if m.is_json_output():
+            m.output_json(result)
+            return
+        state = "a registrar" if result.get("can_register") else "not a registrar"
+        console.print(f"[green]Agent '{escape(result['name'])}' updated; it is {state}.[/green]")
+
+    @agent.command("register")
+    @click.option("--ref", "external_ref", required=True,
+                  help="The session's address, e.g. claude-code:session:<id>")
+    @click.option("--name", default=None, help="Display name (a new identity only; default '<registrar> · <ref tail>')")
+    @click.option("--project", "project_ref", default=None,
+                  help="Narrow the identity to one project of the registrar's team (id or key)")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    def agent_register(external_ref, name, project_ref):
+        """Register a session identity with the configured key as registrar.
+
+        Gets or creates the identity this registrar knows by --ref and
+        mints it a fresh key that expires (7 days by default). Calling it
+        again for the same ref returns the same identity with a new key and
+        revokes its previous one. The configured key must be a registrar's
+        (`chaotic agent create --registrar`), or a person's, who registers
+        in the current team.
+
+        With `session_identity: auto` the CLI and `chaotic mcp` do this by
+        themselves for each Claude Code session; this command is for other
+        harnesses and for scripts.
+
+        The key is displayed only once.
+
+        Example:
+            chaotic agent register --ref claude-code:session:abc123 --json
+        """
+        m = _main()
+        kwargs = {"name": name}
+        # Every request here is the registrar's own, even with
+        # session_identity on.
+        with session_identity.suspended():
+            if project_ref:
+                kwargs["project_id"] = m.resolve_project_id(project_ref)
+            if not _client().get_me().get("is_agent"):
+                # A person registers for themself, in a team they name.
+                team_id = m.get_current_team()
+                if not team_id and not project_ref:
+                    console.print("[red]No team selected.[/red] Run 'chaotic team use <team>' first.")
+                    raise SystemExit(1)
+                kwargs["team_id"] = team_id
+            result = _client().register_agent(external_ref, **kwargs)
+        if m.is_json_output():
+            m.output_json(result)
+            return
+        identity = result["agent"]
+        verb = "Registered" if result.get("created") else "Renewed"
+        console.print(
+            f"[green]{verb} session identity '{escape(identity['name'])}' ({identity['id'][:8]}).[/green]"
+        )
+        console.print(f"Key expires: {escape(str(result.get('expires_at') or 'never'))}")
+        console.print()
+        console.print("[bold yellow]API Key (save this - it won't be shown again!):[/bold yellow]")
+        console.print(f"[cyan]{result['api_key']}[/cyan]")
 
     @agent.command("list")
     @_main().json_option
@@ -109,12 +235,19 @@ def register(cli):
         table.add_column("ID", style="dim")
         table.add_column("Name")
         table.add_column("Scope")
+        table.add_column("Kind")
         table.add_column("Created By")
         table.add_column("Created At")
 
         for a in agents:
             agent_id = a["id"][:8] + "..."
             name = a["name"]
+            if a.get("can_register"):
+                kind = "registrar"
+            elif a.get("kind") == "session":
+                kind = "session"
+            else:
+                kind = "agent"
             if a.get("agent_project_id"):
                 scope = f"Project: {a['agent_project_id'][:8]}..."
             else:
@@ -123,7 +256,7 @@ def register(cli):
                 name = f"{name} [dim](deactivated)[/dim]"
             created_by = a.get("parent_user_name", "Unknown")
             created_at = a["created_at"][:10]
-            table.add_row(agent_id, name, scope, created_by, created_at)
+            table.add_row(agent_id, name, scope, kind, created_by, created_at)
 
         console.print(table)
 

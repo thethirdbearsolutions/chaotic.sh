@@ -1,6 +1,6 @@
 /**
  * Agents module for Chaotic frontend
- * Handles AI agent management (create, list, delete)
+ * Handles AI agent management (create, list, delete, registrar toggle)
  */
 
 import { api } from './api.js';
@@ -126,6 +126,16 @@ export function renderAgents() {
     .map((agent) => {
       const safeName = escapeHtml(agent.name);
       const safeParentName = escapeHtml(agent.parent_user_name || 'Unknown');
+      const isSession = agent.kind === 'session';
+      const kindBadge = agent.can_register
+        ? '<span class="agent-scope" title="Registers one identity per session; cannot write as itself">Registrar</span>'
+        : isSession
+          ? '<span class="agent-scope" title="Registered by a registrar for one session">Session</span>'
+          : '';
+      // A registered session identity can never be a registrar (one level).
+      const registrarToggle = isSession
+        ? ''
+        : `<button class="btn btn-secondary" data-action="toggle-agent-registrar" data-agent-id="${escapeAttr(agent.id)}" data-agent-name="${escapeAttr(agent.name || 'Agent')}" data-can-register="${agent.can_register ? 'true' : 'false'}">${agent.can_register ? 'Stop being a registrar' : 'Make registrar'}</button>`;
       return `
       <div class="agent-item">
         ${renderAgentAvatar(agent)}
@@ -133,9 +143,11 @@ export function renderAgents() {
           <div class="agent-name">${safeName}</div>
           <div class="agent-meta">
             <span class="agent-scope">${agent.agent_project_id ? 'Project-scoped' : 'Team-wide'}</span>
+            ${kindBadge}
             <span class="agent-date">Created by ${safeParentName} ${formatDate(agent.created_at)}</span>
           </div>
         </div>
+        ${registrarToggle}
         <button class="btn btn-secondary" data-action="generate-agent-key" data-agent-id="${escapeAttr(agent.id)}" data-agent-name="${escapeAttr(agent.name || 'Agent')}">Generate new key</button>
         <button class="btn btn-danger-outline" data-action="delete-agent" data-agent-id="${escapeAttr(agent.id)}" data-agent-name="${escapeAttr(agent.name || 'Agent')}">Delete</button>
       </div>
@@ -169,6 +181,13 @@ export function showCreateAgentModal() {
           Project-scoped (can only access selected project)
         </label>
       </div>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="agent-registrar">
+          Registrar (registers one identity per Claude Code session)
+        </label>
+        <p class="form-help">A registrar's key can only register session identities and read; it cannot write as itself. See docs/agents.md.</p>
+      </div>
       <div class="form-group" id="agent-project-select" style="display: none;">
         <label for="agent-project">Project</label>
         <select id="agent-project">
@@ -198,8 +217,12 @@ export function showCreateAgentModal() {
  * @param {string} title - Modal title
  * @param {string} apiKey - Full API key (shown only once)
  */
-function showAgentKeyRevealModal(title, apiKey) {
+function showAgentKeyRevealModal(title, apiKey, registrar = false) {
   const safeApiKey = escapeHtml(apiKey);
+  const registrarSteps = registrar
+    ? `<p>Then give each Claude Code session its own identity:</p>
+        <code>chaotic config set-session-identity auto</code>`
+    : '';
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-content').innerHTML = `
     <div class="api-key-created">
@@ -211,6 +234,7 @@ function showAgentKeyRevealModal(title, apiKey) {
       <div class="api-key-instructions">
         <p>Configure the CLI to use this agent:</p>
         <code>chaotic auth set-key ${safeApiKey}</code>
+        ${registrarSteps}
       </div>
       <button type="button" class="btn btn-primary" data-action="dismiss-agent-modal">Done</button>
     </div>
@@ -235,18 +259,19 @@ export async function handleCreateAgent(event) {
   const avatar = document.getElementById('agent-avatar')?.value.trim() || null;
   const projectScoped = document.getElementById('agent-project-scoped').checked;
   const projectId = document.getElementById('agent-project')?.value;
+  const registrar = Boolean(document.getElementById('agent-registrar')?.checked);
 
   try {
     let result;
     if (projectScoped && projectId) {
-      result = await api.createProjectAgent(projectId, name, avatar);
+      result = await api.createProjectAgent(projectId, name, avatar, registrar);
     } else {
-      result = await api.createTeamAgent(teamId, name, avatar);
+      result = await api.createTeamAgent(teamId, name, avatar, registrar);
     }
     closeModal();
 
     // Show the API key in a new modal (only shown once)
-    showAgentKeyRevealModal('Agent Created', result.api_key);
+    showAgentKeyRevealModal('Agent Created', result.api_key, Boolean(result.can_register));
   } catch (e) {
     showApiError('create agent', e);
   }
@@ -272,6 +297,31 @@ export async function generateAgentKey(agentId, agentName) {
     showAgentKeyRevealModal('New Agent Key', result.key);
   } catch (e) {
     showApiError('generate agent key', e);
+  }
+}
+
+/**
+ * Turn an agent's registrar capability on or off (CHT-1600). Allowed to
+ * its creator and team admins; the server refuses anyone else and any
+ * registered session identity.
+ * @param {string} agentId - Agent ID
+ * @param {string} agentName - Agent name (for the confirmation prompt)
+ * @param {boolean} makeRegistrar - The capability wanted
+ */
+export async function setAgentRegistrar(agentId, agentName, makeRegistrar) {
+  const prompt = makeRegistrar
+    ? `Make "${agentName}" a registrar? Its keys will only be able to register session identities and read; it will no longer be able to write as itself.`
+    : `Stop "${agentName}" being a registrar? It will write as itself again; the session identities it registered keep working until their keys expire, and cannot be renewed.`;
+  if (!confirm(prompt)) {
+    return;
+  }
+
+  try {
+    await api.updateAgent(agentId, { can_register: makeRegistrar });
+    showToast(makeRegistrar ? 'Agent is now a registrar' : 'Agent is no longer a registrar', 'success');
+    loadAgents();
+  } catch (e) {
+    showApiError('change registrar', e);
   }
 }
 
@@ -331,5 +381,8 @@ registerActions({
     },
     'generate-agent-key': (_event, data) => {
         generateAgentKey(data.agentId, data.agentName);
+    },
+    'toggle-agent-registrar': (_event, data) => {
+        setAgentRegistrar(data.agentId, data.agentName, data.canRegister !== 'true');
     },
 });

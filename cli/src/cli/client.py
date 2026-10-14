@@ -3,6 +3,7 @@ import sys
 import httpx
 from urllib.parse import quote, urlencode
 from cli.config import get_api_url, get_token, get_api_key
+from cli import session_identity
 from cli.principals import principal_label
 
 
@@ -27,20 +28,23 @@ class APIError(Exception):
 class Client:
     """API client."""
 
-    def _headers(self) -> dict:
+    @staticmethod
+    def _configured_credential() -> str | None:
+        """The profile's credential: the API key, else the login token."""
+        return get_api_key() or get_token()
+
+    def _headers(self, credential: str | None = None) -> dict:
         """Get request headers.
 
         Reads config on each call to support profile switching.
+        `credential` overrides the configured one (a session identity's
+        key, CHT-1499).
         """
         headers = {"Content-Type": "application/json"}
         # Prefer API key over JWT token
-        api_key = get_api_key()
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        else:
-            token = get_token()
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
+        credential = credential or self._configured_credential()
+        if credential:
+            headers["Authorization"] = f"Bearer {credential}"
         # Signals whether this invocation is an interactive (TTY) session,
         # as opposed to an agent or other non-interactive automation. Used
         # by the backend to require both a human account AND an interactive
@@ -48,6 +52,18 @@ class Client:
         interactive = sys.stdin.isatty() and sys.stdout.isatty()
         headers["X-Chaotic-Interactive"] = "1" if interactive else "0"
         return headers
+
+    @staticmethod
+    def _session_error(exc: session_identity.SessionIdentityError) -> "APIError":
+        return APIError(str(exc), status_code=exc.status_code, detail=exc.detail)
+
+    def _session_key(self, ref: str, api_url: str, failed_key: str | None = None) -> str:
+        try:
+            return session_identity.session_key(
+                ref, self._configured_credential(), api_url, failed_key=failed_key,
+            )
+        except session_identity.SessionIdentityError as exc:
+            raise self._session_error(exc) from exc
 
     @staticmethod
     def _with_query(path: str, **params) -> str:
@@ -63,15 +79,40 @@ class Client:
         query = urlencode(rendered)
         return f"{path}?{query}" if query else path
 
-    def _request(self, method: str, path: str, data: dict = None) -> dict | None:
-        """Make API request."""
-        url = f"{get_api_url()}{path}"
+    def _request(
+        self, method: str, path: str, data: dict = None, *, as_configured: bool = False,
+    ) -> dict | None:
+        """Make API request.
+
+        With session identity on (CHT-1499) the request is sent with this
+        Claude Code session's own key, registered on first use, and a 401
+        for that key re-registers once. `as_configured` sends the
+        configured credential itself (`agent register`, which is the
+        registrar's own call).
+        """
+        api_url = get_api_url()
+        url = f"{api_url}{path}"
+        ref = None
+        if not as_configured:
+            try:
+                ref = session_identity.active_ref()
+            except session_identity.SessionIdentityError as exc:
+                raise self._session_error(exc) from exc
+        key = self._session_key(ref, api_url) if ref else None
         with httpx.Client() as client:
             send = getattr(client, method.lower())
-            kwargs = {"headers": self._headers()}
-            if data is not None:
-                kwargs["json"] = data
-            response = send(url, **kwargs)
+
+            def _send(credential):
+                kwargs = {"headers": self._headers(credential)}
+                if data is not None:
+                    kwargs["json"] = data
+                return send(url, **kwargs)
+
+            response = _send(key)
+            if ref and response.status_code == 401:
+                # Expired or revoked: register again, once.
+                key = self._session_key(ref, api_url, failed_key=key)
+                response = _send(key)
 
             if response.status_code == 204:
                 return None
@@ -844,19 +885,29 @@ class Client:
         return self._request("GET", f"/sprints/current?project_id={project_id}")
 
     # Agents
-    def create_team_agent(self, team_id: str, name: str) -> dict:
-        """Create a team-scoped agent."""
-        return self._request("POST", f"/teams/{team_id}/agents", {"name": name})
+    @staticmethod
+    def _agent_body(name: str, can_register: bool) -> dict:
+        # `can_register` only when asked for, so the body stays what an
+        # older server accepts (CHT-1600).
+        return {"name": name, "can_register": True} if can_register else {"name": name}
 
-    def create_project_agent(self, project_id: str, name: str) -> dict:
-        """Create a project-scoped agent."""
-        return self._request("POST", f"/projects/{project_id}/agents", {"name": name})
+    def create_team_agent(self, team_id: str, name: str, can_register: bool = False) -> dict:
+        """Create a team-scoped agent (a registrar with `can_register`)."""
+        return self._request("POST", f"/teams/{team_id}/agents", self._agent_body(name, can_register))
+
+    def create_project_agent(self, project_id: str, name: str, can_register: bool = False) -> dict:
+        """Create a project-scoped agent (a registrar with `can_register`)."""
+        return self._request("POST", f"/projects/{project_id}/agents", self._agent_body(name, can_register))
 
     def register_agent(self, external_ref: str, **kwargs) -> dict:
         """Get or create the session identity this registrar knows by
         `external_ref` and mint it a fresh expiring key (CHT-1498).
-        kwargs: name, project_id, team_id (a person's call only)."""
-        return self._request("POST", "/agents/register", {"external_ref": external_ref, **kwargs})
+        kwargs: name, project_id, team_id (a person's call only).
+
+        Always sent with the configured credential, never a session
+        identity's key: the caller is the registrar (CHT-1499)."""
+        body = {"external_ref": external_ref, **{k: v for k, v in kwargs.items() if v is not None}}
+        return self._request("POST", "/agents/register", body, as_configured=True)
 
     def get_team_agents(self, team_id: str) -> list:
         """List all agents for a team."""
@@ -867,7 +918,7 @@ class Client:
         return self._request("GET", f"/agents/{agent_id}")
 
     def update_agent(self, agent_id: str, **kwargs) -> dict:
-        """Update an agent's name or avatar."""
+        """Update an agent's name, avatar or `can_register` (registrar)."""
         return self._request("PATCH", f"/agents/{agent_id}", kwargs)
 
     def delete_agent(self, agent_id: str):

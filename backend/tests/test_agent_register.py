@@ -55,6 +55,8 @@ async def _registrar(client, headers, team_id=None, project_id=None, name="Claud
     url = f"/api/projects/{project_id}/agents" if project_id else f"/api/teams/{team_id}/agents"
     created = await client.post(url, json={"name": name, "can_register": True}, headers=headers)
     assert created.status_code == 201, created.text
+    # Echoed so `agent create --registrar` can confirm it (CHT-1600).
+    assert (created.json()["can_register"], created.json()["kind"]) == (True, "service")
     return created.json()["id"], created.json()["api_key"]
 
 
@@ -108,6 +110,9 @@ class TestRegister:
         me = await client.get("/api/auth/me", headers=_bearer(body["api_key"]))
         assert me.status_code == 200
         assert (me.json()["id"], me.json()["kind"], me.json()["registered_by_id"]) == (agent["id"], "session", registrar_id)
+        # `chaotic auth whoami` names the registrar (CHT-1499).
+        assert me.json()["registered_by_name"] == "Claude Code (cloud)"
+        assert (await client.get("/api/auth/me", headers=_bearer(key))).json()["registered_by_name"] is None
 
     async def test_the_identity_writes_as_itself(self, client, registrar, test_project):
         _, key = registrar

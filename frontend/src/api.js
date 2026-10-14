@@ -592,12 +592,18 @@ export class ApiClient {
     }
 
     // Agents
-    async createTeamAgent(teamId, name, avatarUrl = null) {
-        return this.request('POST', `/teams/${teamId}/agents`, { name, avatar_url: avatarUrl });
+    // canRegister: make it a registrar (CHT-1600). Sent only when true,
+    // so the body stays what an older server accepts.
+    async createTeamAgent(teamId, name, avatarUrl = null, canRegister = false) {
+        const body = { name, avatar_url: avatarUrl };
+        if (canRegister) body.can_register = true;
+        return this.request('POST', `/teams/${teamId}/agents`, body);
     }
 
-    async createProjectAgent(projectId, name, avatarUrl = null) {
-        return this.request('POST', `/projects/${projectId}/agents`, { name, avatar_url: avatarUrl });
+    async createProjectAgent(projectId, name, avatarUrl = null, canRegister = false) {
+        const body = { name, avatar_url: avatarUrl };
+        if (canRegister) body.can_register = true;
+        return this.request('POST', `/projects/${projectId}/agents`, body);
     }
 
     async getTeamAgents(teamId) {

@@ -1,4 +1,5 @@
 """E2E contract tests: Agents."""
+import json
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -121,3 +122,83 @@ class TestRegistration:
             issue = session.create_issue(project_id=test_project["id"], title="by the session")
         assert issue["creator"]["kind"] == "session"
         assert issue["creator"]["registered_by_name"] == "Harness"
+
+
+class TestRegistrarCreation:
+    """`agent create --registrar` / `agent update --registrar` through the
+    CLI client (CHT-1600)."""
+
+    def test_create_a_registrar_and_turn_it_off(self, api_client, test_team, test_project):
+        registrar = api_client.create_team_agent(test_team["id"], "Harness", can_register=True)
+        assert registrar["can_register"] is True
+        with _as_agent(registrar["api_key"]) as harness, pytest.raises(APIError) as refused:
+            harness.create_issue(project_id=test_project["id"], title="as the harness")
+        assert refused.value.status_code == 403
+        assert refused.value.detail["error_code"] == "registrar_cannot_write"
+
+        off = api_client.update_agent(registrar["id"], can_register=False)
+        assert off["can_register"] is False
+        with _as_agent(registrar["api_key"]) as harness:
+            assert harness.create_issue(project_id=test_project["id"], title="writes again")["id"]
+
+    def test_project_scoped_registrar(self, api_client, test_project):
+        registrar = api_client.create_project_agent(test_project["id"], "CI", can_register=True)
+        assert registrar["can_register"] is True and registrar["agent_project_id"] == test_project["id"]
+
+
+class TestAutomaticSessionIdentity:
+    """`session_identity: auto` against the real server (CHT-1499): the
+    registrar's key only registers; every request goes as the session."""
+
+    SESSION_ID = "e2e-session-0001"
+
+    @pytest.fixture
+    def auto_registrar(self, api_client, test_team, tmp_path, monkeypatch):
+        from cli import config as cli_config
+
+        registrar = api_client.create_team_agent(test_team["id"], "Claude Code", can_register=True)
+        monkeypatch.setattr(cli_config, "GLOBAL_CONFIG_DIR", tmp_path)
+        monkeypatch.setenv("CHAOTIC_SESSION_IDENTITY", "auto")
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", self.SESSION_ID)
+        return registrar
+
+    def test_writes_as_the_session_and_renews_a_revoked_key(self, api_client, test_project, auto_registrar):
+        from cli import session_identity
+
+        ref = "claude-code:session:" + self.SESSION_ID
+        with _as_agent(auto_registrar["api_key"]) as session:
+            issue = session.create_issue(project_id=test_project["id"], title="by the session")
+            me = session.get_me()
+        first = json.loads(session_identity.cache_path(ref).read_text())
+
+        assert issue["creator"]["kind"] == "session"
+        assert issue["creator"]["registered_by_name"] == "Claude Code"
+        assert me["external_ref"] == ref and me["registered_by_name"] == "Claude Code"
+        assert me["name"].startswith("Claude Code · ") and me["name"].endswith(" · e2e-se")
+        assert first["agent_id"] == me["id"]
+
+        # Revoked (or expired): the next request registers again, once,
+        # and the identity is the same one. (The person's own client would
+        # itself act through a session identity here.)
+        with session_identity.suspended():
+            api_client.revoke_api_key(first["api_key_id"])
+        with _as_agent(auto_registrar["api_key"]) as session:
+            again = session.get_me()
+        second = json.loads(session_identity.cache_path(ref).read_text())
+        assert again["id"] == me["id"]
+        assert second["api_key"] != first["api_key"]
+
+    def test_a_non_registrar_key_fails_loudly(self, api_client, test_team, test_project, tmp_path, monkeypatch):
+        from cli import config as cli_config
+        from cli import session_identity
+
+        plain = api_client.create_team_agent(test_team["id"], "bot")
+        monkeypatch.setattr(cli_config, "GLOBAL_CONFIG_DIR", tmp_path)
+        monkeypatch.setenv("CHAOTIC_SESSION_IDENTITY", "auto")
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", self.SESSION_ID)
+        with _as_agent(plain["api_key"]) as session, pytest.raises(APIError) as refused:
+            session.create_issue(project_id=test_project["id"], title="never sent")
+        assert "is not a registrar" in str(refused.value)
+        assert "Not falling back" in str(refused.value)
+        with session_identity.suspended():
+            assert api_client.get_issues(project_id=test_project["id"]) == []
