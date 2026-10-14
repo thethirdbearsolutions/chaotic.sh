@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+from chaotic_mcp_tools import add_tools
 from fastapi import FastAPI
 from mcp.server.mcpserver import MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPASGIApp
@@ -114,8 +115,7 @@ def get_fastmcp() -> MCPServer:
                     'error_code, read message.'
                 ),
             )
-        for tool_fn in ALL_TOOLS:
-            _fastmcp.add_tool(tool_fn)
+        add_tools(_fastmcp, ALL_TOOLS)
         # streamable_http_app() is what builds the session manager, and in
         # mcp 2.x it is also where the transport settings live (they were
         # constructor arguments in 1.x). Its *returned* Starlette app is

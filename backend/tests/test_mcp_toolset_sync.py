@@ -120,3 +120,17 @@ async def test_team_tools_match_except_for_team_param(snapshot):
         live_required = set(live_schema["inputSchema"].get("required") or []) - {"team"}
         snap_required = set(snap_schema["inputSchema"].get("required") or [])
         assert live_required == snap_required, f"'{name}' required-parameter list diverged"
+
+
+@pytest.mark.parametrize("server", ["build_server", "asgi"])
+async def test_live_descriptions_carry_no_docstring_indentation(server):
+    """CHT-1699: /mcp (the shared asgi server) and build_server() send each
+    description cleandoc'd on every Python, not the raw docstring."""
+    import inspect
+
+    from app.mcp_server import asgi
+
+    mcp = asgi.get_fastmcp() if server == "asgi" else build_server()
+    live = snapshot_toolset(await mcp.list_tools())
+    indented = [name for name, tool in live.items() if tool["description"] != inspect.cleandoc(tool["description"])]
+    assert indented == [], f"descriptions with docstring indentation: {indented}"

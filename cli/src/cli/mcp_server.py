@@ -29,6 +29,7 @@ from chaotic_mcp_tools import (  # noqa: F401 - re-exported for tests and the sc
     RESPONSE_SHAPES,
     TEXT_PREVIEW_CHARS,
     ToolInputError,
+    add_tools,
     bind_all,
     compact as _compact,
     listing as _listing,
@@ -71,8 +72,7 @@ def build_server() -> MCPServer:
             "rather than a protocol error -- switch on error_code, read message."
         ),
     )
-    for tool_fn in ALL_TOOLS:
-        mcp.add_tool(tool_fn)
+    add_tools(mcp, ALL_TOOLS)
     return mcp
 
 

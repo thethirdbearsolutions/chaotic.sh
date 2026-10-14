@@ -27,6 +27,16 @@ from .errors import (
 from .tools import ALL_TOOLS
 
 
+def add_tools(mcp, tools) -> None:
+    """Register `tools` on `mcp`, each described by its docstring
+    cleandoc'd (CHT-1699). `add_tool` would otherwise send the raw
+    `__doc__`, which keeps its source indentation before Python 3.13 and
+    loses it from 3.13 on, so clients saw different text depending on
+    the server's interpreter, and paid tokens for the indentation."""
+    for tool in tools:
+        mcp.add_tool(tool, description=inspect.cleandoc(tool.__doc__ or ""))
+
+
 async def call_guarded(tool, backend: Backend, *args, **kwargs) -> dict:
     """Run a tool body so it NEVER raises -- every failure mode comes back
     as the ADR-0006 envelope and the server keeps serving other calls.
