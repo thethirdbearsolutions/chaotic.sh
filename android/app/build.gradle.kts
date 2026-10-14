@@ -10,6 +10,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.room)
     alias(libs.plugins.hilt)
 }
 
@@ -82,8 +83,11 @@ android {
 // Room writes the cache's schema to app/schemas on every build. CI fails
 // when it differs from the committed copy, and when a committed version's
 // schema is edited, so a schema change cannot ship without a version bump.
-ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
+// The Room plugin rather than a bare KSP argument: each variant's KSP run
+// writes its own copy, where a shared directory had two variants' runs
+// reading each other's half-written file.
+room {
+    schemaDirectory("$projectDir/schemas")
 }
 
 dependencies {
