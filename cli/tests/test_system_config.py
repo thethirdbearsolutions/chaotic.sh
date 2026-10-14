@@ -726,20 +726,23 @@ class TestCanonicalOrigins:
 
 
 class TestIPv6Origins:
-    """CHT-1710: a CORS origin's IPv6 host is kept as written (lower case
-    only), as the server keeps it; an APP_BASE_URL's is written as
-    pydantic/WHATWG writes it, never in Python's dotted IPv4-mapped form."""
+    """CHT-1710: an IPv6 host is accepted only in the WHATWG form, the one
+    a browser sends and pydantic writes, never Python's dotted
+    IPv4-mapped form; any other spelling is refused, naming that form.
+    For CORS_ORIGINS this is the safety net: the server keeps IPv6 text
+    as written (PR #390), so another spelling would never match."""
 
+    @pytest.mark.parametrize("name", ["CORS_ORIGINS", "APP_BASE_URL"])
     @pytest.mark.parametrize("raw", [
         "http://[::ffff:7f00:1]:6274",  # what a browser sends
-        "http://[::ffff:127.0.0.1]", "http://[0:0::1]", "https://[2001:0db8::1]:8443", "http://[::1]",
-        "http://[1:0:0:2:0:0:0:3]",
+        "https://[2001:db8::1]:8443", "http://[::1]", "http://[1:0:0:2::3]", "http://[1:0:2:3:4:5:6:7]",
     ])
-    def test_cors_keeps_ipv6_text_as_written(self, raw):
-        assert ss.normalize("CORS_ORIGINS", raw) == (raw, None)
+    def test_whatwg_form_is_accepted(self, name, raw):
+        assert ss.normalize(name, raw) == (raw, None)
 
-    def test_cors_ipv6_must_be_lower_case(self):
-        problem = ss.normalize("CORS_ORIGINS", "http://[::FFFF:7f00:1]:6274")[1]
+    @pytest.mark.parametrize("name", ["CORS_ORIGINS", "APP_BASE_URL"])
+    def test_ipv6_must_be_lower_case(self, name):
+        problem = ss.normalize(name, "http://[::FFFF:7f00:1]:6274")[1]
         assert problem.endswith("lower case: 'http://[::ffff:7f00:1]:6274'"), problem
 
     @pytest.mark.parametrize("name", ["CORS_ORIGINS", "APP_BASE_URL"])
@@ -747,16 +750,19 @@ class TestIPv6Origins:
     def test_not_an_ipv6_address_is_refused(self, name, raw):
         assert ss.normalize(name, raw)[1]
 
+    @pytest.mark.parametrize("name", ["CORS_ORIGINS", "APP_BASE_URL"])
     @pytest.mark.parametrize("raw,canonical", [
-        ("http://[::ffff:127.0.0.1]", "http://[::ffff:7f00:1]"),
+        ("http://[::ffff:127.0.0.1]:6274", "http://[::ffff:7f00:1]:6274"),
+        ("http://[::1.2.3.4]", "http://[::102:304]"),
         ("http://[0:0::1]", "http://[::1]"),
+        ("https://[2001:0db8::1]:8443", "https://[2001:db8::1]:8443"),
         ("http://[1:0:0:2:0:0:0:3]", "http://[1:0:0:2::3]"),  # the longest run
         ("http://[1:0:0:2:0:0:3:4]", "http://[1::2:0:0:3:4]"),  # the first of equal runs
     ])
-    def test_base_url_suggests_the_whatwg_form(self, raw, canonical):
-        problem = ss.normalize("APP_BASE_URL", raw)[1]
+    def test_other_spellings_are_refused_naming_the_whatwg_form(self, name, raw, canonical):
+        problem = ss.normalize(name, raw)[1]
         assert problem.endswith(f"use {canonical!r}"), problem
-        assert ss.normalize("APP_BASE_URL", canonical) == (canonical, None)
+        assert ss.normalize(name, canonical) == (canonical, None)
 
     @pytest.mark.parametrize("address,written", [
         ("::ffff:7f00:1", "::ffff:7f00:1"), ("::", "::"), ("::1", "::1"), ("1::", "1::"),

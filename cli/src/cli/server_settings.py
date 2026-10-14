@@ -155,17 +155,19 @@ def _whatwg_ipv6(address: ipaddress.IPv6Address) -> str:
     return f"{head}::{tail}"
 
 
-def _canonical_host(host: str, ipv6_as_written: bool = False) -> str | None:
+def _canonical_host(host: str) -> str | None:
     """`host` as the server's URL parser would write it, if this CLI can
     vouch that it would leave it exactly as it is; else None. Stricter
     than the server on purpose: an origin accepted here must also pass
     app.config.oauth_issuer_problem, which compares against pydantic's
     normalised form (PR #349 review, finding 3).
 
-    `ipv6_as_written` is for a CORS origin: the server keeps an IPv6 host
-    as written, only lower-cased (app.config.normalise_cors_origin, PR
-    #390), so a valid lower-case literal is kept, never rewritten. The
-    caller has already refused upper case."""
+    An IPv6 host is vouched for only in the WHATWG form, the one browsers
+    put in an Origin header and pydantic writes. The server keeps a CORS
+    entry's IPv6 text as written (app.config.normalise_cors_origin, PR
+    #390), so any other spelling would be stored and never match: this
+    refusal is the safety net (CHT-1710)."""
+    assert host == host.lower(), "the caller refuses upper case first"
     if host.startswith("["):
         if not host.endswith("]"):
             return None
@@ -175,7 +177,7 @@ def _canonical_host(host: str, ipv6_as_written: bool = False) -> str | None:
             return None
         if address.scope_id is not None:
             return None  # a zone id ("%eth0") is no part of a URL host
-        return host if ipv6_as_written else f"[{_whatwg_ipv6(address)}]"
+        return f"[{_whatwg_ipv6(address)}]"
     labels = host.split(".")
     last = labels[-1]
     if last.isdigit() or last.startswith("0x"):
@@ -200,10 +202,9 @@ def _canonical_host(host: str, ipv6_as_written: bool = False) -> str | None:
     return host
 
 
-def _origin(value: str, what: str, ipv6_as_written: bool = False) -> tuple[str, str | None]:
+def _origin(value: str, what: str) -> tuple[str, str | None]:
     """A bare http(s) origin with no trailing slash, in the form the
-    server compares by exact string. `ipv6_as_written`: see
-    _canonical_host."""
+    server compares by exact string."""
     trimmed = value.rstrip("/")
     if not trimmed.isascii():
         return value, f"{what} {value!r} is not ASCII (write an internationalised host in its xn-- form)"
@@ -230,7 +231,7 @@ def _origin(value: str, what: str, ipv6_as_written: bool = False) -> tuple[str, 
     else:
         host_text, colon, port_text = netloc.partition(":")
         port_text = colon + port_text
-    host = _canonical_host(host_text, ipv6_as_written)
+    host = _canonical_host(host_text)
     if host is None:
         return value, f"{what} {value!r} does not have a host name or IP address in plain canonical form"
     if port_text and not (port_text[1:].isdigit() and port is not None and 1 <= port <= 65535):
@@ -303,7 +304,7 @@ def normalize(name: str, value: str) -> tuple[str, str | None]:
                 return value, f"{name} must be '*' alone or a comma-separated list of origins"
             normalised = []
             for part in parts:
-                origin, problem = _origin(part, "origin", ipv6_as_written=True)
+                origin, problem = _origin(part, "origin")
                 if problem:
                     return value, problem
                 normalised.append(origin)

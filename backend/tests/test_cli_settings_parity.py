@@ -127,10 +127,47 @@ def test_server_normalises_the_grid_to_what_the_cli_would_store():
         canonical = _cli_canonical(url)
         if canonical is None:
             continue
+        if host.startswith("[") and host.lower() not in canonical:
+            # IPv6 text a browser never sends ([0:0::1], a dotted mapped
+            # address): the CLI refuses it naming the browser's form, the
+            # server keeps it as written (PR #390). The next test pins
+            # that the CLI accepts no IPv6 text the server would keep
+            # but a browser would not send.
+            continue
         assert _server_origin(url) == canonical, (url, canonical)
         if url.rstrip("/") != canonical:
             rewritten += 1
     assert rewritten > 50  # capitals and default ports, not just slashes
+
+
+def _browser_form(url: str) -> str | None:
+    """`url` as a browser serialises an origin (WHATWG, which pydantic's
+    URL type implements), or None if it does not parse."""
+    from pydantic import AnyHttpUrl, ValidationError
+
+    try:
+        return str(AnyHttpUrl(url)).rstrip("/")
+    except ValidationError:
+        return None
+
+
+def test_cli_accepts_exactly_the_ipv6_origins_the_server_keeps_and_a_browser_sends():
+    """CHT-1710: over every IPv6 host in the grid, `config set
+    CORS_ORIGINS` accepts a value if and only if the server keeps it
+    unchanged and it is what a browser's Origin header would carry, so an
+    accepted entry can match and a refused one could not have."""
+    checked = accepted = 0
+    for scheme, host, port, tail in itertools.product(SCHEMES, HOSTS, PORTS, TAILS):
+        if not host.startswith("[") or port == ":0" or tail:
+            # Port 0 the CLI refuses on its own; a tail is never an origin.
+            continue
+        url = f"{scheme}://{host}{port}"
+        stored, problem = cli_settings.normalize("CORS_ORIGINS", url)
+        sendable = _server_origin(url) == url and _browser_form(url) == url
+        assert (problem is None) == sendable, (url, problem)
+        checked += 1
+        accepted += problem is None
+    assert checked > 100 and accepted > 10
 
 
 # (written by hand, what a browser sends): the server rewrites the first
@@ -145,11 +182,8 @@ _ORIGIN_CASES = [
     ("http://localhost:80/", "http://localhost"),
     ("http://LOCALHOST:6274/", "http://localhost:6274"),
     ("https://[2001:DB8::1]:8443", "https://[2001:db8::1]:8443"),
-    # IPv6 text is lower-cased, never rewritten (CHT-1710): the first is
-    # what a browser sends for an IPv4-mapped address.
+    # The IPv4-mapped form a browser sends (CHT-1710).
     ("http://[::FFFF:7F00:1]:6274/", "http://[::ffff:7f00:1]:6274"),
-    ("http://[::ffff:127.0.0.1]", "http://[::ffff:127.0.0.1]"),
-    ("https://[2001:0DB8:0:0::1]:8443", "https://[2001:0db8:0:0::1]:8443"),
 ]
 
 
