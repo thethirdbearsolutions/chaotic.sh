@@ -152,3 +152,22 @@ async def test_get_me_agent_reports_is_agent_and_parent_name(db, client, test_us
     assert data["is_agent"] is True
     assert data["name"] == agent.name
     assert data["parent_user_name"] == test_user.name
+
+
+@pytest.mark.asyncio
+async def test_get_me_reports_an_agents_scope(db, client, test_user, test_team, test_project, auth_headers):
+    """/auth/me says where an agent is scoped (CHT-1690). A project agent
+    is issued in its project's team (as create_project_agent does) and
+    also names its project, which /teams cannot tell it; the stdio MCP
+    server falls back to that project. A human has neither."""
+    agent_service = AgentService()
+    _, team_key, _ = await agent_service.create(AgentCreate(name="Team Agent"), test_user, test_team.id)
+    _, project_key, _ = await agent_service.create(
+        AgentCreate(name="Project Agent"), test_user, test_project.team_id, project_id=test_project.id)
+
+    team_me = (await client.get("/api/auth/me", headers={"Authorization": f"Bearer {team_key}"})).json()
+    assert (team_me["agent_team_id"], team_me["agent_project_id"]) == (test_team.id, None)
+    project_me = (await client.get("/api/auth/me", headers={"Authorization": f"Bearer {project_key}"})).json()
+    assert (project_me["agent_team_id"], project_me["agent_project_id"]) == (test_project.team_id, test_project.id)
+    human_me = (await client.get("/api/auth/me", headers=auth_headers)).json()
+    assert (human_me["agent_team_id"], human_me["agent_project_id"]) == (None, None)

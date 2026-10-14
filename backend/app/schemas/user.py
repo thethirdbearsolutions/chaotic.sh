@@ -41,6 +41,11 @@ class UserResponse(BaseModel):
     registered_by_name: str | None = None
     # A registrar sees its own capability on /auth/me (CHT-1497 review).
     can_register: bool = False
+    # An agent's scope; both None for a human. A project-scoped agent has
+    # its project's team and the project; /teams cannot tell it the
+    # project, so the stdio MCP server learns its default here (CHT-1690).
+    agent_team_id: str | None = None
+    agent_project_id: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

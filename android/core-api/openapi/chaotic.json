@@ -15120,6 +15120,28 @@
             "type": "boolean",
             "title": "Can Register",
             "default": false
+          },
+          "agent_team_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Team Id"
+          },
+          "agent_project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Project Id"
           }
         },
         "type": "object",

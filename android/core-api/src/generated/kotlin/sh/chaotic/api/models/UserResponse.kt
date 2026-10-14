@@ -51,6 +51,8 @@ import kotlinx.serialization.encoding.Encoder
  * @param registeredById 
  * @param registeredByName 
  * @param canRegister 
+ * @param agentTeamId 
+ * @param agentProjectId 
  */
 @Serializable
 
@@ -96,7 +98,13 @@ data class UserResponse (
     val registeredByName: kotlin.String? = null,
 
     @SerialName(value = "can_register")
-    val canRegister: kotlin.Boolean? = false
+    val canRegister: kotlin.Boolean? = false,
+
+    @SerialName(value = "agent_team_id")
+    val agentTeamId: kotlin.String? = null,
+
+    @SerialName(value = "agent_project_id")
+    val agentProjectId: kotlin.String? = null
 
 ) {
 
