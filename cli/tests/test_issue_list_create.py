@@ -633,6 +633,42 @@ class TestIssueCreate:
         assert client.create_issue.call_args.args[0] == "other-project"
         assert client.create_issue.call_args.kwargs["parent_id"] == "parent-id"
 
+    def test_create_with_parent_resolves_labels_in_the_parents_team(self, cli_runner):
+        """CHT-1709: labels are looked up in the team of the parent's
+        project, not the current team."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "parent-id", "identifier": "OTH-1", "project_id": "other-project", "project_key": "OTH",
+        })
+        client.get_project = MagicMock(return_value={"id": "other-project", "team_id": "other-team"})
+        client.get_labels = MagicMock(return_value=[{"id": "label-there", "name": "Bug"}])
+        client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "OTH-2", "title": "Sub"})
+
+        result = cli_runner.invoke(cli, ['issue', 'create', 'Sub', '--parent', 'OTH-1', '--label', 'bug'])
+
+        assert result.exit_code == 0, result.output
+        client.get_project.assert_called_once_with("other-project")
+        client.get_labels.assert_called_once_with("other-team")
+        assert client.create_issue.call_args.kwargs["label_ids"] == ["label-there"]
+
+    def test_create_with_project_resolves_labels_in_that_projects_team(self, cli_runner):
+        """CHT-1709 (PR #394 review): --project naming a project in another
+        team looks labels up in that team too."""
+        from cli.main import cli, client
+
+        client.get_project = MagicMock(return_value={"id": "other-project", "team_id": "other-team"})
+        client.get_labels = MagicMock(return_value=[{"id": "label-there", "name": "Bug"}])
+        client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "OTH-2", "title": "X"})
+
+        with patch('cli.main.resolve_project_id', return_value='other-project'):
+            result = cli_runner.invoke(cli, ['issue', 'create', 'X', '--project', 'OTH', '--label', 'bug'])
+
+        assert result.exit_code == 0, result.output
+        client.get_project.assert_called_once_with("other-project")
+        client.get_labels.assert_called_once_with("other-team")
+        assert client.create_issue.call_args.kwargs["label_ids"] == ["label-there"]
+
     def test_create_with_parent_needs_no_current_project(self, cli_runner):
         from cli.main import cli, client
 
