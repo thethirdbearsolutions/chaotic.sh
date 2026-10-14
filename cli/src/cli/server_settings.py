@@ -127,22 +127,55 @@ def name_problem(name: str, force: bool = False) -> str | None:
 _LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 
-def _canonical_host(host: str) -> str | None:
+def _whatwg_ipv6(address: ipaddress.IPv6Address) -> str:
+    """`address` as the WHATWG URL serialiser writes it, which is what
+    pydantic's URL type (and so the server's issuer check) and browsers
+    print: eight hex pieces, the first longest run of two or more zero
+    pieces written "::", never an embedded dotted IPv4 part. Python's
+    `.compressed` is not this: recent point releases write an IPv4-mapped
+    address in dotted form (CHT-1710)."""
+    packed = address.packed  # not .exploded: that too is dotted for a mapped address
+    pieces = [int.from_bytes(packed[i:i + 2], "big") for i in range(0, 16, 2)]
+    start, length = -1, 1  # a run must be longer than 1 to be compressed
+    i = 0
+    while i < len(pieces):
+        if pieces[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(pieces) and not pieces[j]:
+            j += 1
+        if j - i > length:  # strictly longer: the first longest run wins
+            start, length = i, j - i
+        i = j
+    if start < 0:
+        return ":".join(f"{p:x}" for p in pieces)
+    head = ":".join(f"{p:x}" for p in pieces[:start])
+    tail = ":".join(f"{p:x}" for p in pieces[start + length:])
+    return f"{head}::{tail}"
+
+
+def _canonical_host(host: str, ipv6_as_written: bool = False) -> str | None:
     """`host` as the server's URL parser would write it, if this CLI can
     vouch that it would leave it exactly as it is; else None. Stricter
     than the server on purpose: an origin accepted here must also pass
     app.config.oauth_issuer_problem, which compares against pydantic's
-    normalised form (PR #349 review, finding 3)."""
+    normalised form (PR #349 review, finding 3).
+
+    `ipv6_as_written` is for a CORS origin: the server keeps an IPv6 host
+    as written, only lower-cased (app.config.normalise_cors_origin, PR
+    #390), so a valid lower-case literal is kept, never rewritten. The
+    caller has already refused upper case."""
     if host.startswith("["):
         if not host.endswith("]"):
             return None
-        if "." in host:
-            return None  # an embedded IPv4 form: the server writes it in hex
         try:
             address = ipaddress.IPv6Address(host[1:-1])
         except ValueError:
             return None
-        return f"[{address.compressed}]"
+        if address.scope_id is not None:
+            return None  # a zone id ("%eth0") is no part of a URL host
+        return host if ipv6_as_written else f"[{_whatwg_ipv6(address)}]"
     labels = host.split(".")
     last = labels[-1]
     if last.isdigit() or last.startswith("0x"):
@@ -167,9 +200,10 @@ def _canonical_host(host: str) -> str | None:
     return host
 
 
-def _origin(value: str, what: str) -> tuple[str, str | None]:
+def _origin(value: str, what: str, ipv6_as_written: bool = False) -> tuple[str, str | None]:
     """A bare http(s) origin with no trailing slash, in the form the
-    server compares by exact string."""
+    server compares by exact string. `ipv6_as_written`: see
+    _canonical_host."""
     trimmed = value.rstrip("/")
     if not trimmed.isascii():
         return value, f"{what} {value!r} is not ASCII (write an internationalised host in its xn-- form)"
@@ -196,7 +230,7 @@ def _origin(value: str, what: str) -> tuple[str, str | None]:
     else:
         host_text, colon, port_text = netloc.partition(":")
         port_text = colon + port_text
-    host = _canonical_host(host_text)
+    host = _canonical_host(host_text, ipv6_as_written)
     if host is None:
         return value, f"{what} {value!r} does not have a host name or IP address in plain canonical form"
     if port_text and not (port_text[1:].isdigit() and port is not None and 1 <= port <= 65535):
@@ -269,7 +303,7 @@ def normalize(name: str, value: str) -> tuple[str, str | None]:
                 return value, f"{name} must be '*' alone or a comma-separated list of origins"
             normalised = []
             for part in parts:
-                origin, problem = _origin(part, "origin")
+                origin, problem = _origin(part, "origin", ipv6_as_written=True)
                 if problem:
                     return value, problem
                 normalised.append(origin)
