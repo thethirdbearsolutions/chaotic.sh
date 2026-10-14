@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi import Request
 import os
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.oxyde_db import init_oxyde, close_oxyde, bootstrap_if_empty, verify_migrations_current
 from app.api import api_router
 from app.websocket import SocketOwner, manager
@@ -154,14 +154,20 @@ app = FastAPI(
 # arguments while OAUTH_ENABLED is off; when on, it also opens the public
 # OAuth endpoints to any origin and exposes WWW-Authenticate on /mcp
 # (CHT-1551; see app/oauth/cors.py).
-_origins = [o.strip() for o in settings.cors_origins.split(",")]
-app.add_middleware(
-    OAuthAwareCORS,
-    allow_origins=_origins,
-    allow_credentials=("*" not in _origins),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def _cors_kwargs(settings: Settings) -> dict:
+    """The CORS middleware's arguments. The origins are
+    Settings.cors_origin_list, the parse the /mcp guard reads too
+    (CHT-1563)."""
+    origins = settings.cors_origin_list
+    return {
+        "allow_origins": origins,
+        "allow_credentials": "*" not in origins,
+        "allow_methods": ["*"],
+        "allow_headers": ["*"],
+    }
+
+
+app.add_middleware(OAuthAwareCORS, **_cors_kwargs(settings))
 
 
 # The OpenAPI schema advertises this as `ValidationError` (see

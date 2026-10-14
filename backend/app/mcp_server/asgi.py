@@ -21,7 +21,7 @@ host/domain an operator picks (no fixed hostname to hardcode):
   pushes), so there's nothing to lose by not paying for session
   affinity -- and it's one less thing to break behind a load balancer
   with no sticky sessions configured.
-* ``transport_security`` -- derived from ``settings.cors_origins`` (see
+* ``transport_security`` -- derived from ``settings.cors_origin_list`` (see
   ``_transport_security()``): explicit origins turn the SDK's
   Host/Origin allowlisting on, keyed to them; the wildcard default turns
   it off. Never the SDK's own default, which auto-enables allowlisting
@@ -73,7 +73,7 @@ def _transport_security() -> TransportSecuritySettings:
       rebinding protection only adds defense-in-depth for browser-based
       drive-bys, which need a real origin list to mean anything.
     """
-    origins = [o.strip() for o in get_settings().cors_origins.split(",") if o.strip()]
+    origins = get_settings().cors_origin_list
     if not origins or "*" in origins:
         return TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
