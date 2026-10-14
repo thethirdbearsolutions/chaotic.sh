@@ -45,6 +45,8 @@ import kotlinx.serialization.encoding.Encoder
  * @param idleExpiresAt 
  * @param absoluteExpiresAt 
  * @param client 
+ * @param actsAs 
+ * @param deviceName 
  * @param agent 
  * @param teamId 
  * @param teamName 
@@ -77,6 +79,12 @@ data class ConnectionResponse (
     @SerialName(value = "client")
     val client: ConsentClient? = null,
 
+    @SerialName(value = "acts_as")
+    val actsAs: ConnectionResponse.ActsAs? = ActsAs.agent,
+
+    @SerialName(value = "device_name")
+    val deviceName: kotlin.String? = null,
+
     @SerialName(value = "agent")
     val agent: TokenAgent? = null,
 
@@ -97,6 +105,31 @@ data class ConnectionResponse (
 
 ) {
 
+    /**
+     * 
+     *
+     * Values: agent,person,unknown_default_open_api
+     */
+    @Serializable(with = ActsAsSerializer::class)
+    enum class ActsAs(val value: kotlin.String) {
+        @SerialName(value = "agent") agent("agent"),
+        @SerialName(value = "person") person("person"),
+        @SerialName(value = "unknown_default_open_api") unknown_default_open_api("unknown_default_open_api");
+    }
+
+    internal object ActsAsSerializer : KSerializer<ActsAs> {
+        override val descriptor = kotlin.String.serializer().descriptor
+
+        override fun deserialize(decoder: Decoder): ActsAs {
+            val value = decoder.decodeSerializableValue(kotlin.String.serializer())
+            return ActsAs.entries.firstOrNull { it.value == value }
+                ?: ActsAs.unknown_default_open_api
+        }
+
+        override fun serialize(encoder: Encoder, value: ActsAs) {
+            encoder.encodeSerializableValue(kotlin.String.serializer(), value.value)
+        }
+    }
 
 }
 

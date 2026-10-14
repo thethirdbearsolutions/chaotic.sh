@@ -35,13 +35,10 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * 
+ * One request-validation error: where it is (`loc`) and what is wrong (`msg`).
  *
  * @param loc 
  * @param msg 
- * @param type 
- * @param input 
- * @param ctx 
  */
 @Serializable
 
@@ -51,16 +48,7 @@ data class ValidationError (
     val loc: kotlin.collections.List<kotlinx.serialization.json.JsonPrimitive>,
 
     @SerialName(value = "msg")
-    val msg: kotlin.String,
-
-    @SerialName(value = "type")
-    val type: kotlin.String,
-
-    @Contextual @SerialName(value = "input")
-    val input: kotlinx.serialization.json.JsonElement? = null,
-
-    @Contextual @SerialName(value = "ctx")
-    val ctx: kotlinx.serialization.json.JsonObject? = null
+    val msg: kotlin.String
 
 ) {
 

@@ -1,3 +1,10 @@
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ModuleComponentSelector
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedComponentResult
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -81,43 +88,107 @@ dependencies {
 }
 
 // The foss flavor is what F-Droid builds, so nothing non-free may reach its
-// runtime classpath. Groups below are the usual offenders: Play Services,
-// Firebase (FCM), and Google's proprietary analytics/ads SDKs.
-val nonFreeGroups =
+// runtime classpath: no artifact from a vendor's proprietary SDK groups (each
+// entry also covers its sub-groups, e.g. com.huawei.hms under com.huawei), and
+// no local files()/.aar binaries, which F-Droid cannot build from source.
+// The whole resolved graph is walked, so a transitive pull through another
+// library or :core-api is caught too. Unresolved dependencies count by the
+// group they asked for, so the check fails closed.
+val nonFreeDependencyGroups =
     listOf(
-        "com.google.android.gms",
-        "com.google.firebase",
-        "com.google.android.play",
+        "com.google.android.gms", // Play Services
+        "com.google.firebase", // Firebase, including FCM
+        "com.google.android.play", // Play Core / Integrity / Review
+        "com.android.billingclient", // Play Billing
+        "com.google.android.libraries.identity", // Sign in with Google
+        "com.google.android.ump", // User Messaging Platform
+        "com.google.android.recaptcha",
+        "com.google.android.instantapps",
+        "com.google.ads",
         "com.google.android.libraries.places",
         "com.google.mlkit",
+        "com.huawei", // HMS
     )
 
-val checkFossDependencies by tasks.registering {
-    group = "verification"
-    description = "Fails if a non-free dependency reaches the foss flavor's runtime classpath."
-    val runtime = configurations.named("fossReleaseRuntimeClasspath")
-    val componentIds = runtime.flatMap { it.incoming.resolutionResult.rootComponent }
-    // A local copy: the configuration cache cannot serialize a reference to
-    // the build script object that a top-level val would capture.
-    val groups = nonFreeGroups.toList()
-    inputs.property("nonFreeGroups", groups)
-    doLast {
-        val modules = mutableSetOf<String>()
-        fun walk(component: org.gradle.api.artifacts.result.ResolvedComponentResult) {
-            component.dependencies
-                .filterIsInstance<org.gradle.api.artifacts.result.ResolvedDependencyResult>()
-                .forEach { dep ->
-                    val id = dep.selected.moduleVersion ?: return@forEach
-                    if (modules.add("${id.group}:${id.name}")) walk(dep.selected)
+abstract class CheckFossDependencies : DefaultTask() {
+    @get:Input
+    abstract val nonFreeGroups: ListProperty<String>
+
+    @get:Internal
+    abstract val rootComponent: Property<ResolvedComponentResult>
+
+    @get:Internal
+    abstract val localFiles: ConfigurableFileCollection
+
+    @TaskAction
+    fun check() {
+        val groups = nonFreeGroups.get()
+        fun nonFree(group: String) = groups.any { group == it || group.startsWith("$it.") }
+
+        val seen = mutableSetOf<String>()
+        val offenders = sortedSetOf<String>()
+        fun walk(component: ResolvedComponentResult) {
+            for (dependency in component.dependencies) {
+                when (dependency) {
+                    is ResolvedDependencyResult -> {
+                        val id = dependency.selected.moduleVersion ?: continue
+                        val module = "${id.group}:${id.name}"
+                        if (nonFree(id.group)) offenders += module
+                        if (seen.add(module)) walk(dependency.selected)
+                    }
+                    is UnresolvedDependencyResult -> {
+                        val requested = dependency.requested
+                        if (requested is ModuleComponentSelector && nonFree(requested.group)) {
+                            offenders += "${requested.group}:${requested.module} (unresolved)"
+                        }
+                    }
                 }
+            }
         }
-        walk(componentIds.get())
-        val offenders = modules.filter { module -> groups.any { module.startsWith("$it:") } }
-        check(offenders.isEmpty()) {
-            "Non-free dependencies on the foss runtime classpath: ${offenders.sorted().joinToString()}"
+        walk(rootComponent.get())
+        val binaries = localFiles.files.map { "local file ${it.name}" }.sorted()
+
+        val problems = offenders.toList() + binaries
+        check(problems.isEmpty()) {
+            "The foss flavor must stay free of non-free and prebuilt dependencies, but its runtime " +
+                "classpath has: ${problems.joinToString()}"
         }
-        logger.lifecycle("foss runtime classpath: ${modules.size} modules, none non-free.")
+        logger.lifecycle("foss runtime classpath: ${seen.size} modules, none non-free, no local binaries.")
     }
 }
 
+val checkFossDependencies =
+    tasks.register("checkFossDependencies", CheckFossDependencies::class) {
+        group = "verification"
+        description = "Fails if a non-free or local-binary dependency reaches the foss flavor's runtime classpath."
+        val runtime = configurations.named("fossReleaseRuntimeClasspath")
+        nonFreeGroups.set(nonFreeDependencyGroups)
+        rootComponent.set(runtime.flatMap { it.incoming.resolutionResult.rootComponent })
+        // Components that are neither a published module nor a project of this
+        // build are local files: files(...) or a checked-in .aar, here or in
+        // a project dependency.
+        localFiles.from(
+            runtime.map { configuration ->
+                configuration.incoming
+                    .artifactView {
+                        isLenient = true
+                        componentFilter { it !is ModuleComponentIdentifier && it !is ProjectComponentIdentifier }
+                    }.files
+            },
+        )
+    }
+
 tasks.named("check") { dependsOn(checkFossDependencies) }
+
+// CI's negative test for the check above (.github/workflows/ci.yml): with
+// -Pchaotic.fossCanary it adds a Play Services module, an HMS module (a
+// sub-group, and not resolvable from our repositories) and a local jar to the
+// foss flavor, and CI asserts that checkFossDependencies then fails naming
+// all three. Never set it for a real build.
+if (providers.gradleProperty("chaotic.fossCanary").isPresent) {
+    dependencies {
+        "fossImplementation"("com.google.android.gms:play-services-base:18.5.0")
+        "fossImplementation"("com.huawei.hms:push:6.12.0.300")
+        "fossImplementation"(files("foss-canary/canary.jar"))
+    }
+}

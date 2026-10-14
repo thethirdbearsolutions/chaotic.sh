@@ -48,7 +48,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * POST /api/oauth/requests/{request_id}/approve
         * Approve Authorization Request
-        * Approve: mint a single-use code for the chosen agent, team, projects and policy, and return the client redirect carrying it.
+        * Approve: mint a single-use code for the chosen agent, team, projects and policy (for a built-in app, CHT-1602: for the person approving, in the chosen team), and return the client redirect carrying it.
          * @param requestId  
          * @param authorizationApproval  
          * @return AuthorizationDecision

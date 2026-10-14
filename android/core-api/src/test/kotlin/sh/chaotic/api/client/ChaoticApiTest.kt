@@ -5,13 +5,14 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import io.ktor.util.reflect.typeInfo
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
-import kotlinx.serialization.json.jsonPrimitive
 import sh.chaotic.api.apis.AuthApi
 import sh.chaotic.api.models.HTTPValidationError
 import sh.chaotic.api.models.IssueStatus
+import sh.chaotic.api.models.UserLogin
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -62,20 +63,42 @@ class ChaoticApiTest {
     }
 
     @Test
-    fun freeFormAndAnyOfFieldsDecodeAsJsonTrees() {
-        // FastAPI's 422 body: `loc` items are anyOf(string, integer), `input`
-        // is `{}` and `ctx` a bare object, all three of which the generator
-        // would otherwise emit as types that cannot decode.
-        val body =
-            """
-            {"detail": [{"loc": ["body", "items", 0], "msg": "Field required",
-                         "type": "missing", "input": {"title": 1}, "ctx": {"min_length": 1}}]}
-            """.trimIndent()
+    fun serverValidationErrorBodyDecodes() = runTest {
+        // validation-error-422.json is the body this server returns for an
+        // empty login; backend/tests/test_validation_error_sanitization.py
+        // checks it against a live request, so the two cannot drift.
+        val engine =
+            MockEngine {
+                respond(
+                    content = resource("validation-error-422.json"),
+                    status = HttpStatusCode.UnprocessableEntity,
+                    headers = jsonHeaders,
+                )
+            }
+        val api = AuthApi("https://chaotic.example", engine, ChaoticApi.clientConfig)
+
+        val response = api.loginApiAuthLoginPost(UserLogin(email = "", password = ""))
+
+        assertEquals(422, response.status)
+        val error = response.typedBody<HTTPValidationError>(typeInfo<HTTPValidationError>())
+        val body = JsonPrimitive("body")
+        assertEquals(
+            listOf(listOf(body, JsonPrimitive("email")), listOf(body, JsonPrimitive("password"))),
+            error.detail!!.map { it.loc },
+        )
+        assertEquals("Field required", error.detail!!.first().msg)
+    }
+
+    @Test
+    fun validationErrorLocationMayMixStringsAndIndexes() {
+        // `loc` items are anyOf(string, integer): a list index in a body path is a number.
+        val body = """{"detail": [{"loc": ["body", "issue_ids", 0], "msg": "Input should be a valid string"}]}"""
 
         val error = ChaoticApi.json.decodeFromString(HTTPValidationError.serializer(), body)
 
-        val detail = error.detail!!.single()
-        assertEquals(listOf(JsonPrimitive("body"), JsonPrimitive("items"), JsonPrimitive(0)), detail.loc)
-        assertEquals(1, detail.ctx!!["min_length"]!!.jsonPrimitive.int)
+        assertEquals(0, error.detail!!.single().loc[2].int)
     }
+
+    private fun resource(name: String): String =
+        checkNotNull(javaClass.classLoader.getResource(name)) { "missing test resource $name" }.readText()
 }

@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Nothing here writes to the repository; third-party actions and the
+# downloaded generator get a read-only token.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -131,6 +136,7 @@ jobs:
   # until it also commits the output of `just android-client`.
   android-api-client:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -144,10 +150,24 @@ jobs:
           python-version: '3.11'
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Read the pinned generator version
+        id: generator
+        run: |
+          echo "version=$(sed -n 's/^GENERATOR_VERSION=//p' android/scripts/generate-api-client.sh)" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sed -n 's/^GENERATOR_SHA256=//p' android/scripts/generate-api-client.sh)" >> "$GITHUB_OUTPUT"
+
+      # The script re-verifies the cached jar's SHA-256 on every run and
+      # downloads it again if it does not match.
+      - name: Cache the generator jar
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/chaotic
+          key: openapi-generator-${{ steps.generator.outputs.version }}-${{ steps.generator.outputs.sha256 }}
 
       - name: Install backend dependencies
         working-directory: backend
@@ -158,6 +178,7 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: android
@@ -166,7 +187,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -178,14 +199,31 @@ jobs:
       - name: Static analysis (detekt + ktlint rules)
         run: ./gradlew detekt
 
+      # Both flavors; checkDependencies takes :core-api along with each.
       - name: Android lint
-        run: ./gradlew lint
+        run: ./gradlew :app:lintFossDebug :app:lintPlayDebug
 
       - name: Unit tests
         run: ./gradlew test
 
       - name: No non-free dependencies in the foss flavor
         run: ./gradlew :app:checkFossDependencies
+
+      # The negative test for the step above: add a Play Services module, an
+      # HMS module and a local jar to the foss flavor and require the check
+      # to fail naming each of them.
+      - name: The foss check fails on non-free and local dependencies
+        run: |
+          mkdir -p app/foss-canary && touch app/foss-canary/canary.jar
+          if ./gradlew :app:checkFossDependencies -Pchaotic.fossCanary=true > canary.log 2>&1; then
+            cat canary.log
+            echo "checkFossDependencies passed with non-free dependencies added" >&2
+            exit 1
+          fi
+          for expected in com.google.android.gms:play-services-base "com.huawei.hms:push" "local file canary.jar"; do
+            grep -qF "$expected" canary.log || { cat canary.log; echo "the failure did not name $expected" >&2; exit 1; }
+          done
+          echo "checkFossDependencies rejected all three canaries."
 
       - name: Assemble both debug flavors
         run: ./gradlew assembleFossDebug assemblePlayDebug

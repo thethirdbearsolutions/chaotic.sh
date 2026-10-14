@@ -66,10 +66,11 @@ data class ConsentClient (
     /**
      * 
      *
-     * Values: recognized,cimd,unverified,unknown_default_open_api
+     * Values: builtin,recognized,cimd,unverified,unknown_default_open_api
      */
     @Serializable(with = TrustSerializer::class)
     enum class Trust(val value: kotlin.String) {
+        @SerialName(value = "builtin") builtin("builtin"),
         @SerialName(value = "recognized") recognized("recognized"),
         @SerialName(value = "cimd") cimd("cimd"),
         @SerialName(value = "unverified") unverified("unverified"),

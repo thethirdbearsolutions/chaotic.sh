@@ -5639,7 +5639,7 @@
           "agents"
         ],
         "summary": "Update Agent",
-        "description": "Update an agent's name or avatar, or make it a registrar\n(`can_register`, CHT-1498). Allowed to its creator while in the\nagent's team and to that team's admins.",
+        "description": "Update an agent's name or avatar, or make it a registrar\n(`can_register`, CHT-1498). Allowed to its creator while in the\nagent's team and to that team's admins. A built-in app's session may\nrename, but not change `can_register` (CHT-1602): a registrar mints\nkeys, a capability that would outlive the session.",
         "operationId": "update_agent_api_agents__agent_id__patch",
         "security": [
           {
@@ -6713,7 +6713,7 @@
           "oauth"
         ],
         "summary": "Approve Authorization Request",
-        "description": "Approve: mint a single-use code for the chosen agent, team,\nprojects and policy, and return the client redirect carrying it.",
+        "description": "Approve: mint a single-use code for the chosen agent, team,\nprojects and policy (for a built-in app, CHT-1602: for the person\napproving, in the chosen team), and return the client redirect\ncarrying it.",
         "operationId": "approve_authorization_request_api_oauth_requests__request_id__approve_post",
         "security": [
           {
@@ -8867,7 +8867,14 @@
       "AuthorizationApproval": {
         "properties": {
           "team_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Team Id"
           },
           "agent_id": {
@@ -8916,9 +8923,6 @@
           }
         },
         "type": "object",
-        "required": [
-          "team_id"
-        ],
         "title": "AuthorizationApproval",
         "description": "POST /api/oauth/requests/{id}/approve."
       },
@@ -9031,6 +9035,15 @@
               }
             ],
             "title": "Suggested Agent Id"
+          },
+          "acts_as": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "person"
+            ],
+            "title": "Acts As",
+            "default": "agent"
           }
         },
         "type": "object",
@@ -9214,6 +9227,26 @@
               }
             ]
           },
+          "acts_as": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "person"
+            ],
+            "title": "Acts As",
+            "default": "agent"
+          },
+          "device_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Name"
+          },
           "agent": {
             "anyOf": [
               {
@@ -9387,6 +9420,7 @@
           "trust": {
             "type": "string",
             "enum": [
+              "builtin",
               "recognized",
               "cimd",
               "unverified"
@@ -15063,6 +15097,7 @@
         "description": "Schema for updating a user."
       },
       "ValidationError": {
+        "description": "One request-validation error: where it is (`loc`) and what is wrong (`msg`).",
         "properties": {
           "loc": {
             "items": {
@@ -15075,32 +15110,20 @@
                 }
               ]
             },
-            "type": "array",
-            "title": "Location"
+            "title": "Location",
+            "type": "array"
           },
           "msg": {
-            "type": "string",
-            "title": "Message"
-          },
-          "type": {
-            "type": "string",
-            "title": "Error Type"
-          },
-          "input": {
-            "title": "Input"
-          },
-          "ctx": {
-            "type": "object",
-            "title": "Context"
+            "title": "Message",
+            "type": "string"
           }
         },
-        "type": "object",
         "required": [
           "loc",
-          "msg",
-          "type"
+          "msg"
         ],
-        "title": "ValidationError"
+        "title": "ValidationError",
+        "type": "object"
       },
       "VapidPublicKeyResponse": {
         "properties": {

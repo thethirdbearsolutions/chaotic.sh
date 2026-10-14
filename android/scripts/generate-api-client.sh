@@ -14,7 +14,9 @@
 # Needs: uv (the backend environment, as `just sync` builds it) and Java 11+.
 # The generator jar is downloaded from Maven Central once, checked against the
 # pinned SHA-256 below, and cached under ${XDG_CACHE_HOME:-~/.cache}/chaotic.
-# When you change the API, run this and commit what it writes in the same PR.
+# When you change the API (docstrings and field descriptions included: they
+# are in the schema and the generated KDoc), run this and commit what it
+# writes in the same PR.
 set -euo pipefail
 
 GENERATOR_VERSION=7.26.0
@@ -39,13 +41,27 @@ command -v uv >/dev/null || { echo "error: uv is not on PATH" >&2; exit 1; }
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# 1. Dump the schema. Written to a file rather than stdout so nothing the app
-# logs on import can end up in it.
-(cd "$repo_root/backend" && uv run --locked --quiet python - "$work/chaotic.json" <<'PY'
+# 1. Dump the schema. Hermetic (CHT-1609 review L2): it runs from an empty
+# directory so backend/.env is not read, and it clears every environment
+# variable that names a backend setting, so the schema comes from the code's
+# defaults alone. (Of those settings only APP_NAME reaches the schema, as its
+# title; it is pinned explicitly too.) Written to a file rather than stdout so
+# nothing the app logs on import can end up in it.
+mkdir "$work/cwd"
+(cd "$work/cwd" && uv run --locked --quiet --project "$repo_root/backend" python - "$work/chaotic.json" <<'PY'
 import json
+import os
 import sys
 
-from app.main import app
+from app.config import Settings
+
+for name in Settings.model_fields:
+    for key in list(os.environ):
+        if key.lower() == name:
+            del os.environ[key]
+os.environ["APP_NAME"] = "Chaotic"
+
+from app.main import app  # noqa: E402
 
 with open(sys.argv[1], "w", encoding="utf-8") as f:
     json.dump(app.openapi(), f, indent=2)
@@ -126,7 +142,9 @@ if $check; then
     fi
     if $stale; then
         echo >&2
-        echo "Run android/scripts/generate-api-client.sh and commit the result." >&2
+        echo "Run \`just android-client\` (or android/scripts/generate-api-client.sh; needs Java 11+)" >&2
+        echo "and commit the result. Endpoint docstrings and field descriptions are part of the" >&2
+        echo "schema too, so a wording-only change can make the client stale." >&2
         exit 1
     fi
     echo "API client is up to date."

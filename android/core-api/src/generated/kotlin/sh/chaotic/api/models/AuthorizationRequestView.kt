@@ -54,6 +54,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param defaultAgentName 
  * @param suggestedTeamId 
  * @param suggestedAgentId 
+ * @param actsAs 
  */
 @Serializable
 
@@ -102,10 +103,38 @@ data class AuthorizationRequestView (
     val suggestedTeamId: kotlin.String? = null,
 
     @SerialName(value = "suggested_agent_id")
-    val suggestedAgentId: kotlin.String? = null
+    val suggestedAgentId: kotlin.String? = null,
+
+    @SerialName(value = "acts_as")
+    val actsAs: AuthorizationRequestView.ActsAs? = ActsAs.agent
 
 ) {
 
+    /**
+     * 
+     *
+     * Values: agent,person,unknown_default_open_api
+     */
+    @Serializable(with = ActsAsSerializer::class)
+    enum class ActsAs(val value: kotlin.String) {
+        @SerialName(value = "agent") agent("agent"),
+        @SerialName(value = "person") person("person"),
+        @SerialName(value = "unknown_default_open_api") unknown_default_open_api("unknown_default_open_api");
+    }
+
+    internal object ActsAsSerializer : KSerializer<ActsAs> {
+        override val descriptor = kotlin.String.serializer().descriptor
+
+        override fun deserialize(decoder: Decoder): ActsAs {
+            val value = decoder.decodeSerializableValue(kotlin.String.serializer())
+            return ActsAs.entries.firstOrNull { it.value == value }
+                ?: ActsAs.unknown_default_open_api
+        }
+
+        override fun serialize(encoder: Encoder, value: ActsAs) {
+            encoder.encodeSerializableValue(kotlin.String.serializer(), value.value)
+        }
+    }
 
 }
 

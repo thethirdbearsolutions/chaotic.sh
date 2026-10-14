@@ -390,7 +390,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * PATCH /api/agents/{agent_id}
         * Update Agent
-        * Update an agent&#39;s name or avatar, or make it a registrar (&#x60;can_register&#x60;, CHT-1498). Allowed to its creator while in the agent&#39;s team and to that team&#39;s admins.
+        * Update an agent&#39;s name or avatar, or make it a registrar (&#x60;can_register&#x60;, CHT-1498). Allowed to its creator while in the agent&#39;s team and to that team&#39;s admins. A built-in app&#39;s session may rename, but not change &#x60;can_register&#x60; (CHT-1602): a registrar mints keys, a capability that would outlive the session.
          * @param agentId  
          * @param agentUpdate  
          * @return AgentResponse

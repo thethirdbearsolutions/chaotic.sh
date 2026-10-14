@@ -47,7 +47,7 @@ import kotlinx.serialization.encoding.Encoder
 data class AuthorizationApproval (
 
     @SerialName(value = "team_id")
-    val teamId: kotlin.String,
+    val teamId: kotlin.String? = null,
 
     @SerialName(value = "agent_id")
     val agentId: kotlin.String? = null,

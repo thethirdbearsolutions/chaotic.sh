@@ -7,8 +7,10 @@ pluginManagement {
                 includeGroupByRegex("androidx.*")
             }
         }
+        // Every plugin this build applies is published to Google's Maven or
+        // Maven Central, so the Gradle Plugin Portal is left out: one fewer
+        // repository to trust.
         mavenCentral()
-        gradlePluginPortal()
     }
 }
 

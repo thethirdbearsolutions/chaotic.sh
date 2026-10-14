@@ -5,6 +5,7 @@ import dev.detekt.gradle.Detekt
 // plugin version the kotlin-* entries below put on the classpath.
 plugins {
     alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.android.lint) apply false
     alias(libs.plugins.kotlin.jvm) apply false
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.kotlin.serialization) apply false

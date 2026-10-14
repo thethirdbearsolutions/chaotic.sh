@@ -9,3 +9,4 @@ captures/
 .cxx/
 *.keystore
 *.jks
+app/foss-canary/

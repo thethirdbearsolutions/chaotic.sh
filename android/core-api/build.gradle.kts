@@ -8,6 +8,9 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)
+    // Android lint for a plain JVM module, so :app's lint (checkDependencies)
+    // analyzes this module's sources instead of treating it as a binary.
+    alias(libs.plugins.android.lint)
 }
 
 java {
