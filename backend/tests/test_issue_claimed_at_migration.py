@@ -1,7 +1,8 @@
 """Tests for migrations/0030_issue_claimed_at.py (CHT-1672).
 
 A database one migration short is seeded with issues in each state, some
-with a status-change activity into IN_PROGRESS. After the migration every
+with a status activity into or out of IN_PROGRESS (in each spelling ever
+stored, including LEASE_EXPIRED rows). After the migration every
 issue that was demonstrably claimed has claimed_at (the first such
 activity's time, else its updated_at), the rest stay NULL, and every
 other column is unchanged.
@@ -27,12 +28,29 @@ ISSUES = {
     "done": "DONE",
     "todo-was-claimed": "TODO",
     "canceled-was-claimed": "CANCELED",
+    # Created in_progress (no activity on the way in), then released.
+    "created-started-lease-expired": "TODO",
+    # Created in_progress, then moved back by hand.
+    "created-started-moved-back": "BACKLOG",
+    # Rows written before CHT-998 stored str(member).
+    "legacy-str-member": "TODO",
+    "legacy-value": "CANCELED",
 }
-# issue id -> created_at of STATUS_CHANGED activities into IN_PROGRESS.
+# issue id -> [(created_at, activity_type, old_value, new_value)] of
+# status activities that prove a claim.
 CLAIMS = {
-    "todo-was-claimed": ["2026-10-05 09:00:00", "2026-10-03 08:00:00"],
-    "canceled-was-claimed": ["2026-10-04 10:00:00"],
-    "done": ["2026-10-02 07:00:00"],
+    "todo-was-claimed": [
+        ("2026-10-05 09:00:00", "STATUS_CHANGED", "TODO", "IN_PROGRESS"),
+        ("2026-10-03 08:00:00", "STATUS_CHANGED", "TODO", "IN_PROGRESS"),
+    ],
+    "canceled-was-claimed": [("2026-10-04 10:00:00", "STATUS_CHANGED", "TODO", "IN_PROGRESS")],
+    "done": [("2026-10-02 07:00:00", "STATUS_CHANGED", "BACKLOG", "IN_PROGRESS")],
+    "created-started-lease-expired": [("2026-10-06 06:00:00", "LEASE_EXPIRED", "IN_PROGRESS", "TODO")],
+    "created-started-moved-back": [("2026-10-07 07:00:00", "STATUS_CHANGED", "IN_PROGRESS", "BACKLOG")],
+    "legacy-str-member": [
+        ("2026-02-12 12:00:00", "STATUS_CHANGED", "IssueStatus.TODO", "IssueStatus.IN_PROGRESS"),
+    ],
+    "legacy-value": [("2026-02-13 13:00:00", "STATUS_CHANGED", "in_progress", "canceled")],
 }
 EXPECTED = {
     "backlog": None,
@@ -43,6 +61,10 @@ EXPECTED = {
     "done": "2026-10-02 07:00:00",
     "todo-was-claimed": "2026-10-03 08:00:00",
     "canceled-was-claimed": "2026-10-04 10:00:00",
+    "created-started-lease-expired": "2026-10-06 06:00:00",
+    "created-started-moved-back": "2026-10-07 07:00:00",
+    "legacy-str-member": "2026-02-12 12:00:00",
+    "legacy-value": "2026-02-13 13:00:00",
 }
 
 
@@ -58,13 +80,12 @@ def at_before(tmp_path):
                 "'2026-10-01 00:00:00', ?)",
                 (issue_id, f"P-{n}", n, issue_id, status, UPDATED),
             )
-        for issue_id, times in CLAIMS.items():
-            for i, at in enumerate(times):
+        for issue_id, rows in CLAIMS.items():
+            for i, (at, kind, old, new) in enumerate(rows):
                 c.execute(
                     "INSERT INTO issue_activities (id, issue_id, user_id, activity_type, field_name, "
-                    "old_value, new_value, created_at) VALUES (?, ?, 'u1', 'STATUS_CHANGED', 'status', "
-                    "'TODO', 'IN_PROGRESS', ?)",
-                    (f"{issue_id}-{i}", issue_id, at),
+                    "old_value, new_value, created_at) VALUES (?, ?, 'u1', ?, 'status', ?, ?, ?)",
+                    (f"{issue_id}-{i}", issue_id, kind, old, new, at),
                 )
         # Activities that are not a claim do not count.
         c.execute(
@@ -103,6 +124,43 @@ def test_backfill_and_nothing_else_changes(at_before):
         assert cols["claimed_at"][3] == 0  # nullable
 
 
+def test_backfill_is_one_grouped_pass(tmp_path):
+    """The claim lookup is grouped once, not rescanned per issue:
+    issue_activities has no index on issue_id (PR #373 re-review F2)."""
+    import importlib.util
+    import pathlib
+
+    path = pathlib.Path(__file__).resolve().parents[1] / "migrations" / f"{THIS}.py"
+    spec = importlib.util.spec_from_file_location("m0030", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class Ctx:
+        statements: list[str] = []
+
+        def add_column(self, *a):
+            pass
+
+        def execute(self, sql):
+            self.statements.append(sql)
+
+    ctx = Ctx()
+    module.upgrade(ctx)
+    (sql,) = ctx.statements
+    assert "GROUP BY issue_id" in sql
+    with closing(sqlite3.connect(":memory:")) as c:
+        c.execute("CREATE TABLE issues (id TEXT PRIMARY KEY, status TEXT, updated_at TEXT, claimed_at TEXT)")
+        c.execute(
+            "CREATE TABLE issue_activities (id TEXT, issue_id TEXT, field_name TEXT, "
+            "old_value TEXT, new_value TEXT, created_at TEXT)"
+        )
+        plan = " ".join(row[3] for row in c.execute("EXPLAIN QUERY PLAN " + sql))
+        # The activities are scanned once to build the grouped table, and
+        # each issue looks its row up by key, not by rescanning them.
+        assert plan.count("SCAN issue_activities") == 1, plan
+        assert "SEARCH first_claim" in plan, plan
+
+
 def test_backfilled_value_reads_back_through_the_model(at_before, tmp_path):
     """The backfill copies the stored text form, so Oxyde parses it like
     any datetime it wrote itself."""
@@ -126,6 +184,13 @@ def test_backfilled_value_reads_back_through_the_model(at_before, tmp_path):
         "    finally:\n"
         "        await disconnect_all()\n"
         "asyncio.run(main(sys.argv[1]))\n"
+        # Skip interpreter finalization, as _migrate's script does: under
+        # pytest-xdist Oxyde's native runtime can abort the process while
+        # being torn down, after the work is done (PR #373 re-review F1).
+        "sys.stdout.flush()\n"
+        "sys.stderr.flush()\n"
+        "import os\n"
+        "os._exit(0)\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", script, at_before],

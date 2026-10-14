@@ -995,9 +995,10 @@ class IssueService:
     async def _claim_rituals_for_new_issue(self, project_id: str, issue_in: IssueCreate) -> list:
         """The active claim rituals whose conditions match the issue
         `issue_in` would create, for a create straight into in_progress
-        or done (CHT-1672). Evaluated against the new ticket as it would
-        sit in backlog before being claimed, so `estimate__gte` and the
-        like apply exactly as they would to a later claim of it. A
+        or done (CHT-1672). Evaluated against the ticket as requested,
+        status included: `estimate__gte`, labels and the like apply as
+        they would to a claim of it, and a `status` condition sees the
+        status the create asks for (PR #373 re-review F4). A
         ROUND_ROBIN or percentage group reports every matching member:
         there is no issue id yet to seed its selection, which is why the
         refusal tells the caller to create the ticket first.
@@ -1012,7 +1013,7 @@ class IssueService:
         )
         probe = OxydeIssue(
             project_id=project_id, identifier="NEW", number=0, title=issue_in.title,
-            status=IssueStatus.BACKLOG, priority=issue_in.priority,
+            status=issue_in.status, priority=issue_in.priority,
             issue_type=issue_in.issue_type, estimate=issue_in.estimate,
         )
         probe.labels = labels

@@ -396,6 +396,29 @@ class TestCreateAsDone:
         assert big.status_code == 409
         assert [r["name"] for r in big.json()["detail"]["pending_rituals"]] == ["big-claim"]
 
+    async def test_status_conditions_see_the_requested_status(
+        self, client, auth_headers, test_project, make_ritual,
+    ):
+        """PR #373 re-review F4: a status condition is evaluated against
+        the status the create asks for, not a notional backlog."""
+        await make_ritual(
+            name="done-only", trigger=RitualTrigger.TICKET_CLAIM, conditions='{"status__eq": "done"}',
+        )
+        await make_ritual(
+            name="backlog-only", trigger=RitualTrigger.TICKET_CLAIM, conditions='{"status__eq": "backlog"}',
+        )
+        done = await client.post(
+            f"/api/projects/{test_project.id}/issues", headers=auth_headers,
+            json={"title": "Done", "status": "done"},
+        )
+        assert done.status_code == 409
+        assert [r["name"] for r in done.json()["detail"]["pending_rituals"]] == ["done-only"]
+        started = await client.post(
+            f"/api/projects/{test_project.id}/issues", headers=auth_headers,
+            json={"title": "Started", "status": "in_progress"},
+        )
+        assert started.status_code in (200, 201), started.text
+
     async def test_label_conditions_see_the_new_tickets_labels(
         self, client, auth_headers, test_project, test_team, make_ritual,
     ):
