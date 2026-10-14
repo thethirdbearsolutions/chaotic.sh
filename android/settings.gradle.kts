@@ -32,3 +32,4 @@ rootProject.name = "chaotic-android"
 
 include(":app")
 include(":core-api")
+include(":core-auth")

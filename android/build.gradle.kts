@@ -27,6 +27,7 @@ detekt {
             "app/src",
             "core-api/src/main/kotlin",
             "core-api/src/test/kotlin",
+            "core-auth/src",
         ),
     )
     basePath.set(layout.projectDirectory)

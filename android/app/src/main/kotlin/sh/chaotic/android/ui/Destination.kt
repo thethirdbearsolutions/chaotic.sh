@@ -2,7 +2,7 @@ package sh.chaotic.android.ui
 
 import kotlinx.serialization.Serializable
 
-/** Type-safe navigation destinations. Sign-in and the inbox join this list. */
+/** Type-safe destinations of the signed-in app. Sign-in is not one: the session state chooses it. */
 @Serializable
 sealed interface Destination {
     @Serializable

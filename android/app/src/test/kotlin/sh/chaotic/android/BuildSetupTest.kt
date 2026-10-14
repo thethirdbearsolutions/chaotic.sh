@@ -1,6 +1,7 @@
 package sh.chaotic.android
 
 import io.ktor.client.engine.okhttp.OkHttpEngine
+import okhttp3.OkHttpClient
 import sh.chaotic.android.di.NetworkModule
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -17,8 +18,17 @@ class BuildSetupTest {
     }
 
     @Test
+    fun theRedirectIsTheBuiltInClientsPrivateUseScheme() {
+        // backend/app/oauth/builtin.py lists the same URI; a backend test
+        // checks app/build.gradle.kts against it. The scheme is the
+        // application id (RFC 8252 §7.1).
+        assertEquals("sh.chaotic.android:/oauth2redirect", BuildConfig.OAUTH_REDIRECT_URI)
+        assertTrue(BuildConfig.OAUTH_REDIRECT_URI.startsWith(BuildConfig.APPLICATION_ID + ":"))
+    }
+
+    @Test
     fun networkModuleProvidesOkHttpEngine() {
-        val engine = NetworkModule.provideHttpClientEngine()
+        val engine = NetworkModule.provideHttpClientEngine(OkHttpClient())
         try {
             assertIs<OkHttpEngine>(engine)
         } finally {

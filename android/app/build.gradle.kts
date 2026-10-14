@@ -13,6 +13,14 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// The OAuth redirect URI, defined here and nowhere else in the app (CHT-1610).
+// BuildConfig.OAUTH_REDIRECT_URI and the manifest's redirect intent filter
+// (AppAuth's RedirectUriReceiverActivity, via appAuthRedirectScheme) both
+// come from it. The server must list it too: ANDROID_REDIRECT_URIS in
+// backend/app/oauth/builtin.py, which a backend test checks against this
+// line, so keep it one literal. CHT-1649 moves it to an App Links https URL.
+val oauthRedirectUri = "sh.chaotic.android:/oauth2redirect"
+
 android {
     namespace = "sh.chaotic.android"
     compileSdk = 37
@@ -23,6 +31,9 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+
+        buildConfigField("String", "OAUTH_REDIRECT_URI", "\"$oauthRedirectUri\"")
+        manifestPlaceholders["appAuthRedirectScheme"] = oauthRedirectUri.substringBefore(':')
     }
 
     // `foss` ships on F-Droid and must stay free of Google Play Services and
@@ -65,6 +76,7 @@ android {
 
 dependencies {
     implementation(project(":core-api"))
+    implementation(project(":core-auth"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
@@ -81,7 +93,10 @@ dependencies {
     ksp(libs.hilt.compiler)
 
     implementation(libs.ktor.client.okhttp)
+    implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.appauth)
+    implementation(libs.androidx.datastore.preferences)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)
