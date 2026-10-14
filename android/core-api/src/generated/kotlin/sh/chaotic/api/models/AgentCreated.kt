@@ -23,6 +23,7 @@
 
 package sh.chaotic.api.models
 
+import sh.chaotic.api.models.AgentKind
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -44,6 +45,8 @@ import kotlinx.serialization.encoding.Encoder
  * @param apiKey 
  * @param apiKeyId 
  * @param createdAt 
+ * @param kind 
+ * @param canRegister 
  */
 @Serializable
 
@@ -71,7 +74,13 @@ data class AgentCreated (
     val apiKeyId: kotlin.String,
 
     @SerialName(value = "created_at")
-    val createdAt: kotlin.String
+    val createdAt: kotlin.String,
+
+    @Contextual @SerialName(value = "kind")
+    val kind: AgentKind? = null,
+
+    @SerialName(value = "can_register")
+    val canRegister: kotlin.Boolean? = false
 
 ) {
 
