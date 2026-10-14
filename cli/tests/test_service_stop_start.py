@@ -142,6 +142,7 @@ def _upgrade(args=("--no-backup",), **overrides):
         "verify_deployed_commit": dict(return_value=(True, "ab71cd5")),
         "checkout_version": dict(return_value=(True, None)),
         "restore_backup": dict(return_value=True),
+        "resync_checkout": dict(return_value=(True, "re-synced")),
         "run_migrations": dict(return_value=(True, "ok")),
         "rebuild_frontend": dict(return_value=(True, "built")),
     }
@@ -719,6 +720,134 @@ class TestOwnProcessGroup:
         assert progress["migrate_started"] is False
 
 
+class TestRollbackResync:
+    """CHT-1694: by the time anything rolls back, the upgrade has synced the
+    venvs and installed the CLI for the commit it is abandoning. The
+    rollback puts them back for the previous commit before restarting it,
+    and a re-sync that fails is reported without stopping the restart."""
+
+    def test_health_failure_resyncs_the_previous_checkout_before_restarting_it(self):
+        calls = []
+        result, m = _upgrade(
+            health_check=dict(return_value=False),
+            checkout_version=dict(side_effect=lambda *a, **k: calls.append(("checkout", a)) or (True, None)),
+            resync_checkout=dict(side_effect=lambda: calls.append(("resync",)) or (True, "CLI reinstalled")),
+            start_service=dict(side_effect=lambda: calls.append(("start",)) or True),
+        )
+
+        assert result.exit_code == 1
+        assert calls == [
+            ("checkout", ("v0.1.0a20",)), ("start",),               # the upgrade
+            ("checkout", (_COMMITS[0],)), ("resync",), ("start",),  # the rollback
+        ]
+        out = _flat(result.output)
+        assert "Re-syncing dependencies and the CLI for the previous version" in out
+        assert "may not match" not in out
+        assert "Rolled back to previous version" in out
+
+    def test_failed_migration_rollback_resyncs_too(self, tmp_path):
+        result, m = _upgrade(
+            run_migrations=dict(return_value=(False, "Migration failed:\n0030 boom")),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+        )
+
+        assert result.exit_code == 1
+        m["resync_checkout"].assert_called_once_with()
+
+    def test_a_failed_resync_is_reported_and_the_old_code_still_restarts_once(self):
+        result, m = _upgrade(
+            health_check=dict(return_value=False),
+            resync_checkout=dict(return_value=(False, "Dependency sync failed:\nerror: no network")),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "Dependency sync failed: error: no network" in out
+        assert "virtualenvs and the installed CLI may not match the code. Starting it anyway" in out
+        assert "just sync" in out and "uv tool install --force --reinstall" in out
+        # No second rollback: one checkout back, one re-sync, one restart.
+        assert [c.args for c in m["checkout_version"].call_args_list] == [("v0.1.0a20",), (_COMMITS[0],)]
+        m["resync_checkout"].assert_called_once_with()
+        assert m["start_service"].call_count == 2  # new code, then the rollback's
+        assert "Rolled back to previous version" in out
+        assert out.rindex("Server is") > out.index("may not match")
+
+    def test_ctrl_c_during_the_resync_still_restarts(self):
+        result, m = _upgrade(
+            health_check=dict(return_value=False),
+            resync_checkout=dict(side_effect=KeyboardInterrupt),
+        )
+
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        out = _flat(result.output)
+        assert "Interrupted (Ctrl-C)" in out and "may not match" in out
+        assert m["start_service"].call_count == 2
+
+    def test_an_unexpected_error_in_the_resync_still_restarts(self):
+        result, m = _upgrade(
+            health_check=dict(return_value=False),
+            resync_checkout=dict(side_effect=RuntimeError("surprise")),
+        )
+
+        assert result.exit_code == 1
+        assert "RuntimeError: surprise" in _flat(result.output)
+        assert m["start_service"].call_count == 2
+
+    def test_no_resync_when_the_checkout_could_not_be_rolled_back(self):
+        """Re-syncing then would sync the new code again."""
+        outcomes = iter([(True, None), (False, "error: unable to unlink")])
+        result, m = _upgrade(
+            health_check=dict(return_value=False),
+            checkout_version=dict(side_effect=lambda *a, **k: next(outcomes)),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "Could not check out the previous commit 19ae385: error: unable to unlink" in out
+        assert "still on the new code" in out
+        m["resync_checkout"].assert_not_called()
+        assert m["start_service"].call_count == 2
+
+    def test_no_resync_without_a_previous_commit(self):
+        with patch.object(system, "stop_service", return_value=True), \
+                patch.object(system, "wait_for_service_settled", return_value="inactive"), \
+                patch.object(system, "checkout_version") as checkout, \
+                patch.object(system, "resync_checkout") as resync, \
+                patch.object(system, "start_service", return_value=True), \
+                patch.object(system, "is_service_running", return_value=True), \
+                patch.object(system, "health_check", return_value=True):
+            system._roll_back(None, None, port=24267)
+        checkout.assert_not_called()
+        resync.assert_not_called()
+
+
+class TestResyncCheckout:
+    def test_syncs_in_its_own_group_then_reinstalls_the_cli(self):
+        with patch.object(system, "run_command") as run, \
+                patch.object(system, "reinstall_cli", return_value=(True, "CLI reinstalled (verified)")) as reinstall:
+            assert system.resync_checkout() == (True, "CLI reinstalled (verified)")
+        run.assert_called_once_with(["just", "sync"], cwd=system.PROJECT_DIR, timeout=300, own_group=True)
+        reinstall.assert_called_once_with()
+
+    def test_a_cli_reinstall_failure_is_the_result(self):
+        with patch.object(system, "run_command"), \
+                patch.object(system, "reinstall_cli", return_value=(False, "CLI reinstall did not take")):
+            assert system.resync_checkout() == (False, "CLI reinstall did not take")
+
+    def test_sync_failures_stop_before_the_reinstall(self):
+        cases = [
+            (subprocess.CalledProcessError(1, ["just"], output="out", stderr="err"), "Dependency sync failed:\nout\nerr"),
+            (subprocess.TimeoutExpired(["just"], 300), "Dependency sync timed out"),
+            (FileNotFoundError(2, "No such file or directory", "just"), "Dependency sync failed: [Errno 2] No such file or directory: 'just'"),
+        ]
+        for error, expected in cases:
+            with patch.object(system, "run_command", side_effect=error), \
+                    patch.object(system, "reinstall_cli") as reinstall:
+                assert system.resync_checkout() == (False, expected)
+            reinstall.assert_not_called()
+
+
 class TestRunMigrationsReportsOxydesOutput:
     """`oxyde migrate` prints its errors on stdout. Reporting only stderr
     left "Migration failed: " and nothing else, hiding a migration's
@@ -934,6 +1063,7 @@ class TestRollBackRestoreGuard:
              patch("cli.system.is_service_running", return_value=False), \
              patch("cli.system.is_port_in_use", return_value=port_in_use), \
              patch("cli.system.restore_backup", return_value=True) as restore, \
+             patch("cli.system.resync_checkout", return_value=(True, "re-synced")), \
              patch("cli.system.start_service", return_value=True), \
              patch("cli.system.health_check", return_value=True), \
              patch("cli.system.console") as console:

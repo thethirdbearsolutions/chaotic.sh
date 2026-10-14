@@ -1626,6 +1626,23 @@ def verify_installed_cli(cli_dir: Path) -> tuple[bool, str]:
     return True, "CLI reinstalled (verified against the checkout)"
 
 
+def resync_checkout() -> tuple[bool, str]:
+    """Bring the environments back in line with the code now checked out:
+    `just sync` and the verified CLI reinstall, with the same process-group
+    handling and timeouts as the upgrade's own (CHT-1694). Returns
+    (success, message). Used by a rollback, after the upgrade had already
+    synced the venvs and installed the CLI for the commit it abandoned."""
+    try:
+        run_command(["just", "sync"], cwd=PROJECT_DIR, timeout=300, own_group=True)
+    except subprocess.CalledProcessError as e:
+        return False, f"Dependency sync failed:\n{_command_output(e)}"
+    except subprocess.TimeoutExpired:
+        return False, "Dependency sync timed out"
+    except OSError as e:  # e.g. just not on this shell's PATH
+        return False, f"Dependency sync failed: {e}"
+    return reinstall_cli()
+
+
 def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> tuple[bool, str]:
     """Sync dependencies, reinstall the CLI and run pending database
     migrations using Oxyde. Returns (success, message).
@@ -2434,7 +2451,8 @@ def _roll_back(
 ) -> None:
     """Undo a failed upgrade: stop whatever is running, restore the previous
     checkout, the previous service file (if the upgrade rewrote it) and (if
-    one was taken) the database backup, restart.
+    one was taken) the database backup, re-sync the venvs and the CLI for
+    the restored checkout (CHT-1694), restart.
 
     The database step is skipped, loudly, if something still holds the port
     after the service was told to stop: that is exactly the CHT-1363 case
@@ -2447,8 +2465,14 @@ def _roll_back(
     # stop that succeeded AND settled to a state with no process.
     stopped = stop_service()
     state = wait_for_service_settled()
+    checked_out = False
     if current_commit:
-        checkout_version(current_commit, force=True)
+        checked_out, err = checkout_version(current_commit, force=True)
+        if not checked_out:
+            console.print(
+                f"[red]Could not check out the previous commit {current_commit[:7]}"
+                f"{f': {escape(err)}' if err else ''}. The server checkout is still on the new code.[/red]"
+            )
     if service_update is not None and service_update.status == "updated":
         if restore_service_file(service_update):
             console.print(f"Restored the previous service file from {service_update.backup}.")
@@ -2477,6 +2501,8 @@ def _roll_back(
                 restored = False
             if not restored:
                 console.print(f"[red]Database restore failed. Backup is at {backup_path}[/red]")
+    if checked_out:
+        _resync_for_rollback()
     if not was_running:
         console.print(
             "[yellow]The server was not running before this upgrade; starting the previous "
@@ -2487,6 +2513,35 @@ def _roll_back(
     else:
         console.print("[yellow]Rolled back to previous version.[/yellow]")
     _print_service_state(port, host)
+
+
+def _resync_for_rollback() -> None:
+    """The upgrade synced the venvs and installed the CLI for the commit
+    being abandoned; put them back for the previous one before it is
+    restarted (CHT-1694). A failure here, a Ctrl-C included, is reported
+    and the restart still happens: the server back on the old code is
+    worth more than a clean environment, and a rollback must never start
+    another rollback."""
+    console.print("Re-syncing dependencies and the CLI for the previous version...")
+    try:
+        ok, message = resync_checkout()
+    except KeyboardInterrupt:
+        ok, message = False, "Interrupted (Ctrl-C)."
+    except Exception as e:  # noqa: BLE001 -- the old code must still be restarted
+        ok, message = False, f"{type(e).__name__}: {e}"
+    if ok:
+        console.print(f"  [dim]{escape(message)}[/dim]")
+        return
+    console.print(f"[red]{escape(message)}[/red]")
+    console.print(
+        "[red]The re-sync for the previous version did not complete, so its virtualenvs and the "
+        "installed CLI may not match the code. Starting it anyway.[/red]"
+    )
+    console.print(
+        f"Once the cause is fixed, run 'just sync' in {PROJECT_DIR} and "
+        f"'uv tool install --force --reinstall {PROJECT_DIR / 'cli'}', "
+        "then 'chaotic system stop' and 'chaotic system start'."
+    )
 
 
 @system.command("upgrade")
