@@ -38,8 +38,9 @@ def _install_patches(**overrides):
     return patches
 
 
-def _run_install(tmp_path, *, no_start=False, port_in_use=False, start_ok=True, health_ok=True):
+def _run_install(tmp_path, *, no_start=False, port_in_use=False, start_ok=True, health_ok=True, **overrides):
     patches = _install_patches(
+        **overrides,
         GLOBAL_CONFIG_DIR=tmp_path,
         SERVER_DIR=tmp_path / "server",
         DATA_DIR=tmp_path / "data",
@@ -95,3 +96,19 @@ class TestSystemInstallBanner:
         assert result.exit_code == 1
         assert "Chaotic is running at" not in result.output
         assert "Installed. Run 'chaotic system start' when ready." not in result.output
+
+
+class TestSystemInstallRepeatsThePathWarning:
+    """Review M1 (CHT-1695): the PATH warning printed when the CLI was
+    installed is repeated in the closing summary."""
+
+    def test_summary_carries_the_warning(self, tmp_path):
+        def migrate(fake_initial=False, progress=None):
+            progress.update(cli_installed=True, cli_path_warning="`chaotic` is not on this shell's PATH")
+            return True, "Migrations applied"
+
+        result = _run_install(tmp_path, run_migrations=MagicMock(side_effect=migrate))
+        assert result.exit_code == 0, result.output
+        tail = result.output[result.output.index("Chaotic is running at"):]
+        assert "Warning: `chaotic` is not on this shell's PATH" in tail
+        assert tail.index("Warning:") < tail.index("Next steps:")

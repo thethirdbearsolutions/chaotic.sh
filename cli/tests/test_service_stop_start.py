@@ -520,7 +520,8 @@ class TestFailedMigrationRollsBack:
                 patch.object(system, "verify_installed_cli", return_value=(False, "CLI reinstall did not take: cli/system.py")):
             ok, message = system.run_migrations(progress=progress)
         assert ok is False and "did not take" in message
-        assert progress == {"migrate_started": False, "cli_reinstall_started": True, "cli_installed": False}
+        assert progress == {"migrate_started": False, "cli_reinstall_started": True, "cli_installed": False,
+                            "cli_path_warning": None}
         assert not [c for c in ran if "oxyde" in c], "migrated after a CLI reinstall that did not take"
 
         result, m = _upgrade(
@@ -1145,21 +1146,25 @@ class TestRunMigrationsRecordsTheCliStage:
     def test_a_verified_reinstall_sets_cli_installed_only_after_verification(self):
         ok, progress, during = self._run()
         assert ok is True
-        assert during == {"migrate_started": False, "cli_reinstall_started": True, "cli_installed": False}
-        assert progress == {"migrate_started": True, "cli_reinstall_started": True, "cli_installed": True}
+        assert during == {"migrate_started": False, "cli_reinstall_started": True, "cli_installed": False,
+                          "cli_path_warning": None}
+        assert progress == {"migrate_started": True, "cli_reinstall_started": True, "cli_installed": True,
+                            "cli_path_warning": None}
         assert system._cli_state(progress) == "new"
 
     def test_a_reinstall_that_did_not_verify_is_partial(self):
         ok, progress, _ = self._run(verify=(False, "CLI reinstall did not take: cli/x.py"))
         assert ok is False
-        assert progress == {"migrate_started": False, "cli_reinstall_started": True, "cli_installed": False}
+        assert progress == {"migrate_started": False, "cli_reinstall_started": True, "cli_installed": False,
+                            "cli_path_warning": None}
         assert system._cli_state(progress) == "partial"
 
     def test_a_sync_failure_never_touches_the_cli(self):
         ok, progress, during = self._run(sync_ok=False)
         assert ok is False
         assert during == {}, "verification ran after a failed sync"
-        assert progress == {"migrate_started": False, "cli_reinstall_started": False, "cli_installed": False}
+        assert progress == {"migrate_started": False, "cli_reinstall_started": False, "cli_installed": False,
+                            "cli_path_warning": None}
         assert system._cli_state(progress) == "unchanged"
 
 
@@ -1452,3 +1457,24 @@ class TestRollbackFromStoppedSaysSo:
         result, _ = _upgrade(health_check=dict(return_value=False))
         assert result.exit_code == 1
         assert "was not running before this upgrade" not in _flat(result.output)
+
+
+class TestUpgradeRepeatsThePathWarning:
+    """Review M1 (CHT-1695): the PATH warning, printed when the CLI was
+    installed, is repeated after the success line so it is not lost
+    behind the migrations and the restart."""
+
+    def test_the_last_lines_carry_the_warning(self):
+        def migrate(fake_initial=False, progress=None):
+            progress.update(cli_installed=True, cli_path_warning="`chaotic` on this shell's PATH is /opt/x")
+            return True, "Migrations applied"
+
+        result, _ = _upgrade(run_migrations=dict(side_effect=migrate))
+        assert result.exit_code == 0, result.output
+        tail = result.output[result.output.index("Upgraded to"):]
+        assert "Warning: `chaotic` on this shell's PATH is /opt/x" in _flat(tail)
+
+    def test_no_warning_adds_nothing(self):
+        result, _ = _upgrade()
+        assert result.exit_code == 0, result.output
+        assert "Warning:" not in result.output[result.output.index("Upgraded to"):]

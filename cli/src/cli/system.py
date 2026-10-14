@@ -1569,41 +1569,52 @@ def reinstall_cli() -> tuple[bool, str]:
         return False, "CLI reinstall timed out"
     except OSError as e:  # e.g. uv not on this shell's PATH
         return False, f"CLI reinstall failed: {e}"
-    ok, message = verify_installed_cli(cli_dir)
-    if ok:
-        warning = path_cli_warning()
-        if warning:
-            console.print(f"  [yellow]{escape(warning)}[/yellow]")
-    return ok, message
+    return verify_installed_cli(cli_dir)
 
 
 def path_cli_warning() -> str | None:
     """A warning when the `chaotic` this shell's PATH finds is not the uv
-    tool just reinstalled and verified (CHT-1695): a pipx install or an
-    older entry earlier on PATH would keep running stale code. None when
-    it is the tool's, or when uv cannot name its bin directory."""
+    tool just installed and verified (CHT-1695): a pipx install, an active
+    virtualenv or an older entry earlier on PATH would run other code.
+    None when it is the tool's, or when the check cannot tell: it is
+    best-effort, so any error is silence, never a failure."""
     try:
-        bin_dir = run_command(["uv", "tool", "dir", "--bin"], timeout=30).stdout
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return _path_cli_warning()
+    except Exception:  # noqa: BLE001 -- a warning must never fail an install
         return None
-    bin_dir = bin_dir.strip() if isinstance(bin_dir, str) else ""
+
+
+def _path_cli_warning() -> str | None:
+    bin_dir = run_command(["uv", "tool", "dir", "--bin"], timeout=30).stdout.strip()
     if not bin_dir:
         return None
     tool_exe = Path(bin_dir) / "chaotic"
     found = shutil.which("chaotic")
-    if found is None:
-        return (f"`chaotic` is not on this shell's PATH; the upgraded CLI is at {tool_exe}. "
-                f"Add {bin_dir} to PATH (uv tool update-shell).")
-    try:
-        same = Path(found).parent.resolve() == Path(bin_dir).resolve() or (
-            Path(found).resolve() == tool_exe.resolve())
-    except OSError:
-        same = False
-    if same:
+    if found is not None and (
+            Path(found).parent.resolve() == Path(bin_dir).resolve()
+            or Path(found).resolve() == tool_exe.resolve()):
         return None
-    return (f"`chaotic` on this shell's PATH is {found}, not the upgraded CLI at {tool_exe}: "
-            f"running `chaotic` may still run older code. Remove the other install, or put "
-            f"{bin_dir} first on PATH.")
+    if os.environ.get("SUDO_USER") or (hasattr(os, "geteuid") and os.geteuid() == 0):
+        # sudo's secure_path leaves out root's ~/.local/bin, so the
+        # problem is running as root, not this PATH (review L4).
+        return (f"This ran as root, so `chaotic` was installed for root at {tool_exe}, not for "
+                f"your user, and sudo's secure_path does not include {bin_dir}. Run `chaotic system` "
+                "commands as the user that owns this install, without sudo.")
+    if found is None:
+        return (f"`chaotic` is not on this shell's PATH; the CLI just installed is at {tool_exe}. "
+                f"Add {bin_dir} to PATH: `uv tool update-shell` does that for new shells, "
+                "so open a new one afterwards.")
+    shadow = (f"`chaotic` on this shell's PATH is {found}, not the CLI just installed at "
+              f"{tool_exe}, so running `chaotic` runs that other install.")
+    venv = os.environ.get("VIRTUAL_ENV")
+    if venv and Path(found).resolve().is_relative_to(Path(venv).resolve()):
+        return (f"{shadow} A virtualenv is active ({venv}): `deactivate` it to use the "
+                "installed CLI, or ignore this if that virtualenv is the one you meant to run.")
+    if "pipx" in Path(found).resolve().parts or "pipx" in Path(found).parts:
+        return (f"{shadow} It looks like a pipx install: remove it with "
+                f"`pipx uninstall {CLI_TOOL_NAME}`.")
+    return (f"{shadow} Remove the other install, or put {bin_dir} first on PATH "
+            "(a PATH change reaches new shells only).")
 
 
 def _installed_cli_dirs() -> dict[str, Path] | None:
@@ -1733,6 +1744,8 @@ def resync_checkout(reinstall: bool = True, abandoned_commit: str | None = None)
     if not reinstall:
         return True, synced
     ok, message = reinstall_cli()
+    if ok:
+        _print_path_cli_warning()
     return ok, f"{synced}; {message}" if ok else message
 
 
@@ -1742,7 +1755,8 @@ def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> 
 
     `progress["cli_reinstall_started"]` is set to True just before the CLI
     reinstall, and `progress["cli_installed"]` once it and its
-    verification succeeded. `progress["migrate_started"]` is set to
+    verification succeeded, then `progress["cli_path_warning"]` to
+    path_cli_warning()'s result. `progress["migrate_started"]` is set to
     True just before the first
     command that can write to the database runs, so a caller can tell
     "the database was never touched" from "it may be partially migrated"
@@ -1753,6 +1767,7 @@ def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> 
     progress["migrate_started"] = False
     progress["cli_reinstall_started"] = False
     progress["cli_installed"] = False
+    progress["cli_path_warning"] = None
     backend_dir = PROJECT_DIR / "backend"
     # Point Oxyde at the same database file the running server opens
     # (set by the systemd unit / launchd plist). Without this, oxyde_config.py
@@ -1770,6 +1785,9 @@ def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> 
         if not ok:
             return ok, msg
         progress["cli_installed"] = True
+        # After cli_installed (review L3): a Ctrl-C during this check must
+        # not roll back an install that was verified.
+        progress["cli_path_warning"] = _print_path_cli_warning()
 
         # If user specified --fake-initial, mark the initial schema migration
         # as applied without running it (for pre-Oxyde databases)
@@ -1820,6 +1838,24 @@ def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> 
                 "  chaotic system upgrade --fake-initial --yes"
             )
         return False, f"Migration failed:\n{_command_output(e)}"
+
+
+def _print_path_cli_warning() -> str | None:
+    """Print path_cli_warning() where it happens and return it, so the
+    caller can repeat it in its closing summary (review M1)."""
+    warning = path_cli_warning()
+    if warning:
+        console.print(f"  [yellow]{escape(warning)}[/yellow]")
+    return warning
+
+
+def _print_closing_path_cli_warning(progress: dict) -> None:
+    """Repeat run_migrations' PATH warning at the end of an install or
+    upgrade: printed only where the CLI was installed, it had scrolled
+    away behind the migrations and the restart (review M1)."""
+    warning = progress.get("cli_path_warning")
+    if warning:
+        console.print(f"[yellow]Warning: {escape(warning)}[/yellow]")
 
 
 def _command_output(error: subprocess.CalledProcessError) -> str:
@@ -2029,7 +2065,8 @@ def system_install(git_version, host, port, no_start, repo, yes, config_pairs):
 
     # Install dependencies and run migrations
     console.print("Installing dependencies and running migrations...")
-    success, message = run_migrations()
+    progress: dict = {}
+    success, message = run_migrations(progress=progress)
     if not success:
         # escape(): the message carries the command's own output.
         console.print(f"[red]{escape(message)}[/red]")
@@ -2093,6 +2130,7 @@ def system_install(git_version, host, port, no_start, repo, yes, config_pairs):
     else:
         console.print("[bold]Installed.[/bold] Run 'chaotic system start' when ready.")
     console.print("CLI configured to use local server.")
+    _print_closing_path_cli_warning(progress)
     console.print()
     console.print("[bold]Next steps:[/bold]")
     console.print("  chaotic quickstart     # Interactive setup (recommended)")
@@ -3055,6 +3093,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     console.print()
     console.print(f"[bold green]Upgraded to {new_version}[/bold green]")
     console.print(_mcp_reconnect_note(version_before, version_after))
+    _print_closing_path_cli_warning(progress)
 
 
 @system.command("backup")
