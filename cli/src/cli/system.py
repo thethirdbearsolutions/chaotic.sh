@@ -1569,7 +1569,41 @@ def reinstall_cli() -> tuple[bool, str]:
         return False, "CLI reinstall timed out"
     except OSError as e:  # e.g. uv not on this shell's PATH
         return False, f"CLI reinstall failed: {e}"
-    return verify_installed_cli(cli_dir)
+    ok, message = verify_installed_cli(cli_dir)
+    if ok:
+        warning = path_cli_warning()
+        if warning:
+            console.print(f"  [yellow]{escape(warning)}[/yellow]")
+    return ok, message
+
+
+def path_cli_warning() -> str | None:
+    """A warning when the `chaotic` this shell's PATH finds is not the uv
+    tool just reinstalled and verified (CHT-1695): a pipx install or an
+    older entry earlier on PATH would keep running stale code. None when
+    it is the tool's, or when uv cannot name its bin directory."""
+    try:
+        bin_dir = run_command(["uv", "tool", "dir", "--bin"], timeout=30).stdout
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+    bin_dir = bin_dir.strip() if isinstance(bin_dir, str) else ""
+    if not bin_dir:
+        return None
+    tool_exe = Path(bin_dir) / "chaotic"
+    found = shutil.which("chaotic")
+    if found is None:
+        return (f"`chaotic` is not on this shell's PATH; the upgraded CLI is at {tool_exe}. "
+                f"Add {bin_dir} to PATH (uv tool update-shell).")
+    try:
+        same = Path(found).parent.resolve() == Path(bin_dir).resolve() or (
+            Path(found).resolve() == tool_exe.resolve())
+    except OSError:
+        same = False
+    if same:
+        return None
+    return (f"`chaotic` on this shell's PATH is {found}, not the upgraded CLI at {tool_exe}: "
+            f"running `chaotic` may still run older code. Remove the other install, or put "
+            f"{bin_dir} first on PATH.")
 
 
 def _installed_cli_dirs() -> dict[str, Path] | None:

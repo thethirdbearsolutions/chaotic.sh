@@ -169,7 +169,8 @@ class TestUpgradeBetweenCommitsWithTheSameCliVersion:
 class TestReinstallCommand:
     def test_forces_uv_to_rebuild_the_cli_from_the_checkout(self):
         with patch.object(system, "run_command") as run, \
-                patch.object(system, "verify_installed_cli", return_value=(True, "ok")) as verify:
+                patch.object(system, "verify_installed_cli", return_value=(True, "ok")) as verify, \
+                patch.object(system, "path_cli_warning", return_value=None):
             assert system.reinstall_cli() == (True, "ok")
 
         cmd = run.call_args.args[0]
@@ -262,3 +263,75 @@ class TestGitIgnoredMatchesHatch:
         (repo / ".gitignore").write_text("build/\n")  # the pattern comes after the commit
 
         assert system._git_ignored(repo, [tracked, plain]) == {tracked}
+
+
+class TestPathCliWarning:
+    """CHT-1695: the verified uv tool is not necessarily the `chaotic` the
+    shell runs. A warning, never a failure."""
+
+    def _bin(self, tmp_path):
+        bin_dir = tmp_path / "uv-bin"
+        bin_dir.mkdir()
+        exe = bin_dir / "chaotic"
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+        return bin_dir
+
+    def _uv_bin(self, bin_dir):
+        return patch.object(system, "run_command",
+                            return_value=subprocess.CompletedProcess([], 0, f"{bin_dir}\n", ""))
+
+    def test_the_tools_own_chaotic_first_on_path_is_quiet(self, tmp_path, monkeypatch):
+        bin_dir = self._bin(tmp_path)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+        with self._uv_bin(bin_dir):
+            assert system.path_cli_warning() is None
+
+    def test_a_symlink_to_the_tools_chaotic_is_quiet(self, tmp_path, monkeypatch):
+        bin_dir = self._bin(tmp_path)
+        other = tmp_path / "other"
+        other.mkdir()
+        (other / "chaotic").symlink_to(bin_dir / "chaotic")
+        monkeypatch.setenv("PATH", f"{other}{os.pathsep}{os.environ['PATH']}")
+        with self._uv_bin(bin_dir):
+            assert system.path_cli_warning() is None
+
+    def test_another_chaotic_first_on_path_names_both(self, tmp_path, monkeypatch):
+        bin_dir = self._bin(tmp_path)
+        shadow = tmp_path / "pipx-bin"
+        shadow.mkdir()
+        (shadow / "chaotic").write_text("#!/bin/sh\n")
+        (shadow / "chaotic").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{shadow}{os.pathsep}{bin_dir}{os.pathsep}{os.environ['PATH']}")
+        with self._uv_bin(bin_dir):
+            warning = system.path_cli_warning()
+        assert str(shadow / "chaotic") in warning
+        assert str(bin_dir / "chaotic") in warning
+        assert "may still run older code" in warning
+
+    def test_no_chaotic_on_path_says_where_it_is(self, tmp_path, monkeypatch):
+        bin_dir = self._bin(tmp_path)
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        with self._uv_bin(bin_dir):
+            warning = system.path_cli_warning()
+        assert "not on this shell's PATH" in warning and str(bin_dir / "chaotic") in warning
+
+    def test_uv_unable_to_name_its_bin_dir_is_quiet(self):
+        with patch.object(system, "run_command", side_effect=OSError("no uv")):
+            assert system.path_cli_warning() is None
+
+    def test_reinstall_warns_but_succeeds(self):
+        with patch.object(system, "run_command"), \
+                patch.object(system, "verify_installed_cli", return_value=(True, "CLI reinstalled (verified)")), \
+                patch.object(system, "path_cli_warning", return_value="`chaotic` on this shell's PATH is /x"), \
+                patch.object(system, "console") as console:
+            assert system.reinstall_cli() == (True, "CLI reinstalled (verified)")
+        printed = " ".join(str(c.args[0]) for c in console.print.call_args_list)
+        assert "[yellow]" in printed and "/x" in printed
+
+    def test_no_path_check_when_verification_failed(self):
+        with patch.object(system, "run_command"), \
+                patch.object(system, "verify_installed_cli", return_value=(False, "did not take")), \
+                patch.object(system, "path_cli_warning") as warn:
+            assert system.reinstall_cli() == (False, "did not take")
+        warn.assert_not_called()
