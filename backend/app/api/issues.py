@@ -37,6 +37,7 @@ from app.services.issue_service import (
     SprintInLimboError,
     TicketRitualsError,
     ClaimRitualsError,
+    UnclaimedCloseRitualsError,
     IntentInFlightError,
     EstimateRequiredError,
     IssueAlreadyClaimedError,
@@ -491,7 +492,9 @@ async def create_issue(
             status_code=status.HTTP_409_CONFLICT,
             detail=await _ritual_refusal_detail(
                 e, "claim_rituals_pending",
-                "Cannot create issue as in_progress - ticket has pending claim rituals", "claiming",
+                f"Cannot create issue as {'done' if isinstance(e, UnclaimedCloseRitualsError) else 'in_progress'}"
+                " - ticket has pending claim rituals",
+                e.verb,
             ),
         )
     except IntentInFlightError as e:
@@ -1166,7 +1169,10 @@ async def update_issue(
     except ClaimRitualsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=await _ritual_refusal_detail(e, "claim_rituals_pending", "Ticket has pending claim rituals", "claiming"),
+            detail=await _ritual_refusal_detail(
+                e, "claim_rituals_pending", "Ticket has pending claim rituals",
+                e.verb,
+            ),
         )
     except IntentInFlightError as e:
         raise HTTPException(

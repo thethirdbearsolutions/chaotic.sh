@@ -168,7 +168,10 @@ class ClaimRitualsError(Exception):
     name/prompt list kept for compatibility. This message is the
     service-level log line; the wire-form message, which says what is
     attestable and what only a human can do, is built by the API layer.
+    ``verb`` is the refused action as that message names it.
     """
+
+    verb = "claiming"
 
     def __init__(
         self, issue_id: str, pending_rituals: list[dict] | None = None, rituals=None,
@@ -188,6 +191,21 @@ class ClaimRitualsError(Exception):
             f"Ticket has pending claim rituals: {', '.join(ritual_names)} "
             "(see the API error detail for each one's attestation state)."
         )
+
+
+class UnclaimedCloseRitualsError(ClaimRitualsError):
+    """A close (-> done) of a ticket that was never claimed, refused by
+    its pending claim rituals (CHT-1672).
+
+    Claim rituals used to be checked only on the -> in_progress
+    transition, so moving a ticket straight from backlog/todo to done
+    skipped them: a review-mode design gate could be bypassed by simply
+    never claiming. Same rows and API shape as ClaimRitualsError (it
+    *is* one, so every handler of that catches this too); ``verb`` lets
+    the refusal say "before closing" instead of "before claiming".
+    """
+
+    verb = "closing"
 
 
 class RelationCycleError(Exception):
@@ -266,6 +284,10 @@ _SORT_PYTHON_KEYS = {
 
 class IssueService:
     """Service for issue operations."""
+
+    # States a ticket sits in when nobody has claimed it: closing from
+    # one of these must pass the claim rituals too (CHT-1672).
+    UNCLAIMED_STATUSES = frozenset({IssueStatus.BACKLOG, IssueStatus.TODO, IssueStatus.CANCELED})
 
     def __init__(self, db=None):
         # db parameter kept for ritual_service interop during migration.
@@ -792,10 +814,15 @@ class IssueService:
         return True
 
     async def _check_claim_rituals(
-        self, issue, user_id: str, is_human_request: bool = False
+        self, issue, user_id: str, is_human_request: bool = False,
+        error_class: type = None,
     ) -> bool:
         """Check if ticket has pending claim rituals; open intent + limbo + raise.
-        Returns whether the gate was consulted, as `_check_ticket_rituals`."""
+        Returns whether the gate was consulted, as `_check_ticket_rituals`.
+
+        `error_class` is ClaimRitualsError for a claim, and
+        UnclaimedCloseRitualsError when a close of a never-claimed ticket
+        is what the claim rituals gate (CHT-1672)."""
         if is_human_request:
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project and not project.human_rituals_required:
@@ -808,7 +835,7 @@ class IssueService:
 
         await self._open_intent_with_limbo(
             issue, user_id, is_human_request,
-            pending_rituals, LimboType.CLAIM, ClaimRitualsError,
+            pending_rituals, LimboType.CLAIM, error_class or ClaimRitualsError,
         )
         return True
 
@@ -990,6 +1017,12 @@ class IssueService:
         if issue_in.status == IssueStatus.DONE and not is_human_request:
             ritual_service = RitualService()
             rituals = await ritual_service.list_by_project(project_id)
+            # Created as done is also a close of a never-claimed ticket,
+            # so the claim rituals gate it before the close rituals do
+            # (CHT-1672); same unconditional rule as created-as-in_progress.
+            claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM and r.is_active]
+            if claim_rituals:
+                raise UnclaimedCloseRitualsError("NEW", rituals=claim_rituals)
             close_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLOSE and r.is_active]
             if close_rituals:
                 raise TicketRitualsError("NEW", rituals=close_rituals)
@@ -1158,7 +1191,7 @@ class IssueService:
         # auto-transition counts; a human bypass with
         # human_rituals_required off does not, since nothing gated it),
         # and written inside the transaction below once the status is saved.
-        rotation = None
+        rotations = []
         if issue_in.status is not None and "status" in update_data:
             new_status = issue_in.status
             old_status = issue.status
@@ -1174,16 +1207,38 @@ class IssueService:
                         )
                 gated = skip_ritual_check or await self._check_claim_rituals(issue, user_id, is_human_request)
                 if gated:
-                    rotation = await RitualService().prepare_ticket_rotation(
+                    rotations.append(await RitualService().prepare_ticket_rotation(
                         issue.project_id, issue.id, RitualTrigger.TICKET_CLAIM, intent_id=gate_intent_id,
-                    )
+                    ))
 
             if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
+                # Closing a ticket nobody claimed must pass its claim
+                # rituals first, the same way issue_start would
+                # (CHT-1672), or a claim gate is bypassed by never
+                # claiming. Keyed on the ticket's current state, not its
+                # history: once a ticket is in_progress/in_review its
+                # claim gate was passed (or bypassed by a human) on the
+                # way in, and re-checking there would also misfire for a
+                # ROUND_ROBIN claim group, whose selection follows the
+                # pointer once the claim intent has cleared. Not under
+                # skip_ritual_check: the auto-transition firing here is a
+                # cleared CLOSE intent, which this gate already let open.
+                # Canceling is deliberately not gated: it abandons the
+                # work rather than doing it, charges no budget, and close
+                # rituals do not apply to it either.
+                if old_status in self.UNCLAIMED_STATUSES and not skip_ritual_check:
+                    gated = await self._check_claim_rituals(
+                        issue, user_id, is_human_request, error_class=UnclaimedCloseRitualsError,
+                    )
+                    if gated:
+                        rotations.append(await RitualService().prepare_ticket_rotation(
+                            issue.project_id, issue.id, RitualTrigger.TICKET_CLAIM,
+                        ))
                 gated = skip_ritual_check or await self._check_ticket_rituals(issue, user_id, is_human_request)
                 if gated:
-                    rotation = await RitualService().prepare_ticket_rotation(
+                    rotations.append(await RitualService().prepare_ticket_rotation(
                         issue.project_id, issue.id, RitualTrigger.TICKET_CLOSE, intent_id=gate_intent_id,
-                    )
+                    ))
 
             blocked_statuses = {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}
             if new_status in blocked_statuses and old_status != new_status:
@@ -1274,7 +1329,7 @@ class IssueService:
             # advance to the ritual that gated it, in this transaction
             # (CHT-1405). Every status transition, the limbo auto-transition
             # included, comes through here.
-            if rotation is not None:
+            for rotation in rotations:
                 await RitualService().record_ticket_rotation(rotation)
 
             # Handle labels via junction table
