@@ -537,12 +537,15 @@ def _parse_service(content: str, os_type: str) -> _ParsedService | None:
 
 
 def _rewrite_blockers(have: _ParsedService, want: _ParsedService,
-                      owned: frozenset[str] = frozenset()) -> list[str]:
+                      owned: frozenset[str] = frozenset(),
+                      identity_owned: frozenset[str] = frozenset()) -> list[str]:
     """Why the file on disk must not be replaced by the regenerated one,
     naming settings but never their values. Empty means the rewrite only
     adds settings and changes none the file already makes, other than
     the environment variables in `owned`: the ones `system config` was
-    just told to set or unset, which it may change or drop."""
+    just told to set or unset, which it may change or drop. Likewise
+    `identity_owned` names the identity keys (HOST, PORT) that
+    `system reconfigure` was told to change (CHT-1676)."""
     reasons = list(have.unsafe)
     # A comment may hold anything (an old secret, a note the owner needs),
     # and the regenerated file has none: never drop one.
@@ -558,7 +561,8 @@ def _rewrite_blockers(have: _ParsedService, want: _ParsedService,
     # Units written before CHT-761 set no HOST: the server bound to the
     # justfile's ${HOST:-127.0.0.1}, so writing that value changes nothing.
     have_id.setdefault("HOST", _JUSTFILE_DEFAULT_HOST)
-    differing = [k for k in _SERVICE_IDENTITY_KEYS if have_id.get(k) != want_id.get(k)]
+    differing = [k for k in _SERVICE_IDENTITY_KEYS
+                 if k not in identity_owned and have_id.get(k) != want_id.get(k)]
     if differing:
         reasons.append(f"it disagrees with server.json about {', '.join(differing)}")
     changed = {key for (section, key), values in have.directives.items()
@@ -1861,15 +1865,60 @@ def system_stop():
             raise SystemExit(1)
 
 
+def _current_service_file() -> tuple[Path | None, str | None, _ParsedService | None]:
+    """(path, content, parsed) of the service file on disk; content is
+    None when there is none (or it cannot be read), parsed None when it
+    cannot be parsed."""
+    os_type = get_os()
+    if os_type not in ("linux", "darwin"):
+        return None, None, None
+    path = get_service_file_path()
+    try:
+        content = path.read_bytes().decode()  # as on disk: a CRLF file is backed up as CRLF
+    except (OSError, UnicodeDecodeError):
+        return path, None, None
+    return path, content, _parse_service(content, os_type)
+
+
+def _reconfigure_blockers(port: int, host: str, secret_key: str,
+                          settings: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Why `system reconfigure` must not replace the service file on disk
+    with one generated from server.json: what keeps reconcile_service_file
+    from rewriting it, other than the HOST and PORT that reconfigure is
+    for (CHT-1676: an OAUTH_ENABLED added to the unit by hand was dropped,
+    turning OAuth off). Returns (reasons, identity keys among them that
+    the new file would change, such as SECRET_KEY). Empty when there is
+    no file to lose."""
+    path, content, have = _current_service_file()
+    if content is None:
+        return [], []
+    if have is None:
+        return [f"{path} cannot be parsed"], []
+    os_type = get_os()
+    generate = generate_systemd_service if os_type == "linux" else generate_launchd_plist
+    want = _parse_service(generate(port, secret_key, host, settings), os_type)
+    if want is None:
+        return [], []
+    have_id, want_id = have.identity(), want.identity()
+    identity = [k for k in _SERVICE_IDENTITY_KEYS
+                if k not in ("HOST", "PORT") and have_id.get(k) != want_id.get(k)]
+    return _rewrite_blockers(have, want, identity_owned=frozenset({"HOST", "PORT"})), identity
+
+
 @system.command("reconfigure")
 @click.option("--host", default=None, help="New host/IP to bind (use 0.0.0.0 for all interfaces)")
 @click.option("--port", default=None, type=int, help="New port number")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
-def system_reconfigure(host, port, yes):
+@click.option("--force", is_flag=True,
+              help="Replace the service file even if that drops lines added to it by hand")
+def system_reconfigure(host, port, yes, force):
     """Reconfigure server host, port, or other settings.
 
     Updates server.json, regenerates the service file, and restarts
-    the server if it was running.
+    the server if it was running. It refuses (unless --force) when the
+    new file would drop or change anything the current one sets other
+    than HOST and PORT, such as a setting added by hand: adopt those
+    first with 'chaotic system config adopt'. The previous file is kept.
     """
     if not is_server_installed():
         console.print("[red]Chaotic server is not installed.[/red]")
@@ -1907,9 +1956,47 @@ def system_reconfigure(host, port, yes):
     new_host = host if host is not None else current_host
     new_port = port if port is not None else current_port
 
-    if new_host == current_host and new_port == current_port:
+    # The service file is what the server runs with; server.json can say
+    # otherwise (CHT-1676), and then the file still needs rewriting.
+    _, _, unit = _current_service_file()
+    unit_id = unit.identity() if unit else {}
+    unit_id.setdefault("HOST", _JUSTFILE_DEFAULT_HOST)
+
+    def unit_says(h, p):
+        return unit is None or (unit_id.get("HOST") == h and unit_id.get("PORT") == str(p))
+
+    if new_host == current_host and str(new_port) == str(current_port) and unit_says(new_host, new_port):
         console.print("[yellow]No changes — configuration is already set to these values.[/yellow]")
         return
+    if not unit_says(current_host, current_port):
+        console.print(f"[yellow]The service file says host {unit_id.get('HOST')} port {unit_id.get('PORT')}, "
+                      "not what server.json says; the server runs with the service file's.[/yellow]")
+
+    dropin_identity, _ = _dropin_problems()
+    if dropin_identity and not force:
+        for problem in dropin_identity:
+            console.print(f"[red]{escape(problem)}[/red]")
+        console.print("Nothing was changed: the drop-in would keep overriding what reconfigure writes. "
+                      "(--force writes it anyway.)")
+        raise SystemExit(1)
+
+    # A missing secret_key gets a new one below, which the file's
+    # SECRET_KEY blocks: replacing it would log everyone out.
+    blockers, identity = _reconfigure_blockers(new_port, new_host, secret_key or "<new>",
+                                               server_settings.valid_settings(server_info))
+    if blockers and not force:
+        console.print(f"[red]Not replacing the service file: {escape('; '.join(blockers))}.[/red]")
+        if identity:
+            consequence = " (every session is logged out)" if "SECRET_KEY" in identity else ""
+            console.print(f"Nothing was changed. --force would write server.json's {', '.join(identity)} "
+                          f"into the service file{consequence}. Usually the service file is right: edit "
+                          f"{SERVER_JSON} to match it, or restore server.json from a backup.")
+        else:
+            console.print("Nothing was changed. Adopt settings added to it by hand with "
+                          "'chaotic system config adopt' first, or pass --force to replace it anyway "
+                          "(the previous file is kept).")
+        raise SystemExit(1)
+
 
     # Show before/after and confirm
     console.print("[bold]Current config:[/bold]")
@@ -1926,6 +2013,18 @@ def system_reconfigure(host, port, yes):
             console.print("[yellow]Reconfigure cancelled.[/yellow]")
             raise SystemExit(0)
 
+    # Keep the previous service file before anything is written, so a
+    # failure here leaves server.json and the file as they were.
+    path, previous, _ = _current_service_file()
+    backup = None
+    if previous is not None:
+        try:
+            backup = _backup_service_file(path, previous)
+        except OSError as e:
+            console.print(f"[red]Could not keep a copy of {path} in {SERVICE_BACKUP_DIR}: {escape(str(e))}[/red]")
+            console.print("Nothing was changed.")
+            raise SystemExit(1)
+
     # Generate secret key inline if missing (avoid ensure_secret_key clobber)
     if not secret_key:
         secret_key = generate_secret_key()
@@ -1938,6 +2037,8 @@ def system_reconfigure(host, port, yes):
     console.print("Updated server.json.")
 
     # Regenerate service file
+    if backup is not None:
+        console.print(f"Previous service file kept at {backup}")
     service_path = write_service_file(new_port, secret_key, new_host, server_settings.valid_settings(server_info))
     console.print(f"Regenerated service file: {service_path}")
 
@@ -2552,27 +2653,50 @@ def _dropin_dir() -> Path:
     return get_systemd_user_dir() / f"{SYSTEMD_SERVICE}.d"
 
 
-def _dropin_settings() -> dict[str, list[str]]:
-    """Variable name -> the systemd drop-ins that set it. A drop-in is
-    applied after the unit, so it wins over server.json."""
+def _read_dropins() -> list[tuple[str, _ParsedService | None]]:
+    """Each systemd drop-in (chaotic.service.d/*.conf) in the order
+    systemd applies them, after the unit: by file name, so a later one
+    wins. None for one that cannot be read or parsed."""
     if get_os() != "linux":
-        return {}
-    found: dict[str, list[str]] = {}
+        return []
     try:
         files = sorted(_dropin_dir().glob("*.conf"))
     except OSError:
-        return {}
+        return []
+    found = []
     for conf in files:
         try:
             parsed = _parse_systemd_unit(conf.read_text())
         except (OSError, UnicodeDecodeError):
             parsed = None
-        if parsed is None:
-            found.setdefault("?", []).append(conf.name)
-            continue
-        for var in parsed.env:
-            found.setdefault(var, []).append(conf.name)
+        found.append((conf.name, parsed))
     return found
+
+
+def _dropin_settings() -> dict[str, list[str]]:
+    """Variable name -> the systemd drop-ins that set it ("?" -> the ones
+    that could not be read). A drop-in is applied after the unit, so it
+    wins over server.json."""
+    found: dict[str, list[str]] = {}
+    for name, parsed in _read_dropins():
+        for var in (parsed.env if parsed else ["?"]):
+            found.setdefault(var, []).append(name)
+    return found
+
+
+def _dropin_env() -> dict[str, tuple[str, str]]:
+    """Variable name -> (value, drop-in it comes from) for what the
+    drop-ins set, the last drop-in winning as in systemd."""
+    found: dict[str, tuple[str, str]] = {}
+    for name, parsed in _read_dropins():
+        for var, value in (parsed.env if parsed else {}).items():
+            found[var] = (value, name)
+    return found
+
+
+def _setting_env(env: dict[str, str]) -> dict[str, str]:
+    """`env` without the variables every service file sets itself."""
+    return {k: v for k, v in env.items() if k not in _IDENTITY_ENV_KEYS and k != "PATH"}
 
 
 def _service_file_env() -> dict[str, str] | None:
@@ -2607,16 +2731,24 @@ def _settings_notes(settings: dict[str, str]) -> list[str]:
             if unit_env.get(name) != settings[name]:
                 notes.append(f"{name}: the service file does not say what server.json says. "
                              f"Run 'chaotic system config set {name} ...' again to rewrite it.")
-        for name in sorted(set(unit_env) - set(settings) - set(_IDENTITY_ENV_KEYS) - {"PATH"}):
+        for name in sorted(set(_setting_env(unit_env)) - set(settings)):
+            adopt = "adopt" if name in server_settings.KNOWN else f"adopt {name} --force"
             notes.append(f"{name}: set in the service file by hand, not in server.json, so "
                          "'chaotic system upgrade' will not update the file while it is there. "
-                         f"Adopt it with 'chaotic system config set {name} <value>'"
-                         f"{'' if name in server_settings.KNOWN else ' --force'}.")
+                         f"Adopt it with 'chaotic system config {adopt}'.")
+    dropin_env = _dropin_env()
     for name, files in sorted(_dropin_settings().items()):
+        where = f"drop-in {', '.join(files)}"
         if name == "?":
             notes.append(f"Could not read drop-in {', '.join(files)} in {_dropin_dir()}.")
-        elif name in settings or name in server_settings.KNOWN:
-            notes.append(f"{name}: also set in drop-in {', '.join(files)}, which overrides server.json.")
+        elif name in settings and dropin_env[name][0] == settings[name]:
+            notes.append(f"{name}: also set in {where}, to the same value. Delete it there so "
+                         "server.json alone sets it.")
+        elif name in settings:
+            notes.append(f"{name}: also set in {where}, which overrides server.json.")
+        elif name in server_settings.KNOWN:
+            notes.append(f"{name}: set in {where}, not in server.json. Adopt it with "
+                         "'chaotic system config adopt', then delete it from the drop-in.")
     dotenv = _dotenv_settings()
     for name in sorted(dotenv):
         if name in settings:
@@ -2626,6 +2758,115 @@ def _settings_notes(settings: dict[str, str]) -> list[str]:
             notes.append(f"{name}: set in {PROJECT_DIR / 'backend' / '.env'}, not in server.json. "
                          f"Move it with 'chaotic system config set {name} <value>' and delete the line.")
     return notes
+
+
+def _dropin_problems() -> tuple[list[str], list[str]]:
+    """Drop-ins this CLI cannot account for: one that sets what the
+    server is (HOST, PORT, SECRET_KEY, its database, PATH), which wins
+    over both the service file and server.json and so defeats
+    'system reconfigure', or one that resets or unsets the environment
+    or reads an EnvironmentFile, which `check` cannot see through.
+    Returns (identity problems, the rest)."""
+    identity_problems, problems = [], []
+    for name, parsed in _read_dropins():
+        if parsed is None:
+            continue
+        identity = sorted(k for k in parsed.env if k in _IDENTITY_ENV_KEYS or k == "PATH")
+        if identity:
+            identity_problems.append(
+                f"Drop-in {name} sets {', '.join(identity)}, which overrides the service file and "
+                "server.json, so 'chaotic system reconfigure' cannot change it. Remove it from the "
+                f"drop-in ({_dropin_dir()}) and use 'chaotic system reconfigure'.")
+        resets = [*parsed.unsafe, *(["it sets UnsetEnvironment"] if any(
+            key == "UnsetEnvironment" for _, key in parsed.directives) else [])]
+        if resets:
+            problems.append(f"Drop-in {name}: {'; '.join(resets)}, so the settings checked here may "
+                            "not be the ones the server gets.")
+    return identity_problems, problems
+
+
+def _identity_mismatch(server_info: dict) -> dict[str, tuple[str | None, str | None]] | None:
+    """{key: (server.json's, the service file's)} for each identity key
+    (HOST, PORT, SECRET_KEY, the database, WorkingDirectory) they
+    disagree on, or None if there is no service file to compare."""
+    os_type = get_os()
+    if os_type not in ("linux", "darwin"):
+        return None
+    try:
+        have = _parse_service(get_service_file_path().read_bytes().decode(), os_type)
+        generate = generate_systemd_service if os_type == "linux" else generate_launchd_plist
+        want = _parse_service(generate(server_info.get("port", DEFAULT_PORT),
+                                       server_info.get("secret_key") or "<none>",
+                                       server_info.get("host", "127.0.0.1"),
+                                       server_settings.valid_settings(server_info)), os_type)
+    except Exception:  # noqa: BLE001 -- unreadable or ungenerable: nothing to compare
+        return None
+    if have is None or want is None:
+        return None
+    have_id, want_id = have.identity(), want.identity()
+    have_id.setdefault("HOST", _JUSTFILE_DEFAULT_HOST)  # as in _rewrite_blockers
+    if not server_info.get("secret_key"):
+        want_id.pop("SECRET_KEY", None)
+    return {k: (want_id.get(k), have_id.get(k)) for k in _SERVICE_IDENTITY_KEYS if have_id.get(k) != want_id.get(k)}
+
+
+def _identity_drift(server_info: dict) -> list[str]:
+    """Where the service file disagrees with server.json about what the
+    server is: HOST and PORT (shown), SECRET_KEY, the database or the
+    working directory (named only). While they disagree, 'system config
+    set' and 'system upgrade' leave the file alone, and 'system
+    reconfigure' writes server.json's values into it (CHT-1676). Also a
+    drop-in that sets any of them."""
+    mismatch = _identity_mismatch(server_info) or {}
+    problems = []
+    for key, flag in (("HOST", "--host"), ("PORT", "--port")):
+        if key in mismatch:
+            want, have = mismatch[key]
+            problems.append(
+                f"server.json says {key} {want} but the service file says {have}. "
+                "Until they agree, 'chaotic system config set' and 'chaotic system upgrade' leave the "
+                "service file as it is, and 'chaotic system reconfigure' would write server.json's "
+                f"{key} into it. Make them agree with 'chaotic system reconfigure {flag} <the one you want>'.")
+    others = [k for k in mismatch if k not in ("HOST", "PORT")]
+    if others:
+        problems.append(
+            f"server.json and the service file disagree about {', '.join(others)}, so "
+            "'chaotic system config set' and 'chaotic system upgrade' leave the service file as it is. "
+            f"Edit {SERVER_JSON} to match the service file (or restore it from a backup).")
+    return problems + _dropin_problems()[0]
+
+
+def _settings_problems(server_info: dict) -> tuple[list[str], list[str]]:
+    """(errors, warnings) for `system config check` and `list`: the
+    entries of server.json, the service file's identity against it, and
+    the combination rules judged on what the server actually gets. That
+    is the service file's environment with the drop-ins over it, and,
+    where it differs, what a rewrite from server.json would give
+    (CHT-1676: a capability URL turned off in a drop-in was reported as
+    still served)."""
+    if not is_server_installed():
+        return server_settings.check(server_info)
+    errors, warnings = server_settings.check(server_info, combination=False)
+    errors = _identity_drift(server_info) + errors
+    warnings = _dropin_problems()[1] + warnings
+    dropins = _setting_env({name: value for name, (value, _) in _dropin_env().items()})
+    # server.json's invalid entries are reported above; do not report
+    # them again as missing, unless a drop-in sets them anyway.
+    invalid = frozenset(server_settings.invalid_settings(server_info)) - set(dropins)
+    after_rewrite = {**server_settings.valid_settings(server_info), **dropins}
+    unit_env = _service_file_env()
+    if unit_env is None:
+        now_errors, now_warnings = server_settings.check_combination(after_rewrite, skip=invalid)
+        next_errors, next_warnings = [], []
+    else:
+        now = {**_setting_env(unit_env), **dropins}
+        now_errors, now_warnings = server_settings.check_combination(now)
+        next_errors, next_warnings = (server_settings.check_combination(after_rewrite, skip=invalid)
+                                      if after_rewrite != now else ([], []))
+    later = "Once server.json is written to the service file: "
+    errors += now_errors + [later + e for e in next_errors if e not in now_errors and e not in errors]
+    warnings += now_warnings + [later + w for w in next_warnings if w not in now_warnings]
+    return list(dict.fromkeys(errors)), list(dict.fromkeys(warnings))
 
 
 def _print_problems(errors: list[str], warnings: list[str]) -> None:
@@ -2642,7 +2883,8 @@ def _restart_hint() -> None:
         console.print("[dim]The server is not running; it applies at the next 'chaotic system start'.[/dim]")
 
 
-def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str], force: bool) -> None:
+def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str], force: bool,
+                    adopting: bool = False) -> None:
     """Save `settings` to server.json and rewrite the service file with
     them, refusing (unless forced) a combination the server would not
     start with. Exits non-zero if the service file could not be
@@ -2654,13 +2896,13 @@ def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str]
     errors, warnings = server_settings.check(candidate)
     if errors and not force:
         _print_problems(errors, [])
-        unit_env = _service_file_env() or {}
-        for name in sorted(n for n in set(unit_env) & set(server_settings.KNOWN) - set(settings)
+        hand_set = set(_service_file_env() or {}) | set(_dropin_env())
+        for name in sorted(n for n in hand_set & set(server_settings.KNOWN) - set(settings)
                            if any(n in error for error in errors)):
             # Adopting hand-added lines: the server runs fine with this
             # one, server.json just does not have it yet.
-            console.print(f"{name} is set in the service file by hand; adopt it first with "
-                          f"'chaotic system config set {name} <value>'.")
+            console.print(f"{name} is set in the service file or a drop-in by hand; adopt it first "
+                          f"with 'chaotic system config adopt {name}', then run this again.")
         console.print("Nothing was changed. (--force saves it anyway.)")
         raise SystemExit(1)
     save_server_json(candidate)
@@ -2676,8 +2918,15 @@ def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str]
         owned=frozenset(owned))
     if update.status == "skipped":
         console.print(f"[yellow]Service file not updated: {escape(update.reason)}.[/yellow]")
-        console.print("The server will not see this setting until the service file carries it. "
-                      "See 'chaotic system config list'.")
+        for problem in _identity_drift(candidate):
+            console.print(escape(problem))
+        if adopting:
+            console.print(f"server.json now holds {', '.join(sorted(owned))}; the server keeps running with "
+                          "the same values. Once what is in the way is fixed, 'chaotic system upgrade' or "
+                          "the next 'config set' rewrites the service file. See 'chaotic system config list'.")
+        else:
+            console.print("The server will not see this setting until the service file carries it. "
+                          "See 'chaotic system config list'.")
         raise SystemExit(1)
     if update.status == "updated":
         console.print(f"Updated service file {update.path} (previous kept at {update.backup}).")
@@ -2745,7 +2994,7 @@ def system_config_list():
         console.print()
         for note in notes:
             console.print(f"[yellow]Note:[/yellow] {escape(note)}")
-    errors, warnings = server_settings.check(server_info)
+    errors, warnings = _settings_problems(server_info)
     if errors or warnings:
         console.print()
         _print_problems(errors, warnings)
@@ -2826,15 +3075,96 @@ def system_config_unset(name, force):
     _apply_settings(server_info, settings, {name}, force)
 
 
+@system_config.command("adopt")
+@click.argument("names", nargs=-1)
+@click.option("--force", is_flag=True,
+              help="Adopt a name this CLI does not know, or save despite errors the server would not start with")
+def system_config_adopt(names, force):
+    """Move settings set by hand in the service file or a drop-in into server.json.
+
+    \b
+    Examples:
+      chaotic system config adopt
+      chaotic system config adopt CORS_ORIGINS APP_BASE_URL
+
+    With no NAME, adopts every known setting that the service file or a
+    drop-in sets and server.json does not. Name a setting to adopt it
+    even where server.json holds another value, or (with --force) one
+    this CLI does not know. The value adopted is the one the server runs
+    with: a drop-in's wins over the service file's. The service file is
+    then rewritten from server.json, so 'system upgrade' can manage it
+    again. Drop-ins are never edited; delete the adopted lines from them
+    afterwards.
+    """
+    server_info = _require_installed()
+    settings = stored_settings(server_info)
+    unit_env = _setting_env(_service_file_env() or {})
+    found = {name: (value, "the service file") for name, value in unit_env.items()}
+    found.update({name: (value, f"drop-in {conf}") for name, (value, conf) in _dropin_env().items()
+                  if name not in _IDENTITY_ENV_KEYS and name != "PATH"})
+    if names:
+        wanted = []
+        for name in (n.upper() for n in names):
+            reserved = server_settings.name_problem(name, force=True)
+            if reserved:  # HOST, PATH, ...: say why, not "not set"
+                console.print(f"[red]{escape(reserved)}[/red]")
+                raise SystemExit(1)
+            if name not in found:
+                console.print(f"[red]{escape(name)} is not set in the service file or a drop-in.[/red]")
+                raise SystemExit(1)
+            problem = server_settings.name_problem(name, force)
+            if problem:
+                console.print(f"[red]{escape(problem)}[/red]")
+                raise SystemExit(1)
+            wanted.append(name)
+    else:
+        known = [n for n in sorted(found) if n in server_settings.KNOWN]
+        wanted = [n for n in known if n not in settings]
+        for name in (n for n in known if n in settings and settings[n] != found[n][0]):
+            console.print(f"[dim]{name}: server.json holds another value than {found[name][1]}; "
+                          f"'chaotic system config adopt {name}' takes {found[name][1]}'s.[/dim]")
+        for name in (n for n in sorted(found) if n not in server_settings.KNOWN and n not in settings):
+            console.print(f"[dim]{name}: not a setting this CLI knows; "
+                          f"'chaotic system config adopt {name} --force' adopts it.[/dim]")
+    adopted = {}
+    for name in wanted:
+        value, problem = server_settings.normalize(name, found[name][0])
+        if problem and names:
+            console.print(f"[red]{escape(problem)}[/red] (in {found[name][1]})")
+            console.print("Nothing was changed. Correct it there, or set it with 'chaotic system config set'.")
+            raise SystemExit(1)
+        if problem:
+            console.print(f"[yellow]Not adopting {name}:[/yellow] {escape(problem)} (in {found[name][1]}). "
+                          "Correct it there, or set it with 'chaotic system config set'.")
+            continue
+        adopted[name] = value
+    if wanted and not adopted:
+        console.print("Nothing was changed.")
+        raise SystemExit(1)
+    if not adopted:
+        console.print("Nothing to adopt: server.json already holds every setting the service file "
+                      "and its drop-ins set.")
+        return
+    for name, value in adopted.items():
+        console.print(f"{name} = {escape(server_settings.display_value(name, value))} "
+                      f"(from {found[name][1]})", highlight=False)
+    _apply_settings(server_info, {**settings, **adopted}, set(adopted), force, adopting=True)
+    for name in (n for n in adopted if found[n][1].startswith("drop-in")):
+        console.print(f"server.json now holds {name}: delete it from {found[name][1]} "
+                      f"in {_dropin_dir()}, then run 'systemctl --user daemon-reload'.")
+
+
 @system_config.command("check")
 def system_config_check():
     """Check the settings for mistakes (exit 1 on an error).
 
     An error is something the server would not start with, such as
-    OAUTH_ENABLED=true without an https APP_BASE_URL.
+    OAUTH_ENABLED=true without an https APP_BASE_URL, or a service file
+    whose HOST or PORT is not the one server.json says. Settings are
+    judged as the server gets them: the service file with its drop-ins.
     """
     server_info = load_server_json()
-    errors, warnings = server_settings.check(server_info)
+    errors, warnings = _settings_problems(server_info)
     notes = _settings_notes(stored_settings(server_info)) if is_server_installed() else []
     _print_problems(errors, warnings)
     for note in notes:

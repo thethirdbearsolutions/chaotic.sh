@@ -243,6 +243,7 @@ chaotic system config get APP_BASE_URL     # one value; exit 1 if not set
 chaotic system config set NAME VALUE       # validate, save, rewrite the service file
 chaotic system config unset NAME           # back to the server default
 chaotic system config check                # exit 1 on a setting the server would not start with
+chaotic system config adopt [NAME ...]     # move lines set by hand in the unit or a drop-in into server.json
 chaotic system install --config NAME=VALUE ...   # the same, at install time
 ```
 
@@ -280,7 +281,20 @@ only by you (0600).
 server.json: a variable added to the service file by hand, one set in a
 systemd drop-in (which overrides server.json), and one in
 `~/.chaotic/server/backend/.env` (which the service file's value
-overrides).
+overrides). `check` judges the settings as the server gets them, the
+service file with its drop-ins applied, so a capability URL turned off
+in a drop-in is not reported as still served; where server.json would
+give something else once it is written to the file, it reports that
+too, prefixed "Once server.json is written to the service file". A
+service file whose `HOST` or `PORT` is not what server.json says is an
+error: until they agree, `set` and `upgrade` leave the file alone, and
+`reconfigure` would write server.json's value into it (CHT-1676). So is
+a drop-in that sets `HOST`, `PORT`, `SECRET_KEY`, the database or
+`PATH`, which would override whatever `reconfigure` writes; and a value
+in the unit or a drop-in the server would refuse. Only
+`~/.config/systemd/user/chaotic.service.d/` is read, and a drop-in that
+resets the environment (an empty `Environment=`, `UnsetEnvironment=`,
+`EnvironmentFile=`) gets a warning that `check` cannot vouch for it.
 
 **Turning OAuth on.** Behind a TLS-terminating reverse proxy at
 `https://chaotic.example.com`:
@@ -307,13 +321,22 @@ https://chaotic.example.com/.well-known/oauth-authorization-server`
 returns JSON whose `issuer` is exactly `APP_BASE_URL`.
 
 **Lines added to the unit by hand.** Before this, the only way to set
-these was an `Environment=` line added to the unit, which `reconfigure`
-dropped and which made every later `upgrade` report "Service file not
-updated" and leave the unit alone. `chaotic system config list` names
-such lines. Run `chaotic system config set` for each, with the value it
-has there; once server.json has them all, the next `set` rewrites the
-unit and upgrades update it again. Until then `set` saves the value and
-exits non-zero, saying what is in the way.
+these was an `Environment=` line added to the unit, which made every
+later `upgrade` report "Service file not updated" and leave the unit
+alone. `chaotic system config list` names such lines, and those in a
+drop-in. `chaotic system config adopt` copies every known setting the
+unit or a drop-in sets, and server.json does not, into server.json with
+the value the server runs with, then rewrites the unit so upgrades
+update it again. Name a setting to adopt it over a different
+server.json value, or, with `--force`, one the CLI does not know.
+Drop-ins are never edited: delete the adopted lines from them afterwards
+(`adopt` names them), leaving the drop-in for what is not a setting,
+such as `TimeoutStopSec`. If the unit's host or port also disagrees
+with server.json, `adopt` saves server.json and stops there; then run
+`chaotic system reconfigure --host <the one you want>`, which now has
+nothing hand-set to drop. `reconfigure` itself refuses to replace a unit
+whose rewrite would drop or change a hand-set line (`--force` does it
+anyway), and keeps the previous file in `~/.chaotic/service-backups`.
 
 ## CORS and browser-based MCP clients
 
