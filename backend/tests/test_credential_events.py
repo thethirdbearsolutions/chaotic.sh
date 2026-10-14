@@ -224,6 +224,97 @@ class TestIsolation:
         assert "timed out" in caplog.text
 
 
+    async def test_the_whole_dispatch_is_capped(self, seen, monkeypatch, caplog):
+        """CHT-1629: per-hook bounds add up over events and hooks; one cap
+        bounds the whole dispatch, and it is logged."""
+        monkeypatch.setattr(credential_events, "HOOK_TIMEOUT_SECONDS", 10)
+        monkeypatch.setattr(credential_events, "DISPATCH_TIMEOUT_SECONDS", 0.1)
+        ran = []
+
+        async def slow(event):
+            ran.append(event.reason)
+            await asyncio.sleep(0.04)
+
+        remove = credential_events.register(slow)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        try:
+            with caplog.at_level(logging.ERROR, logger="app.services.credential_events"):
+                await credential_events.dispatch(
+                    [CredentialsEnded.of(f"e{i}", key_ids=[f"k{i}"]) for i in range(10)],
+                )
+        finally:
+            remove()
+        assert loop.time() - started < 1
+        assert len(seen) == 10  # registered before the slow hook: ran on every event
+        assert len(ran) < 10  # stopped part-way through the slow hook
+        assert "dispatch stopped after 0.1s" in caplog.text
+        # The line names the hook that was left, and how many runs.
+        line = next(r.getMessage() for r in caplog.records if "dispatch stopped" in r.getMessage())
+        assert "hook runs left:" in line
+        assert f"{__name__}.{TestIsolation.__name__}.test_the_whole_dispatch_is_capped.<locals>.slow x" in line
+        assert "seen" not in line.split("left:")[1].split("(reasons")[0]  # finished hooks are not listed
+
+    async def test_each_hook_runs_on_every_event_before_the_next_hook(self, seen, monkeypatch):
+        """The socket hook closes every socket before the push hook
+        writes anything (CHT-1629)."""
+        order = []
+
+        async def sockets(event):
+            order.append(("sockets", event.reason))
+
+        async def push(event):
+            order.append(("push", event.reason))
+
+        monkeypatch.setattr("app.websocket.on_credentials_ended", sockets)
+        monkeypatch.setattr("app.services.push_service.on_credentials_ended", push)
+        await credential_events.dispatch(
+            [CredentialsEnded.of("a", key_ids=["k1"]), CredentialsEnded.of("b", key_ids=["k2"])],
+        )
+        assert order == [("sockets", "a"), ("sockets", "b"), ("push", "a"), ("push", "b")]
+
+    async def test_the_connection_is_healthy_after_a_timed_out_delete(
+        self, seen, monkeypatch, caplog, test_user,
+    ):
+        """CHT-1629: a hook timing out in the middle of the push-device
+        DELETE abandons a running query. The pool (one connection in
+        tests) must still serve the next query and transaction. The
+        abandoned DELETE runs to its end (the timeout bounds the waiting,
+        not the work; ``credential_events`` docstring). A temporary
+        trigger on this connection makes the DELETE slow enough to be
+        timed out while it runs."""
+        from oxyde import execute_raw
+
+        from app.db.transactions import atomic
+        from app.oxyde_models.user import OxydeUser
+
+        key, _raw = await APIKeyService().create(test_user.id, APIKeyCreate(name="phone"))
+        device = await _device(test_user, INSTALL, "https://ntfy.example.net/up", key_id=key.id)
+        await execute_raw(
+            "CREATE TEMP TRIGGER slow_push_delete BEFORE DELETE ON push_devices BEGIN"
+            " SELECT count(*) FROM (WITH RECURSIVE c(x) AS"
+            " (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 3000000) SELECT x FROM c); END"
+        )
+        monkeypatch.setattr(credential_events, "HOOK_TIMEOUT_SECONDS", 0.01)
+        try:
+            with caplog.at_level(logging.ERROR, logger="app.services.credential_events"):
+                revoked = await APIKeyService().revoke(key)
+            assert "push_devices" not in caplog.text
+            assert "on_credentials_ended timed out" in caplog.text
+        finally:
+            await asyncio.wait_for(execute_raw("DROP TRIGGER slow_push_delete"), 30)
+        assert revoked.is_active is False
+        # The abandoned DELETE ran to its end on the connection.
+        assert await OxydePushDevice.objects.filter(id=device.id).count() == 0
+        # And the connection serves a transaction afterwards.
+        async with atomic():
+            await OxydeUser.objects.filter(id=test_user.id).update(name="after the timeout")
+        assert (await OxydeUser.objects.get(id=test_user.id)).name == "after the timeout"
+        other, _ = await APIKeyService().create(test_user.id, APIKeyCreate(name="other"))
+        await APIKeyService().revoke(other)
+        assert (await OxydeAPIKey.objects.get(id=other.id)).is_active is False
+
+
 class TestWhatEachPathReports:
     async def test_a_batch_reports_only_the_sessions_it_revoked(self, seen, monkeypatch, test_team, test_user):
         """PR #356 review, 7."""
@@ -293,6 +384,83 @@ class TestWhatEachPathReports:
         response = await client.delete(f"/api/teams/{test_team.id}", headers=auth_headers)
         assert response.status_code == 204, response.text
         assert [(e.reason, e.deleted_team_id) for e in seen] == [(REASON_TEAM_DELETED, test_team.id)]
+
+
+    async def test_deleting_a_key_revokes_it_first(self, seen, test_user):
+        """CHT-1629: deleting a key ends what depended on it, as revoking
+        it does, rather than ending it unreported."""
+        key, _raw = await APIKeyService().create(test_user.id, APIKeyCreate(name="phone"))
+        device = await _device(test_user, INSTALL, "https://ntfy.example.net/up", key_id=key.id)
+        await APIKeyService().delete(key)
+        assert [e.key_ids for e in seen] == [frozenset({key.id})]
+        assert await OxydeAPIKey.objects.filter(id=key.id).count() == 0
+        assert await OxydePushDevice.objects.filter(id=device.id).count() == 0
+
+    async def test_deleting_a_revoked_key_reports_it_again_harmlessly(self, seen, test_user):
+        key, _raw = await APIKeyService().create(test_user.id, APIKeyCreate(name="old"))
+        await APIKeyService().revoke(key)
+        await APIKeyService().delete(key)
+        assert [e.key_ids for e in seen] == [frozenset({key.id})] * 2
+        assert await OxydeAPIKey.objects.filter(id=key.id).count() == 0
+
+    @pytest.mark.parametrize("method", ["revoke", "delete"])
+    async def test_a_failed_call_leaves_the_object_as_the_database_has_it(
+        self, seen, monkeypatch, test_user, method,
+    ):
+        """PR #359 review, 5: the transaction rolled back, so the caller's
+        object must not say the key is revoked."""
+        key, _raw = await APIKeyService().create(test_user.id, APIKeyCreate(name="k"))
+
+        async def broken(self, *args, **kwargs):
+            raise RuntimeError("cascade failed")
+
+        monkeypatch.setattr(RevocationService, "revoke_for_keys", broken)
+        with pytest.raises(RuntimeError):
+            await getattr(APIKeyService(), method)(key)
+        assert key.is_active is True
+        assert (await OxydeAPIKey.objects.get(id=key.id)).is_active is True
+        assert seen == []
+
+    @pytest.mark.parametrize("method", ["revoke", "delete"])
+    async def test_cancelled_while_the_hooks_run_keeps_the_committed_state(self, seen, test_user, method):
+        """PR #359 re-review, 2: a request cancelled during the hook
+        dispatch, after the commit, must not put is_active back."""
+        key, _raw = await APIKeyService().create(test_user.id, APIKeyCreate(name="k"))
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def blocking(event):
+            started.set()
+            await release.wait()
+
+        remove = credential_events.register(blocking)
+        try:
+            task = asyncio.create_task(getattr(APIKeyService(), method)(key))
+            await asyncio.wait_for(started.wait(), 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert key.is_active is False
+            rows = await OxydeAPIKey.objects.filter(id=key.id).all()
+            assert [r.is_active for r in rows] == ([False] if method == "revoke" else [])
+        finally:
+            release.set()
+            remove()
+            from app.db.transactions import drain_detached
+
+            await asyncio.wait_for(drain_detached(), 5)
+
+    async def test_a_failed_delete_ends_nothing(self, seen, monkeypatch, test_user):
+        key, _raw = await APIKeyService().create(test_user.id, APIKeyCreate(name="k"))
+
+        async def broken(self, *args, **kwargs):
+            raise RuntimeError("delete failed")
+
+        monkeypatch.setattr(OxydeAPIKey, "delete", broken)
+        with pytest.raises(RuntimeError):
+            await APIKeyService().delete(key)
+        monkeypatch.undo()
+        assert seen == []
+        assert (await OxydeAPIKey.objects.get(id=key.id)).is_active is True
 
 
 class TestStalePushBindings:

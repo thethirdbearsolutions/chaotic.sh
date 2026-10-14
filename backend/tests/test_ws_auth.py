@@ -241,24 +241,136 @@ class TestEndpoint:
         (lambda u: "garbage", 4001),
         (lambda u: jwt_for(u, expires_delta=timedelta(seconds=-5)), 4001),
     ])
-    async def test_refused_before_accept(self, test_user, test_team, make_token, code):
+    async def test_refused_handshake_is_accepted_then_closed_with_the_code(
+        self, test_user, test_team, make_token, code,
+    ):
+        """CHT-1615: a close before accept would reach the client as an
+        HTTP 403 whatever the code; accepted then closed, the code
+        reaches it. Nothing is sent and the socket is never registered."""
+        from app.websocket import manager
+
         ws = FakeWebSocket()
         await websocket_endpoint(ws, team_id=test_team.id, token=make_token(test_user))
+        ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=code)
-        ws.accept.assert_not_awaited()
+        ws.send_json.assert_not_awaited()
+        assert ws not in manager.active_connections.get(test_team.id, set())
+        assert ws not in manager.owners
 
-    async def test_cross_team_refused_before_accept(self, test_user, test_team):
+    async def test_cross_team_is_refused_4003(self, test_user, test_team):
         other = await OxydeTeam.objects.create(name="Other", key="OTH")
         ws = FakeWebSocket(headers={"Authorization": f"Bearer {jwt_for(test_user)}"})
         await websocket_endpoint(ws, team_id=other.id)
+        ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=4003)
-        ws.accept.assert_not_awaited()
+
+    @pytest.mark.parametrize("subprotocols", [
+        ["chaotic", "chaotic.bearer.garbage"],
+        ["chaotic", "chaotic.bearer.one", "chaotic.bearer.two"],  # refused while reading them
+    ])
+    async def test_a_refusal_selects_chaotic_when_offered(self, test_team, subprotocols):
+        """A browser that offered subprotocols fails a handshake that
+        selects none, and would see 1006 instead of the code."""
+        ws = FakeWebSocket(subprotocols=subprotocols)
+        await websocket_endpoint(ws, team_id=test_team.id)
+        ws.accept.assert_awaited_once_with(subprotocol="chaotic")
+        ws.close.assert_awaited_once_with(code=4001)
+
+    async def test_only_the_bearer_entry_offered_selects_none(self, test_team):
+        ws = FakeWebSocket(subprotocols=["chaotic.bearer.garbage"])
+        await websocket_endpoint(ws, team_id=test_team.id)
+        ws.accept.assert_awaited_once_with(subprotocol=None)
+        ws.close.assert_awaited_once_with(code=4001)
 
     async def test_check_error_is_4011(self, test_team):
         ws = FakeWebSocket()
         with patch("app.ws_auth.authenticate", AsyncMock(side_effect=RuntimeError("db down"))):
             await websocket_endpoint(ws, team_id=test_team.id, token="x")
+        ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=4011)
+
+    async def test_a_refusal_is_logged_without_the_credential(self, test_team, caplog):
+        """PR #359 review, 1: the access log shows a refused handshake as
+        accepted, so the app logs the refusal: code, reason, client and
+        team, never the token."""
+        secret = "ck_" + "ab" * 24
+        ws = FakeWebSocket(headers={"Authorization": f"Bearer {secret}"})
+        ws.client = ("203.0.113.7", 51234)
+        with caplog.at_level(logging.INFO, logger="app.ws_auth"):
+            await websocket_endpoint(ws, team_id=test_team.id)
+        [record] = [r for r in caplog.records if r.name == "app.ws_auth" and "Refused" in r.getMessage()]
+        line = record.getMessage()
+        assert record.levelno == logging.WARNING
+        assert "code=4001" in line
+        assert "203.0.113.7:51234" in line
+        assert repr(test_team.id) in line
+        assert secret not in caplog.text and "abab" not in caplog.text
+
+    def test_the_refusal_line_reaches_the_output_under_uvicorns_logging(self, tmp_path):
+        """PR #359 re-review, 1: caplog adds its own handler, so the test
+        above would pass for a line production never prints. Run a fresh
+        interpreter with uvicorn's default logging config (what
+        ``uvicorn app.main:app`` gets) and read its stderr."""
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = (
+            "import asyncio, logging.config\n"
+            "from unittest.mock import AsyncMock\n"
+            "from uvicorn.config import LOGGING_CONFIG\n"
+            "logging.config.dictConfig(LOGGING_CONFIG)\n"
+            "import app.main\n"  # whatever logging setup the app itself does
+            "from app.ws_auth import refuse\n"
+            "class Ws:\n"
+            "    scope = {}\n"
+            "    client = ('198.51.100.9', 4242)\n"
+            "    accept = AsyncMock()\n"
+            "    close = AsyncMock()\n"
+            "asyncio.run(refuse(Ws(), 4001, 'Invalid token', 'team-1'))\n"
+        )
+        backend = Path(__file__).resolve().parents[1]
+        env = {**os.environ, "SECRET_KEY": "x" * 32, "DATABASE_URL": f"sqlite:///{tmp_path}/unused.db"}
+        result = subprocess.run(
+            [sys.executable, "-c", script], cwd=backend, env=env, capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        output = result.stdout + result.stderr
+        assert "Refused /ws handshake: code=4001 reason=Invalid token client=198.51.100.9:4242" in output
+
+    async def test_a_refusal_log_quotes_and_cuts_the_team_id(self, caplog):
+        ws = FakeWebSocket()
+        hostile = "x\nFAKE LOG LINE" + "y" * 200
+        with caplog.at_level(logging.INFO, logger="app.ws_auth"):
+            await websocket_endpoint(ws, team_id=hostile)
+        line = next(r.getMessage() for r in caplog.records if "Refused" in r.getMessage())
+        assert "\n" not in line
+        assert "y" * 100 not in line
+        assert "client=-" in line  # no address known
+
+    async def test_a_check_error_refusal_is_logged_too(self, test_team, caplog):
+        ws = FakeWebSocket()
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=RuntimeError("db down"))):
+            with caplog.at_level(logging.INFO, logger="app.ws_auth"):
+                await websocket_endpoint(ws, team_id=test_team.id, token="x")
+        assert "code=4011" in caplog.text
+
+    @pytest.mark.parametrize("team_id", [None, ""])
+    async def test_a_missing_team_id_is_refused_4003(self, test_user, team_id):
+        """Refused with a code, not by query validation before accept
+        (PR #359 review, 7)."""
+        ws = FakeWebSocket(headers={"Authorization": f"Bearer {jwt_for(test_user)}"})
+        await websocket_endpoint(ws, team_id=team_id)
+        ws.accept.assert_awaited_once_with(subprotocol=None)
+        ws.close.assert_awaited_once_with(code=4003)
+
+    @pytest.mark.parametrize("fails", ["accept", "close"])
+    async def test_a_client_gone_during_the_refusal_is_harmless(self, test_team, fails):
+        ws = FakeWebSocket()
+        getattr(ws, fails).side_effect = RuntimeError("client went away")
+        await websocket_endpoint(ws, team_id=test_team.id, token="garbage")
+        ws.accept.assert_awaited_once()
 
     async def test_non_disconnect_exception_still_cleans_up_connection(self, test_user, test_team):
         """CHT-1225: receive_text() raising anything other than

@@ -18,6 +18,9 @@ let wsFailCount = 0;
 // (4001/4003, CHT-1603) and the client gave up reconnecting.
 let wsStopped = false;
 let reconnectTimer = null;
+// Pending "the connection is up" bookkeeping for the current socket
+// (CHT-1615): see WS_OPEN_SETTLE_MS.
+let settleTimer = null;
 
 // Connection generation (CHT-1224 PR #211 review finding 1): incremented on
 // every connectWebSocket() call so a superseded socket's late events can be
@@ -78,6 +81,25 @@ export function getReconnectDelay(failCount) {
     return Math.max(500, Math.round(base + jitter));
 }
 
+/**
+ * How long a socket must stay open before the client counts it as up
+ * (CHT-1615). The server refuses a handshake by accepting it and closing
+ * it at once with the code (4001 / 4003 / 4011), since a refusal before
+ * accept reaches a browser only as 1006. So onopen alone does not mean
+ * the credential was good: the outage state (fail count, badge, the
+ * "reconnected" toast and resync) is cleared only once the socket has
+ * stayed open this long, or a message has arrived. Without it a 4011
+ * refusal would reset the backoff on every attempt.
+ */
+export const WS_OPEN_SETTLE_MS = 1000;
+
+function clearSettleTimer() {
+    if (settleTimer) {
+        clearTimeout(settleTimer);
+        settleTimer = null;
+    }
+}
+
 /** The subprotocol the server selects (CHT-1603). */
 export const WS_SUBPROTOCOL = 'chaotic';
 /** Close codes /ws sends when a credential stops being good (CHT-1603). */
@@ -112,6 +134,7 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
     }
+    clearSettleTimer();
 
     // Close existing connection. Detach its handlers first (CHT-1224 PR #211
     // review finding 1): in a real browser close() fires the socket's onclose
@@ -153,9 +176,13 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
         const ws = new WebSocket(wsUrl, wsProtocols(token));
         setWebsocket(ws);
 
-        ws.onopen = () => {
-            if (generation !== wsGeneration) return; // superseded connection — ignore
-            console.log('WebSocket connected');
+        // The socket is up: end the outage (CHT-1615: only once it has
+        // stayed open WS_OPEN_SETTLE_MS, or a message arrived).
+        let settled = false;
+        const settle = () => {
+            if (settled || generation !== wsGeneration) return; // done, or superseded
+            settled = true;
+            clearSettleTimer();
             // CHT-1225 item 3: wsFailCount > 0 here means this open followed
             // a genuine outage (the reconnect loop preserves it across
             // attempts) rather than a deliberate fresh connect/team switch
@@ -177,8 +204,17 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
             }
         };
 
+        ws.onopen = () => {
+            if (generation !== wsGeneration) return; // superseded connection — ignore
+            console.log('WebSocket connected');
+            clearSettleTimer();
+            settleTimer = setTimeout(settle, WS_OPEN_SETTLE_MS);
+        };
+
         ws.onmessage = (event) => {
             if (generation !== wsGeneration) return; // superseded connection — ignore
+            // A message means the server accepted the credential.
+            settle();
             // CHT-1038: Safe JSON parsing
             let message;
             try {
@@ -193,6 +229,9 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
         ws.onclose = (event) => {
             if (generation !== wsGeneration) return; // superseded connection — ignore
             console.log('WebSocket disconnected');
+            // Closed before it settled (a refused handshake, CHT-1615):
+            // the outage goes on, and the backoff keeps growing.
+            clearSettleTimer();
             // CHT-1603 (PR #352 review, finding 2): the server closed it
             // because the credential stopped being good. Retrying cannot
             // help: 4001 means sign in again, 4003 means no access to this
@@ -296,6 +335,7 @@ export function resetWsState() {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
     }
+    clearSettleTimer();
     subscribers.clear();
     const existing = getWebsocket();
     if (existing) {

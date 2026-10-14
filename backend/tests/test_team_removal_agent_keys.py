@@ -239,8 +239,10 @@ class TestKeyAuthChecksTheOwnersMembership:
         ws.headers = {}
         ws.scope = {}
         await websocket_endpoint(ws, token=w["k1"], team_id=w["team"].id)
+        # Refused: accepted, then closed with the code (CHT-1615).
+        ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=4001)
-        ws.accept.assert_not_awaited()
+        ws.send_json.assert_not_awaited()
 
 
 @pytest.mark.asyncio

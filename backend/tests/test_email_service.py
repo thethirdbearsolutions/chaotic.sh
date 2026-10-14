@@ -230,3 +230,97 @@ class TestFireAndForget:
             await asyncio.sleep(0)
         assert ran["v"] is True
         assert len(email_service._background_tasks) == 0  # discarded on completion
+
+
+# ---------------------------------------------------------------------------
+# The shutdown drain (CHT-1634)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestShutdownDrain:
+    """Emails queued just before a restart are waited for at shutdown, in
+    the same bounded drain as push deliveries (CHT-1628)."""
+
+    async def test_the_lifespan_waits_for_an_email_before_closing_the_database(self, db, monkeypatch):
+        import asyncio
+        import contextlib
+
+        import app.main as main
+
+        order = []
+
+        async def noop(*args, **kwargs):
+            return None
+
+        async def close():
+            order.append("closed")
+
+        @contextlib.asynccontextmanager
+        async def no_mcp():
+            yield
+
+        for name in ("init_oxyde", "bootstrap_if_empty", "verify_migrations_current", "_mcp_toolset_fingerprint"):
+            monkeypatch.setattr(main, name, noop)
+        monkeypatch.setattr(main, "close_oxyde", close)
+        monkeypatch.setattr(main, "get_version_info", lambda *a, **k: None)
+        monkeypatch.setattr(main, "mcp_lifespan", no_mcp)
+        monkeypatch.setattr(main.settings, "secret_key", "x" * 32)
+
+        async def send():
+            await asyncio.sleep(0.05)
+            order.append("sent")
+
+        async with main.lifespan(main.app):
+            fire_and_forget(send())
+        assert order == ["sent", "closed"]
+
+    async def test_what_an_email_schedules_is_waited_for_too(self):
+        import asyncio
+
+        from app.main import _drain_at_shutdown
+
+        done = []
+
+        async def second():
+            await asyncio.sleep(0.01)
+            done.append("second")
+
+        async def first():
+            await asyncio.sleep(0.01)
+            fire_and_forget(second())
+            done.append("first")
+
+        fire_and_forget(first())
+        assert await _drain_at_shutdown(5) is True
+        assert done == ["first", "second"]
+
+    async def test_the_drain_is_bounded_and_cancels_what_is_left(self, caplog):
+        import asyncio
+        import logging
+
+        from app.main import _drain_at_shutdown
+        from app.services import email_service
+
+        task = fire_and_forget(asyncio.sleep(30))
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        with caplog.at_level(logging.WARNING, logger="app.main"):
+            assert await _drain_at_shutdown(0.05) is False
+        assert loop.time() - started < 5
+        await asyncio.sleep(0)
+        assert task.cancelled()
+        assert "still in flight after 0.05s" in caplog.text
+        assert email_service.in_flight() == 0
+
+    async def test_a_failing_drain_is_logged_and_shutdown_goes_on(self, monkeypatch, caplog):
+        import logging
+
+        import app.main as main
+
+        async def broken():
+            raise RuntimeError("drain broke")
+
+        monkeypatch.setattr(main, "_drain_in_flight", broken)
+        with caplog.at_level(logging.ERROR, logger="app.main"):
+            assert await main._drain_at_shutdown(1) is False
+        assert "could not drain" in caplog.text

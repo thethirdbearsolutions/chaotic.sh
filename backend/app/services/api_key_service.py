@@ -67,6 +67,19 @@ class AgentKeyNeedsHolderError(ValueError):
     the human who holds it (CHT-1537)."""
 
 
+
+def _rolled_back(written: bool, exc: BaseException) -> bool:
+    """Whether a ``revoking()`` block that raised ``exc`` rolled back, so
+    the caller's object must get its old ``is_active`` back (PR #359
+    review, 5). A body that did not finish rolled back. A cancellation
+    once it had finished almost always lands while the hooks run, after
+    the commit (the hooks can take up to 15 s, the commit a moment;
+    CHT-1632): the write stands, and is kept. Anything else raised by the
+    exit is the commit failing."""
+    if not written:
+        return True
+    return not isinstance(exc, asyncio.CancelledError)
+
 class APIKeyService:
     """Service for API key operations."""
 
@@ -239,13 +252,41 @@ class APIKeyService:
         (CHT-1523; RevocationService)."""
         from app.services.revocation_service import RevocationService
 
-        async with revoking():
-            api_key.is_active = False
-            await api_key.save(update_fields={"is_active"})
-            await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)
+        was_active, written = api_key.is_active, False
+        try:
+            async with revoking():
+                api_key.is_active = False
+                await api_key.save(update_fields={"is_active"})
+                await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)
+                written = True
+        except BaseException as exc:
+            if _rolled_back(written, exc):
+                api_key.is_active = was_active
+            raise
         await api_key.refresh()
         return api_key
 
-    async def delete(self, api_key: OxydeAPIKey) -> None:
-        """Delete an API key."""
-        await api_key.delete()
+    async def delete(self, api_key: OxydeAPIKey, *, actor_id: str | None = None) -> None:
+        """Delete an API key. It is revoked first, in the same
+        transaction, so what depended on it ends as on ``revoke`` (its
+        holder sessions and tickets, then after the commit its push
+        devices and sockets) and nothing ends unreported (CHT-1629).
+        A key already revoked is revoked again, harmlessly: the cascade
+        ends only what is still live. No production path calls it today
+        (``DELETE /api/api-keys/{id}`` revokes); it is kept safe for the
+        first one that does."""
+        from app.services.revocation_service import RevocationService
+
+        was_active, written = api_key.is_active, False
+        try:
+            async with revoking():
+                if api_key.is_active:
+                    api_key.is_active = False
+                    await api_key.save(update_fields={"is_active"})
+                await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)
+                await api_key.delete()
+                written = True
+        except BaseException as exc:
+            if _rolled_back(written, exc):
+                api_key.is_active = was_active
+            raise
