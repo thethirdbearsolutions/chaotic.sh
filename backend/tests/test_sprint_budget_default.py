@@ -383,3 +383,168 @@ async def test_resending_same_default_does_not_reset_planned(client, auth_header
     await _set_default(client, auth_headers, test_project.id, 24)
     await planned.refresh()
     assert planned.budget == 7
+
+
+# --- CHT-1701: broadcasts on a change of default, and the way back ---------
+
+
+def _capture_sends():
+    """Patch the websocket manager and collect every message it sends."""
+    from unittest.mock import patch
+    from app.websocket import manager
+
+    sent = []
+
+    async def send(team_id, message):
+        sent.append((team_id, message))
+
+    return sent, patch.object(manager, "_send_to_team", side_effect=send)
+
+
+def _sprint_updates(sent, sprint_id):
+    return [
+        m for _, m in sent
+        if m["entity"] == "sprint" and m["type"] == "updated" and m["data"]["id"] == sprint_id
+    ]
+
+
+@pytest.mark.asyncio
+async def test_default_change_bumps_updated_at_and_broadcasts(client, auth_headers, test_project):
+    """L2: a planned sprint the new default changes is announced, with a
+    new updated_at; the active sprint, untouched, is not."""
+    await _set_default(client, auth_headers, test_project.id, 24)
+    current, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    before = planned.updated_at
+
+    sent, patcher = _capture_sends()
+    with patcher:
+        await _set_default(client, auth_headers, test_project.id, 32)
+
+    updates = _sprint_updates(sent, planned.id)
+    assert len(updates) == 1
+    assert updates[0]["data"]["budget"] == 32
+    assert updates[0]["data"]["budget_explicit"] is False
+    assert _sprint_updates(sent, current.id) == []
+    assert all(team == test_project.team_id for team, _ in sent)
+    await planned.refresh()
+    assert planned.updated_at > before
+
+
+@pytest.mark.asyncio
+async def test_default_change_skips_hand_set_and_unchanged_sprints(client, auth_headers, test_project):
+    """A hand-set planned sprint is not changed, so it is not announced."""
+    await _set_default(client, auth_headers, test_project.id, 24)
+    _, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    resp = await client.patch(f"/api/sprints/{planned.id}", headers=auth_headers, json={"budget": 7})
+    assert resp.status_code == 200
+    stamped = (await OxydeSprint.objects.get(id=planned.id)).updated_at
+
+    sent, patcher = _capture_sends()
+    with patcher:
+        await _set_default(client, auth_headers, test_project.id, 32)
+
+    assert _sprint_updates(sent, planned.id) == []
+    await planned.refresh()
+    assert planned.budget == 7 and planned.updated_at == stamped
+
+
+@pytest.mark.asyncio
+async def test_follows_default_resets_hand_set_planned_sprint(client, auth_headers, test_project):
+    """L3: PATCH budget_follows_default=true clears the hand-set flag and
+    gives the sprint the current default; later defaults reach it again."""
+    await _set_default(client, auth_headers, test_project.id, 24)
+    _, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    resp = await client.patch(f"/api/sprints/{planned.id}", headers=auth_headers, json={"budget": 7})
+    assert resp.json()["budget_explicit"] is True
+    hand_set_at = resp.json()["updated_at"]
+
+    sent, patcher = _capture_sends()
+    with patcher:
+        resp = await client.patch(
+            f"/api/sprints/{planned.id}", headers=auth_headers,
+            json={"budget_follows_default": True},
+        )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["budget"] == 24 and body["budget_explicit"] is False
+    assert body["updated_at"] > hand_set_at
+    assert len(_sprint_updates(sent, planned.id)) == 1
+
+    await _set_default(client, auth_headers, test_project.id, 40)
+    await planned.refresh()
+    assert planned.budget == 40
+
+
+@pytest.mark.asyncio
+async def test_follows_default_under_unlimited_default_clears_budget(client, auth_headers, test_project):
+    """With no default (unlimited), following it means no budget."""
+    await _set_default(client, auth_headers, test_project.id, None)
+    _, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    await client.patch(f"/api/sprints/{planned.id}", headers=auth_headers, json={"budget": 7})
+
+    resp = await client.patch(
+        f"/api/sprints/{planned.id}", headers=auth_headers,
+        json={"budget_follows_default": True},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["budget"] is None and resp.json()["budget_explicit"] is False
+
+
+@pytest.mark.asyncio
+async def test_follows_default_with_budget_is_rejected(client, auth_headers, test_project):
+    _, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    for budget in (7, None):
+        resp = await client.patch(
+            f"/api/sprints/{planned.id}", headers=auth_headers,
+            json={"budget": budget, "budget_follows_default": True},
+        )
+        assert resp.status_code == 422
+        assert "not both" in resp.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [False, None])
+async def test_follows_default_only_accepts_true(client, auth_headers, test_project, value):
+    _, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    resp = await client.patch(
+        f"/api/sprints/{planned.id}", headers=auth_headers,
+        json={"budget_follows_default": value},
+    )
+    assert resp.status_code == 422
+    assert "only accepts true" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_follows_default_refused_for_active_sprint(client, auth_headers, test_project):
+    await _set_default(client, auth_headers, test_project.id, 24)
+    current, _ = await SprintService().ensure_sprints_exist(test_project.id)
+    await client.patch(f"/api/sprints/{current.id}", headers=auth_headers, json={"budget": 7})
+
+    resp = await client.patch(
+        f"/api/sprints/{current.id}", headers=auth_headers,
+        json={"budget_follows_default": True},
+    )
+    assert resp.status_code == 400
+    assert "Only a planned sprint" in resp.json()["detail"]
+    await current.refresh()
+    assert current.budget == 7 and current.budget_explicit is True
+
+
+@pytest.mark.asyncio
+async def test_template_default_change_broadcasts(client, auth_headers, test_project):
+    """The other caller of adopt_default_budget (template apply) runs in a
+    transaction; the broadcast still goes out once it commits."""
+    await _set_default(client, auth_headers, test_project.id, 24)
+    _, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    from app.db.transactions import atomic
+    from app.oxyde_models.project import OxydeProject
+
+    sent, patcher = _capture_sends()
+    with patcher:
+        async with atomic():
+            project = await OxydeProject.objects.get(id=test_project.id)
+            project.default_sprint_budget = 50
+            await project.save(update_fields={"default_sprint_budget"})
+            await SprintService().adopt_default_budget(test_project.id)
+            assert sent == [], "nothing is announced before the commit"
+    assert [m["data"]["budget"] for m in _sprint_updates(sent, planned.id)] == [50]

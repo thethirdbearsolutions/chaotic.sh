@@ -14204,6 +14204,18 @@
               }
             ],
             "title": "Budget"
+          },
+          "budget_follows_default": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Follows Default",
+            "description": "true: make a planned sprint follow the project default budget again. Cannot be combined with budget."
           }
         },
         "type": "object",

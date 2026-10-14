@@ -90,7 +90,11 @@ smell — treat the following as invariants:
   (unlimited), activation never overwrites a budget and the sprint being
   activated passes its budget to the new planned sprint, so rotation
   cannot silently switch arrears off. The carried budget is not hand-set,
-  so a default set later still reaches it (CHT-1495).
+  so a default set later still reaches it (CHT-1495). To make a hand-set
+  planned sprint follow the default again, `PATCH /sprints/{id}` with
+  `budget_follows_default: true` (`chaotic sprint budget <id> --default`);
+  it takes the current default at once. Only a planned sprint accepts it
+  (CHT-1701).
 - **Arrears is a hard stop.** Going over budget blocks moving any ticket into
   `in_progress` / `done` / `canceled` (project-wide, keyed on the active
   sprint — other transitions like `todo`/`in_review` are unaffected) until you

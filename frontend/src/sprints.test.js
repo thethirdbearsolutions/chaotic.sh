@@ -356,6 +356,32 @@ describe('renderSprints', () => {
         expect(html).toContain('Next Sprint');
     });
 
+    it('says whether the planned budget follows the project default (CHT-1701)', () => {
+        setSprints([
+            { id: 's2', name: 'Next Sprint', status: 'planned', budget: 15, budget_explicit: false, project_id: 'p1' },
+        ]);
+        renderSprints();
+        expect(document.getElementById('sprints-list').innerHTML).toContain('follows project default');
+
+        setSprints([
+            { id: 's2', name: 'Next Sprint', status: 'planned', budget: 15, budget_explicit: true, project_id: 'p1' },
+        ]);
+        renderSprints();
+        const html = document.getElementById('sprints-list').innerHTML;
+        expect(html).toContain('set by hand');
+        expect(html).not.toContain('follows project default');
+    });
+
+    it('omits the budget source when the server does not report it', () => {
+        setSprints([
+            { id: 's2', name: 'Next Sprint', status: 'planned', budget: 15, project_id: 'p1' },
+        ]);
+        renderSprints();
+        const html = document.getElementById('sprints-list').innerHTML;
+        expect(html).not.toContain('set by hand');
+        expect(html).not.toContain('follows project default');
+    });
+
     it('renders completed sprints in collapsed section', () => {
         setSprints([
             { id: 's3', name: 'Old Sprint', status: 'completed', points_spent: 18, budget: 20 },

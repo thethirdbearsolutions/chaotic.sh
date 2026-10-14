@@ -26,6 +26,28 @@ class TestSprintCRUD:
         updated = api_client.update_sprint(current["id"], budget=20)
         assert updated["budget"] == 20
 
+    def test_planned_sprint_follows_default_again(self, api_client, test_project):
+        """CHT-1701: a hand-set planned budget can be made to follow the
+        project default again, and then takes later defaults."""
+        api_client.get_current_sprint(test_project["id"])
+        planned = api_client.get_sprints(test_project["id"], status="planned")[0]
+        api_client.update_project(test_project["id"], default_sprint_budget=24)
+
+        hand_set = api_client.update_sprint(planned["id"], budget=7)
+        assert hand_set["budget"] == 7 and hand_set["budget_explicit"] is True
+
+        reset = api_client.update_sprint(planned["id"], budget_follows_default=True)
+        assert reset["budget"] == 24 and reset["budget_explicit"] is False
+
+        api_client.update_project(test_project["id"], default_sprint_budget=30)
+        assert api_client.get_sprint(planned["id"])["budget"] == 30
+
+    def test_follows_default_with_budget_is_rejected(self, api_client, test_project):
+        api_client.get_current_sprint(test_project["id"])
+        planned = api_client.get_sprints(test_project["id"], status="planned")[0]
+        with pytest.raises(APIError):
+            api_client.update_sprint(planned["id"], budget=7, budget_follows_default=True)
+
     def test_close_sprint(self, api_client, test_project):
         current = api_client.get_current_sprint(test_project["id"])
         result = api_client.close_sprint(current["id"])

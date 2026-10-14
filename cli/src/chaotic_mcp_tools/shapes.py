@@ -150,4 +150,11 @@ def with_budget_state(sprint: dict) -> dict:
     sprint["in_arrears"] = over > 0
     sprint["arrears_by"] = max(over, 0)
     sprint["points_remaining"] = None if budget is None else budget - spent
+    # Whether a planned sprint's budget follows the project default or was
+    # set by hand (CHT-1701), spelled out for the same reason. Only a
+    # planned sprint follows the default, so it is null for the others,
+    # and for a server too old to report budget_explicit.
+    explicit = sprint.get("budget_explicit")
+    planned = str(sprint.get("status", "")).lower() == "planned"
+    sprint["budget_follows_default"] = (not explicit) if planned and explicit is not None else None
     return sprint

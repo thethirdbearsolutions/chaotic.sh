@@ -7,7 +7,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from ..markup import Table, esc
 
-from .shared import _client, console, print_sprint_panel, resolve_content_value
+from .shared import _client, budget_source, console, print_sprint_panel, resolve_content_value
 
 
 # One line, printed by `sprint list` / `sprint current` / `sprint budget`
@@ -40,11 +40,14 @@ def _print_budget_panel(result):
     name = result["name"]
     budget = result.get("budget")
     spent = result.get("points_spent", 0)
+    source = budget_source(result)
+    source_markup = f"Budget source: {esc(source)}\n" if source else ""
 
     if budget is None:
         console.print(Panel(
             f"[bold]{esc(name)}[/bold]\n"
             f"Budget: [dim]Unlimited[/dim]\n"
+            f"{source_markup}"
             f"Spent: {esc(spent)} points",
             title="Sprint Budget"
         ))
@@ -59,6 +62,7 @@ def _print_budget_panel(result):
     console.print(Panel(
         f"[bold]{esc(name)}[/bold]\n"
         f"Budget: {esc(budget)} points\n"
+        f"{source_markup}"
         f"Spent: {esc(spent)} points\n"
         f"{status_markup}\n"
         f"[dim]spent = points from tickets CLOSED while this sprint is active "
@@ -122,14 +126,20 @@ def register(cli):
         table.add_column("ID", style="dim")
         table.add_column("Name")
         table.add_column("Status")
+        table.add_column("Budget")
         table.add_column("Activated")
         table.add_column("Closed")
 
         for s in sprints:
+            budget_cell = "unlimited" if s.get("budget") is None else str(s["budget"])
+            source = budget_source(s)
+            if source:
+                budget_cell += f" ({source})"
             table.add_row(
                 s["id"],
                 s["name"],
                 s["status"].title(),
+                budget_cell,
                 s.get("activated_at", "-")[:10] if s.get("activated_at") else "-",
                 s.get("closed_at", "-")[:10] if s.get("closed_at") else "-"
             )
@@ -162,23 +172,49 @@ def register(cli):
     @sprint.command("budget")
     @click.argument("sprint_id", required=False)
     @click.argument("amount", required=False)
+    @click.option(
+        "--default", "follow_default", is_flag=True,
+        help="Make a planned sprint follow the project default budget again "
+             "(SPRINT_ID defaults to the next planned sprint).",
+    )
     @_main().json_option
     @_main().require_project
     @_main().handle_error
-    def sprint_budget(sprint_id, amount):
+    def sprint_budget(sprint_id, amount, follow_default):
         """Show or set a sprint's point budget.
 
         \b
         No args:           show the active sprint's budget.
         AMOUNT:             set the active sprint's budget, e.g. 'sprint budget 25'.
         SPRINT_ID AMOUNT:   set that sprint's budget instead of the active one.
+        [SPRINT_ID] --default: a planned sprint follows the project default
+                           again (default: the next planned sprint).
 
         A lone numeric arg is always AMOUNT for the active sprint (never a
         sprint-number lookup); a lone non-numeric arg is SPRINT_ID and shows
-        that sprint's budget read-only.
+        that sprint's budget read-only. With --default a lone arg is always
+        SPRINT_ID.
+
+        A planned sprint's budget follows the project's default sprint
+        budget until you set it here; --default undoes that.
         """
         m = _main()
         project_id = m.get_current_project()
+
+        if follow_default:
+            if amount is not None:
+                raise click.UsageError("--default takes no AMOUNT: it sets the budget to the project default.")
+            target_id = m.resolve_sprint_id(sprint_id or "next", project_id)
+            result = _client().update_sprint(target_id, budget_follows_default=True)
+            if m.is_json_output():
+                m.output_json(result)
+                return
+            budget = result.get("budget")
+            console.print(
+                f"[green]'{esc(result['name'])}' follows the project default budget again "
+                f"({'unlimited' if budget is None else esc(budget) + ' points'}).[/green]"
+            )
+            return
 
         set_amount = None
         target_id = None
@@ -205,6 +241,11 @@ def register(cli):
                 m.output_json(result)
                 return
             console.print(f"[green]Budget for '{esc(result['name'])}' set to {esc(set_amount)} points.[/green]")
+            if budget_source(result) == "set by hand":
+                console.print(
+                    "[dim]It no longer follows the project default; "
+                    f"'chaotic sprint budget {esc(target_id)} --default' undoes that.[/dim]"
+                )
             return
 
         result = _client().get_sprint(target_id) if target_id else _client().get_current_sprint(project_id)
@@ -556,6 +597,6 @@ def register(cli):
     @_main().handle_error
     def budget_shortcut():
         """Show current sprint budget status (shortcut for 'sprint budget')."""
-        sprint_budget.callback(sprint_id=None, amount=None)
+        sprint_budget.callback(sprint_id=None, amount=None, follow_default=False)
 
     return sprint

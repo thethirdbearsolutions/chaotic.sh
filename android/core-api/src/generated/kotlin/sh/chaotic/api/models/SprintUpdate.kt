@@ -41,6 +41,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param description 
  * @param status 
  * @param budget 
+ * @param budgetFollowsDefault true: make a planned sprint follow the project default budget again. Cannot be combined with budget.
  */
 @Serializable
 
@@ -56,7 +57,11 @@ data class SprintUpdate (
     val status: SprintStatus? = null,
 
     @SerialName(value = "budget")
-    val budget: kotlin.Int? = null
+    val budget: kotlin.Int? = null,
+
+    /* true: make a planned sprint follow the project default budget again. Cannot be combined with budget. */
+    @SerialName(value = "budget_follows_default")
+    val budgetFollowsDefault: kotlin.Boolean? = null
 
 ) {
 
