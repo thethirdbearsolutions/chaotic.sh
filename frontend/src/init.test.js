@@ -18,7 +18,11 @@ import { showOnboarding, hasCompletedOnboarding } from './onboarding.js';
 
 describe('initApp', () => {
     beforeEach(() => {
-        vi.clearAllMocks();
+        // Reset implementations too, not only calls, so one test's
+        // mockReturnValue/mockRejectedValue cannot leak into the next.
+        vi.resetAllMocks();
+        getTeams.mockReturnValue([]);
+        hasCompletedOnboarding.mockReturnValue(true);
         history.replaceState(null, '', '/');
     });
 
@@ -56,7 +60,7 @@ describe('initApp', () => {
 
         it('is installed even if loading the team fails', async () => {
             getTeams.mockReturnValue([{ id: 't1' }]);
-            selectTeam.mockRejectedValue(new Error('boom'));
+            selectTeam.mockRejectedValueOnce(new Error('boom'));
             await expect(initApp()).rejects.toThrow('boom');
             expect(initRouter).toHaveBeenCalledTimes(1);
         });
