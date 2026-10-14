@@ -128,12 +128,12 @@ class PushRegistrarTest {
     }
 
     @Test
-    fun aNewVapidKeyMeansANewSubscription() = runTest {
+    fun aNewVapidKeyIsRegisteredWithoutDroppingTheDistributor() = runTest {
         registrar.start(distributorAvailable = true)
         registrar.onEndpoint("https://ntfy.example/up1", "p256", "auth")
         remote.vapid = Remote.Ok(VapidKey("BKey2", "kid2"))
         assertEquals(PushStatus.REGISTERING, registrar.start(distributorAvailable = true))
-        assertEquals(listOf("register:BKey1", "unregister", "register:BKey2"), distributor.calls)
+        assertEquals(listOf("register:BKey1", "register:BKey2"), distributor.calls)
         assertTrue(PushRegistrar.pollFallback(store.read(), OWNER))
     }
 

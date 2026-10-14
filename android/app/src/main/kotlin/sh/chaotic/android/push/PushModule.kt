@@ -1,12 +1,14 @@
 package sh.chaotic.android.push
 
 import android.content.Context
+import android.util.Log
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import io.ktor.client.engine.HttpClientEngine
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -36,7 +38,15 @@ object PushModule {
     @Provides
     @Singleton
     @ApplicationScope
-    fun provideApplicationScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    fun provideApplicationScope(): CoroutineScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e ->
+            // A push or a worker must never take the process down. Only the
+            // class is logged: a message could carry an endpoint or a key.
+            Log.w(TAG, "Background push work failed: ${e.javaClass.name}")
+        },
+    )
+
+    private const val TAG = "ChaoticPush"
 
     @Provides
     @Singleton

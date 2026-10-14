@@ -122,8 +122,8 @@ class PushRegistrar(
     }
 
     private suspend fun subscribe(owner: String, key: VapidKey): PushStatus {
-        val before = store.read()
-        if (before.vapidKeyId != null && before.vapidKeyId != key.keyId) distributor.unregister()
+        // A changed key needs no unregister first (which would also drop the
+        // saved distributor): registering again under the new key re-subscribes.
         val state = store.update {
             val stillActive = it.status == PushStatus.ACTIVE && it.owner == owner && it.vapidKeyId == key.keyId
             it.copy(
