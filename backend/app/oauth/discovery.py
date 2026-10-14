@@ -17,7 +17,9 @@ Every URL is derived from ``APP_BASE_URL`` (``Settings.oauth_issuer``),
 never from the request's Host, so a forged Host header cannot point a
 client at someone else's authorization server.
 
-All of it is gated on ``OAUTH_ENABLED`` (default off), read per request.
+All of it is gated on ``OAUTH_ENABLED`` (default off), checked on each
+request against the settings, which are read once and cached
+(``get_settings``), so turning it on or off takes a restart (CHT-1563).
 When off, the discovery paths 404 and /mcp's 401 stays the bare
 ``Bearer`` challenge it has always been.
 

@@ -356,7 +356,9 @@ class BearerHeaderAuth(_AuthWrapperBase):
         return None
 
     def _challenges(self) -> tuple[dict[str, str], dict[str, str]]:
-        # Read per request, so OAUTH_ENABLED needs no remount (CHT-1517).
+        # Built on each request from the cached settings, not at mount, so
+        # the challenge follows OAUTH_ENABLED without a remount (CHT-1517).
+        # A change to the setting itself still takes a restart (CHT-1563).
         return (
             {"WWW-Authenticate": www_authenticate_challenge()},
             {"WWW-Authenticate": www_authenticate_challenge(token_presented=True)},

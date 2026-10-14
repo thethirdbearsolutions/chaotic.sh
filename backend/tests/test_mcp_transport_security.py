@@ -58,3 +58,37 @@ def test_multiple_origins(cors):
     assert settings.allowed_origins == ["https://a.example.com", "https://b.example.com"]
     assert "a.example.com" in settings.allowed_hosts
     assert "b.example.com" in settings.allowed_hosts
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("*", ["*"]),
+    ("https://a.example.com,", ["https://a.example.com"]),
+    (" https://a.example.com , ,https://b.example.com ", ["https://a.example.com", "https://b.example.com"]),
+    ("", []),
+    (",", []),
+])
+def test_cors_origin_list_is_the_one_parse(monkeypatch, raw, expected):
+    """CORS_ORIGINS is parsed once, by Settings.cors_origin_list; a
+    trailing comma or blank entry adds nothing (CHT-1563)."""
+    monkeypatch.setenv("CORS_ORIGINS", raw)
+    get_settings.cache_clear()
+    try:
+        assert get_settings().cors_origin_list == expected
+    finally:
+        get_settings.cache_clear()
+
+
+def test_trailing_comma_keeps_the_guard_on_the_same_origins(cors):
+    settings = cors("https://tracker.example.com,")
+    assert settings.enable_dns_rebinding_protection is True
+    assert settings.allowed_origins == ["https://tracker.example.com"]
+
+
+def test_the_cors_middleware_takes_the_same_list():
+    """main.py hands the CORS middleware Settings.cors_origin_list, the
+    list the /mcp guard reads, not a parse of its own (CHT-1563)."""
+    from app.main import app, settings
+    from app.oauth.cors import OAuthAwareCORS
+
+    (cors_mw,) = [m for m in app.user_middleware if m.cls is OAuthAwareCORS]
+    assert cors_mw.kwargs["allow_origins"] == settings.cors_origin_list

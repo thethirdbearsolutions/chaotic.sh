@@ -154,7 +154,7 @@ app = FastAPI(
 # arguments while OAUTH_ENABLED is off; when on, it also opens the public
 # OAuth endpoints to any origin and exposes WWW-Authenticate on /mcp
 # (CHT-1551; see app/oauth/cors.py).
-_origins = [o.strip() for o in settings.cors_origins.split(",")]
+_origins = settings.cors_origin_list
 app.add_middleware(
     OAuthAwareCORS,
     allow_origins=_origins,

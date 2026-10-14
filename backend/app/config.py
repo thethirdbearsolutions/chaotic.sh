@@ -233,6 +233,15 @@ class Settings(BaseSettings):
         return self
 
     @property
+    def cors_origin_list(self) -> list[str]:
+        """CORS_ORIGINS as a list: split on commas, each entry stripped,
+        empty entries dropped (so a trailing comma adds nothing). The one
+        parse of the setting: the CORS middleware (main.py) and the /mcp
+        DNS-rebinding guard (mcp_server/asgi.py) both read it, so they
+        cannot disagree about which origins are allowed (CHT-1563)."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
     def oauth_issuer(self) -> str:
         """APP_BASE_URL exactly, minus any trailing slash (CHT-1517)."""
         return self.app_base_url.rstrip("/")

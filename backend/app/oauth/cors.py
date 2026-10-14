@@ -8,8 +8,9 @@ it cannot read the 401's ``WWW-Authenticate`` challenge even when its
 origin is allowed, because no header is exposed.
 
 ``OAuthAwareCORS`` replaces that one middleware and picks a policy per
-request. With ``OAUTH_ENABLED`` off (read per request, like the rest of
-``app.oauth``) every request gets the app-wide policy, built from the
+request. With ``OAUTH_ENABLED`` off (checked on each request, like the
+rest of ``app.oauth``, against the cached settings, so a change takes a
+restart) every request gets the app-wide policy, built from the
 same arguments as before, so nothing changes. With it on:
 
 * the public OAuth endpoints (``PUBLIC_OAUTH_METHODS``) get

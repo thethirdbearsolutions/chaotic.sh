@@ -73,7 +73,7 @@ def _transport_security() -> TransportSecuritySettings:
       rebinding protection only adds defense-in-depth for browser-based
       drive-bys, which need a real origin list to mean anything.
     """
-    origins = [o.strip() for o in get_settings().cors_origins.split(",") if o.strip()]
+    origins = get_settings().cors_origin_list
     if not origins or "*" in origins:
         return TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
