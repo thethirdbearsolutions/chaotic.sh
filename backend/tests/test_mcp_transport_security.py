@@ -84,11 +84,21 @@ def test_trailing_comma_keeps_the_guard_on_the_same_origins(cors):
     assert settings.allowed_origins == ["https://tracker.example.com"]
 
 
-def test_the_cors_middleware_takes_the_same_list():
+def test_the_cors_middleware_takes_the_same_list(monkeypatch):
     """main.py hands the CORS middleware Settings.cors_origin_list, the
-    list the /mcp guard reads, not a parse of its own (CHT-1563)."""
-    from app.main import app, settings
+    list the /mcp guard reads, not a parse of its own: a trailing comma
+    adds no "" origin (CHT-1563)."""
+    from app.main import _cors_kwargs, app, settings
     from app.oauth.cors import OAuthAwareCORS
 
     (cors_mw,) = [m for m in app.user_middleware if m.cls is OAuthAwareCORS]
-    assert cors_mw.kwargs["allow_origins"] == settings.cors_origin_list
+    assert cors_mw.kwargs == _cors_kwargs(settings)
+
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example.com,")
+    get_settings.cache_clear()
+    try:
+        kwargs = _cors_kwargs(get_settings())
+    finally:
+        get_settings.cache_clear()
+    assert kwargs["allow_origins"] == ["https://a.example.com"]
+    assert kwargs["allow_credentials"] is True

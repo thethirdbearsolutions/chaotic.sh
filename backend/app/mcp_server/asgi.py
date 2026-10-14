@@ -21,7 +21,7 @@ host/domain an operator picks (no fixed hostname to hardcode):
   pushes), so there's nothing to lose by not paying for session
   affinity -- and it's one less thing to break behind a load balancer
   with no sticky sessions configured.
-* ``transport_security`` -- derived from ``settings.cors_origins`` (see
+* ``transport_security`` -- derived from ``settings.cors_origin_list`` (see
   ``_transport_security()``): explicit origins turn the SDK's
   Host/Origin allowlisting on, keyed to them; the wildcard default turns
   it off. Never the SDK's own default, which auto-enables allowlisting
