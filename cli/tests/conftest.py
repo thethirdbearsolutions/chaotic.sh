@@ -28,6 +28,14 @@ def _no_session_identity(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_process_team(monkeypatch):
+    """The stdio MCP server's in-memory default team (CHT-1687) never
+    carries over from one test to the next."""
+    from cli import config
+    monkeypatch.setattr(config, "_process_team", None)
+
+
 @pytest.fixture
 def cli_runner():
     """Create a Click test runner with profile set."""

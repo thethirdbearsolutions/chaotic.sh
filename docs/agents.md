@@ -342,6 +342,12 @@ chaotic config set-session-identity auto       # or CHAOTIC_SESSION_IDENTITY=aut
 claude mcp add chaotic -- chaotic mcp
 ```
 
+No `chaotic team use` is needed when the registrar's key has exactly one
+team (a team-scoped agent key always does): with no current team,
+`chaotic mcp` uses the key's only team, and says which teams to choose
+from when there are several. CLI commands still want a current team, so
+run `chaotic team use <key>` too if you will use the CLI there.
+
 From then on, inside a Claude Code session (which sets
 `CLAUDE_CODE_SESSION_ID`), the CLI and `chaotic mcp` both:
 

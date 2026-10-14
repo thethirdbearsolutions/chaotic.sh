@@ -332,10 +332,24 @@ def set_token(token: str | None):
     save_global_config(config)
 
 
+# A team this process settled on when none is configured: the stdio MCP
+# server's default, the key's only accessible team (CHT-1687). In memory
+# only; a configured current_team always wins.
+_process_team: str | None = None
+
+
+def set_process_team(team_id: str | None) -> None:
+    """Use `team_id` for the rest of this process when no current team is
+    configured. Never written to a config file."""
+    global _process_team
+    _process_team = team_id
+
+
 def get_current_team() -> str | None:
-    """Get current team ID (prefers local, falls back to global)."""
+    """Get current team ID (prefers local, falls back to global, then to
+    this process's default, see set_process_team)."""
     config = load_config()
-    return config.get("current_team")
+    return config.get("current_team") or _process_team
 
 
 def set_current_team(team_id: str | None, local: bool = True):

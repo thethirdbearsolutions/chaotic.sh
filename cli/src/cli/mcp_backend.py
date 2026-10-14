@@ -6,7 +6,8 @@ resolver (``cli.main.resolve_project_id`` and friends) or profile getter
 (``get_current_team``/``get_current_project``). Auth/context therefore
 comes from the exact same CHAOTIC_PROFILE / CHAOTIC_HOME / config.json
 resolution the CLI itself uses; whatever ``chaotic status`` reports is
-what the MCP server sees.
+what the MCP server sees, except that with no current team it uses the
+key's only accessible team (CHT-1687).
 
 Two mechanics worth knowing:
 
@@ -64,15 +65,36 @@ class RestBackend:
                 "first, or 'chaotic quickstart' to get set up."
             )
 
-    def _require_team(self) -> str:
+    async def _require_team(self) -> str:
+        """The configured current team, else the key's only accessible
+        team (CHT-1687), the default the HTTP /mcp applies. A setup made
+        of env vars alone (CHAOTIC_API_URL + CHAOTIC_API_KEY) or `auth
+        set-key` has no current team, and a team-scoped agent key is
+        unambiguous. The teams are listed with the configured key itself:
+        with session identity on, that is the registrar, and a person
+        registrar needs the team before its session key can exist (an
+        agent registrar's session identity is in its own team). The
+        answer is kept for this process only (config.set_process_team),
+        so the CLI resolvers and session identity see it too."""
         self._require_auth()
         team_id = _main().get_current_team()
-        if not team_id:
+        if team_id:
+            return team_id
+        teams = await self._call(self._client().get_teams, as_configured=True) or []
+        if len(teams) == 1:
+            from . import config
+            config.set_process_team(teams[0]["id"])
+            return teams[0]["id"]
+        if not teams:
             raise ToolInputError(
                 "No team selected. Run 'chaotic team list' to see available teams, "
                 "or 'chaotic quickstart' if you don't have one yet."
             )
-        return team_id
+        options = ", ".join(f"{t.get('name')} ({t.get('key')})" for t in teams)
+        raise ToolInputError(
+            f"No team selected, and this key has access to several teams ({options}). "
+            "Run 'chaotic team use <key>' in the directory the MCP server starts in."
+        )
 
     async def _call(self, fn, *args, **kwargs):
         """Run a blocking client/resolver call off the event loop and
@@ -99,11 +121,12 @@ class RestBackend:
     # -- scope / context ----------------------------------------------------
 
     async def resolve_team(self, team: str | None) -> str:
-        # `team` is the HTTP-only disambiguator; a CLI profile has one team.
-        return self._require_team()
+        # `team` is the HTTP-only disambiguator (registry.bind drops it
+        # here); the profile's team, or the key's only one, is the scope.
+        return await self._require_team()
 
     async def resolve_project(self, project: str | None, team: str | None) -> tuple[str, str]:
-        team_id = self._require_team()
+        team_id = await self._require_team()
         if project:
             return await self._call(_main().resolve_project_id, project), team_id
         project_id = _main().get_current_project()
@@ -115,14 +138,15 @@ class RestBackend:
         return project_id, team_id
 
     async def optional_project(self, project: str | None, team: str | None) -> tuple[str | None, str]:
-        team_id = self._require_team()
+        team_id = await self._require_team()
         if project:
             return await self._call(_main().resolve_project_id, project), team_id
         return _main().get_current_project(), team_id
 
     async def team_for_project(self, project_id: str | None) -> str:
-        # The profile's team is the only team this server can see.
-        return self._require_team()
+        # The profile's (or the key's only) team is the only team this
+        # server can see.
+        return await self._require_team()
 
     async def resolve_assignee(self, value: str, team_id: str) -> str:
         return await self._call(_main().resolve_assignee_id, value)
@@ -131,7 +155,7 @@ class RestBackend:
         return await self._call(_main().resolve_sprint_id, value, project_id)
 
     async def resolve_document(self, value: str) -> str:
-        team_id = self._require_team()
+        team_id = await self._require_team()
         return await self._call(_main().resolve_document_id, value, team_id)
 
     async def me_id(self) -> str:

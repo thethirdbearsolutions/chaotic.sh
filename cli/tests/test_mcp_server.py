@@ -222,7 +222,9 @@ class TestErrorBoundary:
         assert "Not authenticated" in result["error"]["message"]
 
     async def test_no_team_selected(self, mcp_mod, monkeypatch):
+        from cli.main import client
         monkeypatch.setattr("cli.main.get_current_team", lambda: None)
+        monkeypatch.setattr(client, "get_teams", MagicMock(return_value=[]))
         result = await mcp_mod.activity_recent()
         assert "No team selected" in result["error"]["message"]
 
@@ -1660,7 +1662,9 @@ class TestProjectList:
 
     async def test_no_team_selected_is_clean_error(self, mcp_mod, monkeypatch):
         # Team-scoped like activity_recent: no team -> {"error": ...}, never a crash.
+        from cli.main import client
         monkeypatch.setattr("cli.main.get_current_team", lambda: None)
+        monkeypatch.setattr(client, "get_teams", MagicMock(return_value=[]))
         result = await mcp_mod.project_list()
         assert "No team selected" in result["error"]["message"]
 

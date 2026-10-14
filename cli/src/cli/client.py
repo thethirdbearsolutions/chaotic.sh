@@ -388,8 +388,8 @@ class Client:
             data["description"] = description
         return self._request("POST", "/teams", data)
 
-    def get_teams(self) -> list:
-        return self._request("GET", "/teams")
+    def get_teams(self, *, as_configured: bool = False) -> list:
+        return self._request("GET", "/teams", as_configured=as_configured)
 
     def get_team(self, team_id: str) -> dict:
         return self._request("GET", f"/teams/{team_id}")

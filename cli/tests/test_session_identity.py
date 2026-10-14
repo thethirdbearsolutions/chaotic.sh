@@ -26,6 +26,7 @@ API = "http://chaotic.test/api"
 REGISTRAR_KEY = "ck_registrar"
 SESSION_ID = "4f2a9c1e-7777-4abc-9def-000000000001"
 REF = si.REF_PREFIX + SESSION_ID
+_REAL_GET_CURRENT_TEAM = cli_config.get_current_team
 
 
 class FakeServer:
@@ -678,3 +679,48 @@ class TestRepositoryUrlNormalised:
         monkeypatch.setattr(cli_config, "load_global_config", lambda: {"api_url": API + "/"})
         monkeypatch.setattr(cli_config, "load_local_config", lambda: {"api_url": API})
         assert si.registrar_settings()[1] == API
+
+
+class TestMcpDefaultTeam:
+    """`chaotic mcp` from env vars alone has no current team; it uses the
+    key's only team (CHT-1687). The teams are listed with the registrar
+    key, before any session key exists, and the session identity is
+    registered in that team."""
+
+    @pytest.fixture
+    def teams_server(self, server, monkeypatch):
+        _set_profile(monkeypatch, team=None)
+        # The real getter: no repository .chaotic, an empty profile, then
+        # the process default.
+        monkeypatch.setattr("cli.config.get_current_team", _REAL_GET_CURRENT_TEAM)
+        import cli.main as m
+        monkeypatch.setattr(m, "get_current_team", _REAL_GET_CURRENT_TEAM)
+        monkeypatch.setattr(m, "client", Client())
+        base = server.handler
+
+        def handler(request):
+            bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
+            if request.url.path == "/api/teams" and bearer in server.registrar_keys:
+                server.requests.append((request.method, "/teams", bearer))
+                return httpx.Response(200, json=[{"id": "team-only", "name": "Demo", "key": "DEMO"}])
+            return base(request)
+
+        server.handler = handler
+        return server
+
+    async def test_a_person_registrar_registers_in_the_keys_only_team(self, auto, teams_server):
+        from cli.mcp_backend import RestBackend
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        assert await RestBackend().resolve_team(None) == "team-only"
+        assert teams_server.requests[0] == ("GET", "/teams", REGISTRAR_KEY)
+        assert teams_server.registrations == []
+        Client()._request("GET", "/issues")
+        assert teams_server.registrations[0]["team_id"] == "team-only"
+
+    async def test_an_agent_registrar(self, auto, teams_server):
+        from cli.mcp_backend import RestBackend
+        assert await RestBackend().resolve_team(None) == "team-only"
+        assert teams_server.requests[0] == ("GET", "/teams", REGISTRAR_KEY)
+        assert Client()._request("GET", "/issues")["as"] == "sess-1"
+        assert "team_id" not in teams_server.registrations[0]
+
