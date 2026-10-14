@@ -464,7 +464,10 @@ class TestReleaseWithNoNewOwner:
         w = world
         await OxydeTeamMember.objects.filter(team_id=w["team"].id, user_id=w["bob"].id).delete()
 
-        released = await AgentService().release_member_agents(w["team"].id, w["bob"].id, None)
+        from app.services.credential_events import revoking
+
+        async with revoking():
+            released = await AgentService().release_member_agents(w["team"].id, w["bob"].id, None)
 
         [(agent, revoked, reassigned)] = released
         assert agent.id == w["agent_id"] and revoked == 2 and reassigned is False

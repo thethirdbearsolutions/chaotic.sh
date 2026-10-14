@@ -15,7 +15,9 @@ import os
 from app.config import get_settings
 from app.oxyde_db import init_oxyde, close_oxyde, bootstrap_if_empty, verify_migrations_current
 from app.api import api_router
-from app.websocket import manager
+from app.websocket import SocketOwner, manager
+from app.services import credential_events
+from app.services.push_service import PushService
 from app import ws_auth
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
 from app.mcp_server.auth import warn_if_capability_url_enabled
@@ -75,6 +77,13 @@ async def lifespan(app: FastAPI):
     # rather than 500 at runtime on the first query of a not-yet-added
     # column (the CHT-1317 incident). No-op on a non-migration-managed DB.
     await verify_migrations_current()
+    # CHT-1625: a push device whose credential was revoked is deleted by a
+    # hook after the revocation commits; this catches a process that died
+    # in between. Fail-soft: a failure here must not stop the server.
+    try:
+        await PushService().delete_stale_bindings()
+    except Exception:
+        logger.exception("could not sweep push devices bound to revoked credentials")
     # CHT-1294: prime the version cache at startup so the git subprocesses
     # (up to 4, each a blocking call) run here rather than on the first
     # request after a restart -- which is exactly when a deploy/health
@@ -318,8 +327,13 @@ async def websocket_endpoint(
     Authorization header, a ``chaotic.bearer.<token>`` subprotocol entry,
     or the deprecated ``?token=`` (``app.ws_auth``, CHT-1603), and checked
     again while open: a credential revoked or expired, or a member removed
-    from the team, is closed at the next check.
+    from the team, is closed at the next check, or at once when the
+    revocation happens in this process (CHT-1616).
     """
+    # Read before the check: a revocation that commits while the check
+    # (or the accept below) is in flight dispatches its hooks before this
+    # socket is registered, so they cannot close it (PR #356 review, 2).
+    generation = credential_events.generation()
     try:
         presented = ws_auth.presented_credential(websocket, token)
         principal = await ws_auth.authenticate(presented.token, team_id)
@@ -331,19 +345,33 @@ async def websocket_endpoint(
         await websocket.close(code=ws_auth.CLOSE_INTERNAL_ERROR)
         return
 
-    await manager.connect(websocket, team_id, subprotocol=presented.subprotocol)
+    # Recorded with its principal, so a revocation in this process closes
+    # it at once (CHT-1616, ``app.websocket.on_credentials_ended``).
+    await manager.connect(
+        websocket, team_id, subprotocol=presented.subprotocol, owner=SocketOwner.of(team_id, principal),
+    )
+    if credential_events.generation() != generation:
+        # Something was revoked meanwhile: check again now that the socket
+        # is registered (a revocation after this point closes it itself).
+        try:
+            await ws_auth.authenticate(presented.token, team_id)
+        except ws_auth.WsRefused as exc:
+            await manager.close(websocket, team_id, exc.code)
+            return
+        except Exception:
+            logger.exception("WebSocket credential re-check after connect failed for team=%s", team_id)
+            await manager.close(websocket, team_id, ws_auth.CLOSE_INTERNAL_ERROR)
+            return
 
     async def close_when_refused():
+        # The backstop: JWT expiry, and revocations made by another process.
         refused = await ws_auth.watch(presented.token, team_id)
-        # Stop broadcasting to it now, not when the client acknowledges.
-        manager.disconnect(websocket, team_id)
         logger.info(
             "Closing WebSocket for user=%s team=%s: %s", principal.user.id, team_id, refused.reason,
         )
-        try:
-            await websocket.close(code=refused.code)
-        except Exception:  # already gone
-            pass
+        # Stops broadcasting to it now, not when the client acknowledges;
+        # a no-op if a revocation hook closed it first.
+        await manager.close(websocket, team_id, refused.code)
 
     watcher = asyncio.create_task(close_when_refused())
     # Cancelled when the socket ends, never awaited: surface anything it

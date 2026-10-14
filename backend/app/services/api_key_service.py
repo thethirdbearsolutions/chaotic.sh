@@ -8,11 +8,11 @@ import hmac
 import logging
 from datetime import datetime, timedelta, timezone
 
-from oxyde import atomic
 
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.schemas.api_key import APIKeyCreate
 from app.services.token_service import API_KEY_PREFIX, mint_secret
+from app.services.credential_events import revoking
 from app.utils.security import verify_password
 
 logger = logging.getLogger(__name__)
@@ -239,7 +239,7 @@ class APIKeyService:
         (CHT-1523; RevocationService)."""
         from app.services.revocation_service import RevocationService
 
-        async with atomic():
+        async with revoking():
             api_key.is_active = False
             await api_key.save(update_fields={"is_active"})
             await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)

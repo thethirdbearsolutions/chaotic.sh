@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 from app.oxyde_models.user import OxydeUser
 from app.schemas.user import UserCreate, UserUpdate
 from app.utils.security import get_password_hash, verify_password
-from oxyde import atomic
 from app.oxyde_models.team import OxydeTeamMember, OxydeTeamInvitation
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.services.agent_service import AgentService, describe_counts
+from app.services.credential_events import revoking
 from app.services.revocation_service import REASON_PRINCIPAL_DELETED, RevocationService
 
 # Type alias: callers still see "User" but it's now an Oxyde model
@@ -134,7 +134,7 @@ class UserService:
         deleted along with them: its presence refuses the delete too.
         """
         agent_service = AgentService()
-        async with atomic():
+        async with revoking():
             # Every row that names the user as parent, agent or not: the
             # RESTRICT applies to all of them (CHT-1467's review).
             children = await OxydeUser.objects.filter(

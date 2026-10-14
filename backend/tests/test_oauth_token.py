@@ -566,6 +566,56 @@ class TestRequestShape:
         assert response.status_code == 404
 
 
+class TestCredentialEndedReports:
+    """CHT-1625 / PR #356 review, 1 and 3: every path that revokes a
+    session reports it, so its push devices and sockets end with it."""
+
+    @pytest.fixture
+    def seen(self):
+        from app.services import credential_events
+
+        events = []
+
+        async def hook(event):
+            # Never under the refresh lock: it blocks every refresh.
+            events.append((event, ts._refresh_lock.locked()))
+
+        remove = credential_events.register(hook)
+        yield events
+        remove()
+
+    async def test_code_reuse(self, client, public_client, auth_headers, test_team, seen):
+        code = await _code(client, public_client, auth_headers, test_team.id)
+        first = (await _token(client, _exchange(public_client, code))).json()
+        _assert_error(await _token(client, _exchange(public_client, code)), 400, "invalid_grant")
+        assert [(e.reason, e.holder_session_ids, locked) for e, locked in seen] == [
+            (ts.REASON_CODE_REUSE, frozenset({first["chaotic"]["holder_session_id"]}), False),
+        ]
+
+    async def test_refresh_reuse_runs_the_hooks_outside_the_refresh_lock(self, client, public_client, tokens, seen):
+        await _token(client, _refresh(public_client, tokens["refresh_token"]))
+        await OxydeAuthToken.objects.filter(replaces_id__isnull=True, kind=TokenKind.REFRESH).update(
+            used_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+        response = await _token(client, _refresh(public_client, tokens["refresh_token"]))
+        _assert_error(response, 400, "invalid_grant")
+        assert "already used" in response.json()["error_description"]
+        assert [(e.reason, e.holder_session_ids, locked) for e, locked in seen] == [
+            (ts.REASON_REFRESH_REUSE, frozenset({tokens["chaotic"]["holder_session_id"]}), False),
+        ]
+        # A second reuse finds it revoked: nothing more is reported.
+        _assert_error(await _token(client, _refresh(public_client, tokens["refresh_token"])), 400, "invalid_grant")
+        assert len(seen) == 1
+
+    async def test_oauth_revoke(self, client, public_client, tokens, seen):
+        response = await client.post("/oauth/revoke", data={"token": tokens["refresh_token"],
+                                                            "client_id": public_client}, headers=FORM)
+        assert response.status_code == 200
+        assert [(e.reason, e.holder_session_ids) for e, _locked in seen] == [
+            ("client_revoked", frozenset({tokens["chaotic"]["holder_session_id"]})),
+        ]
+
+
 # --- /oauth/revoke ----------------------------------------------------------------
 
 

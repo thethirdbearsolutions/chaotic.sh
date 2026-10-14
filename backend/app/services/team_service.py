@@ -9,6 +9,7 @@ from app.oxyde_models.team import OxydeTeam, OxydeTeamMember, OxydeTeamInvitatio
 from app.enums import TeamRole, InvitationStatus
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInvitationCreate
 from oxyde import atomic, execute_raw
+from app.services.credential_events import revoking
 
 # Type aliases for API compatibility
 Team = OxydeTeam
@@ -68,7 +69,7 @@ class TeamService:
         """
         from app.services.revocation_service import RevocationService
 
-        async with atomic():
+        async with revoking():
             await OxydeTeamInvitation.objects.filter(team_id=team.id).delete()
             await RevocationService().revoke_for_team(team.id, actor_id=actor_id)
             await OxydeTeamMember.objects.filter(team_id=team.id).delete()

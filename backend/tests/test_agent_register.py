@@ -149,6 +149,26 @@ class TestIdempotency:
         assert (await client.get("/api/auth/me", headers=_bearer(second["api_key"]))).status_code == 200
         assert await OxydeAPIKey.objects.filter(principal_user_id=first["agent"]["id"], is_active=True).count() == 1
 
+    async def test_re_registering_reports_the_rotated_out_key(self, client, registrar):
+        """CHT-1625: the old key's dependents (push devices, sockets) end
+        with it, after the commit."""
+        from app.services import credential_events
+
+        _, key = registrar
+        first = (await _register(client, key)).json()
+        old = await OxydeAPIKey.objects.get(principal_user_id=first["agent"]["id"], is_active=True)
+        seen = []
+
+        async def hook(event):
+            seen.append(event)
+
+        remove = credential_events.register(hook)
+        try:
+            assert (await _register(client, key)).status_code == 200
+        finally:
+            remove()
+        assert [e.key_ids for e in seen] == [frozenset({old.id})]
+
     async def test_omitting_the_name_keeps_it(self, client, registrar):
         _, key = registrar
         await _register(client, key, name="kept")

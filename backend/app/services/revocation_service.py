@@ -28,7 +28,10 @@ The cascades:
   action is audited and the epoch moves.
 
 Call these inside the transaction that makes the change they follow,
-after that change's first write: the revocation event's ``seq`` is
+opened with ``credential_events.revoking()`` (CHT-1625: what depends on
+the credentials, push devices and /ws sockets, ends after it commits;
+each raises ``RuntimeError`` on entry outside one), after that change's
+first write: the revocation event's ``seq`` is
 assigned there (see ``OxydeRevocationEvent.seq``). Sessions are revoked
 set-wise by ``TokenService.revoke_sessions_batch``, and each action
 writes exactly one ``revocation_events`` row for its target with what it
@@ -52,7 +55,8 @@ from app.config import get_settings
 from app.enums import HolderVia, RevocationTarget, TokenKind
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeRevocationEvent
-from app.services.push_service import PushService
+from app.services import credential_events
+from app.services.credential_events import CredentialsEnded, require_revoking
 from app.services.token_service import TokenService, revocation_epoch
 
 REASON_KEY_REVOKED = "key_revoked"
@@ -127,9 +131,6 @@ class RevocationService:
     async def _end_keys(self, key_ids: list[str], *, actor_id, reason) -> CascadeCounts:
         if not key_ids:
             return CascadeCounts()
-        # Devices registered with a revoked key stop being pushed to
-        # (CHT-1604); the sessions' devices go in revoke_sessions_batch.
-        await PushService().delete_for_keys(key_ids)
         return await self._end(
             actor_id=actor_id, reason=reason, credential_id__in=key_ids,
             starters={"minted_by_credential_id__in": key_ids},
@@ -159,13 +160,17 @@ class RevocationService:
     ) -> CascadeCounts:
         """Keys that were just revoked: end the sessions opened with them
         and the unredeemed tickets they minted. One API_KEY event per key."""
+        require_revoking()
         total = CascadeCounts()
-        for key_id in dict.fromkeys(key_ids):
+        key_ids = list(dict.fromkeys(key_ids))
+        for key_id in key_ids:
             counts = await self._end_keys([key_id], actor_id=actor_id, reason=reason)
             await self._record(
                 counts, target_type=RevocationTarget.API_KEY, target_id=key_id, actor_id=actor_id, reason=reason,
             )
             total += counts
+        # Dependents (push devices, sockets) end after the commit (CHT-1625).
+        await credential_events.ended(CredentialsEnded.of(reason, key_ids=key_ids))
         return total
 
     async def revoke_for_principals(
@@ -178,8 +183,11 @@ class RevocationService:
         in as them opened or minted. With `as_holder`, also everything they
         answer for (a human about to be deleted). One IDENTITY event per
         principal."""
+        require_revoking()
         total = CascadeCounts()
-        for user_id in dict.fromkeys(user_ids):
+        user_ids = list(dict.fromkeys(user_ids))
+        all_key_ids: list[str] = []
+        for user_id in user_ids:
             counts = await self._end(
                 actor_id=actor_id, reason=reason, principal_user_id=user_id,
                 starters={"principal_user_id": user_id},
@@ -190,11 +198,18 @@ class RevocationService:
                     starters={"holder_user_id": user_id},
                 )
             keys = await OxydeAPIKey.objects.filter(principal_user_id=user_id).all()
+            all_key_ids += [k.id for k in keys]
             counts += await self._end_keys([k.id for k in keys], actor_id=actor_id, reason=reason)
             await self._record(
                 counts, target_type=RevocationTarget.IDENTITY, target_id=user_id, actor_id=actor_id, reason=reason,
             )
             total += counts
+        # Every key that signs in as them is dead with them (the caller
+        # revoked or is deleting it), so what was registered with one goes
+        # too; and every socket acting as them (CHT-1625).
+        await credential_events.ended(CredentialsEnded.of(
+            reason, key_ids=all_key_ids, user_ids=user_ids, holder_user_ids=user_ids if as_holder else (),
+        ))
         return total
 
     async def revoke_for_member(
@@ -205,16 +220,23 @@ class RevocationService:
         would answer for there, and what the keys the removal revoked had
         opened or minted (design §4.3, S12). One MEMBER event, for all of
         it."""
+        require_revoking()
         reason = REASON_MEMBER_REMOVED
+        revoked_key_ids = list(dict.fromkeys(revoked_key_ids))
         counts = await self._end(
             actor_id=actor_id, reason=reason, team_id=team_id, holder_user_id=user_id,
             starters={"team_id": team_id, "holder_user_id": user_id},
         )
-        counts += await self._end_keys(list(dict.fromkeys(revoked_key_ids)), actor_id=actor_id, reason=reason)
+        counts += await self._end_keys(revoked_key_ids, actor_id=actor_id, reason=reason)
         await self._record(
             counts, target_type=RevocationTarget.MEMBER, target_id=user_id, team_id=team_id,
             actor_id=actor_id, reason=reason,
         )
+        # Even when nothing above was revoked, their sockets on the team's
+        # feed close (CHT-1616).
+        await credential_events.ended(CredentialsEnded.of(
+            reason, key_ids=revoked_key_ids, removed_member=(team_id, user_id),
+        ))
         return counts
 
     async def revoke_for_team(self, team_id: str, *, actor_id: str | None) -> CascadeCounts:
@@ -222,12 +244,14 @@ class RevocationService:
         code or ticket in it. The delete would cascade them away; this
         writes the audit row and moves the epoch first. One BULK event
         whose filter names the team (its `team_id` is SET NULL with it)."""
+        require_revoking()
         reason = REASON_TEAM_DELETED
         counts = await self._end(actor_id=actor_id, reason=reason, team_id=team_id, starters={"team_id": team_id})
         await self._record(
             counts, target_type=RevocationTarget.BULK, target_id=None, team_id=team_id,
             actor_id=actor_id, reason=reason, filter={"team_id": team_id},
         )
+        await credential_events.ended(CredentialsEnded.of(reason, deleted_team_id=team_id))
         return counts
 
     # --- a human's own connections (Connected apps) --------------------------
