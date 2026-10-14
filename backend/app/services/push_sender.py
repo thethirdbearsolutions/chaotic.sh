@@ -44,16 +44,21 @@ as ``app.oauth.cimd`` does: a name that now resolves somewhere else (DNS
 rebinding), or a private endpoint registered while
 ``PUSH_ALLOW_PRIVATE_ENDPOINTS`` was on, is not sent to. Proxy variables
 are ignored; ``SSL_CERT_FILE`` and ``SSL_CERT_DIR`` are honoured, for an
-ntfy behind an internal CA.
+ntfy behind an internal CA. They replace the default bundle, as they do
+for OpenSSL: a file holding only the internal CA makes every public push
+service (ntfy.sh, FCM, Mozilla) fail verification, so it must hold the
+public roots too.
 
 Answers: 2xx records ``last_success_at`` and clears ``failure_count``;
 404 and 410 mean the subscription is gone, so the device is deleted;
 429, 5xx and network errors are retried with backoff, never sooner than
 the ``Retry-After`` the push service asked for, and not at all when it
 asked for longer than ``MAX_RETRY_AFTER_SECONDS``. A delivery that does
-not succeed, for any reason, adds one to ``failure_count``. At most
-``MAX_CONCURRENCY`` requests are in flight per event loop, each limited
-to ``REQUEST_TIMEOUT_SECONDS``.
+not succeed, for any reason, adds one to ``failure_count``; one the push
+service accepted never does, even when recording the success fails. At
+most ``MAX_CONCURRENCY`` requests are in flight per event loop, each
+limited to ``REQUEST_TIMEOUT_SECONDS``, with ``CONNECT_TIMEOUT_SECONDS``
+to connect to each address so a dead one gives way to the next.
 """
 from __future__ import annotations
 
@@ -97,6 +102,9 @@ logger = logging.getLogger(__name__)
 
 MAX_CONCURRENCY = 8
 REQUEST_TIMEOUT_SECONDS = 10.0
+# Per address: one that black-holes traffic (often IPv6) must give way to
+# the next vetted address well inside REQUEST_TIMEOUT_SECONDS (CHT-1632).
+CONNECT_TIMEOUT_SECONDS = 3.0
 # Waits before the second and third attempt of a 429, 5xx or network error.
 RETRY_DELAYS_SECONDS = (2.0, 8.0)
 # A push service that asks for a longer wait is not retried.
@@ -493,7 +501,8 @@ async def _post(device: OxydePushDevice, message: _Message) -> httpx.Response:
     }
     async with httpx.AsyncClient(
         follow_redirects=False, trust_env=False, verify=_verify(),
-        timeout=REQUEST_TIMEOUT_SECONDS, transport=_transport,
+        timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
+        transport=_transport,
     ) as client:
         for index, address in enumerate(addresses):
             pinned = f"[{address}]" if ":" in address else address
@@ -544,23 +553,29 @@ def retry_after(response: httpx.Response | None, *, now: datetime | None = None)
 async def send(device: OxydePushDevice, message: _Message) -> str:
     """POST one message to one device and record the outcome on it.
     Returns ``sent``, ``gone`` (deleted), ``failed`` or ``refused``.
-    Never raises: anything unexpected is logged and counts a failure."""
+    Never raises: anything unexpected is logged and counts a failure,
+    unless the push service had already accepted the message: a failure
+    to record that is logged and leaves ``failure_count`` alone."""
     try:
         outcome = await _attempts(device, message)
     except Exception:
         logger.exception("Push to device %s failed", device.id)
         outcome = "failed"
-    if outcome in ("failed", "refused"):
-        try:
-            await OxydePushDevice.objects.filter(id=device.id, endpoint=device.endpoint).update(
-                failure_count=F("failure_count") + 1,
-            )
-        except Exception:
-            logger.exception("Could not record a push failure on device %s", device.id)
+    rows = OxydePushDevice.objects.filter(id=device.id, endpoint=device.endpoint)
+    try:
+        if outcome == "sent":
+            await rows.update(last_success_at=_now(), failure_count=0)
+        elif outcome == "gone":
+            await rows.delete()
+        else:
+            await rows.update(failure_count=F("failure_count") + 1)
+    except Exception:
+        logger.exception("Could not record push outcome %r on device %s", outcome, device.id)
     return outcome
 
 
 async def _attempts(device: OxydePushDevice, message: _Message) -> str:
+    """Deliver with retries; the outcome, recorded by ``send``."""
     attempts = len(RETRY_DELAYS_SECONDS) + 1
     for attempt in range(attempts):
         response = None
@@ -575,13 +590,9 @@ async def _attempts(device: OxydePushDevice, message: _Message) -> str:
         else:
             status = response.status_code
             if 200 <= status < 300:
-                await OxydePushDevice.objects.filter(id=device.id, endpoint=device.endpoint).update(
-                    last_success_at=_now(), failure_count=0,
-                )
                 return "sent"
             if status in (404, 410):
-                await OxydePushDevice.objects.filter(id=device.id, endpoint=device.endpoint).delete()
-                logger.info("Push subscription of device %s is gone (HTTP %s); deleted it", device.id, status)
+                logger.info("Push subscription of device %s is gone (HTTP %s); deleting it", device.id, status)
                 return "gone"
             if status != 429 and status < 500:
                 logger.warning("Push to device %s refused: HTTP %s", device.id, status)

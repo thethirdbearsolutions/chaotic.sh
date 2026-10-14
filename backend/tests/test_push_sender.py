@@ -668,6 +668,40 @@ class TestAnswers:
         await _assign(test_issue, test_project, test_user, test_user2)
         assert [r.url.host for r in push.requests] == ["2606:4700::6810:84e5", PUBLIC_IP]
 
+    async def test_a_dead_address_gives_way_on_a_short_connect_timeout(
+        self, push, fake_dns, test_user, test_user2, test_issue, test_project,
+    ):
+        """CHT-1632 R1: each address gets CONNECT_TIMEOUT_SECONDS to
+        connect, well inside the request's overall limit, so one that
+        black-holes traffic is abandoned for the next."""
+        assert push_sender.CONNECT_TIMEOUT_SECONDS < push_sender.REQUEST_TIMEOUT_SECONDS / 2
+        fake_dns["ntfy.example.net"] = ["2606:4700::6810:84e5", PUBLIC_IP]
+        push.answers = [httpx.ConnectTimeout("black hole"), 201]
+        await _device(test_user, Phone())
+        await _assign(test_issue, test_project, test_user, test_user2)
+        assert [r.url.host for r in push.requests] == ["2606:4700::6810:84e5", PUBLIC_IP]
+        timeouts = push.requests[0].extensions["timeout"]
+        assert timeouts["connect"] == push_sender.CONNECT_TIMEOUT_SECONDS
+        assert timeouts["read"] == push_sender.REQUEST_TIMEOUT_SECONDS
+
+    async def test_a_sent_message_never_counts_a_failure(self, push, test_user, monkeypatch):
+        """CHT-1632 R4: the push service took it; failing to record that
+        is logged, and failure_count stays as it was."""
+        from . import conftest
+
+        device = await _device(test_user, Phone())
+        await OxydePushDevice.objects.filter(id=device.id).update(failure_count=2)
+        push.answers = [201]
+
+        def broken_clock():
+            raise RuntimeError("cannot record")
+        monkeypatch.setattr(push_sender, "_now", broken_clock)
+        message = push_sender._Message(test_user.id, "entry-id", b"{}", "normal")
+        assert await push_sender.send(device, message) == "sent"
+        assert any("Could not record push outcome 'sent'" in e for e in conftest.push_errors)
+        conftest.push_errors.clear()
+        assert (await OxydePushDevice.objects.get(id=device.id)).failure_count == 2
+
     def test_ca_bundle_from_the_environment(self, monkeypatch):
         import ssl
 

@@ -593,7 +593,13 @@ is deleted; other failures are retried (never sooner than its
 `Retry-After`, and not at all when that asks for more than 30 seconds)
 and counted on the device. Proxy variables are ignored for these
 requests; `SSL_CERT_FILE` and `SSL_CERT_DIR` are honoured, so an ntfy
-behind an internal CA can be trusted by pointing them at that CA.
+behind an internal CA can be trusted by pointing them at that CA. They
+*replace* the default certificate bundle rather than adding to it, as
+they do for OpenSSL: a file that holds only your internal CA makes every
+public push service (ntfy.sh, Google's FCM, Mozilla's autopush) fail
+verification. Point `SSL_CERT_FILE` at a bundle that holds the public
+roots and your CA, for example the system bundle with your CA appended
+(`cat "$(python -m certifi)" internal-ca.pem > push-ca-bundle.pem`).
 
 If your ntfy runs on the same machine or your LAN, set
 `PUSH_ALLOW_PRIVATE_ENDPOINTS=true`. That admits loopback, private
