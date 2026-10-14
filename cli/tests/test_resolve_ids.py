@@ -222,6 +222,16 @@ class TestFetchAllLabels:
         assert fetch_all_labels("team-123") == full
         assert client.get_labels.call_count == 2
 
+    def test_a_server_ignoring_skip_does_not_loop(self):
+        from cli.main import client
+        from cli.commands.shared import fetch_all_labels, LABEL_PAGE_SIZE
+
+        full = [{"id": f"l{i}", "name": f"n{i}"} for i in range(LABEL_PAGE_SIZE)]
+        client.get_labels = MagicMock(return_value=full)
+
+        assert fetch_all_labels("team-123") == full
+        assert client.get_labels.call_count == 2
+
     def test_none_reads_as_no_labels(self):
         from cli.main import client
         from cli.commands.shared import fetch_all_labels

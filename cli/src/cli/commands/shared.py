@@ -453,16 +453,21 @@ def fetch_all_labels(team_id: str) -> list:
 
     No endpoint resolves a label by name, so name lookups need the whole
     list: a label beyond the first page would otherwise read as "not
-    found" (CHT-1351, CHT-1711). Pages until one comes back short.
+    found" (CHT-1351, CHT-1711). Pages until one comes back short, or
+    until a page adds nothing new (a server that ignored ``skip`` would
+    otherwise loop forever).
     """
     labels: list = []
+    seen: set = set()
     while True:
         kwargs = {"limit": LABEL_PAGE_SIZE}
         if labels:
             kwargs["skip"] = len(labels)
         page = _client().get_labels(team_id, **kwargs) or []
-        labels.extend(page)
-        if len(page) < LABEL_PAGE_SIZE:
+        fresh = [label for label in page if label["id"] not in seen]
+        labels.extend(fresh)
+        seen.update(label["id"] for label in fresh)
+        if len(page) < LABEL_PAGE_SIZE or not fresh:
             return labels
 
 
