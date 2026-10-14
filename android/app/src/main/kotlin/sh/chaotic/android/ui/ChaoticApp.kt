@@ -1,48 +1,44 @@
 package sh.chaotic.android.ui
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import sh.chaotic.android.R
-import sh.chaotic.android.ui.theme.ChaoticTheme
+import sh.chaotic.android.ui.home.HomeScreen
+import sh.chaotic.android.ui.signin.SignInScreen
+import sh.chaotic.auth.AuthState
+
+/**
+ * The session decides what is on screen: the sign-in screen while signed
+ * out, the app's navigation graph while signed in. Signing out (here, in
+ * Connected apps, or by a refused refresh) drops the graph and its back
+ * stack with it.
+ */
+@Composable
+fun ChaoticApp(viewModel: AppViewModel = hiltViewModel()) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    when (val current = state) {
+        AuthState.Loading ->
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+
+        is AuthState.SignedOut -> SignInScreen(ended = current.ended)
+
+        is AuthState.SignedIn -> SignedInApp(current)
+    }
+}
 
 @Composable
-fun ChaoticApp() {
+private fun SignedInApp(state: AuthState.SignedIn) {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = Destination.Home) {
-        composable<Destination.Home> { HomeScreen() }
+        composable<Destination.Home> { HomeScreen(baseUrl = state.baseUrl) }
     }
-}
-
-@Composable
-fun HomeScreen(modifier: Modifier = Modifier) {
-    Scaffold(modifier = modifier.fillMaxSize()) { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(stringResource(R.string.home_title), style = MaterialTheme.typography.headlineMedium)
-            Text(stringResource(R.string.home_body), style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Preview
-@Composable
-private fun HomeScreenPreview() {
-    ChaoticTheme { HomeScreen() }
 }

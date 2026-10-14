@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Chaotic</string>
+    <string name="sign_in_title">Sign in to Chaotic</string>
+    <string name="sign_in_server_label">Server address</string>
+    <string name="sign_in_server_placeholder">chaotic.example.com</string>
+    <string name="sign_in_button">Sign in</string>
+    <string name="sign_in_session_ended">This device was signed out by the server. Sign in again to continue.</string>
     <string name="home_title">Chaotic</string>
-    <string name="home_body">Sign-in is coming next.</string>
+    <string name="home_signed_in_as">Signed in as %1$s</string>
+    <string name="home_retry">Try again</string>
+    <string name="home_sign_out">Sign out</string>
 </resources>

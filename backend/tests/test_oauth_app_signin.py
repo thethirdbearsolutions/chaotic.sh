@@ -8,6 +8,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -198,6 +199,17 @@ class TestBuiltinClient:
     async def test_published_metadata_matches_the_constant(self):
         published = json.loads((REPO / "website" / "oauth" / "android-client.json").read_text())
         assert published == ANDROID.metadata()
+
+    async def test_the_android_app_redirects_where_this_server_accepts(self):
+        # The app defines its redirect once, in android/app/build.gradle.kts
+        # (CHT-1610); the manifest and BuildConfig derive from it. A change
+        # on one side (CHT-1649's App Links move) must reach the other, or
+        # every sign-in ends on the server's "redirect_uri is not one this
+        # app registered" page.
+        gradle = (REPO / "android" / "app" / "build.gradle.kts").read_text()
+        found = re.findall(r'^val oauthRedirectUri = "([^"$]+)"$', gradle, re.MULTILINE)
+        assert len(found) == 1, "android/app/build.gradle.kts must define oauthRedirectUri as one literal"
+        assert found[0] in ANDROID.redirect_uris
 
     async def test_a_builtin_row_this_server_does_not_know_cannot_authenticate(self, oauth_on, db):
         await OxydeOAuthClient.objects.create(
