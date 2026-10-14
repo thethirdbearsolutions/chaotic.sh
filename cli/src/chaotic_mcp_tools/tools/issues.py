@@ -266,12 +266,14 @@ async def issue_create(
     estimate: Annotated[int | None, Field(description="Story point estimate.")] = None,
     project: Annotated[
         str | None,
-        Field(description="Project id, key, or name. Defaults to the configured current project.")
+        Field(description="Project id, key, or name. Defaults to the parent's project when `parent` "
+                          "is given, else the configured current project.")
     ] = None,
     team: Annotated[str | None, Field(description=TEAM_FIELD_DESC)] = None,
     parent: Annotated[
         str | None,
-        Field(description="Parent issue identifier (e.g. CHT-12) to create this as a sub-issue.")
+        Field(description="Parent issue identifier (e.g. CHT-12) to create this as a sub-issue, "
+                          "in the parent's project.")
     ] = None,
 ) -> dict:
     """Create a new issue (optionally as a sub-issue of `parent`).
@@ -279,11 +281,9 @@ async def issue_create(
     An `estimate` off the project's declared estimate_scale is stored as
     given and reported back in `warnings` (absent otherwise).
     """
-    project_id, _team_id = await backend.resolve_project(project, team)
     resolved_type = _resolve_issue_type(issue_type)
-    parent_id = None
-    if parent:
-        parent_id = (await backend.get_issue(parent))["id"]
+    parent_row = await backend.get_issue(parent) if parent else None
+    project_id = await _project_for_new_issue(backend, project, team, parent, parent_row)
     created = await backend.create_issue(
         project_id,
         title=title,
@@ -292,9 +292,34 @@ async def issue_create(
         priority=priority,
         issue_type=resolved_type,
         estimate=estimate,
-        parent_id=parent_id,
+        parent_id=parent_row["id"] if parent_row else None,
     )
     return await _with_estimate_warning(backend, created, project_id, estimate)
+
+
+async def _project_for_new_issue(
+    backend: Backend, project: str | None, team: str | None, parent: str | None, parent_row: dict | None,
+) -> str:
+    """The project a new issue goes in (CHT-1706). A sub-issue lives in
+    its parent's project, so with `parent` and no `project` that is the
+    one: no default project, and no question when the key sees several.
+    A `project` naming another project is refused here, by name, rather
+    than by the server's "does not belong to this project"."""
+    parent_project = parent_row.get("project_id") if parent_row else None
+    if not parent_project:
+        # No parent, or (in a test double) a row without its project: the
+        # usual resolution, and the server still checks the parent.
+        return (await backend.resolve_project(project, team))[0]
+    if project is None:
+        return parent_project
+    project_id = (await backend.resolve_project(project, team))[0]
+    if project_id != parent_project:
+        parent_key = parent_row.get("project_key") or parent_project
+        raise ToolInputError(
+            f"Parent {parent} is in project {parent_key}, not {project}: a sub-issue is created in "
+            f"its parent's project. Omit `project`, or pass {parent_key}."
+        )
+    return project_id
 
 
 async def _with_estimate_warning(backend: Backend, result: dict, project_id: str | None, estimate: int | None) -> dict:

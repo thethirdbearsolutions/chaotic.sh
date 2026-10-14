@@ -691,3 +691,42 @@ class TestIssueDescriptionRevisions:
         issue = api_client.create_issue(test_project["id"], "x")
         with pytest.raises(APIError):
             api_client.get_issue_description_revision(issue["id"], 99)
+
+
+class TestIssueCreateParentImpliesProject:
+    """CHT-1706: `chaotic issue create --parent` takes the project from the
+    parent rather than the current project; a --project that names
+    another project is refused before anything is created."""
+
+    @pytest.fixture
+    def parent(self, api_client, test_team, test_project):
+        other = api_client.create_project(team_id=test_team["id"], name="E2E Other", key="OTH")
+        return api_client.create_issue(other["id"], "Parent in the second project")
+
+    def _invoke(self, auth_token, test_team, current_project, args):
+        from unittest.mock import patch
+        from click.testing import CliRunner
+        from cli.main import cli as chaotic_cli
+
+        with patch("cli.main.get_token", return_value=auth_token), \
+             patch("cli.main.get_current_team", return_value=test_team["id"]), \
+             patch("cli.main.get_current_project", return_value=current_project):
+            return CliRunner().invoke(chaotic_cli, ["issue", "create", "Child", *args, "--json"])
+
+    @pytest.mark.parametrize("current", ["none", "other"])
+    def test_parent_alone_creates_in_the_parents_project(
+        self, api_client, auth_token, test_team, test_project, parent, current,
+    ):
+        import json
+        current_project = None if current == "none" else test_project["id"]
+        result = self._invoke(auth_token, test_team, current_project, ["--parent", parent["identifier"]])
+        assert result.exit_code == 0, result.output
+        created = json.loads(result.stdout)
+        assert created["project_id"] == parent["project_id"]
+        assert created["parent_id"] == parent["id"]
+
+    def test_a_different_project_is_refused(self, api_client, auth_token, test_team, test_project, parent):
+        result = self._invoke(auth_token, test_team, None, ["--parent", parent["identifier"], "--project", "E2E"])
+        assert result.exit_code != 0
+        assert parent["identifier"] in result.output and "OTH" in result.output, result.output
+        assert api_client.get_issues(project_id=test_project["id"]) == []

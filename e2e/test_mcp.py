@@ -119,3 +119,42 @@ class TestRemoteMCP:
         )
         payload = _json.loads(resp.json()["result"]["content"][0]["text"])
         assert any(i["title"] == "From e2e MCP" for i in payload["issues"])
+
+
+class TestIssueCreateParentImpliesProject:
+    """CHT-1706: a parent names its project, so issue_create with `parent`
+    and no `project` creates the sub-issue there, even when the key can
+    see more than one project; a `project` that names another is refused."""
+
+    @staticmethod
+    def _call(api_key, arguments):
+        import json as _json
+
+        resp = httpx.post(
+            MCP_URL,
+            json=_rpc("tools/call", {"name": "issue_create", "arguments": arguments}, id=2),
+            headers={**_HEADERS, "Authorization": f"Bearer {api_key}"},
+            timeout=5.0,
+        )
+        return _json.loads(resp.json()["result"]["content"][0]["text"])
+
+    @pytest.fixture
+    def parent(self, api_client, test_team, test_project):
+        other = api_client.create_project(team_id=test_team["id"], name="E2E Other", key="OTH")
+        return api_client.create_issue(other["id"], "Parent in the second project")
+
+    def test_parent_alone_creates_in_the_parents_project(self, api_key, parent):
+        created = self._call(api_key, {"title": "Child", "parent": parent["identifier"]})
+        assert "error" not in created, created
+        assert created["project_id"] == parent["project_id"]
+        assert created["parent_id"] == parent["id"]
+        assert created["identifier"].startswith("OTH-")
+
+    def test_matching_project_is_accepted(self, api_key, parent):
+        created = self._call(api_key, {"title": "Child", "parent": parent["identifier"], "project": "OTH"})
+        assert created["parent_id"] == parent["id"]
+
+    def test_a_different_project_is_refused(self, api_key, parent):
+        result = self._call(api_key, {"title": "Child", "parent": parent["identifier"], "project": "E2E"})
+        message = result["error"]["message"]
+        assert parent["identifier"] in message and "OTH" in message and "E2E" in message, message

@@ -617,6 +617,65 @@ class TestIssueCreate:
         call_kwargs = client.create_issue.call_args[1]
         assert call_kwargs.get('parent_id') == 'parent-id'
 
+    @pytest.mark.parametrize("flag", ["--parent", "--epic"])
+    def test_create_with_parent_uses_the_parents_project(self, cli_runner, flag):
+        """CHT-1706: the parent's project wins over the current one."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "parent-id", "identifier": "OTH-1", "project_id": "other-project", "project_key": "OTH",
+        })
+        client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "OTH-2", "title": "Sub"})
+
+        result = cli_runner.invoke(cli, ['issue', 'create', 'Sub', flag, 'OTH-1'])
+
+        assert result.exit_code == 0, result.output
+        assert client.create_issue.call_args.args[0] == "other-project"
+        assert client.create_issue.call_args.kwargs["parent_id"] == "parent-id"
+
+    def test_create_with_parent_needs_no_current_project(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "parent-id", "identifier": "OTH-1", "project_id": "other-project", "project_key": "OTH",
+        })
+        client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "OTH-2", "title": "Sub"})
+
+        with patch('cli.main.get_current_project', return_value=None):
+            result = cli_runner.invoke(cli, ['issue', 'create', 'Sub', '--parent', 'OTH-1'])
+
+        assert result.exit_code == 0, result.output
+        assert client.create_issue.call_args.args[0] == "other-project"
+
+    def test_create_with_parent_refuses_another_project(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "parent-id", "identifier": "OTH-1", "project_id": "other-project", "project_key": "OTH",
+        })
+        client.create_issue = MagicMock()
+
+        with patch('cli.main.resolve_project_id', return_value='test-project-123'):
+            result = cli_runner.invoke(cli, ['issue', 'create', 'Sub', '--parent', 'OTH-1', '--project', 'CHT'])
+
+        assert result.exit_code != 0
+        assert "OTH-1 is in project OTH, not CHT" in result.output
+        client.create_issue.assert_not_called()
+
+    def test_create_with_parent_accepts_its_own_project(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "parent-id", "identifier": "OTH-1", "project_id": "other-project", "project_key": "OTH",
+        })
+        client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "OTH-2", "title": "Sub"})
+
+        with patch('cli.main.resolve_project_id', return_value='other-project'):
+            result = cli_runner.invoke(cli, ['issue', 'create', 'Sub', '--parent', 'OTH-1', '--project', 'oth'])
+
+        assert result.exit_code == 0, result.output
+        assert client.create_issue.call_args.args[0] == "other-project"
+
     def test_create_with_sprint(self, cli_runner):
         """issue create --sprint current assigns to sprint."""
         from cli.main import cli, client
