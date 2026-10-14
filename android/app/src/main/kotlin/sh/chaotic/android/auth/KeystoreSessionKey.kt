@@ -17,26 +17,39 @@ import javax.crypto.SecretKey
  * signed out).
  */
 internal object KeystoreSessionKey {
-    private const val PROVIDER = "AndroidKeyStore"
-    private const val ALIAS = "sh.chaotic.android.session.v1"
-    private const val KEY_BITS = 256
+    private val key = KeystoreAesKey("sh.chaotic.android.session.v1")
 
+    fun get(): SecretKey = key.get()
+}
+
+/**
+ * The AES-256 key that seals the push endpoint and its keys while they
+ * wait to be registered with the server (CHT-1612), kept the same way.
+ */
+internal object KeystorePushKey {
+    private val key = KeystoreAesKey("sh.chaotic.android.push.v1")
+
+    fun get(): SecretKey = key.get()
+}
+
+/** An AES-256-GCM key under [alias] in the Android Keystore. */
+internal class KeystoreAesKey(private val alias: String) {
     /** The key, created on first use. Every Keystore failure surfaces as a [GeneralSecurityException]. */
     @Synchronized
     fun get(): SecretKey = try {
         val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
-        (keyStore.getKey(ALIAS, null) as? SecretKey) ?: create()
+        (keyStore.getKey(alias, null) as? SecretKey) ?: create()
     } catch (e: IOException) {
         throw GeneralSecurityException("the Android Keystore could not be loaded", e)
     } catch (e: ProviderException) {
         // Some Keystore implementations throw this unchecked exception for an unusable key.
-        throw GeneralSecurityException("the Android Keystore refused the session key", e)
+        throw GeneralSecurityException("the Android Keystore refused the key", e)
     }
 
     private fun create(): SecretKey {
         val spec =
             KeyGenParameterSpec
-                .Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setKeySize(KEY_BITS)
@@ -45,5 +58,10 @@ internal object KeystoreSessionKey {
             .getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER)
             .apply { init(spec) }
             .generateKey()
+    }
+
+    private companion object {
+        const val PROVIDER = "AndroidKeyStore"
+        const val KEY_BITS = 256
     }
 }

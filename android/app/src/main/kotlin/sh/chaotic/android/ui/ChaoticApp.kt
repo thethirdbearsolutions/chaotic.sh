@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import sh.chaotic.android.ui.home.HomeScreen
 import sh.chaotic.android.ui.issue.IssueScreen
+import sh.chaotic.android.ui.push.PushPrompts
 import sh.chaotic.android.ui.signin.SignInScreen
 import sh.chaotic.auth.AuthState
 
@@ -45,4 +46,5 @@ private fun SignedInApp() {
         }
         composable<Destination.Issue> { IssueScreen(onBack = { navController.popBackStack() }) }
     }
+    PushPrompts()
 }

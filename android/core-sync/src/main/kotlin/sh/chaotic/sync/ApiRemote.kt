@@ -75,44 +75,8 @@ class ApiRemote(
             activity.map { it.toActivity() }
         }
 
-    @Suppress("TooGenericExceptionCaught") // see the last catch
-    private suspend fun <T, R> call(request: suspend () -> HttpResponse<T>, map: (T) -> R): Remote<R> = try {
-        val response = request()
-        if (response.success) {
-            Remote.Ok(map(response.body()))
-        } else {
-            Remote.HttpError(
-                status = response.status,
-                errorCode = errorCode(response),
-                retryAfterMillis = WsReconnectPolicy.retryAfterMillis(
-                    response.headers.entries.firstOrNull { it.key.equals("Retry-After", true) }?.value?.firstOrNull(),
-                    nowMillis(),
-                ),
-            )
-        }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: IOException) {
-        Remote.Unreachable(e)
-    } catch (e: SerializationException) {
-        Remote.Unreadable(e)
-    } catch (e: Exception) {
-        // Ktor wraps a body it cannot convert in its own exception types
-        // (NoTransformationFoundException and friends); none may crash a sync.
-        Remote.Unreadable(e)
-    }
-
-    /** `detail.error_code` (HTTPException with a dict detail) or a top-level `error_code`, if the body has one. */
-    @Suppress("TooGenericExceptionCaught", "SwallowedException")
-    private suspend fun errorCode(response: HttpResponse<*>): String? = try {
-        val body = ChaoticApi.json.parseToJsonElement(response.response.bodyAsText()) as? JsonObject
-        val detail = body?.get("detail") as? JsonObject
-        ((detail?.get("error_code") ?: body?.get("error_code")) as? JsonPrimitive)?.takeIf { it.isString }?.content
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        null
-    }
+    private suspend fun <T, R> call(request: suspend () -> HttpResponse<T>, map: (T) -> R): Remote<R> =
+        apiCall(nowMillis, request, map)
 
     private companion object {
         const val PAGE = 100
@@ -120,4 +84,62 @@ class ApiRemote(
         /** A bound on paging, so a misbehaving server cannot keep the loop going. */
         const val MAX_PROJECTS = 1_000
     }
+}
+
+/**
+ * One generated-client call as a [Remote]: the mapped body on 2xx, else
+ * the status with its error code and Retry-After, and never an exception
+ * (other than cancellation).
+ */
+internal suspend fun <T, R> apiCall(
+    nowMillis: () -> Long,
+    request: suspend () -> HttpResponse<T>,
+    map: (T) -> R,
+): Remote<R> = apiResponse(nowMillis, request) { map(it.body()) }
+
+/** [apiCall] for a call whose answer body does not matter: any 2xx is [Remote.Ok]. */
+internal suspend fun <T> apiStatus(nowMillis: () -> Long, request: suspend () -> HttpResponse<T>): Remote<Unit> =
+    apiResponse(nowMillis, request) { }
+
+@Suppress("TooGenericExceptionCaught") // see the last catch
+private suspend fun <T, R> apiResponse(
+    nowMillis: () -> Long,
+    request: suspend () -> HttpResponse<T>,
+    read: suspend (HttpResponse<T>) -> R,
+): Remote<R> = try {
+    val response = request()
+    if (response.success) {
+        Remote.Ok(read(response))
+    } else {
+        Remote.HttpError(
+            status = response.status,
+            errorCode = errorCode(response),
+            retryAfterMillis = WsReconnectPolicy.retryAfterMillis(
+                response.headers.entries.firstOrNull { it.key.equals("Retry-After", true) }?.value?.firstOrNull(),
+                nowMillis(),
+            ),
+        )
+    }
+} catch (e: CancellationException) {
+    throw e
+} catch (e: IOException) {
+    Remote.Unreachable(e)
+} catch (e: SerializationException) {
+    Remote.Unreadable(e)
+} catch (e: Exception) {
+    // Ktor wraps a body it cannot convert in its own exception types
+    // (NoTransformationFoundException and friends); none may crash a sync.
+    Remote.Unreadable(e)
+}
+
+/** `detail.error_code` (HTTPException with a dict detail) or a top-level `error_code`, if the body has one. */
+@Suppress("TooGenericExceptionCaught", "SwallowedException")
+private suspend fun errorCode(response: HttpResponse<*>): String? = try {
+    val body = ChaoticApi.json.parseToJsonElement(response.response.bodyAsText()) as? JsonObject
+    val detail = body?.get("detail") as? JsonObject
+    ((detail?.get("error_code") ?: body?.get("error_code")) as? JsonPrimitive)?.takeIf { it.isString }?.content
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    null
 }

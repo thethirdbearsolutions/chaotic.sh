@@ -55,4 +55,40 @@
     <string name="sprint_limbo">Closing, waiting on rituals: %1$s</string>
     <string name="sprint_limbo_unnamed">Closing, waiting on its rituals.</string>
     <string name="sprint_arrears">Over budget by %1$d points. Tickets cannot move to in progress, done or canceled until this sprint is closed.</string>
+
+    <!-- Push notifications (CHT-1612) -->
+    <string name="push_channel_approvals">Approvals</string>
+    <string name="push_channel_approvals_description">Gates and reviews waiting on you, and gates that were rejected.</string>
+    <string name="push_channel_mentions">Mentions</string>
+    <string name="push_channel_mentions_description">Someone mentioned you.</string>
+    <string name="push_channel_assignments">Assignments</string>
+    <string name="push_channel_assignments_description">An issue was assigned to you.</string>
+    <string name="push_channel_agents">Agents</string>
+    <string name="push_channel_agents_description">What your agents are up to.</string>
+    <string name="push_channel_account">Account</string>
+    <string name="push_channel_account_description">A new device will get your notifications.</string>
+    <string name="push_channel_other">Other</string>
+    <string name="push_channel_other_description">Anything else in your inbox.</string>
+    <string name="push_kind_gate_pending">Gate waiting on you</string>
+    <string name="push_kind_review_requested">Review requested</string>
+    <string name="push_kind_gate_rejected">Gate rejected</string>
+    <string name="push_kind_mention">You were mentioned</string>
+    <string name="push_kind_assignment">Assigned to you</string>
+    <string name="push_kind_agent_status">Agent update</string>
+    <string name="push_kind_push_device_added">New device</string>
+    <string name="push_kind_other">Inbox update</string>
+    <string name="push_title_with_issue">%1$s · %2$s</string>
+    <string name="push_public_text">Something in your inbox needs you.</string>
+    <plurals name="push_summary">
+        <item quantity="one">%d update</item>
+        <item quantity="other">%d updates</item>
+    </plurals>
+    <string name="push_permission_title">Get notified?</string>
+    <string name="push_permission_text">Chaotic can tell you when a gate or a review is waiting on you, or someone mentions or assigns you. Nothing else, and your lock screen settings decide how much shows there.</string>
+    <string name="push_permission_allow">Allow</string>
+    <string name="push_permission_not_now">Not now</string>
+    <string name="push_no_distributor_title">Notifications need a push app</string>
+    <string name="push_no_distributor_text">Chaotic delivers notifications through UnifiedPush, which needs a distributor app such as ntfy. Without one, Chaotic checks your inbox about every 15 minutes instead.</string>
+    <string name="push_no_distributor_get">Get ntfy</string>
+    <string name="push_no_distributor_ok">OK</string>
 </resources>
