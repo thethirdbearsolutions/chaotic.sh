@@ -1,0 +1,12 @@
+# Overrides on top of detekt's default config (buildUponDefaultConfig = true).
+# The ktlint rule set comes from detekt-rules-ktlint-wrapper and reads
+# android/.editorconfig.
+
+naming:
+  FunctionNaming:
+    # Composables are PascalCase by convention.
+    ignoreAnnotated: ['Composable']
+
+complexity:
+  LongMethod:
+    ignoreAnnotated: ['Composable']

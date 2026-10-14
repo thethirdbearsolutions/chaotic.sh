@@ -134,6 +134,10 @@ test-cli:
 # Run CLI tests (alias)
 cli-test: test-cli
 
+# Regenerate the Android app's API client from the backend's OpenAPI schema (CHT-1609)
+android-client:
+    android/scripts/generate-api-client.sh
+
 # Clean up Python cache files
 clean:
     find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

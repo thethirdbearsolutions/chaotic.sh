@@ -125,3 +125,67 @@ jobs:
 
       - name: Rolling backup rotation
         run: bash scripts/sqlite-backup.test.sh
+
+  # The Android app's generated API client must match the backend's current
+  # OpenAPI schema (CHT-1609). A PR that changes a route or schema fails here
+  # until it also commits the output of `just android-client`.
+  android-api-client:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --locked
+
+      - name: Check the committed client is current
+        run: android/scripts/generate-api-client.sh --check
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Also validates gradle-wrapper.jar against Gradle's published checksums.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Static analysis (detekt + ktlint rules)
+        run: ./gradlew detekt
+
+      - name: Android lint
+        run: ./gradlew lint
+
+      - name: Unit tests
+        run: ./gradlew test
+
+      - name: No non-free dependencies in the foss flavor
+        run: ./gradlew :app:checkFossDependencies
+
+      - name: Assemble both debug flavors
+        run: ./gradlew assembleFossDebug assemblePlayDebug

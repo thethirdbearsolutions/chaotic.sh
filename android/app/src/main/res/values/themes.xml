@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The window theme before Compose draws; the app's colours live in Theme.kt. -->
+    <style name="Theme.Chaotic" parent="android:Theme.Material.NoActionBar" />
+</resources>

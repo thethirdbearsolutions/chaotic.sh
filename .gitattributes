@@ -1,2 +1,9 @@
 # Mark generated bundle as generated so it's collapsed in PR diffs
 frontend/static/js/app.bundle.js linguist-generated=true
+
+# Android API client generated from the backend's OpenAPI schema (CHT-1609)
+android/core-api/src/generated/** linguist-generated=true
+android/core-api/openapi/chaotic.json linguist-generated=true
+android/gradlew text eol=lf
+android/gradlew.bat text eol=crlf
+android/gradle/wrapper/gradle-wrapper.jar binary
