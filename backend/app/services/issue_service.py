@@ -285,10 +285,6 @@ _SORT_PYTHON_KEYS = {
 class IssueService:
     """Service for issue operations."""
 
-    # States a ticket sits in when nobody has claimed it: closing from
-    # one of these must pass the claim rituals too (CHT-1672).
-    UNCLAIMED_STATUSES = frozenset({IssueStatus.BACKLOG, IssueStatus.TODO, IssueStatus.CANCELED})
-
     def __init__(self, db=None):
         # db parameter kept for ritual_service interop during migration.
         self.db = db
@@ -941,10 +937,26 @@ class IssueService:
         if issue.status == new_status:
             return
 
+        # A cleared CLAIM intent is a claim by whoever opened it
+        # (CHT-1672): on a ticket nobody else holds, the transition is
+        # theirs, so it assigns them and grants the lease the way their
+        # own issue_start would have. Otherwise the ticket would sit in
+        # in_progress unowned, with no lease to expire, out of the ready
+        # queue. A ticket already assigned to someone else keeps its
+        # assignee, and the transition stays the clearer's.
+        update = IssueUpdate(status=new_status)
+        actor_id = user_id
+        if limbo_type == LimboType.CLAIM and intent_id:
+            intent = await OxydeTicketLimbo.objects.get_or_none(id=intent_id)
+            requester = intent.requested_by_id if intent else None
+            if requester and issue.assignee_id in (None, requester):
+                update = IssueUpdate(status=new_status, assignee_id=requester)
+                actor_id = requester
+
         updated_issue = await self.update(
             issue,
-            IssueUpdate(status=new_status),
-            user_id=user_id,
+            update,
+            user_id=actor_id,
             is_human_request=False,
             skip_ritual_check=True,
             gate_intent_id=intent_id,
@@ -980,6 +992,33 @@ class IssueService:
                 "Failed to broadcast issue update for issue=%s", issue.id,
             )
 
+    async def _claim_rituals_for_new_issue(self, project_id: str, issue_in: IssueCreate) -> list:
+        """The active claim rituals whose conditions match the issue
+        `issue_in` would create, for a create straight into in_progress
+        or done (CHT-1672). Evaluated against the new ticket as it would
+        sit in backlog before being claimed, so `estimate__gte` and the
+        like apply exactly as they would to a later claim of it. A
+        ROUND_ROBIN or percentage group reports every matching member:
+        there is no issue id yet to seed its selection, which is why the
+        refusal tells the caller to create the ticket first.
+        """
+        rituals = await RitualService().list_by_project(project_id)
+        claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM and r.is_active]
+        if not claim_rituals:
+            return []
+        labels = (
+            await OxydeLabel.objects.filter(id__in=issue_in.label_ids).all()
+            if issue_in.label_ids else []
+        )
+        probe = OxydeIssue(
+            project_id=project_id, identifier="NEW", number=0, title=issue_in.title,
+            status=IssueStatus.BACKLOG, priority=issue_in.priority,
+            issue_type=issue_in.issue_type, estimate=issue_in.estimate,
+        )
+        probe.labels = labels
+        ritual_service = RitualService()
+        return [r for r in claim_rituals if ritual_service._evaluate_conditions(r, probe)]
+
     async def _get_next_issue_number_for_key(self, project_key: str) -> int:
         """Get the next issue number for a project key."""
         rows = await execute_raw(
@@ -1008,21 +1047,19 @@ class IssueService:
                         "Estimate is required before claiming issues in this project"
                     )
             if not is_human_request:
-                ritual_service = RitualService()
-                rituals = await ritual_service.list_by_project(project_id)
-                claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM and r.is_active]
+                claim_rituals = await self._claim_rituals_for_new_issue(project_id, issue_in)
                 if claim_rituals:
                     raise ClaimRitualsError("NEW", rituals=claim_rituals)
 
         if issue_in.status == IssueStatus.DONE and not is_human_request:
-            ritual_service = RitualService()
-            rituals = await ritual_service.list_by_project(project_id)
             # Created as done is also a close of a never-claimed ticket,
             # so the claim rituals gate it before the close rituals do
-            # (CHT-1672); same unconditional rule as created-as-in_progress.
-            claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM and r.is_active]
+            # (CHT-1672).
+            claim_rituals = await self._claim_rituals_for_new_issue(project_id, issue_in)
             if claim_rituals:
                 raise UnclaimedCloseRitualsError("NEW", rituals=claim_rituals)
+            ritual_service = RitualService()
+            rituals = await ritual_service.list_by_project(project_id)
             close_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLOSE and r.is_active]
             if close_rituals:
                 raise TicketRitualsError("NEW", rituals=close_rituals)
@@ -1052,6 +1089,7 @@ class IssueService:
                         parent_id=issue_in.parent_id,
                         due_date=issue_in.due_date,
                         completed_at=datetime.now(timezone.utc) if issue_in.status == IssueStatus.DONE else None,
+                        claimed_at=datetime.now(timezone.utc) if issue_in.status == IssueStatus.IN_PROGRESS else None,
                     )
 
                     # Handle labels via junction table
@@ -1196,7 +1234,18 @@ class IssueService:
             new_status = issue_in.status
             old_status = issue.status
 
-            # Check ticket-level rituals FIRST (CHT-145)
+            # Sprint limbo/arrears before the ticket-level rituals
+            # (CHT-1672): a ritual gate refused first would open an
+            # intent whose auto-transition then fails on the same
+            # arrears, clearing the intent with the ticket unmoved; and
+            # the caller should learn first that no attestation helps
+            # until the sprint is closed.
+            blocked_statuses = {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}
+            if new_status in blocked_statuses and old_status != new_status:
+                await self._check_sprint_limbo(issue.project_id)
+                await self._check_sprint_arrears(issue.project_id)
+
+            # Then ticket-level rituals (CHT-145)
             if new_status == IssueStatus.IN_PROGRESS and old_status != IssueStatus.IN_PROGRESS:
                 project = await OxydeProject.objects.get_or_none(id=issue.project_id)
                 if project and project.require_estimate_on_claim and not is_human_request:
@@ -1212,21 +1261,23 @@ class IssueService:
                     ))
 
             if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
-                # Closing a ticket nobody claimed must pass its claim
-                # rituals first, the same way issue_start would
+                # Closing a ticket nobody ever claimed must pass its
+                # claim rituals first, the same way issue_start would
                 # (CHT-1672), or a claim gate is bypassed by never
-                # claiming. Keyed on the ticket's current state, not its
-                # history: once a ticket is in_progress/in_review its
-                # claim gate was passed (or bypassed by a human) on the
-                # way in, and re-checking there would also misfire for a
-                # ROUND_ROBIN claim group, whose selection follows the
-                # pointer once the claim intent has cleared. Not under
-                # skip_ritual_check: the auto-transition firing here is a
-                # cleared CLOSE intent, which this gate already let open.
-                # Canceling is deliberately not gated: it abandons the
-                # work rather than doing it, charges no budget, and close
-                # rituals do not apply to it either.
-                if old_status in self.UNCLAIMED_STATUSES and not skip_ritual_check:
+                # claiming (straight from backlog/todo, or via an ungated
+                # in_review). "Never claimed" is the recorded claim
+                # marker, not the current status: a ticket whose lease
+                # expired back to todo, or that was canceled and
+                # reopened, passed its gate already, and re-checking it
+                # would misfire for a ROUND_ROBIN claim group, whose
+                # selection follows the pointer once the claim intent
+                # has cleared. Not under skip_ritual_check: the
+                # auto-transition firing here is a cleared CLOSE intent,
+                # which this gate already let open. Canceling is
+                # deliberately not gated: it abandons the work rather
+                # than doing it, charges no budget, and close rituals do
+                # not apply to it either.
+                if issue.claimed_at is None and not skip_ritual_check:
                     gated = await self._check_claim_rituals(
                         issue, user_id, is_human_request, error_class=UnclaimedCloseRitualsError,
                     )
@@ -1239,11 +1290,6 @@ class IssueService:
                     rotations.append(await RitualService().prepare_ticket_rotation(
                         issue.project_id, issue.id, RitualTrigger.TICKET_CLOSE, intent_id=gate_intent_id,
                     ))
-
-            blocked_statuses = {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}
-            if new_status in blocked_statuses and old_status != new_status:
-                await self._check_sprint_limbo(issue.project_id)
-                await self._check_sprint_arrears(issue.project_id)
 
             if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
                 update_data["completed_at"] = datetime.now(timezone.utc)
@@ -1263,6 +1309,11 @@ class IssueService:
         # IN_PROGRESS still invalidates a stale lease.
         final_status = update_data.get("status", issue.status)
         final_assignee_id = update_data.get("assignee_id", issue.assignee_id)
+        # The claim marker (CHT-1672): stamped the first time the ticket
+        # enters in_progress, by whatever path (gated claim, intent
+        # auto-transition, human bypass), and never cleared.
+        if final_status == IssueStatus.IN_PROGRESS and issue.claimed_at is None:
+            update_data["claimed_at"] = datetime.now(timezone.utc)
         assignee_touched = "assignee_id" in update_data
         # Captured before the setattr loop below overwrites the instance:
         # the CAS predicate must be the value we *read*, not the value we

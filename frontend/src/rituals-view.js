@@ -141,7 +141,7 @@ export function renderRitualsView() {
         </div>
         <div id="rituals-tab-claim" class="settings-tab-content hidden">
             <div class="settings-section-header">
-                <p class="settings-description">Required when claiming a ticket (moving to in_progress)</p>
+                <p class="settings-description">Required when claiming a ticket (moving to in_progress), and when closing one that was never claimed</p>
                 <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="ticket_claim">+ Create Ritual</button>
             </div>
             <div id="rv-claim-rituals-list" class="rituals-list"></div>

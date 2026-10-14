@@ -20,6 +20,8 @@ Each test is named for the invariant it locks in. Tests are expected to
 fail today; they describe the target behavior of the refactor and ship
 with it.
 """
+from datetime import datetime, timezone
+
 import pytest
 
 from app.enums import (
@@ -391,6 +393,8 @@ class TestExclusiveLockPerIntentType:
             title="Independent intents",
             creator_id=test_user.id,
             status=IssueStatus.IN_PROGRESS,
+            # Created claimed, so the close meets only its close ritual (CHT-1672).
+            claimed_at=datetime.now(timezone.utc),
         )
 
         with pytest.raises(TicketRitualsError):

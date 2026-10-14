@@ -328,7 +328,7 @@ export function renderTicketRituals(issueId) {
     if (hasCloseRituals && hasClaimRituals) {
         warningMessage = '⚠️ Pending rituals (claim before starting, close before completing):';
     } else if (hasClaimRituals) {
-        warningMessage = '⚠️ Complete these rituals before claiming this ticket:';
+        warningMessage = '⚠️ Complete these rituals before claiming this ticket (or closing it unclaimed):';
     } else if (hasCloseRituals) {
         warningMessage = '⚠️ Complete these rituals before closing this ticket:';
     }

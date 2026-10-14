@@ -39,6 +39,11 @@ class OxydeIssue(Model):
     # reassigning the ticket to someone else). See IssueService.update()
     # and IssueService.release_expired_leases().
     lease_expires_at: DateTimeUTC | None = Field(default=None)
+    # When the ticket was first claimed (CHT-1672): set the first time it
+    # enters IN_PROGRESS, by any path, and never cleared. A close (-> done)
+    # of a ticket with no claimed_at must pass its claim rituals, since
+    # nothing else made it pass them. Not exposed in responses.
+    claimed_at: DateTimeUTC | None = Field(default=None)
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     labels: list["OxydeLabel"] = Field(default_factory=list, db_m2m=True, db_through="OxydeIssueLabel")

@@ -6573,6 +6573,32 @@ class TestRoundRobinContinuity:
         assert closed.status == IssueStatus.DONE
         assert await self._pointer(group) == b.id
 
+    async def test_unclaimed_close_advances_claim_and_close_rotations_once_each(
+        self, db, test_project, test_user,
+    ):
+        """One backlog -> done passes both gates, so it records both
+        rotations (CHT-1672): the claim group and the close group each
+        move once, to the member this ticket was gated on."""
+        from app.enums import IssueStatus
+        from app.schemas.issue import IssueCreate, IssueUpdate
+        from app.services.issue_service import IssueService
+
+        claim_group, (ca, _cb) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLAIM, ["ca", "cb"])
+        close_group, (xa, _xb) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLOSE, ["xa", "xb"])
+        rituals, issues = RitualService(), IssueService()
+        issue = await issues.create(IssueCreate(title="u", project_id=test_project.id), test_project, test_user.id)
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, issue.id)] == ["ca"]
+        assert [r.name for r in await rituals.get_pending_ticket_rituals(test_project.id, issue.id)] == ["xa"]
+        await rituals.attest_for_issue(ca, issue.id, test_user.id, note="done")
+        await rituals.attest_for_issue(xa, issue.id, test_user.id, note="done")
+
+        closed = await issues.update(
+            issue, IssueUpdate(status=IssueStatus.DONE), user_id=test_user.id, is_human_request=False,
+        )
+        assert closed.status == IssueStatus.DONE
+        assert await self._pointer(claim_group) == ca.id
+        assert await self._pointer(close_group) == xa.id
+
     async def _issue(self, project, user, title, **fields):
         from app.schemas.issue import IssueCreate
         from app.services.issue_service import IssueService

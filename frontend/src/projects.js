@@ -809,7 +809,7 @@ export async function showCreateProjectRitualModal(triggerType) {
         <select id="ritual-trigger" data-action="toggle-ritual-conditions">
           <option value="every_sprint" ${triggerType === 'every_sprint' ? 'selected' : ''}>Every Sprint - Required when sprint closes</option>
           <option value="ticket_close" ${triggerType === 'ticket_close' ? 'selected' : ''}>Ticket Close - Required when closing a ticket</option>
-          <option value="ticket_claim" ${triggerType === 'ticket_claim' ? 'selected' : ''}>Ticket Claim - Required when claiming a ticket</option>
+          <option value="ticket_claim" ${triggerType === 'ticket_claim' ? 'selected' : ''}>Ticket Claim - Required when claiming a ticket, or closing a never-claimed one</option>
         </select>
         <p class="form-help">When this ritual is required.</p>
       </div>
@@ -1029,7 +1029,7 @@ export async function showEditProjectRitualModal(ritualId) {
         <select id="ritual-trigger" data-action="toggle-ritual-conditions">
           <option value="every_sprint" ${!ritual.trigger || ritual.trigger === 'every_sprint' ? 'selected' : ''}>Every Sprint - Required when sprint closes</option>
           <option value="ticket_close" ${ritual.trigger === 'ticket_close' ? 'selected' : ''}>Ticket Close - Required when closing a ticket</option>
-          <option value="ticket_claim" ${ritual.trigger === 'ticket_claim' ? 'selected' : ''}>Ticket Claim - Required when claiming a ticket</option>
+          <option value="ticket_claim" ${ritual.trigger === 'ticket_claim' ? 'selected' : ''}>Ticket Claim - Required when claiming a ticket, or closing a never-claimed one</option>
         </select>
       </div>
       <div class="form-group">
