@@ -22,6 +22,13 @@ class OxydeSprint(Model):
     activated_at: DateTimeUTC | None = Field(default=None)
     closed_at: DateTimeUTC | None = Field(default=None)
     budget: int | None = Field(default=None)
+    # True once someone sets this sprint's budget by hand (PATCH budget,
+    # CHT-1495). Until then a PLANNED sprint's budget is a copy of the
+    # project's default_sprint_budget and follows it: it is re-read when
+    # the default changes and again when the sprint activates. An explicit
+    # budget is never overwritten. ACTIVE and COMPLETED sprints are never
+    # touched either way.
+    budget_explicit: bool = Field(default=False)
     points_spent: int = Field(default=0)
     limbo: bool = Field(default=False)
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))

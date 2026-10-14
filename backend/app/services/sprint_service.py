@@ -48,6 +48,23 @@ class SprintService:
             return project.default_sprint_budget
         return None
 
+    async def adopt_default_budget(self, project_id: str) -> None:
+        """Give the project's PLANNED sprints its current default budget.
+
+        Called when ``default_sprint_budget`` changes (CHT-1495), so a
+        planned sprint shows the budget it will open with. Sprints whose
+        budget was set by hand (``budget_explicit``) keep it, and ACTIVE
+        and COMPLETED sprints are never touched. Activation re-reads the
+        default as well, so a path that changes the default without
+        calling this still opens the sprint at the right budget.
+        """
+        default_budget = await self._get_project_default_budget(project_id)
+        await OxydeSprint.objects.filter(
+            project_id=project_id,
+            status=SprintStatus.PLANNED,
+            budget_explicit=False,
+        ).update(budget=default_budget)
+
     async def ensure_sprints_exist(self, project_id: str) -> tuple[OxydeSprint, OxydeSprint]:
         """Ensure Current and Next sprints exist for a project. Returns (current, next)."""
         current = await self.get_current_sprint(project_id)
@@ -213,7 +230,15 @@ class SprintService:
         """Activate the next sprint and create a new next."""
         next_sprint.status = SprintStatus.ACTIVE
         next_sprint.activated_at = datetime.now(timezone.utc)
-        await next_sprint.save(update_fields={"status", "activated_at"})
+        update_fields = {"status", "activated_at"}
+        # A planned sprint nobody budgeted by hand takes the project's
+        # default as it is now, not as it was when the sprint was created
+        # (CHT-1495). This is the last moment the budget follows the
+        # default: an active sprint's budget only changes by hand.
+        if not next_sprint.budget_explicit:
+            next_sprint.budget = await self._get_project_default_budget(next_sprint.project_id)
+            update_fields.add("budget")
+        await next_sprint.save(update_fields=update_fields)
 
         # Only create a new PLANNED sprint if one doesn't already exist
         existing_planned = await OxydeSprint.objects.filter(
@@ -223,10 +248,11 @@ class SprintService:
         if existing_planned:
             return
 
-        # Determine budget for new sprint: inherit from previous Next, or fall back to project default
-        new_budget = next_sprint.budget
-        if new_budget is None:
-            new_budget = await self._get_project_default_budget(next_sprint.project_id)
+        # The new Next sprint starts at the project's current default
+        # (CHT-1495). It used to copy the sprint being activated, which was
+        # itself a snapshot of the default from when *it* was created, so a
+        # changed default never reached a rotation.
+        new_budget = await self._get_project_default_budget(next_sprint.project_id)
 
         # Create new Next sprint
         sprint_num = await self._get_next_sprint_number(next_sprint.project_id)
@@ -305,6 +331,11 @@ class SprintService:
         dates would be outputs of two code paths and a NULL on the third.
         """
         update_data = sprint_in.model_dump(exclude_unset=True)
+        # A budget given here, a number or null for "unlimited", is a
+        # deliberate choice: it stops following the project default
+        # (CHT-1495).
+        if "budget" in update_data:
+            update_data["budget_explicit"] = True
         new_status = update_data.get("status")
         if new_status is not None and new_status != sprint.status:
             now = datetime.now(timezone.utc)

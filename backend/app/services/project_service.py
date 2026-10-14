@@ -7,6 +7,7 @@ from oxyde import F, IntegrityError
 from app.db.transactions import atomic
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
+from app.services.sprint_service import SprintService
 from app.oxyde_models.document import (
     OxydeDocument, OxydeDocumentComment, OxydeDocumentActivity,
     OxydeDocumentIssue, OxydeDocumentLabel,
@@ -75,6 +76,10 @@ class ProjectService:
             setattr(project, field, value)
         project.updated_at = datetime.now(timezone.utc)
         await project.save(update_fields=set(update_data.keys()) | {"updated_at"})
+        if "default_sprint_budget" in update_data:
+            # Planned sprints follow the default until budgeted by hand
+            # (CHT-1495).
+            await SprintService().adopt_default_budget(project.id)
         await project.refresh()
         return project
 

@@ -81,6 +81,11 @@ smell — treat the following as invariants:
 - Each completion writes a **`BudgetTransaction`** (the audit trail behind
   `chaotic sprint transactions`) and atomically increments the sprint's
   `points_spent`.
+- **A planned sprint's budget follows the project's `default_sprint_budget`**
+  until someone sets it by hand (`sprints.budget_explicit`): it is re-read
+  when the default changes and again at activation. A budget set by hand is
+  kept, and an active or closed sprint's budget never changes with the
+  default (CHT-1495).
 - **Arrears is a hard stop.** Going over budget blocks moving any ticket into
   `in_progress` / `done` / `canceled` (project-wide, keyed on the active
   sprint — other transitions like `todo`/`in_review` are unaffected) until you
