@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from chaotic_mcp_tools.expected import EXPECTED_TEAM_SCOPED, REGENERATE_SNAPSHOT, toolset_diff
+from chaotic_mcp_tools.expected import EXPECTED_TEAM_SCOPED, REGENERATE_SNAPSHOT, snapshot_toolset, toolset_diff
 from cli.mcp_server import build_server
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "mcp-toolset-schema.json"
@@ -35,8 +35,7 @@ _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "mcp-toolset-schem
 def _live_toolset() -> dict:
     async def _collect():
         mcp = build_server()
-        tools = await mcp.list_tools()
-        return {t.name: {"description": t.description, "inputSchema": t.input_schema} for t in tools}
+        return snapshot_toolset(await mcp.list_tools())
 
     return asyncio.run(_collect())
 
@@ -90,6 +89,29 @@ def test_stdio_toolset_matches_snapshot_exactly():
         "cd cli && uv run python scripts/gen_mcp_toolset_schema.py > "
         "../docs/mcp-toolset-schema.json"
     )
+
+
+def test_descriptions_compare_the_same_on_every_python():
+    """CHT-1698: Python 3.13 strips docstring indentation at compile time.
+    The comparison ignores that and nothing else: the 3.12-style and
+    3.13-style texts of one docstring compare equal, a changed word does not."""
+    from types import SimpleNamespace
+
+    def tool(description):
+        return SimpleNamespace(name="t", description=description, input_schema={})
+
+    indented = "Link a document.\n\n    Linking twice is a no-op.\n    "
+    dedented = "Link a document.\n\nLinking twice is a no-op.\n"
+    reworded = "Link a document.\n\n    Linking twice is an error.\n    "
+    assert snapshot_toolset([tool(indented)]) == snapshot_toolset([tool(dedented)])
+    assert snapshot_toolset([tool(indented)]) != snapshot_toolset([tool(reworded)])
+
+
+def test_a_changed_description_still_fails_the_snapshot():
+    snapshot = json.loads(_SCHEMA_PATH.read_text())["tools"]
+    live = _live_toolset()
+    live["doc_link"]["description"] = live["doc_link"]["description"].replace("no-op", "error")
+    assert live != snapshot
 
 
 def test_snapshot_covers_the_full_toolset():

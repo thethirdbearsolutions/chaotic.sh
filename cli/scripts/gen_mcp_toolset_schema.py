@@ -19,6 +19,7 @@ import asyncio
 import json
 
 from chaotic_mcp_tools import RESPONSE_SHAPES, TEAM_SCOPED_TOOLS
+from chaotic_mcp_tools.expected import snapshot_toolset
 from cli.mcp_server import build_server
 
 
@@ -47,13 +48,10 @@ async def _main() -> None:
             # against this, the same way they assert tool schemas.
             "response_shapes": RESPONSE_SHAPES,
         },
-        "tools": {},
+        # Descriptions cleandoc'd, so the file is the same whichever
+        # Python generates it (CHT-1698).
+        "tools": snapshot_toolset(tools),
     }
-    for tool in tools:
-        out["tools"][tool.name] = {
-            "description": tool.description,
-            "inputSchema": tool.input_schema,
-        }
     print(json.dumps(out, indent=2, sort_keys=True))
 
 

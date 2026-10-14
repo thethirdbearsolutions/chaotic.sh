@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from chaotic_mcp_tools import RESPONSE_SHAPES, TEAM_SCOPED_TOOLS
-from chaotic_mcp_tools.expected import EDIT_THE_PIN, EXPECTED_TEAM_SCOPED, EXPECTED_TOOLS, REGENERATE_SNAPSHOT, toolset_diff
+from chaotic_mcp_tools.expected import EDIT_THE_PIN, EXPECTED_TEAM_SCOPED, EXPECTED_TOOLS, REGENERATE_SNAPSHOT, snapshot_toolset, toolset_diff
 
 from app.mcp_server.tools import ALL_TOOLS, BACKEND, build_server
 
@@ -25,8 +25,7 @@ _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "mcp-toolset-schem
 
 async def _live_toolset() -> dict:
     mcp = build_server()
-    tools = await mcp.list_tools()
-    return {t.name: {"description": t.description, "inputSchema": t.input_schema} for t in tools}
+    return snapshot_toolset(await mcp.list_tools())
 
 
 @pytest.fixture
