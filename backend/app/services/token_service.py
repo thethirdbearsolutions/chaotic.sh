@@ -64,7 +64,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app.config import get_settings
-from oxyde import atomic
+from app.db.transactions import atomic
 
 from app.enums import HolderVia, RevocationTarget, TokenKind
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeRevocationEvent

@@ -3,7 +3,7 @@
 The models are in ``app.oxyde_models.push``. This module validates what
 an app registers, keeps one row per (person, installation) and per
 endpoint, and answers which inbox kinds a person wants pushed. Sending is
-CHT-1605.
+``app.services.push_sender`` (CHT-1605).
 
 Endpoint validation (SSRF: the server POSTs to every endpoint) is in
 ``check_endpoint``. An endpoint must be an https URL of bounded length,
@@ -17,8 +17,9 @@ and reserved addresses, and the cloud metadata addresses
 
 A check at registration cannot stop a host that later resolves somewhere
 else (DNS rebinding), nor a row registered while the setting was on, so
-the sender (CHT-1605) must apply the current policy again to the address
-it connects to, as the CIMD fetch does.
+the sender (``app.services.push_sender``, CHT-1605) applies the current
+policy again (``permitted_addresses``) and connects to the address it
+vetted, as the CIMD fetch does.
 
 The endpoint is stored in a canonical form (``canonical_endpoint``), and
 uniqueness is on that form, so equivalent spellings of one URL are one
@@ -37,9 +38,10 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.asymmetric import ec
-from oxyde import IntegrityError, atomic, execute_raw
+from oxyde import IntegrityError, execute_raw
 
 from app.config import get_settings
+from app.db.transactions import atomic
 from app.enums import InboxEntryKind, PushTransport
 from app.oauth.cimd import is_public_address
 from app.oauth.clients import has_only_uri_characters
@@ -68,6 +70,10 @@ DEFAULT_KIND_ENABLED: dict[InboxEntryKind, bool] = {
     InboxEntryKind.AGENT_STATUS: False,
     InboxEntryKind.PUSH_DEVICE_ADDED: True,
 }
+# Always pushed, whatever was chosen: the new-device notice exists to
+# catch a device registered with a stolen credential, and that credential
+# could otherwise turn the notice off first (PR #357 review, finding 4).
+ALWAYS_PUSHED: frozenset[InboxEntryKind] = frozenset({InboxEntryKind.PUSH_DEVICE_ADDED})
 
 
 class PushRegistrationError(Exception):
@@ -201,12 +207,15 @@ def is_permitted_private_address(address: str) -> bool:
     return not (ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved)
 
 
-async def check_endpoint(endpoint: str) -> str:
-    """Raise PushRegistrationError unless the server may POST to ``endpoint``
-    (module docstring). Returns its canonical form."""
-    canonical, host = canonical_endpoint(endpoint)
+async def permitted_addresses(host: str) -> list[str]:
+    """The addresses ``host`` is, or resolves to, under the current
+    endpoint policy (module docstring); every one of them is permitted.
+    Raises PushRegistrationError when it does not resolve or any address
+    is refused. Registration checks an endpoint with it, and the sender
+    (``app.services.push_sender``) again before every POST, connecting to
+    an address it returned (DNS rebinding; a setting turned off since)."""
     try:
-        literal = ipaddress.ip_address(host)
+        literal = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         literal = None
     addresses = [str(literal)] if literal is not None else await _resolve(host)
@@ -220,6 +229,14 @@ async def check_endpoint(endpoint: str) -> str:
             "the endpoint URL's host is not a public address "
             "(a server admin can allow private ones with PUSH_ALLOW_PRIVATE_ENDPOINTS)"
         )
+    return addresses
+
+
+async def check_endpoint(endpoint: str) -> str:
+    """Raise PushRegistrationError unless the server may POST to ``endpoint``
+    (module docstring). Returns its canonical form."""
+    canonical, host = canonical_endpoint(endpoint)
+    await permitted_addresses(host)
     return canonical
 
 
@@ -440,11 +457,24 @@ class PushService:
             row.kind: row.enabled
             for row in await OxydePushPreference.objects.filter(user_id=user_id).all()
         }
-        return {kind: chosen.get(kind, DEFAULT_KIND_ENABLED.get(kind, True)) for kind in InboxEntryKind}
+        return {
+            kind: kind in ALWAYS_PUSHED or chosen.get(kind, DEFAULT_KIND_ENABLED.get(kind, True))
+            for kind in InboxEntryKind
+        }
 
     async def set_preferences(self, user_id: str, changes: dict[InboxEntryKind, bool]) -> dict[InboxEntryKind, bool]:
         """Record the person's choice for each kind in ``changes``; the
-        others are left as they are. Returns every kind, as preferences()."""
+        others are left as they are. Returns every kind, as preferences().
+        Turning off a kind in ALWAYS_PUSHED is refused (422), and nothing
+        else in the request is applied."""
+        refused = sorted(k.value for k, enabled in changes.items() if k in ALWAYS_PUSHED and not enabled)
+        if refused:
+            raise PushRegistrationError(
+                "push_kind_required",
+                f"{', '.join(refused)} cannot be turned off: it is how you learn of a device "
+                "you did not add",
+            )
+        changes = {k: v for k, v in changes.items() if k not in ALWAYS_PUSHED}
         now = _now()
         async with atomic():
             for kind, enabled in changes.items():
@@ -467,6 +497,8 @@ class PushService:
     async def wants(self, user_id: str, kind: InboxEntryKind) -> bool:
         """Should an inbox entry of ``kind`` be pushed to this person? For
         the sender (CHT-1605)."""
+        if kind in ALWAYS_PUSHED:
+            return True
         row = await OxydePushPreference.objects.filter(user_id=user_id, kind=kind).first()
         return row.enabled if row is not None else DEFAULT_KIND_ENABLED.get(kind, True)
 

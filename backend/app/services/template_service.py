@@ -27,7 +27,8 @@ import json
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 
-from oxyde import IntegrityError, atomic
+from oxyde import IntegrityError
+from app.db.transactions import atomic
 
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.ritual import OxydeRitual

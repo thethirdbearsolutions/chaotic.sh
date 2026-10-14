@@ -6,7 +6,8 @@ import logging
 import re
 import random
 from datetime import datetime, timedelta, timezone
-from oxyde import atomic, execute_raw, IntegrityError
+from oxyde import execute_raw, IntegrityError
+from app.db.transactions import atomic
 from oxyde.db.transaction import get_active_transaction
 
 logger = logging.getLogger(__name__)
@@ -689,7 +690,7 @@ class IssueService:
         for ritual in gate_rituals:
             await inbox_service.notify_gate_pending(
                 ritual=ritual, issue=issue, project=project,
-                requested_by_name=requester_name,
+                requested_by_name=requester_name, requested_by_id=requester_id,
             )
 
     async def _record_intent_activity(

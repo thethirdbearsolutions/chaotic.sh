@@ -108,13 +108,24 @@ class InboxService:
         except Exception:
             logger.exception("Failed to broadcast inbox event %s for entry=%s", event_type, entry.id)
 
-    async def notify_gate_pending(self, *, ritual, issue, project, requested_by_name: str) -> None:
+    async def _push(self, entries: list, actor_id: str | None = None) -> None:
+        """Push the new entries to their recipients' devices (CHT-1605),
+        except to whoever caused them. Never raises."""
+        from app.services.push_sender import push_created
+
+        await push_created(entries, actor_id=actor_id)
+
+    async def notify_gate_pending(
+        self, *, ritual, issue, project, requested_by_name: str, requested_by_id: str | None = None,
+    ) -> None:
         """A GATE ritual just became blocking on `issue`. Fan out an
-        inbox entry + email to every team admin.
+        inbox entry + email to every team admin. The requester, when an
+        admin, gets the entry but no push (CHT-1605).
         """
         admins = await self._team_admins(project.team_id)
         title = f"Gate pending: {ritual.name} on {issue.identifier}"
         email_svc = EmailService()
+        created = []
         for member in admins:
             if await self._has_open_entry(member.user_id, InboxEntryKind.GATE_PENDING, ritual.id, issue.id):
                 continue
@@ -128,6 +139,7 @@ class InboxService:
                 title=title,
                 body=ritual.prompt,
             )
+            created.append(entry)
             await self._broadcast(project.team_id, "created", entry)
 
             recipient_email = getattr(member.user, "email", None) if member.user else None
@@ -136,6 +148,7 @@ class InboxService:
                     to=recipient_email, issue=issue, ritual=ritual,
                     requested_by_name=requested_by_name, email_svc=email_svc,
                 )
+        await self._push(created, requested_by_id)
 
     def _dispatch_gate_pending_email(self, *, to, issue, ritual, requested_by_name, email_svc: EmailService) -> None:
         """Fire-and-forget the gate-pending email; on a configured-but-
@@ -175,13 +188,17 @@ class InboxService:
 
         fire_and_forget(_job())
 
-    async def notify_review_requested(self, *, ritual, issue, project, attested_by_name: str) -> None:
+    async def notify_review_requested(
+        self, *, ritual, issue, project, attested_by_name: str, attested_by_id: str | None = None,
+    ) -> None:
         """A REVIEW ritual was just attested on `issue` and needs admin
         approval. Fan out an inbox entry to every team admin. No email
-        per CHT-1251 (email is gate-requests + invitations only).
+        per CHT-1251 (email is gate-requests + invitations only). The
+        attester, when an admin, gets the entry but no push (CHT-1605).
         """
         admins = await self._team_admins(project.team_id)
         title = f"Review requested: {ritual.name} on {issue.identifier}"
+        created = []
         for member in admins:
             if await self._has_open_entry(member.user_id, InboxEntryKind.REVIEW_REQUESTED, ritual.id, issue.id):
                 continue
@@ -195,7 +212,9 @@ class InboxService:
                 title=title,
                 body=ritual.prompt,
             )
+            created.append(entry)
             await self._broadcast(project.team_id, "created", entry)
+        await self._push(created, attested_by_id)
 
     async def notify_gate_rejected(self, *, ritual, issue, project, rejection) -> None:
         """A human rejected a gate request or review attestation (CHT-1606).
@@ -218,6 +237,7 @@ class InboxService:
         what = "review" if ritual.approval_mode == ApprovalMode.REVIEW else "gate request"
         who = rejecter.name if rejecter else "Someone"
         seen = set()
+        created = []
         for recipient_id in recipients:
             if recipient_id in seen or recipient_id == rejection.rejected_by_id:
                 continue
@@ -235,7 +255,9 @@ class InboxService:
                 title=title,
                 body=rejection.note,
             )
+            created.append(entry)
             await self._broadcast(project.team_id, "created", entry)
+        await self._push(created, rejection.rejected_by_id)
 
     async def notify_assignment(self, *, issue, project, assignee_id: str, assigned_by) -> None:
         """An issue was assigned to `assignee_id`. Skip self-assignment --
@@ -254,6 +276,7 @@ class InboxService:
             body=issue.title,
         )
         await self._broadcast(project.team_id, "created", entry)
+        await self._push([entry], assigned_by.id if assigned_by else None)
 
     async def notify_agent_status(self, *, agent, actor, verb: str) -> None:
         """Someone other than its creator deactivated or reactivated an
@@ -280,6 +303,7 @@ class InboxService:
             body=body,
         )
         await self._broadcast(agent.agent_team_id, "created", entry)
+        await self._push([entry], actor.id)
 
     async def notify_agent_keys_released(
         self, *, recipient_user_id: str, agent, actor, removed, revoked: int, new_owner,
@@ -309,6 +333,7 @@ class InboxService:
             body=" ".join(parts),
         )
         await self._broadcast(agent.agent_team_id, "created", entry)
+        await self._push([entry], actor.id)
 
     async def notify_connection_revoked_for_reuse(self, *, session, principal) -> None:
         """A refresh token of a connection was presented a second time and
@@ -329,6 +354,7 @@ class InboxService:
             ),
         )
         await self._broadcast(session.team_id, "created", entry)
+        await self._push([entry])
 
     async def add_push_device_entry(
         self, *, user_id: str, device, created: bool, credential_label: str,
@@ -368,8 +394,10 @@ class InboxService:
         return entry
 
     async def broadcast_created(self, entry: OxydeInboxEntry) -> None:
-        """Announce an entry written inside a transaction, once it committed."""
+        """Announce an entry written inside a transaction, once it
+        committed, and push it (CHT-1605)."""
         await self._broadcast(entry.team_id, "created", entry)
+        await self._push([entry])
 
     async def notify_mentions(
         self, *, content: str, team_id: str, author, issue=None, document=None,
@@ -410,6 +438,7 @@ class InboxService:
             document_id = document.id
 
         snippet = (content or "")[:280]
+        created = []
         for user_id in matched_user_ids:
             entry = await OxydeInboxEntry.objects.create(
                 recipient_user_id=user_id,
@@ -422,7 +451,9 @@ class InboxService:
                 title=title,
                 body=snippet,
             )
+            created.append(entry)
             await self._broadcast(team_id, "created", entry)
+        await self._push(created, author.id)
 
     async def resolve_gate_or_review(
         self, *, ritual_id: str, issue_id: str, recipient_user_id: str | None = None,
@@ -503,12 +534,22 @@ class InboxService:
         (updated_at): every row it settles changes in that one statement,
         so a sync can never see some of them at an instant and miss the
         rest at the same instant (PR #355 review, finding 1). The first
-        only fills read_at, which moves no cursor."""
+        only fills read_at, which moves no cursor.
+
+        Every resolve path comes through here, so this is where a device
+        is told to withdraw the entry's notification (CHT-1605): the rows
+        about to be settled are read first, and a ``resolved`` push is
+        scheduled for them once the update is in."""
+        settling = await OxydeInboxEntry.objects.filter(**filters, resolved_at=None).all()
         unread = await self._mark_read_for_resolve(filters)
         now = datetime.now(timezone.utc)
         await OxydeInboxEntry.objects.filter(
             **filters, resolved_at=None,
         ).update(resolved_at=now, updated_at=now)
+        if settling:
+            from app.services.push_sender import push_resolved
+
+            await push_resolved(settling)
         return unread
 
     async def _mark_read_for_resolve(self, filters: dict) -> int:

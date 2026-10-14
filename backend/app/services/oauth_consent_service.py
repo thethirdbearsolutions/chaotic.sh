@@ -31,7 +31,8 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import status
-from oxyde import IntegrityError, atomic, execute_raw
+from oxyde import IntegrityError, execute_raw
+from app.db.transactions import atomic
 
 from app.config import get_settings
 from app.enums import AgentKind, HolderVia, OAuthClientRegistration, TokenKind

@@ -146,6 +146,26 @@ class TestAfterCommit:
                     pass
         assert seen == []
 
+    async def test_inside_an_app_atomic_it_waits_for_that_commit(self, seen):
+        """revoking() is app.db.transactions.atomic() (CHT-1605): inside
+        another one it joins it, and its events wait for that commit."""
+        from app.db.transactions import atomic as app_atomic
+
+        async with app_atomic():
+            async with revoking():
+                await credential_events.ended(CredentialsEnded.of("t", key_ids=["a"]))
+            async with revoking():
+                await credential_events.ended(CredentialsEnded.of("t", key_ids=["b"]))
+            assert seen == []
+        assert [sorted(e.key_ids) for e in seen] == [["a"], ["b"]]
+        seen.clear()
+        with pytest.raises(ValueError):
+            async with app_atomic():
+                async with revoking():
+                    await credential_events.ended(CredentialsEnded.of("t", key_ids=["c"]))
+                raise ValueError
+        assert seen == []
+
     async def test_an_empty_event_is_not_dispatched(self, seen):
         async with revoking():
             await credential_events.ended(CredentialsEnded.of("t"))

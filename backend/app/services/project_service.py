@@ -3,7 +3,8 @@
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 from datetime import datetime, timezone
-from oxyde import F, atomic, IntegrityError
+from oxyde import F, IntegrityError
+from app.db.transactions import atomic
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.document import (

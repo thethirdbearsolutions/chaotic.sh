@@ -577,7 +577,23 @@ person chooses that URL, it is checked when registered: it must be
 `https`, at most 2048 characters, carry no credentials or fragment, and
 its host must be, or resolve only to, public addresses. Loopback,
 private, link-local, CGNAT, multicast and reserved addresses are refused,
-including their IPv4-in-IPv6 forms.
+including their IPv4-in-IPv6 forms. The check is made again before
+every notification is sent, against the setting as it is then, and the
+server connects to the address it checked (certificate and SNI still
+for the name, no redirects, no proxy), so a name that later resolves to
+an internal address, or a private endpoint registered while the setting
+below was on, gets nothing.
+
+What a notification carries: the inbox entry's id and kind, the issue
+identifier, the title (up to 200 characters) and the ritual id; never a
+token, a comment body or a description. When the entry is settled
+elsewhere (a gate approved, an issue deleted), a second message tells
+the app to withdraw it. A device whose push service answers 404 or 410
+is deleted; other failures are retried (never sooner than its
+`Retry-After`, and not at all when that asks for more than 30 seconds)
+and counted on the device. Proxy variables are ignored for these
+requests; `SSL_CERT_FILE` and `SSL_CERT_DIR` are honoured, so an ntfy
+behind an internal CA can be trusted by pointing them at that CA.
 
 If your ntfy runs on the same machine or your LAN, set
 `PUSH_ALLOW_PRIVATE_ENDPOINTS=true`. That admits loopback, private
@@ -594,7 +610,10 @@ is derived from `SECRET_KEY`, so push needs no setup, but rotating
 keep it fixed, set `VAPID_PRIVATE_KEY` to a P-256 private key: its 32
 raw bytes in base64url, or a PEM in the environment. Notification
 payloads are encrypted to each device's own keys (RFC 8291), so VAPID
-does not protect their content.
+does not protect their content. Each request names a contact for the
+push service (VAPID's `sub`): `VAPID_SUBJECT` (a `mailto:` or `https:`
+URL) if set, else `APP_BASE_URL` when it is https. Some push services
+refuse requests without one.
 
 A device goes away when you remove it in Settings, when the API key or
 app session it was registered with is revoked, or when its account is
@@ -603,6 +622,8 @@ paused) once the credential it was last registered with expires, a web
 or CLI login included, or once the VAPID key changes, until the app
 registers it again. Each new device, and each new endpoint for an
 existing one, puts a "New device" entry in the person's inbox, so a
-device registered with a stolen login does not go unnoticed. A
+device registered with a stolen login does not go unnoticed. That
+notice is always pushed to the person's devices: its preference cannot
+be turned off, so the stolen credential cannot mute it first. A
 `chaotic system config check` and the server's startup both refuse a
 `VAPID_PRIVATE_KEY` that is not a P-256 key.

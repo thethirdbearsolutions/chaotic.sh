@@ -3,7 +3,8 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from oxyde import IntegrityError, atomic
+from oxyde import IntegrityError
+from app.db.transactions import atomic
 
 logger = logging.getLogger(__name__)
 from app.enums import (
@@ -1136,6 +1137,7 @@ class RitualService:
         await InboxService().notify_review_requested(
             ritual=ritual, issue=issue, project=project,
             attested_by_name=attester.name if attester else "Someone",
+            attested_by_id=attested_by_id,
         )
 
     async def _ensure_and_clear_limbo_for_attest(

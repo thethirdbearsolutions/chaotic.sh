@@ -16,13 +16,17 @@ otherwise, on entry (``require_revoking``), whether or not it then ends
 anything. So a path that would skip the report fails at once instead of
 silently (PR #356 review, 1). ``revoking()`` holds the events reported in
 it and dispatches them once its outermost transaction has committed;
-they are dropped if it rolls back. A nested ``revoking()`` joins the
-outer one; one that exits with an exception (its savepoint rolled back)
-drops what it held. Opening ``revoking()`` inside a plain ``atomic()``
-raises: Oxyde has no on-commit callback, so the hooks could only fire
-before the commit or never. The block belongs to the task that opened
-it: a child task (which inherits ContextVars, but not Oxyde's
-transaction) is outside it.
+they are dropped if it rolls back. The waiting is
+``app.db.transactions.on_commit_collect`` (CHT-1605): ``revoking()``
+is that module's ``atomic()``, so it may also be opened inside another
+``atomic()``, and its events then wait for that one's commit. A nested
+``revoking()`` joins the outer one; one that exits with an exception
+(its savepoint rolled back) drops what it held. Everything ended in one
+transaction is dispatched together, once. Opening ``revoking()`` inside
+Oxyde's own ``atomic()`` raises: that transaction has no on-commit
+callbacks, so the hooks could only fire before the commit or never. The
+block belongs to the task that opened it: a child task (which inherits
+ContextVars, but not Oxyde's transaction) is outside it.
 
 Each hook runs on its own, bounded by ``HOOK_TIMEOUT_SECONDS``: one that
 raises or times out is logged and the others still run, and nothing a
@@ -48,8 +52,10 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
-from oxyde import atomic
 from oxyde.db.transaction import get_active_transaction
+
+from app.db import transactions
+from app.db.transactions import atomic, on_commit_collect
 
 logger = logging.getLogger(__name__)
 
@@ -200,22 +206,27 @@ async def ended(event: CredentialsEnded) -> None:
 @asynccontextmanager
 async def revoking():
     """``atomic()`` for a transaction that may end credentials: the hooks
-    for what it ended run after it commits (module docstring)."""
-    outer = _held()
-    if outer is None and get_active_transaction() is not None:
+    for what it ended run after the outermost transaction commits
+    (module docstring)."""
+    if _held() is None and not transactions.active() and get_active_transaction() is not None:
         raise RuntimeError(
-            "revoking() inside a plain atomic(): the hooks could not wait for "
-            "its commit; open the outer transaction with revoking() (CHT-1625)"
+            "revoking() inside oxyde's plain atomic(): the hooks could not wait for "
+            "its commit; open the outer transaction with app.db.transactions.atomic() (CHT-1625)"
         )
     held = _Held(task=asyncio.current_task())
     token = _pending.set(held)
     try:
         async with atomic():
-            yield
+            try:
+                yield
+            finally:
+                _pending.reset(token)
+                token = None
+            # The block succeeded: what it ended waits for the outermost
+            # commit, and is dropped if that (or a savepoint around this
+            # block) rolls back.
+            for event in held.events:
+                await on_commit_collect("credential_events", event, dispatch)
     finally:
-        _pending.reset(token)
-    # Reached only when the block (and its atomic) exited cleanly.
-    if outer is not None:
-        outer.events.extend(held.events)
-    else:
-        await dispatch(held.events)
+        if token is not None:  # pragma: no cover -- atomic() failed to open
+            _pending.reset(token)

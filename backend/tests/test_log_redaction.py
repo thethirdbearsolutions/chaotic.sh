@@ -56,6 +56,7 @@ class TestSecretFormat:
         ("app/services/registration_service.py", "uuid4"): "suffix of a placeholder agent email",
         ("app/services/issue_service.py", "random"): "shuffles issue order for display",
         ("app/services/ritual_selection.py", "random"): "seeded ritual sampling, deterministic by design",
+        ("app/services/push_sender.py", "urandom"): "RFC 8188 per-message salt for Web Push encryption, sent in clear",
     }
     _TOKEN_CALLS = {"token_hex", "token_urlsafe", "token_bytes", "urandom", "uuid4", "randbits", "SystemRandom"}
 
