@@ -127,22 +127,57 @@ def name_problem(name: str, force: bool = False) -> str | None:
 _LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 
+def _whatwg_ipv6(address: ipaddress.IPv6Address) -> str:
+    """`address` as the WHATWG URL serialiser writes it, which is what
+    pydantic's URL type (and so the server's issuer check) and browsers
+    print: eight hex pieces, the first longest run of two or more zero
+    pieces written "::", never an embedded dotted IPv4 part. Python's
+    `.compressed` is not this: recent point releases write an IPv4-mapped
+    address in dotted form (CHT-1710)."""
+    packed = address.packed  # not .exploded: that too is dotted for a mapped address
+    pieces = [int.from_bytes(packed[i:i + 2], "big") for i in range(0, 16, 2)]
+    start, length = -1, 1  # a run must be longer than 1 to be compressed
+    i = 0
+    while i < len(pieces):
+        if pieces[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(pieces) and not pieces[j]:
+            j += 1
+        if j - i > length:  # strictly longer: the first longest run wins
+            start, length = i, j - i
+        i = j
+    if start < 0:
+        return ":".join(f"{p:x}" for p in pieces)
+    head = ":".join(f"{p:x}" for p in pieces[:start])
+    tail = ":".join(f"{p:x}" for p in pieces[start + length:])
+    return f"{head}::{tail}"
+
+
 def _canonical_host(host: str) -> str | None:
     """`host` as the server's URL parser would write it, if this CLI can
     vouch that it would leave it exactly as it is; else None. Stricter
     than the server on purpose: an origin accepted here must also pass
     app.config.oauth_issuer_problem, which compares against pydantic's
-    normalised form (PR #349 review, finding 3)."""
+    normalised form (PR #349 review, finding 3).
+
+    An IPv6 host is vouched for only in the WHATWG form, the one browsers
+    put in an Origin header and pydantic writes. The server keeps a CORS
+    entry's IPv6 text as written (app.config.normalise_cors_origin, PR
+    #390), so any other spelling would be stored and never match: this
+    refusal is the safety net (CHT-1710)."""
+    assert host == host.lower(), "the caller refuses upper case first"
     if host.startswith("["):
         if not host.endswith("]"):
             return None
-        if "." in host:
-            return None  # an embedded IPv4 form: the server writes it in hex
         try:
             address = ipaddress.IPv6Address(host[1:-1])
         except ValueError:
             return None
-        return f"[{address.compressed}]"
+        if address.scope_id is not None:
+            return None  # a zone id ("%eth0") is no part of a URL host
+        return f"[{_whatwg_ipv6(address)}]"
     labels = host.split(".")
     last = labels[-1]
     if last.isdigit() or last.startswith("0x"):

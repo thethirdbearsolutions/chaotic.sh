@@ -725,6 +725,55 @@ class TestCanonicalOrigins:
         assert ss.normalize("APP_BASE_URL", raw) == (raw, None)
 
 
+class TestIPv6Origins:
+    """CHT-1710: an IPv6 host is accepted only in the WHATWG form, the one
+    a browser sends and pydantic writes, never Python's dotted
+    IPv4-mapped form; any other spelling is refused, naming that form.
+    For CORS_ORIGINS this is the safety net: the server keeps IPv6 text
+    as written (PR #390), so another spelling would never match."""
+
+    @pytest.mark.parametrize("name", ["CORS_ORIGINS", "APP_BASE_URL"])
+    @pytest.mark.parametrize("raw", [
+        "http://[::ffff:7f00:1]:6274",  # what a browser sends
+        "https://[2001:db8::1]:8443", "http://[::1]", "http://[1:0:0:2::3]", "http://[1:0:2:3:4:5:6:7]",
+    ])
+    def test_whatwg_form_is_accepted(self, name, raw):
+        assert ss.normalize(name, raw) == (raw, None)
+
+    @pytest.mark.parametrize("name", ["CORS_ORIGINS", "APP_BASE_URL"])
+    def test_ipv6_must_be_lower_case(self, name):
+        problem = ss.normalize(name, "http://[::FFFF:7f00:1]:6274")[1]
+        assert problem.endswith("lower case: 'http://[::ffff:7f00:1]:6274'"), problem
+
+    @pytest.mark.parametrize("name", ["CORS_ORIGINS", "APP_BASE_URL"])
+    @pytest.mark.parametrize("raw", ["http://[::1%eth0]", "http://[::g]", "http://[1:2:3]"])
+    def test_not_an_ipv6_address_is_refused(self, name, raw):
+        assert ss.normalize(name, raw)[1]
+
+    @pytest.mark.parametrize("name", ["CORS_ORIGINS", "APP_BASE_URL"])
+    @pytest.mark.parametrize("raw,canonical", [
+        ("http://[::ffff:127.0.0.1]:6274", "http://[::ffff:7f00:1]:6274"),
+        ("http://[::1.2.3.4]", "http://[::102:304]"),
+        ("http://[0:0::1]", "http://[::1]"),
+        ("https://[2001:0db8::1]:8443", "https://[2001:db8::1]:8443"),
+        ("http://[1:0:0:2:0:0:0:3]", "http://[1:0:0:2::3]"),  # the longest run
+        ("http://[1:0:0:2:0:0:3:4]", "http://[1::2:0:0:3:4]"),  # the first of equal runs
+    ])
+    def test_other_spellings_are_refused_naming_the_whatwg_form(self, name, raw, canonical):
+        problem = ss.normalize(name, raw)[1]
+        assert problem.endswith(f"use {canonical!r}"), problem
+        assert ss.normalize(name, canonical) == (canonical, None)
+
+    @pytest.mark.parametrize("address,written", [
+        ("::ffff:7f00:1", "::ffff:7f00:1"), ("::", "::"), ("::1", "::1"), ("1::", "1::"),
+        ("1:0:2:3:4:5:6:7", "1:0:2:3:4:5:6:7"),  # a lone zero piece is not compressed
+        ("2001:db8:0:0:1:0:0:1", "2001:db8::1:0:0:1"),
+    ])
+    def test_whatwg_serialisation(self, address, written):
+        import ipaddress
+        assert ss._whatwg_ipv6(ipaddress.IPv6Address(address)) == written
+
+
 @pytest.mark.parametrize("line,value", [
     ("A=b # comment", "b"),
     ("A=b#not-a-comment", "b#not-a-comment"),
