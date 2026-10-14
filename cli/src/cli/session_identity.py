@@ -517,9 +517,11 @@ def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: s
     # may be a team the person has left: the memo is forgotten and the
     # teams are listed again.
     configured_team = _config.get_current_team()
-    if configured_team and configured_team == _config.process_team(api_url, credential):
+    if (configured_team and configured_team == _config.process_team(api_url, credential)
+            and _config.configured_team() != configured_team):
         # The stdio MCP server's default: the key's only team, a lookup
-        # result like the memo, not a team chosen with `team use`.
+        # result like the memo. A team chosen with `team use` is never
+        # one, even when it is the same team (re-review L1).
         configured_team = None
     if failed_key and not configured_team:
         _config.forget_only_team(api_url, credential)
@@ -577,10 +579,13 @@ def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: s
             slot_team = None if me.get("is_agent") else team_id
             try:
                 new_record = _register(ref, credential, api_url, slot_team, me)
-            except SessionIdentityError:
-                if slot_team and not configured_team:
-                    # Refused in a team that was not chosen by hand: neither
-                    # the session nor this process should go back to it.
+            except SessionIdentityError as exc:
+                definitive = exc.status_code is not None and 400 <= exc.status_code < 500 and exc.status_code != 429
+                if definitive and slot_team and not configured_team:
+                    # Refused (a 4xx; not a 5xx, a 429 or a network error,
+                    # which say nothing about the team) in a team that was
+                    # not chosen by hand: neither the session nor this
+                    # process should go back to it.
                     hint_path.unlink(missing_ok=True)
                     _config.forget_only_team(api_url, credential)
                 raise

@@ -377,6 +377,12 @@ def known_only_team(api_url: str, credential: str) -> str | None:
     return team["id"] if team else None
 
 
+def configured_team() -> str | None:
+    """The current team chosen by configuration (`chaotic team use`, a
+    repository .chaotic), never the process default."""
+    return load_config().get("current_team")
+
+
 def process_team(api_url: str, credential: str) -> str | None:
     """The team set_process_team chose for (api_url, credential), if any:
     a lookup result, unlike a configured current_team."""

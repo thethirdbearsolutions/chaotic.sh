@@ -871,6 +871,38 @@ class TestMcpDefaultTeam:
         assert teams_server.refused == []
         assert await RestBackend().resolve_team(None) == "team-new"
 
+    async def test_a_team_chosen_with_team_use_is_kept_even_when_it_is_the_mcp_default(
+            self, auto, teams_server, monkeypatch):
+        """Re-review L1: `chaotic mcp` defaulted to T, then the person ran
+        `chaotic team use T` and later joined U. After a 401 the chosen
+        team still wins; nothing asks which team to use."""
+        from cli.mcp_backend import RestBackend
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        assert await RestBackend().resolve_team(None) == "team-only"
+        await RestBackend().get_issue("DEMO-1")
+        monkeypatch.setattr(cli_config, "load_config", lambda: {"current_team": "team-only"})
+        teams_server.teams.append({"id": "team-2", "name": "Beta", "key": "BET"})
+        teams_server.revoke_all()
+        before = len(teams_server.requests)
+
+        assert (await RestBackend().get_issue("DEMO-2"))["as"] == "sess-1-team-only"
+        assert "/teams" not in [r[1] for r in teams_server.requests[before:]]
+        assert teams_server.registrations[-1]["team_id"] == "team-only"
+
+    @pytest.mark.parametrize("status", [429, 500, 503])
+    def test_a_transient_registration_failure_keeps_the_team(self, auto, teams_server, status):
+        """Re-review N1: only a definitive refusal says the team is wrong."""
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        fp = si.fingerprint(REGISTRAR_KEY)
+        Client()._request("GET", "/issues")
+        si.cache_path(REF, API, fp, "team-only").unlink()
+        teams_server.register_status = status
+
+        with pytest.raises(si.SessionIdentityError):
+            si.session_key(REF, REGISTRAR_KEY, API)
+        assert si._hinted_team(REF, API, fp) == "team-only"
+        assert cli_config.known_only_team(API, REGISTRAR_KEY) == "team-only"
+
     def test_a_refused_registration_forgets_the_team(self, auto, teams_server):
         """The registration in a looked-up team is refused (the person was
         removed between the list and the registration): neither the hint
