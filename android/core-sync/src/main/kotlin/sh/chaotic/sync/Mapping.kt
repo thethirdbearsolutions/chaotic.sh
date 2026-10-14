@@ -1,5 +1,8 @@
+@file:Suppress("TooManyFunctions") // one mapping per generated model the app reads
+
 package sh.chaotic.sync
 
+import sh.chaotic.api.models.InboxEntryAction
 import sh.chaotic.api.models.InboxEntryResponse
 import sh.chaotic.api.models.InboxEntryState
 import sh.chaotic.api.models.InboxSyncResponse
@@ -63,7 +66,20 @@ internal fun InboxEntryResponse.toInboxEntry() = InboxEntry(
     createdAtMillis = Timestamps.millis(createdAt),
     updatedAtMicros = Timestamps.micros(updatedAt),
     read = readAt != null,
+    actions = actions.orEmpty().mapNotNull { it.toInboxAction() },
 )
+
+/**
+ * An action the app can send: a kind it knows, a POST, and a path on this
+ * server's API. Anything else is left out rather than offered as a
+ * button that would send the person's credentials somewhere unexpected.
+ */
+internal fun InboxEntryAction.toInboxAction(): InboxAction? {
+    val kind = kind.value.wire
+    val post = method == null || method == InboxEntryAction.Method.POST
+    if (kind == UNKNOWN_VALUE || !post || !WritePaths.isApiPath(path)) return null
+    return InboxAction(kind = kind, path = path, note = note?.value?.wire ?: InboxAction.NOTE_NONE)
+}
 
 internal fun TeamResponse.toTeam() = Team(id = id, name = name, key = key)
 

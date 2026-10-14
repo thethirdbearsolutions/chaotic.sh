@@ -13,6 +13,8 @@ class InMemoryCacheStore : CacheStore {
     private val teams = linkedMapOf<String, Team>()
     private val issues = linkedMapOf<String, IssueDetail>()
     private val sprintCards = linkedMapOf<String, SprintCard>()
+    private val writes = linkedMapOf<String, PendingWrite>()
+    private val refused = linkedMapOf<String, WriteRefusal>()
 
     /** How many times [applyInbox] ran, for tests that check a sync wrote nothing. */
     var inboxWrites: Int = 0
@@ -74,6 +76,62 @@ class InMemoryCacheStore : CacheStore {
         cards.forEach { sprintCards[it.projectId] = it }
     }
 
+    override suspend fun queueWrite(write: PendingWrite) = mutex.withLock {
+        writes.remove(write.key)
+        writes[write.key] = write
+    }
+
+    override suspend fun pendingWrites(): List<PendingWrite> = mutex.withLock { writes.values.toList() }
+
+    override suspend fun removeWrite(key: String): Boolean = mutex.withLock { writes.remove(key) != null }
+
+    override suspend fun completeWrite(key: String, effect: WriteEffect?) = mutex.withLock {
+        writes.remove(key)
+        if (effect != null) applyLocked(effect)
+    }
+
+    @Suppress("ReturnCount") // an effect on something not cached is a no-op
+    private fun applyLocked(effect: WriteEffect) {
+        when (effect) {
+            is WriteEffect.DropEntry -> {
+                inbox.remove(effect.entryId)
+            }
+
+            is WriteEffect.MarkRead -> {
+                val entry = inbox[effect.entryId] ?: return
+                inbox[entry.id] = entry.copy(read = true)
+            }
+
+            is WriteEffect.AddComment -> {
+                val detail = issues[effect.comment.issueId] ?: return
+                val comments = detail.comments.filter { it.id != effect.comment.id } + effect.comment
+                issues[detail.issue.id] = detail.copy(comments = comments.sortedBy { it.createdAtMillis })
+            }
+
+            is WriteEffect.UpdateIssue -> {
+                val detail = issues[effect.issue.id] ?: return
+                val issue = effect.issue.copy(
+                    teamId = detail.issue.teamId,
+                    openedAtMillis = detail.issue.openedAtMillis,
+                )
+                issues[issue.id] = detail.copy(issue = issue)
+            }
+        }
+    }
+
+    override suspend fun refuseWrite(refusal: WriteRefusal) = mutex.withLock {
+        writes.remove(refusal.key)
+        refused[refusal.key] = refusal
+        while (refused.size > WriteQueue.MAX_REFUSALS) refused.remove(refused.keys.first())
+    }
+
+    override suspend fun refusals(): List<WriteRefusal> = mutex.withLock { refused.values.toList() }
+
+    override suspend fun dismissRefusal(key: String) = mutex.withLock {
+        refused.remove(key)
+        Unit
+    }
+
     override suspend fun owner(): String? = mutex.withLock { owner }
 
     override suspend fun claim(owner: String) = mutex.withLock {
@@ -90,6 +148,8 @@ class InMemoryCacheStore : CacheStore {
         teams.clear()
         issues.clear()
         sprintCards.clear()
+        writes.clear()
+        refused.clear()
     }
 
     override suspend fun snapshot(): CacheSnapshot = mutex.withLock {
@@ -99,6 +159,8 @@ class InMemoryCacheStore : CacheStore {
             teams = teams.values.sortedBy { it.id },
             issues = issues.values.sortedBy { it.issue.id },
             sprintCards = sprintCards.values.sortedBy { it.projectId },
+            writes = writes.values.toList(),
+            refusals = refused.values.toList(),
         )
     }
 

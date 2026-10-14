@@ -29,6 +29,10 @@ data class CacheSnapshot(
     val teams: List<Team>,
     val issues: List<IssueDetail>,
     val sprintCards: List<SprintCard>,
+    /** The write queue, in the order it is sent. */
+    val writes: List<PendingWrite> = emptyList(),
+    /** Refused writes not yet dismissed, oldest first. */
+    val refusals: List<WriteRefusal> = emptyList(),
 )
 
 /**
@@ -61,6 +65,30 @@ interface CacheStore {
     /** Replace [teamId]'s sprint cards with [cards]. */
     suspend fun replaceSprintCards(teamId: String, cards: List<SprintCard>)
 
+    // The write queue (CHT-1613). It lives in the cache, so it belongs to
+    // the same person: a claim by someone else and a sign-out empty it
+    // with everything else, and nothing queued is ever sent as anyone else.
+
+    /** Add [write] at the end of the queue. */
+    suspend fun queueWrite(write: PendingWrite)
+
+    /** The queue, in the order the writes were queued. */
+    suspend fun pendingWrites(): List<PendingWrite>
+
+    /** Drop [key] from the queue (an undo); false when it is not there. */
+    suspend fun removeWrite(key: String): Boolean
+
+    /** The server took [key]: drop it from the queue and apply [effect], if any. */
+    suspend fun completeWrite(key: String, effect: WriteEffect?)
+
+    /** The server refused the write [refusal] names: drop it from the queue and keep the refusal to show. */
+    suspend fun refuseWrite(refusal: WriteRefusal)
+
+    /** Refusals not yet dismissed, oldest first. */
+    suspend fun refusals(): List<WriteRefusal>
+
+    suspend fun dismissRefusal(key: String)
+
     /** Who the cache belongs to (see [CacheSession]); null when nobody claimed it since it was last emptied. */
     suspend fun owner(): String?
 
@@ -70,6 +98,9 @@ interface CacheStore {
     /** Sign-out: nothing of this account may outlive it, the owner included. */
     suspend fun clearAll()
 
-    /** Inbox ordered by id, teams by id, issues by id (comments and activity oldest first), cards by project id. */
+    /**
+     * Inbox ordered by id, teams by id, issues by id (comments and activity
+     * oldest first), cards by project id, writes and refusals in order.
+     */
     suspend fun snapshot(): CacheSnapshot
 }

@@ -5,15 +5,22 @@ import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ApiRemoteTest {
     private val requests = mutableListOf<HttpRequestData>()
@@ -212,5 +219,134 @@ class ApiRemoteTest {
 
         assertEquals(Remote.Ok(LimboInfo(true, listOf("retro"))), api.limbo("p1"))
         assertEquals("p1", requests.single().url.parameters["project_id"])
+    }
+
+    @Test
+    fun entriesCarryTheActionsTheAppCanSendAndNoOthers() = runTest {
+        val actions = """,
+            "actions": [
+              {"kind": "approve", "method": "POST", "path": "/api/rituals/r1/complete-issue/i1", "note": "optional"},
+              {"kind": "reject", "path": "/api/rituals/r1/reject-issue/i1", "note": "required"},
+              {"kind": "mark_read", "path": "/api/inbox/e1/read"},
+              {"kind": "snooze", "path": "/api/inbox/e1/snooze"},
+              {"kind": "archive", "path": "https://elsewhere.example/api/inbox/e1/archive"},
+              {"kind": "archive", "method": "DELETE", "path": "/api/inbox/e1"}
+            ]
+        """
+        val api = remote { json("""{"entries": [${syncEntry("e1", "open", actions)}], "team_ids": ["t1"]}""") }
+
+        val entry = assertIs<Remote.Ok<SyncPage>>(api.syncInbox(null, 50)).value.entries.single().entry
+
+        assertEquals(
+            listOf(
+                InboxAction("approve", "/api/rituals/r1/complete-issue/i1", "optional"),
+                InboxAction("reject", "/api/rituals/r1/reject-issue/i1", "required"),
+                InboxAction("mark_read", "/api/inbox/e1/read", "none"),
+            ),
+            entry.actions,
+        )
+    }
+
+    @Test
+    fun anActionIsPostedToItsPathWithItsKey() = runTest {
+        val api = remote { json("""{"id": "x"}""") }
+        val body = JsonObject(mapOf("note" to JsonPrimitive("Needs tests")))
+
+        assertEquals(Remote.Ok(Unit), api.act("/api/rituals/r1/reject-issue/i1", body, "key-1"))
+
+        val request = requests.single()
+        assertEquals(HttpMethod.Post, request.method)
+        assertEquals("https://chaotic.example/api/rituals/r1/reject-issue/i1", request.url.toString())
+        assertEquals("key-1", request.headers["Idempotency-Key"])
+        assertEquals(ContentType.Application.Json, request.body.contentType?.withoutParameters())
+        assertEquals("""{"note":"Needs tests"}""", (request.body as TextContent).text)
+    }
+
+    @Test
+    fun aPathOffThisServersApiIsNeverSent() = runTest {
+        val api = remote { json("{}") }
+
+        val answer = api.act("https://elsewhere.example/steal", JsonObject(emptyMap()), "k")
+
+        assertEquals(400, assertIs<Remote.HttpError>(answer).status)
+        assertTrue(requests.isEmpty())
+    }
+
+    @Test
+    fun anIssueUpdateIsAPatchAndReadsTheIssueBack() = runTest {
+        val api = remote {
+            json(
+                """
+                {"id": "i1", "project_id": "p1", "identifier": "CHT-9", "number": 9, "title": "T",
+                 "status": "done", "priority": "urgent", "issue_type": "bug", "creator_id": "u1",
+                 "created_at": "2026-10-14T00:00:00Z", "updated_at": "2026-10-14T00:00:00Z"}
+                """.trimIndent(),
+            )
+        }
+
+        val issue = api.updateIssue("i1", "t1", JsonObject(mapOf("assignee_id" to JsonNull)), "k2")
+
+        assertEquals("done", assertIs<Remote.Ok<Issue?>>(issue).value?.status)
+        assertEquals("t1", issue.value?.teamId)
+        val request = requests.single()
+        assertEquals(HttpMethod.Patch, request.method)
+        assertEquals("/api/issues/i1", request.url.encodedPath)
+        assertEquals("""{"assignee_id":null}""", (request.body as TextContent).text)
+        assertEquals("k2", request.headers["Idempotency-Key"])
+    }
+
+    @Test
+    fun aTakenWriteWhoseAnswerCannotBeReadIsStillTaken() = runTest {
+        val api = remote { json("""{"not": "a comment"}""", HttpStatusCode.Created) }
+
+        assertEquals(Remote.Ok(null), api.addComment("i1", "hello", "k3"))
+        assertEquals("/api/issues/i1/comments", requests.single().url.encodedPath)
+        assertEquals("""{"content":"hello"}""", (requests.single().body as TextContent).text)
+    }
+
+    @Test
+    fun aRefusedWriteCarriesTheServersReason() = runTest {
+        val bodies = ArrayDeque(
+            listOf(
+                """{"detail": {"error_code": "ritual_already_resolved", "message": "Already approved by Grace."}}""",
+                """{"detail": "Only admins can reject attestations"}""",
+                """{"detail": [{"loc": ["body", "note"], "msg": "Field required"}]}""",
+                "<html>proxy error</html>",
+            ),
+        )
+        val statuses = ArrayDeque(listOf(409, 403, 422, 409))
+        val api = remote { json(bodies.removeFirst(), HttpStatusCode.fromValue(statuses.removeFirst())) }
+
+        val answers = List(4) { api.act("/api/inbox/e1/archive", JsonObject(emptyMap()), "k$it") }
+
+        assertEquals(
+            listOf(
+                Remote.HttpError(409, "ritual_already_resolved", message = "Already approved by Grace."),
+                Remote.HttpError(403, message = "Only admins can reject attestations"),
+                Remote.HttpError(422, message = "Field required"),
+                Remote.HttpError(409),
+            ),
+            answers,
+        )
+    }
+
+    @Test
+    fun membersAreNamedByWhatTheServerHas() = runTest {
+        val api = remote {
+            json(
+                """
+                [{"id": "m1", "user_id": "u1", "team_id": "t1", "role": "admin", "joined_at": "2026-10-14T00:00:00Z",
+                  "user_name": "Ada", "user_email": "ada@example.com"},
+                 {"id": "m2", "user_id": "u2", "team_id": "t1", "role": "member", "joined_at": "2026-10-14T00:00:00Z",
+                  "user_email": "grace@example.com"}]
+                """.trimIndent(),
+            )
+        }
+
+        assertEquals(
+            Remote.Ok(listOf(Principal("u1", "Ada"), Principal("u2", "grace@example.com"))),
+            api.members("t1"),
+        )
+        assertEquals("/api/teams/t1/members", requests.single().url.encodedPath)
     }
 }

@@ -15,6 +15,22 @@ data class Principal(val id: String, val name: String, val isAgent: Boolean = fa
 
 data class Team(val id: String, val name: String, val key: String)
 
+/**
+ * One call the server says the recipient can make on an inbox entry
+ * (CHT-1607), so the app never builds these paths itself. [kind] and
+ * [note] are the server's wire values (`approve`, `reject`, `mark_read`,
+ * `archive`; `none`, `optional`, `required`).
+ */
+data class InboxAction(val kind: String, val path: String, val note: String = NOTE_NONE) {
+    companion object {
+        const val APPROVE = "approve"
+        const val REJECT = "reject"
+        const val MARK_READ = "mark_read"
+        const val ARCHIVE = "archive"
+        const val NOTE_NONE = "none"
+    }
+}
+
 /** One open inbox entry. Resolved and archived ones are never stored: they are tombstones. */
 data class InboxEntry(
     val id: String,
@@ -32,7 +48,12 @@ data class InboxEntry(
     /** Microseconds, the server's own precision, so two changes in one millisecond still order. */
     val updatedAtMicros: Long,
     val read: Boolean = false,
-)
+    /** What the person may do with it, as of the last sync (CHT-1613). */
+    val actions: List<InboxAction> = emptyList(),
+) {
+    /** The action of [kind] the server offered, if it did. */
+    fun action(kind: String): InboxAction? = actions.firstOrNull { it.kind == kind }
+}
 
 data class Issue(
     val id: String,
@@ -56,6 +77,8 @@ data class Comment(
     val author: Principal? = null,
     val content: String,
     val createdAtMillis: Long,
+    /** Written on this device and not yet taken by the server (CHT-1613). Never stored: the write queue holds it. */
+    val pending: Boolean = false,
 )
 
 data class Activity(
