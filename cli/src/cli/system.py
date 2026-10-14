@@ -1103,7 +1103,7 @@ def _get_json(url: str, timeout: int) -> dict | None:
     return None
 
 
-def _mcp_reconnect_note(before: dict | None, after: dict | None) -> str:
+def _mcp_reconnect_markup(before: dict | None, after: dict | None) -> str:
     """What to tell the operator about MCP clients after an upgrade (CHT-1364).
 
     MCP clients cache tools/list at connect time and the stateless /mcp
@@ -3104,7 +3104,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     new_version = get_current_version()
     console.print()
     console.print(f"[bold green]Upgraded to {esc(new_version)}[/bold green]")
-    console.print(_mcp_reconnect_note(version_before, version_after))
+    console.print(_mcp_reconnect_markup(version_before, version_after))
     _print_closing_path_cli_warning(progress)
 
 
@@ -3133,10 +3133,10 @@ def system_backup(list_mode, restore_timestamp):
             size_mb = backup.stat().st_size / (1024 * 1024)
             # Extract timestamp from filename
             timestamp = backup.name.replace("chaotic.db.backup-", "")
-            age = ""
+            age_markup = ""
             if i == 0:
-                age = " [dim](latest)[/dim]"
-            console.print(f"  {esc(timestamp)}  ({size_mb:.1f} MB){age}")
+                age_markup = " [dim](latest)[/dim]"
+            console.print(f"  {esc(timestamp)}  ({size_mb:.1f} MB){age_markup}")
         return
 
     if restore_timestamp:

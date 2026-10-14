@@ -637,7 +637,7 @@ def register(cli):
             comments = _client().get_comments(iss["id"])
 
             # Build panel lines
-            panel_lines = [
+            panel_lines_markup = [
                 f"[bold]{esc(iss['title'])}[/bold]\n",
                 f"[dim]Status:[/dim] {esc(iss['status'].replace('_', ' ').title())}",
                 f"[dim]Priority:[/dim] {esc(iss['priority'].replace('_', ' ').title())}",
@@ -651,20 +651,20 @@ def register(cli):
             if iss.get('parent_id'):
                 try:
                     parent = _client().get_issue(iss['parent_id'])
-                    panel_lines.append(f"[dim]Parent:[/dim] {esc(parent['identifier'])}: {esc(parent['title'])}")
+                    panel_lines_markup.append(f"[dim]Parent:[/dim] {esc(parent['identifier'])}: {esc(parent['title'])}")
                 except m.APIError:
-                    panel_lines.append(f"[dim]Parent:[/dim] [dim](unable to load)[/dim]")
+                    panel_lines_markup.append(f"[dim]Parent:[/dim] [dim](unable to load)[/dim]")
 
             # Show sub-issue summary
             try:
                 sub_issues = _client().get_sub_issues(iss['id'])
                 if sub_issues:
                     done_count = sum(1 for s in sub_issues if s.get('status') in ('done', 'canceled'))
-                    panel_lines.append(f"[dim]Sub-issues:[/dim] {esc(done_count)}/{esc(len(sub_issues))} done")
+                    panel_lines_markup.append(f"[dim]Sub-issues:[/dim] {esc(done_count)}/{esc(len(sub_issues))} done")
             except m.APIError:
                 pass
 
-            console.print(Panel("\n".join(panel_lines), title=esc(iss["identifier"])))
+            console.print(Panel("\n".join(panel_lines_markup), title=esc(iss["identifier"])))
 
             console.print("\n[dim]Description:[/dim]")
             description = iss.get('description') or 'No description'
@@ -1121,12 +1121,12 @@ def register(cli):
                 m.output_json(rev)
                 return
             body = rev.get("description") or "(empty)"
-            author = principal_markup(rev.get("author"), rev.get("author_name") or "Unknown")
+            author_markup = principal_markup(rev.get("author"), rev.get("author_name") or "Unknown")
             date = (rev.get("created_at") or "")[:19].replace("T", " ")
             console.print(Panel(
                 Markdown(body),
                 title=f"{esc(identifier)} description v{esc(rev['version'])}",
-                subtitle=f"{author} · {esc(date)}",
+                subtitle=f"{author_markup} · {esc(date)}",
             ))
             return
 
@@ -1460,17 +1460,17 @@ def register(cli):
                     console.print(f"      [dim]Attested: {esc(attested_date)}[/dim]")
 
         for r in pending:
-            mode = f"[dim]({esc(r['approval_mode'])})[/dim]"
+            mode_markup = f"[dim]({esc(r['approval_mode'])})[/dim]"
             if r.get("attestation"):
                 if r["attestation"].get("approved_at"):
-                    console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode}")
+                    console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode_markup}")
                 else:
-                    console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode} - pending approval")
+                    console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode_markup} - pending approval")
                     att = r["attestation"]
                     if att.get("note"):
                         console.print(f"      [dim]Note: {esc(att['note'])}[/dim]")
             else:
-                console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode}")
+                console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode_markup}")
                 print_ritual_prompt(r['prompt'])
 
         if pending:
@@ -1577,7 +1577,7 @@ def register(cli):
                 ref = "-"
 
             action = (a.get("activity_type") or "").replace("_", " ")
-            by = principal_markup(a.get("user"), a.get("user_name") or a.get("user_email") or "-")
+            by_markup = principal_markup(a.get("user"), a.get("user_name") or a.get("user_email") or "-")
 
             # Build details
             details = ""
@@ -1588,7 +1588,7 @@ def register(cli):
                     new = a["sprint_name"]
                 details = f"{a['field_name']}: {old} \u2192 {new}" if old else f"{a['field_name']}: {new}"
 
-            table.add_row(date, ref, action, markup(by), details)
+            table.add_row(date, ref, action, markup(by_markup), details)
 
         console.print(table)
 
@@ -1628,10 +1628,10 @@ def register(cli):
             else:
                 source = c.get("source_type", "-")
 
-            by = principal_markup(c.get("author"), c.get("author_name") or "-")
+            by_markup = principal_markup(c.get("author"), c.get("author_name") or "-")
             content = (c.get("content") or "").replace("\n", " ")[:80]
 
-            table.add_row(date, source, markup(by), content)
+            table.add_row(date, source, markup(by_markup), content)
 
         console.print(table)
 

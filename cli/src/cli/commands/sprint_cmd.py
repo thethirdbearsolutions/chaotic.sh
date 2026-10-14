@@ -13,7 +13,7 @@ from .shared import _client, console, print_sprint_panel, resolve_content_value
 # One line, printed by `sprint list` / `sprint current` / `sprint budget`
 # (CHT-1366): the moment a reader sees a sprint is the moment they assume
 # it is a calendar period. It is not.
-_SPRINT_EXPLAINER = (
+_SPRINT_EXPLAINER_MARKUP = (
     "[dim]a spent budget ends a sprint, not a date; "
     "activated/closed record when that happened[/dim]"
 )
@@ -52,15 +52,15 @@ def _print_budget_panel(result):
 
     remaining = budget - spent
     if remaining < 0:
-        status_line = f"Arrears: [red]{esc(abs(remaining))} points over budget[/red]\nStatus: [red bold]BLOCKED - close sprint to continue[/red bold]"
+        status_markup = f"Arrears: [red]{esc(abs(remaining))} points over budget[/red]\nStatus: [red bold]BLOCKED - close sprint to continue[/red bold]"
     else:
-        status_line = f"Remaining: {esc(remaining)} points\nStatus: [green]OK[/green]"
+        status_markup = f"Remaining: {esc(remaining)} points\nStatus: [green]OK[/green]"
 
     console.print(Panel(
         f"[bold]{esc(name)}[/bold]\n"
         f"Budget: {esc(budget)} points\n"
         f"Spent: {esc(spent)} points\n"
-        f"{status_line}\n"
+        f"{status_markup}\n"
         f"[dim]spent = points from tickets CLOSED while this sprint is active "
         f"(unestimated = 1pt); one active sprint at a time, close to rotate; "
         f"a spent budget ends a sprint, not a date[/dim]",
@@ -135,7 +135,7 @@ def register(cli):
             )
 
         console.print(table)
-        console.print(_SPRINT_EXPLAINER)
+        console.print(_SPRINT_EXPLAINER_MARKUP)
 
     @sprint.command("current")
     @_main().json_option
@@ -149,7 +149,7 @@ def register(cli):
             m.output_json(result)
             return
         print_sprint_panel(result, title="Current Sprint")
-        console.print(_SPRINT_EXPLAINER)
+        console.print(_SPRINT_EXPLAINER_MARKUP)
 
     @sprint.command("status")
     @_main().json_option

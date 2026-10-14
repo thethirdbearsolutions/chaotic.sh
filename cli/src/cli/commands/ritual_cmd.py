@@ -8,14 +8,14 @@ from rich.panel import Panel
 from ..markup import Markup, Table, esc, markup
 
 from ..principals import principal_markup
-from .shared import _client, console, format_ritual_line, print_ritual_prompt, resolve_content_value, resolve_document_id
+from .shared import _client, console, ritual_line_markup, print_ritual_prompt, resolve_content_value, resolve_document_id
 
 
 def print_rejection(rejection: dict) -> None:
     """The reason a human sent this ritual back (CHT-1606), shown before
     the attester is asked to attest again."""
-    who = principal_markup(rejection.get("rejecter"), rejection.get("rejected_by_name")) or "Someone"
-    console.print(f"\n[red]\u2717 Rejected by {who}:[/red] {escape(rejection.get('note') or '')}")
+    who_markup = principal_markup(rejection.get("rejecter"), rejection.get("rejected_by_name")) or "Someone"
+    console.print(f"\n[red]\u2717 Rejected by {who_markup}:[/red] {escape(rejection.get('note') or '')}")
 
 
 def _main():
@@ -76,14 +76,14 @@ def register(cli):
                 return
             console.print(f"\n[bold]Pending Rituals for {esc(ticket_id)}:[/bold]")
             for r in rituals_list:
-                mode = f"[dim]({esc(r.get('approval_mode', 'auto'))})[/dim]"
+                mode_markup = f"[dim]({esc(r.get('approval_mode', 'auto'))})[/dim]"
                 if r.get("attestation"):
                     if r["attestation"].get("approved_at"):
-                        console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode}")
+                        console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode_markup}")
                     else:
-                        console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode} - attested, pending approval")
+                        console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode_markup} - attested, pending approval")
                 else:
-                    console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode}")
+                    console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode_markup}")
                     print_ritual_prompt(r['prompt'])
             return
 
@@ -100,14 +100,14 @@ def register(cli):
         if status["pending_rituals"]:
             console.print("\n[bold]Pending Sprint Rituals:[/bold]")
             for r in status["pending_rituals"]:
-                mode = f"[dim]({esc(r['approval_mode'])})[/dim]"
+                mode_markup = f"[dim]({esc(r['approval_mode'])})[/dim]"
                 if r.get("attestation"):
                     if r["attestation"].get("approved_at"):
-                        console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode}")
+                        console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode_markup}")
                     else:
-                        console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode} - attested, pending approval")
+                        console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode_markup} - attested, pending approval")
                 else:
-                    console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode}")
+                    console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode_markup}")
                     print_ritual_prompt(r['prompt'])
 
         # Skip completed rituals if --pending flag is set
@@ -128,20 +128,20 @@ def register(cli):
                 if sprint_rituals:
                     console.print("\n[bold]Sprint-Close Rituals:[/bold]")
                     for r in sprint_rituals:
-                        console.print(format_ritual_line(r))
+                        console.print(ritual_line_markup(r))
                         print_ritual_prompt(r['prompt'])
 
             if ticket_close_rituals:
                 console.print("\n[bold]Ticket-Close Rituals:[/bold]")
                 for r in ticket_close_rituals:
-                    console.print(format_ritual_line(r))
+                    console.print(ritual_line_markup(r))
                     print_ritual_prompt(r['prompt'])
                 console.print("  [dim]Use 'chaotic ritual attest <name> --ticket <issue>' to attest.[/dim]")
 
             if ticket_claim_rituals:
                 console.print("\n[bold]Ticket-Claim Rituals:[/bold]")
                 for r in ticket_claim_rituals:
-                    console.print(format_ritual_line(r))
+                    console.print(ritual_line_markup(r))
                     print_ritual_prompt(r['prompt'])
                 console.print("  [dim]Use 'chaotic ritual attest <name> --ticket <issue>' to attest.[/dim]")
 
@@ -177,8 +177,8 @@ def register(cli):
             return
 
         # Header
-        active_badge = "" if rit.get("is_active", True) else " [red](deleted)[/red]"
-        console.print(f"[bold]{esc(rit['name'])}[/bold]{active_badge}")
+        active_badge_markup = "" if rit.get("is_active", True) else " [red](deleted)[/red]"
+        console.print(f"[bold]{esc(rit['name'])}[/bold]{active_badge_markup}")
 
         # Trigger
         trigger_desc = {
@@ -253,19 +253,19 @@ def register(cli):
             if not r:
                 # All attested — show first (pending approval or approved)
                 r = rituals_list[0]
-            mode = f"[dim]({esc(r.get('approval_mode', 'auto'))})[/dim]"
+            mode_markup = f"[dim]({esc(r.get('approval_mode', 'auto'))})[/dim]"
             if r.get("attestation"):
                 if r["attestation"].get("approved_at"):
-                    console.print(f"[green]\u2713[/green] {esc(r['name'])} {mode} - approved")
+                    console.print(f"[green]\u2713[/green] {esc(r['name'])} {mode_markup} - approved")
                     return
                 else:
-                    console.print(f"[yellow]\u23f3[/yellow] {esc(r['name'])} {mode} - attested, pending approval")
+                    console.print(f"[yellow]\u23f3[/yellow] {esc(r['name'])} {mode_markup} - attested, pending approval")
                     raise SystemExit(1)
             else:
                 rejection = r.get("last_rejection")
                 if rejection and not rejection.get("superseded_at"):
                     print_rejection(rejection)
-                console.print(f"\n[bold]Next pending ritual for {esc(ticket_id)}:[/bold] {esc(r['name'])} {mode}")
+                console.print(f"\n[bold]Next pending ritual for {esc(ticket_id)}:[/bold] {esc(r['name'])} {mode_markup}")
                 print_ritual_prompt(r['prompt'])
                 console.print(f"\n  [dim]Usage: chaotic ritual attest {esc(r['name'])} --ticket {esc(ticket_id)} --note \"your note here\"[/dim]")
                 raise SystemExit(1)
@@ -284,16 +284,16 @@ def register(cli):
             if not next_r:
                 # All attested — show first (pending approval or approved)
                 next_r = pending_rituals[0]
-            mode = f"[dim]({esc(next_r.get('approval_mode', 'auto'))})[/dim]"
+            mode_markup = f"[dim]({esc(next_r.get('approval_mode', 'auto'))})[/dim]"
             if next_r.get("attestation"):
                 if next_r["attestation"].get("approved_at"):
-                    console.print(f"[green]\u2713[/green] {esc(next_r['name'])} {mode} - approved")
+                    console.print(f"[green]\u2713[/green] {esc(next_r['name'])} {mode_markup} - approved")
                     return
                 else:
-                    console.print(f"[yellow]\u23f3[/yellow] {esc(next_r['name'])} {mode} - attested, pending approval")
+                    console.print(f"[yellow]\u23f3[/yellow] {esc(next_r['name'])} {mode_markup} - attested, pending approval")
                     raise SystemExit(1)
             else:
-                console.print(f"\n[bold]Next pending ritual:[/bold] {esc(next_r['name'])} {mode}")
+                console.print(f"\n[bold]Next pending ritual:[/bold] {esc(next_r['name'])} {mode_markup}")
                 print_ritual_prompt(next_r['prompt'])
                 console.print(f"\n  [dim]Usage: chaotic ritual attest {esc(next_r['name'])} --note \"your note here\"[/dim]")
                 raise SystemExit(1)
@@ -646,18 +646,18 @@ def register(cli):
                         console.print(f"      [dim]Attested: {esc(attested_date)}[/dim]")
 
             for r in pending:
-                mode = f"[dim]({esc(r['approval_mode'])})[/dim]"
+                mode_markup = f"[dim]({esc(r['approval_mode'])})[/dim]"
                 if r.get("attestation"):
                     if r["attestation"].get("approved_at"):
-                        console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode}")
+                        console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode_markup}")
                     else:
-                        console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode} - pending approval")
+                        console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode_markup} - pending approval")
                         # Show attestation note for pending approval
                         att = r["attestation"]
                         if att.get("note"):
                             console.print(f"      [dim]Note: {esc(att['note'])}[/dim]")
                 else:
-                    console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode}")
+                    console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode_markup}")
                     print_ritual_prompt(r['prompt'])
 
             if pending:
@@ -756,9 +756,9 @@ def register(cli):
 
         issue = _client().get_issue_by_identifier(ticket_id)
         rejection = _client().reject_ritual_for_issue(rit["id"], issue["id"], note.strip())
-        attester = principal_markup(rejection.get("attester"), rejection.get("attested_by_name"))
-        to = f" {attester} has been told why." if attester else ""
-        console.print(f"[yellow]Ritual '{esc(ritual_name)}' rejected for {esc(ticket_id)}.[/yellow]{to}")
+        attester_markup = principal_markup(rejection.get("attester"), rejection.get("attested_by_name"))
+        to_markup = f" {attester_markup} has been told why." if attester_markup else ""
+        console.print(f"[yellow]Ritual '{esc(ritual_name)}' rejected for {esc(ticket_id)}.[/yellow]{to_markup}")
 
     @ritual.command("complete")
     @click.argument("ritual_name")
@@ -851,17 +851,17 @@ def register(cli):
 
             # Format status
             if entry.get("rejected_at"):
-                rejecter = principal_markup(entry.get("rejecter"), entry.get("rejected_by_name", ""))
-                status_str = f"[red]Rejected[/red] by {rejecter}"
+                rejecter_markup = principal_markup(entry.get("rejecter"), entry.get("rejected_by_name", ""))
+                status_markup = f"[red]Rejected[/red] by {rejecter_markup}"
             elif entry.get("approved_at"):
                 approval_mode = entry.get("approval_mode", "auto")
                 if approval_mode == "auto":
-                    status_str = "[green]Auto[/green]"
+                    status_markup = "[green]Auto[/green]"
                 else:
-                    approver = principal_markup(entry.get("approver"), entry.get("approved_by_name", ""))
-                    status_str = f"[green]Approved[/green] by {approver}"
+                    approver_markup = principal_markup(entry.get("approver"), entry.get("approved_by_name", ""))
+                    status_markup = f"[green]Approved[/green] by {approver_markup}"
             else:
-                status_str = "[yellow]Pending[/yellow]"
+                status_markup = "[yellow]Pending[/yellow]"
 
             # Free text, cut to 40 characters; markup.Table escapes it
             # after the cut, so the cut cannot split an escape sequence
@@ -874,7 +874,7 @@ def register(cli):
                 type_display,
                 context,
                 markup(principal_markup(entry.get("attester"), entry.get("attested_by_name", "?"))),
-                Markup(status_str),
+                Markup(status_markup),
                 note,
             )
 
@@ -1008,7 +1008,7 @@ def register(cli):
         m = _main()
         project_id = m.get_current_project()
         result = _client().create_ritual_group(project_id, name, mode)
-        console.print(f"[green]Ritual group created: {esc(result['name'])} ({mode})[/green]")
+        console.print(f"[green]Ritual group created: {esc(result['name'])} ({esc(mode)})[/green]")
 
     @ritual_group.command("update")
     @click.argument("name")

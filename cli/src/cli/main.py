@@ -31,11 +31,14 @@ from .config import (  # noqa: F401 - re-exported for late-binding command modul
 from .client import client, APIError
 from .system import system
 from .markup import esc
-from .commands.shared import (  # noqa: F401 – re-exported for backward compat
-    console, get_status_color, suggest_key,
+# Re-exported for callers that reach these through cli.main. Not a stable
+# API: CHT-1702 renamed get_status_color and format_ritual_line to their
+# *_markup names here without aliases.
+from .commands.shared import (  # noqa: F401
+    console, status_color_markup, suggest_key,
     resolve_sprint_id, resolve_document_id, resolve_label_id,
     resolve_team_id, print_sprint_panel,
-    format_ritual_line, print_ritual_prompt,
+    ritual_line_markup, print_ritual_prompt,
 )
 
 
@@ -1142,16 +1145,16 @@ def status():
 
     local_config = find_local_config()
     if local_config:
-        config_type = f"[dim](local: {esc(local_config)})[/dim]"
+        config_type_markup = f"[dim](local: {esc(local_config)})[/dim]"
     else:
-        config_type = "[dim](global ~/.chaotic)[/dim]"
+        config_type_markup = "[dim](global ~/.chaotic)[/dim]"
 
     # Show profile if not default
     current_profile = get_effective_profile()
     if current_profile != "default":
-        config_type = f"[cyan](profile: {esc(current_profile)})[/cyan] {config_type}"
+        config_type_markup = f"[cyan](profile: {esc(current_profile)})[/cyan] {config_type_markup}"
 
-    console.print(f"[bold]Current Context[/bold] {config_type}\n")
+    console.print(f"[bold]Current Context[/bold] {config_type_markup}\n")
 
     # Auth status (CHT-478)
     if get_token() or get_api_key():

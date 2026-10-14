@@ -11,7 +11,7 @@ import httpx
 import pytest
 from rich.console import Console
 
-from cli.commands.shared import format_ritual_line
+from cli.commands.shared import ritual_line_markup
 from cli.markup import Markup, Table, esc, markup
 
 EVIL = "[/bold]evil[red]"
@@ -57,7 +57,7 @@ class TestTable:
 
 class TestRitualLine:
     def test_name_and_labels_print_literally(self):
-        line = format_ritual_line({
+        line = ritual_line_markup({
             "name": EVIL, "approval_mode": "auto", "note_required": False,
             "group_name": EVIL, "is_active": False,
         })

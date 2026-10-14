@@ -166,14 +166,14 @@ def register(cli):
             return
 
         # Build panel
-        panel_lines = [
+        panel_lines_markup = [
             f"[bold]{esc(issue['title'])}[/bold]\n",
             f"[dim]Status:[/dim] {esc(issue['status'].replace('_', ' ').title())}",
             f"[dim]Priority:[/dim] {esc(issue['priority'].replace('_', ' ').title())}",
             f"[dim]Estimate:[/dim] {esc('-' if issue.get('estimate') is None else issue['estimate'])} points",
         ]
 
-        console.print(Panel("\n".join(panel_lines), title=f"Epic {esc(issue['identifier'])}"))
+        console.print(Panel("\n".join(panel_lines_markup), title=f"Epic {esc(issue['identifier'])}"))
 
         # Description
         description = issue.get('description') or 'No description'
@@ -203,9 +203,9 @@ def register(cli):
 
             for s in sub_issues:
                 done = s.get('status') in ('done', 'canceled')
-                mark = "[green]\u2713[/green]" if done else "[dim]\u2717[/dim]"
+                mark_markup = "[green]\u2713[/green]" if done else "[dim]\u2717[/dim]"
                 table.add_row(
-                    Markup(mark),
+                    Markup(mark_markup),
                     s.get("identifier", "-"),
                     (s.get("title", "")[:45] + ("..." if len(s.get("title", "")) > 45 else "")),
                     s["status"].replace("_", " ").title(),
