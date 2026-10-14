@@ -346,7 +346,8 @@ From then on, inside a Claude Code session (which sets
 `CLAUDE_CODE_SESSION_ID`), the CLI and `chaotic mcp` both:
 
 1. read this session's key from `~/.chaotic/sessions/<hash>.json`, one
-   file per session, server, registrar key and team;
+   file per session, server and registrar key (and team, when a person
+   is the registrar);
 2. otherwise register `claude-code:session:<CLAUDE_CODE_SESSION_ID>` with
    the registrar's key and save the new key there (mode 0600, in a 0700
    directory);
@@ -356,9 +357,10 @@ From then on, inside a Claude Code session (which sets
 5. if registering fails, stop with an error that says so. They never
    fall back to the registrar's key.
 
-The first registration names the identity `<registrar> · <git branch or
-directory> · <first 6 of the session id>`; renewals keep whatever it is
-called by then. `chaotic auth whoami` shows the session identity, its
+A new identity is named `<registrar> · <git branch or directory> ·
+<first 6 of the session id>`. The CLI sends that as `default_name`,
+which never renames an existing identity, so a rename by hand survives
+every later registration. `chaotic auth whoami` shows the session identity, its
 `external_ref` and the registrar that registered it; run
 `CHAOTIC_SESSION_IDENTITY=off chaotic auth whoami` to see the registrar
 itself. Subagents of a session share its identity.
@@ -378,9 +380,12 @@ Notes:
   error inside Claude Code, naming the field: remove it, or set
   `CHAOTIC_SESSION_IDENTITY=off` in that directory. The current team and
   project still come from `.chaotic` as usual.
-- Switching profile, registrar key, server or (for a person acting as
-  registrar) team within one session uses a separate cache file for
-  each, so switching back does not register again.
+- Switching profile, registrar key or server within one session uses a
+  separate cache file for each, so switching back does not register
+  again. An agent registrar always registers in its own team, so
+  changing the local current team (`chaotic team use`, another
+  directory's `.chaotic`) changes nothing; for a person acting as
+  registrar each team is its own identity and cache file.
 - Two registrars in the **same team** cannot both register one session:
   registration is idempotent per (team, ref), so the second gets 409.
   Use one registrar per team.
@@ -430,8 +435,10 @@ is shown only here.
   the same ref, or a deactivated identity, gets 409.
 - **Keys expire after 7 days** (`AGENT_SESSION_KEY_TTL_SECONDS`).
   Register again to renew.
-- `name` is optional; a new identity defaults to `<registrar> · <last 8
-  of the ref>`. An agent may not take the name of a person in its team.
+- `name` is optional and renames an existing identity; a new one
+  defaults to `<registrar> · <last 8 of the ref>`. `default_name` names
+  a new identity only and leaves an existing one's name alone (what the
+  CLI sends). An agent may not take the name of a person in its team.
 - `project_id` narrows a team-scoped registrar's identity to one of its
   projects. Nothing can be wider than the registrar. A person calling
   for themself passes `team_id` (or a `project_id`).

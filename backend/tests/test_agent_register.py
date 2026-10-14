@@ -700,6 +700,27 @@ class TestNames:
         _, key = registrar
         assert (await _register(client, key, name=test_user2.name)).status_code == 201
 
+    async def test_default_name_names_only_a_new_identity(self, client, registrar):
+        """CHT-1499: the CLI sends its label as `default_name` on every
+        registration; it names a new identity and never renames one."""
+        _, key = registrar
+        first = await _register(client, key, default_name="Claude Code · main · 4f2a9c")
+        assert first.status_code == 201 and first.json()["agent"]["name"] == "Claude Code · main · 4f2a9c"
+        renamed = await _register(client, key, name="Renamed by hand")
+        assert renamed.json()["agent"]["name"] == "Renamed by hand"
+        again = await _register(client, key, default_name="Claude Code · other-branch · 4f2a9c")
+        assert again.status_code == 200 and again.json()["agent"]["name"] == "Renamed by hand"
+
+    async def test_name_wins_over_default_name(self, client, registrar):
+        _, key = registrar
+        response = await _register(client, key, name="Explicit", default_name="Default")
+        assert response.json()["agent"]["name"] == "Explicit"
+
+    async def test_default_name_is_checked_like_a_name(self, client, registrar):
+        _, key = registrar
+        response = await _register(client, key, default_name="Test User")
+        assert response.status_code == 422 and _code(response) == "name_matches_member"
+
 
 class TestRegistrarToggle:
     async def test_creator_or_admin_toggles_and_kind_follows(self, client, auth_headers, test_team):

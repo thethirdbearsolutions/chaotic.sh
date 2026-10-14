@@ -8628,6 +8628,19 @@
             ],
             "title": "Name"
           },
+          "default_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Name"
+          },
           "kind": {
             "type": "string",
             "const": "session",

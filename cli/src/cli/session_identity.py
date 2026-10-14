@@ -12,7 +12,7 @@ The rules:
 
 1. The session key is cached at ``~/.chaotic/sessions/<hash>.json``
    (0600, in a 0700 directory), one slot per (session ref, server,
-   registrar key, team). A cache file that is a symlink or not a
+   registrar key), and per team too when a person is the registrar. A cache file that is a symlink or not a
    regular file, not ours, readable by anyone else, in a directory that
    is not ours alone, or about to expire is not used. The registrar key
    and server come from the profile or the environment, never from a
@@ -189,10 +189,19 @@ def registrar_settings() -> tuple[str | None, str]:
     ignored: the person meant something by it."""
     glob = _config.load_global_config()
     local = _config.load_local_config()
+    default_url = f"http://localhost:{_config.DEFAULT_PORT}/api"
+
+    def effective(name, value):
+        # Compare what each value means: an unset URL is the default one,
+        # and a trailing slash names the same server.
+        if name == "api_url":
+            return (value or default_url).rstrip("/")
+        return value
+
     for name, env in (("api_key", "CHAOTIC_API_KEY"), ("token", "CHAOTIC_TOKEN"), ("api_url", "CHAOTIC_API_URL")):
         if os.environ.get(env):
             continue
-        if local.get(name) and local.get(name) != glob.get(name):
+        if local.get(name) and effective(name, local.get(name)) != effective(name, glob.get(name)):
             raise SessionIdentityError(
                 f"This directory's .chaotic sets its own {name}, which session_identity auto does not use: "
                 f"the registrar's key and server come only from the profile or the environment. Remove "
@@ -202,10 +211,7 @@ def registrar_settings() -> tuple[str | None, str]:
         os.environ.get("CHAOTIC_API_KEY") or glob.get("api_key")
         or os.environ.get("CHAOTIC_TOKEN") or glob.get("token")
     )
-    api_url = (
-        os.environ.get("CHAOTIC_API_URL") or glob.get("api_url")
-        or f"http://localhost:{_config.DEFAULT_PORT}/api"
-    )
+    api_url = (os.environ.get("CHAOTIC_API_URL") or glob.get("api_url") or default_url).rstrip("/")
     return credential, api_url
 
 
@@ -397,11 +403,15 @@ def default_name(registrar_name: str, ref: str) -> str:
     return name[:NAME_MAX]
 
 
-def _register(ref: str, credential: str, api_url: str, team_id: str | None, *, renew: bool) -> dict:
-    """Register `ref` with the registrar `credential`. A first
-    registration names the identity; a renewal sends no name, so the
-    server keeps whatever it is called now."""
-    me = _registrar_call("GET", f"{api_url}/auth/me", credential)
+def _whoami(credential: str, api_url: str) -> dict:
+    return _registrar_call("GET", f"{api_url}/auth/me", credential)
+
+
+def _register(ref: str, credential: str, api_url: str, team_id: str | None, me: dict) -> dict:
+    """Register `ref` with the registrar `credential` (`me` is its
+    /auth/me). The label goes as `default_name`, which names a new
+    identity and never renames an existing one, so a rename by hand
+    survives every later registration, from any slot."""
     body: dict = {"external_ref": ref}
     if me.get("is_agent"):
         if me.get("kind") == "session" or me.get("registered_by_id"):
@@ -418,14 +428,13 @@ def _register(ref: str, credential: str, api_url: str, team_id: str | None, *, r
                 f"to use this key as is. {NO_FALLBACK}"
             )
     else:
-        # A person registers for themself, and must say in which team.
+        # A person registers for themself, in the current team.
         if not team_id:
             raise SessionIdentityError(
                 f"session_identity is auto but no team is selected (`chaotic team use`). {NO_FALLBACK}"
             )
         body["team_id"] = team_id
-    if not renew:
-        body["name"] = default_name(me.get("name") or "Claude Code", ref)
+    body["default_name"] = default_name(me.get("name") or "Claude Code", ref)
     reg = _registrar_call("POST", f"{api_url}/agents/register", credential, body)
     agent = reg.get("agent") or {}
     if not reg.get("api_key"):
@@ -435,6 +444,7 @@ def _register(ref: str, credential: str, api_url: str, team_id: str | None, *, r
         "api_url": api_url,
         "registrar": fingerprint(credential),
         "team_id": team_id,
+        "registrar_is_agent": bool(me.get("is_agent")),
         "api_key": reg["api_key"],
         "api_key_id": reg.get("api_key_id"),
         "expires_at": reg.get("expires_at"),
@@ -447,7 +457,14 @@ def _register(ref: str, credential: str, api_url: str, team_id: str | None, *, r
 def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: str | None = None) -> str:
     """The key to send for this session. With `failed_key` (the key a 401
     just refused), a cached key equal to it is not used: another process
-    may already have replaced it, otherwise this one registers again."""
+    may already have replaced it, otherwise this one registers again.
+
+    Slots: an agent registrar registers in its own team whatever the
+    local current team is, so its slot leaves the team out (otherwise
+    every `team use` or `.chaotic` change would register the same
+    identity again and revoke the other slot's key). A person registers
+    in the current team, so theirs includes it. Which one applies is
+    known from the cache, or from /auth/me when registering."""
     if not credential:
         raise SessionIdentityError(
             "session_identity is auto but no registrar key is configured "
@@ -455,28 +472,40 @@ def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: s
         )
     fp = fingerprint(credential)
     team_id = _config.get_current_team()
-    path = cache_path(ref, api_url, fp, team_id)
+    agent_slot = cache_path(ref, api_url, fp, None)
 
-    def fresh(record):
-        return usable(record, ref, api_url, fp, team_id) and record["api_key"] != failed_key
+    def person_slot():
+        return cache_path(ref, api_url, fp, team_id) if team_id else None
 
-    record = read_cache(path)
-    if fresh(record):
-        return record["api_key"]
+    def cached(trusted=True):
+        if not trusted:
+            return None
+        record = read_cache(agent_slot)
+        if usable(record, ref, api_url, fp, None) and record["api_key"] != failed_key:
+            return record["api_key"]
+        path = person_slot()
+        record = read_cache(path) if path else None
+        if usable(record, ref, api_url, fp, team_id) and record["api_key"] != failed_key:
+            return record["api_key"]
+        return None
+
+    key = cached()
+    if key:
+        return key
     try:
         trusted = _ensure_dir()
-        with _locked(path):
-            record_now = read_cache(path) if trusted else None
-            if fresh(record_now):
-                return record_now["api_key"]
-            # A renewal (this slot registered before) keeps the identity's
-            # current name: renaming it on every renewal would follow the
-            # branch around and undo renames.
-            renew = same_slot(record_now or record, ref, api_url, fp, team_id)
-            new_record = _register(ref, credential, api_url, team_id, renew=renew)
-            write_cache(path, new_record)
+        # One lock per (session, server, registrar), whichever slot it
+        # ends up in: a registrar's registrations for this ref queue.
+        with _locked(agent_slot):
+            key = cached(trusted)
+            if key:
+                return key
+            me = _whoami(credential, api_url)
+            slot_team = None if me.get("is_agent") else team_id
+            new_record = _register(ref, credential, api_url, slot_team, me)
+            write_cache(cache_path(ref, api_url, fp, slot_team), new_record)
             return new_record["api_key"]
     except OSError as exc:
         raise SessionIdentityError(
-            f"Session identity: cannot use the key cache {path} ({exc}). {NO_FALLBACK}"
+            f"Session identity: cannot use the key cache ({exc}). {NO_FALLBACK}"
         ) from exc

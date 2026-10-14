@@ -84,6 +84,10 @@ class AgentRegister(BaseModel):
     # Display name. Optional: a new identity defaults to
     # "<registrar> · <last 8 of the ref>"; an existing one keeps its name.
     name: str | None = Field(default=None, min_length=1, max_length=255)
+    # The name for a *new* identity only; an existing one keeps its name
+    # (CHT-1499: the CLI's `<registrar> · <branch> · <session>` label must
+    # not undo a rename when it registers again). `name` wins if both.
+    default_name: str | None = Field(default=None, min_length=1, max_length=255)
     # Only session identities can be registered in this slice.
     kind: Literal["session"] = "session"
     # Narrow a team-scoped registrar's identity to one project of its

@@ -43,6 +43,7 @@ class FakeServer:
         self._n = count(1)
         self.lock = threading.Lock()
         self.registrar_keys = {REGISTRAR_KEY}
+        self.names: dict[str, str] = {}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
@@ -60,7 +61,7 @@ class FakeServer:
                 "sess-1" if (bearer, request.url.host) == (REGISTRAR_KEY, "chaotic.test")
                 else f"sess-{bearer}" if request.url.host == "chaotic.test"
                 else f"sess-{request.url.host}"
-            )
+            ) + (f"-{body['team_id']}" if body.get("team_id") else "")  # a person's: per team
             with self.lock:
                 self.registrations.append(body)
                 if self.register_status >= 400:
@@ -70,7 +71,7 @@ class FakeServer:
                 key = f"ck_session_{next(self._n)}"
                 self.live_keys[key] = identity
             return httpx.Response(201, json={
-                "agent": {"id": identity, "name": body.get("name") or "Claude Code · 00000001",
+                "agent": {"id": identity, "name": self._name(identity, body),
                           "kind": "session", "external_ref": body["external_ref"]},
                 "created": len(self.registrations) == 1,
                 "api_key": key,
@@ -85,6 +86,15 @@ class FakeServer:
         if bearer in self.live_keys:
             return httpx.Response(200, json={"as": self.live_keys[bearer], "key": bearer})
         return httpx.Response(401, json={"detail": "Could not validate credentials"})
+
+    def _name(self, identity, body):
+        """The server's rule: `name` renames, `default_name` only names a
+        new identity."""
+        if body.get("name"):
+            self.names[identity] = body["name"]
+        else:
+            self.names.setdefault(identity, body.get("default_name") or "Claude Code · 00000001")
+        return self.names[identity]
 
     def revoke_all(self):
         self.live_keys.clear()
@@ -136,7 +146,9 @@ def configured(monkeypatch):
     _set_profile(monkeypatch)
 
 
-def _cache(url=API, key=REGISTRAR_KEY, team="team-1"):
+def _cache(url=API, key=REGISTRAR_KEY, team=None):
+    """The slot. An agent registrar's leaves the team out; pass `team`
+    for a person's."""
     return si.cache_path(REF, url, si.fingerprint(key), team)
 
 
@@ -184,7 +196,8 @@ class TestAutoMode:
         assert len(server.registrations) == 1
         body = server.registrations[0]
         assert body["external_ref"] == REF
-        assert body["name"] == f"Claude Code · cht-1499 · {SESSION_ID[:6]}"
+        assert body["default_name"] == f"Claude Code · cht-1499 · {SESSION_ID[:6]}"
+        assert "name" not in body  # never renames an existing identity
         assert "team_id" not in body  # an agent registrar registers in its own team
         # The write went with the session key, never with the registrar's.
         assert [r for r in server.sent_with(REGISTRAR_KEY) if r[1] not in ("/auth/me", "/agents/register")] == []
@@ -195,7 +208,7 @@ class TestAutoMode:
         assert REGISTRAR_KEY not in _cache().read_text()
         assert stat.S_IMODE(_cache().stat().st_mode) == 0o600
         assert stat.S_IMODE((home / "sessions").stat().st_mode) == 0o700
-        slot = "\n".join((REF, API, si.fingerprint(REGISTRAR_KEY), "team-1"))
+        slot = "\n".join((REF, API, si.fingerprint(REGISTRAR_KEY), ""))
         assert _cache().name == f"{__import__('hashlib').sha256(slot.encode()).hexdigest()[:16]}.json"
 
     def test_later_requests_and_processes_reuse_the_cache(self, auto, server, configured):
@@ -212,7 +225,7 @@ class TestAutoMode:
 
         assert new != old
         assert len(server.registrations) == 2
-        assert "name" not in server.registrations[1]  # a renewal keeps the server's name
+        assert "name" not in server.registrations[1]  # only default_name: never a rename
         assert json.loads(_cache().read_text())["api_key"] == new
 
     def test_a_second_401_is_an_error_not_a_loop(self, auto, server, configured):
@@ -440,9 +453,9 @@ class TestSlots:
         _set_profile(monkeypatch, key="ck_registrar_two")
         assert Client()._request("GET", "/issues")["as"] == "sess-ck_registrar_two"
         first_body, second_body = server.registrations
-        # A different registrar's first registration in this slot is named,
+        # A different registrar's identity gets its own default name,
         # not treated as a renewal of the other registrar's identity.
-        assert "name" in second_body
+        assert "default_name" in second_body
 
         _set_profile(monkeypatch, key=REGISTRAR_KEY)
         Client()._request("GET", "/issues")
@@ -546,7 +559,9 @@ def _process_worker(home, log, start, results):
 
     cli_config.get_current_team = lambda: "team-1"
 
-    def slow_register(ref, credential, api_url, team_id, *, renew):
+    si._whoami = lambda credential, api_url: {"is_agent": True, "can_register": True, "name": "R"}
+
+    def slow_register(ref, credential, api_url, team_id, me):
         with open(log, "a") as f:
             f.write(f"{os.getpid()}\n")
         time.sleep(0.3)
@@ -596,3 +611,70 @@ class TestCacheErrors:
         with pytest.raises(APIError, match="cannot use the key cache"):
             Client()._request("GET", "/issues")
         assert server.registrations == []
+
+
+class TestTeamSwitches:
+    """An agent registrar registers in its own team whatever the local
+    current team says, so switching it (`team use`, another directory's
+    .chaotic) must not register again: that would revoke the other
+    slot's key and spend the registrar's hourly cap (review R1)."""
+
+    def test_an_agent_registrar_ignores_the_local_team(self, auto, server, monkeypatch):
+        keys = []
+        for team in ("team-1", "team-2", None, "team-1", "team-2"):
+            _set_profile(monkeypatch, team=team)
+            keys.append(Client()._request("GET", "/issues")["key"])
+        assert len(server.registrations) == 1
+        assert len(set(keys)) == 1
+        assert len(server.live_keys) == 1
+        assert "team_id" not in server.registrations[0]
+
+    def test_a_person_registrar_alternating_teams_registers_once_per_team(self, auto, server, monkeypatch):
+        server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        for team in ("team-A", "team-B", "team-A", "team-B"):
+            _set_profile(monkeypatch, team=team)
+            Client()._request("GET", "/issues")
+        assert [r["team_id"] for r in server.registrations] == ["team-A", "team-B"]
+
+
+class TestRenamesSurvive:
+    """A new slot for the same identity (a person's fresh login, a
+    rotated registrar key) must not undo a rename (review R2)."""
+
+    def test_a_rename_survives_a_new_slot(self, auto, server, configured, monkeypatch):
+        Client()._request("GET", "/issues")
+        server.names["sess-1"] = "Renamed by hand"
+        # Rotated registrar key: same registrar agent, new fingerprint.
+        server.registrar_keys.add("ck_rotated")
+        original = server.handler
+
+        def same_registrar(request):
+            if request.headers.get("Authorization") == "Bearer ck_rotated":
+                request.headers["Authorization"] = f"Bearer {REGISTRAR_KEY}"
+            return original(request)
+
+        server.handler = same_registrar
+        _set_profile(monkeypatch, key="ck_rotated")
+        Client()._request("GET", "/issues")
+        assert len(server.registrations) == 2
+        assert server.names["sess-1"] == "Renamed by hand"
+        assert all("name" not in body for body in server.registrations)
+
+
+class TestRepositoryUrlNormalised:
+    """The .chaotic check compares what values mean (review R3)."""
+
+    def test_the_default_url_spelled_out_is_not_a_conflict(self, auto, server, configured, monkeypatch):
+        monkeypatch.delenv("CHAOTIC_API_URL")
+        monkeypatch.setattr(cli_config, "load_global_config", lambda: {})
+        monkeypatch.setattr(
+            cli_config, "load_local_config",
+            lambda: {"api_url": f"http://localhost:{cli_config.DEFAULT_PORT}/api/"},
+        )
+        assert si.registrar_settings()[1] == f"http://localhost:{cli_config.DEFAULT_PORT}/api"
+
+    def test_a_trailing_slash_is_the_same_server(self, auto, server, configured, monkeypatch):
+        monkeypatch.delenv("CHAOTIC_API_URL")
+        monkeypatch.setattr(cli_config, "load_global_config", lambda: {"api_url": API + "/"})
+        monkeypatch.setattr(cli_config, "load_local_config", lambda: {"api_url": API})
+        assert si.registrar_settings()[1] == API
