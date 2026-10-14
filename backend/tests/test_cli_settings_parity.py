@@ -118,6 +118,7 @@ def test_hand_written_origins_normalise_as_the_cli_says(raw, expected):
 @pytest.mark.parametrize("raw", [
     "https://tracker.example.com/path", "https://tracker.example.com?q", "https://tracker.example.com#f",
     "https://u@tracker.example.com", "tracker.example.com", "https://tracker.example.com:65536",
+    "https://bücher.example", "https://tracker example.com",
 ])
 def test_non_origins_are_refused_by_both(raw):
     assert _server_origin(raw) is None

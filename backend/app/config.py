@@ -312,6 +312,12 @@ def normalise_cors_origin(entry: str) -> str:
     """
     if entry == "*":
         return entry
+    if not entry.isascii():
+        raise ValueError(f"CORS_ORIGINS entry {entry!r} is not ASCII "
+                         "(browsers send an internationalised host in its xn-- form; write it so)")
+    if any(c.isspace() or ord(c) < 0x20 or ord(c) == 0x7F for c in entry):
+        raise ValueError(f"CORS_ORIGINS entry {entry!r} contains whitespace or a control character "
+                         "(separate origins with commas)")
     trimmed = entry.rstrip("/")
     try:
         parsed = urlsplit(trimmed)

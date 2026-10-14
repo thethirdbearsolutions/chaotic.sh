@@ -88,6 +88,7 @@ def test_cors_origin_list_is_the_one_parse(monkeypatch, raw, expected):
     "https://tracker.example.com/path", "https://tracker.example.com?q", "https://tracker.example.com#f",
     "https://user:pw@tracker.example.com", "https://user@tracker.example.com", "tracker.example.com",
     "null", "https://tracker.example.com:99999", "https://a.example.com,https://b.example.com/x",
+    "https://bücher.example", "https://a example.com", "https://a.example.com\thttps://b.example.com",
 ])
 def test_a_value_that_is_not_an_origin_refuses_startup(raw):
     """Settings refuses to build, naming the entry, rather than guessing
