@@ -47,8 +47,10 @@ class SessionManager(
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val mutex = Mutex()
-    private var session: Session? = null
-    private var loaded = false
+
+    @Volatile private var session: Session? = null
+
+    @Volatile private var loaded = false
     private val mutableState = MutableStateFlow<AuthState>(AuthState.Loading)
 
     val state: StateFlow<AuthState> = mutableState.asStateFlow()
@@ -69,7 +71,13 @@ class SessionManager(
     }
 
     /** The server the device is signed in to, if any. */
-    suspend fun server(): ServerConfig? = mutex.withLock { ensureLoaded()?.server }
+    suspend fun server(): ServerConfig? {
+        // Without the lock once loaded: the interceptor asks this for every
+        // request, and must not wait behind a refresh or a sign-out in flight
+        // (a request to another origin never needs the token at all).
+        if (loaded) return session?.server
+        return mutex.withLock { ensureLoaded()?.server }
+    }
 
     /**
      * An access token that is good for at least [EXPIRY_MARGIN_MILLIS] more,
