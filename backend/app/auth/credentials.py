@@ -11,7 +11,8 @@ Kinds of credential, decided by the token's shape (``classify``):
 
 * ``API_KEY``: ``ck_...``, looked up by digest (``APIKeyService``). Signs
   in as the key's ``principal_user_id``; an agent's key also needs its
-  ``holder_user_id`` to still be in the agent's team (ADR-0008).
+  ``holder_user_id`` to be active and still in the agent's team
+  (ADR-0008, CHT-1552).
 * ``OAUTH_ACCESS``: a token minted by ``TokenService`` (``cat_``, and
   the other token prefixes, which are refused as not access tokens),
   validated by it (CHT-1576). Only while ``OAUTH_ENABLED`` is on. The
@@ -200,13 +201,21 @@ async def _verify_api_key(token: str, audience: str | None) -> Principal:
     # it (CHT-1508/CHT-1510): the key's `holder_user_id`, whoever minted
     # it, or the holder of the key an agent used to mint one for itself
     # (a legacy self-minted key was given the agent's creator by 0021).
-    # Once that human is no longer in the agent's team the key is dead,
-    # whether or not the removal got to revoke it, and it is answered
-    # exactly like a revoked key. REST and both MCP transports come
+    # Once that human is no longer in the agent's team, or is deactivated
+    # (CHT-1552: they can no longer sign in themselves, so nothing they
+    # hold signs in either), the key is dead, whether or not anything got
+    # to revoke it, and it is answered exactly like a revoked key: 401,
+    # never the 403 an inactive principal gets, so the answer does not say
+    # which. REST (and through it the stdio MCP server) and /mcp come
     # through here.
     if user.is_agent:
         holder_id = key_record.holder_user_id
-        if not holder_id or await TeamService().get_member(user.agent_team_id, holder_id) is None:
+        holder = await UserService().get_by_id(holder_id) if holder_id else None
+        if (
+            holder is None
+            or not holder.is_active
+            or await TeamService().get_member(user.agent_team_id, holder.id) is None
+        ):
             raise CredentialError(CredentialFailure.INVALID, "Invalid API key", kind=kind)
 
     if not user.is_active:

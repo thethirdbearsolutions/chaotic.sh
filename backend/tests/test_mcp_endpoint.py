@@ -923,6 +923,17 @@ class TestRemovedCreatorsAgentKey:
         assert removed.status_code == 204
         assert await self._both(client, key) == (401, 401)
 
+    async def test_holder_deactivated(self, client, db, test_user, test_team):
+        """CHT-1552: a holder deactivated but still in the team ends the
+        key on both transports too, with the same 401."""
+        bob, key = await self._setup(db, test_user, test_team)
+        assert await self._both(client, key) == (200, 200)
+
+        bob.is_active = False
+        await bob.save(update_fields={"is_active"})
+
+        assert await self._both(client, key) == (401, 401)
+
 
 class TestRegistrarOverHTTP:
     """A registrar's key is register-only on /mcp too (CHT-1498)."""

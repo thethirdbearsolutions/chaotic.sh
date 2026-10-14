@@ -329,6 +329,7 @@ class TestFailsLoudly:
         with pytest.raises(APIError, match="configured key was rejected") as refused:
             Client()._request("GET", "/issues")
         assert refused.value.status_code == 401
+        assert "revoked or its holder deactivated" in str(refused.value)
 
     def test_no_registrar_key(self, auto, server, monkeypatch):
         _set_profile(monkeypatch, key=None)
