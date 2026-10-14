@@ -730,3 +730,54 @@ class TestIssueCreateParentImpliesProject:
         assert result.exit_code != 0
         assert f"{parent['identifier']} is in project OTH, not E2E:" in result.output, result.output
         assert api_client.get_issues(project_id=test_project["id"]) == []
+
+
+class TestIssueCreateParentLabelsTeam:
+    """CHT-1709: a sub-issue is created in its parent's project, so
+    `--label` names are looked up in that project's team, not the CLI's
+    current team."""
+
+    @pytest.fixture
+    def elsewhere(self, api_client):
+        team = api_client.create_team(name="E2E Elsewhere", key="ELS")
+        project = api_client.create_project(team_id=team["id"], name="Elsewhere", key="ELW")
+        label = api_client.create_label(team["id"], "only-elsewhere")
+        parent = api_client.create_issue(project["id"], "Parent in another team")
+        return {"team": team, "project": project, "label": label, "parent": parent}
+
+    def _invoke(self, auth_token, test_team, test_project, args):
+        from unittest.mock import patch
+        from click.testing import CliRunner
+        from cli.main import cli as chaotic_cli
+
+        with patch("cli.main.get_token", return_value=auth_token), \
+             patch("cli.main.get_current_team", return_value=test_team["id"]), \
+             patch("cli.main.get_current_project", return_value=test_project["id"]):
+            return CliRunner().invoke(chaotic_cli, ["issue", "create", "Child", *args, "--json"])
+
+    def test_label_resolves_in_the_parents_team(self, api_client, auth_token, test_team, test_project, elsewhere):
+        import json
+        result = self._invoke(
+            auth_token, test_team, test_project,
+            ["--parent", elsewhere["parent"]["identifier"], "--label", "only-elsewhere"],
+        )
+        assert result.exit_code == 0, result.output
+        created = json.loads(result.stdout)
+        assert created["project_id"] == elsewhere["project"]["id"]
+        assert [l["id"] for l in created["labels"]] == [elsewhere["label"]["id"]]
+
+    def test_a_current_team_label_is_not_used_for_the_parents_team(
+        self, api_client, auth_token, test_team, test_project, elsewhere,
+    ):
+        """A label that exists only in the current team is reported as not
+        found among the parent's team's labels, and nothing is created."""
+        api_client.create_label(test_team["id"], "only-here")
+        result = self._invoke(
+            auth_token, test_team, test_project,
+            ["--parent", elsewhere["parent"]["identifier"], "--label", "only-here"],
+        )
+        assert result.exit_code != 0
+        assert "Label 'only-here' not found. Available labels: only-elsewhere" in result.output, result.output
+        assert [i["id"] for i in api_client.get_issues(project_id=elsewhere["project"]["id"])] == [
+            elsewhere["parent"]["id"]
+        ]

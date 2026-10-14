@@ -557,8 +557,11 @@ def register(cli):
         if parent_issue:
             data["parent_id"] = parent_issue["id"]
         if labels:
-            # Resolve label names to IDs
-            team_id = m.get_current_team()
+            # Resolve label names to IDs, in the team of the project the
+            # issue is created in. A parent can put that project in another
+            # team than the current one (CHT-1709); --project and the
+            # current project are both looked up in the current team.
+            team_id = _client().get_project(project_id)["team_id"] if parent_project else m.get_current_team()
             all_labels = _client().get_labels(team_id)
             label_ids = []
             for label_name in labels:

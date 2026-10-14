@@ -169,6 +169,36 @@ class TestIssueCreateParentImpliesProject:
         created = self._call(api_key, {"title": "Child", "parent": parent["identifier"], "team": test_team["key"]})
         assert created["parent_id"] == parent["id"], created
 
+    def test_a_sub_issue_in_another_team_takes_that_teams_labels(self, api_client, api_key, test_team):
+        """CHT-1709: issue_create has no labels of its own; issue_label
+        resolves names in the team of the issue's project, so a sub-issue
+        created under a parent in another team takes that team's labels."""
+        import json as _json
+
+        team = api_client.create_team(name="E2E Elsewhere", key="ELS")
+        project = api_client.create_project(team_id=team["id"], name="Elsewhere", key="ELW")
+        label = api_client.create_label(team["id"], "only-elsewhere")
+        api_client.create_label(test_team["id"], "only-here")
+        parent = api_client.create_issue(project["id"], "Parent in another team")
+
+        created = self._call(api_key, {"title": "Child", "parent": parent["identifier"]})
+        assert created["project_id"] == project["id"], created
+
+        def add_label(add):
+            resp = httpx.post(
+                MCP_URL,
+                json=_rpc("tools/call", {"name": "issue_label",
+                                         "arguments": {"identifier": created["identifier"], "add": [add]}}, id=3),
+                headers={**_HEADERS, "Authorization": f"Bearer {api_key}"},
+                timeout=5.0,
+            )
+            return _json.loads(resp.json()["result"]["content"][0]["text"])
+
+        assert "error" not in add_label("only-elsewhere")
+        refused = add_label("only-here")
+        assert refused["error"]["message"].startswith("No label matching 'only-here'. Team labels: only-elsewhere"), refused
+        assert [l["id"] for l in api_client.get_issue(created["id"])["labels"]] == [label["id"]]
+
     def test_a_key_scoped_to_another_project_cannot_see_the_parent(self, api_client, test_project, parent):
         """A key scoped to project E2E naming a parent in OTH gets the same
         not-found as an identifier that does not exist, and creates nothing:
