@@ -121,6 +121,7 @@ class InMemoryCacheStore : CacheStore {
 
     override suspend fun refuseWrite(refusal: WriteRefusal) = mutex.withLock {
         writes.remove(refusal.key)
+        refused.remove(refusal.key)
         refused[refusal.key] = refusal
         while (refused.size > WriteQueue.MAX_REFUSALS) refused.remove(refused.keys.first())
     }

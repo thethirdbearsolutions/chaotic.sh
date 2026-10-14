@@ -10,18 +10,24 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import sh.chaotic.android.data.CacheDao
 import sh.chaotic.android.ui.common.SyncProblem
+import sh.chaotic.android.writes.WriteActions
 import sh.chaotic.auth.SessionManager
 import sh.chaotic.sync.CacheRefresher
+import sh.chaotic.sync.InboxEntry
 import sh.chaotic.sync.InboxSections
 import sh.chaotic.sync.InboxSyncer
+import sh.chaotic.sync.PendingOverlay
 import sh.chaotic.sync.PollSchedule
 import sh.chaotic.sync.SprintCard
 import sh.chaotic.sync.SyncLoop
 import sh.chaotic.sync.SyncTrigger
 import sh.chaotic.sync.Team
+import sh.chaotic.sync.WriteKind
+import sh.chaotic.sync.WriteRefusal
 import sh.chaotic.sync.forDisplay
 import javax.inject.Inject
 
@@ -36,7 +42,14 @@ data class HomeState(
     val tab: HomeTab = HomeTab.INBOX,
     val refreshing: Boolean = false,
     val problem: SyncProblem? = null,
+    /** Writes the server refused, with its reasons, until dismissed (CHT-1613). */
+    val refusals: List<WriteRefusal> = emptyList(),
+    /** The swipe that can still be taken back, for the undo snackbar. */
+    val undo: UndoOffer? = null,
 )
+
+/** A queued swipe still inside its undo window: [key] is the write's, [label] what it was done to. */
+data class UndoOffer(val key: String, val kind: WriteKind, val label: String)
 
 /**
  * The signed-in home: the inbox and the sprint cards, both read from the
@@ -51,6 +64,7 @@ data class HomeState(
  * pull to refresh asks for everything now.
  */
 @HiltViewModel
+@Suppress("TooManyFunctions") // the screen's actions, one function each
 class HomeViewModel
 @Inject
 constructor(
@@ -60,15 +74,22 @@ constructor(
     private val syncer: InboxSyncer,
     private val refresher: CacheRefresher,
     private val trigger: SyncTrigger,
+    private val writes: WriteActions,
 ) : ViewModel() {
     private val selectedTeam = savedState.getStateFlow<String?>(KEY_TEAM, null)
     private val tab = savedState.getStateFlow(KEY_TAB, HomeTab.INBOX.name)
     private val refreshing = MutableStateFlow(false)
     private val problem = MutableStateFlow<SyncProblem?>(null)
+    private val undoOffer = MutableStateFlow<UndoOffer?>(null)
     private val schedule = PollSchedule()
 
     private val teams = dao.observeTeams().map { rows -> rows.map { it.toTeam() } }
-    private val entries = dao.observeInbox().map { rows -> rows.map { it.toEntry() } }
+
+    // The cache with the queued writes laid over it: a swiped entry leaves at once.
+    private val entries = combine(dao.observeInbox(), dao.observeWrites()) { rows, queued ->
+        PendingOverlay.inbox(rows.map { it.toEntry() }, queued.mapNotNull { it.toWrite() })
+    }
+    private val refusals = dao.observeRefusals().map { rows -> rows.mapNotNull { it.toRefusal() } }
     private val cards = dao.observeAllSprintCards().map { rows -> rows.map { it.toCard() } }
 
     private val data = combine(teams, entries, cards, selectedTeam, tab) { teams, entries, cards, selected, tab ->
@@ -84,8 +105,8 @@ constructor(
     }
 
     val state: StateFlow<HomeState> =
-        combine(data, refreshing, problem) { data, refreshing, problem ->
-            data.copy(refreshing = refreshing, problem = problem)
+        combine(data, refreshing, problem, refusals, undoOffer) { data, refreshing, problem, refusals, undo ->
+            data.copy(refreshing = refreshing, problem = problem, refusals = refusals, undo = undo)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HomeState())
 
     /** The foreground poll: teams unless fresh, then the inbox loop until cancelled (the screen left) or signed out. */
@@ -117,6 +138,41 @@ constructor(
     fun selectTab(tab: HomeTab) {
         savedState[KEY_TAB] = tab.name
         if (tab == HomeTab.SPRINT) viewModelScope.launch { refreshSprintCards(state.value.teamId) }
+    }
+
+    /** Opening an entry reads it (CHT-1613), through the queue like any write. */
+    fun open(entry: InboxEntry) {
+        viewModelScope.launch { writes.opened(entry) }
+    }
+
+    fun approve(entry: InboxEntry) = offerUndo(entry, WriteKind.APPROVE) { writes.approve(entry) }
+
+    fun reject(entry: InboxEntry, note: String) = offerUndo(entry, WriteKind.REJECT) { writes.reject(entry, note) }
+
+    fun markRead(entry: InboxEntry) = offerUndo(entry, WriteKind.MARK_READ) { writes.markRead(entry) }
+
+    fun archive(entry: InboxEntry) = offerUndo(entry, WriteKind.ARCHIVE) { writes.archive(entry) }
+
+    /** The snackbar's Undo. */
+    fun undo(key: String) {
+        undoGone(key)
+        viewModelScope.launch { writes.undo(key) }
+    }
+
+    /** The snackbar went away without an undo. */
+    fun undoGone(key: String) {
+        undoOffer.update { if (it?.key == key) null else it }
+    }
+
+    fun dismissRefusal(key: String) {
+        viewModelScope.launch { writes.dismissRefusal(key) }
+    }
+
+    private fun offerUndo(entry: InboxEntry, kind: WriteKind, queue: suspend () -> String?) {
+        viewModelScope.launch {
+            val key = queue() ?: return@launch
+            undoOffer.value = UndoOffer(key, kind, entry.issueIdentifier ?: entry.documentTitle ?: entry.title)
+        }
     }
 
     fun signOut() {

@@ -18,11 +18,12 @@ import java.io.IOException
  * - on a 401, refreshes once (single-flight, [SessionManager.refreshAfterRejection])
  *   and retries once with the new token. A second 401 is returned as is;
  * - when [interactive], adds `X-Chaotic-Interactive: 1` to writes (any
- *   method but GET, HEAD and OPTIONS). Everything the app does today is
- *   a person tapping a button; a background writer (an offline queue, a
- *   notification action) should get its own client built with
- *   `interactive = false`, so the server gates it as the agent-like
- *   traffic it is.
+ *   method but GET, HEAD and OPTIONS). Every write the app sends is a
+ *   person's own tap: the offline write queue (CHT-1613) only delays
+ *   sending one, so it goes out on this client too. Something that
+ *   writes on its own, with no tap behind it, should get its own client
+ *   built with `interactive = false`, so the server gates it as the
+ *   agent-like traffic it is.
  *
  * OkHttp runs interceptors on its own threads, so blocking on the session
  * here does not block the UI.

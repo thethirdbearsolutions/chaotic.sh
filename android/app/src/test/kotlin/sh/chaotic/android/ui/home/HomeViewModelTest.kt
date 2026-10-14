@@ -20,14 +20,19 @@ import sh.chaotic.android.data.ChaoticDatabase
 import sh.chaotic.android.data.RoomCacheStore
 import sh.chaotic.android.di.cacheOwner
 import sh.chaotic.android.testSessions
+import sh.chaotic.android.writes.WriteActions
 import sh.chaotic.sync.CacheRefresher
 import sh.chaotic.sync.CacheSession
 import sh.chaotic.sync.FakeRemote
+import sh.chaotic.sync.InboxAction
 import sh.chaotic.sync.InboxSyncer
 import sh.chaotic.sync.Remote
 import sh.chaotic.sync.SyncTrigger
 import sh.chaotic.sync.TEAM_A
 import sh.chaotic.sync.Team
+import sh.chaotic.sync.WriteQueue
+import sh.chaotic.sync.entry
+import sh.chaotic.sync.open
 import sh.chaotic.sync.page
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -42,6 +47,7 @@ class HomeViewModelTest {
     private val remote = FakeRemote()
     private lateinit var database: ChaoticDatabase
     private lateinit var syncer: InboxSyncer
+    private lateinit var queue: WriteQueue
 
     @Before
     fun setUp() {
@@ -65,6 +71,7 @@ class HomeViewModelTest {
         sessions.load()
         val cache = CacheSession(RoomCacheStore(database.cache())) { sessions.cacheOwner() }
         syncer = InboxSyncer(remote, cache)
+        queue = WriteQueue(remote, cache)
         return HomeViewModel(
             sessions = sessions,
             savedState = SavedStateHandle(),
@@ -72,6 +79,7 @@ class HomeViewModelTest {
             syncer = syncer,
             refresher = CacheRefresher(remote, cache),
             trigger = SyncTrigger(),
+            writes = WriteActions(queue) {},
         )
     }
 
@@ -101,6 +109,26 @@ class HomeViewModelTest {
         home.refresh()
         waitFor { remote.teamCalls == 2 }
         assertEquals(listOf<String?>(null, "c0"), remote.sinceSent)
+    }
+
+    @Test
+    fun openingAnUnreadEntryReadsItAtOnceAndQueuesTheWrite() = runBlocking {
+        val markRead = InboxAction(InboxAction.MARK_READ, "/api/inbox/e1/read")
+        val unread = entry("e1").copy(issueId = "i1", actions = listOf(markRead))
+        remote.syncAnswers += Remote.Ok(page(open(unread), teams = setOf(TEAM_A)))
+        val home = viewModel()
+        val collecting = launch(Dispatchers.Default) { home.state.collect {} }
+        syncer.sync()
+        waitFor { home.state.value.inbox.unread == 1 }
+
+        home.open(home.state.value.inbox.forYou.single())
+
+        // Shown read before anything is sent.
+        waitFor { home.state.value.inbox.unread == 0 }
+        assertEquals(emptyList(), remote.writesSent)
+        queue.flush()
+        assertEquals(listOf("/api/inbox/e1/read"), remote.writesSent.map { it.path })
+        collecting.cancelAndJoin()
     }
 
     private companion object {

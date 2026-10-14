@@ -1,6 +1,7 @@
 package sh.chaotic.android.data
 
 import androidx.room.Dao
+import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
@@ -9,6 +10,9 @@ import sh.chaotic.sync.InboxChange
 import sh.chaotic.sync.IssueDetail
 import sh.chaotic.sync.SprintCard
 import sh.chaotic.sync.Team
+import sh.chaotic.sync.WriteEffect
+import sh.chaotic.sync.WriteQueue
+import sh.chaotic.sync.WriteRefusal
 
 /**
  * Every query of the offline cache. The multi-table operations are
@@ -38,6 +42,12 @@ abstract class CacheDao {
     @Query("SELECT * FROM sprint_card")
     abstract fun observeAllSprintCards(): Flow<List<SprintCardEntity>>
 
+    @Query("SELECT * FROM pending_write ORDER BY seq")
+    abstract fun observeWrites(): Flow<List<PendingWriteEntity>>
+
+    @Query("SELECT * FROM write_refusal ORDER BY seq")
+    abstract fun observeRefusals(): Flow<List<WriteRefusalEntity>>
+
     // Reads for the store.
 
     @Query("SELECT value FROM sync_state WHERE `key` = :key")
@@ -63,6 +73,15 @@ abstract class CacheDao {
 
     @Query("SELECT * FROM sprint_card ORDER BY projectId")
     abstract suspend fun allSprintCards(): List<SprintCardEntity>
+
+    @Query("SELECT * FROM pending_write ORDER BY seq")
+    abstract suspend fun allWrites(): List<PendingWriteEntity>
+
+    @Query("SELECT * FROM write_refusal ORDER BY seq")
+    abstract suspend fun allRefusals(): List<WriteRefusalEntity>
+
+    @Query("SELECT * FROM issue WHERE id = :issueId")
+    protected abstract suspend fun issueRow(issueId: String): IssueEntity?
 
     // Writes.
 
@@ -153,6 +172,30 @@ abstract class CacheDao {
     @Query("DELETE FROM sync_state")
     protected abstract suspend fun deleteAllSyncState()
 
+    @Insert
+    protected abstract suspend fun insertWrite(write: PendingWriteEntity)
+
+    @Query("DELETE FROM pending_write WHERE `key` = :key")
+    protected abstract suspend fun deleteWrite(key: String): Int
+
+    @Query("DELETE FROM pending_write")
+    protected abstract suspend fun deleteAllWrites()
+
+    @Insert
+    protected abstract suspend fun insertRefusal(refusal: WriteRefusalEntity)
+
+    @Query("DELETE FROM write_refusal WHERE `key` = :key")
+    abstract suspend fun deleteRefusal(key: String)
+
+    @Query("DELETE FROM write_refusal WHERE seq NOT IN (SELECT seq FROM write_refusal ORDER BY seq DESC LIMIT :keep)")
+    protected abstract suspend fun trimRefusals(keep: Int)
+
+    @Query("DELETE FROM write_refusal")
+    protected abstract suspend fun deleteAllRefusals()
+
+    @Query("UPDATE inbox_entry SET read = 1 WHERE id = :entryId")
+    protected abstract suspend fun markRead(entryId: String)
+
     @Transaction
     open suspend fun applyInbox(change: InboxChange) {
         if (change.clear) deleteAllInbox()
@@ -207,6 +250,45 @@ abstract class CacheDao {
         upsertSprintCards(cards.map(SprintCardEntity::of))
     }
 
+    /** Queued last; a write already queued under the same key moves to the end. */
+    @Transaction
+    open suspend fun queueWrite(write: PendingWriteEntity) {
+        deleteWrite(write.key)
+        insertWrite(write)
+    }
+
+    /** Whether [key] was queued; it no longer is. */
+    open suspend fun removeWrite(key: String): Boolean = deleteWrite(key) > 0
+
+    @Transaction
+    open suspend fun completeWrite(key: String, effect: WriteEffect?) {
+        deleteWrite(key)
+        when (effect) {
+            null -> Unit
+
+            is WriteEffect.DropEntry -> deleteInbox(listOf(effect.entryId))
+
+            is WriteEffect.MarkRead -> markRead(effect.entryId)
+
+            is WriteEffect.AddComment -> if (issueRow(effect.comment.issueId) != null) {
+                upsertComments(listOf(CommentEntity.of(effect.comment)))
+            }
+
+            is WriteEffect.UpdateIssue -> issueRow(effect.issue.id)?.let { row ->
+                // Known in the team it was opened in, and still opened when it was.
+                upsertIssue(IssueEntity.of(effect.issue.copy(teamId = row.teamId, openedAtMillis = row.openedAtMillis)))
+            }
+        }
+    }
+
+    @Transaction
+    open suspend fun refuseWrite(refusal: WriteRefusal) {
+        deleteWrite(refusal.key)
+        deleteRefusal(refusal.key)
+        insertRefusal(WriteRefusalEntity.of(refusal))
+        trimRefusals(WriteQueue.MAX_REFUSALS)
+    }
+
     /** Make [owner] the owner, first emptying everything when it belonged to anyone else (or nobody). */
     @Transaction
     open suspend fun claim(owner: String) {
@@ -223,6 +305,8 @@ abstract class CacheDao {
         deleteOrphans()
         deleteAllSprintCards()
         deleteAllSyncState()
+        deleteAllWrites()
+        deleteAllRefusals()
     }
 
     private suspend fun retainTeams(teamIds: List<String>) {

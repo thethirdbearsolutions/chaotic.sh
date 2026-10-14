@@ -5,11 +5,15 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import sh.chaotic.sync.Activity
 import sh.chaotic.sync.Comment
+import sh.chaotic.sync.InboxAction
 import sh.chaotic.sync.InboxEntry
 import sh.chaotic.sync.Issue
+import sh.chaotic.sync.PendingWrite
 import sh.chaotic.sync.Principal
 import sh.chaotic.sync.SprintCard
 import sh.chaotic.sync.Team
+import sh.chaotic.sync.WriteKind
+import sh.chaotic.sync.WriteRefusal
 
 // The Room tables of the offline cache (CHT-1611), and the mapping to and
 // from core-sync's records. A principal is stored as four flat columns
@@ -37,6 +41,8 @@ data class InboxEntryEntity(
     val createdAtMillis: Long,
     val updatedAtMicros: Long,
     val read: Boolean,
+    /** The entry's actions (CHT-1613), one per line: kind, note and path, tab-separated. */
+    val actions: String,
 ) {
     fun toEntry() = InboxEntry(
         id = id,
@@ -53,9 +59,22 @@ data class InboxEntryEntity(
         createdAtMillis = createdAtMillis,
         updatedAtMicros = updatedAtMicros,
         read = read,
+        actions = decodeActions(actions),
     )
 
     companion object {
+        // A kind and a note are single words, and a path that reached the
+        // cache passed WritePaths.isApiPath, which allows no whitespace.
+        private fun encodeActions(actions: List<InboxAction>): String =
+            actions.joinToString("\n") { "${it.kind}\t${it.note}\t${it.path}" }
+
+        private fun decodeActions(encoded: String): List<InboxAction> = encoded.split('\n').mapNotNull { line ->
+            val parts = line.split('\t')
+            if (parts.size == ACTION_PARTS) InboxAction(kind = parts[0], path = parts[2], note = parts[1]) else null
+        }
+
+        private const val ACTION_PARTS = 3
+
         fun of(entry: InboxEntry) = InboxEntryEntity(
             id = entry.id,
             teamId = entry.teamId,
@@ -74,6 +93,7 @@ data class InboxEntryEntity(
             createdAtMillis = entry.createdAtMillis,
             updatedAtMicros = entry.updatedAtMicros,
             read = entry.read,
+            actions = encodeActions(entry.actions),
         )
     }
 }
@@ -265,3 +285,105 @@ data class SprintCardEntity(
 /** Small values the sync keeps, by key: the inbox cursor and whose cache this is. */
 @Entity(tableName = "sync_state")
 data class SyncStateEntity(@PrimaryKey val key: String, val value: String)
+
+private fun writeKind(name: String): WriteKind? = WriteKind.entries.firstOrNull { it.name == name }
+
+/**
+ * The write queue (CHT-1613), in the order the writes were queued ([seq]).
+ * It lives in the cache's database so that a sign-out or another person's
+ * claim empties it with the rest, in one transaction.
+ */
+@Entity(tableName = "pending_write", indices = [Index(value = ["key"], unique = true)])
+data class PendingWriteEntity(
+    @PrimaryKey(autoGenerate = true) val seq: Long = 0,
+    val key: String,
+    val kind: String,
+    val path: String?,
+    val entryId: String?,
+    val issueId: String?,
+    val teamId: String?,
+    val field: String?,
+    val value: String?,
+    val valueLabel: String?,
+    val label: String,
+    val createdAtMillis: Long,
+    val notBeforeMillis: Long,
+) {
+    /** Null for a kind this build does not know, which only a downgrade could have written. */
+    fun toWrite(): PendingWrite? = writeKind(kind)?.let {
+        PendingWrite(
+            key = key,
+            kind = it,
+            path = path,
+            entryId = entryId,
+            issueId = issueId,
+            teamId = teamId,
+            field = field,
+            value = value,
+            valueLabel = valueLabel,
+            label = label,
+            createdAtMillis = createdAtMillis,
+            notBeforeMillis = notBeforeMillis,
+        )
+    }
+
+    companion object {
+        fun of(write: PendingWrite) = PendingWriteEntity(
+            key = write.key,
+            kind = write.kind.name,
+            path = write.path,
+            entryId = write.entryId,
+            issueId = write.issueId,
+            teamId = write.teamId,
+            field = write.field,
+            value = write.value,
+            valueLabel = write.valueLabel,
+            label = write.label,
+            createdAtMillis = write.createdAtMillis,
+            notBeforeMillis = write.notBeforeMillis,
+        )
+    }
+}
+
+/** Refused writes the person has not dismissed yet, oldest first ([seq]). */
+@Entity(tableName = "write_refusal", indices = [Index(value = ["key"], unique = true)])
+data class WriteRefusalEntity(
+    @PrimaryKey(autoGenerate = true) val seq: Long = 0,
+    val key: String,
+    val kind: String,
+    val label: String,
+    val status: Int,
+    val errorCode: String?,
+    val message: String?,
+    val entryId: String?,
+    val issueId: String?,
+    val atMillis: Long,
+) {
+    fun toRefusal(): WriteRefusal? = writeKind(kind)?.let {
+        WriteRefusal(
+            key = key,
+            kind = it,
+            label = label,
+            status = status,
+            errorCode = errorCode,
+            message = message,
+            entryId = entryId,
+            issueId = issueId,
+            atMillis = atMillis,
+        )
+    }
+
+    companion object {
+        fun of(refusal: WriteRefusal) = WriteRefusalEntity(
+            key = refusal.key,
+            kind = refusal.kind.name,
+            label = refusal.label,
+            status = refusal.status,
+            errorCode = refusal.errorCode,
+            message = refusal.message,
+            entryId = refusal.entryId,
+            issueId = refusal.issueId,
+            atMillis = refusal.atMillis,
+        )
+    }
+}

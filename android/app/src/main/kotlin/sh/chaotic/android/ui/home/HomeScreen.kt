@@ -13,6 +13,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,9 +36,13 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import sh.chaotic.android.R
+import sh.chaotic.android.ui.common.RefusalList
 import sh.chaotic.android.ui.common.SyncProblemBanner
 import sh.chaotic.android.ui.common.rememberNow
 import sh.chaotic.android.ui.inbox.InboxList
+import sh.chaotic.android.ui.inbox.InboxRowActions
+import sh.chaotic.android.ui.inbox.RejectDialog
+import sh.chaotic.android.ui.inbox.UndoSnackbar
 import sh.chaotic.android.ui.sprint.SprintList
 import sh.chaotic.android.ui.theme.ChaoticTheme
 import sh.chaotic.sync.InboxEntry
@@ -58,10 +64,33 @@ fun HomeScreen(onOpenIssue: (issueId: String, teamId: String) -> Unit, viewModel
         onRefresh = viewModel::refresh,
         onSelectTab = viewModel::selectTab,
         onSelectTeam = viewModel::selectTeam,
-        onOpen = { entry -> entry.issueId?.let { onOpenIssue(it, entry.teamId) } },
+        onOpen = { entry ->
+            viewModel.open(entry)
+            entry.issueId?.let { onOpenIssue(it, entry.teamId) }
+        },
         onSignOut = viewModel::signOut,
+        writes = HomeWrites(
+            onApprove = viewModel::approve,
+            onReject = viewModel::reject,
+            onMarkRead = viewModel::markRead,
+            onArchive = viewModel::archive,
+            onUndo = viewModel::undo,
+            onUndoGone = viewModel::undoGone,
+            onDismissRefusal = viewModel::dismissRefusal,
+        ),
     )
 }
+
+/** The home screen's writes (CHT-1613); the defaults do nothing, for previews and tests. */
+class HomeWrites(
+    val onApprove: (InboxEntry) -> Unit = {},
+    val onReject: (InboxEntry, String) -> Unit = { _, _ -> },
+    val onMarkRead: (InboxEntry) -> Unit = {},
+    val onArchive: (InboxEntry) -> Unit = {},
+    val onUndo: (String) -> Unit = {},
+    val onUndoGone: (String) -> Unit = {},
+    val onDismissRefusal: (String) -> Unit = {},
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,9 +103,24 @@ fun HomeContent(
     onOpen: (InboxEntry) -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
+    writes: HomeWrites = HomeWrites(),
 ) {
+    val snackbar = remember { SnackbarHostState() }
+    var rejecting by remember { mutableStateOf<InboxEntry?>(null) }
+    UndoSnackbar(state.undo, snackbar, writes)
+    rejecting?.let { entry ->
+        RejectDialog(
+            entry = entry,
+            onReject = { note ->
+                rejecting = null
+                writes.onReject(entry, note)
+            },
+            onCancel = { rejecting = null },
+        )
+    }
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.home_title)) },
@@ -105,13 +149,25 @@ fun HomeContent(
                 )
             }
             SyncProblemBanner(state.problem)
+            RefusalList(state.refusals, writes.onDismissRefusal)
             PullToRefreshBox(
                 isRefreshing = state.refreshing,
                 onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize(),
             ) {
                 when (state.tab) {
-                    HomeTab.INBOX -> InboxList(state.inbox, nowMillis, onOpen)
+                    HomeTab.INBOX -> InboxList(
+                        state.inbox,
+                        nowMillis,
+                        onOpen,
+                        actions = InboxRowActions(
+                            onApprove = writes.onApprove,
+                            onReject = { rejecting = it },
+                            onMarkRead = writes.onMarkRead,
+                            onArchive = writes.onArchive,
+                        ),
+                    )
+
                     HomeTab.SPRINT -> SprintList(state.sprintCards)
                 }
             }

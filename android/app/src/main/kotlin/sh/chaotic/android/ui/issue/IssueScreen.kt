@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import sh.chaotic.android.R
+import sh.chaotic.android.ui.common.RefusalList
 import sh.chaotic.android.ui.common.humanize
 import sh.chaotic.android.ui.common.rememberNow
 import sh.chaotic.android.ui.common.whoLabel
@@ -45,8 +45,33 @@ import sh.chaotic.sync.RelativeAge
 @Composable
 fun IssueScreen(onBack: () -> Unit, viewModel: IssueViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    IssueContent(state = state, nowMillis = rememberNow(), onBack = onBack, onRefresh = viewModel::refresh)
+    IssueContent(
+        state = state,
+        nowMillis = rememberNow(),
+        onBack = onBack,
+        onRefresh = viewModel::refresh,
+        writes = IssueWrites(
+            onComment = viewModel::comment,
+            onStatus = viewModel::setStatus,
+            onPriority = viewModel::setPriority,
+            onAssign = viewModel::assign,
+            onPickAssignee = viewModel::loadMembers,
+            onDismissRefusal = viewModel::dismissRefusal,
+        ),
+    )
 }
+
+/** The issue screen's writes (CHT-1613); the defaults do nothing, for previews and tests. */
+class IssueWrites(
+    val onComment: (String) -> Unit = {},
+    val onStatus: (String) -> Unit = {},
+    val onPriority: (String) -> Unit = {},
+    /** Null unassigns. */
+    val onAssign: (Principal?) -> Unit = {},
+    /** The assignee picker opened. */
+    val onPickAssignee: () -> Unit = {},
+    val onDismissRefusal: (String) -> Unit = {},
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,6 +81,7 @@ fun IssueContent(
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    writes: IssueWrites = IssueWrites(),
 ) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -83,9 +109,12 @@ fun IssueContent(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (state.refusals.isNotEmpty()) {
+                    item { RefusalList(state.refusals, writes.onDismissRefusal) }
+                }
                 notice(state)?.let { message -> item { Text(message.text(), color = message.color()) } }
                 val detail = state.detail ?: return@LazyColumn
-                item { Header(detail.issue) }
+                item { Header(detail.issue, state, writes) }
                 item {
                     val description = detail.issue.description
                     if (description.isNullOrBlank()) {
@@ -97,10 +126,9 @@ fun IssueContent(
                         MarkdownText(description)
                     }
                 }
-                if (detail.comments.isNotEmpty()) {
-                    item { SectionTitle(stringResource(R.string.issue_comments)) }
-                    items(detail.comments, key = { "c-${it.id}" }) { CommentView(it, nowMillis) }
-                }
+                item { SectionTitle(stringResource(R.string.issue_comments)) }
+                items(detail.comments, key = { "c-${it.id}" }) { CommentView(it, nowMillis) }
+                item { CommentBox(writes.onComment) }
                 if (detail.activity.isNotEmpty()) {
                     item { SectionTitle(stringResource(R.string.issue_activity)) }
                     items(detail.activity, key = { "a-${it.id}" }) { ActivityView(it, nowMillis) }
@@ -139,34 +167,6 @@ private fun notice(state: IssueState): Notice? = when (state.fetch) {
 }
 
 @Composable
-private fun Header(issue: Issue) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(issue.title, style = MaterialTheme.typography.headlineSmall)
-        Field(stringResource(R.string.issue_status), humanize(issue.status))
-        Field(stringResource(R.string.issue_priority), humanize(issue.priority))
-        Field(
-            stringResource(R.string.issue_assignee),
-            issue.assignee?.let { whoLabel(it) } ?: stringResource(R.string.issue_unassigned),
-        )
-        issue.estimate?.let { Field(stringResource(R.string.issue_estimate), it.toString()) }
-        HorizontalDivider()
-    }
-}
-
-@Composable
-private fun Field(label: String, value: String) {
-    Row {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(96.dp),
-        )
-        Text(value, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-@Composable
 private fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
 }
@@ -175,6 +175,13 @@ private fun SectionTitle(text: String) {
 private fun CommentView(comment: Comment, nowMillis: Long) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Byline(comment.author, comment.createdAtMillis, nowMillis)
+        if (comment.pending) {
+            Text(
+                stringResource(R.string.issue_comment_pending),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         MarkdownText(comment.content)
         HorizontalDivider()
     }

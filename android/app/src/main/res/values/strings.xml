@@ -49,6 +49,34 @@
     <string name="markdown_truncated">%1$d more characters are not shown here.</string>
     <string name="issue_forbidden">The server would not show this issue to this app.</string>
 
+    <!-- Writes (CHT-1613) -->
+    <string name="inbox_approve">Approve</string>
+    <string name="inbox_reject">Reject</string>
+    <string name="inbox_mark_read">Mark read</string>
+    <string name="inbox_archive">Archive</string>
+    <string name="undo">Undo</string>
+    <string name="undo_approved">Approving %1$s</string>
+    <string name="undo_rejected">Rejecting %1$s</string>
+    <string name="undo_marked_read">Marked %1$s read</string>
+    <string name="undo_archived">Archived %1$s</string>
+    <string name="cancel">Cancel</string>
+    <string name="reject_title">Reject %1$s?</string>
+    <string name="reject_reason">Why (required: the requester reads this)</string>
+    <string name="refusal_approve">Could not approve %1$s</string>
+    <string name="refusal_reject">Could not reject %1$s</string>
+    <string name="refusal_mark_read">Could not mark %1$s read</string>
+    <string name="refusal_archive">Could not archive %1$s</string>
+    <string name="refusal_comment">Could not comment on %1$s</string>
+    <string name="refusal_update">Could not change %1$s</string>
+    <string name="refusal_no_reason">The server refused it (%1$d).</string>
+    <string name="refusal_dismiss">Dismiss</string>
+    <string name="issue_comment_hint">Add a comment</string>
+    <string name="issue_comment_send">Send</string>
+    <string name="issue_comment_pending">Waiting to send</string>
+    <string name="issue_change">Change %1$s</string>
+    <string name="issue_assign_me">Me</string>
+    <string name="issue_members_unavailable">The team\'s members could not be fetched.</string>
+
     <string name="sprint_empty">No sprints to show yet. Pull to refresh.</string>
     <string name="sprint_points">%1$d of %2$d points spent</string>
     <string name="sprint_points_unlimited">%1$d points spent, no budget</string>

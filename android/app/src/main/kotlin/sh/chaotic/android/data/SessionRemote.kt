@@ -3,6 +3,7 @@ package sh.chaotic.android.data
 import io.ktor.client.engine.HttpClientEngine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonObject
 import sh.chaotic.auth.SessionManager
 import sh.chaotic.sync.Activity
 import sh.chaotic.sync.ApiRemote
@@ -11,6 +12,7 @@ import sh.chaotic.sync.Comment
 import sh.chaotic.sync.CurrentSprint
 import sh.chaotic.sync.Issue
 import sh.chaotic.sync.LimboInfo
+import sh.chaotic.sync.Principal
 import sh.chaotic.sync.Project
 import sh.chaotic.sync.Remote
 import sh.chaotic.sync.SyncPage
@@ -22,6 +24,7 @@ import sh.chaotic.sync.Team
  * changes. Signed out, every call is a 401, which the sync and refreshes
  * already treat as "stop".
  */
+@Suppress("TooManyFunctions") // ChaoticRemote, one function per server call
 class SessionRemote(private val sessions: SessionManager, private val engine: HttpClientEngine) : ChaoticRemote {
     private val mutex = Mutex()
     private var current: Pair<String, ApiRemote>? = null
@@ -52,6 +55,21 @@ class SessionRemote(private val sessions: SessionManager, private val engine: Ht
     override suspend fun comments(issueId: String): Remote<List<Comment>> = call { comments(issueId) }
 
     override suspend fun activity(issueId: String): Remote<List<Activity>> = call { activity(issueId) }
+
+    override suspend fun members(teamId: String): Remote<List<Principal>> = call { members(teamId) }
+
+    override suspend fun act(path: String, body: JsonObject, idempotencyKey: String): Remote<Unit> =
+        call { act(path, body, idempotencyKey) }
+
+    override suspend fun updateIssue(
+        issueId: String,
+        teamId: String,
+        fields: JsonObject,
+        idempotencyKey: String,
+    ): Remote<Issue?> = call { updateIssue(issueId, teamId, fields, idempotencyKey) }
+
+    override suspend fun addComment(issueId: String, content: String, idempotencyKey: String): Remote<Comment?> =
+        call { addComment(issueId, content, idempotencyKey) }
 
     private companion object {
         const val HTTP_UNAUTHORIZED = 401
