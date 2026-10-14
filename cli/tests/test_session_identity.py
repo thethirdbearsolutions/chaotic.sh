@@ -697,12 +697,13 @@ class TestMcpDefaultTeam:
         monkeypatch.setattr(m, "get_current_team", _REAL_GET_CURRENT_TEAM)
         monkeypatch.setattr(m, "client", Client())
         base = server.handler
+        server.teams = [{"id": "team-only", "name": "Demo", "key": "DEMO"}]
 
         def handler(request):
             bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
             if request.url.path == "/api/teams" and bearer in server.registrar_keys:
                 server.requests.append((request.method, "/teams", bearer))
-                return httpx.Response(200, json=[{"id": "team-only", "name": "Demo", "key": "DEMO"}])
+                return httpx.Response(200, json=server.teams)
             return base(request)
 
         server.handler = handler
@@ -716,6 +717,34 @@ class TestMcpDefaultTeam:
         assert teams_server.registrations == []
         Client()._request("GET", "/issues")
         assert teams_server.registrations[0]["team_id"] == "team-only"
+
+    async def test_a_person_registrar_whose_first_call_needs_no_team(self, auto, teams_server):
+        """issue_view, issue_comment, inbox_*, ritual_*, sprint_* never
+        resolve a team before their first request; the session key must
+        still register in the only team (review M1)."""
+        from cli.mcp_backend import RestBackend
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        assert (await RestBackend().get_issue("DEMO-1"))["as"] == "sess-1-team-only"
+        assert teams_server.registrations[0]["team_id"] == "team-only"
+        # Known from then on: no more /auth/me or /teams, one registration.
+        before = len(teams_server.requests)
+        await RestBackend().get_issue("DEMO-2")
+        assert [r[1] for r in teams_server.requests[before:]] == ["/issues/identifier/DEMO-2"]
+        assert await RestBackend().resolve_team(None) == "team-only"
+        assert len(teams_server.registrations) == 1
+
+    def test_a_person_registrar_in_several_teams_is_told_to_choose(self, auto, teams_server):
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        teams_server.teams.append({"id": "team-2", "name": "Beta", "key": "BET"})
+        with pytest.raises(APIError, match=r"several teams \(Demo \(DEMO\), Beta \(BET\)\)"):
+            Client()._request("GET", "/issues")
+        assert teams_server.registrations == []
+
+    def test_the_plain_cli_registers_in_the_only_team_without_adopting_it(self, auto, teams_server):
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        Client()._request("GET", "/issues")
+        assert teams_server.registrations[0]["team_id"] == "team-only"
+        assert cli_config.get_current_team() is None
 
     async def test_an_agent_registrar(self, auto, teams_server):
         from cli.mcp_backend import RestBackend

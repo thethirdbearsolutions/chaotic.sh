@@ -30,10 +30,11 @@ def _no_session_identity(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_process_team(monkeypatch):
-    """The stdio MCP server's in-memory default team (CHT-1687) never
-    carries over from one test to the next."""
-    from cli import config
-    monkeypatch.setattr(config, "_process_team", None)
+    """The in-memory default teams (CHT-1687) never carry over from one
+    test to the next."""
+    from cli import config, session_identity
+    monkeypatch.setattr(config, "_process_teams", {})
+    monkeypatch.setattr(session_identity, "_registrar_teams", {})
 
 
 @pytest.fixture

@@ -71,7 +71,6 @@ class TestScope:
         with pytest.raises(ToolInputError, match="No team selected"):
             await backend.resolve_team(None)
 
-
     async def test_not_authenticated_is_checked_before_any_call(self, backend, monkeypatch):
         from cli.main import client
         monkeypatch.setattr("cli.main.get_token", lambda: None)
@@ -108,6 +107,8 @@ class TestDefaultTeam:
         # What cli.main.get_current_team is outside the test suite.
         monkeypatch.setattr("cli.main.get_current_team", config.get_current_team)
         monkeypatch.setattr(config, "load_config", lambda: {})
+        monkeypatch.setenv("CHAOTIC_API_KEY", "ck_key_a")
+        monkeypatch.delenv("CHAOTIC_API_URL", raising=False)
 
     @pytest.fixture
     def teams(self, monkeypatch):
@@ -150,6 +151,24 @@ class TestDefaultTeam:
         monkeypatch.setattr(config, "save_global_config", saved)
         await backend.resolve_team(None)
         saved.assert_not_called()
+
+    async def test_another_key_does_not_inherit_the_team(self, backend, teams, monkeypatch):
+        """The default belongs to the server and key it was looked up with:
+        a key set while the server runs is asked again (review L1)."""
+        assert await backend.resolve_team(None) == "only-team"
+        monkeypatch.setenv("CHAOTIC_API_KEY", "ck_key_b")
+        teams.return_value = [
+            {"id": "only-team", "name": "Demo", "key": "DEMO"},
+            {"id": "t2", "name": "Beta", "key": "BET"},
+        ]
+        with pytest.raises(ToolInputError, match="several teams"):
+            await backend.resolve_team(None)
+        monkeypatch.setenv("CHAOTIC_API_URL", "http://other.test/api")
+        monkeypatch.setenv("CHAOTIC_API_KEY", "ck_key_a")
+        with pytest.raises(ToolInputError, match="several teams"):
+            await backend.resolve_team(None)
+        monkeypatch.delenv("CHAOTIC_API_URL")
+        assert await backend.resolve_team(None) == "only-team"
 
     async def test_several_teams_are_named(self, backend, teams):
         teams.return_value = [
@@ -260,3 +279,16 @@ class TestCallShapes:
         client.get_issue_by_identifier = MagicMock(side_effect=_get)
         await backend.get_issue("CHT-1")
         assert seen["thread"] is not threading.main_thread()
+
+
+def test_only_the_mcp_backend_sets_the_process_team():
+    """The plain CLI never picks a team on its own: `chaotic team use` is
+    how it gets one. Only the stdio MCP server falls back to the key's
+    only team (CHT-1687 review L4)."""
+    from pathlib import Path
+    src = Path(__file__).resolve().parent.parent / "src"
+    callers = sorted(
+        str(p.relative_to(src)) for p in src.rglob("*.py")
+        if "set_process_team(" in p.read_text() and p.name != "config.py"
+    )
+    assert callers == ["cli/mcp_backend.py"]
