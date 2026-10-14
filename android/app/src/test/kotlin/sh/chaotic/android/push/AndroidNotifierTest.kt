@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import org.junit.Before
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import sh.chaotic.sync.push.NotificationAction
 import sh.chaotic.sync.push.NotificationPlanner
 import sh.chaotic.sync.push.PushChannel
@@ -69,6 +70,62 @@ class AndroidNotifierTest {
 
         notifier.apply(NotificationPlanner.onResolved(PushPayload.Resolved("e1", "issue:i1"), notifier.shown()))
         assertEquals(listOf("entry:e2"), manager.activeNotifications.map { it.tag })
+    }
+
+    @Test
+    fun aGateForTheSignedInPersonHasItsButtonsOnTheLockScreenToo() {
+        val owned = AndroidNotifier(context) { "ada@https://chaotic.test" }
+        owned.apply(NotificationPlanner.onEntry(entry("e1"), owned.shown()))
+        val notification = manager.activeNotifications.single().notification
+
+        assertEquals(
+            listOf("Approve", "Reject", "Reject with note"),
+            notification.actions.map { it.title.toString() },
+        )
+        // Only the inline-reply one takes a note.
+        assertEquals(listOf(false, false, true), notification.actions.map { !it.remoteInputs.isNullOrEmpty() })
+        val tap = DecisionTap.from(shadowOf(notification.actions.first().actionIntent).savedIntent)
+        assertEquals(DecisionTap("e1", "ada@https://chaotic.test", "gate_pending", "CHT-7", DecisionTap.APPROVE), tap)
+
+        // Hidden content: the kind and the issue, and the buttons; never the entry's text.
+        val public = notification.publicVersion
+        val publicText = listOf(Notification.EXTRA_TITLE, Notification.EXTRA_TEXT)
+            .joinToString(" ") { public.extras.getCharSequence(it).toString() }
+        assertTrue("CHT-7" in publicText)
+        assertFalse("secret" in publicText)
+        assertEquals(3, public.actions.size)
+    }
+
+    @Test
+    fun noButtonsOnAnythingButAGateOrAReviewNorWhileSignedOut() {
+        val owned = AndroidNotifier(context) { "ada@https://chaotic.test" }
+        owned.apply(NotificationPlanner.onEntry(entry("e1", kind = "mention", collapse = "issue:i2"), owned.shown()))
+        notifier.apply(NotificationPlanner.onEntry(entry("e2"), notifier.shown()))
+
+        for (posted in manager.activeNotifications) {
+            assertTrue(posted.notification.actions.isNullOrEmpty(), posted.tag)
+        }
+    }
+
+    @Test
+    fun aDecisionReplacesTheEntrysNotificationWithItsOwn() {
+        notifier.apply(NotificationPlanner.onEntry(entry("e1"), notifier.shown()))
+
+        notifier.withdraw("e1")
+        notifier.showDecision(
+            "e1",
+            DecisionNotice("Gate waiting on you · CHT-7", "Already approved by Grace.", "Not done.", expires = false),
+        )
+
+        val posted = manager.activeNotifications.single()
+        assertEquals("decision:e1", posted.tag)
+        assertEquals(Notification.VISIBILITY_PRIVATE, posted.notification.visibility)
+        val publicText = posted.notification.publicVersion.extras.getCharSequence(Notification.EXTRA_TEXT)
+        assertFalse("Grace" in publicText.toString())
+        // Not an entry's notification: a sync or a push about the entry leaves it alone.
+        assertTrue(notifier.shown().isEmpty())
+        notifier.cancelDecision("e1")
+        assertTrue(manager.activeNotifications.isEmpty())
     }
 
     @Test

@@ -76,7 +76,9 @@ object PushModule {
 
     @Provides
     @Singleton
-    fun provideNotifier(@ApplicationContext context: Context): AndroidNotifier = AndroidNotifier(context)
+    fun provideNotifier(@ApplicationContext context: Context, sessions: SessionManager): AndroidNotifier =
+        // A gate or review notification's buttons act for whoever is signed in when it is posted (CHT-1665).
+        AndroidNotifier(context) { sessions.cacheOwner() }
 
     /** A push means the inbox changed: sync now if the app is on screen, and soon in the background either way. */
     @Provides

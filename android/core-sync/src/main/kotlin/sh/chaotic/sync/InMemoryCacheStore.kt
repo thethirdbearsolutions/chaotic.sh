@@ -34,6 +34,8 @@ class InMemoryCacheStore : CacheStore {
         ids.mapNotNull { id -> inbox[id]?.let { id to it.updatedAtMicros } }.toMap()
     }
 
+    override suspend fun inboxEntry(id: String): InboxEntry? = mutex.withLock { inbox[id] }
+
     override suspend fun applyInbox(change: InboxChange) = mutex.withLock {
         inboxWrites++
         if (change.clear) inbox.clear()
