@@ -203,9 +203,12 @@ class WriteQueue(
             val write = queued.firstOrNull { it.key == key }
             when {
                 write == null -> false
+
                 superseded(write, queued) -> removeWrite(key).let { false }
+
                 // Too late to send safely (the class comment): refused here, with why.
                 write.tooOld(nowMillis()) -> refuseWrite(tooOldRefusal(write)).let { false }
+
                 else -> rescheduleWrite(key, attempts = 0, notBeforeMillis = nowMillis())
             }
         } ?: false
