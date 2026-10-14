@@ -2,29 +2,38 @@
 
 Rich parses every string it prints as markup, so a name with `[/bold]` in
 it crashed a command mid-print and a `[link=...]` restyled the terminal
-(CHT-1526). `markup.Table` escapes its cells, title and caption itself;
-for everything else this test reads the CLI's source and fails on:
+(CHT-1526). `markup.Table` escapes its cells, title, caption, column
+headers and footers itself; for everything else this test reads the CLI's
+source and fails on:
 
 - unescaped: a value in a markup string handed to a sink, or in a string
   assigned to a `*_markup` name, appended to one, or returned by a
   `*_markup` function, that is not `esc(...)`, `escape(...)`,
   `markup(...)`/`Markup(...)`, a `*_markup` name or call, or a constant.
-  The sinks: `.print/.log/.rule/.status` on any console (a receiver whose
-  name contains "console", or `Console()`), `rich.print`, `Panel(...)`
-  (body, title, subtitle), `Text.from_markup`, `Prompt/Confirm.ask`,
-  `progress.add_task`, `Tree(...)`/`tree.add(...)`, and the str arguments
-  of `Group`/`Columns`/`Padding`. A bare variable passed to a sink counts
-  too, unless it holds a renderable built in the same function
-  (`Table(...)`, `Markdown(...)`, ...).
+  The sinks: `.print/.log/.rule/.input` on any console (a receiver whose
+  name contains "console", `Console()`, `get_console()`, or a name bound
+  to one: by assignment, import alias or a `Console` annotation),
+  `rich.print`, `Panel(...)` (body, `renderable=`, title, subtitle),
+  `Text.from_markup`, and the str arguments of `Group`/`Columns`/`Padding`.
+  A bare variable passed to a sink counts too, unless it holds a
+  renderable built in the same function (`Table(...)`, `Markdown(...)`,
+  ...). A console bound under another name with no annotation
+  (`def f(c): c.print(name)`) is not seen.
 - markup_false: esc()/escape() or a `*_markup` value in a
   `console.print(..., markup=False)`, where the tags and backslashes are
   printed as they are.
 - nested: esc()/escape() around a string that already contains esc(),
   escape() or a `*_markup` value, which escapes it twice.
-- table_title: esc()/escape() in a `Table(title=/caption=)`, which
-  markup.Table escapes itself.
+- table_title: esc()/escape() in a `Table(title=/caption=)`, a
+  positional `Table(...)` header, or an `add_column(...)` header or footer,
+  all of which markup.Table escapes itself.
 - rich_table: an import of `rich.table`. The table_title rule (and the
   cell escaping it relies on) holds only for markup.Table.
+- rich_module: an import of `rich.progress`, `rich.tree`, `rich.live`,
+  `rich.status` or `rich.prompt`, or a `console.status(...)` call. Each
+  takes markup in places this guard does not check (a task description, a
+  tree label, a prompt, a spinner message); the CLI uses none of them.
+  Whoever needs one adds its sinks to this guard along with the first use.
 - markup_binding: a `*_markup` name bound where its value is not checked:
   a parameter, a for/comprehension/with/except target, a walrus, or a
   tuple target unpacked from anything but a tuple literal. Pass the
@@ -33,6 +42,15 @@ for everything else this test reads the CLI's source and fails on:
 Text that is markup on purpose lives in a name ending in `_markup`, or is
 built by a function whose name ends in `_markup`; that name is the whole
 allowlist, so there is no list of exceptions to keep.
+
+One shape this rules out: a helper that takes markup in and prints it.
+`def show(body): console.print(body)` is `unescaped` (a plain parameter
+is server text as far as the guard knows), `def show(body_markup)` is a
+`markup_binding`, and `console.print(Markup(body))` is `unescaped` again.
+The legal shape is the other way round: a `*_markup` function that
+*returns* the markup (its returns are checked), and the caller prints it.
+The same holds for a renderable passed in as a parameter: print it where
+it is built, or build it in the helper.
 """
 import ast
 import re
@@ -49,8 +67,10 @@ STR_METHODS = {"strip", "lstrip", "rstrip"}
 # A numeric format spec (`{size_mb:.1f}`) cannot produce a bracket.
 NUMERIC_SPEC = re.compile(r"^[<>=^]?[+ -]?#?0?\d*,?(\.\d+)?[dfegn%]$")
 # Rich renderables (not markup strings) a variable may hold.
-RENDERABLES = {"Table", "Markdown", "Panel", "Padding", "Text", "Group", "Columns", "Syntax", "Tree"}
-PROMPTS = {"Prompt", "Confirm", "IntPrompt", "FloatPrompt"}
+RENDERABLES = {"Table", "Markdown", "Panel", "Padding", "Text", "Group", "Columns", "Syntax"}
+CONSOLE_METHODS = {"print", "log", "rule", "input"}
+# Rich modules whose markup sinks this guard does not check (rich_module).
+UNCHECKED_MODULES = {"progress", "tree", "live", "status", "prompt"}
 # Containers whose str arguments Rich renders as markup.
 CONTAINERS = {"Group", "Columns", "Padding"}
 
@@ -66,21 +86,12 @@ def _is_markup_name(name):
     return name is not None and name.lower().endswith("_markup")
 
 
-def _is_console(node):
+def _is_console(node, aliases=()):
     if isinstance(node, ast.Name):
-        return "console" in node.id.lower()
+        return "console" in node.id.lower() or node.id in aliases
     if isinstance(node, ast.Attribute):
         return "console" in node.attr.lower()
-    return _call_name(node) == "Console"
-
-
-def _is_console_print(call):
-    f = call.func
-    if not isinstance(f, ast.Attribute):
-        return False
-    if f.attr == "print" and isinstance(f.value, ast.Name) and f.value.id == "rich":
-        return True  # rich.print
-    return f.attr in ("print", "log", "rule", "status") and _is_console(f.value)
+    return _call_name(node) in ("Console", "get_console")
 
 
 def _contains_escaper(node):
@@ -117,6 +128,29 @@ class _Checker:
             a.asname or a.name for n in ast.walk(self.tree)
             if isinstance(n, ast.ImportFrom) and n.module == "rich" for a in n.names if a.name == "print"
         }
+        # Names bound to a console without "console" in them: `out = console`,
+        # `from .shared import console as out`.
+        self.consoles = {
+            a.asname for n in ast.walk(self.tree) if isinstance(n, ast.ImportFrom)
+            for a in n.names if a.asname and "console" in a.name.lower()
+        }
+        # Parameters and names annotated `Console` (or "rich.console.Console").
+        for n in ast.walk(self.tree):
+            for x, ann in self._annotated(n):
+                if isinstance(ann, ast.Constant) and isinstance(ann.value, str):
+                    ann = ast.parse(ann.value, mode="eval").body
+                if any((isinstance(a, ast.Name) and a.id == "Console")
+                       or (isinstance(a, ast.Attribute) and a.attr == "Console") for a in ast.walk(ann)):
+                    self.consoles.add(x)
+        assigns = [n for n in ast.walk(self.tree) if isinstance(n, ast.Assign)]
+        while True:
+            found = {
+                t.id for n in assigns if _is_console(n.value, self.consoles)
+                for t in n.targets if isinstance(t, ast.Name) and "console" not in t.id.lower()
+            } - self.consoles
+            if not found:
+                break
+            self.consoles |= found
         self.parents = {}
         for p in ast.walk(self.tree):
             for c in ast.iter_child_nodes(p):
@@ -127,7 +161,25 @@ class _Checker:
         self.problems.append(f"{rel}:{node.lineno}: [{rule}] {what}")
 
     def _is_print(self, call):
-        return _is_console_print(call) or (isinstance(call.func, ast.Name) and call.func.id in self.rich_prints)
+        f = call.func
+        if isinstance(f, ast.Name):
+            return f.id in self.rich_prints
+        if not isinstance(f, ast.Attribute):
+            return False
+        if f.attr == "print" and isinstance(f.value, ast.Name) and f.value.id == "rich":
+            return True  # rich.print
+        return f.attr in CONSOLE_METHODS and _is_console(f.value, self.consoles)
+
+    @staticmethod
+    def _annotated(node):
+        """(name, annotation) for each annotated parameter or name `node` binds."""
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            a = node.args
+            for p in (*a.posonlyargs, *a.args, *a.kwonlyargs):
+                if p.annotation is not None:
+                    yield p.arg, p.annotation
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            yield node.target.id, node.annotation
 
     def _inside_checked(self, node):
         """A Markup() call within a sink is checked from the sink."""
@@ -260,19 +312,27 @@ class _Checker:
         for node in ast.walk(self.tree):
             self._check_bindings(node)
             if isinstance(node, (ast.Import, ast.ImportFrom)):
-                mods = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
-                if any(m == "rich.table" or m.startswith("rich.table.") for m in mods) or (
-                        isinstance(node, ast.ImportFrom) and node.module == "rich"
-                        and any(a.name == "table" for a in node.names)):
-                    self._flag("rich_table", node, ast.get_source_segment(self.src, node))
-            elif (isinstance(node, ast.Attribute) and node.attr == "table"
-                  and isinstance(node.value, ast.Name) and node.value.id == "rich"):
-                self._flag("rich_table", node, ast.get_source_segment(self.src, node))
+                if isinstance(node, ast.Import):
+                    mods = [a.name for a in node.names]
+                elif node.module == "rich":
+                    mods = [f"rich.{a.name}" for a in node.names]
+                else:
+                    mods = [node.module or ""]
+                for m in {".".join(m.split(".")[:2]) for m in mods if m.startswith("rich.")}:
+                    if m == "rich.table" or m[5:] in UNCHECKED_MODULES:
+                        rule = "rich_table" if m == "rich.table" else "rich_module"
+                        self._flag(rule, node, ast.get_source_segment(self.src, node))
+            elif (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "rich"
+                  and (node.attr == "table" or node.attr in UNCHECKED_MODULES)):
+                rule = "rich_table" if node.attr == "table" else "rich_module"
+                self._flag(rule, node, ast.get_source_segment(self.src, node))
             elif isinstance(node, ast.Call):
                 name = _call_name(node)
                 f = node.func
                 receiver = f.value if isinstance(f, ast.Attribute) else None
-                if self._is_print(node):
+                if name == "status" and _is_console(receiver, self.consoles):
+                    self._flag("rich_module", node, ast.get_source_segment(self.src, node))
+                elif self._is_print(node):
                     if any(k.arg == "markup" and isinstance(k.value, ast.Constant) and k.value.value is False
                            for k in node.keywords):
                         for a in node.args:
@@ -287,23 +347,20 @@ class _Checker:
                     for k in node.keywords:
                         if k.arg in ("title", "subtitle"):
                             self._check_value(k.value)
+                        elif k.arg == "renderable":
+                            self._check_value(k.value, bare_ok=True)
                 elif name in MARKERS and not self._inside_checked(node):
                     for a in node.args:
                         self._check_value(a)
-                elif name == "Table":
-                    for k in node.keywords:
-                        if k.arg in ("title", "caption") and _contains_escaper(k.value):
-                            self._flag("table_title", k.value, ast.get_source_segment(self.src, k.value))
+                elif name in ("Table", "add_column"):
+                    names = ("title", "caption") if name == "Table" else ("header", "footer")
+                    heads = node.args if name == "Table" else node.args[:2]
+                    for v in [*heads, *(k.value for k in node.keywords if k.arg in names)]:
+                        if _contains_escaper(v):
+                            self._flag("table_title", v, ast.get_source_segment(self.src, v))
                 elif name == "append" and isinstance(receiver, ast.Name) and _is_markup_name(receiver.id):
                     for a in node.args:
                         self._check_value(a)
-                elif name == "ask" and isinstance(receiver, ast.Name) and receiver.id in PROMPTS:
-                    self._check_first(node, "prompt")
-                elif name == "add_task":
-                    self._check_first(node, "description")
-                elif name == "Tree" or (name == "add" and isinstance(receiver, ast.Name)
-                                        and any(w in receiver.id.lower() for w in ("tree", "branch"))):
-                    self._check_first(node, "label", bare_ok=True)
                 elif name in CONTAINERS:
                     args = node.args[:1] if name == "Padding" else node.args
                     for a in args:
@@ -358,13 +415,20 @@ def f(name, size_mb, rows, x):
     a_markup, b = f"[b]{esc(name)}[/b]", name
     err_console.print(a_markup)
     console.print(Group(table, a_markup), Columns([table]), Padding(table, 1))
-    tree = Tree(esc(name))
-    tree.add(a_markup)
-    progress.add_task(esc(name))
-    Prompt.ask(f"Delete {esc(name)}?")
     Text.from_markup(f"[b]{esc(name)}[/b]")
     for n in x:
         console.print(n, markup=False)
+    # Not Rich sinks (CHT-1703): a set, a dict, a client.
+    branches = set()
+    branches.add(name)
+    status.update({"k": name})
+    client.add_task(name)
+    table.add_column("Name", footer="Total")
+    console.print(Panel(renderable=table))
+
+
+def g(out: Console, name):
+    out.print(f"[b]{esc(name)}[/b]")
 
 
 def status_markup(x):
@@ -399,18 +463,39 @@ BAD["unescaped"] += [
     'err_console.print(f"[red]{name}[/red]")',
     'self.console.print(f"{name}")',
     'Console().print(name)',
-    'console.status(f"Working on {name}")',
     'rich.print(f"[b]{name}[/b]")',
     'Text.from_markup(f"{name}")',
-    'Prompt.ask(f"Delete {name}?")',
-    'Confirm.ask(prompt=name)',
-    'progress.add_task(f"{name}")',
-    "Tree(name)",
-    "tree.add(name)",
     "console.print(Group(Markdown(line), name))",
     'Columns([f"{name}"])',
     "Padding(name, 1)",
     'a_markup, b = name, 1',
+]
+# The sinks the #386 re-review found unchecked (CHT-1703).
+BAD["unescaped"] += [
+    'Panel(renderable=f"{name}")',
+    'console.input(f"{name}? ")',
+    "out = console; out.print(name)",
+    "get_console().print(name)",
+]
+# Rich modules with sinks the guard does not check: banned until needed.
+BAD["rich_module"] = [
+    "from rich.progress import Progress",
+    "from rich.tree import Tree",
+    "from rich.live import Live",
+    "from rich.status import Status",
+    "from rich.prompt import Prompt as P",
+    "import rich.prompt",
+    "import rich.progress as rp",
+    "from rich import tree",
+    "x = rich.live.Live()",
+    'console.status(f"Working on {name}")',
+    'err_console.status("Working")',
+]
+BAD["table_title"] += [
+    "table.add_column(esc(name))",
+    'table.add_column("A", footer=esc(name))',
+    "table.add_column(header=esc(name))",
+    "Table(esc(name))",
 ]
 BAD["nested"] += ["console.print(esc(lines_markup))"]
 BAD["markup_false"] += ["console.print(lines_markup, markup=False)"]
@@ -429,6 +514,17 @@ def test_clean_source_passes(tmp_path):
 
 def test_an_aliased_rich_print_is_a_sink(tmp_path):
     problems = _check_source(tmp_path, "from rich import print as rprint\ndef f(name):\n    rprint(f'{name}')\n")
+    assert len(problems) == 1 and "[unescaped] name" in problems[0], problems
+
+
+@pytest.mark.parametrize("source", [
+    "from .shared import console as out\ndef f(name):\n    out.print(name)\n",
+    "def f(name, out: Console):\n    out.print(name)\n",
+    "def f(name, out: 'rich.console.Console | None' = None):\n    out.log(name)\n",
+    "def f(name):\n    out: Console = make()\n    out.rule(name)\n",
+])
+def test_an_aliased_or_annotated_sink_is_a_sink(tmp_path, source):
+    problems = _check_source(tmp_path, source)
     assert len(problems) == 1 and "[unescaped] name" in problems[0], problems
 
 

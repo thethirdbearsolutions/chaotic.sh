@@ -7,18 +7,18 @@ users, so a `[/x]` in one raised MarkupError mid-print, and a `[link=...]`
 or `[red]` in one restyled the terminal.
 
 - `esc(value)`: escape a value interpolated into a markup string.
-- `Table`: a rich Table that escapes every plain `str` cell, title and
-  caption, so none of them can carry markup by accident. One that is
-  markup on purpose is passed as `Markup(...)` (or `markup(...)`, which
-  keeps None as an empty cell), with any server text inside it already
-  escaped. Column headers are still markup: they are our constants.
+- `Table`: a rich Table that escapes every plain `str` cell, title,
+  caption, column header and footer, so none of them can carry markup by
+  accident. One that is markup on purpose is passed as `Markup(...)` (or
+  `markup(...)`, which keeps None as an empty cell), with any server text
+  inside it already escaped.
 """
 from rich.markup import escape
 from rich.table import Table as _RichTable
 
 
 class Markup(str):
-    """A table cell, title or caption that is Rich markup on purpose;
+    """A table cell, title, caption or header that is Rich markup on purpose;
     `Table` leaves it as is. Build it from constants and `esc()`'d values
     only, and wrap last: any str operation on a Markup (`+`, slicing,
     `.strip()`, `.format()`) returns a plain str, which `Table` then
@@ -41,11 +41,16 @@ def esc(value) -> str:
 
 
 class Table(_RichTable):
-    """rich.table.Table, but a plain `str` cell, title or caption is
-    printed as text, not parsed as markup (see the module docstring)."""
+    """rich.table.Table, but a plain `str` cell, title, caption, column
+    header or footer is printed as text, not parsed as markup (see the
+    module docstring)."""
 
     def __init__(self, *headers, title=None, caption=None, **kwargs):
+        # rich's __init__ adds each str header through add_column, which escapes it.
         super().__init__(*headers, title=_text(title), caption=_text(caption), **kwargs)
+
+    def add_column(self, header="", footer="", **kwargs):
+        return super().add_column(_text(header), _text(footer), **kwargs)
 
     def add_row(self, *renderables, **kwargs):
         return super().add_row(*(_text(cell) for cell in renderables), **kwargs)
