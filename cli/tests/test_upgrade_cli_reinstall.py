@@ -347,19 +347,38 @@ class TestPathCliWarning:
         assert "not on this shell's PATH" in warning and str(bin_dir / "chaotic") in warning
         assert "uv tool update-shell" in warning and "new shells" in warning
 
-    @pytest.mark.parametrize("env, euid", [({"SUDO_USER": "deploy"}, 0), ({}, 0)])
-    def test_running_as_root_says_so_instead_of_editing_path(self, tmp_path, monkeypatch, env, euid):
-        """Review L4: under sudo, uv installs into root's ~/.local/bin and
-        secure_path leaves it out; adding it to PATH is the wrong fix."""
+    def test_sudo_with_no_chaotic_on_path_says_so_instead_of_editing_path(self, tmp_path, monkeypatch):
+        """Review L4: under sudo, uv installs as root and secure_path leaves
+        its bin dir out; adding it to PATH is the wrong fix."""
         bin_dir = self._bin(tmp_path)
-        for name, value in env.items():
-            monkeypatch.setenv(name, value)
-        monkeypatch.setattr(system.os, "geteuid", lambda: euid, raising=False)
+        monkeypatch.setenv("SUDO_USER", "deploy")
+        monkeypatch.setattr(system.os, "geteuid", lambda: 0, raising=False)
         self._path(monkeypatch, tmp_path / "empty")
         with self._uv_bin(bin_dir):
             warning = system.path_cli_warning()
-        assert "installed for root" in warning and "secure_path" in warning
+        assert "under sudo" in warning and "installed as root" in warning and "secure_path" in warning
         assert "update-shell" not in warning and "first on PATH" not in warning
+
+    def test_plain_root_gets_the_ordinary_advice(self, tmp_path, monkeypatch):
+        """Review M2: root without sudo (a container, a VPS) owns the
+        install; the fix is the PATH, not sudo."""
+        bin_dir = self._bin(tmp_path)
+        monkeypatch.setattr(system.os, "geteuid", lambda: 0, raising=False)
+        self._path(monkeypatch, tmp_path / "empty")
+        with self._uv_bin(bin_dir):
+            warning = system.path_cli_warning()
+        assert "not on this shell's PATH" in warning and "uv tool update-shell" in warning
+        assert "sudo" not in warning
+
+    def test_a_shadowing_install_under_sudo_keeps_its_specific_advice(self, tmp_path, monkeypatch):
+        """Review M2: the sudo text is only for `chaotic` missing from PATH."""
+        bin_dir = self._bin(tmp_path)
+        pipx = self._exe(tmp_path / "pipx" / "bin")
+        monkeypatch.setenv("SUDO_USER", "deploy")
+        self._path(monkeypatch, pipx.parent, bin_dir)
+        with self._uv_bin(bin_dir):
+            warning = system.path_cli_warning()
+        assert "pipx uninstall chaotic-cli" in warning and "sudo" not in warning
 
     def test_a_relative_path_entry_resolves_against_the_cwd(self, tmp_path, monkeypatch):
         bin_dir = self._bin(tmp_path)
@@ -449,6 +468,15 @@ class TestRunMigrationsCarriesThePathWarning:
         (ok, _), progress, printed = self._run(lambda progress: None)
         assert ok is True and progress["cli_path_warning"] is None
         assert "[yellow]" not in printed
+
+    def test_a_ctrl_c_during_the_resync_check_keeps_the_verified_reinstall(self):
+        """A Ctrl-C during the rollback re-sync's check skips only the
+        warning: the reinstall verified, so the re-sync still succeeded."""
+        with patch.object(system, "run_command", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+                patch.object(system, "reinstall_cli", return_value=(True, "CLI reinstalled (verified)")), \
+                patch.object(system, "path_cli_warning", side_effect=KeyboardInterrupt):
+            ok, message = system.resync_checkout()
+        assert ok is True and message.endswith("CLI reinstalled (verified)")
 
     def test_a_rollback_resync_prints_it_too(self):
         with patch.object(system, "run_command", return_value=subprocess.CompletedProcess([], 0, "", "")), \

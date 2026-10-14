@@ -1594,12 +1594,17 @@ def _path_cli_warning() -> str | None:
             Path(found).parent.resolve() == Path(bin_dir).resolve()
             or Path(found).resolve() == tool_exe.resolve()):
         return None
-    if os.environ.get("SUDO_USER") or (hasattr(os, "geteuid") and os.geteuid() == 0):
-        # sudo's secure_path leaves out root's ~/.local/bin, so the
-        # problem is running as root, not this PATH (review L4).
-        return (f"This ran as root, so `chaotic` was installed for root at {tool_exe}, not for "
-                f"your user, and sudo's secure_path does not include {bin_dir}. Run `chaotic system` "
-                "commands as the user that owns this install, without sudo.")
+    if found is None and os.environ.get("SUDO_USER"):
+        # Under sudo, secure_path leaves out the bin dir uv just used, so
+        # the problem is running under sudo, not this PATH (review L4).
+        # Only when nothing is found (review M2): plain root takes the
+        # ordinary advice, and so does a shadowing venv or pipx install.
+        # "installed as root": under `sudo -E` uv writes root-owned files
+        # into the invoking user's own bin dir instead (review L6).
+        return (f"This ran under sudo, so `chaotic` was installed as root, at {tool_exe}; "
+                f"sudo's secure_path does not include {bin_dir}, and the installed files are "
+                "owned by root. Run `chaotic system` commands as the user that owns this "
+                "install, without sudo.")
     if found is None:
         return (f"`chaotic` is not on this shell's PATH; the CLI just installed is at {tool_exe}. "
                 f"Add {bin_dir} to PATH: `uv tool update-shell` does that for new shells, "
@@ -1745,7 +1750,12 @@ def resync_checkout(reinstall: bool = True, abandoned_commit: str | None = None)
         return True, synced
     ok, message = reinstall_cli()
     if ok:
-        _print_path_cli_warning()
+        try:
+            _print_path_cli_warning()
+        except KeyboardInterrupt:
+            # Skips only the warning: the reinstall has already verified,
+            # and a rollback reporting it as failed would be wrong.
+            pass
     return ok, f"{synced}; {message}" if ok else message
 
 
