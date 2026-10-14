@@ -885,7 +885,12 @@ def register(cli):
             # team (CHT-1711): the identifier can name an issue in another
             # team than the current one, and the server only accepts a
             # label from the issue's team.
-            team_id = _client().get_project(iss["project_id"])["team_id"]
+            # An issue in the current project is in the current team, so
+            # the common case skips the project lookup.
+            team_id = (
+                m.get_current_team() if iss["project_id"] == m.get_current_project()
+                else _client().get_project(iss["project_id"])["team_id"]
+            )
             all_labels = fetch_all_labels(team_id)
             label_lookup = {l["name"].lower(): l["id"] for l in all_labels}
 

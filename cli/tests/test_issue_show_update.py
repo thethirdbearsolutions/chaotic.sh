@@ -656,13 +656,35 @@ class TestIssueUpdateLabels:
         client.get_labels = MagicMock(return_value=[{"id": "label-9", "name": "bug"}])
         client.add_label_to_issue = MagicMock()
 
-        with patch('cli.main.get_current_team', return_value='test-team-123'):
+        with patch('cli.main.get_current_team', return_value='test-team-123'), \
+             patch('cli.main.get_current_project', return_value='some-other-project'):
             result = cli_runner.invoke(cli, ['issue', 'update', 'CHT-100', '--label', 'bug'])
 
         assert result.exit_code == 0, result.output
         client.get_project.assert_called_once_with("test-project-123")
         client.get_labels.assert_called_once_with("other-team", limit=1000)
         client.add_label_to_issue.assert_called_once_with('issue-uuid-123', 'label-9')
+
+
+    def test_an_issue_in_the_current_project_skips_the_project_lookup(self, cli_runner, mock_issue):
+        """Review on #396: the current project is in the current team, so
+        only the labels request is made."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_project = MagicMock()
+        client.get_labels = MagicMock(return_value=[{"id": "label-1", "name": "bug"}])
+        client.add_label_to_issue = MagicMock()
+
+        with patch('cli.main.get_current_team', return_value='test-team-123'), \
+             patch('cli.main.get_current_project', return_value='test-project-123'):
+            result = cli_runner.invoke(cli, ['issue', 'update', 'CHT-100', '--label', 'bug'])
+
+        assert result.exit_code == 0, result.output
+        client.get_project.assert_not_called()
+        assert client.get_labels.call_count == 1
+        client.get_labels.assert_called_once_with("test-team-123", limit=1000)
+        client.add_label_to_issue.assert_called_once_with('issue-uuid-123', 'label-1')
 
 
 class TestIssueUpdateErrors:

@@ -894,3 +894,17 @@ class TestLabelLookupPastFirstPage:
         )
         assert result.exit_code == 0, result.output
         assert [l["id"] for l in json.loads(result.stdout)["labels"]] == [many_labels["id"]]
+
+    def test_paging_follows_the_servers_skip(self, api_client, auth_token, test_team, test_project):
+        """Pins fetch_all_labels against the real skip/limit semantics with
+        a small page size: it pages, stops on the short page, and sees all."""
+        from unittest.mock import patch
+        from cli.commands.shared import fetch_all_labels
+        for i in range(12):
+            api_client.create_label(test_team["id"], f"paged-{i:02d}")
+        with patch("cli.main.client", api_client), \
+             patch("cli.commands.shared.LABEL_PAGE_SIZE", 5), \
+             patch.object(api_client, "get_labels", wraps=api_client.get_labels) as spy:
+            labels = fetch_all_labels(test_team["id"])
+        assert sorted(l["name"] for l in labels) == [f"paged-{i:02d}" for i in range(12)]
+        assert [c.kwargs.get("skip", 0) for c in spy.call_args_list] == [0, 5, 10]
