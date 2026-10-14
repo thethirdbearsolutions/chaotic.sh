@@ -32,10 +32,16 @@ class FakeWebSocket:
     """Enough of starlette's WebSocket for the endpoint: headers, the
     offered subprotocols, and a receive that blocks until closed."""
 
-    def __init__(self, *, headers=None, subprotocols=None):
+    def __init__(self, *, headers=None, subprotocols=None, client=None, denial=False):
         self.headers = Headers(headers or {})
         self.scope = {"type": "websocket", "subprotocols": list(subprotocols or [])}
+        if denial:
+            # The server takes an HTTP response for a handshake (uvicorn does).
+            self.scope["extensions"] = {"websocket.http.response": {}}
+        if client is not None:
+            self.client = client
         self.accept = AsyncMock()
+        self.send_denial_response = AsyncMock()
         self.send_json = AsyncMock()
         self._closed = asyncio.Event()
         self.close = AsyncMock(side_effect=lambda code=1000: self._closed.set())
@@ -282,12 +288,37 @@ class TestEndpoint:
         ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=4001)
 
-    async def test_check_error_is_4011(self, test_team):
+    async def test_check_error_is_an_http_503(self, test_team):
+        """CHT-1637: a failed check is refused before accept, with a 503 and
+        Retry-After, so a tab on a bundle from before CHT-1615 (which
+        counts any onopen as up and resyncs) sees 1006 and backs off."""
+        ws = FakeWebSocket(denial=True)
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=RuntimeError("db down"))):
+            await websocket_endpoint(ws, team_id=test_team.id, token="x")
+        ws.accept.assert_not_awaited()
+        ws.close.assert_not_awaited()
+        [response] = ws.send_denial_response.await_args.args
+        assert response.status_code == 503
+        assert response.headers["retry-after"] == str(ws_auth.RETRY_AFTER_SECONDS)
+
+    async def test_check_error_is_4011_without_the_denial_extension(self, test_team):
+        """A server that cannot send an HTTP response for a handshake gets
+        the close code, as before."""
         ws = FakeWebSocket()
         with patch("app.ws_auth.authenticate", AsyncMock(side_effect=RuntimeError("db down"))):
             await websocket_endpoint(ws, team_id=test_team.id, token="x")
         ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=4011)
+        ws.send_denial_response.assert_not_awaited()
+
+    async def test_a_credential_refusal_keeps_its_close_code_with_the_denial_extension(self, test_team):
+        """4001 / 4003 must reach a browser as codes, so they are still
+        accepted and closed when the server could send a status."""
+        ws = FakeWebSocket(denial=True)
+        await websocket_endpoint(ws, team_id=test_team.id, token="garbage")
+        ws.accept.assert_awaited_once_with(subprotocol=None)
+        ws.close.assert_awaited_once_with(code=4001)
+        ws.send_denial_response.assert_not_awaited()
 
     async def test_a_refusal_is_logged_without_the_credential(self, test_team, caplog):
         """PR #359 review, 1: the access log shows a refused handshake as
@@ -740,3 +771,166 @@ class TestWatcherFailure:
             _log_watcher_failure(failed)
         assert caplog.records[0].getMessage() == "WebSocket credential watcher failed"
         assert caplog.records[0].exc_info[1].args == ("boom",)
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """Both refusal limiters on one clock the test moves."""
+    clock = FakeClock()
+    monkeypatch.setattr(ws_auth, "_gate", ws_auth._RefusalGate(clock))
+    monkeypatch.setattr(ws_auth, "_refusal_log", ws_auth._RefusalLog(clock))
+    return clock
+
+
+def refusal_lines(caplog):
+    return [r.getMessage() for r in caplog.records if r.name == "app.ws_auth" and "Refused" in r.getMessage()]
+
+
+async def refuse_from(host, *, code=4001, reason="Invalid token", denial=True, port=40000):
+    ws = FakeWebSocket(client=(host, port), denial=denial)
+    await ws_auth.refuse(ws, code, reason, "team-1")
+    return ws
+
+
+def held(ws) -> bool:
+    """Refused by accept then close: the connection is held until the
+    client answers the close frame."""
+    return ws.accept.await_count == 1 and ws.close.await_count == 1
+
+
+class TestRefusalLimits:
+    """CHT-1635: a refusal that is accepted and closed holds its connection
+    until the client answers the close frame, up to the server's close
+    timeout; the caps bound how many one address, and all together, can
+    hold, and the refusal line is rate-limited so a flood cannot fill
+    the log."""
+
+    async def test_one_address_holds_at_most_the_cap(self, clock):
+        cap = ws_auth.MAX_HELD_REFUSALS_PER_CLIENT
+        sockets = [await refuse_from("198.51.100.1", port=40000 + i) for i in range(cap)]
+        assert all(held(ws) for ws in sockets)
+
+        over = await refuse_from("198.51.100.1", port=50000)
+        over.accept.assert_not_awaited()
+        over.close.assert_not_awaited()
+        [response] = over.send_denial_response.await_args.args
+        assert response.status_code == 429
+        assert int(response.headers["retry-after"]) >= ws_auth.RETRY_AFTER_SECONDS
+
+        # Another address is not affected.
+        assert held(await refuse_from("198.51.100.2"))
+
+    async def test_the_cap_frees_up_after_the_close_timeout(self, clock):
+        for i in range(ws_auth.MAX_HELD_REFUSALS_PER_CLIENT):
+            await refuse_from("198.51.100.1", port=40000 + i)
+        assert not held(await refuse_from("198.51.100.1"))
+        clock.now += ws_auth.REFUSAL_HOLD_SECONDS - 1
+        assert not held(await refuse_from("198.51.100.1"))
+        clock.now += 1
+        assert held(await refuse_from("198.51.100.1"))
+
+    async def test_throttled_refusals_do_not_extend_the_window(self, clock):
+        """Only refusals that hold a connection are counted: a 429 drops it
+        at once, so a client hammering past the cap is not locked out
+        beyond the close timeout."""
+        for i in range(ws_auth.MAX_HELD_REFUSALS_PER_CLIENT):
+            await refuse_from("198.51.100.1", port=40000 + i)
+        for _ in range(50):
+            clock.now += 0.1
+            await refuse_from("198.51.100.1")
+        clock.now += ws_auth.REFUSAL_HOLD_SECONDS - 5
+        assert held(await refuse_from("198.51.100.1"))
+
+    async def test_all_addresses_together_hold_at_most_the_total_cap(self, clock, monkeypatch):
+        monkeypatch.setattr(ws_auth, "MAX_HELD_REFUSALS", 5)
+        sockets = [await refuse_from(f"203.0.113.{i}") for i in range(5)]
+        assert all(held(ws) for ws in sockets)
+        over = await refuse_from("203.0.113.99")
+        assert over.send_denial_response.await_args.args[0].status_code == 429
+        clock.now += ws_auth.REFUSAL_HOLD_SECONDS
+        assert held(await refuse_from("203.0.113.99"))
+
+    async def test_the_address_table_stays_bounded(self, clock, monkeypatch):
+        monkeypatch.setattr(ws_auth, "MAX_HELD_REFUSALS", 5)
+        for i in range(200):
+            clock.now += ws_auth.REFUSAL_HOLD_SECONDS  # each one expires before the next
+            await refuse_from(f"2001:db8::{i:x}")
+        assert len(ws_auth._gate._by_host) <= ws_auth.MAX_HELD_REFUSALS + 1
+
+    async def test_without_the_denial_extension_a_throttled_refusal_closes_before_accept(self, clock):
+        for i in range(ws_auth.MAX_HELD_REFUSALS_PER_CLIENT):
+            await refuse_from("198.51.100.1", denial=False, port=40000 + i)
+        over = await refuse_from("198.51.100.1", denial=False)
+        over.accept.assert_not_awaited()
+        over.close.assert_awaited_once_with(code=4001)  # the server's 403: dropped at once
+
+    async def test_a_503_holds_nothing_and_is_not_counted(self, clock):
+        for _ in range(3 * ws_auth.MAX_HELD_REFUSALS_PER_CLIENT):
+            ws = await refuse_from("198.51.100.1", code=4011, reason="Credential check failed")
+            assert ws.send_denial_response.await_args.args[0].status_code == 503
+        assert held(await refuse_from("198.51.100.1"))
+
+    async def test_a_flood_logs_one_line_per_client_and_reason(self, clock, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            for i in range(100):
+                clock.now += 0.01
+                await refuse_from("198.51.100.1", port=40000 + i)
+            await refuse_from("198.51.100.1", reason="User not found")
+            await refuse_from("198.51.100.2")
+        lines = refusal_lines(caplog)
+        assert len(lines) == 4, lines
+        # The first of each is logged in full, the throttled one too.
+        assert "reason=Invalid token client=198.51.100.1:40000" in lines[0] and "as=close" in lines[0]
+        assert "as=http-429" in lines[1]
+        assert "reason=User not found client=198.51.100.1" in lines[2]
+        assert "client=198.51.100.2" in lines[3]
+
+    async def test_the_next_line_says_how_many_were_not_logged(self, clock, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            for i in range(5):
+                await refuse_from("198.51.100.1", code=4011, reason="Credential check failed", port=40000 + i)
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await refuse_from("198.51.100.1", code=4011, reason="Credential check failed", port=41000)
+        first, second = refusal_lines(caplog)
+        assert "more like it" not in first
+        assert "client=198.51.100.1:41000" in second
+        assert "(4 more like it not logged in the last 60s)" in second
+
+    async def test_a_forgotten_key_logs_its_count(self, clock, caplog, monkeypatch):
+        monkeypatch.setattr(ws_auth, "_MAX_LOG_KEYS", 2)
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            for _ in range(3):
+                await refuse_from("198.51.100.1", code=4011, reason="Credential check failed")
+            await refuse_from("198.51.100.2", code=4011, reason="Credential check failed")
+            await refuse_from("198.51.100.3", code=4011, reason="Credential check failed")
+        lines = refusal_lines(caplog)
+        assert any(
+            "2 more with code=4011 reason=Credential check failed client=198.51.100.1 as=http-503" in line
+            for line in lines
+        ), lines
+        assert len(ws_auth._refusal_log._seen) <= 2
+
+    async def test_a_flood_never_logs_the_credential(self, db, clock, caplog):
+        secret = "ck_" + "cd" * 24
+        with caplog.at_level(logging.DEBUG, logger="app.ws_auth"):
+            for i in range(30):
+                ws = FakeWebSocket(
+                    headers={"Authorization": f"Bearer {secret}"}, client=("198.51.100.1", 40000 + i), denial=True,
+                )
+                await websocket_endpoint(ws, team_id="team-1")
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await websocket_endpoint(
+                FakeWebSocket(headers={"Authorization": f"Bearer {secret}"}, client=("198.51.100.1", 1), denial=True),
+                team_id="team-1",
+            )
+        lines = refusal_lines(caplog)
+        assert len(lines) == 3 and all("code=4001 reason=Invalid API key" in line for line in lines), lines
+        assert secret not in caplog.text and "cdcd" not in caplog.text

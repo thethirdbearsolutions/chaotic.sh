@@ -114,6 +114,17 @@ class _PushErrorHandler(logging.Handler):
 _push_error_handler = _PushErrorHandler(level=logging.ERROR)
 
 
+@pytest.fixture(autouse=True)
+def reset_ws_refusal_limits():
+    """Each test starts with no /ws refusals counted (CHT-1635): the caps
+    on refusals in flight and the refusal-log limiter are process-wide,
+    and would otherwise carry from one test to the next."""
+    from app import ws_auth
+
+    ws_auth.reset_refusal_limits()
+    yield
+
+
 @pytest_asyncio.fixture
 async def db(tmp_path, schema_template):
     """Initialize Oxyde with a fresh temp database for each test: a copy of

@@ -46,7 +46,11 @@ has no access to ``team_id`` (or names none); 4011 when the check itself failed 
 client should retry). A user who no longer exists is 4001, as it is 401
 on REST (it was 4003 before CHT-1567). A client cannot tell a refused
 handshake from an open socket closed at once, and need not: the code
-says what to do.
+says what to do. Two refusals are HTTP statuses on the handshake
+instead (``refuse``): a failed check is a 503 (CHT-1637), and a refusal
+past the per-address or total cap on refusals in flight is a 429
+(CHT-1635), both with ``Retry-After``. A browser sees either as 1006 and
+retries with backoff, as it does on 4011.
 
 The check is repeated while the socket is open (``watch``), every
 ``WS_AUTH_RECHECK_SECONDS`` (30 by default): a credential that has been
@@ -71,9 +75,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import time
+from collections import deque
 from dataclasses import dataclass
 
 from fastapi import HTTPException
+from starlette.responses import Response
 
 from app.api.deps import check_user_team_access
 from app.auth.access import authorize, reads
@@ -110,6 +118,149 @@ def _client_address(websocket) -> str:
     return f"{host}:{port}"
 
 
+def _client_host(websocket) -> str:
+    client = getattr(websocket, "client", None)
+    return "-" if client is None else str(client[0])
+
+
+# How long a refused handshake can hold its connection: uvicorn's
+# websockets implementations wait this long for the client to answer the
+# close frame (``close_timeout``, hard-coded, not configurable) before
+# dropping it. A client that answers (every browser, OkHttp) frees it at
+# once; this is the bound for one that does not (CHT-1635).
+REFUSAL_HOLD_SECONDS = 10.0
+# At most this many refusals that hold a connection (accept, then close)
+# per client address, and in all, within REFUSAL_HOLD_SECONDS. Past
+# either cap a refusal is an HTTP 429 on the handshake, which drops the
+# connection at once: so no client address holds more than
+# MAX_HELD_REFUSALS_PER_CLIENT connections open through refusals, and
+# the server no more than MAX_HELD_REFUSALS (CHT-1635).
+MAX_HELD_REFUSALS_PER_CLIENT = 8
+MAX_HELD_REFUSALS = 256
+# A refusal is logged at most once per this many seconds for each
+# (client address, code, reason); the next line that is logged says how
+# many were not (CHT-1635).
+REFUSAL_LOG_INTERVAL_SECONDS = 60.0
+# How many (client, code, reason) keys the log limiter remembers. Past
+# it, the oldest is forgotten (and its suppressed count logged).
+_MAX_LOG_KEYS = 1024
+# Retry-After on a 503 for a failed check, and the floor of one on a 429.
+RETRY_AFTER_SECONDS = 5
+
+_DENIAL_EXTENSION = "websocket.http.response"
+
+
+class _RefusalGate:
+    """Counts the refusals that hold a connection (``refuse`` accepts the
+    handshake, then closes it, and the server waits up to
+    REFUSAL_HOLD_SECONDS for the client's answer), per client address and
+    in all, over the last REFUSAL_HOLD_SECONDS. Monotonic clock; memory
+    is bounded by MAX_HELD_REFUSALS, since an address with no refusal in
+    the window is forgotten."""
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._by_host: dict[str, deque[float]] = {}
+        self._all: deque[float] = deque()
+
+    def _prune(self, now: float) -> None:
+        horizon = now - REFUSAL_HOLD_SECONDS
+        while self._all and self._all[0] <= horizon:
+            self._all.popleft()
+        if len(self._by_host) > MAX_HELD_REFUSALS:
+            for host in [h for h, q in self._by_host.items() if not q or q[-1] <= horizon]:
+                del self._by_host[host]
+
+    def admit(self, host: str) -> float | None:
+        """Record a held refusal for ``host`` and return None, or, when a
+        cap is reached, record nothing and return how many seconds until
+        one frees up."""
+        now = self._clock()
+        self._prune(now)
+        horizon = now - REFUSAL_HOLD_SECONDS
+        mine = self._by_host.get(host)
+        if mine is not None:
+            while mine and mine[0] <= horizon:
+                mine.popleft()
+        if mine is not None and len(mine) >= MAX_HELD_REFUSALS_PER_CLIENT:
+            return mine[0] - horizon
+        if len(self._all) >= MAX_HELD_REFUSALS:
+            return self._all[0] - horizon
+        if mine is None:
+            mine = self._by_host[host] = deque()
+        mine.append(now)
+        self._all.append(now)
+        return None
+
+
+class _RefusalLog:
+    """Logs the refusal lines, at most one per REFUSAL_LOG_INTERVAL_SECONDS
+    for each (client address, code, reason, outcome), so a flood cannot
+    fill the log: the first line for each key is always written, the rest
+    are counted, and the count goes out with the key's next line, or as a
+    line of its own when the key is forgotten to make room."""
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        # key -> [when last logged, how many suppressed since]
+        self._seen: dict[tuple, list] = {}
+
+    def log(self, key: tuple, message: str, *args) -> None:
+        now = self._clock()
+        entry = self._seen.get(key)
+        if entry is not None and now - entry[0] < REFUSAL_LOG_INTERVAL_SECONDS:
+            entry[1] += 1
+            return
+        suppressed = entry[1] if entry is not None else 0
+        if entry is not None:
+            del self._seen[key]  # re-inserted below, as the newest
+        elif len(self._seen) >= _MAX_LOG_KEYS:
+            self._evict(now)
+        self._seen[key] = [now, 0]
+        if suppressed:
+            message += " (%d more like it not logged in the last %ds)"
+            args = (*args, suppressed, int(now - entry[0]))
+        logger.warning(message, *args)
+
+    def _evict(self, now: float) -> None:
+        expired = [k for k, (when, _) in self._seen.items() if now - when >= REFUSAL_LOG_INTERVAL_SECONDS]
+        if not expired:
+            expired = [next(iter(self._seen))]  # the oldest
+        for key in expired:
+            when, suppressed = self._seen.pop(key)
+            if suppressed:
+                host, code, reason, outcome = key
+                logger.warning(
+                    "Refused /ws handshake: %d more with code=%s reason=%s client=%s as=%s not logged in the last %ds",
+                    suppressed, code, reason, host, outcome, int(now - when),
+                )
+
+
+_gate = _RefusalGate()
+_refusal_log = _RefusalLog()
+
+
+def reset_refusal_limits() -> None:
+    """Forget every refusal counted so far (tests)."""
+    global _gate, _refusal_log
+    _gate = _RefusalGate()
+    _refusal_log = _RefusalLog()
+
+
+def _can_deny(websocket) -> bool:
+    """Whether the server takes an HTTP response for a handshake (the ASGI
+    denial-response extension; uvicorn has it)."""
+    return _DENIAL_EXTENSION in (websocket.scope.get("extensions") or {})
+
+
+async def _deny(websocket, status: int, retry_after: int) -> None:
+    """Refuse the handshake with an HTTP ``status`` and ``Retry-After``,
+    which the server sends and then drops the connection at once."""
+    await websocket.send_denial_response(
+        Response(status_code=status, headers={"Retry-After": str(retry_after)}),
+    )
+
+
 async def refuse(websocket, code: int, reason: str, team_id: str | None) -> None:
     """Refuse a handshake so the client sees ``code`` (CHT-1615): accept
     the socket, then close it at once with the code. Nothing is sent in
@@ -129,27 +280,69 @@ async def refuse(websocket, code: int, reason: str, team_id: str | None) -> None
     handshake: a browser that offered subprotocols fails a handshake
     whose response selects none, and would see 1006 again.
 
+    Two refusals are HTTP statuses instead, sent before accept, so the
+    server drops the connection at once:
+
+    - 4011 (the check itself failed, so the client should retry) is an
+      HTTP 503 with ``Retry-After`` (CHT-1637). Every client already
+      treats it as it treats 4011: the web app backs off and retries on
+      1006 as on 4011, and a native client reads the 503. A web tab still
+      running a bundle from before CHT-1615 counts any ``onopen`` as up,
+      clears its backoff and resyncs over REST, so an accepted-then-closed
+      4011 made it reconnect and refetch about once a second during a
+      database outage, the one time 4011 happens. A 503 never opens.
+      4001 and 4003 keep their close codes: a client must tell them
+      apart, and neither comes in a flood from good clients.
+    - A refusal past the hold caps (``_RefusalGate``) is an HTTP 429 with
+      ``Retry-After`` (CHT-1635). A client that never answers the close
+      frame holds its connection for the server's close timeout
+      (REFUSAL_HOLD_SECONDS), where the old 403 dropped it at once, and
+      the caps bound how many such connections one address, and all of
+      them together, can hold. A browser sees 1006 and backs off; its
+      next attempt, under the cap, gets the code.
+
+    Without the ASGI denial-response extension both fall back: a 4011 is
+    accepted and closed with its code (and counts against the caps), and
+    a refusal past the caps is closed before accept (the server's own
+    403).
+
     Each refusal is logged (WARNING, ``app.ws_auth``) with its code,
     reason, client address and team, never the credential: the access log
-    now shows a refused handshake as accepted, so this line is the only
+    shows a refused handshake as accepted, so this line is the only
     server-side record of it (PR #359 review, 1). WARNING, because nothing
     configures the ``app`` loggers under uvicorn's default logging, where
     only WARNING and up reach the output (PR #359 re-review, 1).
     ``team_id`` is the client's text, so it is logged quoted and cut
-    short.
-
-    The connection stays open until the client answers the close frame,
-    or for the server's close timeout (10 s with uvicorn's websockets
-    implementations) if it never does; the 403 path dropped it at once
-    (PR #359 review, 2; CHT-1635)."""
-    logger.warning(
-        "Refused /ws handshake: code=%s reason=%s client=%s team=%r",
-        code, reason, _client_address(websocket), (team_id or "")[:64],
+    short. The line is rate-limited per client address, code, reason and
+    outcome (``_RefusalLog``, CHT-1635): the first is always logged, and a
+    later one says how many were not."""
+    host = _client_host(websocket)
+    can_deny = _can_deny(websocket)
+    unavailable = code == CLOSE_INTERNAL_ERROR and can_deny
+    wait = None if unavailable else _gate.admit(host)
+    if unavailable:
+        outcome = "http-503"
+    elif wait is not None:
+        outcome = "http-429" if can_deny else "http-403"
+    else:
+        outcome = "close"
+    _refusal_log.log(
+        (host, code, reason, outcome),
+        "Refused /ws handshake: code=%s reason=%s client=%s team=%r as=%s",
+        code, reason, _client_address(websocket), (team_id or "")[:64], outcome,
     )
-    subprotocol = SUBPROTOCOL if SUBPROTOCOL in _offered_subprotocols(websocket) else None
     try:
-        await websocket.accept(subprotocol=subprotocol)
-        await websocket.close(code=code)
+        if unavailable:
+            await _deny(websocket, 503, RETRY_AFTER_SECONDS)
+        elif wait is not None:
+            if can_deny:
+                await _deny(websocket, 429, max(RETRY_AFTER_SECONDS, math.ceil(wait)))
+            else:
+                await websocket.close(code=code)  # before accept: the server's 403
+        else:
+            subprotocol = SUBPROTOCOL if SUBPROTOCOL in _offered_subprotocols(websocket) else None
+            await websocket.accept(subprotocol=subprotocol)
+            await websocket.close(code=code)
     except Exception:
         # The client went away during the handshake: nobody to tell.
         logger.debug("WebSocket refusal (%s) not delivered", code, exc_info=True)
