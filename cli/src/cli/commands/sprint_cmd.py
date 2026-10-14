@@ -214,6 +214,14 @@ def register(cli):
                 f"[green]'{esc(result['name'])}' follows the project default budget again "
                 f"({'unlimited' if budget is None else esc(budget) + ' points'}).[/green]"
             )
+            if budget is None:
+                # The project default is unlimited (PR #391 review L1).
+                console.print(
+                    "[yellow]Warning: the project has no default sprint budget, so this sprint "
+                    "(and later sprints that follow the default) will have no budget and "
+                    "arrears will not apply. Set one with 'chaotic project update "
+                    "--default-sprint-budget N'.[/yellow]"
+                )
             return
 
         set_amount = None

@@ -348,7 +348,10 @@ def resolve_sprint_id(sprint_value: str, project_id: str) -> str:
         sprints = _client().get_sprints(project_id, status="planned")
         if not sprints:
             raise click.ClickException("No planned (next) sprint found. Use 'chaotic sprint list' to see available sprints.")
-        return sprints[0]["id"]
+        # The server lists newest first; "next" is the planned sprint the
+        # server activates next, which is the oldest (SprintService.
+        # get_next_sprint orders by created_at). PR #391 review L4.
+        return min(sprints, key=lambda s: s.get("created_at") or "")["id"]
 
     # Fetch all sprints for resolution
     sprints = _client().get_sprints(project_id)

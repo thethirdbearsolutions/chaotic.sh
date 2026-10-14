@@ -4,7 +4,7 @@ from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_project_access
 from app.schemas.sprint import SprintCreate, SprintUpdate, SprintResponse
 from app.schemas.budget_transaction import BudgetTransactionResponse
-from app.services.sprint_service import SprintService
+from app.services.sprint_service import SprintNotPlannedError, SprintService
 from app.services.project_service import ProjectService
 from app.enums import SprintStatus
 from app.oxyde_models.issue import OxydeBudgetTransaction
@@ -180,7 +180,11 @@ async def update_sprint(
             ),
         )
 
-    sprint = await sprint_service.update(sprint, sprint_in)
+    try:
+        sprint = await sprint_service.update(sprint, sprint_in)
+    except SprintNotPlannedError as e:
+        # Activated between the check above and the write.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     response = SprintResponse.model_validate(sprint, from_attributes=True)
     await broadcast_sprint_event(project.team_id, "updated", response.model_dump(mode="json"))
     return response

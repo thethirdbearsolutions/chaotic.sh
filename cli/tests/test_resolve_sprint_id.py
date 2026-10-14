@@ -363,3 +363,32 @@ class TestResolveSprintIdEdgeCases:
         # Empty string input matches empty name - this is edge case behavior
         result = resolve_sprint_id("", "project-123")
         assert result == "id-1"
+
+
+class TestResolveSprintIdNext:
+    """'next' is the planned sprint the server activates next: the oldest
+    (SprintService.get_next_sprint), not the first row of a newest-first
+    listing (PR #391 review L4)."""
+
+    def test_next_picks_oldest_planned_sprint(self):
+        from cli.main import resolve_sprint_id, client
+
+        client.get_sprints = MagicMock(return_value=[
+            {"id": "newer", "status": "planned", "created_at": "2026-10-02T00:00:00Z"},
+            {"id": "older", "status": "planned", "created_at": "2026-10-01T00:00:00Z"},
+        ])
+        assert resolve_sprint_id("next", "project-123") == "older"
+        client.get_sprints.assert_called_once_with("project-123", status="planned")
+
+    def test_next_single_planned_sprint(self):
+        from cli.main import resolve_sprint_id, client
+
+        client.get_sprints = MagicMock(return_value=[{"id": "only", "status": "planned"}])
+        assert resolve_sprint_id("next", "project-123") == "only"
+
+    def test_next_without_planned_sprint_errors(self):
+        from cli.main import resolve_sprint_id, client
+
+        client.get_sprints = MagicMock(return_value=[])
+        with pytest.raises(click.ClickException, match="No planned"):
+            resolve_sprint_id("next", "project-123")

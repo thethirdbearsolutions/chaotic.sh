@@ -16,6 +16,10 @@ from app.schemas.sprint import SprintUpdate
 Sprint = OxydeSprint
 
 
+class SprintNotPlannedError(ValueError):
+    """budget_follows_default was asked of a sprint that is not PLANNED."""
+
+
 class SprintService:
     """Service for sprint operations."""
 
@@ -389,11 +393,24 @@ class SprintService:
             update_data["budget_explicit"] = True
         # The way back (CHT-1701): the sprint follows the default again
         # and takes it now, as adopt_default_budget would have given it.
-        # The schema refuses this together with `budget`; the route
-        # refuses it for a sprint that is not planned.
+        # The schema refuses this together with `budget`. The write is
+        # conditional on the row still being PLANNED, not on this copy of
+        # it: a sprint activated since it was read keeps its budget, as
+        # the activation write in _activate_next_sprint does (PR #391
+        # review L3).
         if update_data.pop("budget_follows_default", None):
-            update_data["budget_explicit"] = False
-            update_data["budget"] = await self._get_project_default_budget(sprint.project_id)
+            default_budget = await self._get_project_default_budget(sprint.project_id)
+            matched = await execute_raw(
+                "UPDATE sprints SET budget = ?, budget_explicit = 0, updated_at = ? "
+                "WHERE id = ? AND status = ? RETURNING id",
+                [default_budget, datetime.now(timezone.utc), sprint.id, SprintStatus.PLANNED.name],
+            )
+            if not matched:
+                raise SprintNotPlannedError(
+                    "Only a planned sprint can follow the project default budget; "
+                    "set this sprint's budget instead"
+                )
+            await sprint.refresh()
         new_status = update_data.get("status")
         if new_status is not None and new_status != sprint.status:
             now = datetime.now(timezone.utc)

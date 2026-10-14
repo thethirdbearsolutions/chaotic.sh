@@ -368,6 +368,7 @@ class TestSprintBudget:
         client.update_sprint.assert_called_once_with('sprint-uuid-31', budget_follows_default=True)
         assert 'follows the project default budget again' in result.output
         assert '24 points' in result.output
+        assert 'Warning' not in result.output
 
     def test_sprint_budget_default_by_sprint_id(self, cli_runner):
         """A lone arg with --default is a SPRINT_ID, even a numeric one."""
@@ -385,6 +386,9 @@ class TestSprintBudget:
         mock_resolve.assert_called_once_with('31', 'test-project-123')
         client.update_sprint.assert_called_once_with('sprint-uuid-31', budget_follows_default=True)
         assert 'unlimited' in result.output
+        flat = " ".join(result.output.split())
+        assert 'Warning: the project has no default sprint budget' in flat
+        assert 'arrears will not apply' in flat
 
     def test_sprint_budget_default_with_amount_is_rejected(self, cli_runner):
         from cli.main import cli, client

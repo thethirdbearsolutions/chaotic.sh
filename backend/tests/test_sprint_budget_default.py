@@ -560,3 +560,44 @@ async def test_template_default_change_broadcasts(client, auth_headers, test_pro
             await SprintService().adopt_default_budget(test_project.id)
             assert sent == [], "nothing is announced before the commit"
     assert [m["data"]["budget"] for m in _sprint_updates(sent, planned.id)] == [50]
+
+
+@pytest.mark.asyncio
+async def test_follows_default_write_is_conditional_on_planned(client, auth_headers, test_project):
+    """PR #391 review L3: a sprint activated after it was read (and after
+    the route's status check) keeps its budget; the reset is refused."""
+    from app.schemas.sprint import SprintUpdate
+    from app.services.sprint_service import SprintNotPlannedError
+
+    await _set_default(client, auth_headers, test_project.id, 24)
+    current, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    await client.patch(f"/api/sprints/{planned.id}", headers=auth_headers, json={"budget": 7})
+    stale = await OxydeSprint.objects.get(id=planned.id)
+    assert stale.status == SprintStatus.PLANNED
+
+    await _close(client, auth_headers, current.id)  # activates `planned`
+
+    with pytest.raises(SprintNotPlannedError):
+        await SprintService().update(stale, SprintUpdate(budget_follows_default=True))
+    fresh = await OxydeSprint.objects.get(id=planned.id)
+    assert fresh.status == SprintStatus.ACTIVE
+    assert fresh.budget == 7 and fresh.budget_explicit is True
+
+
+@pytest.mark.asyncio
+async def test_follows_default_race_is_a_400_from_the_route(client, auth_headers, test_project, monkeypatch):
+    """The route turns a lost race into the same 400 as its own check."""
+    from app.services.sprint_service import SprintNotPlannedError
+
+    _, planned = await SprintService().ensure_sprints_exist(test_project.id)
+
+    async def lose(self, sprint, sprint_in):
+        raise SprintNotPlannedError("Only a planned sprint can follow the project default budget")
+
+    monkeypatch.setattr(SprintService, "update", lose)
+    resp = await client.patch(
+        f"/api/sprints/{planned.id}", headers=auth_headers,
+        json={"budget_follows_default": True},
+    )
+    assert resp.status_code == 400
+    assert "Only a planned sprint" in resp.json()["detail"]
