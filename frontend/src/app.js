@@ -114,7 +114,6 @@ import {
     navigateToEpicByIdentifier,
     configureRouter,
     registerViews,
-    initRouter,
 } from './router.js';
 import { registerWsHandlers } from './ws-handlers.js';
 import { toggleSidebar, closeSidebar } from './sidebar.js';
@@ -562,7 +561,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     initThemeToggle();
     initIssueLinkHandler();
     initIssueTooltip({ api });
-    initRouter();
     registerWsHandlers();
     await bootApp();
 });
