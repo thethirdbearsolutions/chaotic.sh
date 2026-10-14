@@ -8,6 +8,7 @@ import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /** Approve and Reject from a notification's buttons (CHT-1665). */
@@ -48,14 +49,14 @@ class NotificationDecisionTest {
         val queued = assertIs<NotificationDecision.Queued>(queue.decideFromNotification(OWNER, "g1"))
 
         // No undo window: due now.
-        assertEquals(WriteStatus.Waiting, queue.status(queued.key))
+        assertEquals(WriteStatus.Waiting, queue.status(queued.key, OWNER))
         assertEquals(FlushOutcome.Done(null), queue.flush())
 
         assertEquals(
             listOf(SentWrite("POST", "/api/rituals/r1/complete-issue/i1", JsonObject(emptyMap()), queued.key, OWNER)),
             remote.writesSent,
         )
-        assertEquals(WriteStatus.Done, queue.status(queued.key))
+        assertEquals(WriteStatus.Done, queue.status(queued.key, OWNER))
         assertEquals(listOf("g2"), store.inbox().map { it.id })
     }
 
@@ -104,10 +105,61 @@ class NotificationDecisionTest {
 
     @Test
     fun aSecondDecisionOnTheSameEntryIsNotQueued() = runTest {
-        assertIs<NotificationDecision.Queued>(queue.decideFromNotification(OWNER, "g1"))
+        val first = assertIs<NotificationDecision.Queued>(queue.decideFromNotification(OWNER, "g1"))
 
-        assertEquals(NotificationDecision.AlreadyQueued, queue.decideFromNotification(OWNER, "g1", note = "no"))
+        assertEquals(
+            NotificationDecision.AlreadyQueued(first.key, WriteKind.APPROVE, dueInMillis = 0),
+            queue.decideFromNotification(OWNER, "g1", note = "no"),
+        )
         assertEquals(1, store.pendingWrites().size)
+    }
+
+    @Test
+    fun anInAppSwipeStillInItsUndoWindowSaysHowLongItHasLeft() = runTest {
+        val swipe = assertNotNull(queue.reject(gate, "not yet"))
+        now += 1_000
+
+        assertEquals(
+            NotificationDecision.AlreadyQueued(swipe, WriteKind.REJECT, WriteQueue.UNDO_MILLIS - 1_000),
+            queue.decideFromNotification(OWNER, "g1"),
+        )
+    }
+
+    @Test
+    fun aWriteDiscardedInTheAppIsUnknownNeverDone() = runTest {
+        remote.answerWrite = { Remote.HttpError(503) }
+        val queued = assertIs<NotificationDecision.Queued>(queue.decideFromNotification(OWNER, "g1"))
+        queue.flush()
+
+        assertTrue(queue.undo(queued.key))
+
+        assertEquals(WriteStatus.Unknown, queue.status(queued.key, OWNER))
+    }
+
+    @Test
+    fun aWriteEmptiedWithTheCacheAtASignOutIsUnknownAfterTheSamePersonSignsInAgain() = runTest {
+        val queued = assertIs<NotificationDecision.Queued>(queue.decideFromNotification(OWNER, "g1"))
+        signedIn = null
+        session.end()
+
+        assertEquals(WriteStatus.SignedOut, queue.status(queued.key, OWNER))
+        signedIn = OWNER
+        // Back again: the queue was emptied, nothing was sent, so it was not approved.
+        assertEquals(WriteStatus.Unknown, queue.status(queued.key, OWNER))
+        assertTrue(remote.writesSent.isEmpty())
+    }
+
+    @Test
+    fun anotherPersonsQueueSaysNothingAboutTheWrite() = runTest {
+        val queued = assertIs<NotificationDecision.Queued>(queue.decideFromNotification(OWNER, "g1"))
+        queue.flush()
+        assertEquals(WriteStatus.Done, queue.status(queued.key, OWNER))
+
+        signedIn = OTHER_OWNER
+
+        assertEquals(WriteStatus.SignedOut, queue.status(queued.key, OWNER))
+        // Grace's own queue never held it, and it was not hers to be taken.
+        assertEquals(WriteStatus.Unknown, queue.status(queued.key, OTHER_OWNER))
     }
 
     @Test
@@ -115,7 +167,7 @@ class NotificationDecisionTest {
         signedIn = null
 
         assertEquals(NotificationDecision.SignedOut, queue.decideFromNotification(OWNER, "g1"))
-        assertEquals(WriteStatus.SignedOut, queue.status("k1"))
+        assertEquals(WriteStatus.SignedOut, queue.status("k1", OWNER))
         signedIn = OWNER
         assertEquals(emptyList(), store.pendingWrites())
     }
@@ -142,7 +194,7 @@ class NotificationDecisionTest {
 
         queue.flush()
 
-        val refused = assertIs<WriteStatus.Refused>(queue.status(queued.key))
+        val refused = assertIs<WriteStatus.Refused>(queue.status(queued.key, OWNER))
         assertEquals("Already approved by Grace.", refused.refusal.message)
         assertEquals("ritual_already_resolved", refused.refusal.errorCode)
     }
@@ -153,13 +205,13 @@ class NotificationDecisionTest {
         val queued = assertIs<NotificationDecision.Queued>(queue.decideFromNotification(OWNER, "g1"))
 
         queue.flush()
-        assertEquals(WriteStatus.Waiting, queue.status(queued.key))
+        assertEquals(WriteStatus.Waiting, queue.status(queued.key, OWNER))
 
         repeat(WriteQueue.MAX_ATTEMPTS) {
             now += WriteQueue.MAX_RETRY_MILLIS
             queue.flush()
         }
-        assertEquals(WriteStatus.Stalled, queue.status(queued.key))
+        assertEquals(WriteStatus.Stalled, queue.status(queued.key, OWNER))
     }
 
     @Test
@@ -169,6 +221,6 @@ class NotificationDecisionTest {
 
         assertIs<FlushOutcome.Retry>(queue.flush())
 
-        assertEquals(WriteStatus.Waiting, queue.status(queued.key))
+        assertEquals(WriteStatus.Waiting, queue.status(queued.key, OWNER))
     }
 }

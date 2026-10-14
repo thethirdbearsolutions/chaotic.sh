@@ -117,6 +117,8 @@ constructor(
     private suspend fun signedOut() {
         guarded(::failed) { notifier.cancelAll() }
         guarded(::failed) { PushWork.cancelAll(context) }
+        // A decision from a notification is followed for its own person only (CHT-1665).
+        guarded(::failed) { DecisionWork.cancelAll(context) }
         notice.value = false
         guarded(::failed) { registrar.signedOut() }
     }

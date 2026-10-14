@@ -40,8 +40,12 @@ sealed interface NotificationDecision {
     /** The server did not offer this decision on the entry (the person may not decide it now). */
     data object NotOffered : NotificationDecision
 
-    /** A decision on this entry is already on its way. */
-    data object AlreadyQueued : NotificationDecision
+    /**
+     * A decision on this entry is already queued: [key], of [kind]
+     * (approve, reject or archive), due in [dueInMillis]. More than zero
+     * is an in-app swipe whose undo window is still open.
+     */
+    data class AlreadyQueued(val key: String, val kind: WriteKind, val dueInMillis: Long) : NotificationDecision
 
     /** Nobody is signed in, or someone other than the notification's person is. Nothing was sent. */
     data object SignedOut : NotificationDecision
@@ -55,12 +59,19 @@ sealed interface WriteStatus {
     /** Still queued, but no longer sent on its own: the person retries or discards it in the app. */
     data object Stalled : WriteStatus
 
-    /** Sent and taken (or taken back, which a notification's write never is). */
+    /** Sent and taken by the server, as this process saw it. */
     data object Done : WriteStatus
 
     data class Refused(val refusal: WriteRefusal) : WriteStatus
 
-    /** Nobody is signed in any more, or someone else is: the write went with their cache. */
+    /**
+     * No longer queued, and not known to be taken: discarded in the app,
+     * dropped as superseded, emptied with the cache at a sign-out, or
+     * taken by an earlier process. Never to be shown as done.
+     */
+    data object Unknown : WriteStatus
+
+    /** Nobody is signed in any more, or someone other than the write's person is. */
     data object SignedOut : WriteStatus
 }
 
@@ -139,6 +150,15 @@ class WriteQueue(
     /** In-flight or busy answers in a row, per write; kept only while the app runs. */
     private val hinted = HashMap<String, Int>()
 
+    /**
+     * The keys the server took while this process ran, newest last, with
+     * whose they were: what lets [status] say Done rather than guess it
+     * from a write's absence. Guarded by itself.
+     */
+    private val taken = object : LinkedHashMap<String, String>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > MAX_TAKEN
+    }
+
     // What a person can do. Each returns the write's key (for an undo), or
     // null when there is nothing to do: the server did not offer that
     // action, it is already queued, or nobody is signed in.
@@ -185,7 +205,10 @@ class WriteQueue(
 
                 action == null -> NotificationDecision.NotOffered
 
-                !undecided(entryId, before) -> NotificationDecision.AlreadyQueued
+                !undecided(entryId, before) -> before.first { isDecisionOn(entryId, it) }.let {
+                    val due = (it.notBeforeMillis - nowMillis()).coerceAtLeast(0)
+                    NotificationDecision.AlreadyQueued(it.key, it.kind, due)
+                }
 
                 else -> {
                     val write = entry.pendingWrite(kind, action, reason, undoMillis = 0)
@@ -196,9 +219,16 @@ class WriteQueue(
         } ?: NotificationDecision.SignedOut
     }
 
-    /** Where the write [key] is now: still queued, done, or refused (with why). */
-    suspend fun status(key: String): WriteStatus {
+    /**
+     * Where the write [key], queued for [owner], is now: still queued,
+     * taken, refused (with why), or [WriteStatus.Unknown]. Signed out when
+     * [owner] is not the one signed in: another person's queue says
+     * nothing about it.
+     */
+    @Suppress("ReturnCount") // signed out, and someone else signed in, each end early
+    suspend fun status(key: String, owner: String): WriteStatus {
         val ticket = session.begin() ?: return WriteStatus.SignedOut
+        if (session.ownerOf(ticket) != owner) return WriteStatus.SignedOut
         return session.write(ticket) {
             val write = pendingWrites().firstOrNull { it.key == key }
             val refusal = refusals().firstOrNull { it.key == key }
@@ -206,7 +236,8 @@ class WriteQueue(
                 write != null && write.stalled -> WriteStatus.Stalled
                 write != null -> WriteStatus.Waiting
                 refusal != null -> WriteStatus.Refused(refusal)
-                else -> WriteStatus.Done
+                synchronized(taken) { taken[key] == owner } -> WriteStatus.Done
+                else -> WriteStatus.Unknown
             }
         } ?: WriteStatus.SignedOut
     }
@@ -375,6 +406,7 @@ class WriteQueue(
         if (stop != null) return stop
         failures = 0
         val written = session.write(ticket) { record(write, result) }
+        if (written != null && result is Remote.Ok) synchronized(taken) { taken[write.key] = origin.owner }
         return if (written == null) FlushOutcome.Unauthorized else null
     }
 
@@ -515,8 +547,10 @@ class WriteQueue(
      * One decision per entry: a second swipe while the first waits is not a second request.
      * A stalled one is not on its way, so it does not stand in for a new one.
      */
-    private fun undecided(entryId: String, queued: List<PendingWrite>) =
-        queued.none { it.entryId == entryId && it.kind in DECISIONS && !it.stalled }
+    private fun undecided(entryId: String, queued: List<PendingWrite>) = queued.none { isDecisionOn(entryId, it) }
+
+    private fun isDecisionOn(entryId: String, write: PendingWrite) =
+        write.entryId == entryId && write.kind in DECISIONS && !write.stalled
 
     private fun InboxEntry.pendingWrite(
         kind: WriteKind,
@@ -586,6 +620,9 @@ class WriteQueue(
 
         /** The server's answer when other writes held its database too long. */
         const val BUSY = "idempotency_busy"
+
+        /** How many taken keys [status] remembers. */
+        private const val MAX_TAKEN = 200
 
         /** In-flight or busy answers in a row sent again after just the server's Retry-After. */
         const val MAX_HINTED_RETRIES = 5

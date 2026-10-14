@@ -9,10 +9,7 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
-import sh.chaotic.auth.SessionManager
-import sh.chaotic.sync.WriteQueue
+import sh.chaotic.android.R
 
 /**
  * One tap on a gate or review notification's Approve, Reject or Reject
@@ -78,20 +75,13 @@ data class DecisionTap(
     }
 }
 
-/** What [DecisionReceiver] and [DecisionWorker] need, which Android constructs without Hilt's help. */
+/** What [DecisionWorker] needs, which Android constructs without Hilt's help. */
 @EntryPoint
 @InstallIn(SingletonComponent::class)
 interface DecisionEntryPoint {
-    fun sessions(): SessionManager
-
-    fun queue(): WriteQueue
-
     fun decisions(): NotificationDecisions
 
     fun notifier(): AndroidNotifier
-
-    @ApplicationScope
-    fun scope(): CoroutineScope
 }
 
 fun Context.decisionEntryPoint(): DecisionEntryPoint =
@@ -99,27 +89,39 @@ fun Context.decisionEntryPoint(): DecisionEntryPoint =
 
 /**
  * Where a notification's Approve and Reject buttons arrive (CHT-1665).
- * Not exported: only this app's own PendingIntents reach it. The work
- * is a cache lookup and a queue write, done on the application scope
- * while the broadcast is kept alive ([goAsync]); sending is left to
- * [DecisionWork].
+ * Not exported: only this app's own PendingIntents reach it. It only
+ * reads the tap and hands it to [DecisionWork], whose expedited worker
+ * looks the entry up, queues the decision and sends it: nothing slow
+ * runs in the broadcast, and a tap survives the process dying, since
+ * WorkManager keeps the step until it has run.
  */
 class DecisionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val tap = DecisionTap.from(intent) ?: return
-        val typed = if (tap.decision == DecisionTap.REJECT_WITH_NOTE) {
-            RemoteInput.getResultsFromIntent(intent)?.getCharSequence(DecisionTap.KEY_NOTE)?.toString()
-        } else {
-            null
-        }
-        val deps = context.decisionEntryPoint()
-        val pending = goAsync()
-        deps.scope().launch {
-            try {
-                deps.decisions().onTap(tap, typed)
-            } finally {
-                pending.finish()
+        DecisionWork.start(context, DecisionJob.of(tap, note(context, intent, tap)))
+    }
+
+    companion object {
+        /**
+         * The worker's input holds at most 10 KB, so a typed note is cut
+         * to this many characters (the server allows more; an inline
+         * reply is rarely long).
+         */
+        const val MAX_NOTE_CHARS = 3_000
+
+        /**
+         * A reject's reason: what was typed for Reject with note, else the
+         * canned "Rejected from phone". Null for Approve.
+         */
+        fun note(context: Context, intent: Intent, tap: DecisionTap): String? {
+            if (tap.decision == DecisionTap.APPROVE) return null
+            val typed = if (tap.decision == DecisionTap.REJECT_WITH_NOTE) {
+                RemoteInput.getResultsFromIntent(intent)?.getCharSequence(DecisionTap.KEY_NOTE)?.toString()?.trim()
+            } else {
+                null
             }
+            return typed?.takeIf { it.isNotEmpty() }?.take(MAX_NOTE_CHARS)
+                ?: context.getString(R.string.decision_canned_note)
         }
     }
 }

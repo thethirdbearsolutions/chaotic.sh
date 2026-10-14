@@ -141,7 +141,10 @@
     <string name="decision_stalled">Not sent: the server kept failing. Open Chaotic to retry or discard it.</string>
     <string name="decision_gone">This is no longer waiting on you. Nothing was sent.</string>
     <string name="decision_not_offered">You cannot decide this one now. Nothing was sent.</string>
-    <string name="decision_already_queued">A decision on this is already on its way.</string>
+    <string name="decision_archiving">Archiving…</string>
+    <string name="decision_archived">Archived</string>
+    <string name="decision_unknown">No longer queued, and not known to be sent. Open Chaotic to check.</string>
+    <string name="decision_failed">Something went wrong, so this may not have been sent. Open Chaotic to check.</string>
     <string name="decision_signed_out">This was for an account that is not signed in here now. Nothing was sent.</string>
     <string name="decision_sending">Sending your decision</string>
 </resources>

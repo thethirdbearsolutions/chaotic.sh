@@ -723,8 +723,12 @@ sealed with an Android Keystore key; the app never logs an endpoint, a
 key or a message. Notifications are private on the lock screen: one
 that hides sensitive content shows only that something is waiting. The
 exception is a gate or review waiting on you, which has Approve, Reject
-and Reject-with-note buttons that work from the lock screen without
-unlocking (CHT-1665). Its hidden-content version shows the kind and the
+and Reject-with-note buttons (CHT-1665). Approve and Reject (which sends
+the note "Rejected from phone") are meant to work from the lock screen
+without unlocking; the app asks for no unlock of its own. Typing a note
+for Reject with note may still ask you to unlock on a secure lock screen:
+whether Android allows inline replies there is up to the phone, and this
+has not yet been checked on a device (CHT-1684). Its hidden-content version shows the kind and the
 issue (`Gate waiting on you · CHT-12`) so you can see what the buttons
 decide, but never the entry's text. A button acts only when the account
 it was posted for is still signed in, and only on an entry in that
