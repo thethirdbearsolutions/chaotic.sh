@@ -66,20 +66,29 @@ class SharedPrefsPushStateStore(
             .commit()
     }
 
+    // Any Keystore failure, not only the checked ones: Cipher.init/doFinal on a
+    // broken Keystore key can throw ProviderException or IllegalStateException
+    // unwrapped. A pending endpoint that cannot be sealed or opened is "not
+    // kept", never a crash (the session store does the same).
+    @Suppress("TooGenericExceptionCaught", "SwallowedException")
     private fun seal(pending: PendingEndpoint): String? = try {
         val plain = listOf(pending.url, pending.p256dh, pending.auth).joinToString(SEPARATOR)
         Base64.getEncoder().encodeToString(cipher.encrypt(plain.encodeToByteArray()))
     } catch (_: GeneralSecurityException) {
         // Not kept: the next app start asks the distributor for the endpoint again.
         null
+    } catch (_: RuntimeException) {
+        null
     }
 
+    @Suppress("TooGenericExceptionCaught", "SwallowedException")
     private fun open(sealed: String): PendingEndpoint? = try {
         val parts = cipher.decrypt(Base64.getDecoder().decode(sealed)).decodeToString().split(SEPARATOR)
         if (parts.size == PARTS) PendingEndpoint(parts[0], parts[1], parts[2]) else null
     } catch (_: GeneralSecurityException) {
         null
-    } catch (_: IllegalArgumentException) {
+    } catch (_: RuntimeException) {
+        // ProviderException, IllegalStateException, and IllegalArgumentException for bad base64.
         null
     }
 

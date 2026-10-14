@@ -2,6 +2,7 @@ package sh.chaotic.android.push
 
 import android.app.Activity
 import android.content.Context
+import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +22,8 @@ import sh.chaotic.sync.push.PollNotifications
 import sh.chaotic.sync.push.PushRegistrar
 import sh.chaotic.sync.push.PushRemote
 import sh.chaotic.sync.push.PushStateStore
+import sh.chaotic.sync.push.collectGuarded
+import sh.chaotic.sync.push.guarded
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -59,21 +62,29 @@ constructor(
     fun start() {
         AndroidNotifier.createChannels(context)
         scope.launch { sessions.load() }
+        // These collectors live as long as the process: one event whose
+        // handling throws must not end them, or a later sign-out would
+        // leave the previous person's notifications up.
         scope.launch {
-            sessions.state.collect { if (it is AuthState.SignedOut) signedOut() }
+            sessions.state.collectGuarded(::failed) { if (it is AuthState.SignedOut) signedOut() }
         }
         scope.launch {
-            combine(dao.observeInbox(), syncer.lastSyncedAtMillis) { rows, synced ->
-                NotificationPlanner.reconcileWithCache(notifier.shown(), rows.associate { it.id to it.read }, synced)
-            }.collect { notifier.apply(it) }
+            combine(dao.observeInbox(), syncer.lastSyncedAtMillis) { rows, synced -> rows to synced }
+                .collectGuarded(::failed) { (rows, synced) ->
+                    val read = rows.associate { it.id to it.read }
+                    notifier.apply(NotificationPlanner.reconcileWithCache(notifier.shown(), read, synced))
+                }
         }
     }
 
+    /** Runs in the activity's scope, outside the application scope's handler: a failure here is logged, not a crash. */
     suspend fun onAppOpen(activity: Activity) {
-        if (sessions.cacheOwner() == null) return
-        registrar.start(distributorAvailable = UnifiedPushDistributor.pick(activity))
-        if (registrar.takeNoDistributorNotice()) notice.value = true
-        updateSchedule()
+        guarded(::failed) {
+            if (sessions.cacheOwner() == null) return@guarded
+            registrar.start(distributorAvailable = UnifiedPushDistributor.pick(activity))
+            if (registrar.takeNoDistributorNotice()) notice.value = true
+            updateSchedule()
+        }
     }
 
     fun dismissNotice() {
@@ -97,10 +108,20 @@ constructor(
         PollNotifications.post(notifier, entries)
     }
 
+    private fun failed(e: Exception) {
+        // The class only: a message could carry an endpoint.
+        Log.w(TAG, "Push work failed: ${e.javaClass.name}")
+    }
+
+    /** Each step on its own: a failed unregister must not leave the previous person's notifications up. */
     private suspend fun signedOut() {
-        registrar.signedOut()
-        notifier.cancelAll()
-        PushWork.cancelAll(context)
+        guarded(::failed) { notifier.cancelAll() }
+        guarded(::failed) { PushWork.cancelAll(context) }
         notice.value = false
+        guarded(::failed) { registrar.signedOut() }
+    }
+
+    private companion object {
+        const val TAG = "ChaoticPush"
     }
 }

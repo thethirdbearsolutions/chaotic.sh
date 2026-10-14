@@ -12,6 +12,7 @@ import sh.chaotic.sync.push.PendingEndpoint
 import sh.chaotic.sync.push.PushState
 import sh.chaotic.sync.push.PushStatus
 import java.security.GeneralSecurityException
+import java.security.ProviderException
 import javax.crypto.KeyGenerator
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -79,6 +80,24 @@ class SharedPrefsPushStateStoreTest {
         val state = store().read()
         assertNull(state.pending)
         assertEquals(PushStatus.ACTIVE, state.status)
+    }
+
+    @Test
+    fun aKeystoreThatThrowsUncheckedReadsAsNoPendingStateNotACrash() = runTest {
+        store().update { full }
+        for (failure in listOf(ProviderException("keystore"), IllegalStateException("keystore"))) {
+            val broken = object : TokenCipher {
+                override fun encrypt(plaintext: ByteArray): ByteArray = throw failure
+
+                override fun decrypt(sealed: ByteArray): ByteArray = throw failure
+            }
+            val state = store(broken).read()
+            assertNull(state.pending, "${failure.javaClass.simpleName} opening")
+            assertEquals("install-1", state.installationId)
+            store(broken).update { it.copy(vapidKeyId = "kid2", pending = full.pending) }
+            assertNull(store().read().pending, "${failure.javaClass.simpleName} sealing")
+            store().update { full }
+        }
     }
 
     @Test

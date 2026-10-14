@@ -41,7 +41,8 @@ android {
     // other non-free dependencies (`checkFossDependencies` enforces it in CI).
     // `play` is the Google Play build; it is where an FCM push distributor
     // would go if one is ever chosen (CHT-1608). Today the two are identical:
-    // both push through UnifiedPush (CHT-1612), which needs no Google code.
+    // both push through UnifiedPush (CHT-1612), which needs no Google Play
+    // Services or Firebase.
     flavorDimensions += "distribution"
     productFlavors {
         create("foss") {

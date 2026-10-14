@@ -85,8 +85,9 @@ interface PushDistributor {
  * - [start], on every app start while signed in: with a distributor,
  *   fetch the server's VAPID key and ask the distributor for an endpoint
  *   under it (it answers with the same endpoint when nothing changed). A
- *   VAPID key that changed on the server means a new subscription, so the
- *   old one is dropped first.
+ *   VAPID key that changed on the server is registered the same way, without
+ *   unregistering first (which would forget the chosen distributor): the
+ *   connector keeps its keys and the distributor decides the endpoint.
  * - [onEndpoint]: the distributor's endpoint and keys, kept as pending
  *   and then PUT to the server ([flushPending]; also run by a worker when
  *   the PUT could not be made then). The PUT is idempotent, so a new

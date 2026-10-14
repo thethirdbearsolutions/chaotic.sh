@@ -65,4 +65,22 @@ class InboxSyncerAddedTest {
         syncer.sync() // nothing queued: unreachable
         assertEquals(5_000L, syncer.lastSyncedAtMillis.value, "a failed run is not a sync")
     }
+
+    @Test
+    fun aResetSpanningPagesIsNotASyncUntilItCompletes() = runTest {
+        remote.syncAnswers += Remote.Ok(page(open(entry("e1")), cursor = "c1"))
+        syncer.sync()
+        assertEquals(5_000L, syncer.lastSyncedAtMillis.value)
+        now = 9_000L
+        val seen = mutableListOf<Long?>()
+        // The reset's first page clears the cache; the next page is the one that fails.
+        remote.syncAnswers += Remote.Ok(page(open(entry("e2", 2_000)), cursor = "c2", reset = true, hasMore = true))
+        val outcome = syncer.sync()
+        seen += syncer.lastSyncedAtMillis.value
+        assertIs<SyncOutcome.Failed>(outcome)
+        assertEquals(listOf<Long?>(null), seen, "a half-done reset leaves the cache incomplete")
+        remote.syncAnswers += Remote.Ok(page(open(entry("e3", 3_000)), cursor = "c3"))
+        syncer.sync()
+        assertEquals(9_000L, syncer.lastSyncedAtMillis.value)
+    }
 }

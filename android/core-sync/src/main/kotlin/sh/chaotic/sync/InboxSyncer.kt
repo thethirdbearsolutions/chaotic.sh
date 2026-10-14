@@ -71,9 +71,12 @@ class InboxSyncer(
     private val synced = MutableStateFlow<Long?>(null)
 
     /**
-     * When a run last brought the cache fully up to date (in this process;
-     * null before the first): the notifications use it to tell an entry
-     * that is gone from one the cache has not caught up with (CHT-1612).
+     * When a run last brought the cache fully up to date (in this process):
+     * the notifications use it to tell an entry that is gone from one the
+     * cache has not caught up with (CHT-1612). Null before the first such
+     * run, and from the moment a page clears the cache (a reset, or the
+     * restart after a refused cursor) until a run completes again: while a
+     * reset spans pages, the cache is missing entries that are still open.
      */
     val lastSyncedAtMillis: StateFlow<Long?> = synced.asStateFlow()
 
@@ -106,6 +109,8 @@ class InboxSyncer(
             clearNext = false
             cursor = page.nextCursor ?: if (clear) null else cursor
             val (change, new) = merge(page, clear, cursor)
+            // Before the write, so nothing that sees the cleared cache takes it for complete.
+            if (clear) synced.value = null
             // Signed out, or someone else signed in, while the page was on its way.
             session.write(ticket) { applyInbox(change) } ?: return SyncOutcome.Unauthorized
             added.record(change, new)

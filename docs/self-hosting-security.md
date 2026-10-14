@@ -712,9 +712,12 @@ be turned off, so the stolen credential cannot mute it first. A
 
 On the phone (CHT-1612), the app registers with whichever UnifiedPush
 distributor the person has installed (ntfy, NextPush, Sunup and others;
-the Android build has no Google code), each time it comes on screen. It
-re-registers under a new subscription when the server's VAPID key
-changes, which is what brings a paused device back. The subscription's
+the Android build uses no Google Play Services, Firebase or other
+proprietary code), each time it comes on screen. When the server's VAPID
+key changes it registers again with the new key, keeping its own
+subscription keys; whether the endpoint changes is up to the
+distributor, and the server records the device again either way, which
+is what brings a paused device back. The subscription's
 private key is made and kept by the UnifiedPush connector library,
 sealed with an Android Keystore key; the app never logs an endpoint, a
 key or a message. Notifications are private on the lock screen: one
@@ -724,3 +727,21 @@ the background every 15 minutes instead, notifying about what that
 brings in. The app's tests decrypt bodies made by the server's own
 encryption (`android/testdata/web-push-vectors.json`, which
 `backend/tests/test_push_vectors.py` keeps in step with the server).
+
+What the distributor can do. Messages reach the app through the
+distributor app, and Web Push has no replay protection, so the
+distributor (or anyone holding the endpoint's push-service topic) is
+trusted with more than it can read. It cannot forge a notification: the
+app shows only a message that decrypts with the subscription's keys,
+which the distributor never holds. It can make the app sync, by
+delivering anything (bounded to one background sync at a time, plus
+one in the open app). It can replay an old message: a stale entry notification can
+reappear until the app next syncs its inbox, and a replayed "resolved"
+can withdraw a notification that is still current (the entry stays in
+the inbox). It can also hand the app an endpoint of its own choosing,
+which only stops push for that phone. These are properties of Web Push,
+not of Chaotic, and the reason a notification carries no more than a
+kind, an issue identifier and a title. A sign-out that cannot reach the
+server leaves the device registered there until the session lapses;
+the server keeps posting messages the phone can no longer decrypt,
+since sign-out deletes the subscription keys.

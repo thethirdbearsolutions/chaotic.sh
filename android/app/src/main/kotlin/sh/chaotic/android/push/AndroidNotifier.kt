@@ -134,6 +134,9 @@ class AndroidNotifier(private val context: Context) : Notifier {
                     NotificationChannel(channel.id, context.getString(channelName(channel)), importance(channel))
                         .apply {
                             description = context.getString(channelDescription(channel))
+                            // A hint only: the system ignores an app's lock-screen setting for a
+                            // channel. What keeps content off the lock screen is each
+                            // notification's VISIBILITY_PRIVATE and its content-free public version.
                             lockscreenVisibility = Notification.VISIBILITY_PRIVATE
                         }
                 },
