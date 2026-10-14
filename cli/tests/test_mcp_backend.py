@@ -170,6 +170,19 @@ class TestDefaultTeam:
         monkeypatch.delenv("CHAOTIC_API_URL")
         assert await backend.resolve_team(None) == "only-team"
 
+    async def test_several_teams_are_not_remembered(self, backend, teams):
+        """Only a single answer is kept: a person given a second team, or
+        whose extra team is removed, mid-process is asked again (CHT-1691)."""
+        teams.return_value = [
+            {"id": "t1", "name": "Alpha", "key": "ALP"},
+            {"id": "t2", "name": "Beta", "key": "BET"},
+        ]
+        with pytest.raises(ToolInputError, match="several teams"):
+            await backend.resolve_team(None)
+        teams.return_value = [{"id": "t1", "name": "Alpha", "key": "ALP"}]
+        assert await backend.resolve_team(None) == "t1"
+        assert teams.call_count == 2
+
     async def test_several_teams_are_named(self, backend, teams):
         teams.return_value = [
             {"id": "t1", "name": "Alpha", "key": "ALP"},

@@ -746,6 +746,70 @@ class TestMcpDefaultTeam:
         assert teams_server.registrations[0]["team_id"] == "team-only"
         assert cli_config.get_current_team() is None
 
+    async def test_one_teams_lookup_per_process_shared_with_the_mcp_default(self, auto, teams_server):
+        """CHT-1691 N2: session identity listed the registrar's teams for
+        the first call; the MCP default team then uses that answer."""
+        from cli.mcp_backend import RestBackend
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        await RestBackend().get_issue("DEMO-1")
+        assert await RestBackend().resolve_team(None) == "team-only"
+        assert [r for r in teams_server.requests if r[1] == "/teams"] == [("GET", "/teams", REGISTRAR_KEY)]
+
+    async def test_the_mcp_default_is_seen_by_session_identity_without_a_second_lookup(self, auto, teams_server):
+        from cli.mcp_backend import RestBackend
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        assert await RestBackend().resolve_team(None) == "team-only"
+        await RestBackend().get_issue("DEMO-1")
+        assert [r[1] for r in teams_server.requests].count("/teams") == 1
+
+    def _new_process(self):
+        """What a fresh `chaotic` process starts with: no in-memory team."""
+        cli_config._only_teams.clear()
+        cli_config._process_teams.clear()
+
+    def test_a_later_cli_process_finds_the_session_key_without_asking_again(self, auto, teams_server):
+        """CHT-1691 N1: the team a person registrar with no current team
+        registered in is remembered for the session, so the next process
+        goes straight to the cached key."""
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        Client()._request("GET", "/issues")
+        self._new_process()
+        before = len(teams_server.requests)
+
+        assert Client()._request("GET", "/issues")["as"] == "sess-1-team-only"
+        assert [r[1] for r in teams_server.requests[before:]] == ["/issues"]
+        assert len(teams_server.registrations) == 1
+        assert cli_config.get_current_team() is None  # remembered, not adopted
+        hint = si.team_hint_path(REF, API, si.fingerprint(REGISTRAR_KEY))
+        assert stat.S_IMODE(os.stat(hint).st_mode) == 0o600
+
+    def test_the_remembered_team_is_asked_again_after_a_refused_key(self, auto, teams_server):
+        """The person may have left that team: a 401 re-resolves it."""
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        Client()._request("GET", "/issues")
+        self._new_process()
+        teams_server.teams[:] = [{"id": "team-new", "name": "New", "key": "NEW"}]
+        teams_server.revoke_all()
+        before = len(teams_server.requests)
+
+        assert Client()._request("GET", "/issues")["as"] == "sess-1-team-new"
+        assert "/teams" in [r[1] for r in teams_server.requests[before:]]
+        assert teams_server.registrations[-1]["team_id"] == "team-new"
+        # And the new team is what later processes use.
+        self._new_process()
+        before = len(teams_server.requests)
+        assert Client()._request("GET", "/issues")["as"] == "sess-1-team-new"
+        assert [r[1] for r in teams_server.requests[before:]] == ["/issues"]
+
+    def test_a_hint_for_another_slot_is_ignored(self, auto, teams_server):
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        fp = si.fingerprint(REGISTRAR_KEY)
+        si._ensure_dir()
+        si.write_cache(si.team_hint_path(REF, API, fp),
+                       {"external_ref": "other", "api_url": API, "registrar": fp, "team_id": "team-x"})
+        Client()._request("GET", "/issues")
+        assert teams_server.registrations[0]["team_id"] == "team-only"
+
     async def test_an_agent_registrar(self, auto, teams_server):
         from cli.mcp_backend import RestBackend
         assert await RestBackend().resolve_team(None) == "team-only"

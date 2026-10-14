@@ -345,7 +345,7 @@ def _process_team_slot() -> tuple[str, str] | None:
     credential = get_api_key() or get_token()
     if not credential:
         return None
-    return get_api_url().rstrip("/"), hashlib.sha256(credential.encode()).hexdigest()[:16]
+    return _team_slot(get_api_url(), credential)
 
 
 def set_process_team(team_id: str) -> None:
@@ -355,6 +355,40 @@ def set_process_team(team_id: str) -> None:
     slot = _process_team_slot()
     if slot:
         _process_teams[slot] = team_id
+
+
+# The single team a (server, credential) can see, per process (CHT-1691):
+# one /teams lookup shared by the stdio MCP server's default team and
+# session identity's person-registrar team. Only an answer of exactly one
+# team is kept, so a person who joins a team or is given one mid-process
+# is asked again rather than told an old answer. Not the current team:
+# remembering it here never makes the plain CLI adopt it.
+_only_teams: dict[tuple[str, str], dict] = {}
+
+
+def _team_slot(api_url: str, credential: str) -> tuple[str, str]:
+    return api_url.rstrip("/"), hashlib.sha256(credential.encode()).hexdigest()[:16]
+
+
+def known_only_team(api_url: str, credential: str) -> str | None:
+    """The only team `credential` sees on `api_url`, if this process has
+    already listed it (see accessible_teams); never makes a request."""
+    team = _only_teams.get(_team_slot(api_url, credential))
+    return team["id"] if team else None
+
+
+def accessible_teams(api_url: str, credential: str, fetch) -> list[dict]:
+    """The teams `credential` can see on `api_url`: from this process's
+    memo when it already found exactly one, else `fetch()` (a call to
+    GET /teams with that credential), remembering a single answer."""
+    slot = _team_slot(api_url, credential)
+    if slot in _only_teams:
+        return [_only_teams[slot]]
+    teams = fetch()
+    teams = teams if isinstance(teams, list) else []
+    if len(teams) == 1 and isinstance(teams[0], dict) and teams[0].get("id"):
+        _only_teams[slot] = teams[0]
+    return teams
 
 
 def get_current_team() -> str | None:
