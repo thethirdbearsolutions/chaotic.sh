@@ -21,8 +21,41 @@ BACKEND = Path(__file__).resolve().parents[1]
 MIGRATION = BACKEND / "migrations" / "0020_parent_user_restrict.py"
 NOW = "2026-10-13T00:00:00+00:00"
 
+# The end of every child script below. Oxyde's close of its last
+# connection can still be running when disconnect_all() returns
+# (tests/oxyde_files.py). SQLite's WAL close unlinks the -shm first and
+# the -wal last, so a process that dies in between leaves an empty -wal
+# behind (CHT-1583). Wait until SQLite has removed both sidecars, which
+# it does when the last connection is closed (bounded: if something else
+# still has the file open they stay, and the test sees that). Then exit
+# with os._exit, on failure as well as success: under pytest-xdist,
+# Oxyde's native runtime aborts the process (rc -6) while being torn down
+# by interpreter finalization, after the work is done, and a failed
+# migration used to take that path. A script defines `run()` and ends
+# with this. An error is printed and exits 1; SystemExit keeps its code
+# and KeyboardInterrupt exits 130, as the interpreter would.
+_SETTLE_AND_EXIT = """
+try:
+    run()
+    code = 0
+except SystemExit as exit_:
+    code = exit_.code if isinstance(exit_.code, int) else (0 if exit_.code is None else 1)
+except KeyboardInterrupt:
+    code = 130
+except Exception:
+    traceback.print_exc()
+    code = 1
+
+deadline = time.monotonic() + 5
+while time.monotonic() < deadline and any(os.path.exists(sys.argv[1] + s) for s in ("-wal", "-shm")):
+    time.sleep(0.01)
+sys.stdout.flush()
+sys.stderr.flush()
+os._exit(code)
+"""
+
 _MIGRATE = """
-import asyncio, sys
+import asyncio, os, sys, time, traceback
 from oxyde import AsyncDatabase, PoolSettings, disconnect_all
 from oxyde.migrations.executor import apply_migrations
 
@@ -35,15 +68,9 @@ async def main(path, target):
     finally:
         await disconnect_all()
 
-asyncio.run(main(sys.argv[1], sys.argv[2]))
-# Skip interpreter finalization: under pytest-xdist, Oxyde's native
-# runtime aborts the process while being torn down, after the work is
-# done and every connection is closed.
-sys.stdout.flush()
-sys.stderr.flush()
-import os
-os._exit(0)
-"""
+def run():
+    asyncio.run(main(sys.argv[1], sys.argv[2]))
+""" + _SETTLE_AND_EXIT
 
 
 def _migrate(path: str, target: str | None = None) -> None:
