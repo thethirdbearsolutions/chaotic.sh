@@ -120,6 +120,7 @@ import { registerWsHandlers } from './ws-handlers.js';
 import { toggleSidebar, closeSidebar } from './sidebar.js';
 import { handleQuickCreate } from './quick-create.js';
 import { getTheme, setTheme } from './storage.js';
+import { clearPendingAssigneeFilter } from './assignees.js';
 
 // Mobile sidebar toggle, closeSidebar, focus trap moved to sidebar.js (CHT-1046)
 
@@ -424,7 +425,10 @@ function initIssuesView() {
     if (typeFilter) typeFilter.addEventListener('change', () => filterIssues());
 
     const assigneeFilter = document.getElementById('assignee-filter');
-    if (assigneeFilter) assigneeFilter.addEventListener('change', () => filterIssues());
+    if (assigneeFilter) assigneeFilter.addEventListener('change', () => {
+        clearPendingAssigneeFilter();
+        filterIssues();
+    });
 
     const sprintFilter = document.getElementById('sprint-filter');
     if (sprintFilter) sprintFilter.addEventListener('change', () => filterIssues());

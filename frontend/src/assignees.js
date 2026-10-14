@@ -5,8 +5,14 @@
  */
 
 import { escapeHtml } from './utils.js';
+import { getCurrentView } from './state.js';
 
 let assignees = [];
+
+// A `?assignee=` id that could not be resolved yet: the issues view can
+// read the URL before the team's members and agents have loaded. It is
+// applied by the first assignee-filter rebuild that resolves it (CHT-1692).
+let pendingAssigneeId = null;
 
 function normalizeMemberAssignee(member) {
     const name = member.user_name || member.name || member.user_email || member.email || 'Unknown';
@@ -145,6 +151,42 @@ export function updateAssigneeFilter({ keepId = null } = {}) {
     if (currentSelection) {
         assigneeFilter.value = currentSelection;
     }
+
+    applyPendingAssigneeFilter(assigneeFilter);
+}
+
+/**
+ * Apply a `?assignee=` id that arrived before its assignee had loaded,
+ * once it resolves. Only while the issues view is open and nothing else
+ * has been chosen meanwhile; the `change` event makes the issues view
+ * reload its list and write the id back into the URL (CHT-1692).
+ */
+function applyPendingAssigneeFilter(assigneeFilter) {
+    if (!pendingAssigneeId) return;
+    if (getCurrentView() !== 'issues' || assigneeFilter.value) {
+        pendingAssigneeId = null;
+        return;
+    }
+    if (!getAssigneeById(pendingAssigneeId)) return;
+    const assigneeId = pendingAssigneeId;
+    pendingAssigneeId = null;
+    updateAssigneeFilter({ keepId: assigneeId });
+    assigneeFilter.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+/**
+ * The `?assignee=` id still waiting for its assignee to load, if any.
+ * @returns {string|null}
+ */
+export function getPendingAssigneeFilter() {
+    return pendingAssigneeId;
+}
+
+/**
+ * Forget a waiting `?assignee=` id, because the user chose a filter.
+ */
+export function clearPendingAssigneeFilter() {
+    pendingAssigneeId = null;
 }
 
 /**
@@ -158,7 +200,15 @@ export function selectAssigneeFilter(assigneeId) {
     const assigneeFilter = document.getElementById('assignee-filter');
     if (!assigneeFilter || !assigneeId) return;
     const listed = Array.from(assigneeFilter.options).some(o => o.value === assigneeId);
-    if (!listed && getAssigneeById(assigneeId)) {
+    pendingAssigneeId = null;
+    if (!listed) {
+        if (!getAssigneeById(assigneeId)) {
+            // Not loaded yet, or unknown: wait for the next rebuild rather
+            // than drop it (CHT-1692). No option is invented for it.
+            assigneeFilter.value = '';
+            pendingAssigneeId = assigneeId;
+            return;
+        }
         updateAssigneeFilter({ keepId: assigneeId });
     }
     assigneeFilter.value = assigneeId;
@@ -169,4 +219,5 @@ export function selectAssigneeFilter(assigneeId) {
  */
 export function resetAssignees() {
     assignees = [];
+    pendingAssigneeId = null;
 }

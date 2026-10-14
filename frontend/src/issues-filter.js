@@ -9,7 +9,7 @@ import { api } from './api.js';
 import { formatStatus, formatPriority, escapeHtml, sanitizeColor } from './utils.js';
 import { getCurrentTeam, getCurrentProject, setCurrentProject } from './state.js';
 import { getIssueFilters, setIssueFilters } from './storage.js';
-import { selectAssigneeFilter } from './assignees.js';
+import { selectAssigneeFilter, getPendingAssigneeFilter } from './assignees.js';
 
 // ========================================
 // Filter Getter Functions
@@ -111,7 +111,9 @@ export function syncFiltersToUrl() {
     const priorities = getSelectedPriorities();
     const labels = getSelectedLabels();
     const excludedLabels = getExcludedLabels();
-    const assignee = document.getElementById('assignee-filter')?.value;
+    // A `?assignee=` id still waiting for its assignee to load stays in
+    // the URL (CHT-1692).
+    const assignee = document.getElementById('assignee-filter')?.value || getPendingAssigneeFilter();
     const project = getCurrentProject() || '';
     const sprint = document.getElementById('sprint-filter')?.value;
     const issueType = document.getElementById('issue-type-filter')?.value;

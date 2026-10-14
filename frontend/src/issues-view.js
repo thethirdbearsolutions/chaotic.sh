@@ -31,6 +31,7 @@ import { showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
 import { OPEN_STATUSES } from './constants.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
+import { clearPendingAssigneeFilter } from './assignees.js';
 
 // Import from sub-modules
 import {
@@ -494,6 +495,7 @@ export function clearTypeFilter() {
 }
 
 export function setAssigneeFilter(value) {
+    clearPendingAssigneeFilter();
     const filter = document.getElementById('assignee-filter');
     if (filter) {
         filter.value = value;
@@ -595,6 +597,7 @@ export function clearAllFilters() {
 
     const assigneeFilter = document.getElementById('assignee-filter');
     if (assigneeFilter) assigneeFilter.value = '';
+    clearPendingAssigneeFilter();
 
     const sprintFilter = document.getElementById('sprint-filter');
     if (sprintFilter) sprintFilter.value = '';
