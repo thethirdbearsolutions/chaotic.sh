@@ -254,6 +254,7 @@ def test_table_headers_and_footers_are_text_unless_markup():
     table.add_row("a", "b", "c")
     text = _render(table)
     assert all(f"{EVIL}{n}" in text for n in ("", "2", "3")) and "[bold]" not in text and "ok" in text
+    assert "\\[" not in text  # escaped once, not twice
 
 
 def test_table_title_and_caption_are_text_unless_markup():

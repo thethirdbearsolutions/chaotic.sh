@@ -46,7 +46,8 @@ class Table(_RichTable):
     module docstring)."""
 
     def __init__(self, *headers, title=None, caption=None, **kwargs):
-        super().__init__(*(_text(h) for h in headers), title=_text(title), caption=_text(caption), **kwargs)
+        # rich's __init__ adds each str header through add_column, which escapes it.
+        super().__init__(*headers, title=_text(title), caption=_text(caption), **kwargs)
 
     def add_column(self, header="", footer="", **kwargs):
         return super().add_column(_text(header), _text(footer), **kwargs)
