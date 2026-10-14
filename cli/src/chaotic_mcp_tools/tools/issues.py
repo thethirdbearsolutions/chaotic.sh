@@ -303,18 +303,26 @@ async def _project_for_new_issue(
     """The project a new issue goes in (CHT-1706). A sub-issue lives in
     its parent's project, so with `parent` and no `project` that is the
     one: no default project, and no question when the key sees several.
-    A `project` naming another project is refused here, by name, rather
-    than by the server's "does not belong to this project"."""
+    A `project` naming another project, or a `team` that does not own the
+    parent's, is refused here, by name, rather than by the server's "does
+    not belong to this project"."""
     parent_project = parent_row.get("project_id") if parent_row else None
     if not parent_project:
         # No parent, or (in a test double) a row without its project: the
         # usual resolution, and the server still checks the parent.
         return (await backend.resolve_project(project, team))[0]
+    parent_key = parent_row.get("project_key") or parent_project
     if project is None:
+        # `team` only picks the project, which the parent already did; one
+        # that does not own it is refused like a mismatched `project`.
+        if team is not None and await backend.resolve_team(team) != await backend.team_for_project(parent_project):
+            raise ToolInputError(
+                f"Parent {parent} is in project {parent_key}, which is not in team {team}: a sub-issue is "
+                "created in its parent's project. Omit `team`, or pass the team that owns it."
+            )
         return parent_project
     project_id = (await backend.resolve_project(project, team))[0]
     if project_id != parent_project:
-        parent_key = parent_row.get("project_key") or parent_project
         raise ToolInputError(
             f"Parent {parent} is in project {parent_key}, not {project}: a sub-issue is created in "
             f"its parent's project. Omit `project`, or pass {parent_key}."

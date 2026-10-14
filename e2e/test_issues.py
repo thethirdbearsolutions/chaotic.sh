@@ -728,5 +728,5 @@ class TestIssueCreateParentImpliesProject:
     def test_a_different_project_is_refused(self, api_client, auth_token, test_team, test_project, parent):
         result = self._invoke(auth_token, test_team, None, ["--parent", parent["identifier"], "--project", "E2E"])
         assert result.exit_code != 0
-        assert parent["identifier"] in result.output and "OTH" in result.output, result.output
+        assert f"{parent['identifier']} is in project OTH, not E2E:" in result.output, result.output
         assert api_client.get_issues(project_id=test_project["id"]) == []
