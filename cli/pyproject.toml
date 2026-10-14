@@ -49,7 +49,10 @@ Documentation = "https://chaotic.sh/docs"
 [project.scripts]
 chaotic = "cli.main:cli"
 
-[project.optional-dependencies]
+# A dependency group, not an extra (CHT-1698): `uv sync` and `uv run`
+# install it by default, so `cd cli && uv run pytest` works with no
+# flags. Groups are not published, so the wheel is unchanged for users.
+[dependency-groups]
 dev = [
     "pytest>=7.4.0",
     "pytest-mock>=3.12.0",

@@ -71,7 +71,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: uv sync --locked --extra dev
+        run: uv sync --locked  # the dev group is a default group (CHT-1698)
 
       - name: Run tests
         run: uv run pytest -v
