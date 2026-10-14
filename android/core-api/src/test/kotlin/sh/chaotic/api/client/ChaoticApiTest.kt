@@ -1,0 +1,104 @@
+package sh.chaotic.api.client
+
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import io.ktor.util.reflect.typeInfo
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.int
+import sh.chaotic.api.apis.AuthApi
+import sh.chaotic.api.models.HTTPValidationError
+import sh.chaotic.api.models.IssueStatus
+import sh.chaotic.api.models.UserLogin
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+class ChaoticApiTest {
+    private val jsonHeaders = headersOf(HttpHeaders.ContentType, "application/json")
+
+    private val userBody =
+        """
+        {"id": "u1", "email": "a@example.com", "name": "Ada",
+         "avatar_url": null, "is_active": true,
+         "created_at": "2026-10-14T00:00:00Z",
+         "updated_at": "2026-10-14T00:00:00Z",
+         "kind": "assistant",
+         "a_field_this_app_predates": {"x": 1}}
+        """.trimIndent()
+
+    @Test
+    fun generatedClientSendsBearerTokenAndDecodesResponse() = runTest {
+        val engine =
+            MockEngine { request ->
+                assertEquals("https://chaotic.example/api/auth/me", request.url.toString())
+                assertEquals("Bearer ck_test", request.headers[HttpHeaders.Authorization])
+                respond(content = userBody, status = HttpStatusCode.OK, headers = jsonHeaders)
+            }
+        val api = AuthApi("https://chaotic.example", engine, ChaoticApi.clientConfig)
+        api.setBearerToken("ck_test")
+
+        val response = api.getMeApiAuthMeGet()
+
+        assertEquals(200, response.status)
+        val user = response.body()
+        assertEquals("Ada", user.name)
+        assertEquals("assistant", user.kind?.value)
+    }
+
+    @Test
+    fun unknownEnumValueDecodesToTheUnknownCase() {
+        val status = ChaoticApi.json.decodeFromString(IssueStatus.serializer(), "\"a_status_added_later\"")
+
+        assertEquals(IssueStatus.unknown_default_open_api, status)
+    }
+
+    @Test
+    fun knownEnumValueRoundTripsAsItsWireValue() {
+        val encoded = ChaoticApi.json.encodeToString(IssueStatus.serializer(), IssueStatus.in_progress)
+
+        assertEquals("\"in_progress\"", encoded)
+    }
+
+    @Test
+    fun serverValidationErrorBodyDecodes() = runTest {
+        // validation-error-422.json is the body this server returns for an
+        // empty login; backend/tests/test_validation_error_sanitization.py
+        // checks it against a live request, so the two cannot drift.
+        val engine =
+            MockEngine {
+                respond(
+                    content = resource("validation-error-422.json"),
+                    status = HttpStatusCode.UnprocessableEntity,
+                    headers = jsonHeaders,
+                )
+            }
+        val api = AuthApi("https://chaotic.example", engine, ChaoticApi.clientConfig)
+
+        val response = api.loginApiAuthLoginPost(UserLogin(email = "", password = ""))
+
+        assertEquals(422, response.status)
+        val error = response.typedBody<HTTPValidationError>(typeInfo<HTTPValidationError>())
+        val body = JsonPrimitive("body")
+        assertEquals(
+            listOf(listOf(body, JsonPrimitive("email")), listOf(body, JsonPrimitive("password"))),
+            error.detail!!.map { it.loc },
+        )
+        assertEquals("Field required", error.detail!!.first().msg)
+    }
+
+    @Test
+    fun validationErrorLocationMayMixStringsAndIndexes() {
+        // `loc` items are anyOf(string, integer): a list index in a body path is a number.
+        val body = """{"detail": [{"loc": ["body", "issue_ids", 0], "msg": "Input should be a valid string"}]}"""
+
+        val error = ChaoticApi.json.decodeFromString(HTTPValidationError.serializer(), body)
+
+        assertEquals(0, error.detail!!.single().loc[2].int)
+    }
+
+    private fun resource(name: String): String =
+        checkNotNull(javaClass.classLoader.getResource(name)) { "missing test resource $name" }.readText()
+}

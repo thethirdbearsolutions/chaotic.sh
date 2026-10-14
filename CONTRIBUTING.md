@@ -40,6 +40,7 @@ Run the suites your change touches before you push. CI runs all of them.
 | End-to-end | `cd e2e && uv run pytest -q` | The real CLI against a real server. Run it if you change an API route or a CLI command. |
 | Frontend | `cd frontend && npm test` | Also `npm run lint`. |
 | Lint | `just lint` | Ruff's pyflakes rules in backend, cli and e2e. |
+| Android | `cd android && ./gradlew detekt lint test assembleFossDebug assemblePlayDebug` | Needs JDK 17+ and the Android SDK. |
 
 Optional fast local hooks: `pip install pre-commit && pre-commit install`.
 
@@ -52,6 +53,12 @@ through. If you think a test is wrong, say why in the PR.
   `frontend/static/js/app.bundle.js`. The server serves that bundle, so it is
   committed: run `npm run build` and commit the rebuilt bundle in the same
   PR as your `src/` change.
+- **API changes and the Android client:** `android/core-api` holds a Kotlin
+  client generated from the backend's OpenAPI schema. If you change a route
+  or a request/response schema, run `just android-client` (needs Java 11+)
+  and commit what it writes in the same PR; CI fails when it is stale. That
+  includes wording-only changes: endpoint docstrings and `Field`
+  descriptions are in the schema and the generated KDoc.
 - **Database:** schema changes go through an Oxyde migration in
   `backend/migrations/`. Read the "Database" section of
   [CLAUDE.md](CLAUDE.md) first; it lists the rules the migration tests

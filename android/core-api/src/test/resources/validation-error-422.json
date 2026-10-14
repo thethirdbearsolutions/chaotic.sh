@@ -1,0 +1,12 @@
+{
+  "detail": [
+    {
+      "loc": ["body", "email"],
+      "msg": "Field required"
+    },
+    {
+      "loc": ["body", "password"],
+      "msg": "Field required"
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import logging
 from typing import Annotated
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
@@ -163,6 +164,35 @@ app.add_middleware(
 )
 
 
+# The OpenAPI schema advertises this as `ValidationError` (see
+# _openapi_with_sanitized_validation_errors) in place of FastAPI's default,
+# whose required `type` and optional `input`/`ctx` this server never sends;
+# a client generated from the default (the Android app's, CHT-1609) could not
+# decode a real 422. The handler below builds its entries from this model, so
+# the schema and the wire cannot drift apart.
+class SanitizedValidationError(BaseModel):
+    """One request-validation error: where it is (`loc`) and what is wrong (`msg`)."""
+
+    model_config = ConfigDict(title="ValidationError")
+
+    loc: list[str | int] = Field(title="Location")
+    msg: str = Field(title="Message")
+
+
+def _openapi_with_sanitized_validation_errors() -> dict:
+    """FastAPI's schema, with `ValidationError` replaced by the shape the
+    sanitizing 422 handler actually returns."""
+    if app.openapi_schema is None:
+        schema = FastAPI.openapi(app)
+        schemas = schema.get("components", {}).get("schemas", {})
+        if "ValidationError" in schemas:
+            schemas["ValidationError"] = SanitizedValidationError.model_json_schema()
+    return app.openapi_schema
+
+
+app.openapi = _openapi_with_sanitized_validation_errors
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Sanitize 422 request-validation error bodies.
@@ -194,7 +224,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
        special-case as a non-JSON body).
     """
     sanitized = [
-        {"loc": list(err.get("loc", ())), "msg": err.get("msg", "")}
+        SanitizedValidationError(loc=list(err.get("loc", ())), msg=err.get("msg", "")).model_dump()
         for err in exc.errors()
     ]
     return JSONResponse(status_code=422, content={"detail": sanitized})

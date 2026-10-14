@@ -1,0 +1,12 @@
+.gradle/
+build/
+.kotlin/
+local.properties
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+*.keystore
+*.jks
+app/foss-canary/

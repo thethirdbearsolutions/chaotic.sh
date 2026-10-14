@@ -9,6 +9,9 @@ shell history, and any agent-harness logging of raw output.
 `loc`+`msg`. These tests cover both the real end-to-end HTTP path (auth
 signup with a too-short password) and the handler in isolation.
 """
+import json
+from pathlib import Path
+
 import pytest
 from fastapi.exceptions import RequestValidationError
 
@@ -118,3 +121,38 @@ def json_body(response) -> dict:
     """Decode a Starlette JSONResponse's body back into a dict."""
     import json
     return json.loads(response.body.decode())
+
+
+# The Android client's decode test (android/core-api, CHT-1609) reads this
+# file, so it decodes the body this server really sends. The test below
+# regenerates the comparison from a live request; if the 422 shape changes,
+# update the fixture and the Android client together.
+ANDROID_422_FIXTURE = (
+    Path(__file__).resolve().parents[2]
+    / "android/core-api/src/test/resources/validation-error-422.json"
+)
+
+
+@pytest.mark.asyncio
+async def test_android_client_fixture_is_this_servers_real_422_body(client):
+    response = await client.post("/api/auth/login", json={})
+    assert response.status_code == 422
+
+    assert response.json() == json.loads(ANDROID_422_FIXTURE.read_text())
+
+
+@pytest.mark.asyncio
+async def test_openapi_validation_error_schema_matches_the_sanitized_body(client):
+    """The schema must describe what the handler sends (CHT-1609 review M1):
+    a client generated from FastAPI's default `ValidationError` requires a
+    `type` field this server strips, and fails to decode every real 422."""
+    schema = (await client.get("/openapi.json")).json()
+    validation_error = schema["components"]["schemas"]["ValidationError"]
+    assert set(validation_error["properties"]) == {"loc", "msg"}
+    assert set(validation_error["required"]) == {"loc", "msg"}
+
+    response = await client.post("/api/auth/signup", json={"name": "U", "email": "x", "password": "short"})
+    assert response.status_code == 422
+    for error in response.json()["detail"]:
+        assert set(error) == set(validation_error["properties"])
+        assert all(isinstance(part, (str, int)) for part in error["loc"])
