@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { setCurrentTeam } from './state.js';
+import { setCurrentTeam, setCurrentUser } from './state.js';
 import {
   getAgents,
   renderAgentAvatar,
@@ -11,6 +11,7 @@ import {
   copyAgentKey,
   deleteAgent,
   generateAgentKey,
+  setAgentRegistrar,
 } from './agents.js';
 import { api } from './api.js';
 import { getProjects } from './projects.js';
@@ -24,6 +25,7 @@ vi.mock('./api.js', () => ({
     createProjectAgent: vi.fn(),
     deleteAgent: vi.fn(),
     createAgentKey: vi.fn(),
+    updateAgent: vi.fn(),
   },
 }));
 
@@ -50,8 +52,10 @@ vi.mock('./assignees.js', () => ({
   buildAssignees: (...args) => mockBuildAssignees(...args),
 }));
 
+const mockIsCurrentUserAdmin = vi.fn(() => false);
 vi.mock('./teams.js', () => ({
   getMembers: vi.fn(() => []),
+  isCurrentUserAdmin: (...args) => mockIsCurrentUserAdmin(...args),
 }));
 
 describe('getAgents', () => {
@@ -340,7 +344,7 @@ describe('handleCreateAgent', () => {
     const event = { preventDefault: vi.fn() };
     api.createTeamAgent.mockResolvedValue({ api_key: 'test-key-123' });
     await handleCreateAgent(event);
-    expect(api.createTeamAgent).toHaveBeenCalledWith('team-1', 'NewBot', '🤖');
+    expect(api.createTeamAgent).toHaveBeenCalledWith('team-1', 'NewBot', '🤖', false);
   });
 
   it('creates project agent when project-scoped', async () => {
@@ -348,7 +352,7 @@ describe('handleCreateAgent', () => {
     const event = { preventDefault: vi.fn() };
     api.createProjectAgent.mockResolvedValue({ api_key: 'test-key-123' });
     await handleCreateAgent(event);
-    expect(api.createProjectAgent).toHaveBeenCalledWith('proj-1', 'NewBot', '🤖');
+    expect(api.createProjectAgent).toHaveBeenCalledWith('proj-1', 'NewBot', '🤖', false);
   });
 
   it('shows API key after creation', async () => {
@@ -374,7 +378,7 @@ describe('handleCreateAgent', () => {
     const event = { preventDefault: vi.fn() };
     api.createTeamAgent.mockResolvedValue({ api_key: 'test-key' });
     await handleCreateAgent(event);
-    expect(api.createTeamAgent).toHaveBeenCalledWith('team-1', 'NewBot', null);
+    expect(api.createTeamAgent).toHaveBeenCalledWith('team-1', 'NewBot', null, false);
   });
 });
 
@@ -492,5 +496,124 @@ describe('generateAgentKey', () => {
     api.createAgentKey.mockRejectedValue(new Error('boom'));
     await generateAgentKey('agent-1', 'TestBot');
     expect(showApiError).toHaveBeenCalledWith('generate agent key', expect.objectContaining({ message: 'boom' }));
+  });
+});
+
+describe('registrars (CHT-1600)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setCurrentTeam({ id: 'team-1' });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    setCurrentTeam(null);
+    vi.restoreAllMocks();
+  });
+
+  it('the create form offers a registrar checkbox', () => {
+    document.body.innerHTML = '<div id="modal-title"></div><div id="modal-content"></div>';
+    showCreateAgentModal();
+    expect(document.getElementById('agent-registrar')).not.toBeNull();
+  });
+
+  it('creates a registrar and shows the session setup step', async () => {
+    document.body.innerHTML = `
+      <input id="agent-name" value="Claude Code">
+      <input id="agent-avatar" value="">
+      <input type="checkbox" id="agent-project-scoped">
+      <input type="checkbox" id="agent-registrar" checked>
+      <div id="modal-title"></div>
+      <div id="modal-content"></div>
+    `;
+    api.createTeamAgent.mockResolvedValue({ api_key: 'ck_reg', can_register: true });
+    await handleCreateAgent({ preventDefault: vi.fn() });
+    expect(api.createTeamAgent).toHaveBeenCalledWith('team-1', 'Claude Code', null, true);
+    expect(document.getElementById('modal-content').innerHTML).toContain(
+      'chaotic config set-session-identity auto'
+    );
+  });
+
+  it('an ordinary agent gets no session setup step', async () => {
+    document.body.innerHTML = `
+      <input id="agent-name" value="bot">
+      <input type="checkbox" id="agent-project-scoped">
+      <div id="modal-title"></div>
+      <div id="modal-content"></div>
+    `;
+    api.createTeamAgent.mockResolvedValue({ api_key: 'ck_x' });
+    await handleCreateAgent({ preventDefault: vi.fn() });
+    expect(document.getElementById('modal-content').innerHTML).not.toContain('set-session-identity');
+  });
+
+  it('shows the kind and a toggle, but no toggle for a session identity', async () => {
+    document.body.innerHTML = '<div id="agents-list"></div>';
+    setCurrentUser({ id: 'me' });
+    api.getTeamAgents.mockResolvedValue([
+      { id: 'reg-1', name: 'Claude Code', can_register: true, kind: 'service', parent_user_id: 'me', created_at: '2024-01-01' },
+      { id: 'bot-1', name: 'bot', can_register: false, kind: 'assistant', parent_user_id: 'me', created_at: '2024-01-01' },
+      { id: 'ses-1', name: 'Claude Code · main', kind: 'session', parent_user_id: 'me', created_at: '2024-01-01' },
+    ]);
+    await loadAgents();
+    const list = document.getElementById('agents-list');
+    const toggles = list.querySelectorAll('[data-action="toggle-agent-registrar"]');
+    expect(Array.from(toggles).map((b) => [b.dataset.agentId, b.dataset.canRegister, b.textContent])).toEqual([
+      ['reg-1', 'true', 'Stop being a registrar'],
+      ['bot-1', 'false', 'Make registrar'],
+    ]);
+    expect(list.innerHTML).toContain('Registrar');
+    expect(list.innerHTML).toContain('Session');
+    setCurrentUser(null);
+  });
+
+  it('shows the toggle only to the creator or a team admin, and not on deactivated agents', async () => {
+    document.body.innerHTML = '<div id="agents-list"></div>';
+    setCurrentUser({ id: 'me' });
+    api.getTeamAgents.mockResolvedValue([
+      { id: 'mine', name: 'mine', kind: 'assistant', parent_user_id: 'me', created_at: '2024-01-01' },
+      { id: 'theirs', name: 'theirs', kind: 'assistant', parent_user_id: 'other', created_at: '2024-01-01' },
+      { id: 'off', name: 'off', kind: 'assistant', parent_user_id: 'me', is_active: false, created_at: '2024-01-01' },
+    ]);
+    const toggled = () =>
+      Array.from(document.querySelectorAll('[data-action="toggle-agent-registrar"]')).map((b) => b.dataset.agentId);
+
+    await loadAgents();
+    expect(toggled()).toEqual(['mine']);
+
+    mockIsCurrentUserAdmin.mockReturnValue(true);
+    await loadAgents();
+    expect(toggled()).toEqual(['mine', 'theirs']);
+    mockIsCurrentUserAdmin.mockReturnValue(false);
+    setCurrentUser(null);
+  });
+
+  it('turns the capability on and reloads', async () => {
+    api.updateAgent.mockResolvedValue({});
+    api.getTeamAgents.mockResolvedValue([]);
+    await setAgentRegistrar('bot-1', 'bot', true);
+    expect(window.confirm.mock.calls[0][0]).toContain('Make "bot" a registrar?');
+    expect(api.updateAgent).toHaveBeenCalledWith('bot-1', { can_register: true });
+    expect(api.getTeamAgents).toHaveBeenCalled();
+  });
+
+  it('turns it off', async () => {
+    api.updateAgent.mockResolvedValue({});
+    api.getTeamAgents.mockResolvedValue([]);
+    await setAgentRegistrar('reg-1', 'Claude Code', false);
+    expect(window.confirm.mock.calls[0][0]).toContain('Stop "Claude Code" being a registrar?');
+    expect(api.updateAgent).toHaveBeenCalledWith('reg-1', { can_register: false });
+  });
+
+  it('does nothing if the user cancels', async () => {
+    window.confirm.mockReturnValue(false);
+    await setAgentRegistrar('bot-1', 'bot', true);
+    expect(api.updateAgent).not.toHaveBeenCalled();
+  });
+
+  it('shows the server refusal', async () => {
+    const err = new Error('Not authorized to update this agent');
+    api.updateAgent.mockRejectedValue(err);
+    await setAgentRegistrar('bot-1', 'bot', true);
+    expect(showApiError).toHaveBeenCalledWith('change registrar', err);
   });
 });

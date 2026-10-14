@@ -55,6 +55,8 @@ async def _registrar(client, headers, team_id=None, project_id=None, name="Claud
     url = f"/api/projects/{project_id}/agents" if project_id else f"/api/teams/{team_id}/agents"
     created = await client.post(url, json={"name": name, "can_register": True}, headers=headers)
     assert created.status_code == 201, created.text
+    # Echoed so `agent create --registrar` can confirm it (CHT-1600).
+    assert (created.json()["can_register"], created.json()["kind"]) == (True, "service")
     return created.json()["id"], created.json()["api_key"]
 
 
@@ -108,6 +110,9 @@ class TestRegister:
         me = await client.get("/api/auth/me", headers=_bearer(body["api_key"]))
         assert me.status_code == 200
         assert (me.json()["id"], me.json()["kind"], me.json()["registered_by_id"]) == (agent["id"], "session", registrar_id)
+        # `chaotic auth whoami` names the registrar (CHT-1499).
+        assert me.json()["registered_by_name"] == "Claude Code (cloud)"
+        assert (await client.get("/api/auth/me", headers=_bearer(key))).json()["registered_by_name"] is None
 
     async def test_the_identity_writes_as_itself(self, client, registrar, test_project):
         _, key = registrar
@@ -694,6 +699,27 @@ class TestNames:
     async def test_a_non_members_name_is_fine(self, client, registrar, test_user2):
         _, key = registrar
         assert (await _register(client, key, name=test_user2.name)).status_code == 201
+
+    async def test_default_name_names_only_a_new_identity(self, client, registrar):
+        """CHT-1499: the CLI sends its label as `default_name` on every
+        registration; it names a new identity and never renames one."""
+        _, key = registrar
+        first = await _register(client, key, default_name="Claude Code · main · 4f2a9c")
+        assert first.status_code == 201 and first.json()["agent"]["name"] == "Claude Code · main · 4f2a9c"
+        renamed = await _register(client, key, name="Renamed by hand")
+        assert renamed.json()["agent"]["name"] == "Renamed by hand"
+        again = await _register(client, key, default_name="Claude Code · other-branch · 4f2a9c")
+        assert again.status_code == 200 and again.json()["agent"]["name"] == "Renamed by hand"
+
+    async def test_name_wins_over_default_name(self, client, registrar):
+        _, key = registrar
+        response = await _register(client, key, name="Explicit", default_name="Default")
+        assert response.json()["agent"]["name"] == "Explicit"
+
+    async def test_default_name_is_checked_like_a_name(self, client, registrar):
+        _, key = registrar
+        response = await _register(client, key, default_name="Test User")
+        assert response.status_code == 422 and _code(response) == "name_matches_member"
 
 
 class TestRegistrarToggle:

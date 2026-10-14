@@ -1347,6 +1347,28 @@ describe('ApiClient', () => {
           })
         );
       });
+
+      it('sends can_register for a registrar (CHT-1600)', async () => {
+        await client.createProjectAgent(5, 'CI', null, true);
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/projects/5/agents',
+          expect.objectContaining({
+            body: JSON.stringify({ name: 'CI', avatar_url: null, can_register: true }),
+          })
+        );
+      });
+    });
+
+    describe('createTeamAgent registrar', () => {
+      it('sends can_register only when asked (CHT-1600)', async () => {
+        await client.createTeamAgent(1, 'Claude Code', null, true);
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/teams/1/agents',
+          expect.objectContaining({
+            body: JSON.stringify({ name: 'Claude Code', avatar_url: null, can_register: true }),
+          })
+        );
+      });
     });
 
     describe('getTeamAgents', () => {

@@ -111,10 +111,18 @@ def register(cli):
                 identity += f" (parent: {escape(parent_name)})"
         else:
             identity = "human"
-        console.print(Panel(
-            f"[bold]{escape(user['name'])}[/bold]\n{escape(user['email'])}\n{identity}",
-            title="Current User",
-        ))
+        lines = [f"[bold]{escape(user['name'])}[/bold]", escape(user["email"]), identity]
+        # Agent identity (CHT-1499): what kind, and for a registered
+        # session, its address and the registrar that registered it.
+        if user.get("is_agent"):
+            kind = "registrar" if user.get("can_register") else (user.get("kind") or "agent")
+            lines.append(f"[dim]Kind:[/dim] {escape(str(kind))}")
+            if user.get("external_ref"):
+                lines.append(f"[dim]Session:[/dim] {escape(user['external_ref'])}")
+            if user.get("registered_by_id"):
+                registrar = user.get("registered_by_name") or user["registered_by_id"]
+                lines.append(f"[dim]Registered by:[/dim] {escape(registrar)}")
+        console.print(Panel("\n".join(lines), title="Current User"))
 
     @auth.group("keys")
     def auth_keys():

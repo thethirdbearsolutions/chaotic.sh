@@ -605,6 +605,12 @@ adapter (`cli/src/cli/mcp_backend.py`); see `docs/adr/0007-one-mcp-tool-body-two
 claude mcp add chaotic -- chaotic mcp
 ```
 
+To give each Claude Code session its own identity, configure a
+registrar's key (`chaotic agent create NAME --registrar`) and run
+`chaotic config set-session-identity auto`: the CLI and `chaotic mcp`
+then register `claude-code:session:$CLAUDE_CODE_SESSION_ID` once and act
+as it. See `docs/agents.md` § Registrars and per-session identities.
+
 To pin a specific profile, pass the flag through:
 
 ```bash

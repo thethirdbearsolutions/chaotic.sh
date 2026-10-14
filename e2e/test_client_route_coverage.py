@@ -173,7 +173,7 @@ def client_calls():
     calls, failures = [], []
     current = {"name": None}
 
-    def recorder(self, method, path, data=None):
+    def recorder(self, method, path, data=None, **_options):
         calls.append((current["name"], method.upper(), path))
         return _Permissive()
 

@@ -180,7 +180,9 @@ class RegistrationService:
                 await self._check_identity_cap(caller, settings.registrar_max_active_identities)
             await self._check_rate(caller, settings.registrar_max_registrations_per_hour)
 
-            name = req.name or (existing.name if existing else self._default_name(caller, req.external_ref))
+            name = req.name or (
+                existing.name if existing else (req.default_name or self._default_name(caller, req.external_ref))
+            )
             if existing is None or (req.name and req.name != existing.name):
                 await self._check_name(team_id, name)
 

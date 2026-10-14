@@ -49,6 +49,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param kind 
  * @param externalRef 
  * @param registeredById 
+ * @param registeredByName 
  * @param canRegister 
  */
 @Serializable
@@ -90,6 +91,9 @@ data class UserResponse (
 
     @SerialName(value = "registered_by_id")
     val registeredById: kotlin.String? = null,
+
+    @SerialName(value = "registered_by_name")
+    val registeredByName: kotlin.String? = null,
 
     @SerialName(value = "can_register")
     val canRegister: kotlin.Boolean? = false

@@ -8477,6 +8477,21 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "can_register": {
+            "type": "boolean",
+            "title": "Can Register",
+            "default": false
           }
         },
         "type": "object",
@@ -8612,6 +8627,19 @@
               }
             ],
             "title": "Name"
+          },
+          "default_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Name"
           },
           "kind": {
             "type": "string",
@@ -15047,6 +15075,17 @@
               }
             ],
             "title": "Registered By Id"
+          },
+          "registered_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered By Name"
           },
           "can_register": {
             "type": "boolean",

@@ -212,7 +212,7 @@ export async function loadTeamMembers() {
  * team_service.py:197-202) -- mirrored here so the frontend can hide
  * affordances that would otherwise always 403.
  */
-function isCurrentUserAdmin() {
+export function isCurrentUserAdmin() {
   const currentUserId = getCurrentUser()?.id;
   const self = members.find((m) => m.user_id === currentUserId);
   return self?.role === 'admin' || self?.role === 'owner';

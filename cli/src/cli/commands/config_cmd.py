@@ -31,6 +31,11 @@ def register(cli):
         has_key = bool(m.get_api_key())
         team_id = m.get_current_team()
         project_id = m.get_current_project()
+        try:
+            from cli import session_identity
+            session_mode = session_identity.mode()
+        except Exception as exc:  # an invalid value: show it, don't crash `config show`
+            session_mode = f"invalid ({exc})"
 
         if m.is_json_output():
             m.output_json({
@@ -41,6 +46,7 @@ def register(cli):
                 "has_api_key": has_key,
                 "team_id": team_id,
                 "project_id": project_id,
+                "session_identity": session_mode,
             })
             return
 
@@ -55,6 +61,25 @@ def register(cli):
         console.print(f"  [dim]API key:[/dim]     {'✓' if has_key else '✗'}")
         console.print(f"  [dim]Team ID:[/dim]     {team_id or '[dim](not set)[/dim]'}")
         console.print(f"  [dim]Project ID:[/dim]  {project_id or '[dim](not set)[/dim]'}")
+        console.print(f"  [dim]Session identity:[/dim] {session_mode}")
+
+    @config.command("set-session-identity")
+    @click.argument("mode", type=click.Choice(["auto", "off"]))
+    def config_set_session_identity(mode):
+        """Give each Claude Code session its own identity (auto) or not (off).
+
+        With auto, and CLAUDE_CODE_SESSION_ID set (Claude Code sets it), the
+        configured key is used only as a registrar: the CLI and `chaotic mcp`
+        register `claude-code:session:<id>` once, cache its key under
+        ~/.chaotic/sessions/, and send every request with it. The key must
+        be a registrar's (`chaotic agent create --registrar`). Outside Claude
+        Code nothing changes. CHAOTIC_SESSION_IDENTITY=auto|off overrides
+        this setting. Saved in the current profile.
+        """
+        from cli import session_identity
+
+        session_identity.set_mode(mode)
+        console.print(f"[green]session_identity set to: {mode}[/green]")
 
     @config.command("set-url")
     @click.argument("url")

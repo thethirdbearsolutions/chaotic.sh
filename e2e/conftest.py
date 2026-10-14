@@ -126,6 +126,15 @@ def test_server():
 
 
 @pytest.fixture(autouse=True)
+def _no_session_identity(monkeypatch):
+    """Session identity (CHT-1499) is off unless a test turns it on, so
+    the CLAUDE_CODE_SESSION_ID of a Claude Code session running the
+    suite cannot change which key a Client sends."""
+    monkeypatch.delenv("CHAOTIC_SESSION_IDENTITY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def reset_ws_refusal_limits():
     """Each test starts with no /ws refusals counted (CHT-1635): the caps
     on refusals in flight and the refusal-log limiter are process-wide,

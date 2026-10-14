@@ -38,6 +38,7 @@ import kotlinx.serialization.encoding.Encoder
  *
  * @param externalRef 
  * @param name 
+ * @param defaultName 
  * @param kind 
  * @param projectId 
  * @param teamId 
@@ -51,6 +52,9 @@ data class AgentRegister (
 
     @SerialName(value = "name")
     val name: kotlin.String? = null,
+
+    @SerialName(value = "default_name")
+    val defaultName: kotlin.String? = null,
 
     @SerialName(value = "kind")
     val kind: AgentRegister.Kind? = Kind.session,

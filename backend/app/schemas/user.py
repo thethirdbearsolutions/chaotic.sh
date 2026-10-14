@@ -36,6 +36,9 @@ class UserResponse(BaseModel):
     kind: AgentKind | None = None
     external_ref: str | None = None
     registered_by_id: str | None = None
+    # The registrar's name, so `chaotic auth whoami` can say which
+    # harness registered this session identity (CHT-1499).
+    registered_by_name: str | None = None
     # A registrar sees its own capability on /auth/me (CHT-1497 review).
     can_register: bool = False
 

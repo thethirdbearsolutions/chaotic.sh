@@ -17,7 +17,16 @@ def register(cli):
         Inherits whatever `chaotic status` would report (profile, team,
         project, credentials) -- there is no separate MCP auth step.
         See docs/agents.md for client setup (e.g. `claude mcp add chaotic
-        -- chaotic mcp`).
+        -- chaotic mcp`). With `session_identity: auto` it acts as this
+        Claude Code session's own identity (CHT-1499).
         """
+        import sys
+
+        from .. import session_identity
         from ..mcp_server import serve
+
+        # stdout is the protocol; say it on stderr, which harnesses log.
+        notice = session_identity.missing_session_notice()
+        if notice:
+            print(notice, file=sys.stderr)
         serve()

@@ -167,6 +167,10 @@ through:
 claude mcp add chaotic -- chaotic --profile myprofile mcp
 ```
 
+To give each Claude Code session its own identity instead of sharing
+one, use a registrar's key with `session_identity: auto`; see
+[Registrars and per-session identities](#registrars-and-per-session-identities).
+
 ### Generic MCP client config
 
 Any MCP host that reads a JSON config (stdio transport) can point at
@@ -283,6 +287,167 @@ documented above.
 
 See `cli/README.md` § MCP server for the full tool list mapped to
 their CLI equivalents.
+
+## Registrars and per-session identities
+
+Every Claude Code session on a machine that shares one agent key also
+shares one identity: two sessions can each `issue start` the same ticket
+"as themselves", an @mention reaches both, and activity cannot tell them
+apart. A **registrar** fixes that. It is an agent a person makes once for
+a harness (a machine, a cloud environment), whose key does one thing:
+register a separate **session identity** for each session, each with its
+own short-lived key. A session identity is an ordinary agent, so claims,
+leases, gates, the inbox and deactivation all apply to it unchanged.
+
+### Make a registrar
+
+```bash
+chaotic agent create "Claude Code" --registrar          # team-scoped
+chaotic agent create "CI" --project --registrar         # one project only
+chaotic agent update claude-bot --registrar             # an existing agent
+chaotic agent update claude-bot --no-registrar          # and back
+```
+
+In the web app: **Agents → Create Agent → Registrar**, or **Make
+registrar** / **Stop being a registrar** on an agent's row (shown to
+the agent's creator and team admins, on active agents). Over the API,
+`can_register: true` on `POST /api/teams/{id}/agents` or
+`POST /api/projects/{id}/agents`, or `PATCH /api/agents/{id}`.
+
+- Any member of the team can create one. Turning the capability on or
+  off later is for the agent's creator (while in the team) and the
+  team's admins. The Android app's sign-in cannot change it.
+- **A registrar cannot write as itself.** Its key may call
+  `POST /api/agents/register` and read; every other call is a 403
+  `registrar_cannot_write`, over REST and `/mcp` alike. That is
+  deliberate: if registering fails, nothing can fall back to writing as
+  the shared identity.
+- **One level deep.** A session identity can never be made a registrar,
+  and cannot register anything.
+- `--no-registrar` lets the agent write as itself again. The identities
+  it registered keep working until their keys expire, but it can no
+  longer renew them.
+- **Deactivating a registrar retires its identities**: `chaotic agent
+  deactivate` deactivates every active identity it registered and
+  revokes their keys in the same step.
+
+### Automatic: one identity per Claude Code session
+
+Give the machine's profile the registrar's key and turn on
+`session_identity`:
+
+```bash
+chaotic auth set-key ck_...                    # the registrar's key
+chaotic config set-session-identity auto       # or CHAOTIC_SESSION_IDENTITY=auto
+claude mcp add chaotic -- chaotic mcp
+```
+
+From then on, inside a Claude Code session (which sets
+`CLAUDE_CODE_SESSION_ID`), the CLI and `chaotic mcp` both:
+
+1. read this session's key from `~/.chaotic/sessions/<hash>.json`, one
+   file per session, server and registrar key (and team, when a person
+   is the registrar);
+2. otherwise register `claude-code:session:<CLAUDE_CODE_SESSION_ID>` with
+   the registrar's key and save the new key there (mode 0600, in a 0700
+   directory);
+3. send every request with the session's key, never the registrar's;
+4. on a 401 (the key expired or was revoked), register again once and
+   retry;
+5. if registering fails, stop with an error that says so. They never
+   fall back to the registrar's key.
+
+A new identity is named `<registrar> · <git branch or directory> ·
+<first 6 of the session id>`. The CLI sends that as `default_name`,
+which never renames an existing identity, so a rename by hand survives
+every later registration. `chaotic auth whoami` shows the session identity, its
+`external_ref` and the registrar that registered it; run
+`CHAOTIC_SESSION_IDENTITY=off chaotic auth whoami` to see the registrar
+itself. Subagents of a session share its identity.
+
+Notes:
+
+- **Off by default.** Without the setting, or outside Claude Code (no
+  `CLAUDE_CODE_SESSION_ID`), nothing changes: the configured key is used
+  as before. `CHAOTIC_SESSION_IDENTITY=auto|off` in the environment
+  overrides the profile, which suits a cloud environment's setup script.
+- **What a repository's `.chaotic` can change.** With the setting on, the
+  setting itself, the registrar key and the server URL come only from
+  the environment (`CHAOTIC_SESSION_IDENTITY`, `CHAOTIC_API_KEY`,
+  `CHAOTIC_TOKEN`, `CHAOTIC_API_URL`) or the profile
+  (`~/.chaotic/<profile>.json`). A `.chaotic` that sets its own
+  `api_key`, `token` or `api_url` (different from the profile's) is an
+  error inside Claude Code, naming the field: remove it, or set
+  `CHAOTIC_SESSION_IDENTITY=off` in that directory. The current team and
+  project still come from `.chaotic` as usual.
+- Switching profile, registrar key or server within one session uses a
+  separate cache file for each, so switching back does not register
+  again. An agent registrar always registers in its own team, so
+  changing the local current team (`chaotic team use`, another
+  directory's `.chaotic`) changes nothing; for a person acting as
+  registrar each team is its own identity and cache file.
+- Two registrars in the **same team** cannot both register one session:
+  registration is idempotent per (team, ref), so the second gets 409.
+  Use one registrar per team.
+- Processes of one session that start together (the CLI, `chaotic mcp`,
+  subagents) register once: they take a lock next to the cache file and
+  the second one uses what the first saved. This matters because each
+  registration revokes the identity's previous key.
+- The cache is ignored, and replaced, when it is a symlink or not a
+  regular file, is readable by anyone but you, or sits in a
+  `~/.chaotic/sessions` that is not yours alone (a looser directory is
+  tightened to 0700 and everything already in it is distrusted; a
+  symlinked one is an error).
+- If the configured agent is not a registrar, the error says so: its
+  creator or a team admin, signed in as themselves, runs
+  `CHAOTIC_SESSION_IDENTITY=off chaotic agent update <agent>
+  --registrar` (or uses Make registrar in the web app).
+- `chaotic mcp` prints a warning on stderr at startup when the setting
+  is auto but its process has no `CLAUDE_CODE_SESSION_ID`: it then acts
+  with the configured key itself, and a registrar's key can only read.
+- A person's own login works as the registrar too (the identity is
+  registered in the current team), but the profile then acts as a
+  session identity for everything inside Claude Code.
+
+### By hand: `POST /api/agents/register`
+
+For other harnesses, or a script, `chaotic agent register --ref <ref>
+[--name ...] [--project ...] [--json]` makes the call with the configured
+key, as does:
+
+```bash
+curl -X POST https://your-chaotic-host/api/agents/register \
+  -H "Authorization: Bearer ck_REGISTRAR..." -H "Content-Type: application/json" \
+  -d '{"external_ref": "my-harness:session:1234", "name": "Harness · job 1234"}'
+```
+
+It returns `{agent, created, api_key, api_key_id, expires_at}`; the key
+is shown only here.
+
+- `external_ref` is the session's address in the harness (printable
+  ASCII, no spaces, up to 200 characters), for example
+  `claude-code:session:<uuid>`. It is not a secret. Only the identity
+  itself, its owner and team admins can read it back.
+- **Idempotent per team and ref.** The first call creates the identity
+  (201); later calls by the same registrar return the same identity
+  (200) with a **new key, revoking its previous ones**: one live key per
+  identity. That is how a key is rotated. Another registrar asking for
+  the same ref, or a deactivated identity, gets 409.
+- **Keys expire after 7 days** (`AGENT_SESSION_KEY_TTL_SECONDS`).
+  Register again to renew.
+- `name` is optional and renames an existing identity; a new one
+  defaults to `<registrar> · <last 8 of the ref>`. `default_name` names
+  a new identity only and leaves an existing one's name alone (what the
+  CLI sends). An agent may not take the name of a person in its team.
+- `project_id` narrows a team-scoped registrar's identity to one of its
+  projects. Nothing can be wider than the registrar. A person calling
+  for themself passes `team_id` (or a `project_id`).
+- **Caps** (429; the hourly one with `Retry-After`): at most 200 active identities per
+  registrar (`REGISTRAR_MAX_ACTIVE_IDENTITIES`) and 60 registrations per
+  rolling hour, renewals included (`REGISTRAR_MAX_REGISTRATIONS_PER_HOUR`).
+- The identity's owner, and the holder of its keys, is the person who
+  holds the registrar's key. So it stops working when that person leaves
+  the team, like any agent key they hold.
 
 ## Remote MCP (Streamable HTTP, `/mcp`)
 
