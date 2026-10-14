@@ -32,6 +32,8 @@ import click
 from rich.console import Console
 from rich.markup import escape
 
+from .markup import esc
+
 from .config import GLOBAL_CONFIG_DIR, DEFAULT_PORT, set_api_url
 from . import server_settings
 from .server_settings import SETTINGS_KEY, stored_settings
@@ -152,9 +154,9 @@ def print_prerequisites_status(prereqs: dict[str, bool]) -> bool:
     all_ok = True
     for cmd, ok in prereqs.items():
         if ok:
-            console.print(f"  {cmd}: [green]OK[/green]")
+            console.print(f"  {esc(cmd)}: [green]OK[/green]")
         else:
-            console.print(f"  {cmd}: [red]MISSING[/red]")
+            console.print(f"  {esc(cmd)}: [red]MISSING[/red]")
             all_ok = False
     return all_ok
 
@@ -270,7 +272,7 @@ def _run_in_own_group(cmd: list[str], cwd: Path | None, check: bool, timeout: in
             # Also seen when only unreaped zombies are left (a container
             # whose PID 1 does not reap), so this is a note, not an alarm.
             console.print(f"[yellow]Could not confirm that every process started by "
-                          f"{escape(' '.join(cmd))} has exited (process group {proc.pid}).[/yellow]")
+                          f"{escape(' '.join(cmd))} has exited (process group {esc(proc.pid)}).[/yellow]")
         raise subprocess.TimeoutExpired(cmd, timeout, output=stdout, stderr=stderr) from None
     except BaseException:  # KeyboardInterrupt above all
         _kill_group(proc)
@@ -941,7 +943,7 @@ def _handle_failed_stop(port: int, host: str, restart: bool = True) -> bool:
             console.print("[yellow]The server is DOWN: the stop completed after the CLI stopped waiting.[/yellow]")
         else:
             console.print(
-                f"[red]Could not confirm the server stopped: the service manager reports '{state}'. "
+                f"[red]Could not confirm the server stopped: the service manager reports '{esc(state)}'. "
                 "Check 'chaotic system status'.[/red]"
             )
         return False
@@ -1116,8 +1118,8 @@ def _mcp_reconnect_note(before: dict | None, after: dict | None) -> str:
         if before_fp == after_fp:
             return "[dim]MCP toolset unchanged; connected MCP clients need no action.[/dim]"
         return (
-            f"[yellow]MCP toolset changed ({before.get('mcp_tool_count')} -> "
-            f"{after.get('mcp_tool_count')} tools). MCP clients cache the toolset at connect "
+            f"[yellow]MCP toolset changed ({esc(before.get('mcp_tool_count'))} -> "
+            f"{esc(after.get('mcp_tool_count'))} tools). MCP clients cache the toolset at connect "
             "time: remove and re-add connectors, or restart Claude Code sessions, so they "
             "see the new tools (docs/agents.md).[/yellow]"
         )
@@ -1247,7 +1249,7 @@ def restore_backup(backup_path: Path, port: int | None = None, host: str = "127.
     if database_in_use(port, host):
         console.print(
             "[red]Refusing to restore: something is still running against the database"
-            + (f" (port {port} is in use)" if port is not None and is_port_in_use(port, host) else "")
+            + (f" (port {esc(port)} is in use)" if port is not None and is_port_in_use(port, host) else "")
             + ". Stop it first.[/red]"
         )
         return False
@@ -1255,7 +1257,7 @@ def restore_backup(backup_path: Path, port: int | None = None, host: str = "127.
     holder = _database_lock_holder(DATABASE_PATH)
     if holder:
         console.print(
-            f"[red]Refusing to restore: {holder}. Some process the service manager does not "
+            f"[red]Refusing to restore: {esc(holder)}. Some process the service manager does not "
             "know about still has the database open; stop it first.[/red]"
         )
         return False
@@ -1282,8 +1284,8 @@ def restore_backup(backup_path: Path, port: int | None = None, host: str = "127.
         _fsync_dir(DATABASE_PATH.parent)
     except OSError as e:
         staging.unlink(missing_ok=True)
-        console.print(f"[red]Could not restore {backup_path.name}: {e}. "
-                      f"The database file {DATABASE_PATH} was not replaced.[/red]")
+        console.print(f"[red]Could not restore {esc(backup_path.name)}: {esc(e)}. "
+                      f"The database file {esc(DATABASE_PATH)} was not replaced.[/red]")
         return False
     return True
 
@@ -1952,28 +1954,28 @@ def system_install(git_version, host, port, no_start, repo, yes, config_pairs):
     # Check OS
     os_type = get_os()
     if os_type == "unsupported":
-        console.print(f"[red]Unsupported operating system: {platform.system()}[/red]")
+        console.print(f"[red]Unsupported operating system: {esc(platform.system())}[/red]")
         console.print("Chaotic system commands support Linux and macOS only.")
         raise SystemExit(1)
 
     # Validate inputs (security)
     if not validate_repo_url(repo):
-        console.print(f"[red]Invalid repository URL: {repo}[/red]")
+        console.print(f"[red]Invalid repository URL: {esc(repo)}[/red]")
         console.print("URL must be https:// or git@ format.")
         raise SystemExit(1)
 
     if not validate_host(host):
-        console.print(f"[red]Invalid host: {host}[/red]")
+        console.print(f"[red]Invalid host: {esc(host)}[/red]")
         console.print("Host must be a valid IP address or hostname.")
         raise SystemExit(1)
 
     if not validate_port(port):
-        console.print(f"[red]Invalid port: {port}[/red]")
+        console.print(f"[red]Invalid port: {esc(port)}[/red]")
         console.print("Port must be between 1024 and 65535.")
         raise SystemExit(1)
 
     if git_version and not validate_git_ref(git_version):
-        console.print(f"[red]Invalid version: {git_version}[/red]")
+        console.print(f"[red]Invalid version: {esc(git_version)}[/red]")
         console.print("Version must be a valid git tag or branch name.")
         raise SystemExit(1)
 
@@ -1982,7 +1984,7 @@ def system_install(git_version, host, port, no_start, repo, yes, config_pairs):
     # Check if already installed
     if is_server_installed():
         console.print("[yellow]Chaotic server is already installed.[/yellow]")
-        console.print(f"  Location: {SERVER_DIR}")
+        console.print(f"  Location: {esc(SERVER_DIR)}")
         console.print("\nRun 'chaotic system status' to check server status.")
         console.print("Run 'chaotic system upgrade' to upgrade to a new version.")
         raise SystemExit(1)
@@ -1997,12 +1999,12 @@ def system_install(git_version, host, port, no_start, repo, yes, config_pairs):
 
     # Confirm installation
     if not yes:
-        console.print(f"[bold]This will install Chaotic to:[/bold] {SERVER_DIR}")
-        console.print(f"[bold]Database:[/bold] {DATABASE_PATH}")
-        console.print(f"[bold]Host:[/bold] {host}")
-        console.print(f"[bold]Port:[/bold] {port}")
+        console.print(f"[bold]This will install Chaotic to:[/bold] {esc(SERVER_DIR)}")
+        console.print(f"[bold]Database:[/bold] {esc(DATABASE_PATH)}")
+        console.print(f"[bold]Host:[/bold] {esc(host)}")
+        console.print(f"[bold]Port:[/bold] {esc(port)}")
         for name, value in sorted(settings.items()):
-            console.print(f"[bold]{name}:[/bold] {escape(server_settings.display_value(name, value))}",
+            console.print(f"[bold]{esc(name)}:[/bold] {escape(server_settings.display_value(name, value))}",
                           highlight=False)
         if not _confirm_action("\nProceed with installation?"):
             console.print("[yellow]Installation cancelled.[/yellow]")
@@ -2018,15 +2020,15 @@ def system_install(git_version, host, port, no_start, repo, yes, config_pairs):
 
     # Clone or update repository
     if (SERVER_DIR / ".git").exists():
-        console.print(f"Existing installation found at {SERVER_DIR}, updating...")
+        console.print(f"Existing installation found at {esc(SERVER_DIR)}, updating...")
         try:
             run_command(["git", "fetch", "--tags"], cwd=SERVER_DIR, timeout=120)
             run_command(["git", "pull", "--ff-only"], cwd=SERVER_DIR, timeout=120)
         except subprocess.CalledProcessError as e:
-            console.print(f"[yellow]Warning: Could not update repository: {e.stderr}[/yellow]")
+            console.print(f"[yellow]Warning: Could not update repository: {esc(e.stderr)}[/yellow]")
             console.print("[dim]Continuing with existing version.[/dim]")
     else:
-        console.print(f"Cloning repository to {SERVER_DIR}...")
+        console.print(f"Cloning repository to {esc(SERVER_DIR)}...")
         try:
             run_command(["git", "clone", repo, str(SERVER_DIR)], timeout=300)
         except subprocess.TimeoutExpired:
@@ -2044,19 +2046,19 @@ def system_install(git_version, host, port, no_start, repo, yes, config_pairs):
             elif "Authentication failed" in stderr:
                 console.print("Authentication failed. Check repository access permissions.")
             else:
-                console.print(f"[dim]{stderr.strip()}[/dim]")
+                console.print(f"[dim]{esc(stderr.strip())}[/dim]")
             raise SystemExit(1)
 
     # Checkout version if specified
     if git_version:
-        console.print(f"Checking out {git_version}...")
+        console.print(f"Checking out {esc(git_version)}...")
         try:
             run_command(["git", "checkout", git_version], cwd=SERVER_DIR)
         except subprocess.TimeoutExpired:
             console.print(f"[red]Checkout timed out[/red]")
             raise SystemExit(1)
         except subprocess.CalledProcessError as e:
-            console.print(f"[red]Failed to checkout {git_version}: {e.stderr}[/red]")
+            console.print(f"[red]Failed to checkout {esc(git_version)}: {esc(e.stderr)}[/red]")
             raise SystemExit(1)
     else:
         # Try to get latest tag
@@ -2068,7 +2070,7 @@ def system_install(git_version, host, port, no_start, repo, yes, config_pairs):
             )
             if result.returncode == 0 and result.stdout.strip():
                 latest_tag = result.stdout.strip()
-                console.print(f"Checking out {latest_tag}...")
+                console.print(f"Checking out {esc(latest_tag)}...")
                 run_command(["git", "checkout", latest_tag], cwd=SERVER_DIR)
         except subprocess.CalledProcessError:
             console.print("[dim]No tags found, using main branch.[/dim]")
@@ -2100,17 +2102,17 @@ def system_install(git_version, host, port, no_start, repo, yes, config_pairs):
     console.print("  [dim]Stored in ~/.chaotic/server.json[/dim]")
 
     # Write service file
-    console.print(f"Installing {'systemd' if os_type == 'linux' else 'launchd'} service...")
+    console.print(f"Installing {esc('systemd' if os_type == 'linux' else 'launchd')} service...")
     service_path = write_service_file(port, secret_key, host, settings)
-    console.print(f"  [dim]{service_path}[/dim]")
+    console.print(f"  [dim]{esc(service_path)}[/dim]")
 
     # Start service
     started_ok = False
     if not no_start:
         # Check if port is already in use
         if is_port_in_use(port, host):
-            console.print(f"[yellow]Warning: Port {port} is already in use.[/yellow]")
-            console.print(f"Another process is listening on port {port}.")
+            console.print(f"[yellow]Warning: Port {esc(port)} is already in use.[/yellow]")
+            console.print(f"Another process is listening on port {esc(port)}.")
             console.print(f"Use 'chaotic system reconfigure --port <port>' to change, or stop the other process.")
             console.print("Installed but not started. Run 'chaotic system start' when the port is free.")
         else:
@@ -2136,7 +2138,7 @@ def system_install(git_version, host, port, no_start, repo, yes, config_pairs):
 
     console.print()
     if started_ok:
-        console.print(f"[bold green]Chaotic is running at http://{_display_host(host)}:{port}[/bold green]")
+        console.print(f"[bold green]Chaotic is running at http://{esc(_display_host(host))}:{esc(port)}[/bold green]")
     else:
         console.print("[bold]Installed.[/bold] Run 'chaotic system start' when ready.")
     console.print("CLI configured to use local server.")
@@ -2188,7 +2190,7 @@ def system_status():
     host = server_info.get("host", "127.0.0.1")
     if is_service_running():
         console.print(f"  Status:   [green]running[/green]")
-        console.print(f"  URL:      http://{_display_host(host)}:{port}")
+        console.print(f"  URL:      http://{esc(_display_host(host))}:{esc(port)}")
     else:
         console.print(f"  Status:   [red]stopped[/red]")
         console.print()
@@ -2203,7 +2205,7 @@ def system_status():
     elif health.get("db") == "error":
         console.print("  Health:   [yellow]degraded[/yellow] (db: error -- check 'chaotic system logs')")
     else:
-        console.print(f"  Health:   [green]ok[/green] (db: {health.get('db', 'unknown')})")
+        console.print(f"  Health:   [green]ok[/green] (db: {esc(health.get('db', 'unknown'))})")
 
     # Try to get version from git
     try:
@@ -2214,7 +2216,7 @@ def system_status():
         )
         if result.returncode == 0:
             version = result.stdout.strip()
-            console.print(f"  Version:  {version}")
+            console.print(f"  Version:  {esc(version)}")
     except subprocess.CalledProcessError:
         pass
 
@@ -2224,15 +2226,15 @@ def system_status():
     if remote:
         sha = remote.get("git_sha_short") or remote.get("git_sha") or "unknown"
         dirty = " (dirty)" if remote.get("git_dirty") else ""
-        console.print(f"  Commit:   {sha}{dirty}")
+        console.print(f"  Commit:   {esc(sha)}{esc(dirty)}")
         count = remote.get("mcp_tool_count")
         if count is not None:
-            console.print(f"  MCP:      {count} tools served (fingerprint {(remote.get('mcp_toolset_fingerprint') or 'unknown')[:12]})")
+            console.print(f"  MCP:      {esc(count)} tools served (fingerprint {esc((remote.get('mcp_toolset_fingerprint') or 'unknown')[:12])})")
 
     # Show database info
     if DATABASE_PATH.exists():
         size_mb = DATABASE_PATH.stat().st_size / (1024 * 1024)
-        console.print(f"  Database: {DATABASE_PATH} ({size_mb:.1f} MB)")
+        console.print(f"  Database: {esc(DATABASE_PATH)} ({size_mb:.1f} MB)")
 
 
 @system.command("start")
@@ -2253,10 +2255,10 @@ def system_start():
 
     # Check if port is already in use by another process
     if is_port_in_use(port, host):
-        console.print(f"[red]Port {port} is already in use.[/red]")
-        console.print(f"Another process is listening on port {port}.")
+        console.print(f"[red]Port {esc(port)} is already in use.[/red]")
+        console.print(f"Another process is listening on port {esc(port)}.")
         console.print(f"\nTo use a different port: chaotic system reconfigure --port <port>")
-        console.print(f"To find what's using the port: lsof -i :{port}")
+        console.print(f"To find what's using the port: lsof -i :{esc(port)}")
         raise SystemExit(1)
 
     console.print("Starting server...")
@@ -2264,7 +2266,7 @@ def system_start():
         console.print("Waiting for health check...", end=" ")
         if health_check(port, host=host):
             console.print("[green]OK[/green]")
-            console.print(f"\n[green]Server started at http://{_display_host(host)}:{port}[/green]")
+            console.print(f"\n[green]Server started at http://{esc(_display_host(host))}:{esc(port)}[/green]")
         else:
             console.print("[yellow]TIMEOUT[/yellow]")
             console.print("Server may still be starting. Check 'chaotic system status'.")
@@ -2366,20 +2368,20 @@ def system_reconfigure(host, port, yes, force):
         current_host = server_info.get("host", "127.0.0.1")
         current_port = server_info.get("port", DEFAULT_PORT)
         console.print("[bold]Current server configuration:[/bold]")
-        console.print(f"  Host: {current_host}")
-        console.print(f"  Port: {current_port}")
+        console.print(f"  Host: {esc(current_host)}")
+        console.print(f"  Port: {esc(current_port)}")
         console.print()
         console.print("Use --host and/or --port to change settings.")
         return
 
     # Validate inputs before anything else
     if host is not None and not validate_host(host):
-        console.print(f"[red]Invalid host: {host}[/red]")
+        console.print(f"[red]Invalid host: {esc(host)}[/red]")
         console.print("Host must be a valid IP address or hostname.")
         raise SystemExit(1)
 
     if port is not None and not validate_port(port):
-        console.print(f"[red]Invalid port: {port}[/red]")
+        console.print(f"[red]Invalid port: {esc(port)}[/red]")
         console.print("Port must be between 1024 and 65535.")
         raise SystemExit(1)
 
@@ -2404,7 +2406,7 @@ def system_reconfigure(host, port, yes, force):
         console.print("[yellow]No changes — configuration is already set to these values.[/yellow]")
         return
     if not unit_says(current_host, current_port):
-        console.print(f"[yellow]The service file says host {unit_id.get('HOST')} port {unit_id.get('PORT')}, "
+        console.print(f"[yellow]The service file says host {esc(unit_id.get('HOST'))} port {esc(unit_id.get('PORT'))}, "
                       "not what server.json says; the server runs with the service file's.[/yellow]")
 
     dropin_identity, _ = _dropin_problems()
@@ -2423,9 +2425,9 @@ def system_reconfigure(host, port, yes, force):
         console.print(f"[red]Not replacing the service file: {escape('; '.join(blockers))}.[/red]")
         if identity:
             consequence = " (every session is logged out)" if "SECRET_KEY" in identity else ""
-            console.print(f"Nothing was changed. --force would write server.json's {', '.join(identity)} "
-                          f"into the service file{consequence}. Usually the service file is right: edit "
-                          f"{SERVER_JSON} to match it, or restore server.json from a backup.")
+            console.print(f"Nothing was changed. --force would write server.json's {esc(', '.join(identity))} "
+                          f"into the service file{esc(consequence)}. Usually the service file is right: edit "
+                          f"{esc(SERVER_JSON)} to match it, or restore server.json from a backup.")
         else:
             console.print("Nothing was changed. Adopt settings added to it by hand with "
                           "'chaotic system config adopt' first, or pass --force to replace it anyway "
@@ -2435,12 +2437,12 @@ def system_reconfigure(host, port, yes, force):
 
     # Show before/after and confirm
     console.print("[bold]Current config:[/bold]")
-    console.print(f"  Host: {current_host}")
-    console.print(f"  Port: {current_port}")
+    console.print(f"  Host: {esc(current_host)}")
+    console.print(f"  Port: {esc(current_port)}")
     console.print()
     console.print("[bold]New config:[/bold]")
-    console.print(f"  Host: {new_host}")
-    console.print(f"  Port: {new_port}")
+    console.print(f"  Host: {esc(new_host)}")
+    console.print(f"  Port: {esc(new_port)}")
     console.print()
 
     if not yes:
@@ -2456,7 +2458,7 @@ def system_reconfigure(host, port, yes, force):
         try:
             backup = _backup_service_file(path, previous)
         except OSError as e:
-            console.print(f"[red]Could not keep a copy of {path} in {SERVICE_BACKUP_DIR}: {escape(str(e))}[/red]")
+            console.print(f"[red]Could not keep a copy of {esc(path)} in {esc(SERVICE_BACKUP_DIR)}: {escape(str(e))}[/red]")
             console.print("Nothing was changed.")
             raise SystemExit(1)
 
@@ -2473,9 +2475,9 @@ def system_reconfigure(host, port, yes, force):
 
     # Regenerate service file
     if backup is not None:
-        console.print(f"Previous service file kept at {backup}")
+        console.print(f"Previous service file kept at {esc(backup)}")
     service_path = write_service_file(new_port, secret_key, new_host, server_settings.valid_settings(server_info))
-    console.print(f"Regenerated service file: {service_path}")
+    console.print(f"Regenerated service file: {esc(service_path)}")
 
     # Restart if running
     was_running = is_service_running()
@@ -2485,12 +2487,12 @@ def system_reconfigure(host, port, yes, force):
             # The unit file is already rewritten; a restart here picks up
             # the new config, which is what reconfigure was asked to do.
             _handle_failed_stop(new_port, new_host)
-            console.print(f"[dim]Previous config was: host={current_host} port={current_port}[/dim]")
+            console.print(f"[dim]Previous config was: host={esc(current_host)} port={esc(current_port)}[/dim]")
             console.print("Try 'chaotic system stop' and then 'chaotic system start' manually.")
             raise SystemExit(1)
         if not wait_for_service_stop(timeout=10):
             console.print("[yellow]Server did not stop in time.[/yellow]")
-            console.print(f"[dim]Previous config was: host={current_host} port={current_port}[/dim]")
+            console.print(f"[dim]Previous config was: host={esc(current_host)} port={esc(current_port)}[/dim]")
             console.print("Try 'chaotic system stop' and then 'chaotic system start' manually.")
             raise SystemExit(1)
         if start_service():
@@ -2502,8 +2504,8 @@ def system_reconfigure(host, port, yes, force):
                 console.print("Server may still be starting. Check 'chaotic system status'.")
         else:
             console.print("[red]Failed to restart server.[/red]")
-            console.print(f"[dim]Previous config was: host={current_host} port={current_port}[/dim]")
-            console.print(f"Run 'chaotic system reconfigure --host {current_host} --port {current_port}' to revert.")
+            console.print(f"[dim]Previous config was: host={esc(current_host)} port={esc(current_port)}[/dim]")
+            console.print(f"Run 'chaotic system reconfigure --host {esc(current_host)} --port {esc(current_port)}' to revert.")
             raise SystemExit(1)
     else:
         console.print("[dim]Server was not running; skipping restart.[/dim]")
@@ -2512,10 +2514,10 @@ def system_reconfigure(host, port, yes, force):
     if new_port != current_port:
         local_url = f"http://localhost:{new_port}/api"
         set_api_url(local_url)
-        console.print(f"Updated CLI API URL to {local_url}")
+        console.print(f"Updated CLI API URL to {esc(local_url)}")
 
     console.print()
-    console.print(f"[bold green]Server reconfigured: http://{_display_host(new_host)}:{new_port}[/bold green]")
+    console.print(f"[bold green]Server reconfigured: http://{esc(_display_host(new_host))}:{esc(new_port)}[/bold green]")
 
 
 @system.command("logs")
@@ -2543,7 +2545,7 @@ def system_logs(follow, lines):
             cmd.append("-f")
         cmd.append(str(log_file))
     else:
-        console.print(f"[red]Unsupported OS: {os_type}[/red]")
+        console.print(f"[red]Unsupported OS: {esc(os_type)}[/red]")
         raise SystemExit(1)
 
     # Run without capture to stream output directly
@@ -2568,17 +2570,17 @@ def _print_commit_list(rev_range: str, heading: str) -> None:
         return
     commits = log_result.stdout.strip().splitlines()
     if not commits:
-        console.print(f"\n[bold]{heading}[/bold]: no commits in {rev_range}")
+        console.print(f"\n[bold]{esc(heading)}[/bold]: no commits in {esc(rev_range)}")
         return
-    console.print(f"\n[bold]{heading}[/bold] ({len(commits)} commit{'s' if len(commits) != 1 else ''}):")
+    console.print(f"\n[bold]{esc(heading)}[/bold] ({esc(len(commits))} commit{esc('s' if len(commits) != 1 else '')}):")
     for line in commits:
-        console.print(f"  {line}")
+        console.print(f"  {esc(line)}")
     console.print()
 
 
 def _report_service_file_update(update: ServiceFileUpdate) -> None:
     if update.status == "updated":
-        console.print(f"Updated service file {update.path} (previous kept at {update.backup}):")
+        console.print(f"Updated service file {esc(update.path)} (previous kept at {esc(update.backup)}):")
         for line in update.diff:
             console.print(f"  {line}", markup=False, highlight=False)
     elif update.status == "unchanged":
@@ -2636,7 +2638,7 @@ def _roll_back(
         checkout_failed = not checked_out
         if checkout_failed:
             console.print(
-                f"[red]Could not check out the previous commit {current_commit[:7]}"
+                f"[red]Could not check out the previous commit {esc(current_commit[:7])}"
                 f"{f': {escape(err)}' if err else ''}. The server checkout is still on the new code.[/red]"
             )
     if service_update is not None and service_update.status == "updated":
@@ -2645,33 +2647,33 @@ def _roll_back(
             # it keeps the unit the upgrade wrote for it.
             console.print(
                 f"[red]NOT restoring the previous service file: the checkout is still on the new code. "
-                f"It is at {service_update.backup}.[/red]"
+                f"It is at {esc(service_update.backup)}.[/red]"
             )
         elif restore_service_file(service_update):
-            console.print(f"Restored the previous service file from {service_update.backup}.")
+            console.print(f"Restored the previous service file from {esc(service_update.backup)}.")
         else:
             console.print(
-                f"[red]Could not restore the previous service file; it is at {service_update.backup}.[/red]"
+                f"[red]Could not restore the previous service file; it is at {esc(service_update.backup)}.[/red]"
             )
     if backup_path:
         if checkout_failed:
             console.print(
                 f"[red]NOT restoring the database backup: the checkout is still on the new code, which "
                 f"would refuse the old schema. Once the previous commit is checked out "
-                f"(git reset --hard {current_commit} in {SERVER_DIR}), restore by hand: "
-                f"chaotic system backup --restore {backup_path.name}[/red]"
+                f"(git reset --hard {esc(current_commit)} in {esc(SERVER_DIR)}), restore by hand: "
+                f"chaotic system backup --restore {esc(backup_path.name)}[/red]"
             )
         elif database_in_use(port, host):
             console.print(
                 f"[red]NOT restoring the database backup: something is still running against it"
-                f"{f' (port {port} is in use)' if port is not None else ''}. "
-                f"Stop it, then restore by hand: chaotic system backup --restore {backup_path.name}[/red]"
+                f"{esc(f' (port {port} is in use)' if port is not None else '')}. "
+                f"Stop it, then restore by hand: chaotic system backup --restore {esc(backup_path.name)}[/red]"
             )
         elif not (stopped and state in _STOPPED_STATES):
             console.print(
                 f"[red]NOT restoring the database backup: the server did not stop cleanly "
-                f"(service state '{state}'), so it may still have the database open. "
-                f"Stop it, then restore by hand: chaotic system backup --restore {backup_path.name}[/red]"
+                f"(service state '{esc(state)}'), so it may still have the database open. "
+                f"Stop it, then restore by hand: chaotic system backup --restore {esc(backup_path.name)}[/red]"
             )
         else:
             try:
@@ -2680,7 +2682,7 @@ def _roll_back(
                 console.print(f"[red]{escape(f'{type(e).__name__}: {e}')}[/red]")
                 restored = False
             if not restored:
-                console.print(f"[red]Database restore failed. Backup is at {backup_path}[/red]")
+                console.print(f"[red]Database restore failed. Backup is at {esc(backup_path)}[/red]")
     if checked_out:
         _resync_for_rollback(current_commit, cli, abandoned_commit)
     if not was_running:
@@ -2710,7 +2712,7 @@ def _resync_for_rollback(previous_commit: str, cli: str, abandoned_commit: str |
     environment, and a rollback must never start another rollback."""
     reinstall = cli == "partial"
     what = "dependencies and the CLI" if reinstall else "dependencies"
-    console.print(f"Re-syncing {what} for the previous version...")
+    console.print(f"Re-syncing {esc(what)} for the previous version...")
     try:
         ok, message = resync_checkout(reinstall=reinstall, abandoned_commit=abandoned_commit)
     except KeyboardInterrupt:
@@ -2723,12 +2725,12 @@ def _resync_for_rollback(previous_commit: str, cli: str, abandoned_commit: str |
         console.print(f"[red]{escape(message)}[/red]")
         console.print(
             f"[red]The re-sync for the previous version did not complete, so its virtualenv"
-            f"{' and the installed CLI' if reinstall else ''} may not match the code. "
+            f"{esc(' and the installed CLI' if reinstall else '')} may not match the code. "
             "Starting it anyway.[/red]"
         )
         reinstall_hint = f" and 'uv tool install --force --reinstall {PROJECT_DIR / 'cli'}'" if reinstall else ""
         console.print(
-            f"Once the cause is fixed, run 'just sync-backend' in {PROJECT_DIR}{reinstall_hint}, "
+            f"Once the cause is fixed, run 'just sync-backend' in {esc(PROJECT_DIR)}{esc(reinstall_hint)}, "
             "then 'chaotic system stop' and 'chaotic system start'."
         )
     if cli == "new":
@@ -2740,7 +2742,7 @@ def _resync_for_rollback(previous_commit: str, cli: str, abandoned_commit: str |
     elif not reinstall:
         console.print("CLI: unchanged (the upgrade never reinstalled it).")
     elif ok:
-        console.print(f"CLI: reinstalled from the previous version ({previous_commit[:7]}) and verified.")
+        console.print(f"CLI: reinstalled from the previous version ({esc(previous_commit[:7])}) and verified.")
     else:
         console.print("[red]CLI: may be half-installed; reinstall it with the command above.[/red]")
 
@@ -2801,14 +2803,14 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
 
     # Validate version if provided (security)
     if target_version and not validate_git_ref(target_version):
-        console.print(f"[red]Invalid version: {target_version}[/red]")
+        console.print(f"[red]Invalid version: {esc(target_version)}[/red]")
         console.print("Version must be a valid git tag or branch name.")
         raise SystemExit(1)
 
     # Get current version
     current_version = get_current_version()
     current_commit = get_current_commit()
-    console.print(f"Current version: {current_version or 'unknown'}")
+    console.print(f"Current version: {esc(current_version or 'unknown')}")
 
     # Fetch updates
     console.print("Fetching updates...")
@@ -2824,11 +2826,11 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             # Fall back to origin/main if no tags
             target_version = "origin/main"
 
-    console.print(f"Target version:  {target_version}")
+    console.print(f"Target version:  {esc(target_version)}")
 
     target_commit = resolve_commit(target_version)
     if target_commit is None:
-        console.print(f"[red]Unknown version: {target_version}[/red] (not a tag, branch, or commit in the server checkout)")
+        console.print(f"[red]Unknown version: {esc(target_version)}[/red] (not a tag, branch, or commit in the server checkout)")
         raise SystemExit(1)
 
     # An upgrade must never move the server backwards by accident (CHT-1357):
@@ -2842,13 +2844,13 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         target_desc = describe_commit(target_commit)
         if direction == "backward":
             console.print(
-                f"\n[red]Target {target_desc} is OLDER than the deployed commit {current_desc}:[/red] "
+                f"\n[red]Target {esc(target_desc)} is OLDER than the deployed commit {esc(current_desc)}:[/red] "
                 "it is an ancestor of what is running, so this would be a downgrade, not an upgrade."
             )
             _print_commit_list(f"{target_commit}..{current_commit}", "Commits that would be REMOVED")
         else:
             console.print(
-                f"\n[red]Target {target_desc} does not descend from the deployed commit {current_desc}:[/red] "
+                f"\n[red]Target {esc(target_desc)} does not descend from the deployed commit {esc(current_desc)}:[/red] "
                 "the histories have diverged, so this is not an upgrade."
             )
         if not allow_downgrade:
@@ -2891,7 +2893,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     version_before = get_remote_version(port, host=host) if was_running else None
     version_after = None
     if must_stop:
-        console.print("Stopping server..." if was_running else f"Stopping server (service state '{state}')...")
+        console.print("Stopping server..." if was_running else f"Stopping server (service state '{esc(state)}')...")
         if not stop_service():
             # CHT-1474: nothing has been changed yet; make sure the server
             # is back up (or say plainly that it is not) before giving up.
@@ -2927,14 +2929,14 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         try:
             backup_path = create_backup()
         except BackupError as e:
-            console.print(f"[red]{e}[/red]")
+            console.print(f"[red]{esc(e)}[/red]")
             console.print("Nothing was changed. Fix the backup problem or pass --no-backup deliberately.")
             if was_running:
                 start_service()
             _print_service_state(port, host)
             raise SystemExit(1)
         if backup_path:
-            console.print(f"  [dim]{backup_path}[/dim]")
+            console.print(f"  [dim]{esc(backup_path)}[/dim]")
             cleanup_old_backups()
         else:
             console.print("  [dim]No database to backup[/dim]")
@@ -2943,12 +2945,12 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print("Already on latest code. Running migrations...")
     else:
         # Checkout new version (force to handle dirty state from uv sync etc.)
-        console.print(f"Checking out {target_version}...")
+        console.print(f"Checking out {esc(target_version)}...")
         ok, err = checkout_version(target_version, force=True)
         if not ok:
             console.print(f"[red]Failed to checkout version.[/red]")
             if err:
-                console.print(f"  [dim]{err}[/dim]")
+                console.print(f"  [dim]{esc(err)}[/dim]")
             # Rollback
             if current_commit:
                 console.print("Rolling back...")
@@ -2993,8 +2995,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                     "To recover, either restore a backup you trust "
                     "('chaotic system backup --list', then 'chaotic system backup --restore <timestamp>'), "
                     "or fix the cause above and run the upgrade again to finish migrating forward. "
-                    f"'uv run --frozen oxyde showmigrations' in {PROJECT_DIR / 'backend'} "
-                    f"(with DATABASE_URL=sqlite+aiosqlite:///{DATABASE_PATH}) shows what was applied."
+                    f"'uv run --frozen oxyde showmigrations' in {esc(PROJECT_DIR / 'backend')} "
+                    f"(with DATABASE_URL=sqlite+aiosqlite:///{esc(DATABASE_PATH)}) shows what was applied."
                 )
             else:
                 console.print("No migration ran, so the database was not changed.")
@@ -3010,9 +3012,9 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     console.print("Rebuilding frontend...")
     fe_ok, fe_msg = rebuild_frontend()
     if fe_ok:
-        console.print(f"  [dim]{fe_msg}[/dim]")
+        console.print(f"  [dim]{esc(fe_msg)}[/dim]")
     else:
-        console.print(f"  [yellow]{fe_msg}[/yellow]")
+        console.print(f"  [yellow]{esc(fe_msg)}[/yellow]")
         console.print("  [yellow]Continuing; UI may be stale until the next successful build.[/yellow]")
 
     # Regenerate the service file while the server is down (CHT-1476):
@@ -3076,8 +3078,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         if matched is False:
             console.print("[red]FAILED[/red]")
             console.print(
-                f"\nPort {port} is answering, but with {served}, not "
-                f"{new_commit[:7]}: the new process did not take over. Rolling back..."
+                f"\nPort {esc(port)} is answering, but with {esc(served)}, not "
+                f"{esc(new_commit[:7])}: the new process did not take over. Rolling back..."
             )
             _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running,
                        service_update=service_update, cli="new")
@@ -3089,7 +3091,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             # deliberate downgrade that can never pass this check.
             console.print("[yellow]UNVERIFIED[/yellow]")
             console.print(
-                f"  /health on port {port} reports no git_sha, so whether the new process took over "
+                f"  /health on port {esc(port)} reports no git_sha, so whether the new process took over "
                 "could not be confirmed. Check `chaotic system status` after this finishes."
             )
         else:
@@ -3101,7 +3103,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     # Success
     new_version = get_current_version()
     console.print()
-    console.print(f"[bold green]Upgraded to {new_version}[/bold green]")
+    console.print(f"[bold green]Upgraded to {esc(new_version)}[/bold green]")
     console.print(_mcp_reconnect_note(version_before, version_after))
     _print_closing_path_cli_warning(progress)
 
@@ -3134,7 +3136,7 @@ def system_backup(list_mode, restore_timestamp):
             age = ""
             if i == 0:
                 age = " [dim](latest)[/dim]"
-            console.print(f"  {timestamp}  ({size_mb:.1f} MB){age}")
+            console.print(f"  {esc(timestamp)}  ({size_mb:.1f} MB){age}")
         return
 
     if restore_timestamp:
@@ -3148,11 +3150,11 @@ def system_backup(list_mode, restore_timestamp):
         else:
             backup_path = get_backup_path(restore_timestamp)
             if not backup_path.exists():
-                console.print(f"[red]Backup not found: {restore_timestamp}[/red]")
+                console.print(f"[red]Backup not found: {esc(restore_timestamp)}[/red]")
                 console.print("Run 'chaotic system backup --list' to see available backups.")
                 raise SystemExit(1)
 
-        console.print(f"Restoring from {backup_path.name}...")
+        console.print(f"Restoring from {esc(backup_path.name)}...")
 
         server_info = load_server_json()
         port = server_info.get("port", DEFAULT_PORT)
@@ -3202,11 +3204,11 @@ def system_backup(list_mode, restore_timestamp):
     try:
         backup_path = create_backup()
     except BackupError as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{esc(e)}[/red]")
         raise SystemExit(1)
     if backup_path:
         size_mb = backup_path.stat().st_size / (1024 * 1024)
-        console.print(f"[green]Backup created: {backup_path.name} ({size_mb:.1f} MB)[/green]")
+        console.print(f"[green]Backup created: {esc(backup_path.name)} ({size_mb:.1f} MB)[/green]")
         cleanup_old_backups()
     else:
         console.print("[red]Failed to create backup.[/red]")
@@ -3473,8 +3475,8 @@ def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str]
                            if any(n in error for error in errors)):
             # Adopting hand-added lines: the server runs fine with this
             # one, server.json just does not have it yet.
-            console.print(f"{name} is set in the service file or a drop-in by hand; adopt it first "
-                          f"with 'chaotic system config adopt {name}', then run this again.")
+            console.print(f"{esc(name)} is set in the service file or a drop-in by hand; adopt it first "
+                          f"with 'chaotic system config adopt {esc(name)}', then run this again.")
         console.print("Nothing was changed. (--force saves it anyway.)")
         raise SystemExit(1)
     save_server_json(candidate)
@@ -3493,7 +3495,7 @@ def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str]
         for problem in _identity_drift(candidate):
             console.print(escape(problem))
         if adopting:
-            console.print(f"server.json now holds {', '.join(sorted(owned))}; the server keeps running with "
+            console.print(f"server.json now holds {esc(', '.join(sorted(owned)))}; the server keeps running with "
                           "the same values. Once what is in the way is fixed, 'chaotic system upgrade' or "
                           "the next 'config set' rewrites the service file. See 'chaotic system config list'.")
         else:
@@ -3501,13 +3503,13 @@ def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str]
                           "See 'chaotic system config list'.")
         raise SystemExit(1)
     if update.status == "updated":
-        console.print(f"Updated service file {update.path} (previous kept at {update.backup}).")
+        console.print(f"Updated service file {esc(update.path)} (previous kept at {esc(update.backup)}).")
     else:
         console.print("[dim]Service file already says this.[/dim]")
     for name in sorted(owned):
         files = _dropin_settings().get(name)
         if files:
-            console.print(f"[yellow]Warning:[/yellow] {name} is also set in drop-in {', '.join(files)}, "
+            console.print(f"[yellow]Warning:[/yellow] {esc(name)} is also set in drop-in {esc(', '.join(files))}, "
                           "which overrides this.")
     _restart_hint()
 
@@ -3528,7 +3530,7 @@ def _require_installed() -> dict:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         problem = f"it cannot be read ({type(e).__name__})"
     if problem:
-        console.print(f"[red]{SERVER_JSON}: {problem}.[/red]")
+        console.print(f"[red]{esc(SERVER_JSON)}: {esc(problem)}.[/red]")
         console.print("Nothing was changed. Fix it or restore it from a backup first; it holds the "
                       "server's SECRET_KEY, host and port (the service file has the same values).")
         raise SystemExit(1)
@@ -3556,10 +3558,10 @@ def system_config_list():
     for name in sorted(set(server_settings.KNOWN) | set(settings)):
         if name in settings:
             shown = server_settings.display_value(name, settings[name])
-            console.print(f"  {name:<{width}}  {escape(shown)}", highlight=False)
+            console.print(f"  {esc(name):<{width}}  {escape(shown)}", highlight=False)
         else:
             default = server_settings.KNOWN[name].default
-            console.print(f"  {name:<{width}}  [dim]not set (server default: {escape(default or '<empty>')})[/dim]",
+            console.print(f"  {esc(name):<{width}}  [dim]not set (server default: {escape(default or '<empty>')})[/dim]",
                           highlight=False)
     notes = _settings_notes(settings) if is_server_installed() else []
     if notes:
@@ -3627,7 +3629,7 @@ def system_config_set(name, value, force):
         raise SystemExit(1)
     settings = stored_settings(server_info)
     settings[name] = value
-    console.print(f"{name} = {escape(server_settings.display_value(name, value))}", highlight=False)
+    console.print(f"{esc(name)} = {escape(server_settings.display_value(name, value))}", highlight=False)
     _apply_settings(server_info, settings, {name}, force)
 
 
@@ -3693,20 +3695,20 @@ def system_config_adopt(names, force):
         known = [n for n in sorted(found) if n in server_settings.KNOWN]
         wanted = [n for n in known if n not in settings]
         for name in (n for n in known if n in settings and settings[n] != found[n][0]):
-            console.print(f"[dim]{name}: server.json holds another value than {found[name][1]}; "
-                          f"'chaotic system config adopt {name}' takes {found[name][1]}'s.[/dim]")
+            console.print(f"[dim]{esc(name)}: server.json holds another value than {esc(found[name][1])}; "
+                          f"'chaotic system config adopt {esc(name)}' takes {esc(found[name][1])}'s.[/dim]")
         for name in (n for n in sorted(found) if n not in server_settings.KNOWN and n not in settings):
-            console.print(f"[dim]{name}: not a setting this CLI knows; "
-                          f"'chaotic system config adopt {name} --force' adopts it.[/dim]")
+            console.print(f"[dim]{esc(name)}: not a setting this CLI knows; "
+                          f"'chaotic system config adopt {esc(name)} --force' adopts it.[/dim]")
     adopted = {}
     for name in wanted:
         value, problem = server_settings.normalize(name, found[name][0])
         if problem and names:
-            console.print(f"[red]{escape(problem)}[/red] (in {found[name][1]})")
+            console.print(f"[red]{escape(problem)}[/red] (in {esc(found[name][1])})")
             console.print("Nothing was changed. Correct it there, or set it with 'chaotic system config set'.")
             raise SystemExit(1)
         if problem:
-            console.print(f"[yellow]Not adopting {name}:[/yellow] {escape(problem)} (in {found[name][1]}). "
+            console.print(f"[yellow]Not adopting {esc(name)}:[/yellow] {escape(problem)} (in {esc(found[name][1])}). "
                           "Correct it there, or set it with 'chaotic system config set'.")
             continue
         adopted[name] = value
@@ -3718,12 +3720,12 @@ def system_config_adopt(names, force):
                       "and its drop-ins set.")
         return
     for name, value in adopted.items():
-        console.print(f"{name} = {escape(server_settings.display_value(name, value))} "
-                      f"(from {found[name][1]})", highlight=False)
+        console.print(f"{esc(name)} = {escape(server_settings.display_value(name, value))} "
+                      f"(from {esc(found[name][1])})", highlight=False)
     _apply_settings(server_info, {**settings, **adopted}, set(adopted), force, adopting=True)
     for name in (n for n in adopted if found[n][1].startswith("drop-in")):
-        console.print(f"server.json now holds {name}: delete it from {found[name][1]} "
-                      f"in {_dropin_dir()}, then run 'systemctl --user daemon-reload'.")
+        console.print(f"server.json now holds {esc(name)}: delete it from {esc(found[name][1])} "
+                      f"in {esc(_dropin_dir())}, then run 'systemctl --user daemon-reload'.")
 
 
 @system_config.command("check")

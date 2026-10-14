@@ -5,7 +5,7 @@ import click
 from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
-from rich.table import Table
+from ..markup import Markup, Table, esc, markup
 
 from ..principals import principal_markup
 from .shared import (
@@ -59,10 +59,11 @@ class IssueTypeChoice(click.ParamType):
 
 
 def _text(value, default="-"):
-    """A table-safe string for one relation field: never raises, escapes markup."""
+    """One relation field as a string: never raises. Not escaped here:
+    markup.Table escapes every plain cell (CHT-1526)."""
     if value is None or value == "":
         return default
-    return escape(str(value))
+    return str(value)
 
 
 def _relation_row(r) -> tuple:
@@ -283,7 +284,7 @@ def register(cli):
         # Truncation warning (CHT-946) + pagination hint (CHT-950)
         if len(issues) >= limit:
             next_skip = (skip or 0) + limit
-            console.print(f"\n[yellow]Showing {limit} issues (results may be truncated). Use --skip {next_skip} to see next page, or --limit to adjust.[/yellow]")
+            console.print(f"\n[yellow]Showing {esc(limit)} issues (results may be truncated). Use --skip {esc(next_skip)} to see next page, or --limit to adjust.[/yellow]")
 
         # Search tip (CHT-949)
         console.print("\n[dim]Tip: Use 'chaotic issue search <query>' to search by title, description, or identifier.[/dim]")
@@ -442,7 +443,7 @@ def register(cli):
                 i.get("issue_type", "task").replace("_", " ").title(),
                 "-" if i.get("estimate") is None else str(i.get("estimate")),
                 "Unassigned" if not i.get("assignee_id")
-                else principal_markup(i.get("assignee"), i.get("assignee_id")[:8] + "..."),
+                else markup(principal_markup(i.get("assignee"), i.get("assignee_id")[:8] + "...")),
             ])
             table.add_row(*row)
 
@@ -472,7 +473,7 @@ def register(cli):
             return
         if not issues:
             scope = "" if search_all else " in current project"
-            console.print(f"[yellow]No issues found matching '{query}'{scope}.[/yellow]")
+            console.print(f"[yellow]No issues found matching '{esc(query)}'{esc(scope)}.[/yellow]")
             return
 
         title = f"Search Results: '{query}'" + (" (all projects)" if search_all else "")
@@ -496,7 +497,7 @@ def register(cli):
 
         # Truncation warning for search results (CHT-948)
         if len(issues) >= limit:
-            console.print(f"\n[yellow]Showing {limit} results (may be truncated). Use --limit to see more.[/yellow]")
+            console.print(f"\n[yellow]Showing {esc(limit)} results (may be truncated). Use --limit to see more.[/yellow]")
 
     @issue.command("create")
     @click.argument("title", required=False)
@@ -567,11 +568,11 @@ def register(cli):
         _warn_off_scale_estimate(project_id, data.get("estimate"))
 
         if parent:
-            console.print(f"[green]Sub-issue created: {result['identifier']} - {result['title']} (parent: {parent})[/green]")
+            console.print(f"[green]Sub-issue created: {esc(result['identifier'])} - {esc(result['title'])} (parent: {esc(parent)})[/green]")
         elif epic:
-            console.print(f"[green]Issue created: {result['identifier']} - {result['title']} (epic: {epic})[/green]")
+            console.print(f"[green]Issue created: {esc(result['identifier'])} - {esc(result['title'])} (epic: {esc(epic)})[/green]")
         else:
-            console.print(f"[green]Issue created: {result['identifier']} - {result['title']}[/green]")
+            console.print(f"[green]Issue created: {esc(result['identifier'])} - {esc(result['title'])}[/green]")
 
         # Create relations if specified. Must run unconditionally, before
         # any --json return, or --json silently drops --blocked-by/--relates-to
@@ -581,12 +582,12 @@ def register(cli):
             blocker = _client().get_issue_by_identifier(blocker_id)
             relation = _client().create_relation(blocker["id"], result["id"], "blocks")
             relations_created.append(relation)
-            console.print(f"[dim]  Blocked by {blocker_id}[/dim]")
+            console.print(f"[dim]  Blocked by {esc(blocker_id)}[/dim]")
         for related_id in relates_to:
             related = _client().get_issue_by_identifier(related_id)
             relation = _client().create_relation(result["id"], related["id"], "relates_to")
             relations_created.append(relation)
-            console.print(f"[dim]  Related to {related_id}[/dim]")
+            console.print(f"[dim]  Related to {esc(related_id)}[/dim]")
 
         if m.is_json_output():
             if relations_created:
@@ -637,11 +638,11 @@ def register(cli):
 
             # Build panel lines
             panel_lines = [
-                f"[bold]{iss['title']}[/bold]\n",
-                f"[dim]Status:[/dim] {iss['status'].replace('_', ' ').title()}",
-                f"[dim]Priority:[/dim] {iss['priority'].replace('_', ' ').title()}",
-                f"[dim]Type:[/dim] {iss.get('issue_type', 'task').replace('_', ' ').title()}",
-                f"[dim]Estimate:[/dim] {'-' if iss.get('estimate') is None else iss['estimate']} points",
+                f"[bold]{esc(iss['title'])}[/bold]\n",
+                f"[dim]Status:[/dim] {esc(iss['status'].replace('_', ' ').title())}",
+                f"[dim]Priority:[/dim] {esc(iss['priority'].replace('_', ' ').title())}",
+                f"[dim]Type:[/dim] {esc(iss.get('issue_type', 'task').replace('_', ' ').title())}",
+                f"[dim]Estimate:[/dim] {esc('-' if iss.get('estimate') is None else iss['estimate'])} points",
                 f"[dim]Assignee:[/dim] {_assignee_markup(iss)}",
                 f"[dim]Creator:[/dim] {principal_markup(iss.get('creator'), iss.get('creator_name')) or 'Unknown'}",
             ]
@@ -650,7 +651,7 @@ def register(cli):
             if iss.get('parent_id'):
                 try:
                     parent = _client().get_issue(iss['parent_id'])
-                    panel_lines.append(f"[dim]Parent:[/dim] {parent['identifier']}: {parent['title']}")
+                    panel_lines.append(f"[dim]Parent:[/dim] {esc(parent['identifier'])}: {esc(parent['title'])}")
                 except m.APIError:
                     panel_lines.append(f"[dim]Parent:[/dim] [dim](unable to load)[/dim]")
 
@@ -659,18 +660,18 @@ def register(cli):
                 sub_issues = _client().get_sub_issues(iss['id'])
                 if sub_issues:
                     done_count = sum(1 for s in sub_issues if s.get('status') in ('done', 'canceled'))
-                    panel_lines.append(f"[dim]Sub-issues:[/dim] {done_count}/{len(sub_issues)} done")
+                    panel_lines.append(f"[dim]Sub-issues:[/dim] {esc(done_count)}/{esc(len(sub_issues))} done")
             except m.APIError:
                 pass
 
-            console.print(Panel("\n".join(panel_lines), title=iss["identifier"]))
+            console.print(Panel("\n".join(panel_lines), title=esc(iss["identifier"])))
 
             console.print("\n[dim]Description:[/dim]")
             description = iss.get('description') or 'No description'
             if iss.get('description'):
                 console.print(Markdown(description))
             else:
-                console.print(f"  {description}")
+                console.print(f"  {esc(description)}")
 
             if comments:
                 console.print("\n[bold]Comments:[/bold]")
@@ -684,7 +685,7 @@ def register(cli):
                             date_str = dt.strftime('%Y-%m-%d %H:%M')
                         except (ValueError, AttributeError):
                             date_str = created_at[:16] if len(created_at) > 16 else created_at
-                        console.print(f"  \u2022 [dim]{principal_markup(c.get('author'), c.get('author_name', 'User'))} ({date_str}):[/dim]")
+                        console.print(f"  \u2022 [dim]{principal_markup(c.get('author'), c.get('author_name', 'User'))} ({esc(date_str)}):[/dim]")
                     else:
                         console.print(f"  \u2022 [dim]{principal_markup(c.get('author'), c.get('author_name', 'User'))}:[/dim]")
                     console.print(Markdown(c.get('content', '')))
@@ -698,7 +699,7 @@ def register(cli):
                 for r in relations:
                     _, rel_type, related, title, status, _ = _relation_row(r)
                     suffix = f": {title}" if title else ""
-                    console.print(f"  • {rel_type} {related}{suffix} [dim]({status})[/dim]")
+                    console.print(f"  • {esc(rel_type)} {esc(related)}{esc(suffix)} [dim]({esc(status)})[/dim]")
 
             # Show ritual attestation notes
             try:
@@ -712,9 +713,9 @@ def register(cli):
                     console.print("\n[bold]Ritual Attestations:[/bold]")
                     for r in attestations_with_notes:
                         att = r["attestation"]
-                        console.print(f"  \u2713 [green]{r['name']}[/green] - {principal_markup(att.get('attester'), att.get('attested_by_name', 'Unknown'))}")
+                        console.print(f"  \u2713 [green]{esc(r['name'])}[/green] - {principal_markup(att.get('attester'), att.get('attested_by_name', 'Unknown'))}")
                         if att.get("note"):
-                            console.print(f"    [dim]{att['note']}[/dim]")
+                            console.print(f"    [dim]{esc(att['note'])}[/dim]")
             except m.APIError:
                 pass  # Silently ignore if rituals API fails
 
@@ -725,7 +726,7 @@ def register(cli):
                     console.print("\n[bold]Linked Documents:[/bold]")
                     for doc in linked_docs:
                         icon = doc.get('icon') or '\U0001f4c4'
-                        console.print(f"  \u2022 {icon} {doc['title']}")
+                        console.print(f"  \u2022 {esc(icon)} {esc(doc['title'])}")
             except m.APIError:
                 pass  # Silently ignore if API doesn't support this yet
             return
@@ -751,7 +752,7 @@ def register(cli):
                     "-" if iss.get("estimate") is None else str(iss["estimate"]),
                 )
             except m.APIError as e:
-                table.add_row(identifier, f"[red]Error: {escape(str(e))}[/red]", "-", "-", "-", "-")
+                table.add_row(identifier, Markup(f"[red]Error: {escape(str(e))}[/red]"), "-", "-", "-", "-")
 
         console.print(table)
 
@@ -777,7 +778,7 @@ def register(cli):
         iss = _client().get_issue_by_identifier(identifier)
         web_url = m.get_web_url()
         url = f"{web_url}/#/issue/{iss['identifier']}"
-        console.print(f"[dim]Opening {url}...[/dim]")
+        console.print(f"[dim]Opening {esc(url)}...[/dim]")
         m.webbrowser.open(url)
 
     @issue.command("get")
@@ -849,15 +850,15 @@ def register(cli):
             gate_rituals = [r for r in pending if r.get("approval_mode") == "gate"]
 
             if gate_rituals:
-                console.print(f"[yellow]Warning: {len(gate_rituals)} GATE ritual(s) require human approval and cannot be auto-attested:[/yellow]")
+                console.print(f"[yellow]Warning: {esc(len(gate_rituals))} GATE ritual(s) require human approval and cannot be auto-attested:[/yellow]")
                 for r in gate_rituals:
-                    console.print(f"  [dim]\u26a0 {r['name']}[/dim]")
+                    console.print(f"  [dim]\u26a0 {esc(r['name'])}[/dim]")
 
             if attestable:
-                console.print(f"[yellow]Auto-attesting {len(attestable)} ritual(s)...[/yellow]")
+                console.print(f"[yellow]Auto-attesting {esc(len(attestable))} ritual(s)...[/yellow]")
                 for rit in attestable:
                     _client().attest_ritual_for_issue(rit["id"], iss["id"], note)
-                    console.print(f"  [dim]\u2713 {rit['name']}[/dim]")
+                    console.print(f"  [dim]\u2713 {esc(rit['name'])}[/dim]")
             elif not gate_rituals:
                 console.print("[dim]No pending rituals to attest.[/dim]")
 
@@ -877,7 +878,7 @@ def register(cli):
                         f"Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}"
                     )
                 _client().add_label_to_issue(iss["id"], label_id)
-                console.print(f"[dim]Added label: {label_name}[/dim]")
+                console.print(f"[dim]Added label: {esc(label_name)}[/dim]")
                 labels_modified = True
 
             # Remove labels
@@ -888,7 +889,7 @@ def register(cli):
                         f"Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}"
                     )
                 _client().remove_label_from_issue(iss["id"], label_id)
-                console.print(f"[dim]Removed label: {label_name}[/dim]")
+                console.print(f"[dim]Removed label: {esc(label_name)}[/dim]")
                 labels_modified = True
 
         # Validate parent flags before building update data
@@ -933,12 +934,12 @@ def register(cli):
         for blocker_id in blocked_by:
             blocker = _client().get_issue_by_identifier(blocker_id)
             _client().create_relation(blocker["id"], iss["id"], "blocks")
-            console.print(f"[dim]  Blocked by {blocker_id}[/dim]")
+            console.print(f"[dim]  Blocked by {esc(blocker_id)}[/dim]")
             relations_modified = True
         for related_id in relates_to:
             related = _client().get_issue_by_identifier(related_id)
             _client().create_relation(iss["id"], related["id"], "relates_to")
-            console.print(f"[dim]  Related to {related_id}[/dim]")
+            console.print(f"[dim]  Related to {esc(related_id)}[/dim]")
             relations_modified = True
 
         if not data and not labels_modified and not relations_modified:
@@ -959,7 +960,7 @@ def register(cli):
             updated = _client().get_issue_by_identifier(identifier)
             m.output_json(updated)
             return
-        console.print(f"[green]Issue {identifier} updated.[/green]")
+        console.print(f"[green]Issue {esc(identifier)} updated.[/green]")
 
     @issue.command("comment")
     @click.argument("identifier")
@@ -976,11 +977,11 @@ def register(cli):
         body = "\n".join([content, note]) if note else content
         iss = _client().get_issue_by_identifier(identifier)
         comment = _client().create_comment(iss["id"], body)
-        console.print(f"[green]Comment added to {identifier}.[/green]")
+        console.print(f"[green]Comment added to {esc(identifier)}.[/green]")
         if assign_to:
             assignee_id = m.resolve_assignee_id(assign_to)
             _client().update_issue(iss["id"], assignee_id=assignee_id)
-            console.print(f"[green]Issue {identifier} assigned.[/green]")
+            console.print(f"[green]Issue {esc(identifier)} assigned.[/green]")
         return comment
 
     @issue.command("comment-edit")
@@ -995,7 +996,7 @@ def register(cli):
         """Edit a comment on an issue."""
         iss = _client().get_issue_by_identifier(identifier)
         comment = _client().update_comment(iss["id"], comment_id, content)
-        console.print(f"[green]Comment updated on {identifier}.[/green]")
+        console.print(f"[green]Comment updated on {esc(identifier)}.[/green]")
         return comment
 
     @issue.command("comment-delete")
@@ -1012,7 +1013,7 @@ def register(cli):
             raise SystemExit(0)
         iss = _client().get_issue_by_identifier(identifier)
         _client().delete_comment(iss["id"], comment_id)
-        console.print(f"[green]Comment deleted from {identifier}.[/green]")
+        console.print(f"[green]Comment deleted from {esc(identifier)}.[/green]")
         return {"deleted": True, "id": comment_id, "issue_id": iss["id"], "identifier": identifier}
 
     @issue.command("delete")
@@ -1028,7 +1029,7 @@ def register(cli):
             raise SystemExit(0)
         iss = _client().get_issue_by_identifier(identifier)
         _client().delete_issue(iss["id"])
-        console.print(f"[green]Issue {identifier} deleted.[/green]")
+        console.print(f"[green]Issue {esc(identifier)} deleted.[/green]")
         return {"deleted": True, "id": iss["id"], "identifier": identifier}
 
     @issue.command("sub-issues")
@@ -1046,7 +1047,7 @@ def register(cli):
             return
 
         if not sub_issues:
-            console.print(f"[yellow]No sub-issues found for {identifier}.[/yellow]")
+            console.print(f"[yellow]No sub-issues found for {esc(identifier)}.[/yellow]")
             return
 
         table = Table(title=f"Sub-issues of {identifier}")
@@ -1082,7 +1083,7 @@ def register(cli):
             return
 
         if not relations:
-            console.print(f"[yellow]No relations found for {identifier}.[/yellow]")
+            console.print(f"[yellow]No relations found for {esc(identifier)}.[/yellow]")
             return
 
         table = Table(title=f"Relations for {identifier}")
@@ -1124,8 +1125,8 @@ def register(cli):
             date = (rev.get("created_at") or "")[:19].replace("T", " ")
             console.print(Panel(
                 Markdown(body),
-                title=f"{identifier} description v{rev['version']}",
-                subtitle=f"{author} · {date}",
+                title=f"{esc(identifier)} description v{esc(rev['version'])}",
+                subtitle=f"{author} · {esc(date)}",
             ))
             return
 
@@ -1135,7 +1136,7 @@ def register(cli):
             return
 
         if not revisions:
-            console.print(f"[yellow]No description revisions found for {identifier}.[/yellow]")
+            console.print(f"[yellow]No description revisions found for {esc(identifier)}.[/yellow]")
             return
 
         table = Table(title=f"Description history for {identifier}")
@@ -1146,12 +1147,12 @@ def register(cli):
         for rev in revisions:
             table.add_row(
                 f"v{rev['version']}",
-                principal_markup(rev.get("author"), rev.get("author_name") or "Unknown"),
+                markup(principal_markup(rev.get("author"), rev.get("author_name") or "Unknown")),
                 (rev.get("created_at") or "")[:19].replace("T", " "),
             )
 
         console.print(table)
-        console.print(f"[dim]Use 'chaotic issue history {identifier} --version N' to view a snapshot.[/dim]")
+        console.print(f"[dim]Use 'chaotic issue history {esc(identifier)} --version N' to view a snapshot.[/dim]")
 
     @issue.command("block")
     @click.argument("identifier")
@@ -1173,11 +1174,11 @@ def register(cli):
         relation = _client().create_relation(iss["id"], blocked["id"], relation_type)
 
         if relation_type == "blocks":
-            console.print(f"[green]{identifier} now blocks {blocked_identifier}.[/green]")
+            console.print(f"[green]{esc(identifier)} now blocks {esc(blocked_identifier)}.[/green]")
         elif relation_type == "duplicates":
-            console.print(f"[green]{identifier} marked as duplicate of {blocked_identifier}.[/green]")
+            console.print(f"[green]{esc(identifier)} marked as duplicate of {esc(blocked_identifier)}.[/green]")
         else:
-            console.print(f"[green]{identifier} related to {blocked_identifier}.[/green]")
+            console.print(f"[green]{esc(identifier)} related to {esc(blocked_identifier)}.[/green]")
         return relation
 
     @issue.command("unblock")
@@ -1191,7 +1192,7 @@ def register(cli):
         """Remove a relation from an issue."""
         iss = _client().get_issue_by_identifier(identifier)
         _client().delete_relation(iss["id"], relation_id)
-        console.print(f"[green]Relation removed from {identifier}.[/green]")
+        console.print(f"[green]Relation removed from {esc(identifier)}.[/green]")
         return {"deleted": True, "id": relation_id, "issue_id": iss["id"], "identifier": identifier}
 
     @issue.command("duplicate")
@@ -1238,7 +1239,7 @@ def register(cli):
         # Close the duplicate as canceled (skips rituals per CHT-171)
         _client().update_issue(duplicate["id"], status="canceled")
 
-        console.print(f"[green]{duplicate_identifier} closed as duplicate of {original_identifier}.[/green]")
+        console.print(f"[green]{esc(duplicate_identifier)} closed as duplicate of {esc(original_identifier)}.[/green]")
 
     @issue.command("assign")
     @click.argument("identifier")
@@ -1259,14 +1260,14 @@ def register(cli):
 
         if assignee is None:
             _client().update_issue(iss["id"], assignee_id=None)
-            console.print(f"[green]Issue {identifier} unassigned.[/green]")
+            console.print(f"[green]Issue {esc(identifier)} unassigned.[/green]")
         else:
             assignee_id = m.resolve_assignee_id(assignee)
             _client().update_issue(iss["id"], assignee_id=assignee_id)
-            console.print(f"[green]Issue {identifier} assigned.[/green]")
+            console.print(f"[green]Issue {esc(identifier)} assigned.[/green]")
         if comment_text:
             _client().create_comment(iss["id"], comment_text)
-            console.print(f"[green]Comment added to {identifier}.[/green]")
+            console.print(f"[green]Comment added to {esc(identifier)}.[/green]")
 
     @issue.command("move")
     @click.argument("identifier")
@@ -1282,7 +1283,7 @@ def register(cli):
         """
         iss = _client().get_issue_by_identifier(identifier)
         _client().update_issue(iss["id"], status=status)
-        console.print(f"[green]Issue {identifier} moved to {status.replace('_', ' ').title()}.[/green]")
+        console.print(f"[green]Issue {esc(identifier)} moved to {esc(status.replace('_', ' ').title())}.[/green]")
 
     @issue.command("close")
     @click.argument("identifier")
@@ -1304,7 +1305,7 @@ def register(cli):
         iss = _client().get_issue_by_identifier(identifier)
         apply_ritual_attestations(iss, attest_specs)
         _client().update_issue(iss["id"], status="done")
-        console.print(f"[green]Issue {identifier} closed.[/green]")
+        console.print(f"[green]Issue {esc(identifier)} closed.[/green]")
 
     @issue.command("complete")
     @click.argument("identifier")
@@ -1342,10 +1343,10 @@ def register(cli):
         """
         iss = _client().get_issue_by_identifier(identifier)
         if iss["status"] == "canceled":
-            console.print(f"[dim]Issue {identifier} is already canceled.[/dim]")
+            console.print(f"[dim]Issue {esc(identifier)} is already canceled.[/dim]")
             return iss
         _client().update_issue(iss["id"], status="canceled")
-        console.print(f"[green]Issue {identifier} marked as wontfix (canceled).[/green]")
+        console.print(f"[green]Issue {esc(identifier)} marked as wontfix (canceled).[/green]")
 
     @issue.command("cancel")
     @click.argument("identifier")
@@ -1393,7 +1394,7 @@ def register(cli):
         if lease_seconds is not None:
             kwargs["lease_seconds"] = int(lease_seconds)
         _client().update_issue(iss["id"], **kwargs)
-        console.print(f"[green]Issue {identifier} claimed and moved to In Progress.[/green]")
+        console.print(f"[green]Issue {esc(identifier)} claimed and moved to In Progress.[/green]")
 
     @issue.command("start")
     @click.argument("identifier")
@@ -1446,34 +1447,34 @@ def register(cli):
             console.print(f"[dim]No ticket-level rituals configured for this project.[/dim]")
             return
 
-        console.print(f"[bold]Ticket-level rituals for {identifier}:[/bold]")
+        console.print(f"[bold]Ticket-level rituals for {esc(identifier)}:[/bold]")
 
         for r in completed:
-            console.print(f"  [green]\u2713[/green] {r['name']}")
+            console.print(f"  [green]\u2713[/green] {esc(r['name'])}")
             if r.get("attestation"):
                 att = r["attestation"]
                 if att.get("note"):
-                    console.print(f"      [dim]Note: {att['note']}[/dim]")
+                    console.print(f"      [dim]Note: {esc(att['note'])}[/dim]")
                 if att.get("attested_at"):
                     attested_date = att["attested_at"][:10]
-                    console.print(f"      [dim]Attested: {attested_date}[/dim]")
+                    console.print(f"      [dim]Attested: {esc(attested_date)}[/dim]")
 
         for r in pending:
-            mode = f"[dim]({r['approval_mode']})[/dim]"
+            mode = f"[dim]({esc(r['approval_mode'])})[/dim]"
             if r.get("attestation"):
                 if r["attestation"].get("approved_at"):
-                    console.print(f"  [green]\u2713[/green] {r['name']} {mode}")
+                    console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode}")
                 else:
-                    console.print(f"  [yellow]\u23f3[/yellow] {r['name']} {mode} - pending approval")
+                    console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode} - pending approval")
                     att = r["attestation"]
                     if att.get("note"):
-                        console.print(f"      [dim]Note: {att['note']}[/dim]")
+                        console.print(f"      [dim]Note: {esc(att['note'])}[/dim]")
             else:
-                console.print(f"  [red]\u25cb[/red] {r['name']} {mode}")
+                console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode}")
                 print_ritual_prompt(r['prompt'])
 
         if pending:
-            console.print(f"\n[dim]Run 'chaotic ritual attest <name> --ticket {identifier}' to attest.[/dim]")
+            console.print(f"\n[dim]Run 'chaotic ritual attest <name> --ticket {esc(identifier)}' to attest.[/dim]")
 
     @issue.command("escalate")
     @click.argument("identifier")
@@ -1498,12 +1499,12 @@ def register(cli):
             current_index = 0  # Default to no_priority if unknown
 
         if current_index >= len(PRIORITY_LEVELS) - 1:
-            console.print(f"[yellow]Issue {identifier} is already at highest priority (urgent).[/yellow]")
+            console.print(f"[yellow]Issue {esc(identifier)} is already at highest priority (urgent).[/yellow]")
             return
 
         new_priority = PRIORITY_LEVELS[current_index + 1]
         _client().update_issue(iss["id"], priority=new_priority)
-        console.print(f"[green]Issue {identifier} priority escalated: {current} \u2192 {new_priority}[/green]")
+        console.print(f"[green]Issue {esc(identifier)} priority escalated: {esc(current)} \u2192 {esc(new_priority)}[/green]")
 
     @issue.command("deescalate")
     @click.argument("identifier")
@@ -1528,12 +1529,12 @@ def register(cli):
             current_index = 0  # Default to no_priority if unknown
 
         if current_index <= 0:
-            console.print(f"[yellow]Issue {identifier} is already at lowest priority (no_priority).[/yellow]")
+            console.print(f"[yellow]Issue {esc(identifier)} is already at lowest priority (no_priority).[/yellow]")
             return
 
         new_priority = PRIORITY_LEVELS[current_index - 1]
         _client().update_issue(iss["id"], priority=new_priority)
-        console.print(f"[green]Issue {identifier} priority deescalated: {current} \u2192 {new_priority}[/green]")
+        console.print(f"[green]Issue {esc(identifier)} priority deescalated: {esc(current)} \u2192 {esc(new_priority)}[/green]")
 
     # Add 'ticket' as alias for 'issue' command group
     cli.add_command(issue, name="ticket")
@@ -1587,7 +1588,7 @@ def register(cli):
                     new = a["sprint_name"]
                 details = f"{a['field_name']}: {old} \u2192 {new}" if old else f"{a['field_name']}: {new}"
 
-            table.add_row(date, ref, action, by, details)
+            table.add_row(date, ref, action, markup(by), details)
 
         console.print(table)
 
@@ -1630,7 +1631,7 @@ def register(cli):
             by = principal_markup(c.get("author"), c.get("author_name") or "-")
             content = (c.get("content") or "").replace("\n", " ")[:80]
 
-            table.add_row(date, source, by, content)
+            table.add_row(date, source, markup(by), content)
 
         console.print(table)
 

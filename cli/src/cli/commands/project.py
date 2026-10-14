@@ -3,7 +3,7 @@ import sys
 
 import click
 from rich.panel import Panel
-from rich.table import Table
+from ..markup import Table, esc
 
 from .shared import _client, console, resolve_content_value
 
@@ -96,7 +96,7 @@ def register(cli):
                         description=doc.get("description"),
                     )
                     console.print(
-                        f"[dim]Installed pack '{template_name}' as a team template.[/dim]"
+                        f"[dim]Installed pack '{esc(template_name)}' as a team template.[/dim]"
                     )
                 else:
                     # ClickException for --json error-shape consistency
@@ -128,9 +128,9 @@ def register(cli):
                 # error surfaces, or the partial state is invisible (PR #220
                 # review finding 9). Goes to stderr under --json.
                 console.print(
-                    f"[yellow]Project {result['key']} was created, but the "
+                    f"[yellow]Project {esc(result['key'])} was created, but the "
                     f"template was not applied. Fix the issue and run "
-                    f"'chaotic template apply {template_name}'.[/yellow]"
+                    f"'chaotic template apply {esc(template_name)}'.[/yellow]"
                 )
                 raise
 
@@ -139,17 +139,17 @@ def register(cli):
                 result = {**result, "template_applied": report}
             m.output_json(result)
             return
-        console.print(f"[green]Project created: {result['name']} ({result['key']})[/green]")
+        console.print(f"[green]Project created: {esc(result['name'])} ({esc(result['key'])})[/green]")
         console.print(f"[dim]Set as current project[/dim]")
         if report is not None:
             created = sum(1 for c in report["rituals"] if c["action"] == "create")
             set_count = sum(1 for c in report["settings"] if c["action"] == "set")
             console.print(
-                f"[green]Applied template '{report['template']}': "
-                f"{created} ritual(s) created, {set_count} setting(s) set.[/green]"
+                f"[green]Applied template '{esc(report['template'])}': "
+                f"{esc(created)} ritual(s) created, {esc(set_count)} setting(s) set.[/green]"
             )
             for warning in report.get("warnings", []):
-                console.print(f"[yellow]Warning: {warning}[/yellow]")
+                console.print(f"[yellow]Warning: {esc(warning)}[/yellow]")
 
     @project.command("use")
     @click.argument("identifier")
@@ -160,7 +160,7 @@ def register(cli):
         m = _main()
         p = m.resolve_project(identifier)
         m.set_current_project(p["id"])
-        console.print(f"[green]Switched to project: {p['name']}[/green]")
+        console.print(f"[green]Switched to project: {esc(p['name'])}[/green]")
 
     @project.command("show")
     @click.argument("identifier", required=False)
@@ -193,13 +193,13 @@ def register(cli):
         unest = p.get('unestimated_handling', 'default_one_point').replace('_', ' ').title()
         is_current = " (current)" if project_id == m.get_current_project() else ""
         console.print(Panel(
-            f"[bold]{p['name']}[/bold]{is_current}\n"
-            f"Key: {p['key']}\n"
-            f"Description: {p.get('description') or 'None'}\n"
-            f"Issues: {p['issue_count']}\n"
-            f"Estimate Scale: {scale}\n"
-            f"Default Sprint Budget: {budget_str}\n"
-            f"Unestimated Handling: {unest}",
+            f"[bold]{esc(p['name'])}[/bold]{esc(is_current)}\n"
+            f"Key: {esc(p['key'])}\n"
+            f"Description: {esc(p.get('description') or 'None')}\n"
+            f"Issues: {esc(p['issue_count'])}\n"
+            f"Estimate Scale: {esc(scale)}\n"
+            f"Default Sprint Budget: {esc(budget_str)}\n"
+            f"Unestimated Handling: {esc(unest)}",
             title="Project Details"
         ))
 

@@ -3,7 +3,7 @@ import sys
 
 import click
 from rich.markup import escape
-from rich.table import Table
+from ..markup import Table, esc, markup
 
 from cli import session_identity
 
@@ -32,11 +32,11 @@ def _resolve_agent(agents: list, ref: str) -> dict:
     for a in agents:
         if a["id"] == ref or a["id"].startswith(ref) or a["name"] == ref:
             if found is not None:
-                console.print(f"[red]Ambiguous agent identifier '{ref}'. Please be more specific.[/red]")
+                console.print(f"[red]Ambiguous agent identifier '{esc(ref)}'. Please be more specific.[/red]")
                 raise SystemExit(1)
             found = a
     if not found:
-        console.print(f"[red]Agent '{ref}' not found.[/red]")
+        console.print(f"[red]Agent '{esc(ref)}' not found.[/red]")
         raise SystemExit(1)
     return found
 
@@ -118,13 +118,13 @@ def register(cli):
                 "a registrar (it may predate registrars).[/yellow]"
             )
         kind_msg = ", registrar" if result.get("can_register") else ""
-        console.print(f"[green]Agent '{escape(result['name'])}' created ({scope_msg}{kind_msg}).[/green]")
+        console.print(f"[green]Agent '{escape(result['name'])}' created ({esc(scope_msg)}{esc(kind_msg)}).[/green]")
         console.print()
         console.print("[bold yellow]API Key (save this - it won't be shown again!):[/bold yellow]")
-        console.print(f"[cyan]{result['api_key']}[/cyan]")
+        console.print(f"[cyan]{esc(result['api_key'])}[/cyan]")
         console.print()
         console.print("To configure the CLI with this agent's key:")
-        console.print(f"  chaotic auth set-key {result['api_key']}")
+        console.print(f"  chaotic auth set-key {esc(result['api_key'])}")
         if result.get("can_register"):
             console.print("Then give each Claude Code session its own identity with:")
             console.print("  chaotic config set-session-identity auto   [dim](or CHAOTIC_SESSION_IDENTITY=auto)[/dim]")
@@ -174,7 +174,7 @@ def register(cli):
             m.output_json(result)
             return
         state = "a registrar" if result.get("can_register") else "not a registrar"
-        console.print(f"[green]Agent '{escape(result['name'])}' updated; it is {state}.[/green]")
+        console.print(f"[green]Agent '{escape(result['name'])}' updated; it is {esc(state)}.[/green]")
 
     @agent.command("register")
     @click.option("--ref", "external_ref", required=True,
@@ -225,12 +225,12 @@ def register(cli):
         identity = result["agent"]
         verb = "Registered" if result.get("created") else "Renewed"
         console.print(
-            f"[green]{verb} session identity '{escape(identity['name'])}' ({identity['id'][:8]}).[/green]"
+            f"[green]{esc(verb)} session identity '{escape(identity['name'])}' ({esc(identity['id'][:8])}).[/green]"
         )
         console.print(f"Key expires: {escape(str(result.get('expires_at') or 'never'))}")
         console.print()
         console.print("[bold yellow]API Key (save this - it won't be shown again!):[/bold yellow]")
-        console.print(f"[cyan]{result['api_key']}[/cyan]")
+        console.print(f"[cyan]{esc(result['api_key'])}[/cyan]")
 
     @agent.command("list")
     @click.option("--all", "show_all", is_flag=True,
@@ -285,7 +285,7 @@ def register(cli):
                 name = f"  └ {name}"
             created_by = a.get("parent_user_name", "Unknown")
             created_at = a["created_at"][:10]
-            table.add_row(agent_id, name, scope, kind, created_by, created_at)
+            table.add_row(agent_id, markup(name), scope, kind, created_by, created_at)
 
         console.print(table)
 
@@ -311,16 +311,16 @@ def register(cli):
         for a in agents:
             if a["id"] == agent_id or a["id"].startswith(agent_id):
                 if agent_obj is not None:
-                    console.print(f"[red]Ambiguous agent ID prefix '{agent_id}'. Please be more specific.[/red]")
+                    console.print(f"[red]Ambiguous agent ID prefix '{esc(agent_id)}'. Please be more specific.[/red]")
                     raise SystemExit(1)
                 agent_obj = a
 
         if not agent_obj:
-            console.print(f"[red]Agent '{agent_id}' not found.[/red]")
+            console.print(f"[red]Agent '{esc(agent_id)}' not found.[/red]")
             raise SystemExit(1)
 
         _client().delete_agent(agent_obj["id"])
-        console.print(f"[green]Agent '{agent_obj['name']}' deleted.[/green]")
+        console.print(f"[green]Agent '{esc(agent_obj['name'])}' deleted.[/green]")
 
     @agent.command("deactivate")
     @click.argument("agent_ref", metavar="AGENT")
@@ -356,7 +356,7 @@ def register(cli):
             m.output_json(result)
             return
         console.print(
-            f"[green]Agent '{result['name']}' deactivated; its API keys are revoked.[/green]"
+            f"[green]Agent '{esc(result['name'])}' deactivated; its API keys are revoked.[/green]"
         )
         console.print("Issues still assigned to it stay assigned; reassign any open ones.")
 
@@ -385,8 +385,8 @@ def register(cli):
         if m.is_json_output():
             m.output_json(result)
             return
-        console.print(f"[green]Agent '{result['name']}' reactivated.[/green]")
-        console.print(f"Mint it a key with: chaotic agent keys create {result['id']}")
+        console.print(f"[green]Agent '{esc(result['name'])}' reactivated.[/green]")
+        console.print(f"Mint it a key with: chaotic agent keys create {esc(result['id'])}")
 
     @agent.group("keys")
     def agent_keys():
@@ -414,13 +414,13 @@ def register(cli):
 
         result = _client().create_agent_key(agent_obj["id"])
 
-        console.print(f"[green]New API key minted for agent '{agent_obj['name']}'.[/green]")
+        console.print(f"[green]New API key minted for agent '{esc(agent_obj['name'])}'.[/green]")
         console.print()
         console.print("[bold yellow]API Key (save this - it won't be shown again!):[/bold yellow]")
-        console.print(f"[cyan]{result['key']}[/cyan]")
+        console.print(f"[cyan]{esc(result['key'])}[/cyan]")
         console.print()
         console.print("To configure the CLI with this agent's key:")
-        console.print(f"  chaotic auth set-key {result['key']}")
+        console.print(f"  chaotic auth set-key {esc(result['key'])}")
 
     @agent_keys.command("list")
     @click.argument("agent_ref", metavar="AGENT")
@@ -446,7 +446,7 @@ def register(cli):
             m.output_json(keys)
             return
         if not keys:
-            console.print(f"[yellow]Agent '{agent_obj['name']}' has no API keys.[/yellow]")
+            console.print(f"[yellow]Agent '{esc(agent_obj['name'])}' has no API keys.[/yellow]")
             return
 
         table = Table(title=f"API keys for {agent_obj['name']}")
@@ -509,15 +509,15 @@ def register(cli):
         # Never print a pasted secret back to the terminal.
         shown = key_ref if len(key_ref) <= 11 else key_ref[:11] + "..."
         if not matches:
-            console.print(f"[red]Agent '{agent_obj['name']}' has no active key '{shown}'.[/red]")
+            console.print(f"[red]Agent '{esc(agent_obj['name'])}' has no active key '{esc(shown)}'.[/red]")
             raise SystemExit(1)
         if len(matches) > 1:
-            console.print(f"[red]Ambiguous key identifier '{shown}'. Please be more specific.[/red]")
+            console.print(f"[red]Ambiguous key identifier '{esc(shown)}'. Please be more specific.[/red]")
             raise SystemExit(1)
         key = matches[0]
         if not m.confirm_action(f"Revoke key '{key['name']}' ({key['key_prefix']}) of agent '{agent_obj['name']}'?"):
             raise SystemExit(0)
         _client().revoke_api_key(key["id"])
-        console.print(f"[green]Key '{key['name']}' revoked.[/green]")
+        console.print(f"[green]Key '{esc(key['name'])}' revoked.[/green]")
 
     return agent

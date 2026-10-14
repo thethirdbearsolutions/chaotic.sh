@@ -4,6 +4,7 @@ import sys
 import click
 
 from .shared import console
+from ..markup import esc
 
 
 def _main():
@@ -51,17 +52,17 @@ def register(cli):
             return
 
         console.print(f"[bold]Configuration[/bold]\n")
-        console.print(f"  [dim]Profile:[/dim]      {prof}")
-        console.print(f"  [dim]API URL:[/dim]      {api_url}")
+        console.print(f"  [dim]Profile:[/dim]      {esc(prof)}")
+        console.print(f"  [dim]API URL:[/dim]      {esc(api_url)}")
         if local_cfg:
-            console.print(f"  [dim]Local config:[/dim] {local_cfg}")
+            console.print(f"  [dim]Local config:[/dim] {esc(local_cfg)}")
         else:
             console.print(f"  [dim]Local config:[/dim] [dim](none)[/dim]")
-        console.print(f"  [dim]Auth token:[/dim]  {'✓' if has_token else '✗'}")
-        console.print(f"  [dim]API key:[/dim]     {'✓' if has_key else '✗'}")
-        console.print(f"  [dim]Team ID:[/dim]     {team_id or '[dim](not set)[/dim]'}")
-        console.print(f"  [dim]Project ID:[/dim]  {project_id or '[dim](not set)[/dim]'}")
-        console.print(f"  [dim]Session identity:[/dim] {session_mode}")
+        console.print(f"  [dim]Auth token:[/dim]  {esc('✓' if has_token else '✗')}")
+        console.print(f"  [dim]API key:[/dim]     {esc('✓' if has_key else '✗')}")
+        console.print(f"  [dim]Team ID:[/dim]     {esc(team_id) if team_id else '[dim](not set)[/dim]'}")
+        console.print(f"  [dim]Project ID:[/dim]  {esc(project_id) if project_id else '[dim](not set)[/dim]'}")
+        console.print(f"  [dim]Session identity:[/dim] {esc(session_mode)}")
 
     @config.command("set-session-identity")
     @click.argument("mode", type=click.Choice(["auto", "off"]))
@@ -79,7 +80,7 @@ def register(cli):
         from cli import session_identity
 
         session_identity.set_mode(mode)
-        console.print(f"[green]session_identity set to: {mode}[/green]")
+        console.print(f"[green]session_identity set to: {esc(mode)}[/green]")
 
     @config.command("set-url")
     @click.argument("url")
@@ -94,6 +95,6 @@ def register(cli):
         if not url.endswith("/api"):
             url = f"{url}/api"
         _main().set_api_url(url)
-        console.print(f"[green]API URL set to: {url}[/green]")
+        console.print(f"[green]API URL set to: {esc(url)}[/green]")
 
     return config

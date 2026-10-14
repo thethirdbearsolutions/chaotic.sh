@@ -30,6 +30,7 @@ from .config import (  # noqa: F401 - re-exported for late-binding command modul
 )
 from .client import client, APIError
 from .system import system
+from .markup import esc
 from .commands.shared import (  # noqa: F401 – re-exported for backward compat
     console, get_status_color, suggest_key,
     resolve_sprint_id, resolve_document_id, resolve_label_id,
@@ -250,21 +251,21 @@ def handle_error(f):
             if is_json_output():
                 output_json({"error": msg})
             else:
-                console.print(f"[red]{msg}[/red]")
+                console.print(f"[red]{esc(msg)}[/red]")
             raise SystemExit(1)
         except httpx.TimeoutException:
             msg = "Request timed out. The server may be overloaded or unreachable."
             if is_json_output():
                 output_json({"error": msg})
             else:
-                console.print(f"[red]{msg}[/red]")
+                console.print(f"[red]{esc(msg)}[/red]")
             raise SystemExit(1)
         except httpx.HTTPError as e:
             msg = f"Network error: {e}"
             if is_json_output():
                 output_json({"error": msg})
             else:
-                console.print(f"[red]{msg}[/red]")
+                console.print(f"[red]{esc(msg)}[/red]")
             raise SystemExit(1)
     wrapper.__name__ = f.__name__
     wrapper.__doc__ = f.__doc__
@@ -397,9 +398,9 @@ def resolve_assignee_id(assignee_value: str) -> str:
         )
 
     if len(candidates) > 1:
-        console.print(f"[red]Ambiguous assignee '{assignee_value}':[/red]")
+        console.print(f"[red]Ambiguous assignee '{esc(assignee_value)}':[/red]")
         for _, label in candidates:
-            console.print(f"  - {label}")
+            console.print(f"  - {esc(label)}")
         raise click.ClickException("Please be more specific.")
 
     return candidates[0][0]
@@ -536,7 +537,7 @@ def cli(ctx, profile, json_output, yes):
         try:
             check_profile_ambiguity()
         except ProfileAmbiguityError as e:
-            console.print(f"[red]Error: {e}[/red]")
+            console.print(f"[red]Error: {esc(e)}[/red]")
             raise SystemExit(1)
 
     if ctx.invoked_subcommand is None:
@@ -656,7 +657,7 @@ def init(url):
 
     console.print(f"\n[bold]Opening browser to authorize Chaotic CLI...[/bold]\n")
     console.print(f"[dim]If browser doesn't open, visit:[/dim]")
-    console.print(f"[link={auth_url}]{auth_url}[/link]\n")
+    console.print(f"[link={esc(auth_url)}]{esc(auth_url)}[/link]\n")
 
     webbrowser.open(auth_url)
 
@@ -667,7 +668,7 @@ def init(url):
     server.server_close()
 
     if received_data["error"]:
-        console.print(f"\n[red]Authorization failed: {received_data['error']}[/red]")
+        console.print(f"\n[red]Authorization failed: {esc(received_data['error'])}[/red]")
         raise SystemExit(1)
 
     if not received_data["key"]:
@@ -688,7 +689,7 @@ def init(url):
 
     # Show where config was saved
     config_path = get_local_config_path()
-    console.print(f"[green]✓ Config saved to {config_path}[/green]")
+    console.print(f"[green]✓ Config saved to {esc(config_path)}[/green]")
 
     console.print(f"\n[bold green]Chaotic initialized![/bold green]")
     console.print("Run [bold]chaotic status[/bold] to verify your setup.")
@@ -738,13 +739,13 @@ def _run_quickstart_wizard():
     if get_token() or get_api_key():
         try:
             me = client.get_me()
-            console.print(f"  [green]✓[/green] Already signed in as [bold]{me['name']}[/bold] ({me['email']})")
+            console.print(f"  [green]✓[/green] Already signed in as [bold]{esc(me['name'])}[/bold] ({esc(me['email'])})")
             console.print()
         except Exception:
             # Token is stale, proceed to auth
             pass
     if not get_token() and not get_api_key():
-        console.print(f"  [bold blue]Step {step}/{total_steps}: Create Account[/bold blue]")
+        console.print(f"  [bold blue]Step {esc(step)}/{esc(total_steps)}: Create Account[/bold blue]")
         console.print()
 
         has_account = click.confirm("  Already have an account?", default=False)
@@ -756,7 +757,7 @@ def _run_quickstart_wizard():
             result = client.login(email, password)
             set_token(result["access_token"])
             me = client.get_me()
-            console.print(f"  [green]✓ Signed in as {me['name']}[/green]")
+            console.print(f"  [green]✓ Signed in as {esc(me['name'])}[/green]")
         else:
             name = sanitized_prompt("  Your name")
             email = sanitized_prompt("  Email")
@@ -792,10 +793,10 @@ def _run_quickstart_wizard():
         team_name = team["name"]
         team_key = team["key"]
         set_current_team(team_id, local=True)
-        console.print(f"  [green]✓[/green] Using team [bold]{team_name}[/bold] ({team_key})")
+        console.print(f"  [green]✓[/green] Using team [bold]{esc(team_name)}[/bold] ({esc(team_key)})")
         console.print()
     else:
-        console.print(f"  [bold blue]Step {step}/{total_steps}: Create Your Team[/bold blue]")
+        console.print(f"  [bold blue]Step {esc(step)}/{esc(total_steps)}: Create Your Team[/bold blue]")
         console.print()
         console.print("  [dim]Teams organize your people and projects.[/dim]")
         console.print()
@@ -808,11 +809,11 @@ def _run_quickstart_wizard():
                 result = client.create_team(team_name, team_key)
                 team_id = result["id"]
                 set_current_team(team_id, local=True)
-                console.print(f"  [green]✓ Team created: {team_name} ({team_key})[/green]")
+                console.print(f"  [green]✓ Team created: {esc(team_name)} ({esc(team_key)})[/green]")
                 break
             except APIError as e:
                 if "key" in str(e).lower() and ("exists" in str(e).lower() or "already" in str(e).lower()):
-                    console.print(f"  [yellow]Key '{team_key}' is already taken. Try another.[/yellow]")
+                    console.print(f"  [yellow]Key '{esc(team_key)}' is already taken. Try another.[/yellow]")
                 else:
                     raise
         else:
@@ -836,10 +837,10 @@ def _run_quickstart_wizard():
         project_name = project["name"]
         project_key = project["key"]
         set_current_project(project_id, local=True)
-        console.print(f"  [green]✓[/green] Using project [bold]{project_name}[/bold] ({project_key})")
+        console.print(f"  [green]✓[/green] Using project [bold]{esc(project_name)}[/bold] ({esc(project_key)})")
         console.print()
     else:
-        console.print(f"  [bold blue]Step {step}/{total_steps}: Create Your First Project[/bold blue]")
+        console.print(f"  [bold blue]Step {esc(step)}/{esc(total_steps)}: Create Your First Project[/bold blue]")
         console.print()
         console.print("  [dim]Projects group related issues. One per repo or component.[/dim]")
         console.print()
@@ -852,11 +853,11 @@ def _run_quickstart_wizard():
                 result = client.create_project(team_id, project_name, project_key)
                 project_id = result["id"]
                 set_current_project(project_id, local=True)
-                console.print(f"  [green]✓ Project created: {project_name} ({project_key})[/green]")
+                console.print(f"  [green]✓ Project created: {esc(project_name)} ({esc(project_key)})[/green]")
                 break
             except APIError as e:
                 if "key" in str(e).lower() and ("exists" in str(e).lower() or "already" in str(e).lower()):
-                    console.print(f"  [yellow]Key '{project_key}' is already taken. Try another.[/yellow]")
+                    console.print(f"  [yellow]Key '{esc(project_key)}' is already taken. Try another.[/yellow]")
                 else:
                     raise
         else:
@@ -865,27 +866,27 @@ def _run_quickstart_wizard():
     step += 1
 
     # Step 4: First issue
-    console.print(f"  [bold blue]Step {step}/{total_steps}: Create Your First Issue[/bold blue]")
+    console.print(f"  [bold blue]Step {esc(step)}/{esc(total_steps)}: Create Your First Issue[/bold blue]")
     console.print()
 
     title = sanitized_prompt("  Issue title", default="Set up project")
     result = client.create_issue(project_id, title)
     identifier = result.get("identifier", f"{project_key}-{result.get('number', '?')}")
-    console.print(f"  [green]✓ Created: {identifier} - {title}[/green]")
+    console.print(f"  [green]✓ Created: {esc(identifier)} - {esc(title)}[/green]")
     console.print()
 
     # Summary
     web_url = get_web_url() or f"http://localhost:{DEFAULT_PORT}"
     console.print(Panel(
         f"[bold]Your workspace:[/bold]\n"
-        f"  Team:    {team_name} ({team_key})\n"
-        f"  Project: {project_name} ({project_key})\n"
-        f"  Issue:   {identifier} - {title}\n\n"
+        f"  Team:    {esc(team_name)} ({esc(team_key)})\n"
+        f"  Project: {esc(project_name)} ({esc(project_key)})\n"
+        f"  Issue:   {esc(identifier)} - {esc(title)}\n\n"
         f"[bold]Quick reference:[/bold]\n"
         f"  chaotic issue list          List issues\n"
         f"  chaotic issue create \"...\"  Create an issue\n"
         f"  chaotic status              Show context\n"
-        f"  {web_url}      Open web UI",
+        f"  {esc(web_url)}      Open web UI",
         title="You're all set!",
         border_style="green",
     ))
@@ -915,7 +916,7 @@ def upgrade(target_version, git, dry_run):
 
     # Validate version string if provided
     if target_version and not re.match(r'^[0-9a-zA-Z._-]+$', target_version):
-        console.print(f"[red]Invalid version string: {target_version}[/red]")
+        console.print(f"[red]Invalid version string: {esc(target_version)}[/red]")
         raise SystemExit(1)
 
     # Get current version
@@ -923,7 +924,7 @@ def upgrade(target_version, git, dry_run):
         current = importlib.metadata.version(pkg)
     except importlib.metadata.PackageNotFoundError:
         current = "unknown"
-    console.print(f"Current version: [bold]{current}[/bold]")
+    console.print(f"Current version: [bold]{esc(current)}[/bold]")
 
     # Detect install method
     installer = _detect_installer()
@@ -934,13 +935,13 @@ def upgrade(target_version, git, dry_run):
         console.print("  pip install --pre --upgrade chaotic-cli")
         raise SystemExit(1)
 
-    console.print(f"Install method: [bold]{installer}[/bold]")
+    console.print(f"Install method: [bold]{esc(installer)}[/bold]")
     if git:
         console.print("Source: [bold]git main[/bold]")
 
     # Build the upgrade command
     cmd = _build_upgrade_cmd(installer, pkg, target_version, git_url=GIT_URL if git else None)
-    console.print(f"Command: [dim]{' '.join(cmd)}[/dim]")
+    console.print(f"Command: [dim]{esc(' '.join(cmd))}[/dim]")
 
     if dry_run:
         console.print("[yellow]Dry run — nothing executed.[/yellow]")
@@ -954,13 +955,13 @@ def upgrade(target_version, git, dry_run):
         raise SystemExit(1)
 
     if result.returncode != 0:
-        console.print(f"[red]Upgrade failed (exit {result.returncode}):[/red]")
+        console.print(f"[red]Upgrade failed (exit {esc(result.returncode)}):[/red]")
         if result.stderr:
-            console.print(result.stderr.strip())
+            console.print(esc(result.stderr.strip()))
         raise SystemExit(1)
 
     if result.stdout:
-        console.print(result.stdout.strip())
+        console.print(esc(result.stdout.strip()))
 
     # Report new version using the installer's own listing
     try:
@@ -968,13 +969,13 @@ def upgrade(target_version, git, dry_run):
         if git:
             # Git installs may not bump the version string, so always report success
             if new_ver:
-                console.print(f"[green]Installed from git main (version {new_ver}).[/green]")
+                console.print(f"[green]Installed from git main (version {esc(new_ver)}).[/green]")
             else:
                 console.print("[green]Installed from git main.[/green]")
         elif new_ver and new_ver != current:
-            console.print(f"[green]Upgraded: {current} -> {new_ver}[/green]")
+            console.print(f"[green]Upgraded: {esc(current)} -> {esc(new_ver)}[/green]")
         elif new_ver == current:
-            console.print(f"[yellow]Already at latest version ({current}).[/yellow]")
+            console.print(f"[yellow]Already at latest version ({esc(current)}).[/yellow]")
         else:
             console.print("[green]Upgrade complete.[/green]")
     except Exception:
@@ -1093,7 +1094,7 @@ def me():
     if is_json_output():
         output_json(user)
         return
-    console.print(Panel(f"[bold]{user['name']}[/bold]\n{user['email']}", title="Current User"))
+    console.print(Panel(f"[bold]{esc(user['name'])}[/bold]\n{esc(user['email'])}", title="Current User"))
 
 
 # Shortcut: 'status' to show current context
@@ -1141,14 +1142,14 @@ def status():
 
     local_config = find_local_config()
     if local_config:
-        config_type = f"[dim](local: {local_config})[/dim]"
+        config_type = f"[dim](local: {esc(local_config)})[/dim]"
     else:
         config_type = "[dim](global ~/.chaotic)[/dim]"
 
     # Show profile if not default
     current_profile = get_effective_profile()
     if current_profile != "default":
-        config_type = f"[cyan](profile: {current_profile})[/cyan] {config_type}"
+        config_type = f"[cyan](profile: {esc(current_profile)})[/cyan] {config_type}"
 
     console.print(f"[bold]Current Context[/bold] {config_type}\n")
 
@@ -1157,15 +1158,15 @@ def status():
         try:
             user = client.get_me()
             if user.get("is_agent"):
-                console.print(f"  [green]✓[/green] Acting as: [bold]{user['name']}[/bold] [dim](agent)[/dim]")
+                console.print(f"  [green]✓[/green] Acting as: [bold]{esc(user['name'])}[/bold] [dim](agent)[/dim]")
                 try:
                     agent_info = client.get_agent(user["id"])
                     parent_name = agent_info.get("parent_user_name", "unknown")
-                    console.print(f"    [dim]↳ Parent: {parent_name}[/dim]")
+                    console.print(f"    [dim]↳ Parent: {esc(parent_name)}[/dim]")
                 except Exception:
                     pass
             else:
-                console.print(f"  [green]✓[/green] Logged in as: [bold]{user['name']}[/bold] ({user['email']})")
+                console.print(f"  [green]✓[/green] Logged in as: [bold]{esc(user['name'])}[/bold] ({esc(user['email'])})")
         except Exception:
             console.print("  [yellow]![/yellow] Auth token set but unable to verify")
     else:
@@ -1176,9 +1177,9 @@ def status():
     if team_id:
         try:
             team = client.get_team(team_id)
-            console.print(f"  [green]✓[/green] Team: [bold]{team['name']}[/bold] ({team['key']})")
+            console.print(f"  [green]✓[/green] Team: [bold]{esc(team['name'])}[/bold] ({esc(team['key'])})")
         except Exception:
-            console.print(f"  [yellow]![/yellow] Team ID set: {team_id[:8]}...")
+            console.print(f"  [yellow]![/yellow] Team ID set: {esc(team_id[:8])}...")
     else:
         console.print("  [dim]-[/dim] No team selected")
 
@@ -1187,9 +1188,9 @@ def status():
     if project_id:
         try:
             project = client.get_project(project_id)
-            console.print(f"  [green]✓[/green] Project: [bold]{project['name']}[/bold] ({project['key']})")
+            console.print(f"  [green]✓[/green] Project: [bold]{esc(project['name'])}[/bold] ({esc(project['key'])})")
         except Exception:
-            console.print(f"  [yellow]![/yellow] Project ID set: {project_id[:8]}...")
+            console.print(f"  [yellow]![/yellow] Project ID set: {esc(project_id[:8])}...")
     else:
         console.print("  [dim]-[/dim] No project selected")
 
@@ -1220,15 +1221,15 @@ def status():
                     parts.append(f"{review_count} review{'s' if review_count != 1 else ''}")
                 count = len(pending)
                 suffix = f" ({', '.join(parts)})" if parts else ""
-                console.print(f"\n  [yellow]⚠[/yellow] [bold]{count}[/bold] issue{'s' if count != 1 else ''} awaiting approval{suffix}")
+                console.print(f"\n  [yellow]⚠[/yellow] [bold]{esc(count)}[/bold] issue{esc('s' if count != 1 else '')} awaiting approval{esc(suffix)}")
                 for item in pending[:5]:
                     ident = item.get("identifier", "")
                     title = item.get("title", "")
                     approvals = item.get("pending_approvals", [])
                     ritual_names = ", ".join(a.get("ritual_name", "") for a in approvals)
-                    console.print(f"    [dim]•[/dim] {ident}: {title} [dim]({ritual_names})[/dim]")
+                    console.print(f"    [dim]•[/dim] {esc(ident)}: {esc(title)} [dim]({esc(ritual_names)})[/dim]")
                 if count > 5:
-                    console.print(f"    [dim]... and {count - 5} more[/dim]")
+                    console.print(f"    [dim]... and {esc(count - 5)} more[/dim]")
         except Exception:
             pass  # Don't fail status if approval check fails
 
@@ -1243,22 +1244,22 @@ def whoami():
 
     user = client.get_me()
 
-    console.print(f"[bold]User:[/bold] {user['name']}")
-    console.print(f"[bold]Email:[/bold] {user['email']}")
-    console.print(f"[bold]Type:[/bold] {'Agent' if user.get('is_agent') else 'Human'}")
+    console.print(f"[bold]User:[/bold] {esc(user['name'])}")
+    console.print(f"[bold]Email:[/bold] {esc(user['email'])}")
+    console.print(f"[bold]Type:[/bold] {esc('Agent' if user.get('is_agent') else 'Human')}")
 
     api_key = get_api_key()
     if api_key:
-        console.print(f"[bold]API Key:[/bold] {api_key[:12]}...")
+        console.print(f"[bold]API Key:[/bold] {esc(api_key[:12])}...")
     elif get_token():
         console.print("[bold]Auth:[/bold] JWT token")
 
     profile = get_effective_profile()
     if profile != "default":
-        console.print(f"[bold]Profile:[/bold] {profile}")
+        console.print(f"[bold]Profile:[/bold] {esc(profile)}")
 
     config_file = get_global_config_file()
-    console.print(f"[bold]Config:[/bold] {config_file}")
+    console.print(f"[bold]Config:[/bold] {esc(config_file)}")
 
 
 # Register command modules and system commands

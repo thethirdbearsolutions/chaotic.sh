@@ -11,6 +11,7 @@ import sys
 import click
 from rich.console import Console
 from chaotic_mcp_tools.estimates import off_scale_warning
+from ..markup import esc
 
 
 # ── Duration parsing ─────────────────────────────────────────────────────────
@@ -176,7 +177,7 @@ def apply_ritual_attestations(issue, attest_specs):
         rit = pending.get(name)
         if rit is None:
             if name in completed:
-                console.print(f"[dim]Ritual '{name}' already attested; skipping.[/dim]")
+                console.print(f"[dim]Ritual '{esc(name)}' already attested; skipping.[/dim]")
                 continue
             known = ", ".join(sorted(pending)) or "none"
             raise click.ClickException(
@@ -184,30 +185,32 @@ def apply_ritual_attestations(issue, attest_specs):
                 f"{issue.get('identifier', issue['id'])}. Pending: {known}."
             )
         if rit.get("attestation"):
-            console.print(f"[dim]Ritual '{name}' already attested; skipping.[/dim]")
+            console.print(f"[dim]Ritual '{esc(name)}' already attested; skipping.[/dim]")
             continue
         if rit.get("approval_mode") == "gate":
             _client().complete_gate_ritual_for_issue(rit["id"], issue["id"], note)
-            console.print(f"  [green]✓[/green] {name} [dim](gate completed)[/dim]")
+            console.print(f"  [green]✓[/green] {esc(name)} [dim](gate completed)[/dim]")
         else:
             result = _client().attest_ritual_for_issue(rit["id"], issue["id"], note)
             if result and result.get("approved_at"):
-                console.print(f"  [green]✓[/green] {name}")
+                console.print(f"  [green]✓[/green] {esc(name)}")
             else:
-                console.print(f"  [yellow]⏳[/yellow] {name} attested, pending approval")
+                console.print(f"  [yellow]⏳[/yellow] {esc(name)} attested, pending approval")
 
 
 # ── Display helpers ──────────────────────────────────────────────────────────
 
 def format_ritual_line(r):
     """Format a ritual display line with mode, group, and note info."""
-    mode = f"[dim]({r['approval_mode']})[/dim]"
-    note_tag = "" if r.get("note_required", True) else " [dim][no note req][/dim]"
+    mode = f"[dim]({esc(r['approval_mode'])})[/dim]"
+    # A backslash makes the bracket literal: a bare `[deleted]` is a style
+    # tag to Rich, so these labels used to vanish (CHT-1526).
+    note_tag = "" if r.get("note_required", True) else " [dim]\\[no note req][/dim]"
     group_tag = ""
     if r.get("group_name"):
-        group_tag = f" [dim][group: {r['group_name']}][/dim]"
-    deleted_tag = " [red][deleted][/red]" if not r.get("is_active", True) else ""
-    return f"  \u2022 {r['name']} {mode}{note_tag}{group_tag}{deleted_tag}"
+        group_tag = f" [dim]\\[group: {esc(r['group_name'])}][/dim]"
+    deleted_tag = " [red]\\[deleted][/red]" if not r.get("is_active", True) else ""
+    return f"  \u2022 {esc(r['name'])} {mode}{note_tag}{group_tag}{deleted_tag}"
 
 
 def print_ritual_prompt(prompt):
@@ -296,8 +299,8 @@ def print_sprint_panel(result: dict, title: str = "Sprint"):
     limbo_info = "\n[yellow]IN LIMBO - pending rituals[/yellow]" if result.get("limbo") else ""
 
     console.print(Panel(
-        f"[bold]{result['name']}[/bold]\n"
-        f"Status: {result['status'].title()}"
+        f"[bold]{esc(result['name'])}[/bold]\n"
+        f"Status: {esc(result['status'].title())}"
         f"{budget_info}"
         f"{limbo_info}",
         title=title

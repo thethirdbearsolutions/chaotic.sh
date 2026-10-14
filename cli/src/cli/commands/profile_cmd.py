@@ -4,6 +4,7 @@ import sys
 import click
 
 from .shared import console
+from ..markup import esc
 
 
 def _main():
@@ -13,24 +14,24 @@ def _main():
 
 def _show_profile_details(name, cfg):
     """Display profile details in a consistent format."""
-    console.print(f"[bold]Profile:[/bold] {name}")
+    console.print(f"[bold]Profile:[/bold] {esc(name)}")
 
     api_url = cfg.get("api_url", "not set")
-    console.print(f"  API URL: {api_url}")
+    console.print(f"  API URL: {esc(api_url)}")
 
     if cfg.get("api_key"):
         key = cfg["api_key"]
         masked = f"{key[:8]}...{key[-4:]}" if len(key) > 12 else "***"
-        console.print(f"  Auth: API key ({masked})")
+        console.print(f"  Auth: API key ({esc(masked)})")
     elif cfg.get("token"):
         console.print("  Auth: JWT token")
     else:
         console.print("  Auth: [yellow]not configured[/yellow]")
 
     if cfg.get("current_team"):
-        console.print(f"  Team: {cfg['current_team']}")
+        console.print(f"  Team: {esc(cfg['current_team'])}")
     if cfg.get("current_project"):
-        console.print(f"  Project: {cfg['current_project']}")
+        console.print(f"  Project: {esc(cfg['current_project'])}")
 
 
 def register(cli):
@@ -63,9 +64,9 @@ def register(cli):
         console.print("[bold]Available profiles:[/bold]\n")
         for p in profiles:
             if p == current:
-                console.print(f"  [green]* {p}[/green] [dim](active)[/dim]")
+                console.print(f"  [green]* {esc(p)}[/green] [dim](active)[/dim]")
             else:
-                console.print(f"    {p}")
+                console.print(f"    {esc(p)}")
         console.print()
         console.print(f"[dim]Set profile with: CHAOTIC_PROFILE=<name> or --profile <name>[/dim]")
 
@@ -76,8 +77,8 @@ def register(cli):
         current = m.get_effective_profile()
         source = "CHAOTIC_PROFILE" if m.get_profile() else "default"
 
-        console.print(f"[bold]Active profile:[/bold] {current}")
-        console.print(f"[dim]Source: {source}[/dim]")
+        console.print(f"[bold]Active profile:[/bold] {esc(current)}")
+        console.print(f"[dim]Source: {esc(source)}[/dim]")
 
         # Show profile details
         try:
@@ -88,7 +89,7 @@ def register(cli):
                 # Mask API key
                 key = cfg["api_key"]
                 masked = f"{key[:8]}...{key[-4:]}" if len(key) > 12 else "***"
-                console.print(f"[dim]Auth: API key ({masked})[/dim]")
+                console.print(f"[dim]Auth: API key ({esc(masked)})[/dim]")
             else:
                 console.print("[yellow]Auth: Not configured[/yellow]")
         except Exception:
@@ -114,7 +115,7 @@ def register(cli):
         # Check if profile already exists
         existing = m.list_profiles()
         if name in existing:
-            console.print(f"[red]Error: Profile '{name}' already exists.[/red]")
+            console.print(f"[red]Error: Profile '{esc(name)}' already exists.[/red]")
             raise SystemExit(1)
 
         # Validate the name by attempting to resolve the config file path
@@ -122,7 +123,7 @@ def register(cli):
             m.set_profile(name)
             m.get_global_config_file()
         except m.ProfileError as e:
-            console.print(f"[red]Error: {e}[/red]")
+            console.print(f"[red]Error: {esc(e)}[/red]")
             raise SystemExit(1)
         finally:
             m.set_profile(None)
@@ -139,14 +140,14 @@ def register(cli):
         try:
             m.save_global_config(config)
         except (OSError, PermissionError) as e:
-            console.print(f"[red]Error writing profile: {e}[/red]")
+            console.print(f"[red]Error writing profile: {esc(e)}[/red]")
             raise SystemExit(1)
         finally:
             m.set_profile(None)
 
-        console.print(f"[green]Profile '{name}' created.[/green]")
+        console.print(f"[green]Profile '{esc(name)}' created.[/green]")
         if not api_url and not api_key:
-            console.print(f"[dim]Configure with: CHAOTIC_PROFILE={name} chaotic auth login[/dim]")
+            console.print(f"[dim]Configure with: CHAOTIC_PROFILE={esc(name)} chaotic auth login[/dim]")
 
     @profile.command("show")
     @click.argument("name")
@@ -157,8 +158,8 @@ def register(cli):
         # Check profile exists
         existing = m.list_profiles()
         if name not in existing:
-            console.print(f"[red]Error: Profile '{name}' not found.[/red]")
-            console.print(f"[dim]Available profiles: {', '.join(existing) if existing else 'none'}[/dim]")
+            console.print(f"[red]Error: Profile '{esc(name)}' not found.[/red]")
+            console.print(f"[dim]Available profiles: {esc(', '.join(existing) if existing else 'none')}[/dim]")
             raise SystemExit(1)
 
         # Load the profile's config
@@ -172,7 +173,7 @@ def register(cli):
 
         # Hint for unconfigured profiles
         if not cfg.get("api_key") and not cfg.get("token"):
-            console.print(f"\n[dim]Configure with: CHAOTIC_PROFILE={name} chaotic auth login[/dim]")
+            console.print(f"\n[dim]Configure with: CHAOTIC_PROFILE={esc(name)} chaotic auth login[/dim]")
 
     @profile.command("delete")
     @click.argument("name")
@@ -193,13 +194,13 @@ def register(cli):
         # Check profile exists
         existing = m.list_profiles()
         if name not in existing:
-            console.print(f"[red]Error: Profile '{name}' not found.[/red]")
+            console.print(f"[red]Error: Profile '{esc(name)}' not found.[/red]")
             raise SystemExit(1)
 
         # Prevent deleting the active profile
         current = m.get_effective_profile()
         if name == current:
-            console.print(f"[red]Error: Cannot delete the active profile '{name}'.[/red]")
+            console.print(f"[red]Error: Cannot delete the active profile '{esc(name)}'.[/red]")
             console.print("[dim]Switch to a different profile first.[/dim]")
             raise SystemExit(1)
 
@@ -208,7 +209,7 @@ def register(cli):
         try:
             config_file = m.get_global_config_file()
         except m.ProfileError as e:
-            console.print(f"[red]Error: {e}[/red]")
+            console.print(f"[red]Error: {esc(e)}[/red]")
             raise SystemExit(1)
         finally:
             m.set_profile(None)
@@ -221,6 +222,6 @@ def register(cli):
                 return
 
         config_file.unlink(missing_ok=True)
-        console.print(f"[green]Profile '{name}' deleted.[/green]")
+        console.print(f"[green]Profile '{esc(name)}' deleted.[/green]")
 
     return profile

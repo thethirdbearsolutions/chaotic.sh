@@ -4,7 +4,7 @@ import sys
 import click
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.table import Table
+from ..markup import Table, esc, markup
 
 from ..principals import principal_markup
 from .shared import _client, console, get_status_color, resolve_content_value
@@ -117,7 +117,7 @@ def register(cli):
             m.output_json(result)
             return
         scope = "sprint" if sprint_id else ("project" if project_id else "global")
-        console.print(f"[green]Document created ({scope}): {result['title']}[/green]")
+        console.print(f"[green]Document created ({esc(scope)}): {esc(result['title'])}[/green]")
 
     @doc.command("show")
     @click.argument("document_id")
@@ -159,7 +159,7 @@ def register(cli):
         md_content = Markdown(content)
         console.print(Panel(
             md_content,
-            title=f"{d.get('icon') or ''} {d['title']}".strip(),
+            title=f"{esc(d.get('icon') or '')} {esc(d['title'])}".strip(),
             subtitle=subtitle
         ))
 
@@ -169,7 +169,7 @@ def register(cli):
             console.print("\n[bold]Linked Issues:[/bold]")
             for issue in linked_issues:
                 status_color = get_status_color(issue.get('status', 'backlog'))
-                console.print(f"  \u2022 [{status_color}]{issue['identifier']}[/{status_color}] {issue['title']}")
+                console.print(f"  \u2022 [{status_color}]{esc(issue['identifier'])}[/{status_color}] {esc(issue['title'])}")
 
         # Show comments if requested
         if comments:
@@ -186,7 +186,7 @@ def register(cli):
                             date_str = dt.strftime('%Y-%m-%d %H:%M')
                         except (ValueError, AttributeError):
                             date_str = created_at[:16] if len(created_at) > 16 else created_at
-                        console.print(f"  \u2022 [dim]{principal_markup(c.get('author'), c.get('author_name', 'User'))} ({date_str}):[/dim]")
+                        console.print(f"  \u2022 [dim]{principal_markup(c.get('author'), c.get('author_name', 'User'))} ({esc(date_str)}):[/dim]")
                     else:
                         console.print(f"  \u2022 [dim]{principal_markup(c.get('author'), c.get('author_name', 'User'))}:[/dim]")
                     console.print(Markdown(c.get('content', '')))
@@ -242,8 +242,8 @@ def register(cli):
             date = (rev.get("created_at") or "")[:19].replace("T", " ")
             console.print(Panel(
                 Markdown(body),
-                title=f"{rev['title']} — v{rev['version']}",
-                subtitle=f"{author} · {date}",
+                title=f"{esc(rev['title'])} — v{esc(rev['version'])}",
+                subtitle=f"{author} · {esc(date)}",
             ))
             return
 
@@ -266,7 +266,7 @@ def register(cli):
             table.add_row(
                 f"v{rev['version']}",
                 rev.get("title") or "",
-                principal_markup(rev.get("author"), rev.get("author_name") or "Unknown"),
+                markup(principal_markup(rev.get("author"), rev.get("author_name") or "Unknown")),
                 (rev.get("created_at") or "")[:19].replace("T", " "),
             )
 
@@ -426,7 +426,7 @@ def register(cli):
         issue_id = issue['id']
 
         result = _client().link_document_to_issue(document_id, issue_id)
-        console.print(f"[green]Document linked to {issue_identifier}.[/green]")
+        console.print(f"[green]Document linked to {esc(issue_identifier)}.[/green]")
         return result if result is not None else {
             "linked": True, "document_id": document_id, "issue_id": issue_id,
         }
@@ -453,7 +453,7 @@ def register(cli):
         issue_id = issue['id']
 
         _client().unlink_document_from_issue(document_id, issue_id)
-        console.print(f"[green]Document unlinked from {issue_identifier}.[/green]")
+        console.print(f"[green]Document unlinked from {esc(issue_identifier)}.[/green]")
         return {"unlinked": True, "document_id": document_id, "issue_id": issue_id}
 
     @doc.command("open")
@@ -470,7 +470,7 @@ def register(cli):
         document_id = m.resolve_document_id(document_id, team_id)
         web_url = m.get_web_url()
         url = f"{web_url}/document/{document_id}"
-        console.print(f"[dim]Opening {url}...[/dim]")
+        console.print(f"[dim]Opening {esc(url)}...[/dim]")
         m.webbrowser.open(url)
 
     return doc
