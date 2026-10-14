@@ -7,7 +7,7 @@
 
 import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
-import { getEstimateScaleHint } from './projects.js';
+import { getEstimateScaleHint, getProjects } from './projects.js';
 import { formatTimeAgo, escapeHtml, escapeAttr } from './utils.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setDetailNavContext, setSelectedSprintIndex } from './state.js';
 import { registerActions } from './event-delegation.js';
@@ -67,6 +67,9 @@ subscribe((key) => {
 // review finding 2; same pattern as viewSprint below / CHT-1211 item 7).
 let loadSprintsRequestId = 0;
 
+// Resolves false when the sprints could not be fetched (the list then shows
+// its own error state); anything else means the list is current or a newer
+// load superseded this one.
 export async function loadSprints() {
     // Reset the keyboard cursor before the skeleton wipe destroys the selected
     // card — a stale index would positionally clamp into the re-rendered list
@@ -117,7 +120,9 @@ export async function loadSprints() {
         // cta the helper already supports, wired to re-run loadSprints().
         if (list) list.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.sprints, heading: 'Failed to load sprints', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-sprints' }, variant: 'error' });
         showApiError('load sprints', e);
+        return false;
     }
+    return true;
 }
 
 export function renderSprints() {
@@ -684,23 +689,52 @@ export const UNLIMITED_DEFAULT_WARNING = 'The project has no default sprint budg
 /**
  * Make a planned sprint whose budget was set by hand follow the project
  * default budget again (CHT-1708), via the API's budget_follows_default.
+ *
+ * No modal: the change is undone by setting the budget again in Edit
+ * Sprint, and the success toast names the old value for that. The one
+ * consequential case, a project with no default (the sprint becomes
+ * unlimited and arrears stop applying), is confirmed before sending when
+ * the client knows the default is unset.
  */
 export async function followDefaultBudget(sprintId, button = null) {
+    const sprint = sprints.find(s => s.id === sprintId);
+    const project = sprint ? getProjects().find(p => p.id === sprint.project_id) : null;
+    if (project && project.default_sprint_budget === null
+        && !confirm(`${UNLIMITED_DEFAULT_WARNING}\n\nFollow the project default anyway?`)) {
+        return;
+    }
+    const describe = (budget) => (budget === null || budget === undefined ? 'unlimited' : `${budget} points`);
+
     if (button) button.disabled = true;
+    let result;
     try {
-        const result = await api.updateSprint(sprintId, { budget_follows_default: true });
-        await loadSprints();
-        const budget = result?.budget;
-        const name = result?.name || sprints.find(s => s.id === sprintId)?.name || 'Sprint';
-        const amount = budget === null || budget === undefined ? 'unlimited' : `${budget} points`;
-        showToast(`'${name}' follows the project default budget again (${amount}).`, 'success');
-        if (budget === null || budget === undefined) {
-            showToast(UNLIMITED_DEFAULT_WARNING, 'warning');
-        }
+        result = await api.updateSprint(sprintId, { budget_follows_default: true });
     } catch (e) {
         showApiError('reset budget to project default', e);
-    } finally {
         if (button) button.disabled = false;
+        // The usual failure is a sprint activated meanwhile; reload so the
+        // stale NEXT card and its button go away (review on #397).
+        try { await loadSprints(); } catch { /* loadSprints reports its own errors */ }
+        return;
+    }
+
+    const name = result?.name || sprint?.name || 'Sprint';
+    const was = sprint && 'budget' in sprint ? ` (was ${describe(sprint.budget)})` : '';
+    // The PATCH succeeded, so a failed reload is still a success, with a
+    // note (review on #397).
+    let reloaded;
+    try {
+        reloaded = (await loadSprints()) !== false;
+    } catch {
+        reloaded = false;
+    }
+    showToast(
+        `'${name}' follows the project default budget again: ${describe(result?.budget)}${was}.`
+        + (reloaded ? '' : ' Refresh to see it.'),
+        'success',
+    );
+    if (result?.budget === null || result?.budget === undefined) {
+        showToast(UNLIMITED_DEFAULT_WARNING, 'warning');
     }
 }
 
