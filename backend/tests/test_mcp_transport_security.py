@@ -66,6 +66,12 @@ def test_multiple_origins(cors):
     (" https://a.example.com , ,https://b.example.com ", ["https://a.example.com", "https://b.example.com"]),
     ("", []),
     (",", []),
+    # CHT-1707: written by hand, in the form browsers send.
+    ("https://A.example.com/", ["https://a.example.com"]),
+    ("HTTPS://Tracker.Example.COM:8443//", ["https://tracker.example.com:8443"]),
+    ("https://a.example.com:443,http://localhost:80", ["https://a.example.com", "http://localhost"]),
+    ("http://[2001:DB8::1]:6274/", ["http://[2001:db8::1]:6274"]),
+    ("chrome-extension://abcdef", ["chrome-extension://abcdef"]),
 ])
 def test_cors_origin_list_is_the_one_parse(monkeypatch, raw, expected):
     """CORS_ORIGINS is parsed once, by Settings.cors_origin_list; a
@@ -76,6 +82,28 @@ def test_cors_origin_list_is_the_one_parse(monkeypatch, raw, expected):
         assert get_settings().cors_origin_list == expected
     finally:
         get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("raw", [
+    "https://tracker.example.com/path", "https://tracker.example.com?q", "https://tracker.example.com#f",
+    "https://user:pw@tracker.example.com", "https://user@tracker.example.com", "tracker.example.com",
+    "null", "https://tracker.example.com:99999", "https://a.example.com,https://b.example.com/x",
+])
+def test_a_value_that_is_not_an_origin_refuses_startup(raw):
+    """Settings refuses to build, naming the entry, rather than guessing
+    at an origin or dropping one (CHT-1707): dropping could empty the
+    list, which turns the /mcp guard off."""
+    from pydantic import ValidationError
+    from app.config import Settings
+
+    with pytest.raises(ValidationError, match="CORS_ORIGINS entry"):
+        Settings(cors_origins=raw)
+
+
+def test_a_hand_written_origin_reaches_the_guard_normalised(cors):
+    settings = cors("https://Tracker.Example.com/")
+    assert settings.allowed_origins == ["https://tracker.example.com"]
+    assert "tracker.example.com" in settings.allowed_hosts
 
 
 def test_trailing_comma_keeps_the_guard_on_the_same_origins(cors):

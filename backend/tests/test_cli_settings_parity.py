@@ -9,7 +9,9 @@ app.config, so this pins the subset relation from the server's side:
 over a grid of origins built from the forms that differ between a naive
 check and pydantic's normalisation, everything the CLI accepts as an
 OAuth APP_BASE_URL passes oauth_issuer_problem. Same for the .env
-reading it reports on, against python-dotenv.
+reading it reports on, against python-dotenv. And CORS_ORIGINS
+(CHT-1707): the server normalises a hand-written origin to the very value
+the CLI would have stored, or told the operator to write.
 """
 import importlib.util
 import io
@@ -20,7 +22,7 @@ from pathlib import Path
 import pytest
 from dotenv import dotenv_values
 
-from app.config import oauth_issuer_problem
+from app.config import normalise_cors_origin, oauth_issuer_problem
 
 _PATH = Path(__file__).resolve().parents[2] / "cli" / "src" / "cli" / "server_settings.py"
 _spec = importlib.util.spec_from_file_location("cli_server_settings", _PATH)
@@ -67,6 +69,59 @@ def test_cli_accepted_issuers_are_a_subset_of_the_servers():
 def test_ordinary_issuers_are_accepted_by_both(url):
     assert _cli_accepts_as_issuer(url)
     assert oauth_issuer_problem(url) is None
+
+
+def _server_origin(url: str) -> str | None:
+    try:
+        return normalise_cors_origin(url)
+    except ValueError:
+        return None
+
+
+def test_cli_accepted_cors_origins_are_left_as_stored_by_the_server():
+    """Every origin `config set CORS_ORIGINS` accepts, the server starts
+    with, normalised to exactly what the CLI stored."""
+    accepted = 0
+    for scheme, host, port, tail in itertools.product(SCHEMES, HOSTS, PORTS, TAILS):
+        url = f"{scheme}://{host}{port}{tail}"
+        stored, problem = cli_settings.normalize("CORS_ORIGINS", url)
+        if problem:
+            continue
+        accepted += 1
+        assert _server_origin(url) == stored, (url, stored)
+        assert _server_origin(stored) == stored, (url, stored)
+    assert accepted > 50
+
+
+# (written by hand, what a browser sends): the server rewrites the first
+# to the second; the CLI stores the second or refuses, naming it.
+_ORIGIN_CASES = [
+    ("https://tracker.example.com", "https://tracker.example.com"),
+    ("https://tracker.example.com/", "https://tracker.example.com"),
+    ("https://tracker.example.com//", "https://tracker.example.com"),
+    ("https://Tracker.Example.com", "https://tracker.example.com"),
+    ("HTTPS://tracker.example.com/", "https://tracker.example.com"),
+    ("https://tracker.example.com:443", "https://tracker.example.com"),
+    ("http://localhost:80/", "http://localhost"),
+    ("http://LOCALHOST:6274/", "http://localhost:6274"),
+    ("https://[2001:DB8::1]:8443", "https://[2001:db8::1]:8443"),
+]
+
+
+@pytest.mark.parametrize("raw, expected", _ORIGIN_CASES)
+def test_hand_written_origins_normalise_as_the_cli_says(raw, expected):
+    assert _server_origin(raw) == expected
+    stored, problem = cli_settings.normalize("CORS_ORIGINS", raw)
+    assert stored == expected if problem is None else repr(expected) in problem, (stored, problem)
+
+
+@pytest.mark.parametrize("raw", [
+    "https://tracker.example.com/path", "https://tracker.example.com?q", "https://tracker.example.com#f",
+    "https://u@tracker.example.com", "tracker.example.com", "https://tracker.example.com:65536",
+])
+def test_non_origins_are_refused_by_both(raw):
+    assert _server_origin(raw) is None
+    assert cli_settings.normalize("CORS_ORIGINS", raw)[1] is not None
 
 
 @pytest.mark.parametrize("line", [
