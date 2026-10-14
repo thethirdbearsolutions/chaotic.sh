@@ -9,18 +9,21 @@ app.config, so this pins the subset relation from the server's side:
 over a grid of origins built from the forms that differ between a naive
 check and pydantic's normalisation, everything the CLI accepts as an
 OAuth APP_BASE_URL passes oauth_issuer_problem. Same for the .env
-reading it reports on, against python-dotenv.
+reading it reports on, against python-dotenv. And CORS_ORIGINS
+(CHT-1707): the server normalises a hand-written origin to the very value
+the CLI would have stored, or told the operator to write.
 """
 import importlib.util
 import io
 import itertools
+import re
 import sys
 from pathlib import Path
 
 import pytest
 from dotenv import dotenv_values
 
-from app.config import oauth_issuer_problem
+from app.config import normalise_cors_origin, oauth_issuer_problem
 
 _PATH = Path(__file__).resolve().parents[2] / "cli" / "src" / "cli" / "server_settings.py"
 _spec = importlib.util.spec_from_file_location("cli_server_settings", _PATH)
@@ -67,6 +70,114 @@ def test_cli_accepted_issuers_are_a_subset_of_the_servers():
 def test_ordinary_issuers_are_accepted_by_both(url):
     assert _cli_accepts_as_issuer(url)
     assert oauth_issuer_problem(url) is None
+
+
+def _server_origin(url: str) -> str | None:
+    try:
+        return normalise_cors_origin(url)
+    except ValueError:
+        return None
+
+
+def test_cli_accepted_cors_origins_are_left_as_stored_by_the_server():
+    """Every origin `config set CORS_ORIGINS` accepts, the server keeps
+    exactly as the CLI stored it. Idempotence over the CLI's own output:
+    it pins trailing-slash stripping, not the rules the CLI refuses on
+    (capitals, a default port); the next test pins those."""
+    accepted = 0
+    for scheme, host, port, tail in itertools.product(SCHEMES, HOSTS, PORTS, TAILS):
+        url = f"{scheme}://{host}{port}{tail}"
+        stored, problem = cli_settings.normalize("CORS_ORIGINS", url)
+        if problem:
+            continue
+        accepted += 1
+        assert _server_origin(url) == stored, (url, stored)
+        assert _server_origin(stored) == stored, (url, stored)
+    assert accepted > 50
+
+
+_SUGGESTION = re.compile(r"(?:lower case: |; use )'([^']*)'$")
+
+
+def _cli_canonical(url: str) -> str | None:
+    """What `config set` ends up storing for `url` when the operator
+    follows each of its suggestions ("must be written in lower case: ...",
+    "use ..."), or None if it refuses outright."""
+    value = url
+    for _ in range(4):
+        stored, problem = cli_settings.normalize("CORS_ORIGINS", value)
+        if problem is None:
+            return stored
+        suggestion = _SUGGESTION.search(problem)
+        if not suggestion:
+            return None
+        value = suggestion.group(1)
+    return None
+
+
+def test_server_normalises_the_grid_to_what_the_cli_would_store():
+    """Over the whole grid: wherever the CLI, followed through its
+    suggestions, would store a value, the server rewrites the raw value to
+    exactly that. Pins lower-casing and default-port dropping, which the
+    CLI refuses rather than rewrites (PR #390 review)."""
+    rewritten = 0
+    for scheme, host, port, tail in itertools.product(SCHEMES, HOSTS, PORTS, TAILS):
+        url = f"{scheme}://{host}{port}{tail}"
+        canonical = _cli_canonical(url)
+        if canonical is None:
+            continue
+        if host.startswith("[") and host.lower() not in canonical:
+            # The CLI rewrites IPv6 text ([0:0::1] -> [::1]); the server
+            # keeps it as written, only lower-cased (PR #390 re-review).
+            continue
+        assert _server_origin(url) == canonical, (url, canonical)
+        if url.rstrip("/") != canonical:
+            rewritten += 1
+    assert rewritten > 50  # capitals and default ports, not just slashes
+
+
+# (written by hand, what a browser sends): the server rewrites the first
+# to the second; the CLI stores the second or refuses, naming it.
+_ORIGIN_CASES = [
+    ("https://tracker.example.com", "https://tracker.example.com"),
+    ("https://tracker.example.com/", "https://tracker.example.com"),
+    ("https://tracker.example.com//", "https://tracker.example.com"),
+    ("https://Tracker.Example.com", "https://tracker.example.com"),
+    ("HTTPS://tracker.example.com/", "https://tracker.example.com"),
+    ("https://tracker.example.com:443", "https://tracker.example.com"),
+    ("http://localhost:80/", "http://localhost"),
+    ("http://LOCALHOST:6274/", "http://localhost:6274"),
+    ("https://[2001:DB8::1]:8443", "https://[2001:db8::1]:8443"),
+]
+
+
+@pytest.mark.parametrize("raw, expected", [
+    # IPv4-mapped: the first is what a browser sends (WHATWG writes hex
+    # pieces); neither is rewritten into the other, on any Python.
+    ("http://[::ffff:7f00:1]:6274", "http://[::ffff:7f00:1]:6274"),
+    ("http://[::FFFF:7F00:1]/", "http://[::ffff:7f00:1]"),
+    ("http://[::ffff:127.0.0.1]", "http://[::ffff:127.0.0.1]"),
+    ("https://[2001:0DB8:0:0::1]:443", "https://[2001:0db8:0:0::1]"),
+])
+def test_ipv6_hosts_are_lower_cased_not_rewritten(raw, expected):
+    assert _server_origin(raw) == expected
+
+
+@pytest.mark.parametrize("raw, expected", _ORIGIN_CASES)
+def test_hand_written_origins_normalise_as_the_cli_says(raw, expected):
+    assert _server_origin(raw) == expected
+    stored, problem = cli_settings.normalize("CORS_ORIGINS", raw)
+    assert stored == expected if problem is None else repr(expected) in problem, (stored, problem)
+
+
+@pytest.mark.parametrize("raw", [
+    "https://tracker.example.com/path", "https://tracker.example.com?q", "https://tracker.example.com#f",
+    "https://u@tracker.example.com", "tracker.example.com", "https://tracker.example.com:65536",
+    "https://bücher.example", "https://tracker example.com",
+])
+def test_non_origins_are_refused_by_both(raw):
+    assert _server_origin(raw) is None
+    assert cli_settings.normalize("CORS_ORIGINS", raw)[1] is not None
 
 
 @pytest.mark.parametrize("line", [

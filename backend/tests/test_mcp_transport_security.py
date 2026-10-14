@@ -66,6 +66,12 @@ def test_multiple_origins(cors):
     (" https://a.example.com , ,https://b.example.com ", ["https://a.example.com", "https://b.example.com"]),
     ("", []),
     (",", []),
+    # CHT-1707: written by hand, in the form browsers send.
+    ("https://A.example.com/", ["https://a.example.com"]),
+    ("HTTPS://Tracker.Example.COM:8443//", ["https://tracker.example.com:8443"]),
+    ("https://a.example.com:443,http://localhost:80", ["https://a.example.com", "http://localhost"]),
+    ("http://[2001:DB8::1]:6274/", ["http://[2001:db8::1]:6274"]),
+    ("chrome-extension://abcdef", ["chrome-extension://abcdef"]),
 ])
 def test_cors_origin_list_is_the_one_parse(monkeypatch, raw, expected):
     """CORS_ORIGINS is parsed once, by Settings.cors_origin_list; a
@@ -76,6 +82,84 @@ def test_cors_origin_list_is_the_one_parse(monkeypatch, raw, expected):
         assert get_settings().cors_origin_list == expected
     finally:
         get_settings.cache_clear()
+
+
+# (CORS_ORIGINS, the list on main before CHT-1707, which this must still give)
+_STARTS_AS_TODAY = [
+    ("null", ["null"]),
+    ("*,null", ["*", "null"]),
+    ("*, https://a.example.com/app", ["*", "https://a.example.com/app"]),
+    ("*, https://A.example.com/", ["*", "https://A.example.com/"]),
+    ("https://a.example.com,https://a.example.com/app", ["https://a.example.com", "https://a.example.com/app"]),
+    ("https://a.example.com https://b.example.com", ["https://a.example.com https://b.example.com"]),
+    ("tracker.example.com", ["tracker.example.com"]),
+    ("https://user@tracker.example.com", ["https://user@tracker.example.com"]),
+    ("https://tracker.example.com:99999", ["https://tracker.example.com:99999"]),
+    ("https://*.example.com", ["https://*.example.com"]),
+    ("https://bücher.example", ["https://bücher.example"]),
+]
+
+
+@pytest.mark.parametrize("raw, expected", _STARTS_AS_TODAY)
+def test_a_value_that_is_not_an_origin_still_starts(raw, expected, caplog):
+    """The server never refuses to start over CORS_ORIGINS (PR #390
+    review): an entry that is not an origin is logged and kept as
+    written, so it matches nothing, as before; with `*` present nothing
+    is judged; `null` is a real Origin value."""
+    from app.config import Settings
+
+    with caplog.at_level("ERROR", logger="app.config"):
+        assert Settings(cors_origins=raw).cors_origin_list == expected
+    judged = "*" not in expected and expected != ["null"]
+    assert bool(caplog.records) == judged
+    for record in caplog.records:
+        assert "CORS_ORIGINS entry" in record.getMessage() and "kept as written" in record.getMessage()
+
+
+@pytest.mark.parametrize("raw", ["null", "https://a.example.com/app", "https://a.example.com,https://a.example.com/app"])
+def test_the_guard_stays_on_with_an_entry_kept_as_written(cors, raw):
+    """The list never shrinks, so the /mcp guard never turns off."""
+    settings = cors(raw)
+    assert settings.enable_dns_rebinding_protection is True
+    assert settings.allowed_origins == raw.split(",")
+
+
+def test_a_malformed_entry_does_not_stop_the_guard_being_built(cors, caplog):
+    """`http://[fe80::1` is kept as written by Settings (and logged);
+    deriving its Host must not raise (PR #390 re-review; this crashed
+    the import on main too)."""
+    with caplog.at_level("ERROR", logger="app.config"):
+        settings = cors("https://tracker.example.com,http://[fe80::1")
+    assert settings.allowed_origins == ["https://tracker.example.com", "http://[fe80::1"]
+    assert settings.allowed_hosts == ["tracker.example.com", "tracker.example.com:*"]
+    assert any("http://[fe80::1" in r.getMessage() for r in caplog.records)
+
+
+def test_app_main_imports_with_a_malformed_entry():
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "CORS_ORIGINS": "https://tracker.example.com,http://[fe80::1"}
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.main"], env=env, capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+
+
+@pytest.mark.parametrize("raw, hosts", [
+    ("https://[::1]:443", ["[::1]", "[::1]:*"]),
+    ("http://[2001:db8::1]", ["[2001:db8::1]", "[2001:db8::1]:*"]),
+    ("http://[2001:db8::1]:6274", ["[2001:db8::1]:6274"]),
+])
+def test_an_ipv6_entry_without_a_port_allows_any_port(cors, raw, hosts):
+    assert cors(raw).allowed_hosts == hosts
+
+
+def test_a_hand_written_origin_reaches_the_guard_normalised(cors):
+    settings = cors("https://Tracker.Example.com/")
+    assert settings.allowed_origins == ["https://tracker.example.com"]
+    assert "tracker.example.com" in settings.allowed_hosts
 
 
 def test_trailing_comma_keeps_the_guard_on_the_same_origins(cors):

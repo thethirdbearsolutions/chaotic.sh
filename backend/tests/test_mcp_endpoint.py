@@ -145,6 +145,30 @@ class TestTransportSecurity:
         resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
         assert resp.status_code == 200
 
+    async def test_host_is_compared_case_insensitively(self, client, bearer_headers, rebinding_enabled):
+        """A Host sent as typed, capitals and all, still matches (PR #390
+        review): host names are case-insensitive, the SDK's check is not."""
+        headers = {**bearer_headers, "Host": "Tracker.Example.COM"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 200
+
+    @pytest.mark.parametrize("raw", ["https://Tracker.example.com/", "https://Tracker.example.com/app"])
+    async def test_a_hand_written_entry_with_capitals_keeps_its_host(self, client, bearer_headers, monkeypatch, raw):
+        """Normalised (CHT-1707) or kept as written (not an origin), an
+        entry with capitals still lets its own host through, in either case."""
+        from app.config import get_settings
+
+        monkeypatch.setenv("CORS_ORIGINS", raw)
+        get_settings.cache_clear()
+        try:
+            await _remount_mcp()
+            for host in ("Tracker.example.com", "tracker.example.com"):
+                headers = {**bearer_headers, "Host": host}
+                resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+                assert resp.status_code == 200, host
+        finally:
+            get_settings.cache_clear()
+
     async def test_explicit_origins_accept_matching_host_any_port(self, client, bearer_headers, rebinding_enabled):
         headers = {**bearer_headers, "Host": "tracker.example.com:8443"}
         resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)

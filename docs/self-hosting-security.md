@@ -350,6 +350,15 @@ header`, and its `Host` must match one of the listed origins. Requests
 with no `Origin` (Claude Code, curl, any server-side client) pass the
 `Origin` check.
 
+Both checks compare origins by exact string, so the server stores each
+entry in the form a browser sends: `https://Tracker.example.com:443/`
+becomes `https://tracker.example.com` (CHT-1707), and the guard compares
+`Host` without regard to case. An entry that is not an origin at all (a
+path, query, fragment or credentials, no scheme, a bad port) is logged
+as an ERROR at startup and kept as written, where it matches nothing;
+`chaotic system config check` reports it too. With `*` in the list the
+other entries are not judged, and `null` is kept as is.
+
 With `OAUTH_ENABLED` on (CHT-1551, `backend/app/oauth/cors.py`):
 
 - The OAuth discovery documents (`/.well-known/oauth-protected-resource`,

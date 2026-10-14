@@ -31,7 +31,7 @@ host/domain an operator picks (no fixed hostname to hardcode):
 """
 from __future__ import annotations
 
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 from chaotic_mcp_tools import add_tools
 from fastapi import FastAPI
@@ -79,10 +79,20 @@ def _transport_security() -> TransportSecuritySettings:
 
     allowed_hosts: list[str] = []
     for origin in origins:
-        netloc = urlparse(origin).netloc
+        # Lower-cased, like the Host header _HostCaseFold hands the SDK:
+        # an entry kept as written (not an origin) may carry capitals.
+        try:
+            parts = urlsplit(origin)
+            netloc, port = parts.netloc.lower(), parts.port
+        except ValueError:
+            # Kept as written by Settings, which logged it (`https://[::1`,
+            # a bad port): no host to derive. It stays in allowed_origins,
+            # matching nothing, and must not stop the import (PR #390).
+            continue
         if netloc:
             allowed_hosts.append(netloc)
-            if ":" not in netloc:
+            # No port in the entry (bracketed IPv6 included): any port.
+            if port is None and not netloc.endswith(":"):
                 allowed_hosts.append(f"{netloc}:*")
     return TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
@@ -145,14 +155,32 @@ def mcp_lifespan():
     return get_fastmcp().session_manager.run()  # pragma: no cover
 
 
+class _HostCaseFold:
+    """Lower-case the Host header before the SDK's DNS-rebinding guard
+    reads it (PR #390 review). Host names are case-insensitive, but the
+    SDK compares Host to allowed_hosts by exact string, and those are now
+    derived from lower-cased origins (CHT-1707): without this a client
+    sending Host as typed (``curl https://Tracker.example.com/mcp``)
+    would get a 421."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = [(k, v.lower()) if k == b"host" else (k, v) for k, v in scope["headers"]]
+            scope = {**scope, "headers": headers}
+        await self.app(scope, receive, send)
+
+
 def mount_mcp(app: FastAPI) -> None:
     """Register the two /mcp routes plus the key-redaction middleware.
     Call this before any catch-all route (app.main's SPA fallback) is
     registered, so /mcp gets first look.
     """
     session_manager = get_fastmcp().session_manager
-    header_app = BearerHeaderAuth(StreamableHTTPASGIApp(session_manager))
-    capability_app = CapabilityURLAuth(StreamableHTTPASGIApp(session_manager))
+    header_app = BearerHeaderAuth(_HostCaseFold(StreamableHTTPASGIApp(session_manager)))
+    capability_app = CapabilityURLAuth(_HostCaseFold(StreamableHTTPASGIApp(session_manager)))
 
     # App-level (pre-routing) so even requests that never reach the
     # capability route -- 405s, CORS preflights, the SPA catch-all --
