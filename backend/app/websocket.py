@@ -118,6 +118,10 @@ class ConnectionManager:
         # 500.
         dead_connections = set()
         for connection in list(self.active_connections.get(team_id, ())):
+            # Closed since the snapshot (a revocation, PR #356 review, 4):
+            # skip it. A send already in flight cannot be recalled.
+            if connection not in self.active_connections.get(team_id, ()):
+                continue
             try:
                 await connection.send_json(message)
             except Exception:

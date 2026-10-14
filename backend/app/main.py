@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.oxyde_db import init_oxyde, close_oxyde, bootstrap_if_empty, verify_migrations_current
 from app.api import api_router
 from app.websocket import SocketOwner, manager
+from app.services import credential_events
 from app.services.push_service import PushService
 from app import ws_auth
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
@@ -329,6 +330,10 @@ async def websocket_endpoint(
     from the team, is closed at the next check, or at once when the
     revocation happens in this process (CHT-1616).
     """
+    # Read before the check: a revocation that commits while the check
+    # (or the accept below) is in flight dispatches its hooks before this
+    # socket is registered, so they cannot close it (PR #356 review, 2).
+    generation = credential_events.generation()
     try:
         presented = ws_auth.presented_credential(websocket, token)
         principal = await ws_auth.authenticate(presented.token, team_id)
@@ -345,6 +350,18 @@ async def websocket_endpoint(
     await manager.connect(
         websocket, team_id, subprotocol=presented.subprotocol, owner=SocketOwner.of(team_id, principal),
     )
+    if credential_events.generation() != generation:
+        # Something was revoked meanwhile: check again now that the socket
+        # is registered (a revocation after this point closes it itself).
+        try:
+            await ws_auth.authenticate(presented.token, team_id)
+        except ws_auth.WsRefused as exc:
+            await manager.close(websocket, team_id, exc.code)
+            return
+        except Exception:
+            logger.exception("WebSocket credential re-check after connect failed for team=%s", team_id)
+            await manager.close(websocket, team_id, ws_auth.CLOSE_INTERNAL_ERROR)
+            return
 
     async def close_when_refused():
         # The backstop: JWT expiry, and revocations made by another process.

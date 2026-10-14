@@ -1,6 +1,7 @@
 """The credential-ended hook (CHT-1625): every revoking path reports one
 ``CredentialsEnded``, and its dependents (push devices, /ws sockets) run
 after the transaction that ended the credentials commits, each on its own."""
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -92,10 +93,46 @@ class TestAfterCommit:
             assert seen == []  # not yet: the outer has not committed
         assert seen == [a]
 
-    async def test_outside_a_transaction_it_dispatches_at_once(self, seen):
-        event = CredentialsEnded.of("t", holder_session_ids=["s"])
-        await credential_events.ended(event)
-        assert seen == [event]
+    async def test_outside_revoking_every_primitive_refuses_even_with_nothing_to_end(self, seen):
+        """PR #356 review, 1: a path that forgot revoking() fails at once,
+        not only when it happens to end something."""
+        with pytest.raises(RuntimeError, match="revoking"):
+            await credential_events.ended(CredentialsEnded.of("t", holder_session_ids=["s"]))
+        service = RevocationService()
+        for call in (
+            service.revoke_for_keys([], actor_id=None),
+            service.revoke_for_principals([], actor_id=None),
+            service.revoke_for_member("team", "user", actor_id=None),
+            service.revoke_for_team("team", actor_id=None),
+            TokenService().revoke_sessions_batch([], actor_id=None, reason="t"),
+            TokenService()._revoke_session_in_tx("nope", actor_id=None, reason="t"),
+        ):
+            with pytest.raises(RuntimeError, match="revoking"):
+                await call
+        assert seen == []
+
+    async def test_a_child_task_is_outside_its_parents_block(self, seen):
+        """PR #356 review, 5: a task inherits the ContextVar but not the
+        block; reporting from it refuses rather than appending to a list
+        that may already have been dispatched."""
+        async def child():
+            await credential_events.ended(CredentialsEnded.of("t", key_ids=["k"]))
+
+        async with revoking():
+            task = asyncio.create_task(child())
+            with pytest.raises(RuntimeError, match="revoking"):
+                await task
+        assert seen == []
+
+    async def test_the_generation_moves_once_per_dispatch(self, seen):
+        before = credential_events.generation()
+        async with revoking():
+            pass  # nothing ended: no dispatch
+        assert credential_events.generation() == before
+        async with revoking():
+            await credential_events.ended(CredentialsEnded.of("t", key_ids=["a"]))
+            await credential_events.ended(CredentialsEnded.of("t", key_ids=["b"]))
+        assert credential_events.generation() == before + 1
 
     async def test_inside_a_plain_atomic_it_refuses(self, seen):
         """Oxyde has no on-commit callback: a revocation inside a plain
@@ -110,7 +147,8 @@ class TestAfterCommit:
         assert seen == []
 
     async def test_an_empty_event_is_not_dispatched(self, seen):
-        await credential_events.ended(CredentialsEnded.of("t"))
+        async with revoking():
+            await credential_events.ended(CredentialsEnded.of("t"))
         await credential_events.dispatch([])
         assert seen == []
 
@@ -142,12 +180,56 @@ class TestIsolation:
 
         monkeypatch.setattr("app.services.push_service.on_credentials_ended", broken)
         with caplog.at_level(logging.ERROR, logger="app.services.credential_events"):
-            await credential_events.ended(CredentialsEnded.of("t", key_ids=["k"]))
+            async with revoking():
+                await credential_events.ended(CredentialsEnded.of("t", key_ids=["k"]))
         assert len(seen) == 1
         assert "push down" in caplog.text
 
+    async def test_a_slow_hook_is_abandoned_after_its_timeout(self, seen, monkeypatch, caplog):
+        """PR #356 review, 3: the revoking request waits for its hooks, so
+        each is bounded."""
+        monkeypatch.setattr(credential_events, "HOOK_TIMEOUT_SECONDS", 0.05)
+
+        async def stuck(event):
+            await asyncio.sleep(10)
+
+        remove = credential_events.register(stuck)
+        try:
+            with caplog.at_level(logging.ERROR, logger="app.services.credential_events"):
+                async with revoking():
+                    await credential_events.ended(CredentialsEnded.of("t", key_ids=["k"]))
+        finally:
+            remove()
+        assert len(seen) == 1
+        assert "timed out" in caplog.text
+
 
 class TestWhatEachPathReports:
+    async def test_a_batch_reports_only_the_sessions_it_revoked(self, seen, monkeypatch, test_team, test_user):
+        """PR #356 review, 7."""
+        enable_oauth(monkeypatch)
+        agent = await make_agent(test_team, test_user)
+        one = await connector_token(agent, test_team, test_user)
+        two = await connector_token(agent, test_team, test_user)
+        await TokenService().revoke_session(one.holder_session_id, actor_id=None, reason="earlier")
+        seen.clear()
+        async with revoking():
+            counts = await TokenService().revoke_sessions_batch(
+                [one.holder_session_id, two.holder_session_id, "no-such-session"], actor_id=None, reason="t",
+            )
+        assert counts[0] == 1
+        assert [e.holder_session_ids for e in seen] == [frozenset({two.holder_session_id})]
+
+    async def test_agent_delete(self, seen, test_team, test_user):
+        from app.services.agent_service import AgentService
+
+        agent = await make_agent(test_team, test_user)
+        key, _raw = await APIKeyService().create(agent.id, APIKeyCreate(name="k"), holder_user_id=test_user.id)
+        await AgentService().delete(agent)
+        [event] = [e for e in seen if agent.id in e.user_ids]
+        assert event.reason == REASON_PRINCIPAL_DELETED
+        assert key.id in event.key_ids
+
     async def test_session_revocation(self, seen, monkeypatch, test_team, test_user):
         enable_oauth(monkeypatch)
         agent = await make_agent(test_team, test_user)
@@ -217,3 +299,50 @@ class TestStalePushBindings:
         assert remaining == {live.id}
         assert dead.id not in remaining and session.id not in remaining
         assert await PushService().delete_stale_bindings() == 0
+
+
+class TestStartupSweepWiring:
+    """PR #356 review, 6: the lifespan runs the sweep, and a sweep that
+    fails is logged and does not stop the server."""
+
+    @pytest.fixture
+    def stubbed_lifespan(self, db, monkeypatch):
+        import contextlib
+
+        import app.main as main
+
+        async def noop(*args, **kwargs):
+            return None
+
+        @contextlib.asynccontextmanager
+        async def no_mcp():
+            yield
+
+        for name in ("init_oxyde", "close_oxyde", "bootstrap_if_empty", "verify_migrations_current",
+                     "_mcp_toolset_fingerprint"):
+            monkeypatch.setattr(main, name, noop)
+        monkeypatch.setattr(main, "get_version_info", lambda *a, **k: None)
+        monkeypatch.setattr(main, "mcp_lifespan", no_mcp)
+        monkeypatch.setattr(main.settings, "secret_key", "x" * 32)
+        return main
+
+    async def test_the_lifespan_sweeps(self, stubbed_lifespan, monkeypatch):
+        calls = []
+
+        async def sweep(self):
+            calls.append(True)
+            return 0
+
+        monkeypatch.setattr(PushService, "delete_stale_bindings", sweep)
+        async with stubbed_lifespan.lifespan(stubbed_lifespan.app):
+            assert calls == [True]
+
+    async def test_a_failing_sweep_is_logged_and_startup_goes_on(self, stubbed_lifespan, monkeypatch, caplog):
+        async def sweep(self):
+            raise RuntimeError("database is locked")
+
+        monkeypatch.setattr(PushService, "delete_stale_bindings", sweep)
+        with caplog.at_level(logging.ERROR, logger="app.main"):
+            async with stubbed_lifespan.lifespan(stubbed_lifespan.app):
+                pass
+        assert "could not sweep push devices" in caplog.text

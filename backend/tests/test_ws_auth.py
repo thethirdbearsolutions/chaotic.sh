@@ -454,26 +454,29 @@ class TestImmediateClose:
     async def test_holder_session_revoked_closes_4001(self, test_user, test_team, monkeypatch):
         """No OAuth session acts as a human yet (CHT-1602); when one does,
         revoking it closes its socket."""
-        from app.services.credential_events import CredentialsEnded, ended
+        from app.services.credential_events import CredentialsEnded, ended, revoking
 
         async def resolve(token):
             return Principal(user=test_user, holder_user_id=test_user.id, kind=CredentialKind.OAUTH_ACCESS,
                              scopes=frozenset({"chaotic:read"}), holder_session_id="hs-1")
         monkeypatch.setattr(ws_auth.ws_resolver, "resolve", resolve)
         ws, task = await self._open("cat_x", test_team.id)
-        await ended(CredentialsEnded.of("user_revoked", holder_session_ids=["hs-2"]))
+        async with revoking():
+            await ended(CredentialsEnded.of("user_revoked", holder_session_ids=["hs-2"]))
         ws.close.assert_not_awaited()
-        await ended(CredentialsEnded.of("user_revoked", holder_session_ids=["hs-1"]))
+        async with revoking():
+            await ended(CredentialsEnded.of("user_revoked", holder_session_ids=["hs-1"]))
         assert await self._closed_at_once(ws, task, test_team.id) == 4001
 
     async def test_principal_deactivated_closes_4003(self, test_user, test_team):
         """No human is deactivated through the API today, and /ws refuses
         agents, so this drives the hook directly."""
-        from app.services.credential_events import CredentialsEnded, ended
+        from app.services.credential_events import CredentialsEnded, ended, revoking
         from app.services.revocation_service import REASON_PRINCIPAL_DEACTIVATED
 
         ws, task = await self._open(jwt_for(test_user), test_team.id)
-        await ended(CredentialsEnded.of(REASON_PRINCIPAL_DEACTIVATED, user_ids=[test_user.id]))
+        async with revoking():
+            await ended(CredentialsEnded.of(REASON_PRINCIPAL_DEACTIVATED, user_ids=[test_user.id]))
         assert await self._closed_at_once(ws, task, test_team.id) == 4003
 
     async def test_a_socket_already_gone_does_not_break_the_revocation(self, test_user, test_team):
@@ -489,6 +492,83 @@ class TestImmediateClose:
         assert revoked.is_active is False
         ws.close.assert_awaited_once_with(code=4001)
         await asyncio.wait_for(task, 5)
+
+    async def test_a_revocation_committing_during_the_handshake_is_caught(self, test_user, test_team, monkeypatch):
+        """PR #356 review, 2: the check passes on the state before the
+        revocation commits, and its hooks run before the socket is
+        registered; the endpoint sees the generation move and checks again."""
+        row, raw = await key_for(test_user)
+        real = ws_auth.authenticate
+        calls = []
+
+        async def racing(token, team_id):
+            principal = await real(token, team_id)
+            calls.append(token)
+            if len(calls) == 1:
+                await APIKeyService().revoke(row, actor_id=test_user.id)  # commits, hooks run: no socket yet
+            return principal
+
+        monkeypatch.setattr(ws_auth, "authenticate", racing)
+        ws = FakeWebSocket(headers={"Authorization": f"Bearer {raw}"})
+        await asyncio.wait_for(websocket_endpoint(ws, team_id=test_team.id), 5)
+        ws.accept.assert_awaited_once()
+        ws.close.assert_awaited_once_with(code=4001)
+        assert len(calls) == 1  # the second check refused
+
+    async def test_no_second_check_when_nothing_was_revoked(self, test_user, test_team, monkeypatch):
+        calls = []
+        real = ws_auth.authenticate
+
+        async def counting(token, team_id):
+            calls.append(token)
+            return await real(token, team_id)
+
+        monkeypatch.setattr(ws_auth, "authenticate", counting)
+        ws, task = await self._open(jwt_for(test_user), test_team.id)
+        assert len(calls) == 1
+        await ws.close()
+        await task
+
+    async def test_a_failing_second_check_closes_4011(self, test_user, test_team, monkeypatch):
+        from app.services import credential_events
+
+        real = ws_auth.authenticate
+        calls = []
+
+        async def flaky(token, team_id):
+            calls.append(token)
+            if len(calls) == 1:
+                principal = await real(token, team_id)
+                monkeypatch.setattr(credential_events, "_generation", credential_events.generation() + 1)
+                return principal
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(ws_auth, "authenticate", flaky)
+        ws = FakeWebSocket(headers={"Authorization": f"Bearer {jwt_for(test_user)}"})
+        await asyncio.wait_for(websocket_endpoint(ws, team_id=test_team.id), 5)
+        ws.close.assert_awaited_once_with(code=4011)
+
+    async def test_a_broadcast_in_flight_skips_a_socket_closed_meanwhile(self, test_user, test_team):
+        """PR #356 review, 4: a broadcast whose snapshot predates the close
+        does not send to the socket once it is gone. (A send already
+        under way cannot be recalled.)"""
+        from app.websocket import SocketOwner, manager
+
+        a, b = FakeWebSocket(), FakeWebSocket()
+        owners = {a: "user-a", b: "user-b"}
+        for ws, user_id in owners.items():
+            await manager.connect(ws, test_team.id, owner=SocketOwner(team_id=test_team.id, user_id=user_id))
+        first, second = list(manager.active_connections[test_team.id])  # the broadcast's order
+
+        async def closes_the_other(message):
+            await manager.close_for(user_id=owners[second], code=4001)
+
+        first.send_json.side_effect = closes_the_other
+        await manager.broadcast_to_team(test_team.id, self.BROADCAST)
+        first.send_json.assert_awaited_once()
+        second.send_json.assert_not_awaited()
+        second.close.assert_awaited_once_with(code=4001)
+        manager.disconnect(first, test_team.id)
 
     async def test_the_watcher_after_a_hook_close_does_nothing(self, test_user, test_team):
         """Both paths go through ConnectionManager.close, which closes once."""
