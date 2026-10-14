@@ -508,7 +508,7 @@ def register(cli):
     @click.option("--type", "issue_type", default="task", type=IssueTypeChoice(), help="Issue type")
     @click.option("--estimate", "--points", type=int, help="Story point estimate (0 is a zero-point ticket: charges nothing on close)")
     @click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
-    @click.option("--parent", help="Parent issue identifier (e.g., PRJ-123) to create a sub-issue")
+    @click.option("--parent", help="Parent issue identifier (e.g., PRJ-123) to create a sub-issue, in the parent's project")
     @click.option("--epic", help="Epic identifier (e.g., PRJ-123) - shorthand for --parent with an epic")
     @click.option("--label", "labels", multiple=True, help="Label name(s) to assign (can be used multiple times)")
     @click.option("--blocked-by", "blocked_by", multiple=True, help="Issue identifier(s) that block this issue (can be used multiple times)")
@@ -525,9 +525,25 @@ def register(cli):
         if not title:
             raise click.ClickException("Title is required. Use: chaotic issue create \"My Title\" or --title \"My Title\"")
 
-        # Resolve project ID
+        if parent and epic:
+            raise click.UsageError("Cannot use both --parent and --epic")
+        parent_ref = parent or epic
+        parent_issue = _client().get_issue_by_identifier(parent_ref) if parent_ref else None
+        parent_project = parent_issue.get("project_id") if parent_issue else None
+
+        # Resolve project ID. A sub-issue lives in its parent's project
+        # (CHT-1706): that wins over the current project, and an explicit
+        # --project naming another is refused before anything is created.
         if project_key:
             project_id = m.resolve_project_id(project_key)
+            if parent_project and project_id != parent_project:
+                parent_key = parent_issue.get("project_key") or parent_project
+                raise click.ClickException(
+                    f"{parent_ref} is in project {parent_key}, not {project_key}: a sub-issue is created "
+                    f"in its parent's project. Drop --project, or pass --project {parent_key}."
+                )
+        elif parent_project:
+            project_id = parent_project
         else:
             project_id = m.get_current_project()
             if not project_id:
@@ -538,14 +554,8 @@ def register(cli):
         data = {"description": description or None, "status": status, "priority": priority, "issue_type": issue_type}
         if estimate is not None:  # 0 is a real (zero-point) estimate, not "unset" (CHT-1397)
             data["estimate"] = estimate
-        if parent and epic:
-            raise click.UsageError("Cannot use both --parent and --epic")
-        if parent:
-            parent_issue = _client().get_issue_by_identifier(parent)
+        if parent_issue:
             data["parent_id"] = parent_issue["id"]
-        elif epic:
-            epic_issue = _client().get_issue_by_identifier(epic)
-            data["parent_id"] = epic_issue["id"]
         if labels:
             # Resolve label names to IDs
             team_id = m.get_current_team()

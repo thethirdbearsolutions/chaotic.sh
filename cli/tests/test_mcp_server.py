@@ -519,6 +519,47 @@ class TestIssueCreate:
         _, kwargs = client.create_issue.call_args
         assert kwargs["parent_id"] == "epic-1"
 
+    async def test_create_with_parent_uses_the_parents_project(self, mcp_mod, mock_issue, monkeypatch):
+        """CHT-1706: no `project` and no current project -- the parent's."""
+        from cli.main import client
+        monkeypatch.setattr("cli.main.get_current_project", lambda: None)
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "parent-id", "project_id": "other-project", "project_key": "OTH",
+        })
+        client.create_issue = MagicMock(return_value=mock_issue)
+
+        result = await mcp_mod.issue_create(title="Sub", parent="OTH-1")
+
+        assert "error" not in result, result
+        assert client.create_issue.call_args.args[0] == "other-project"
+        assert client.create_issue.call_args.kwargs["parent_id"] == "parent-id"
+
+    async def test_create_with_parent_refuses_another_project(self, mcp_mod, monkeypatch):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "parent-id", "project_id": "other-project", "project_key": "OTH",
+        })
+        client.create_issue = MagicMock()
+        monkeypatch.setattr("cli.main.resolve_project_id", lambda value: "test-project-123")
+
+        result = await mcp_mod.issue_create(title="Sub", parent="OTH-1", project="CHT")
+
+        assert result["error"]["error_code"] == "tool_input"
+        assert "OTH-1 is in project OTH, not CHT" in result["error"]["message"]
+        client.create_issue.assert_not_called()
+
+    async def test_create_with_parent_accepts_its_own_project(self, mcp_mod, mock_issue, monkeypatch):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "parent-id", "project_id": "other-project", "project_key": "OTH",
+        })
+        client.create_issue = MagicMock(return_value=mock_issue)
+        monkeypatch.setattr("cli.main.resolve_project_id", lambda value: "other-project")
+
+        await mcp_mod.issue_create(title="Sub", parent="OTH-1", project="OTH")
+
+        assert client.create_issue.call_args.args[0] == "other-project"
+
     async def test_create_with_estimate(self, mcp_mod, mock_issue):
         from cli.main import client
         client.create_issue = MagicMock(return_value=mock_issue)

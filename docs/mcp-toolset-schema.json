@@ -597,7 +597,7 @@
               }
             ],
             "default": null,
-            "description": "Parent issue identifier (e.g. CHT-12) to create this as a sub-issue.",
+            "description": "Parent issue identifier (e.g. CHT-12) to create this as a sub-issue, in the parent's project.",
             "title": "Parent"
           },
           "priority": {
@@ -623,7 +623,7 @@
               }
             ],
             "default": null,
-            "description": "Project id, key, or name. Defaults to the configured current project.",
+            "description": "Project id, key, or name. Defaults to the parent's project when `parent` is given, else the configured current project.",
             "title": "Project"
           },
           "status": {

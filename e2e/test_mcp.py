@@ -119,3 +119,63 @@ class TestRemoteMCP:
         )
         payload = _json.loads(resp.json()["result"]["content"][0]["text"])
         assert any(i["title"] == "From e2e MCP" for i in payload["issues"])
+
+
+class TestIssueCreateParentImpliesProject:
+    """CHT-1706: a parent names its project, so issue_create with `parent`
+    and no `project` creates the sub-issue there, even when the key can
+    see more than one project; a `project` that names another is refused."""
+
+    @staticmethod
+    def _call(api_key, arguments):
+        import json as _json
+
+        resp = httpx.post(
+            MCP_URL,
+            json=_rpc("tools/call", {"name": "issue_create", "arguments": arguments}, id=2),
+            headers={**_HEADERS, "Authorization": f"Bearer {api_key}"},
+            timeout=5.0,
+        )
+        return _json.loads(resp.json()["result"]["content"][0]["text"])
+
+    @pytest.fixture
+    def parent(self, api_client, test_team, test_project):
+        other = api_client.create_project(team_id=test_team["id"], name="E2E Other", key="OTH")
+        return api_client.create_issue(other["id"], "Parent in the second project")
+
+    def test_parent_alone_creates_in_the_parents_project(self, api_key, parent):
+        created = self._call(api_key, {"title": "Child", "parent": parent["identifier"]})
+        assert "error" not in created, created
+        assert created["project_id"] == parent["project_id"]
+        assert created["parent_id"] == parent["id"]
+        assert created["identifier"].startswith("OTH-")
+
+    def test_matching_project_is_accepted(self, api_key, parent):
+        created = self._call(api_key, {"title": "Child", "parent": parent["identifier"], "project": "OTH"})
+        assert created["parent_id"] == parent["id"]
+
+    def test_a_different_project_is_refused(self, api_key, parent):
+        result = self._call(api_key, {"title": "Child", "parent": parent["identifier"], "project": "E2E"})
+        message = result["error"]["message"]
+        assert message.startswith(f"Parent {parent['identifier']} is in project OTH, not E2E:"), message
+
+    def test_a_team_that_does_not_own_the_parent_is_refused(self, api_client, api_key, parent):
+        api_client.create_team(name="E2E Elsewhere", key="ELS")
+        result = self._call(api_key, {"title": "Child", "parent": parent["identifier"], "team": "ELS"})
+        message = result["error"]["message"]
+        assert f"Parent {parent['identifier']} is in project OTH, which is not in team ELS:" in message, message
+
+    def test_the_parents_own_team_is_accepted(self, api_key, parent, test_team):
+        created = self._call(api_key, {"title": "Child", "parent": parent["identifier"], "team": test_team["key"]})
+        assert created["parent_id"] == parent["id"], created
+
+    def test_a_key_scoped_to_another_project_cannot_see_the_parent(self, api_client, test_project, parent):
+        """A key scoped to project E2E naming a parent in OTH gets the same
+        not-found as an identifier that does not exist, and creates nothing:
+        inferring the project from the parent opens no oracle (PR #392 review)."""
+        scoped = api_client.create_project_agent(test_project["id"], "scoped")["api_key"]
+        hidden = self._call(scoped, {"title": "Child", "parent": parent["identifier"]})
+        missing = self._call(scoped, {"title": "Child", "parent": "NOPE-999"})
+        assert hidden["error"]["message"] == missing["error"]["message"], (hidden, missing)
+        assert "not found" in hidden["error"]["message"].lower(), hidden
+        assert [i["id"] for i in api_client.get_issues(project_id=parent["project_id"])] == [parent["id"]]
