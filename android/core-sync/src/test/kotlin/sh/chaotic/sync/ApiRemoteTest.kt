@@ -148,6 +148,13 @@ class ApiRemoteTest {
     }
 
     @Test
+    fun theServerIsReachableWhenItAnswersAtAll() = runTest {
+        assertTrue(remote { json("{}", HttpStatusCode.ServiceUnavailable) }.reachable())
+        assertEquals("/health", requests.single().url.encodedPath)
+        assertEquals(false, remote { throw IOException("no route") }.reachable())
+    }
+
+    @Test
     fun anHtmlPageIsUnreadable() = runTest {
         val api = remote {
             respond(

@@ -76,6 +76,8 @@ class SessionRemote(private val sessions: SessionManager, private val engine: Ht
     override suspend fun addComment(issueId: String, content: String, origin: WriteOrigin): Remote<Comment?> =
         call { addComment(issueId, content, origin) }
 
+    override suspend fun reachable(): Boolean = remote()?.reachable() ?: false
+
     private companion object {
         const val HTTP_UNAUTHORIZED = 401
     }

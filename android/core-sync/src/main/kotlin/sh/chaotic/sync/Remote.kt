@@ -109,6 +109,13 @@ interface ChaoticRemote {
 
     /** Comment on [issueId]; the answer is the comment as stored (null as for [updateIssue]). */
     suspend fun addComment(issueId: String, content: String, origin: WriteOrigin): Remote<Comment?>
+
+    /**
+     * Whether the server answers at all (any status): after a write got no
+     * answer, this tells a network that is down from a write that cannot
+     * get through on its own (CHT-1670).
+     */
+    suspend fun reachable(): Boolean
 }
 
 /**

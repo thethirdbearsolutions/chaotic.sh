@@ -159,6 +159,17 @@ class FakeRemote : ChaoticRemote {
             .map { it as? Comment }
     }
 
+    /** What [reachable] answers: false, offline, unless a test says otherwise. */
+    var answersProbe = false
+
+    /** How many times [reachable] was asked. */
+    var probes = 0
+
+    override suspend fun reachable(): Boolean {
+        probes++
+        return answersProbe
+    }
+
     private suspend fun sent(write: SentWrite): Remote<Any?> {
         writesSent += write
         return answerWrite(write)

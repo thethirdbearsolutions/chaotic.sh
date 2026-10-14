@@ -287,6 +287,70 @@ class WriteQueueTest {
     }
 
     @Test
+    fun aWriteThatNeverGetsAnAnswerStallsWhileTheServerAnswers() = runTest {
+        // This write times out every time, but the server answers: it is not offline (CHT-1670).
+        remote.answersProbe = true
+        remote.answerWrite = { sent ->
+            if (sent.path.startsWith("/api/issues/")) Remote.Unreachable(IOException("timeout")) else Remote.Ok(null)
+        }
+        val stuck = assertNotNull(queue.comment(issue(), "never gets through"))
+        queue.markRead(mention)
+
+        // It counts against the write, and the rest still goes.
+        assertEquals(FlushOutcome.Done(WriteQueue.FIRST_RETRY_MILLIS), queue.flush())
+        assertTrue(store.inbox().single { it.id == "m1" }.read)
+        assertEquals(1, store.pendingWrites().single().attempts)
+
+        repeat(WriteQueue.MAX_ATTEMPTS - 1) {
+            now += WriteQueue.MAX_RETRY_MILLIS
+            queue.flush()
+        }
+        assertTrue(store.pendingWrites().single { it.key == stuck }.stalled)
+        assertEquals(FlushOutcome.Done(null), queue.flush())
+    }
+
+    @Test
+    fun aStalledChangeIsDroppedWhenANewerOneToTheSameFieldIsMade() = runTest {
+        val old = assertNotNull(queue.update(issue(), IssueFields.STATUS, "done"))
+        val comment = assertNotNull(queue.comment(issue(), "kept"))
+        store.rescheduleWrite(old, WriteQueue.MAX_ATTEMPTS, now)
+        store.rescheduleWrite(comment, WriteQueue.MAX_ATTEMPTS, now)
+
+        // Another field, and a comment, replace nothing.
+        val priority = assertNotNull(queue.update(issue(), IssueFields.PRIORITY, "high"))
+        assertEquals(listOf(old, comment, priority), store.pendingWrites().map { it.key })
+        val newer = assertNotNull(queue.update(issue(), IssueFields.STATUS, "todo"))
+
+        assertEquals(listOf(comment, priority, newer), store.pendingWrites().map { it.key })
+    }
+
+    @Test
+    fun aChangeThatStallsBehindANewerOneIsDroppedAndTheNewerGoes() = runTest {
+        remote.answerWrite = { sent ->
+            if (sent.body["status"] == JsonPrimitive("done")) Remote.HttpError(500) else Remote.Ok(null)
+        }
+        val old = assertNotNull(queue.update(issue(), IssueFields.STATUS, "done"))
+        store.rescheduleWrite(old, WriteQueue.MAX_ATTEMPTS - 1, now)
+        queue.update(issue(), IssueFields.STATUS, "todo")
+
+        assertEquals(FlushOutcome.Done(null), queue.flush())
+
+        assertEquals(listOf("done", "todo"), remote.writesSent.map { (it.body["status"] as JsonPrimitive).content })
+        assertEquals(emptyList(), store.pendingWrites())
+    }
+
+    @Test
+    fun aRetryNeverUndoesANewerChange() = runTest {
+        val old = assertNotNull(queue.update(issue(), IssueFields.STATUS, "done"))
+        val newer = assertNotNull(queue.update(issue(), IssueFields.STATUS, "todo"))
+        store.rescheduleWrite(old, WriteQueue.MAX_ATTEMPTS, now)
+
+        assertFalse(queue.retry(old))
+
+        assertEquals(listOf(newer), store.pendingWrites().map { it.key })
+    }
+
+    @Test
     fun aStalledDecisionDoesNotStopANewOne() = runTest {
         remote.answerWrite = { Remote.HttpError(502) }
         val first = assertNotNull(queue.approve(gate, undoMillis = 0))
@@ -319,6 +383,8 @@ class WriteQueueTest {
 
         assertEquals(listOf(1, 2, 4).map { WriteQueue.FIRST_RETRY_MILLIS * it }, delays)
         assertEquals(0, store.pendingWrites().single().attempts)
+        // Each time the server was asked whether it answers at all, and it did not.
+        assertEquals(3, remote.probes)
     }
 
     @Test

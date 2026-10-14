@@ -64,6 +64,28 @@ data class PendingWrite(
 
     /** What it is about, for keeping writes to the same thing in order. */
     val targets: List<String> get() = listOfNotNull(entryId?.let { "entry:$it" }, issueId?.let { "issue:$it" })
+
+    /**
+     * Whether this write, made after [earlier], makes it moot: a newer
+     * value for the same field of the same issue, or a newer decision (or
+     * mark-read) on the same entry. Sending [earlier] after this one would
+     * undo what the person chose last. A comment supersedes nothing.
+     */
+    fun supersedes(earlier: PendingWrite): Boolean = when (kind) {
+        WriteKind.COMMENT -> false
+
+        WriteKind.UPDATE_ISSUE ->
+            earlier.kind == WriteKind.UPDATE_ISSUE && earlier.issueId == issueId && earlier.field == field
+
+        WriteKind.MARK_READ -> earlier.kind == WriteKind.MARK_READ && entryId != null && earlier.entryId == entryId
+
+        WriteKind.APPROVE, WriteKind.REJECT, WriteKind.ARCHIVE ->
+            earlier.kind in DECISION_KINDS && entryId != null && earlier.entryId == entryId
+    }
+
+    private companion object {
+        val DECISION_KINDS = setOf(WriteKind.APPROVE, WriteKind.REJECT, WriteKind.ARCHIVE)
+    }
 }
 
 /**

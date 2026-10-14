@@ -19,7 +19,7 @@ sealed interface FlushOutcome {
     data class Done(val nextDueInMillis: Long?) : FlushOutcome
 
     /**
-     * The server could not be reached (offline, most likely): every write
+     * The server could not be reached at all (offline): every write
      * stays queued, in order, and none is counted as a failed attempt. Try
      * again in [afterMillis].
      */
@@ -45,17 +45,23 @@ sealed interface FlushOutcome {
  *   updated issue is saved as the server now has it).
  * - 401: the session ended (or someone else is signed in now); nothing
  *   more is sent.
- * - No answer at all: most likely offline. The flush stops, every write
+ * - No answer, and the server does not answer a probe either
+ *   ([ChaoticRemote.reachable]): offline. The flush stops, every write
  *   stays where it is, and nothing counts against them.
- * - 408, 425, 429 or 5xx, or an answer that cannot be read: not taken,
- *   as far as the app can tell. That write waits (doubling from
- *   [FIRST_RETRY_MILLIS], never sooner than Retry-After), later writes
+ * - No answer while the server answers the probe (this write times out,
+ *   or its connection is reset), 408, 425, 429 or 5xx, or an answer that
+ *   cannot be read: not taken, as far as the app can tell. That write
+ *   waits (doubling from [FIRST_RETRY_MILLIS], never sooner than
+ *   Retry-After), later writes
  *   about the same entry or issue wait behind it so they cannot overtake
  *   it, and the flush goes on with everything else. After
  *   [MAX_ATTEMPTS] such failures in a row the write is
  *   [PendingWrite.stalled]: no longer sent or shown as done, and it holds
  *   nothing back, until the person retries ([retry]) or discards ([undo])
- *   it. One write the server always fails can never block the rest.
+ *   it. One write the server always fails can never block the rest. A
+ *   write that a newer one supersedes ([PendingWrite.supersedes]) is
+ *   dropped instead of stalling, and a stalled one is dropped when a
+ *   newer one is queued, so a retry never undoes the newer change.
  * - Any other 4xx: refused (arrears, limbo, someone else already decided
  *   the gate, a value the server will not take). Dropped and kept as a
  *   [WriteRefusal] with the server's reason, never retried. A mark-read or
@@ -170,10 +176,23 @@ class WriteQueue(
         session.write(ticket) { removeWrite(key) } ?: false
     }
 
-    /** Send [key] again from scratch (a stalled write the person still wants); false when it is gone. */
+    /**
+     * Send [key] again from scratch (a stalled write the person still
+     * wants); false when it is gone. A write something later supersedes
+     * ([PendingWrite.supersedes]) is dropped instead, so a retry never
+     * undoes a newer change.
+     */
     suspend fun retry(key: String): Boolean {
         val ticket = session.begin() ?: return false
-        return session.write(ticket) { rescheduleWrite(key, attempts = 0, notBeforeMillis = nowMillis()) } ?: false
+        return session.write(ticket) {
+            val queued = pendingWrites()
+            val write = queued.firstOrNull { it.key == key }
+            when {
+                write == null -> false
+                superseded(write, queued) -> removeWrite(key).let { false }
+                else -> rescheduleWrite(key, attempts = 0, notBeforeMillis = nowMillis())
+            }
+        } ?: false
     }
 
     suspend fun dismissRefusal(key: String) {
@@ -244,12 +263,18 @@ class WriteQueue(
         return if (written == null) FlushOutcome.Unauthorized else null
     }
 
-    /** An answer that ends the flush before anything is recorded: signed out, or offline. */
-    private fun stopsTheFlush(result: Remote<Any?>): FlushOutcome? = when {
+    /**
+     * An answer that ends the flush before anything is recorded: signed
+     * out, or offline. A write that got no answer while the server answers
+     * a probe is not offline: that write cannot get through (it times out,
+     * or its connection is reset), so it counts as a failed attempt and
+     * the flush goes on with the rest (CHT-1670).
+     */
+    private suspend fun stopsTheFlush(result: Remote<Any?>): FlushOutcome? = when {
         result is Remote.HttpError && result.status == HTTP_UNAUTHORIZED -> FlushOutcome.Unauthorized
 
-        // Nothing answered: offline, most likely, so it says nothing about this write.
-        result is Remote.Unreachable -> FlushOutcome.Retry(offlineBackoff())
+        // Nothing answers at all: offline, so it says nothing about this write.
+        result is Remote.Unreachable && !remote.reachable() -> FlushOutcome.Retry(offlineBackoff())
 
         else -> null
     }
@@ -269,10 +294,16 @@ class WriteQueue(
             else -> {
                 val attempts = write.attempts + 1
                 val wait = retryDelay(attempts, (result as? Remote.HttpError)?.retryAfterMillis ?: 0)
-                rescheduleWrite(write.key, attempts, nowMillis() + wait)
+                // A write that stalls while a newer one replaces it is dropped: the newer one goes instead.
+                val moot = attempts >= MAX_ATTEMPTS && superseded(write, pendingWrites())
+                if (moot) removeWrite(write.key) else rescheduleWrite(write.key, attempts, nowMillis() + wait)
             }
         }
     }
+
+    /** Whether a write queued after [write] supersedes it. */
+    private fun superseded(write: PendingWrite, queued: List<PendingWrite>): Boolean =
+        queued.dropWhile { it.key != write.key }.drop(1).any { it.supersedes(write) }
 
     private suspend fun request(write: PendingWrite, origin: WriteOrigin): Remote<Any?> = when (write.kind) {
         WriteKind.APPROVE, WriteKind.ARCHIVE, WriteKind.MARK_READ ->
@@ -358,8 +389,13 @@ class WriteQueue(
     private suspend fun queue(write: PendingWrite, allowed: (List<PendingWrite>) -> Boolean = { true }): String? {
         val ticket = session.begin() ?: return null
         val queued = session.write(ticket) {
-            val ok = allowed(pendingWrites())
-            if (ok) queueWrite(write)
+            val before = pendingWrites()
+            val ok = allowed(before)
+            if (ok) {
+                queueWrite(write)
+                // A stalled write this one replaces would only undo it if retried.
+                before.filter { it.stalled && write.supersedes(it) }.forEach { removeWrite(it.key) }
+            }
             ok
         }
         return write.key.takeIf { queued == true }

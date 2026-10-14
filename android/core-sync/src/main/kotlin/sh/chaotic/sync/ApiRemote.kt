@@ -2,6 +2,7 @@ package sh.chaotic.sync
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
@@ -123,6 +124,17 @@ class ApiRemote(
         }
     }
 
+    /** Any answer from the server's health check counts, whatever its status; only no answer does not. */
+    @Suppress("TooGenericExceptionCaught") // no answer of any kind is the answer
+    override suspend fun reachable(): Boolean = try {
+        http.get(baseUrl.trimEnd('/') + HEALTH_PATH).bodyAsText()
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        false
+    }
+
     /** The write client, when it is this remote's own; the engine is the caller's, and stays open. */
     override fun close() {
         if (ownsHttp) http.close()
@@ -193,6 +205,7 @@ class ApiRemote(
         const val MAX_PROJECTS = 1_000
         const val HTTP_BAD_REQUEST = 400
         const val IDEMPOTENCY_KEY = "Idempotency-Key"
+        const val HEALTH_PATH = "/health"
     }
 }
 
