@@ -14,6 +14,7 @@ import { showMainScreen, updateUserInfo } from './auth.js';
 import { getTeams, loadTeams, selectTeam } from './teams.js';
 import { showOnboarding, hasCompletedOnboarding } from './onboarding.js';
 import { consentRequestId, showConsent } from './oauth-consent.js';
+import { initRouter } from './router.js';
 
 /**
  * Initialize the app after authentication.
@@ -36,7 +37,15 @@ export async function initApp() {
         showOnboarding();
         return;
     }
-    if (teams.length > 0) {
-        await selectTeam(teams[0], true);
+    try {
+        if (teams.length > 0) {
+            await selectTeam(teams[0], true);
+        }
+    } finally {
+        // Back/forward routes only once the team has loaded: a popstate
+        // during boot would otherwise reach handleRoute() before the
+        // team's members and agents exist (CHT-1697). Idempotent, since
+        // initApp also runs after login and onboarding.
+        initRouter();
     }
 }

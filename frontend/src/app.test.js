@@ -633,7 +633,8 @@ describe('app.js DOMContentLoaded initialization', () => {
         await domReadyCallback();
         expect(initEventDelegation).toHaveBeenCalled();
         expect(initAuth).toHaveBeenCalled();
-        expect(initRouter).toHaveBeenCalled();
+        // The popstate listener waits for initApp (CHT-1697).
+        expect(initRouter).not.toHaveBeenCalled();
         expect(registerWsHandlers).toHaveBeenCalled();
         expect(initIssueTooltip).toHaveBeenCalled();
     });
