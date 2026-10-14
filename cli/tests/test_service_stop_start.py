@@ -588,7 +588,7 @@ class TestFailedMigrationRealRestore:
         assert result.exit_code == 1
         out = _flat(result.output)
         assert "No space left on device" in out
-        assert "was left as it was" in out
+        assert "was not replaced" in out
         assert "Database restore failed. Backup is at" in out
         assert _rows(db) == 3, "the live file was not touched"
         assert not (tmp_path / "chaotic.db.restoring").exists()
@@ -628,22 +628,52 @@ class TestRestoreDurability:
     """CHT-1696: the directory is fsynced after the rename, so a power loss
     right after a restore cannot bring the old file back."""
 
-    def test_the_rename_is_followed_by_a_directory_fsync(self, tmp_path, monkeypatch):
+    def test_sidecars_go_durably_before_the_rename_and_the_rename_is_fsynced(self, tmp_path, monkeypatch):
         db = tmp_path / "chaotic.db"
         _sqlite_db(db, 3)
+        (tmp_path / "chaotic.db-wal").write_bytes(b"stale")
+        (tmp_path / "chaotic.db-shm").write_bytes(b"stale")
         backup = tmp_path / "chaotic.db.backup-20261014-000000"
         _sqlite_db(backup, 10)
         monkeypatch.setattr(system, "DATABASE_PATH", db)
         monkeypatch.setattr(system, "is_service_running", lambda: False)
+        monkeypatch.setattr(system, "_database_lock_holder", lambda path: None)
         order = []
-        real_replace = os.replace
+        real_replace, real_unlink = os.replace, Path.unlink
         monkeypatch.setattr(system.os, "replace", lambda a, b: order.append("replace") or real_replace(a, b))
+        monkeypatch.setattr(Path, "unlink", lambda self, missing_ok=False: (
+            order.append(("unlink", self.name)), real_unlink(self, missing_ok=missing_ok))[1])
         monkeypatch.setattr(system, "_fsync_dir", lambda d: order.append(("fsync_dir", d)))
 
         assert system.restore_backup(backup) is True
-        # After the rename, and again after the stale sidecars are removed.
-        assert order == ["replace", ("fsync_dir", tmp_path), ("fsync_dir", tmp_path)]
+        assert order == [
+            ("unlink", "chaotic.db-wal"), ("unlink", "chaotic.db-shm"), ("fsync_dir", tmp_path),
+            "replace", ("fsync_dir", tmp_path),
+        ]
         assert _rows(db) == 10
+        assert not (tmp_path / "chaotic.db-wal").exists()
+
+    def test_a_wal_that_survives_removal_refuses_the_restore(self, tmp_path, monkeypatch):
+        db = tmp_path / "chaotic.db"
+        _sqlite_db(db, 3)
+        wal = tmp_path / "chaotic.db-wal"
+        wal.write_bytes(b"stale")
+        backup = tmp_path / "chaotic.db.backup-20261014-000000"
+        _sqlite_db(backup, 10)
+        monkeypatch.setattr(system, "DATABASE_PATH", db)
+        monkeypatch.setattr(system, "is_service_running", lambda: False)
+        monkeypatch.setattr(system, "_database_lock_holder", lambda path: None)
+        real_unlink = Path.unlink
+        monkeypatch.setattr(Path, "unlink", lambda self, missing_ok=False: (
+            None if self.name == "chaotic.db-wal" else real_unlink(self, missing_ok=missing_ok)))
+
+        with patch.object(system, "console") as console:
+            assert system.restore_backup(backup) is False
+        printed = " ".join(str(c.args[0]) for c in console.print.call_args_list)
+        assert "chaotic.db-wal is still there" in printed
+        assert "was not replaced" in printed
+        assert _rows(db) == 3
+        assert not (tmp_path / "chaotic.db.restoring").exists()
 
     def test_fsync_dir_is_best_effort(self, tmp_path):
         system._fsync_dir(tmp_path)  # a real directory: no error

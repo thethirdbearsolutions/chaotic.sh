@@ -1264,27 +1264,26 @@ def restore_backup(backup_path: Path, port: int | None = None, host: str = "127.
     # partway (a full disk is the likely case right after a failed
     # migration) leaves the live file exactly as it was (PR #374 review).
     staging = DATABASE_PATH.with_name(DATABASE_PATH.name + ".restoring")
+    wal = _sidecars(DATABASE_PATH)[0]
     try:
         shutil.copy2(backup_path, staging)
         with open(staging, "rb") as f:
             os.fsync(f.fileno())
+        # The sidecars belong to the file being replaced, and a WAL replayed
+        # onto the restored one would undo the restore. Remove them (durably)
+        # BEFORE the rename, so there is no moment, crash included, in which
+        # the restored file sits next to the old WAL (CHT-1696).
+        for sidecar in _sidecars(DATABASE_PATH):
+            sidecar.unlink(missing_ok=True)
+        _fsync_dir(DATABASE_PATH.parent)
+        if wal.exists() and wal.stat().st_size > 0:
+            raise OSError(f"{wal.name} is still there after removing it")
         os.replace(staging, DATABASE_PATH)
         _fsync_dir(DATABASE_PATH.parent)
     except OSError as e:
         staging.unlink(missing_ok=True)
         console.print(f"[red]Could not restore {backup_path.name}: {e}. "
-                      f"The database at {DATABASE_PATH} was left as it was.[/red]")
-        return False
-    # Only after the replace: the sidecars belong to the old file, and a
-    # WAL replayed onto the restored one would undo the restore.
-    try:
-        for sidecar in _sidecars(DATABASE_PATH):
-            sidecar.unlink(missing_ok=True)
-        _fsync_dir(DATABASE_PATH.parent)  # or a power loss can bring back the stale WAL
-    except OSError as e:
-        console.print(f"[red]The backup was copied in, but a stale sidecar could not be removed ({e}). "
-                      f"Remove {DATABASE_PATH.name}-wal and {DATABASE_PATH.name}-shm before starting the server, "
-                      "or the old WAL is replayed onto the restored database.[/red]")
+                      f"The database file {DATABASE_PATH} was not replaced.[/red]")
         return False
     return True
 
