@@ -267,8 +267,10 @@ def _run_in_own_group(cmd: list[str], cwd: Path | None, check: bool, timeout: in
         gone = _kill_group(proc)
         stdout, stderr = _drain(proc)
         if not gone:
-            console.print(f"[red]Could not stop every process started by: {escape(' '.join(cmd))} "
-                          f"(process group {proc.pid}).[/red]")
+            # Also seen when only unreaped zombies are left (a container
+            # whose PID 1 does not reap), so this is a note, not an alarm.
+            console.print(f"[yellow]Could not confirm that every process started by "
+                          f"{escape(' '.join(cmd))} has exited (process group {proc.pid}).[/yellow]")
         raise subprocess.TimeoutExpired(cmd, timeout, output=stdout, stderr=stderr) from None
     except BaseException:  # KeyboardInterrupt above all
         _kill_group(proc)
@@ -1267,6 +1269,7 @@ def restore_backup(backup_path: Path, port: int | None = None, host: str = "127.
         with open(staging, "rb") as f:
             os.fsync(f.fileno())
         os.replace(staging, DATABASE_PATH)
+        _fsync_dir(DATABASE_PATH.parent)
     except OSError as e:
         staging.unlink(missing_ok=True)
         console.print(f"[red]Could not restore {backup_path.name}: {e}. "
@@ -1285,6 +1288,22 @@ def restore_backup(backup_path: Path, port: int | None = None, host: str = "127.
     return True
 
 
+def _fsync_dir(directory: Path) -> None:
+    """Make a rename in `directory` durable: without this a power loss
+    right after os.replace can bring back the old file. Best effort (not
+    every platform can open a directory for fsync)."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 RESTORE_LOCK_TIMEOUT = 2.0
 
 
@@ -1292,9 +1311,12 @@ def _database_lock_holder(db_path: Path, timeout: float = RESTORE_LOCK_TIMEOUT) 
     """None if no other connection is using the database, else what was
     found. The second guard before a restore (PR #374 review, H1): the
     service and port checks cannot see a process like an orphaned `oxyde
-    migrate`, but SQLite's own locks can. Takes an exclusive write lock and,
-    in WAL mode, a truncating checkpoint, which reports busy while any
-    other connection is still reading. Errors other than "locked/busy"
+    migrate`, but SQLite's own locks can. Takes an exclusive write lock,
+    which catches any writer, and in WAL mode a truncating checkpoint,
+    which catches a reader with a read transaction open. A connection
+    that is open but idle holds no lock and is NOT caught; the real
+    protection for such a process is that the restore replaces the file
+    with os.replace instead of writing into it. Errors other than "locked/busy"
     (say, a file that is no longer a database) do not block: replacing
     that file is the point of a restore."""
     if not db_path.exists():
@@ -1582,7 +1604,9 @@ def _git_ignored(repo_dir: Path, paths: list[Path]) -> set[Path]:
     if not paths:
         return set()
     try:
-        result = run_command(["git", "check-ignore", "--", *map(str, paths)], cwd=repo_dir,
+        # --no-index: hatch excludes by pattern, tracked or not, so a
+        # committed file that matches an ignore pattern is excluded too.
+        result = run_command(["git", "check-ignore", "--no-index", "--", *map(str, paths)], cwd=repo_dir,
                              check=False, timeout=30)
     except (subprocess.TimeoutExpired, OSError):
         return set()
@@ -1632,8 +1656,10 @@ def verify_installed_cli(cli_dir: Path) -> tuple[bool, str]:
 
 # What the server's environment is built from. The CLI's own environment
 # is the uv tool, which reinstall_cli rebuilds; cli/.venv and e2e/.venv
-# are development environments the server never imports.
-SERVER_DEPENDENCY_FILES = ("backend/uv.lock", "backend/pyproject.toml")
+# are development environments the server never imports. cli/pyproject.toml
+# is cheap insurance: the backend lock records the editable cli
+# dependency's requirements from it.
+SERVER_DEPENDENCY_FILES = ("backend/uv.lock", "backend/pyproject.toml", "cli/pyproject.toml")
 
 
 def _server_dependencies_unchanged(abandoned_commit: str) -> bool:
@@ -2532,7 +2558,14 @@ def _roll_back(
                 f"{f': {escape(err)}' if err else ''}. The server checkout is still on the new code.[/red]"
             )
     if service_update is not None and service_update.status == "updated":
-        if restore_service_file(service_update):
+        if checkout_failed:
+            # Like the database below: the new code is what will run, so
+            # it keeps the unit the upgrade wrote for it.
+            console.print(
+                f"[red]NOT restoring the previous service file: the checkout is still on the new code. "
+                f"It is at {service_update.backup}.[/red]"
+            )
+        elif restore_service_file(service_update):
             console.print(f"Restored the previous service file from {service_update.backup}.")
         else:
             console.print(
