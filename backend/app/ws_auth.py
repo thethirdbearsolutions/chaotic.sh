@@ -327,7 +327,13 @@ class _RefusalLog:
                 self._count_unlogged(key[0], unlogged.last, unlogged.count, unlogged.first)
 
 
-_DIGITS_AND_IDS = re.compile(r"[0-9a-fA-F]{8,}|\d+")
+# What a failure's message has that differs between occurrences of the
+# same failure, blanked out of its kind: tokens and other base64 or
+# base64url runs (a JWT included), hex runs with or without dashes (ids,
+# UUIDs, hashes), and any other digits (PR #360 re-review 2, L5).
+_DIGITS_AND_IDS = re.compile(r"[A-Za-z0-9_\-+/=.]{20,}|[0-9a-fA-F-]{8,}|\d+")
+# Only this much of a failure's message is looked at.
+_KIND_MESSAGE_CHARS = 200
 # How many kinds of failed check ``_ErrorLog`` tells apart.
 _MAX_ERROR_KINDS = 64
 
@@ -359,7 +365,14 @@ class _ErrorLog:
     def _kind(message: str, exc: BaseException | None) -> tuple:
         if exc is None:
             return (message, None, "")
-        return (message, type(exc), _DIGITS_AND_IDS.sub("#", str(exc))[:200])
+        try:
+            text = str(exc)[:_KIND_MESSAGE_CHARS]
+        except Exception:
+            # An exception whose __str__ raises must not escape the
+            # limiter: the refusal or the 4011 close it is logged for
+            # still has to happen (PR #360 re-review 2, L6).
+            text = "<unprintable>"
+        return (message, type(exc), _DIGITS_AND_IDS.sub("#", text))
 
     def exception(self, log: logging.Logger, message: str, *args) -> None:
         """``log.exception(message, *args)``, rate-limited; call it from an

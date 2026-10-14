@@ -8,7 +8,10 @@ fake socket against real credentials; e2e/test_websocket_auth.py drives
 the real handshake.
 """
 import asyncio
+import base64
 import logging
+import os
+import uuid
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -773,6 +776,11 @@ class TestWatcherFailure:
         assert caplog.records[0].exc_info[1].args == ("boom",)
 
 
+class Unprintable(Exception):
+    def __str__(self):
+        raise RuntimeError("cannot print me")
+
+
 class FakeClock:
     def __init__(self):
         self.now = 1000.0
@@ -923,9 +931,9 @@ class TestRefusalLimits:
     async def test_one_ipv6_64_is_one_client(self, clock, caplog):
         """PR #360 review, M1: one IPv6 host can source from any address in
         its /64, so the /64 is what the cap and the log limiter count.
-        1000 refusals from one /64 hold 8 sockets and write 2 lines."""
+        200 refusals from one /64 hold 8 sockets and write 2 lines."""
         with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
-            sockets = [await refuse_from(f"2001:db8:1:2::{i:x}") for i in range(1000)]
+            sockets = [await refuse_from(f"2001:db8:1:2::{i:x}") for i in range(200)]
         assert sum(held(ws) for ws in sockets) == ws_auth.MAX_HELD_REFUSALS_PER_CLIENT
         lines = refusal_lines(caplog)
         assert len(lines) == 2, lines
@@ -950,19 +958,22 @@ class TestRefusalLimits:
             await refuse_from("198.51.100.7", port=40000 + i)
         assert not held(await refuse_from("::ffff:198.51.100.7"))
 
-    async def test_many_clients_log_within_the_budget_and_one_summary(self, clock, caplog):
+    async def test_many_clients_log_within_the_budget_and_one_summary(self, clock, caplog, monkeypatch):
         """PR #360 review, M1: a flood of distinct clients writes at most
-        REFUSAL_LOG_BUDGET lines a minute, then one summary line."""
+        REFUSAL_LOG_BUDGET lines a minute, then one summary line. (Smaller
+        limits than production, to keep the test light.)"""
+        monkeypatch.setattr(ws_auth, "REFUSAL_LOG_BUDGET", 20)
+        monkeypatch.setattr(ws_auth, "_MAX_LOG_KEYS", 50)
         budget = ws_auth.REFUSAL_LOG_BUDGET
         with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
-            for i in range(1200):
+            for i in range(120):
                 await refuse_from(f"2001:db8:{i:x}::1")
             assert len(refusal_lines(caplog)) == budget
             clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
             await refuse_from("198.51.100.1")
         lines = refusal_lines(caplog)
         assert len(lines) == budget + 2
-        assert f"{1200 - budget} more refusals from at least {ws_auth._MAX_LOG_KEYS} clients" in lines[budget]
+        assert f"{120 - budget} more refusals from at least {ws_auth._MAX_LOG_KEYS} clients" in lines[budget]
         assert "client=198.51.100.1" in lines[-1]
 
     async def test_a_known_key_over_the_budget_keeps_its_count(self, clock, caplog, monkeypatch):
@@ -1022,6 +1033,54 @@ class TestRefusalLimits:
                 ws_auth.log_check_error(log, "another call site")
         assert [r.exc_info[0] for r in caplog.records] == [OSError, ValueError, OSError]
         assert caplog.records[-1].getMessage() == "another call site"
+
+    @pytest.mark.parametrize("make", [
+        lambda n: f"no row for {uuid.uuid4()}",
+        lambda n: f"lookup {uuid.uuid4().hex} failed",
+        lambda n: f"bad token {base64.urlsafe_b64encode(os.urandom(30 + n % 7)).decode()}",
+        lambda n: "jwt " + ".".join(base64.urlsafe_b64encode(os.urandom(24)).decode().rstrip("=") for _ in range(3)),
+        lambda n: f"retry {n} of 200 after {n * 7} ms",
+    ])
+    def test_ids_tokens_and_numbers_do_not_make_new_kinds(self, clock, caplog, make):
+        """PR #360 re-review 2, L5: 200 failures that differ only in an id,
+        a token or a number are one kind: one traceback."""
+        log = logging.getLogger("app.main")
+        with caplog.at_level(logging.ERROR):
+            for n in range(200):
+                try:
+                    raise OSError(make(n))
+                except Exception:
+                    ws_auth.log_check_error(log, "check failed")
+        assert len(caplog.records) == 1
+
+    def test_only_the_start_of_a_long_message_makes_the_kind(self, clock, caplog):
+        log = logging.getLogger("app.main")
+        with caplog.at_level(logging.ERROR):
+            for tail in ("a b " * 500, "c d " * 500):
+                try:
+                    raise OSError("database is locked " + "x y " * 100 + tail)
+                except Exception:
+                    ws_auth.log_check_error(log, "check failed")
+        assert len(caplog.records) == 1
+
+    async def test_an_unprintable_failure_at_the_handshake_is_still_refused(self, clock, caplog, test_team):
+        """PR #360 re-review 2, L6: an exception whose __str__ raises must
+        not escape the limiter and skip the refusal."""
+        ws = FakeWebSocket(denial=True)
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=Unprintable())):
+            with caplog.at_level(logging.ERROR):
+                await websocket_endpoint(ws, team_id=test_team.id, token="x")
+        assert ws.send_denial_response.await_args.args[0].status_code == 503
+        [record] = [r for r in caplog.records if "team validation" in r.getMessage()]
+        assert record.exc_info[0] is Unprintable
+        assert ws_auth._check_errors._kinds  # recorded, as "<unprintable>"
+        assert list(ws_auth._check_errors._kinds)[0][2] == "<unprintable>"
+
+    async def test_an_unprintable_failure_in_the_recheck_still_closes_4011(self, clock, test_user, test_team):
+        token = jwt_for(test_user)
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=Unprintable())):
+            refused = await asyncio.wait_for(watch(token, test_team.id, interval=0.01), 5)
+        assert refused.code == 4011
 
     def test_failure_kinds_are_bounded_and_a_forgotten_count_is_reported(self, clock, caplog, monkeypatch):
         monkeypatch.setattr(ws_auth, "_MAX_ERROR_KINDS", 2)
