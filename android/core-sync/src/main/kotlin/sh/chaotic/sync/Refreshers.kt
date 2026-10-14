@@ -39,14 +39,25 @@ class CacheRefresher(
     /** Current-sprint requests in flight at once, for a team with many projects. */
     private val parallelism: Int = DEFAULT_PARALLELISM,
 ) {
-    suspend fun refreshTeams(): RefreshOutcome = when (val teams = remote.teams()) {
-        is Remote.Ok -> {
-            store.replaceTeams(teams.value)
-            RefreshOutcome.Refreshed
-        }
+    /**
+     * The team list, which also prunes every left team's cache. Runs when
+     * the app comes to the foreground, so it also drops issues not opened
+     * for [ISSUE_RETENTION_DAYS] even when no issue is opened.
+     */
+    suspend fun refreshTeams(): RefreshOutcome {
+        pruneIssues()
+        return when (val teams = remote.teams()) {
+            is Remote.Ok -> {
+                store.replaceTeams(teams.value)
+                RefreshOutcome.Refreshed
+            }
 
-        else -> failure(teams, teamId = null)
+            else -> failure(teams, teamId = null)
+        }
     }
+
+    private suspend fun pruneIssues() =
+        store.pruneIssuesOpenedBefore(nowMillis() - TimeUnit.DAYS.toMillis(ISSUE_RETENTION_DAYS))
 
     /**
      * Fetch [issueId] with its comments and activity, as known in [teamId],
@@ -56,7 +67,7 @@ class CacheRefresher(
     @Suppress("ReturnCount") // a failure of any of the three calls ends the refresh
     suspend fun refreshIssue(issueId: String, teamId: String): RefreshOutcome {
         val now = nowMillis()
-        store.pruneIssuesOpenedBefore(now - TimeUnit.DAYS.toMillis(ISSUE_RETENTION_DAYS))
+        pruneIssues()
         val issue = remote.issue(issueId, teamId)
         if (issue !is Remote.Ok) return failure(issue, teamId, issueId)
         val comments = remote.comments(issueId)

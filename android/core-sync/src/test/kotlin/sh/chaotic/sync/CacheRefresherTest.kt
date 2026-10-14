@@ -100,6 +100,18 @@ class CacheRefresherTest {
     }
 
     @Test
+    fun teamsRefreshAlsoPrunesStaleIssues() = runTest {
+        store.saveIssue(
+            IssueDetail(issue("old", openedAtMillis = now - TimeUnit.DAYS.toMillis(8)), emptyList(), emptyList()),
+        )
+        remote.teams = Remote.Ok(listOf(Team(TEAM_A, "A", "A")))
+
+        refresher.refreshTeams()
+
+        assertNull(store.issue("old"))
+    }
+
+    @Test
     fun teamsRefreshReplacesTheListAndPrunesLeftTeams() = runTest {
         store.replaceTeams(listOf(Team(TEAM_A, "A", "A"), Team(TEAM_B, "B", "B")))
         store.saveIssue(IssueDetail(issue("ib", TEAM_B), emptyList(), emptyList()))
