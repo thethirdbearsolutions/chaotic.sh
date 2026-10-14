@@ -336,12 +336,34 @@ async def push_resolved(entries: list) -> None:
         logger.exception("Failed to schedule push withdrawals")
 
 
-async def drain() -> None:
-    """Wait for every scheduled delivery (tests, shutdown)."""
-    while _tasks:
+# How long shutdown waits for deliveries in flight (CHT-1628). What is
+# still unsent then is dropped; the app's inbox sync recovers it.
+SHUTDOWN_DRAIN_SECONDS = 5.0
+
+
+async def _drain() -> None:
+    from app.db.transactions import drain_detached
+
+    while True:
+        # A detached on-commit dispatch can still schedule deliveries.
+        await drain_detached()
+        if not _tasks:
+            return
         await asyncio.gather(*list(_tasks), return_exceptions=True)
         for task in [t for t in _tasks if t.done()]:
             _tasks.discard(task)
+
+
+async def drain(timeout: float | None = None) -> bool:
+    """Wait for every scheduled delivery, and every on-commit dispatch
+    that can still schedule one (tests, shutdown). With ``timeout``, stop
+    waiting after that long, cancel what is left and return False."""
+    try:
+        await asyncio.wait_for(_drain(), timeout)
+    except asyncio.TimeoutError:
+        logger.warning("Push deliveries still in flight after %ss; dropped", timeout)
+        return False
+    return True
 
 
 async def _deliver_created(entry_ids: list[str]) -> None:

@@ -138,8 +138,21 @@ async def _dispatch(events: list[tuple[str, Any, Any]]) -> None:
     except asyncio.CancelledError:
         if not task.done():
             _detached.add(task)
-            task.add_done_callback(_detached.discard)
+            task.add_done_callback(_detached_done)
         raise
+
+
+def _detached_done(task: asyncio.Task) -> None:
+    _detached.discard(task)
+    if not task.cancelled():
+        task.exception()  # retrieved: _run logged it before re-raising
+
+
+async def drain_detached() -> None:
+    """Wait for the dispatches whose committing task was cancelled
+    (shutdown, tests)."""
+    while _detached:
+        await asyncio.gather(*list(_detached), return_exceptions=True)
 
 
 async def _run(events: list[tuple[str, Any, Any]]) -> None:
@@ -163,6 +176,12 @@ async def _run(events: list[tuple[str, Any, Any]]) -> None:
                 await flush(items)
         except Exception:
             logger.exception("on-commit callback %s failed", value)
+        except BaseException:
+            # Cancelled (a shutdown that stopped waiting) or worse: the
+            # callbacks after this one are lost, which must not pass
+            # silently, nor be swallowed (CHT-1632 review, finding 7).
+            logger.exception("on-commit callback %s interrupted; later callbacks dropped", value)
+            raise
 
 
 def active() -> bool:

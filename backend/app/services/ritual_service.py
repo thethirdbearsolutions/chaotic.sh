@@ -8,6 +8,7 @@ from app.db.transactions import atomic
 
 logger = logging.getLogger(__name__)
 from app.enums import (
+    InboxEntryKind,
     RitualArtifact,
     ApprovalMode,
     RitualTrigger,
@@ -407,11 +408,8 @@ class RitualService:
         leaving = bool(ritual.group_id) and new_group_id != ritual.group_id
         deactivating = update_data.get("is_active") is False and ritual.is_active
 
-        # A ritual that leaves GATE or REVIEW mode no longer waits on a
-        # human: its approve/reject actions would now answer 400 (CHT-1626).
-        human_modes = (ApprovalMode.GATE, ApprovalMode.REVIEW)
-        new_mode = update_data.get("approval_mode", ritual.approval_mode)
-        leaving_human_mode = ritual.approval_mode in human_modes and new_mode != ritual.approval_mode
+        # A mode change moves what each issue waits on (CHT-1626).
+        mode_changed = update_data.get("approval_mode", ritual.approval_mode) != ritual.approval_mode
 
         async with atomic():
             if leaving or deactivating:
@@ -422,8 +420,10 @@ class RitualService:
             changed_fields = set(update_data.keys()) | {"updated_at"}
             await ritual.save(update_fields=changed_fields)
 
-        if deactivating or leaving_human_mode:
+        if deactivating:
             await self._resolve_inbox_for_ritual(ritual.id)
+        elif mode_changed and ritual.is_active:
+            await self._carry_decisions_to_mode(ritual)
 
         # Reload to get fresh data
         return await self.get_by_id(ritual.id, include_inactive=True)
@@ -437,6 +437,60 @@ class RitualService:
             await InboxService().resolve_for_ritual(ritual_id)
         except Exception:
             logger.exception("Failed to resolve inbox entries of inactive ritual=%s", ritual_id)
+
+    async def _carry_decisions_to_mode(self, ritual: OxydeRitual) -> None:
+        """After ``ritual`` changed approval mode, make its inbox ask for
+        what each issue now waits on (CHT-1626). An issue that still waits
+        on a human gets the new mode's entry: GATE_PENDING in GATE mode
+        while the ritual is not approved for it, REVIEW_REQUESTED in
+        REVIEW mode while an attestation awaits approval. Every other
+        open GATE_PENDING or REVIEW_REQUESTED entry of the ritual is
+        settled: its actions no longer fit the ritual (a gate cannot be
+        approved as a review, nor the reverse), and in AUTO mode, or in
+        REVIEW mode before anyone has attested, nobody needs to act.
+        GATE_REJECTED entries stay: the rejection still stands and the
+        requester still has to answer it. Considered: the issues with an
+        open entry of the ritual, and those with an open intent it
+        blocks. Best-effort, after commit, like the deactivate path."""
+        from app.services.inbox_service import InboxService
+
+        try:
+            inbox = InboxService()
+            issue_ids = set(await inbox.open_decision_issue_ids(ritual.id))
+            blockers = await OxydeTicketLimboBlocker.objects.filter(
+                ritual_id=ritual.id, resolved_at=None,
+            ).all()
+            if blockers:
+                limbos = await OxydeTicketLimbo.objects.filter(
+                    id__in=sorted({b.limbo_id for b in blockers}), cleared_at=None,
+                ).all()
+                issue_ids |= {limbo.issue_id for limbo in limbos}
+            waiting: dict[str, InboxEntryKind] = {}
+            for issue_id in sorted(issue_ids):
+                attestation = await self.get_issue_attestation(ritual.id, issue_id)
+                unapproved = attestation is not None and attestation.approved_at is None
+                if ritual.approval_mode == ApprovalMode.GATE and (attestation is None or unapproved):
+                    waiting[issue_id] = InboxEntryKind.GATE_PENDING
+                elif ritual.approval_mode == ApprovalMode.REVIEW and unapproved:
+                    waiting[issue_id] = InboxEntryKind.REVIEW_REQUESTED
+            await inbox.settle_decisions_except(ritual.id, waiting)
+            for issue_id, kind in waiting.items():
+                issue = await OxydeIssue.objects.get_or_none(id=issue_id)
+                project = await OxydeProject.objects.get_or_none(id=issue.project_id) if issue else None
+                if project is None:
+                    continue
+                if kind is InboxEntryKind.GATE_PENDING:
+                    # No email: nobody asked again; the request moved.
+                    await inbox.notify_gate_pending(
+                        ritual=ritual, issue=issue, project=project,
+                        requested_by_name="Someone", email=False,
+                    )
+                else:
+                    await inbox.notify_review_requested(
+                        ritual=ritual, issue=issue, project=project, attested_by_name="Someone",
+                    )
+        except Exception:
+            logger.exception("Failed to move inbox entries of ritual=%s to its new mode", ritual.id)
 
     async def delete(self, ritual: OxydeRitual, deleted_by_id: str | None = None) -> None:
         """Soft-delete a ritual by marking it inactive.
@@ -1327,8 +1381,22 @@ class RitualService:
         ritual_name = ritual.name
 
         existing = await self.get_issue_attestation(ritual_id, issue_id)
-        if existing:
+        if existing and existing.approved_at is not None:
             return existing
+        if existing:
+            # Attested while the ritual was in REVIEW mode and never
+            # approved; it is a GATE now, so completing the gate approves
+            # it. Returning it as it was left the issue blocked with
+            # nothing able to approve it (CHT-1626 review, finding 1).
+            try:
+                await self._approve_atomic(existing, user_id)
+            except ValueError:  # a concurrent approver won
+                return await self.get_issue_attestation(ritual_id, issue_id)
+            await OxydeIssueActivity.objects.create(
+                issue_id=issue_id, user_id=user_id,
+                activity_type=ActivityType.RITUAL_APPROVED, new_value=ritual_name,
+            )
+            return await self._after_gate_completed(ritual, issue_id, user_id, existing)
 
         now = datetime.now(timezone.utc)
         try:
@@ -1355,6 +1423,13 @@ class RitualService:
                 return existing
             raise
 
+        return await self._after_gate_completed(ritual, issue_id, user_id, attestation)
+
+    async def _after_gate_completed(
+        self, ritual: OxydeRitual, issue_id: str, user_id: str, attestation: OxydeRitualAttestation,
+    ) -> OxydeRitualAttestation:
+        """What follows a gate's completion: rejections, limbo, inbox."""
+        ritual_id = ritual.id
         # A human completed the gate after all: any rejection of the
         # request is moot (CHT-1606).
         try:

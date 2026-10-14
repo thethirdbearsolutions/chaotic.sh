@@ -14,6 +14,7 @@
   user) get nothing, and the endpoint policy is applied again at send
   time, connecting to the vetted address.
 """
+import asyncio
 import base64
 import json
 import os
@@ -911,3 +912,87 @@ class TestFailSoft:
         conftest.push_errors.clear()
         assert any("Push delivery failed" in e for e in errors)
         assert any("Push withdrawal failed" in e for e in errors)
+
+
+class TestShutdownDrain:
+    """CHT-1628 (PR #358 review, finding 4): shutdown waits a bounded
+    time for deliveries in flight, then closes the database."""
+
+    @pytest.fixture
+    def lifespan(self, db, monkeypatch):
+        import contextlib
+
+        import app.main as main
+
+        events: list[str] = []
+
+        async def noop(*args, **kwargs):
+            return None
+
+        async def close():
+            events.append("closed")
+
+        @contextlib.asynccontextmanager
+        async def no_mcp():
+            yield
+
+        for name in ("init_oxyde", "bootstrap_if_empty", "verify_migrations_current", "_mcp_toolset_fingerprint"):
+            monkeypatch.setattr(main, name, noop)
+        monkeypatch.setattr(main, "close_oxyde", close)
+        monkeypatch.setattr(main, "get_version_info", lambda *a, **k: None)
+        monkeypatch.setattr(main, "mcp_lifespan", no_mcp)
+        monkeypatch.setattr(main.settings, "secret_key", "x" * 32)
+        monkeypatch.setattr(push_service.PushService, "delete_stale_bindings", noop)
+        return main, events
+
+    async def test_waits_for_a_delivery_before_closing(self, lifespan):
+        main, events = lifespan
+
+        async def delivery():
+            await asyncio.sleep(0.05)
+            events.append("delivered")
+
+        async with main.lifespan(main.app):
+            push_sender._spawn(delivery())
+        assert events == ["delivered", "closed"]
+
+    async def test_gives_up_after_the_timeout(self, lifespan, monkeypatch, caplog):
+        main, events = lifespan
+        monkeypatch.setattr(push_sender, "SHUTDOWN_DRAIN_SECONDS", 0.05)
+        stuck = asyncio.Event()
+
+        with caplog.at_level("WARNING", logger="app.services.push_sender"):
+            async with main.lifespan(main.app):
+                push_sender._spawn(stuck.wait())
+        assert events == ["closed"]
+        assert "still in flight" in caplog.text
+        assert all(t.done() for t in push_sender._tasks)
+
+    async def test_waits_for_a_detached_dispatch_and_what_it_schedules(self, db):
+        """A dispatch whose request was cancelled can still schedule a
+        delivery; drain() waits for both."""
+        from app.db.transactions import atomic, on_commit
+
+        started, release = asyncio.Event(), asyncio.Event()
+        delivered = []
+
+        async def deliver():
+            delivered.append(True)
+
+        async def callback():
+            started.set()
+            await release.wait()
+            push_sender._spawn(deliver())
+
+        async def request():
+            async with atomic():
+                await on_commit(callback)
+
+        task = asyncio.create_task(request())
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        asyncio.get_running_loop().call_later(0.02, release.set)
+        assert await push_sender.drain(timeout=5) is True
+        assert delivered == [True]

@@ -117,10 +117,13 @@ class InboxService:
 
     async def notify_gate_pending(
         self, *, ritual, issue, project, requested_by_name: str, requested_by_id: str | None = None,
+        email: bool = True,
     ) -> None:
         """A GATE ritual just became blocking on `issue`. Fan out an
         inbox entry + email to every team admin. The requester, when an
-        admin, gets the entry but no push (CHT-1605).
+        admin, gets the entry but no push (CHT-1605). ``email=False``
+        when nobody asked anew: a request carried over from REVIEW mode
+        (CHT-1626).
         """
         admins = await self._team_admins(project.team_id)
         title = f"Gate pending: {ritual.name} on {issue.identifier}"
@@ -143,7 +146,7 @@ class InboxService:
             await self._broadcast(project.team_id, "created", entry)
 
             recipient_email = getattr(member.user, "email", None) if member.user else None
-            if recipient_email:
+            if recipient_email and email:
                 self._dispatch_gate_pending_email(
                     to=recipient_email, issue=issue, ritual=ritual,
                     requested_by_name=requested_by_name, email_svc=email_svc,
@@ -520,6 +523,27 @@ class InboxService:
             ids = [row["id"] for row in await model.objects.filter(project_id=project_id).values("id").all()]
             for start in range(0, len(ids), self._RESOLVE_CHUNK):
                 unread += await self._resolve({f"{column}__in": ids[start:start + self._RESOLVE_CHUNK]})
+        return unread
+
+    _ASK_KINDS = (InboxEntryKind.GATE_PENDING, InboxEntryKind.REVIEW_REQUESTED)
+
+    async def open_decision_issue_ids(self, ritual_id: str) -> list[str]:
+        """The issues with an open GATE_PENDING or REVIEW_REQUESTED entry
+        of this ritual."""
+        rows = await OxydeInboxEntry.objects.filter(
+            ritual_id=ritual_id, kind__in=[k.name for k in self._ASK_KINDS], resolved_at=None,
+        ).values("issue_id").all()
+        return sorted({row["issue_id"] for row in rows if row["issue_id"]})
+
+    async def settle_decisions_except(self, ritual_id: str, keep: dict[str, InboxEntryKind]) -> int:
+        """Settle this ritual's open GATE_PENDING and REVIEW_REQUESTED
+        entries, except, for each issue in ``keep``, those of the kind
+        given for it: a mode change (CHT-1626). GATE_REJECTED entries
+        are left alone; the rejection still stands."""
+        unread = 0
+        for issue_id in await self.open_decision_issue_ids(ritual_id):
+            kinds = [k.name for k in self._ASK_KINDS if keep.get(issue_id) is not k]
+            unread += await self._resolve({"ritual_id": ritual_id, "issue_id": issue_id, "kind__in": kinds})
         return unread
 
     async def resolve_for_document(self, document_id: str) -> int:

@@ -619,6 +619,95 @@ class TestReferentsGoAway:
         [entry] = [e for e in body["entries"] if e["kind"] == "review_requested"]
         await self._to_auto(client, auth_headers, review_close_ritual, entry["id"], body["next_cursor"])
 
+    async def _switch(self, ritual, mode):
+        from app.schemas.ritual import RitualUpdate
+
+        await RitualService().update(ritual, RitualUpdate(approval_mode=mode))
+
+    async def test_review_turning_gate_carries_the_request_and_the_gate_completes(
+        self, client, db, test_issue, test_user, auth_headers, review_close_ritual,
+    ):
+        """Review finding 1: the issue still waits on a human, so the
+        request moves to a gate_pending entry, and completing that gate
+        approves the attestation made in REVIEW mode."""
+        from app.enums import ApprovalMode
+        from app.oxyde_models.issue import OxydeIssue
+        from app.oxyde_models.ritual import OxydeRitualAttestation
+
+        await _close_review(test_issue, test_user.id, review_close_ritual)
+        body = await _sync(client, auth_headers)
+        [review] = [e for e in body["entries"] if e["kind"] == "review_requested"]
+
+        await self._switch(review_close_ritual, ApprovalMode.GATE)
+        later = await _sync(client, auth_headers, since=body["next_cursor"])
+        states = {(e["id"], e["kind"]): e["state"] for e in later["entries"]}
+        assert states.pop((review["id"], "review_requested")) == "resolved"
+        [((gate_id, kind), state)] = states.items()
+        assert (kind, state) == ("gate_pending", "open")
+
+        [gate] = [e for e in later["entries"] if e["id"] == gate_id]
+        resp = await client.post(_by_kind(gate)["approve"]["path"], json={"note": "ok"}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        attestation = await OxydeRitualAttestation.objects.get(
+            ritual_id=review_close_ritual.id, issue_id=test_issue.id,
+        )
+        assert attestation.approved_at is not None and attestation.approved_by == test_user.id
+        assert (await OxydeIssue.objects.get(id=test_issue.id)).status == IssueStatus.DONE
+        assert (await OxydeInboxEntry.objects.get(id=gate_id)).resolved_at is not None
+
+    async def test_gate_turning_review_waits_for_the_attestation(
+        self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
+    ):
+        """GATE to REVIEW: nobody has attested, so nothing waits on a
+        human until someone does; then the review request is written."""
+        from app.enums import ApprovalMode
+
+        entry, cursor = await self._gate(client, auth_headers, test_issue, test_user)
+        await self._switch(gate_claim_ritual, ApprovalMode.REVIEW)
+        later = await _sync(client, auth_headers, since=cursor)
+        assert [(e["id"], e["state"]) for e in later["entries"]] == [(entry["id"], "resolved")]
+
+        await RitualService().attest_for_issue(
+            ritual=await RitualService().get_by_id(gate_claim_ritual.id),
+            issue_id=test_issue.id, user_id=test_user.id, note="done",
+        )
+        asked = await _sync(client, auth_headers, since=later["next_cursor"])
+        assert [(e["kind"], e["state"]) for e in asked["entries"]] == [("review_requested", "open")]
+
+    async def test_a_mode_change_leaves_rejections_open(
+        self, client, db, test_team, test_issue, test_user, auth_headers, gate_claim_ritual,
+    ):
+        """Review finding 2: the rejection still stands, and the
+        requester still has to answer it."""
+        from app.enums import ApprovalMode
+
+        rejected = await _entry(
+            test_user.id, test_team.id, kind=InboxEntryKind.GATE_REJECTED,
+            ritual_id=gate_claim_ritual.id, issue_id=test_issue.id,
+        )
+        await self._switch(gate_claim_ritual, ApprovalMode.AUTO)
+        assert (await OxydeInboxEntry.objects.get(id=rejected.id)).resolved_at is None
+
+    async def test_project_delete_settles_across_chunks(
+        self, client, db, test_team, test_project, test_issue, test_user, auth_headers, monkeypatch,
+    ):
+        """Review finding 8: more issues than one IN (...) list holds."""
+        from app.oxyde_models.issue import OxydeIssue
+        from app.oxyde_models.project import OxydeProject
+        from app.services.project_service import ProjectService
+
+        monkeypatch.setattr(InboxService, "_RESOLVE_CHUNK", 1)
+        other = await OxydeIssue.objects.create(
+            project_id=test_project.id, identifier=f"{test_project.key}-99", number=99,
+            title="other", creator_id=test_user.id,
+        )
+        entries = [
+            await _entry(test_user.id, test_team.id, issue_id=issue_id) for issue_id in (test_issue.id, other.id)
+        ]
+        await ProjectService().delete(await OxydeProject.objects.get(id=test_project.id))
+        for e in entries:
+            assert (await OxydeInboxEntry.objects.get(id=e.id)).resolved_at is not None
+
     async def test_other_ritual_edits_leave_the_entry_open(
         self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
     ):
