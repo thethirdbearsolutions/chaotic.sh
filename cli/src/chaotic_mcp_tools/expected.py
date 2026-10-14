@@ -16,7 +16,6 @@ ships in the `chaotic-cli` wheel; that is accepted, not an oversight.
 """
 from __future__ import annotations
 
-import inspect
 from collections.abc import Iterable
 
 EXPECTED_TOOLS: dict[str, bool] = {
@@ -95,18 +94,11 @@ REGENERATE_SNAPSHOT = (
 
 
 def snapshot_toolset(tools: Iterable) -> dict[str, dict]:
-    """A live `list_tools()` result in docs/mcp-toolset-schema.json's shape.
-
-    Each description is a tool body's docstring, and Python 3.13 strips
-    docstring indentation at compile time where earlier versions keep it,
-    so the raw text depends on the interpreter (CHT-1698). The generator
-    and both transports' sync tests compare `inspect.cleandoc` of it,
-    which is the same on every version and still differs on any real
-    change to the wording."""
-    return {
-        t.name: {"description": inspect.cleandoc(t.description or ""), "inputSchema": t.input_schema}
-        for t in tools
-    }
+    """A live `list_tools()` result in docs/mcp-toolset-schema.json's shape:
+    the exact text a client receives. Both servers register through
+    `add_tools`, which cleandocs each description, so it is the same on
+    every Python version (CHT-1698, CHT-1699)."""
+    return {t.name: {"description": t.description, "inputSchema": t.input_schema} for t in tools}
 
 
 def toolset_diff(

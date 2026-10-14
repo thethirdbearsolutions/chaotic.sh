@@ -91,20 +91,33 @@ def test_stdio_toolset_matches_snapshot_exactly():
     )
 
 
-def test_descriptions_compare_the_same_on_every_python():
-    """CHT-1698: Python 3.13 strips docstring indentation at compile time.
-    The comparison ignores that and nothing else: the 3.12-style and
-    3.13-style texts of one docstring compare equal, a changed word does not."""
-    from types import SimpleNamespace
+def test_live_descriptions_carry_no_docstring_indentation():
+    """CHT-1699: clients get each description cleandoc'd on every Python,
+    not the raw docstring that keeps its indentation before 3.13."""
+    import inspect
 
-    def tool(description):
-        return SimpleNamespace(name="t", description=description, input_schema={})
+    live = _live_toolset()
+    indented = [name for name, tool in live.items() if tool["description"] != inspect.cleandoc(tool["description"])]
+    assert indented == [], f"descriptions with docstring indentation: {indented}"
+    # Some docstrings span paragraphs, so this checks something.
+    assert any("\n\n" in tool["description"] for tool in live.values())
 
-    indented = "Link a document.\n\n    Linking twice is a no-op.\n    "
-    dedented = "Link a document.\n\nLinking twice is a no-op.\n"
-    reworded = "Link a document.\n\n    Linking twice is an error.\n    "
-    assert snapshot_toolset([tool(indented)]) == snapshot_toolset([tool(dedented)])
-    assert snapshot_toolset([tool(indented)]) != snapshot_toolset([tool(reworded)])
+
+def test_add_tools_cleans_an_indented_docstring():
+    """The registration step itself, independent of the interpreter: a
+    docstring written with indentation is sent without it."""
+    from mcp.server.mcpserver import MCPServer
+
+    from chaotic_mcp_tools import add_tools
+
+    async def sample_tool() -> dict:
+        return {}
+
+    sample_tool.__doc__ = "Do a thing.\n\n    More about it.\n    "
+    mcp = MCPServer(name="t")
+    add_tools(mcp, [sample_tool])
+    (tool,) = asyncio.run(mcp.list_tools())
+    assert tool.description == "Do a thing.\n\nMore about it."
 
 
 def test_a_changed_description_still_fails_the_snapshot():

@@ -39,7 +39,7 @@ from .errors import (
     error_envelope,
     validation_payload,
 )
-from .registry import TEAM_SCOPED_TOOLS, bind, bind_all, call_guarded
+from .registry import TEAM_SCOPED_TOOLS, add_tools, bind, bind_all, call_guarded
 from .shapes import (
     COMPACT_DOCUMENT_FIELDS,
     COMPACT_ISSUE_FIELDS,
@@ -74,6 +74,7 @@ __all__ = [
     "TEXT_PREVIEW_CHARS",
     "ToolInputError",
     "TransportError",
+    "add_tools",
     "backend_error_payload",
     "bind",
     "bind_all",
