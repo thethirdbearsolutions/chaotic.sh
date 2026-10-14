@@ -7,4 +7,8 @@ import kotlinx.serialization.Serializable
 sealed interface Destination {
     @Serializable
     data object Home : Destination
+
+    /** One issue, known by the team the inbox entry that led to it is in (the server's issue has no team). */
+    @Serializable
+    data class Issue(val issueId: String, val teamId: String) : Destination
 }

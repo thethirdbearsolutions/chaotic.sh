@@ -7,7 +7,52 @@
     <string name="sign_in_button">Sign in</string>
     <string name="sign_in_session_ended">This device was signed out by the server. Sign in again to continue.</string>
     <string name="home_title">Chaotic</string>
-    <string name="home_signed_in_as">Signed in as %1$s</string>
-    <string name="home_retry">Try again</string>
     <string name="home_sign_out">Sign out</string>
+    <string name="home_more">More</string>
+    <string name="home_tab_inbox">Inbox</string>
+    <string name="home_tab_sprint">Sprint</string>
+    <string name="home_all_teams">All teams</string>
+    <string name="home_pick_team">Team: %1$s</string>
+    <string name="sync_offline">Offline. Showing what was saved.</string>
+    <string name="sync_failed">Could not sync (%1$s). Showing what was saved.</string>
+    <string name="sync_unreadable">The server\'s answer could not be read. Showing what was saved.</string>
+
+    <string name="inbox_needs_you">Needs you</string>
+    <string name="inbox_for_you">For you</string>
+    <string name="inbox_empty">Nothing is waiting on you.</string>
+    <string name="inbox_unread">Unread</string>
+    <string name="who_agent">%1$s (agent of %2$s)</string>
+    <string name="who_agent_unowned">%1$s (agent)</string>
+    <string name="who_system">Chaotic</string>
+    <string name="kind_gate_pending">Gate</string>
+    <string name="kind_review_requested">Review</string>
+    <string name="kind_mention">Mention</string>
+    <string name="kind_assignment">Assigned</string>
+    <string name="kind_gate_rejected">Rejected</string>
+    <string name="kind_agent_status">Agent</string>
+    <string name="kind_unknown">Update</string>
+
+    <string name="issue_back">Back</string>
+    <string name="issue_status">Status</string>
+    <string name="issue_priority">Priority</string>
+    <string name="issue_assignee">Assignee</string>
+    <string name="issue_estimate">Estimate</string>
+    <string name="issue_unassigned">Unassigned</string>
+    <string name="issue_no_description">No description.</string>
+    <string name="issue_comments">Comments</string>
+    <string name="issue_activity">Activity</string>
+    <string name="issue_loading">Loading…</string>
+    <string name="issue_not_cached">This issue is not saved on this device yet, and the server cannot be reached.</string>
+    <string name="issue_gone">This issue was deleted.</string>
+    <string name="issue_team_lost">You are no longer in this issue\'s team.</string>
+    <string name="markdown_show_more">Show more</string>
+    <string name="markdown_truncated">%1$d more characters are not shown here.</string>
+    <string name="issue_forbidden">The server would not show this issue to this app.</string>
+
+    <string name="sprint_empty">No sprints to show yet. Pull to refresh.</string>
+    <string name="sprint_points">%1$d of %2$d points spent</string>
+    <string name="sprint_points_unlimited">%1$d points spent, no budget</string>
+    <string name="sprint_limbo">Closing, waiting on rituals: %1$s</string>
+    <string name="sprint_limbo_unnamed">Closing, waiting on its rituals.</string>
+    <string name="sprint_arrears">Over budget by %1$d points. Tickets cannot move to in progress, done or canceled until this sprint is closed.</string>
 </resources>

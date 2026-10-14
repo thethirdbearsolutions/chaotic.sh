@@ -10,6 +10,7 @@ plugins {
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.kotlin.serialization) apply false
     alias(libs.plugins.ksp) apply false
+    alias(libs.plugins.room) apply false
     alias(libs.plugins.hilt) apply false
     alias(libs.plugins.detekt)
 }
@@ -28,6 +29,7 @@ detekt {
             "core-api/src/main/kotlin",
             "core-api/src/test/kotlin",
             "core-auth/src",
+            "core-sync/src",
         ),
     )
     basePath.set(layout.projectDirectory)

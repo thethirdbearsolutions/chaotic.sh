@@ -10,6 +10,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.room)
     alias(libs.plugins.hilt)
 }
 
@@ -67,6 +68,11 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        // Robolectric (Room DAO and Compose UI tests) needs the merged resources and manifest.
+        unitTests.isIncludeAndroidResources = true
+    }
+
     lint {
         warningsAsErrors = false
         abortOnError = true
@@ -74,9 +80,20 @@ android {
     }
 }
 
+// Room writes the cache's schema to app/schemas on every build. CI fails
+// when it differs from the committed copy, and when a committed version's
+// schema is edited, so a schema change cannot ship without a version bump.
+// The Room plugin rather than a bare KSP argument: each variant's KSP run
+// writes its own copy, where a shared directory had two variants' runs
+// reading each other's half-written file.
+room {
+    schemaDirectory("$projectDir/schemas")
+}
+
 dependencies {
     implementation(project(":core-api"))
     implementation(project(":core-auth"))
+    implementation(project(":core-sync"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
@@ -97,9 +114,22 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.appauth)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    // CacheStoreContract, which the Room store must pass like the in-memory one.
+    testImplementation(testFixtures(project(":core-sync")))
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    // The activity the Compose rule launches. Debug only, so the Compose UI
+    // tests live in src/testDebug.
+    debugImplementation(libs.compose.ui.test.manifest)
 }
 
 // The foss flavor is what F-Droid builds, so nothing non-free may reach its

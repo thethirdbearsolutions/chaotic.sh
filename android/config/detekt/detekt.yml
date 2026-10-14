@@ -10,3 +10,14 @@ naming:
 complexity:
   LongMethod:
     ignoreAnnotated: ['Composable']
+  TooManyFunctions:
+    # detekt's default test paths, plus Android's per-variant test sets and
+    # Gradle test fixtures (core-sync's CacheStoreContract): a contract or a
+    # test class has as many functions as it has cases.
+    excludes: ['**/test/**', '**/testDebug/**', '**/testFixtures/**', '**/androidTest/**']
+
+style:
+  MagicNumber:
+    excludes: ['**/test/**', '**/testDebug/**', '**/testFixtures/**', '**/androidTest/**', '**/*.kts']
+    # Preview data is sample numbers.
+    ignoreAnnotated: ['Preview']

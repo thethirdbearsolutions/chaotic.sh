@@ -13,6 +13,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import sh.chaotic.android.ui.home.HomeScreen
+import sh.chaotic.android.ui.issue.IssueScreen
 import sh.chaotic.android.ui.signin.SignInScreen
 import sh.chaotic.auth.AuthState
 
@@ -31,14 +32,17 @@ fun ChaoticApp(viewModel: AppViewModel = hiltViewModel()) {
 
         is AuthState.SignedOut -> SignInScreen(ended = current.ended)
 
-        is AuthState.SignedIn -> SignedInApp(current)
+        is AuthState.SignedIn -> SignedInApp()
     }
 }
 
 @Composable
-private fun SignedInApp(state: AuthState.SignedIn) {
+private fun SignedInApp() {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = Destination.Home) {
-        composable<Destination.Home> { HomeScreen(baseUrl = state.baseUrl) }
+        composable<Destination.Home> {
+            HomeScreen(onOpenIssue = { issueId, teamId -> navController.navigate(Destination.Issue(issueId, teamId)) })
+        }
+        composable<Destination.Issue> { IssueScreen(onBack = { navController.popBackStack() }) }
     }
 }
