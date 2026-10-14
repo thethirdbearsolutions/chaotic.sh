@@ -9,10 +9,17 @@ sealed interface SyncOutcome {
      * The cache is as current as the server lets it be. [retryAfterSeconds]
      * is the server's hint that syncing again sooner returns the same rows
      * (CHT-1622); [morePending] that the run stopped at its page cap with
-     * more to fetch.
+     * more to fetch. [added] are the open entries this run brought in that
+     * the cache did not have before, for the poll fallback's notifications
+     * (CHT-1612); always empty for a run that started without a cursor or
+     * was reset, where everything is new to the cache but not to the person.
      */
-    data class Synced(val pages: Int, val retryAfterSeconds: Int? = null, val morePending: Boolean = false) :
-        SyncOutcome
+    data class Synced(
+        val pages: Int,
+        val retryAfterSeconds: Int? = null,
+        val morePending: Boolean = false,
+        val added: List<InboxEntry> = emptyList(),
+    ) : SyncOutcome
 
     /**
      * Nobody is signed in any more: the credential was refused even after
@@ -66,6 +73,9 @@ class InboxSyncer(
     @Suppress("ReturnCount") // each way a run ends is an early return
     private suspend fun syncLocked(ticket: Long): SyncOutcome {
         var cursor = store.inboxCursor()
+        // A first sync (or one after a sign-in) brings in the whole inbox: none of it is news.
+        var mayNotify = cursor != null
+        val added = linkedMapOf<String, InboxEntry>()
         var restartedForBadCursor = false
         var clearNext = false
         var pages = 0
@@ -83,16 +93,27 @@ class InboxSyncer(
             pages++
             val clear = clearNext || page.reset
             clearNext = false
+            if (clear) mayNotify = false
             cursor = page.nextCursor ?: if (clear) null else cursor
-            val change = merge(page, clear, cursor)
+            val (change, new) = merge(page, clear, cursor)
             // Signed out, or someone else signed in, while the page was on its way.
             session.write(ticket) { applyInbox(change) } ?: return SyncOutcome.Unauthorized
-            if (!page.hasMore) return SyncOutcome.Synced(pages, page.retryAfterSeconds)
+            change.deletes.forEach { added.remove(it) }
+            // A later page's newer copy of an entry an earlier page brought in.
+            change.upserts.forEach { if (it.id in added) added[it.id] = it }
+            new.forEach { added[it.id] = it }
+            if (!page.hasMore) {
+                return SyncOutcome.Synced(pages, page.retryAfterSeconds, added = addedIf(mayNotify, added))
+            }
         }
-        return SyncOutcome.Synced(pages, morePending = true)
+        return SyncOutcome.Synced(pages, morePending = true, added = addedIf(mayNotify, added))
     }
 
-    private suspend fun merge(page: SyncPage, clear: Boolean, cursor: String?): InboxChange {
+    private fun addedIf(mayNotify: Boolean, added: Map<String, InboxEntry>) =
+        if (mayNotify) added.values.toList() else emptyList()
+
+    /** The page as a change to the cache, and the open entries in it the cache did not hold at all. */
+    private suspend fun merge(page: SyncPage, clear: Boolean, cursor: String?): Pair<InboxChange, List<InboxEntry>> {
         val cached = if (clear) emptyMap() else store.inboxVersions(page.entries.map { it.entry.id })
         val upserts = linkedMapOf<String, InboxEntry>()
         val deletes = mutableSetOf<String>()
@@ -108,13 +129,14 @@ class InboxSyncer(
                 deletes += entry.id
             }
         }
-        return InboxChange(
+        val change = InboxChange(
             clear = clear,
             upserts = upserts.values.toList(),
             deletes = deletes,
             teamIds = page.teamIds,
             cursor = cursor,
         )
+        return change to change.upserts.filter { it.id !in cached && it.teamId in page.teamIds }
     }
 
     private fun failure(error: Remote.Failure): SyncOutcome = when (error) {
