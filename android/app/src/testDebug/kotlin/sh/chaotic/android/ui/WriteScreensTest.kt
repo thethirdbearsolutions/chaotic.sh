@@ -20,6 +20,7 @@ import sh.chaotic.android.ui.home.HomeContent
 import sh.chaotic.android.ui.home.HomeState
 import sh.chaotic.android.ui.home.HomeWrites
 import sh.chaotic.android.ui.home.UndoOffer
+import sh.chaotic.android.ui.inbox.RejectDialog
 import sh.chaotic.android.ui.issue.Fetch
 import sh.chaotic.android.ui.issue.IssueContent
 import sh.chaotic.android.ui.issue.IssueState
@@ -34,6 +35,7 @@ import sh.chaotic.sync.Issue
 import sh.chaotic.sync.IssueDetail
 import sh.chaotic.sync.Principal
 import sh.chaotic.sync.WriteKind
+import sh.chaotic.sync.WriteQueue
 import sh.chaotic.sync.WriteRefusal
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -111,6 +113,17 @@ class WriteScreensTest {
 
         compose.onNodeWithText("CHT-1611  Gate: human review").performTouchInput { swipeLeft() }
         compose.onNodeWithText("Reject CHT-1611?").assertIsDisplayed()
+        assertEquals(emptyList(), calls)
+    }
+
+    @Test
+    fun aRejectionNeedsAReason() {
+        compose.setContent {
+            ChaoticTheme {
+                RejectDialog(gate, onReject = { calls += "reject:${gate.id}:$it" }, onCancel = {})
+            }
+        }
+
         // No reason, no reject.
         compose.onNodeWithText("Reject").assertIsNotEnabled()
         compose.onNodeWithText("Why (required: the requester reads this)").performTextInput("Needs tests")
@@ -162,6 +175,18 @@ class WriteScreensTest {
         compose.waitForIdle()
 
         assertEquals(listOf("undo:k1"), calls)
+    }
+
+    @Test
+    fun theUndoSnackbarLeavesWhenTheWindowCloses() {
+        home(HomeState(undo = UndoOffer("k1", WriteKind.APPROVE, "CHT-1611")))
+        compose.onNodeWithText("Approving CHT-1611").assertIsDisplayed()
+
+        compose.mainClock.advanceTimeBy(WriteQueue.UNDO_MILLIS + 1_000)
+        compose.waitForIdle()
+
+        compose.onNodeWithText("Undo").assertDoesNotExist()
+        assertEquals(listOf("gone:k1"), calls)
     }
 
     @Test

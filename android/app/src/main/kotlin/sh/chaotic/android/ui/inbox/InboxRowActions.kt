@@ -16,11 +16,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import kotlinx.coroutines.withTimeoutOrNull
 import sh.chaotic.android.R
 import sh.chaotic.android.ui.home.HomeWrites
 import sh.chaotic.android.ui.home.UndoOffer
 import sh.chaotic.sync.InboxEntry
 import sh.chaotic.sync.WriteKind
+import sh.chaotic.sync.WriteQueue
 
 /**
  * What an inbox row can do (CHT-1613). A row offers a swipe only for what
@@ -36,9 +38,11 @@ class InboxRowActions(
 )
 
 /**
- * The undo snackbar for a swipe (CHT-1613). It stays up as long as the
- * write waits to be sent (the short duration is the queue's four-second
- * undo window), and its Undo takes the write back.
+ * The undo snackbar for a swipe (CHT-1613). It stays up exactly as long
+ * as the write waits to be sent (the queue's undo window), and its Undo
+ * takes the write back. Not a Short duration: with a screen reader on,
+ * Android stretches that well past the window, and an Undo tapped after
+ * the write went would do nothing while looking as if it had worked.
  */
 @Composable
 fun UndoSnackbar(offer: UndoOffer?, host: SnackbarHostState, writes: HomeWrites) {
@@ -46,7 +50,10 @@ fun UndoSnackbar(offer: UndoOffer?, host: SnackbarHostState, writes: HomeWrites)
     val undo = stringResource(R.string.undo)
     LaunchedEffect(offer?.key) {
         if (offer == null || message == null) return@LaunchedEffect
-        val result = host.showSnackbar(message, actionLabel = undo, duration = SnackbarDuration.Short)
+        // Cancelling showSnackbar when the window closes dismisses it.
+        val result = withTimeoutOrNull(WriteQueue.UNDO_MILLIS) {
+            host.showSnackbar(message, actionLabel = undo, duration = SnackbarDuration.Indefinite)
+        }
         if (result == SnackbarResult.ActionPerformed) writes.onUndo(offer.key) else writes.onUndoGone(offer.key)
     }
 }

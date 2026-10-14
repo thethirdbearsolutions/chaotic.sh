@@ -172,8 +172,8 @@ private fun committed(offset: Float, width: Int, swipeRight: Swipe?, swipeLeft: 
 
 /**
  * A row that slides sideways to reveal [swipeRight] or [swipeLeft], and
- * runs it (with a haptic tick) when let go far enough; it springs back
- * either way. Both are also accessibility actions, so a screen reader
+ * runs it (with a haptic tick) when let go far enough; otherwise it
+ * springs back. Both are also accessibility actions, so a screen reader
  * can approve or reject without a swipe.
  */
 @Composable
@@ -204,13 +204,21 @@ private fun SwipeRow(swipeRight: Swipe?, swipeLeft: Swipe?, content: @Composable
                 .draggable(
                     state = drag,
                     orientation = Orientation.Horizontal,
-                    enabled = swipes.isNotEmpty(),
+                    // Always on, even with nothing to reveal: a sideways drag
+                    // is then taken by the row and goes nowhere, rather than
+                    // ending as a tap that opens the issue.
                     onDragStopped = {
-                        committed(offset, width, swipeRight, swipeLeft)?.let { swipe ->
+                        val swipe = committed(offset, width, swipeRight, swipeLeft)
+                        if (swipe == null) {
+                            animate(offset, 0f) { value, _ -> offset = value }
+                        } else {
+                            // Back in place before the action: a committed row
+                            // leaves the list, or a dialog covers it, and an
+                            // animation running under a dialog never settles.
+                            offset = 0f
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             swipe.run()
                         }
-                        animate(offset, 0f) { value, _ -> offset = value }
                     },
                 ),
         ) { content() }
