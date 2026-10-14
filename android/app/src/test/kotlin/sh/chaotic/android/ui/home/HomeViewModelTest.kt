@@ -41,6 +41,7 @@ import kotlin.test.assertEquals
 class HomeViewModelTest {
     private val remote = FakeRemote()
     private lateinit var database: ChaoticDatabase
+    private lateinit var syncer: InboxSyncer
 
     @Before
     fun setUp() {
@@ -63,11 +64,12 @@ class HomeViewModelTest {
         val sessions = testSessions(ADA)
         sessions.load()
         val cache = CacheSession(RoomCacheStore(database.cache())) { sessions.cacheOwner() }
+        syncer = InboxSyncer(remote, cache)
         return HomeViewModel(
             sessions = sessions,
             savedState = SavedStateHandle(),
             dao = database.cache(),
-            syncer = InboxSyncer(remote, cache),
+            syncer = syncer,
             refresher = CacheRefresher(remote, cache),
             trigger = SyncTrigger(),
         )
@@ -84,7 +86,9 @@ class HomeViewModelTest {
         val home = viewModel()
 
         val first = launch(Dispatchers.Default) { home.runWhileVisible() }
-        waitFor { remote.sinceSent.size == 1 }
+        // A run that has finished, not one whose request is out: cancelled
+        // mid-write, the poll would never have scheduled its next run (CHT-1663).
+        waitFor { syncer.lastSyncedAtMillis.value != null }
         first.cancelAndJoin()
 
         // Back from an issue a moment later: no sync, no team list.
