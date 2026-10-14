@@ -27,9 +27,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from oxyde import atomic
 
 from app.config import get_settings
+from app.db.transactions import atomic
 from app.enums import InboxEntryKind, TeamRole
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.oxyde_models.inbox import OxydeInboxEntry
@@ -179,10 +179,27 @@ class TestEncryption:
         assert one != two  # a fresh salt and ephemeral key each time
         assert phone.decrypt(one) == phone.decrypt(two) == b'{"hello":"world"}'
 
-    def test_a_message_must_fit_one_record(self):
+    def test_the_body_must_fit_4096_bytes(self):
+        """RFC 8291 section 4 bounds the whole body, header included: 86
+        bytes of header, the delimiter and the tag leave 3993."""
         phone = Phone()
+        assert len(push_sender.encrypt(b"x" * 3993, phone.p256dh, phone.auth)) == 4096
         with pytest.raises(ValueError):
-            push_sender.encrypt(b"x" * 4096, phone.p256dh, phone.auth)
+            push_sender.encrypt(b"x" * 3994, phone.p256dh, phone.auth)
+
+    def test_urandom_only_for_the_salt(self):
+        """The log-redaction guard allowlists os.urandom for this whole
+        file (PR #357 review, finding 12); this keeps it to the salt."""
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(push_sender))
+        users = {
+            fn.name for fn in ast.walk(tree) if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Attribute) and node.attr == "urandom"
+        }
+        assert users == {"_salt"}
 
 
 class TestVapid:
@@ -212,13 +229,20 @@ class TestVapid:
         push_sender.vapid_authorization("https://third.example", now=1_000_000 + 30 * 3600)
         assert {aud for _, aud in push_sender._vapid_tokens} == {"https://third.example"}
 
-    def test_subject_is_the_https_base_url(self, monkeypatch):
+    @pytest.mark.parametrize("env, expected", [
+        ({"APP_BASE_URL": "https://chaotic.example.org/"}, "https://chaotic.example.org"),
+        ({"APP_BASE_URL": "http://localhost:24267"}, None),
+        ({"VAPID_SUBJECT": "mailto:ops@example.org", "APP_BASE_URL": "https://c.example"}, "mailto:ops@example.org"),
+        ({"VAPID_SUBJECT": "ops@example.org", "APP_BASE_URL": "https://c.example"}, "https://c.example"),
+    ])
+    def test_subject(self, monkeypatch, env, expected):
         push_sender._vapid_tokens.clear()
-        monkeypatch.setenv("APP_BASE_URL", "https://chaotic.example.org/")
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
         get_settings.cache_clear()
         try:
             token = push_sender.vapid_authorization("https://a.example", now=5).split("t=")[1].split(",")[0]
-            assert json.loads(_unb64(token.split(".")[1]))["sub"] == "https://chaotic.example.org"
+            assert json.loads(_unb64(token.split(".")[1])).get("sub") == expected
         finally:
             get_settings.cache_clear()
             push_sender._vapid_tokens.clear()
@@ -325,6 +349,23 @@ class TestDelivery:
         await push_sender.drain()
         assert phone.read(push.requests[0])["kind"] == "push_device_added"
 
+    async def test_device_added_notice_ignores_a_stored_off(self, push, test_user, test_team):
+        """A row turning it off (written before this rule, or by hand)
+        does not mute it (PR #357 review, finding 4)."""
+        from app.oxyde_models.push import OxydePushPreference
+
+        await OxydePushPreference.objects.create(
+            user_id=test_user.id, kind=InboxEntryKind.PUSH_DEVICE_ADDED, enabled=False,
+        )
+        phone = Phone()
+        await PushService().register(
+            test_user.id, "inst-1",
+            push_service.Registration(endpoint=ENDPOINT, p256dh=_b64(phone.p256dh), auth=_b64(phone.auth)),
+            holder_session_id=None, credential_id=None, credential_expires_at=None,
+        )
+        await push_sender.drain()
+        assert phone.read(push.requests[0])["kind"] == "push_device_added"
+
     async def test_read_entries_are_not_pushed(self, push, test_user, test_issue):
         await _device(test_user, Phone())
         entry = await OxydeInboxEntry.objects.create(
@@ -349,10 +390,27 @@ class TestAfterCommit:
             await InboxService().notify_assignment(
                 issue=test_issue, project=test_project, assignee_id=test_user.id, assigned_by=test_user2,
             )
-            await push_sender.asyncio.sleep(0.1)
-            assert push.requests == []
+            await push_sender.drain()
+            assert push.requests == [] and not push_sender._tasks
         await push_sender.drain()
         assert len(push.requests) == 1
+
+    async def test_one_dispatch_per_transaction(
+        self, push, monkeypatch, test_user, test_user2, test_issue, test_project,
+    ):
+        """PR #357 review, finding 8: many writes, one task."""
+        await _device(test_user, Phone())
+        spawned = []
+        real = push_sender._spawn
+        monkeypatch.setattr(push_sender, "_spawn", lambda coro: (spawned.append(1), real(coro)))
+        async with atomic():
+            for _ in range(20):
+                await InboxService().notify_assignment(
+                    issue=test_issue, project=test_project, assignee_id=test_user.id, assigned_by=test_user2,
+                )
+        await push_sender.drain()
+        assert len(spawned) == 1
+        assert len(push.requests) == 20
 
     async def test_a_rolled_back_entry_is_not_sent(
         self, push, test_user, test_user2, test_issue, test_project,
@@ -385,24 +443,52 @@ class TestAfterCommit:
         await push_sender.drain()
         assert push.requests == []
 
-    async def test_writer_transaction_that_never_ends(self, monkeypatch):
-        monkeypatch.setattr(push_sender, "COMMIT_WAIT_SECONDS", 0.05)
+    async def test_slow_commit_on_a_pool(
+        self, push, monkeypatch, test_user, test_user2, test_issue, test_project,
+    ):
+        """PR #357 review, finding 1: with several connections a reader
+        does not wait for a commit in progress. Nothing may be read, and
+        nothing skipped, until the commit has returned."""
+        import oxyde.db.transaction as oxyde_tx
+        from oxyde import AsyncDatabase, PoolSettings, disconnect_all
 
-        class Open:
-            id = 7
+        await _device(test_user, Phone())
+        url = os.environ["DATABASE_URL"].replace("sqlite+aiosqlite://", "sqlite://")
+        await disconnect_all()
+        pool = AsyncDatabase(url, overwrite=True, settings=PoolSettings(max_connections=4))
+        await pool.connect()
+        real_commit = oxyde_tx._commit_transaction
 
-        assert await push_sender._wait_for_commit(Open()) is False
-        assert await push_sender._wait_for_commit(None) is True
+        async def slow_commit(tx_id):
+            await push_sender.asyncio.sleep(1.5)
+            await real_commit(tx_id)
 
-    async def test_timeout_skips_delivery(self, push, monkeypatch, caplog):
-        async def never(tx):
-            return False
+        monkeypatch.setattr(oxyde_tx, "_commit_transaction", slow_commit)
+        async with atomic():
+            await InboxService().notify_assignment(
+                issue=test_issue, project=test_project, assignee_id=test_user.id, assigned_by=test_user2,
+            )
+        await push_sender.drain()
+        assert len(push.requests) == 1
 
-        monkeypatch.setattr(push_sender, "_wait_for_commit", never)
-        await push_sender._deliver_created(["x"], None)
-        await push_sender._deliver_resolved([("x", "u", "entry:x")], None)
+    async def test_a_plain_oxyde_transaction_is_refused(
+        self, push, test_user, test_user2, test_issue, test_project,
+    ):
+        """Registering inside oxyde.atomic() cannot be honoured; it is
+        logged (and fails the test through conftest's handler)."""
+        import oxyde
+
+        from . import conftest
+
+        await _device(test_user, Phone())
+        async with oxyde.atomic():
+            await InboxService().notify_assignment(
+                issue=test_issue, project=test_project, assignee_id=test_user.id, assigned_by=test_user2,
+            )
+        await push_sender.drain()
         assert push.requests == []
-        assert caplog.text.count("did not end") == 2
+        assert any("Failed to schedule push notifications" in e for e in conftest.push_errors)
+        conftest.push_errors.clear()
 
 
 class TestResolved:
@@ -483,8 +569,15 @@ class TestResolved:
     async def test_an_entry_deleted_outright_is_still_withdrawn(self, push, test_user):
         phone = Phone()
         await _device(test_user, phone)
-        await push_sender._deliver_resolved([("gone-id", test_user.id, "entry:gone-id")], None)
+        await push_sender._deliver_resolved([("gone-id", test_user.id, "entry:gone-id")])
         assert phone.read(push.requests[0])["id"] == "gone-id"
+
+    async def test_an_entry_deleted_before_delivery_is_skipped(self, push, test_user, caplog):
+        await _device(test_user, Phone())
+        with caplog.at_level("INFO", logger="app.services.push_sender"):
+            await push_sender._deliver_created(["gone-id"])
+        assert push.requests == []
+        assert "no longer exists" in caplog.text
 
 
 class TestAnswers:
@@ -522,11 +615,69 @@ class TestAnswers:
         assert len(push.requests) == 1
         assert (await OxydePushDevice.objects.get(id=device.id)).failure_count == 1
 
-    def test_retry_after_is_capped(self):
-        long = httpx.Response(429, headers={"Retry-After": "3600"})
-        assert push_sender._retry_after(long, 1.0) == push_sender.MAX_RETRY_AFTER_SECONDS
-        assert push_sender._retry_after(httpx.Response(503), 2.5) == 2.5
-        assert push_sender._retry_after(None, 2.5) == 2.5
+    async def test_a_long_retry_after_is_not_retried(self, push, test_user, test_user2, test_issue, test_project):
+        device = await self._send(
+            push, test_user, test_user2, test_issue, test_project, (429, {"Retry-After": "3600"}),
+        )
+        assert len(push.requests) == 1
+        assert (await OxydePushDevice.objects.get(id=device.id)).failure_count == 1
+
+    async def test_retry_waits_at_least_retry_after(self, push, test_user, test_user2, test_issue, test_project):
+        started = push_sender.time.monotonic()
+        await self._send(push, test_user, test_user2, test_issue, test_project, (503, {"Retry-After": "1"}), 201)
+        assert len(push.requests) == 2
+        assert push_sender.time.monotonic() - started >= 1.0
+
+    def test_retry_after_forms(self):
+        now = datetime(2026, 10, 14, 12, 0, 0, tzinfo=timezone.utc)
+
+        def asked(value):
+            return push_sender.retry_after(httpx.Response(429, headers={"Retry-After": value}), now=now)
+
+        assert asked("120") == 120.0
+        assert asked("Wed, 14 Oct 2026 12:00:45 GMT") == 45.0
+        assert asked("Wed, 14 Oct 2026 11:00:00 GMT") == 0.0
+        assert asked("soon") is None
+        assert push_sender.retry_after(httpx.Response(503)) is None
+        assert push_sender.retry_after(None) is None
+
+    async def test_one_bad_device_does_not_stop_the_others(
+        self, push, test_user, test_user2, test_issue, test_project,
+    ):
+        """PR #357 review, finding 7: an unusable stored key fails that
+        device alone, and counts."""
+        good = await _device(test_user, Phone())
+        bad = await _device(
+            test_user, Phone(), endpoint="https://ntfy.example.net/other", p256dh=_b64(b"\x04" + b"\x01" * 64),
+        )
+        await _assign(test_issue, test_project, test_user, test_user2)
+        from . import conftest
+
+        assert any("Push to device" in e for e in conftest.push_errors)
+        conftest.push_errors.clear()
+        assert len(push.requests) == 1
+        assert (await OxydePushDevice.objects.get(id=good.id)).last_success_at is not None
+        assert (await OxydePushDevice.objects.get(id=bad.id)).failure_count == 1
+
+    async def test_next_address_on_connect_error(
+        self, push, fake_dns, test_user, test_user2, test_issue, test_project,
+    ):
+        fake_dns["ntfy.example.net"] = ["2606:4700::6810:84e5", PUBLIC_IP]
+        push.answers = [httpx.ConnectError("no route"), 201]
+        await _device(test_user, Phone())
+        await _assign(test_issue, test_project, test_user, test_user2)
+        assert [r.url.host for r in push.requests] == ["2606:4700::6810:84e5", PUBLIC_IP]
+
+    def test_ca_bundle_from_the_environment(self, monkeypatch):
+        import ssl
+
+        import certifi
+
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+        assert push_sender._verify() is True
+        monkeypatch.setenv("SSL_CERT_FILE", certifi.where())
+        assert isinstance(push_sender._verify(), ssl.SSLContext)
 
 
 class TestLiveDevicesOnly:
@@ -568,25 +719,96 @@ class TestLiveDevicesOnly:
         await self._nothing_sent(push, test_user, test_user2, test_issue, test_project)
         assert await OxydePushDevice.objects.filter(credential_id=key.id).count() == 1  # the window CHT-1627 names
 
+    async def _session(self, test_team, principal, holder, **fields):
+        """A holder session acting as ``principal``: a human one, as the
+        app's own session will be (CHT-1602), built by hand."""
+        from app.enums import HolderVia
+        from app.oxyde_models.oauth import OxydeHolderSession
+
+        later = datetime.now(timezone.utc) + timedelta(days=1)
+        values = dict(
+            team_id=test_team.id, principal_user_id=principal.id, holder_user_id=holder.id,
+            via=HolderVia.GRANTEE_CREDENTIAL, resource="https://chaotic.example/mcp",
+            idle_expires_at=later, absolute_expires_at=later,
+        )
+        values.update(fields)
+        return await OxydeHolderSession.objects.create(**values)
+
+    async def _live_then(self, push, session, change, test_user, test_user2, test_issue, test_project):
+        from app.oxyde_models.oauth import OxydeHolderSession
+
+        await _device(test_user, Phone(), holder_session_id=session.id)
+        await _assign(test_issue, test_project, test_user, test_user2)
+        assert len(push.requests) == 1
+        push.requests.clear()
+        await change()
+        await self._nothing_sent(push, test_user, test_user2, test_issue, test_project)
+        assert await OxydeHolderSession.objects.filter(id=session.id).count() == 1
+
     @pytest.mark.parametrize("field", ["revoked_at", "idle_expires_at", "absolute_expires_at"])
     async def test_revoked_or_expired_session(
-        self, field, monkeypatch, push, test_team, test_user, test_user2, test_issue, test_project,
+        self, field, push, test_team, test_user, test_user2, test_issue, test_project,
     ):
         from app.oxyde_models.oauth import OxydeHolderSession
 
+        session = await self._session(test_team, test_user, test_user)
+
+        async def change():
+            await OxydeHolderSession.objects.filter(id=session.id).update(
+                **{field: datetime.now(timezone.utc) - timedelta(seconds=1)},
+            )
+
+        await self._live_then(push, session, change, test_user, test_user2, test_issue, test_project)
+
+    async def test_session_claim_key_revoked(self, push, test_team, test_user, test_user2, test_issue, test_project):
+        """The resolver refuses a session whose claiming key died; so does
+        the sender (PR #357 review, finding 2)."""
+        key, _ = await APIKeyService().create(test_user.id, APIKeyCreate(name="claim"))
+        session = await self._session(test_team, test_user, test_user, credential_id=key.id)
+
+        async def change():
+            await OxydeAPIKey.objects.filter(id=key.id).update(is_active=False)
+
+        await self._live_then(push, session, change, test_user, test_user2, test_issue, test_project)
+
+    async def test_session_holder_left_the_team(
+        self, push, test_team, test_user, test_user2, test_issue, test_project,
+    ):
+        session = await self._session(test_team, test_user, test_user)
+
+        async def change():
+            await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=test_user.id).delete()
+
+        await self._live_then(push, session, change, test_user, test_user2, test_issue, test_project)
+
+    async def test_session_holder_inactive(self, push, test_team, test_user, test_user2, test_issue, test_project):
+        from app.oxyde_models.oauth import OxydeHolderSession
+
+        holder = test_user2
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=holder.id, role=TeamRole.MEMBER)
+        session = await self._session(test_team, test_user, holder)
+        await _device(test_user, Phone(), holder_session_id=session.id)
+        await OxydeUser.objects.filter(id=holder.id).update(is_active=False)
+        await self._nothing_sent(push, test_user, test_user2, test_issue, test_project)
+        assert await OxydeHolderSession.objects.filter(id=session.id).count() == 1
+
+    async def test_a_session_acting_as_someone_else(
+        self, push, monkeypatch, test_team, test_user, test_user2, test_issue, test_project,
+    ):
+        """A device belongs to the person who registered it; a device row
+        bound to a session acting as someone else (an agent the person
+        holds) gets nothing."""
         from .oauth_tokens import connector_token, enable_oauth, make_agent
 
         enable_oauth(monkeypatch)
         agent = await make_agent(test_team, test_user)
         issued = await connector_token(agent, test_team, test_user)
         await _device(test_user, Phone(), holder_session_id=issued.holder_session_id)
-        # Live first: one push gets through.
-        await _assign(test_issue, test_project, test_user, test_user2)
-        assert len(push.requests) == 1
-        push.requests.clear()
-        await OxydeHolderSession.objects.filter(id=issued.holder_session_id).update(
-            **{field: datetime.now(timezone.utc) - timedelta(seconds=1)},
-        )
+        await self._nothing_sent(push, test_user, test_user2, test_issue, test_project)
+
+    async def test_someone_elses_key(self, push, test_user, test_user2, test_issue, test_project):
+        key, _ = await APIKeyService().create(test_user2.id, APIKeyCreate(name="theirs"))
+        await _device(test_user, Phone(), credential_id=key.id)
         await self._nothing_sent(push, test_user, test_user2, test_issue, test_project)
 
 
@@ -642,12 +864,16 @@ class TestFailSoft:
         assert "Failed to schedule push notifications" in caplog.text
         assert "Failed to schedule push withdrawals" in caplog.text
 
-    async def test_delivery_errors_are_logged(self, monkeypatch, caplog):
+    async def test_delivery_errors_are_logged(self, db, monkeypatch):
+        from . import conftest
+
         async def boom(*args, **kwargs):
             raise RuntimeError("db down")
 
-        monkeypatch.setattr(push_sender, "_read_back", boom)
-        await push_sender._deliver_created(["x"], None)
-        await push_sender._deliver_resolved([("x", "u", "c")], None)
-        assert "Push delivery failed" in caplog.text
-        assert "Push withdrawal failed" in caplog.text
+        monkeypatch.setattr(push_sender, "_send_all", boom)
+        await push_sender._deliver_created([])
+        await push_sender._deliver_resolved([("x", "u", "c")])
+        errors = list(conftest.push_errors)
+        conftest.push_errors.clear()
+        assert any("Push delivery failed" in e for e in errors)
+        assert any("Push withdrawal failed" in e for e in errors)

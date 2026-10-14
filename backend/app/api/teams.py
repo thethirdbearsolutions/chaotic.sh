@@ -15,7 +15,7 @@ from app.schemas.team import (
     TeamInvitationResponse,
 )
 from app.config import get_settings
-from oxyde import atomic
+from app.db.transactions import atomic
 from app.oxyde_models.team import OxydeTeamMember
 from app.services.agent_service import AgentService
 from app.services.team_service import TeamService

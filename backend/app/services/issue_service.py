@@ -6,7 +6,8 @@ import logging
 import re
 import random
 from datetime import datetime, timedelta, timezone
-from oxyde import atomic, execute_raw, IntegrityError
+from oxyde import execute_raw, IntegrityError
+from app.db.transactions import atomic
 from oxyde.db.transaction import get_active_transaction
 
 logger = logging.getLogger(__name__)

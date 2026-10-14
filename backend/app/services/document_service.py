@@ -4,7 +4,8 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 import logging
 from datetime import datetime, timezone
-from oxyde import atomic, execute_raw, IntegrityError
+from oxyde import execute_raw, IntegrityError
+from app.db.transactions import atomic
 
 logger = logging.getLogger(__name__)
 from app.oxyde_models.document import (

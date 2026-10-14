@@ -42,7 +42,8 @@ from datetime import datetime, timedelta, timezone
 
 import unicodedata
 
-from oxyde import IntegrityError, atomic, execute_raw
+from oxyde import IntegrityError, execute_raw
+from app.db.transactions import atomic
 from oxyde.db.transaction import get_active_transaction
 
 from app.config import get_settings

@@ -503,6 +503,38 @@ class TestVapid:
         assert response.json()["detail"]["error_code"] == "push_misconfigured"
 
 
+class TestDeviceAddedIsAlwaysPushed:
+    """PR #357 review, finding 4: a stolen credential must not be able to
+    mute the notice of the device it is about to add."""
+
+    async def test_patch_refuses_turning_it_off(self, client, test_user, auth_headers):
+        response = await client.patch(
+            "/api/push/preferences", json={"kinds": {"push_device_added": False, "mention": False}},
+            headers=auth_headers,
+        )
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"]["error_code"] == "push_kind_required"
+        kinds = (await client.get("/api/push/preferences", headers=auth_headers)).json()["kinds"]
+        assert kinds["push_device_added"] is True
+        assert kinds["mention"] is True  # nothing in the refused request applied
+        assert await OxydePushPreference.objects.count() == 0
+
+    async def test_turning_it_on_is_accepted_and_stores_nothing(self, client, auth_headers):
+        response = await client.patch(
+            "/api/push/preferences", json={"kinds": {"push_device_added": True}}, headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["kinds"]["push_device_added"] is True
+        assert await OxydePushPreference.objects.count() == 0
+
+    async def test_a_stored_off_is_ignored(self, test_user):
+        await OxydePushPreference.objects.create(
+            user_id=test_user.id, kind=InboxEntryKind.PUSH_DEVICE_ADDED, enabled=False,
+        )
+        assert await PushService().wants(test_user.id, InboxEntryKind.PUSH_DEVICE_ADDED)
+        assert (await PushService().preferences(test_user.id))[InboxEntryKind.PUSH_DEVICE_ADDED] is True
+
+
 async def test_preference_insert_race_is_the_later_write(test_user, monkeypatch):
     """A concurrent PATCH created the row between this one's UPDATE and
     INSERT: the INSERT's unique violation becomes an UPDATE."""

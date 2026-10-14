@@ -1,7 +1,7 @@
 """API Key routes."""
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
-from oxyde import atomic
+from app.db.transactions import atomic
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, can_manage_agent, get_api_key_record
 from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated

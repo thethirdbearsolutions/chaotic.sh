@@ -148,6 +148,10 @@ class Settings(BaseSettings):
     # GET /api/push/vapid-public-key; changing it means devices register
     # again.
     vapid_private_key: str = ""
+    # VAPID's `sub` claim (RFC 8292): how a push service reaches whoever
+    # runs this server, `mailto:` or `https:`. Empty: APP_BASE_URL when it
+    # is https, else none (RFC 8292 says SHOULD; some services require it).
+    vapid_subject: str = ""
     # The server POSTs to every registered push endpoint, so by default an
     # endpoint must be an https URL whose host resolves only to public
     # addresses (SSRF). True also accepts loopback, private and link-local

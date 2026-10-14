@@ -4,7 +4,7 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 import logging
 import uuid
-from oxyde import atomic
+from app.db.transactions import atomic
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.oxyde_models.document import (

@@ -39,7 +39,8 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from oxyde import IntegrityError, atomic, execute_raw
+from oxyde import IntegrityError, execute_raw
+from app.db.transactions import atomic
 
 from app.config import get_settings
 from app.enums import OAuthClientRegistration

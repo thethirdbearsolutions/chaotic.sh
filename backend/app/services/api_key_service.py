@@ -8,7 +8,7 @@ import hmac
 import logging
 from datetime import datetime, timedelta, timezone
 
-from oxyde import atomic
+from app.db.transactions import atomic
 
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.schemas.api_key import APIKeyCreate

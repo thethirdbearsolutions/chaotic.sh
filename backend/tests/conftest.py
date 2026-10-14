@@ -3,6 +3,7 @@
 Uses Oxyde ORM for all database operations. Each test gets a fresh
 file-based SQLite database to ensure isolation.
 """
+import logging
 import os
 
 # Before anything imports app.config: a bcrypt cost of 4 instead of the
@@ -100,6 +101,19 @@ def _copy_database(src: str, dst: str) -> None:
         source.backup(target)
 
 
+_PUSH_LOGGERS = ("app.services.push_sender", "app.db.transactions")
+# ERROR records from those loggers during the current test.
+push_errors: list[str] = []
+
+
+class _PushErrorHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        push_errors.append(f"{record.name}: {record.getMessage()}")
+
+
+_push_error_handler = _PushErrorHandler(level=logging.ERROR)
+
+
 @pytest_asyncio.fixture
 async def db(tmp_path, schema_template):
     """Initialize Oxyde with a fresh temp database for each test: a copy of
@@ -156,12 +170,26 @@ async def db(tmp_path, schema_template):
     import httpx
     from app.services import push_sender
     push_sender._transport = httpx.MockTransport(lambda request: httpx.Response(201))
+    # The push path and on-commit callbacks never raise into a request;
+    # they log. Any ERROR they log fails the test that caused it, so a
+    # bug there cannot hide behind a passing test (PR #357 review,
+    # finding 6). A test that means to cause one clears push_errors.
+    push_errors.clear()
+    for name in _PUSH_LOGGERS:
+        logging.getLogger(name).addHandler(_push_error_handler)
 
     yield None
 
     # Deliveries still in flight finish against this database, not the next.
-    await push_sender.drain()
-    push_sender._transport = None
+    try:
+        await push_sender.drain()
+    finally:
+        push_sender._transport = None
+        for name in _PUSH_LOGGERS:
+            logging.getLogger(name).removeHandler(_push_error_handler)
+    errors = list(push_errors)
+    push_errors.clear()
+    assert not errors, f"the push path logged errors: {errors}"
 
     # Restore original create
     QueryManager.create = _original_create

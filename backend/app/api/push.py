@@ -144,8 +144,13 @@ async def get_push_preferences(current_user: Person) -> PushPreferencesResponse:
 @router.patch("/preferences", response_model=PushPreferencesResponse)
 @writes
 async def update_push_preferences(body: PushPreferencesUpdate, current_user: Person) -> PushPreferencesResponse:
-    """Turn the given kinds on or off; the others stay as they are."""
-    return PushPreferencesResponse(kinds=await PushService().set_preferences(current_user.id, body.kinds))
+    """Turn the given kinds on or off; the others stay as they are.
+    push_device_added cannot be turned off (422 push_kind_required)."""
+    try:
+        kinds = await PushService().set_preferences(current_user.id, body.kinds)
+    except PushRegistrationError as exc:
+        raise _refusal(exc) from None
+    return PushPreferencesResponse(kinds=kinds)
 
 
 @router.get("/vapid-public-key", response_model=VapidPublicKeyResponse)

@@ -37,7 +37,8 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.asymmetric import ec
-from oxyde import IntegrityError, atomic
+from oxyde import IntegrityError
+from app.db.transactions import atomic
 
 from app.config import get_settings
 from app.enums import InboxEntryKind, PushTransport
@@ -65,6 +66,10 @@ DEFAULT_KIND_ENABLED: dict[InboxEntryKind, bool] = {
     InboxEntryKind.AGENT_STATUS: False,
     InboxEntryKind.PUSH_DEVICE_ADDED: True,
 }
+# Always pushed, whatever was chosen: the new-device notice exists to
+# catch a device registered with a stolen credential, and that credential
+# could otherwise turn the notice off first (PR #357 review, finding 4).
+ALWAYS_PUSHED: frozenset[InboxEntryKind] = frozenset({InboxEntryKind.PUSH_DEVICE_ADDED})
 
 
 class PushRegistrationError(Exception):
@@ -431,11 +436,24 @@ class PushService:
             row.kind: row.enabled
             for row in await OxydePushPreference.objects.filter(user_id=user_id).all()
         }
-        return {kind: chosen.get(kind, DEFAULT_KIND_ENABLED.get(kind, True)) for kind in InboxEntryKind}
+        return {
+            kind: kind in ALWAYS_PUSHED or chosen.get(kind, DEFAULT_KIND_ENABLED.get(kind, True))
+            for kind in InboxEntryKind
+        }
 
     async def set_preferences(self, user_id: str, changes: dict[InboxEntryKind, bool]) -> dict[InboxEntryKind, bool]:
         """Record the person's choice for each kind in ``changes``; the
-        others are left as they are. Returns every kind, as preferences()."""
+        others are left as they are. Returns every kind, as preferences().
+        Turning off a kind in ALWAYS_PUSHED is refused (422), and nothing
+        else in the request is applied."""
+        refused = sorted(k.value for k, enabled in changes.items() if k in ALWAYS_PUSHED and not enabled)
+        if refused:
+            raise PushRegistrationError(
+                "push_kind_required",
+                f"{', '.join(refused)} cannot be turned off: it is how you learn of a device "
+                "you did not add",
+            )
+        changes = {k: v for k, v in changes.items() if k not in ALWAYS_PUSHED}
         now = _now()
         async with atomic():
             for kind, enabled in changes.items():
@@ -458,5 +476,7 @@ class PushService:
     async def wants(self, user_id: str, kind: InboxEntryKind) -> bool:
         """Should an inbox entry of ``kind`` be pushed to this person? For
         the sender (CHT-1605)."""
+        if kind in ALWAYS_PUSHED:
+            return True
         row = await OxydePushPreference.objects.filter(user_id=user_id, kind=kind).first()
         return row.enabled if row is not None else DEFAULT_KIND_ENABLED.get(kind, True)

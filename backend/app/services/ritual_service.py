@@ -3,7 +3,8 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from oxyde import IntegrityError, atomic
+from oxyde import IntegrityError
+from app.db.transactions import atomic
 
 logger = logging.getLogger(__name__)
 from app.enums import (

@@ -4,7 +4,8 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 from datetime import datetime, timezone
 
-from oxyde import atomic, execute_raw
+from oxyde import execute_raw
+from app.db.transactions import atomic
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.project import OxydeProject
 from app.enums import SprintStatus

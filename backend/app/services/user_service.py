@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from app.oxyde_models.user import OxydeUser
 from app.schemas.user import UserCreate, UserUpdate
 from app.utils.security import get_password_hash, verify_password
-from oxyde import atomic
+from app.db.transactions import atomic
 from app.oxyde_models.team import OxydeTeamMember, OxydeTeamInvitation
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.services.agent_service import AgentService, describe_counts

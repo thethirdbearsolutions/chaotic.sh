@@ -464,7 +464,7 @@ async def force_clear_ticket_limbo(
 
     from app.oxyde_models.issue import OxydeIssueActivity
     from app.websocket import broadcast_activity_event
-    from oxyde import atomic
+    from app.db.transactions import atomic
 
     now = datetime.now(timezone.utc)
     canceled_payloads = []
