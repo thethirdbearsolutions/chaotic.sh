@@ -787,6 +787,7 @@ def clock(monkeypatch):
     clock = FakeClock()
     monkeypatch.setattr(ws_auth, "_gate", ws_auth._RefusalGate(clock))
     monkeypatch.setattr(ws_auth, "_refusal_log", ws_auth._RefusalLog(clock))
+    monkeypatch.setattr(ws_auth, "_check_errors", ws_auth._ErrorLog(clock))
     return clock
 
 
@@ -862,7 +863,7 @@ class TestRefusalLimits:
         monkeypatch.setattr(ws_auth, "MAX_HELD_REFUSALS", 5)
         for i in range(200):
             clock.now += ws_auth.REFUSAL_HOLD_SECONDS  # each one expires before the next
-            await refuse_from(f"2001:db8::{i:x}")
+            await refuse_from(f"2001:db8:{i:x}::1")  # a /64 each
         assert len(ws_auth._gate._by_host) <= ws_auth.MAX_HELD_REFUSALS + 1
 
     async def test_without_the_denial_extension_a_throttled_refusal_closes_before_accept(self, clock):
@@ -911,12 +912,84 @@ class TestRefusalLimits:
                 await refuse_from("198.51.100.1", code=4011, reason="Credential check failed")
             await refuse_from("198.51.100.2", code=4011, reason="Credential check failed")
             await refuse_from("198.51.100.3", code=4011, reason="Credential check failed")
+            assert len(ws_auth._refusal_log._seen) <= 2
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await refuse_from("198.51.100.4", code=4011, reason="Credential check failed")
         lines = refusal_lines(caplog)
-        assert any(
-            "2 more with code=4011 reason=Credential check failed client=198.51.100.1 as=http-503" in line
-            for line in lines
-        ), lines
-        assert len(ws_auth._refusal_log._seen) <= 2
+        assert any("2 more refusals from 1 clients not logged in the last 60s" in line for line in lines), lines
+
+    async def test_one_ipv6_64_is_one_client(self, clock, caplog):
+        """PR #360 review, M1: one IPv6 host can source from any address in
+        its /64, so the /64 is what the cap and the log limiter count.
+        1000 refusals from one /64 hold 8 sockets and write 2 lines."""
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            sockets = [await refuse_from(f"2001:db8:1:2::{i:x}") for i in range(1000)]
+        assert sum(held(ws) for ws in sockets) == ws_auth.MAX_HELD_REFUSALS_PER_CLIENT
+        lines = refusal_lines(caplog)
+        assert len(lines) == 2, lines
+        # The line still names the address the refusal came from.
+        assert "client=2001:db8:1:2::0:40000" in lines[0]
+        # Another /64 is another client.
+        assert held(await refuse_from("2001:db8:1:3::1"))
+
+    @pytest.mark.parametrize("host, key", [
+        ("198.51.100.7", "198.51.100.7"),
+        ("::ffff:198.51.100.7", "198.51.100.7"),
+        ("2001:db8:1:2:aaaa:bbbb:cccc:dddd", "2001:db8:1:2::/64"),
+        ("fe80::1%eth0", "fe80::/64"),
+        ("-", "-"),
+        ("/run/chaotic.sock", "/run/chaotic.sock"),
+    ])
+    def test_client_key(self, host, key):
+        assert ws_auth._client_key(host) == key
+
+    async def test_an_ipv4_mapped_address_shares_its_ipv4_cap(self, clock):
+        for i in range(ws_auth.MAX_HELD_REFUSALS_PER_CLIENT):
+            await refuse_from("198.51.100.7", port=40000 + i)
+        assert not held(await refuse_from("::ffff:198.51.100.7"))
+
+    async def test_many_clients_log_within_the_budget_and_one_summary(self, clock, caplog):
+        """PR #360 review, M1: a flood of distinct clients writes at most
+        REFUSAL_LOG_BUDGET lines a minute, then one summary line."""
+        budget = ws_auth.REFUSAL_LOG_BUDGET
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            for i in range(1200):
+                await refuse_from(f"2001:db8:{i:x}::1")
+            assert len(refusal_lines(caplog)) == budget
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await refuse_from("198.51.100.1")
+        lines = refusal_lines(caplog)
+        assert len(lines) == budget + 2
+        assert f"{1200 - budget} more refusals from at least {ws_auth._MAX_LOG_KEYS} clients" in lines[budget]
+        assert "client=198.51.100.1" in lines[-1]
+
+    async def test_a_known_key_over_the_budget_keeps_its_count(self, clock, caplog, monkeypatch):
+        monkeypatch.setattr(ws_auth, "REFUSAL_LOG_BUDGET", 2)
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            await refuse_from("198.51.100.1")
+            await refuse_from("198.51.100.1")  # suppressed: 1
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await refuse_from("198.51.100.2")
+            await refuse_from("198.51.100.3")
+            await refuse_from("198.51.100.1")  # over the budget: counted on its entry
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await refuse_from("198.51.100.1")
+        lines = refusal_lines(caplog)
+        assert "client=198.51.100.1" in lines[-1] and "(2 more like it not logged" in lines[-1], lines
+
+    async def test_a_failed_check_logs_one_traceback_a_minute(self, clock, caplog, test_team):
+        """PR #360 review, L2: every handshake fails during an outage, and
+        a traceback per attempt would fill the log."""
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=RuntimeError("db down"))):
+            with caplog.at_level(logging.ERROR):
+                for _ in range(20):
+                    await websocket_endpoint(FakeWebSocket(denial=True), team_id=test_team.id, token="x")
+                clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+                await websocket_endpoint(FakeWebSocket(denial=True), team_id=test_team.id, token="x")
+        errors = [r for r in caplog.records if "team validation" in r.getMessage()]
+        assert len(errors) == 2
+        assert all(r.exc_info for r in errors)
+        assert "(19 more failed checks not logged in the last 60s)" in errors[1].getMessage()
 
     async def test_a_flood_never_logs_the_credential(self, db, clock, caplog):
         secret = "ck_" + "cd" * 24

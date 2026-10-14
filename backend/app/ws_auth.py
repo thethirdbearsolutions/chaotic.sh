@@ -74,6 +74,7 @@ message has arrived (``WS_OPEN_SETTLE_MS``, ``frontend/src/ws.js``).
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import math
 import time
@@ -123,6 +124,23 @@ def _client_host(websocket) -> str:
     return "-" if client is None else str(client[0])
 
 
+def _client_key(host: str) -> str:
+    """What the refusal caps and the log limiter count a client by
+    (PR #360 review, M1): an IPv4 address, or the /64 an IPv6 address is
+    in, since one IPv6 host can usually source from any address in its
+    /64. An IPv4-mapped IPv6 address counts as its IPv4 address; anything
+    that is not an IP address (no address known, a socket path) as is."""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    if ip.version == 4:
+        return str(ip)
+    if ip.ipv4_mapped is not None:
+        return str(ip.ipv4_mapped)
+    return str(ipaddress.IPv6Network((int(ip) >> 64 << 64, 64)))
+
+
 # How long a refused handshake can hold its connection: uvicorn's
 # websockets implementations wait this long for the client to answer the
 # close frame (``close_timeout``, hard-coded, not configurable) before
@@ -130,19 +148,25 @@ def _client_host(websocket) -> str:
 # once; this is the bound for one that does not (CHT-1635).
 REFUSAL_HOLD_SECONDS = 10.0
 # At most this many refusals that hold a connection (accept, then close)
-# per client address, and in all, within REFUSAL_HOLD_SECONDS. Past
-# either cap a refusal is an HTTP 429 on the handshake, which drops the
-# connection at once: so no client address holds more than
-# MAX_HELD_REFUSALS_PER_CLIENT connections open through refusals, and
-# the server no more than MAX_HELD_REFUSALS (CHT-1635).
+# per client (an IPv4 address or an IPv6 /64, ``_client_key``), and in
+# all, within REFUSAL_HOLD_SECONDS, in each server process. Past either
+# cap a refusal is an HTTP 429 on the handshake, which drops the
+# connection at once: so no client holds more than
+# MAX_HELD_REFUSALS_PER_CLIENT connections open through refusals, and a
+# process no more than MAX_HELD_REFUSALS (CHT-1635).
 MAX_HELD_REFUSALS_PER_CLIENT = 8
 MAX_HELD_REFUSALS = 256
 # A refusal is logged at most once per this many seconds for each
-# (client address, code, reason); the next line that is logged says how
+# (client, code, reason, outcome); the next line that is logged says how
 # many were not (CHT-1635).
 REFUSAL_LOG_INTERVAL_SECONDS = 60.0
-# How many (client, code, reason) keys the log limiter remembers. Past
-# it, the oldest is forgotten (and its suppressed count logged).
+# And no more than this many refusal lines in all per
+# REFUSAL_LOG_INTERVAL_SECONDS: past it, refusals are counted into one
+# summary line, written with the first refusal of the next interval
+# (PR #360 review, M1).
+REFUSAL_LOG_BUDGET = 100
+# How many keys the log limiter remembers. Past it, the oldest is
+# forgotten, and its suppressed count goes into the summary.
 _MAX_LOG_KEYS = 1024
 # Retry-After on a 503 for a failed check, and the floor of one on a 429.
 RETRY_AFTER_SECONDS = 5
@@ -153,10 +177,10 @@ _DENIAL_EXTENSION = "websocket.http.response"
 class _RefusalGate:
     """Counts the refusals that hold a connection (``refuse`` accepts the
     handshake, then closes it, and the server waits up to
-    REFUSAL_HOLD_SECONDS for the client's answer), per client address and
-    in all, over the last REFUSAL_HOLD_SECONDS. Monotonic clock; memory
-    is bounded by MAX_HELD_REFUSALS, since an address with no refusal in
-    the window is forgotten."""
+    REFUSAL_HOLD_SECONDS for the client's answer), per client
+    (``_client_key``) and in all, over the last REFUSAL_HOLD_SECONDS.
+    Monotonic clock; memory is bounded by MAX_HELD_REFUSALS, since a
+    client with no refusal in the window is forgotten."""
 
     def __init__(self, clock=time.monotonic):
         self._clock = clock
@@ -172,9 +196,9 @@ class _RefusalGate:
                 del self._by_host[host]
 
     def admit(self, host: str) -> float | None:
-        """Record a held refusal for ``host`` and return None, or, when a
-        cap is reached, record nothing and return how many seconds until
-        one frees up."""
+        """Record a held refusal for ``host`` (a ``_client_key``) and
+        return None, or, when a cap is reached, record nothing and return
+        how many seconds until one frees up."""
         now = self._clock()
         self._prune(now)
         horizon = now - REFUSAL_HOLD_SECONDS
@@ -194,23 +218,61 @@ class _RefusalGate:
 
 
 class _RefusalLog:
-    """Logs the refusal lines, at most one per REFUSAL_LOG_INTERVAL_SECONDS
-    for each (client address, code, reason, outcome), so a flood cannot
-    fill the log: the first line for each key is always written, the rest
-    are counted, and the count goes out with the key's next line, or as a
-    line of its own when the key is forgotten to make room."""
+    """Logs the refusal lines so a flood cannot fill the log.
+
+    At most one line per REFUSAL_LOG_INTERVAL_SECONDS for each (client,
+    code, reason, outcome): the first is written, the rest are counted,
+    and the count goes out with the key's next line. And at most
+    REFUSAL_LOG_BUDGET lines in all per interval: past it, a refusal
+    whose key has no line yet, and the count of a key forgotten to make
+    room, go into one summary line ("N more refusals from M clients not
+    logged"), written with the first refusal after the interval ends. A
+    flood from many clients therefore writes the first line of the
+    first REFUSAL_LOG_BUDGET of them and one summary a minute."""
 
     def __init__(self, clock=time.monotonic):
         self._clock = clock
         # key -> [when last logged, how many suppressed since]
         self._seen: dict[tuple, list] = {}
+        self._window_start: float | None = None
+        self._lines = 0
+        self._unlogged = 0
+        self._unlogged_clients: set[str] = set()
+
+    def _roll(self, now: float) -> None:
+        if self._window_start is not None and now - self._window_start < REFUSAL_LOG_INTERVAL_SECONDS:
+            return
+        if self._unlogged:
+            logger.warning(
+                "Refused /ws handshake: %d more refusals from %s%d clients not logged in the last %ds",
+                self._unlogged,
+                "at least " if len(self._unlogged_clients) >= _MAX_LOG_KEYS else "",
+                len(self._unlogged_clients), int(now - self._window_start),
+            )
+        self._window_start = now
+        self._lines = 0
+        self._unlogged = 0
+        self._unlogged_clients = set()
+
+    def _count_unlogged(self, client: str, refusals: int) -> None:
+        self._unlogged += refusals
+        if len(self._unlogged_clients) < _MAX_LOG_KEYS:
+            self._unlogged_clients.add(client)
 
     def log(self, key: tuple, message: str, *args) -> None:
         now = self._clock()
+        self._roll(now)
         entry = self._seen.get(key)
         if entry is not None and now - entry[0] < REFUSAL_LOG_INTERVAL_SECONDS:
             entry[1] += 1
             return
+        if self._lines >= REFUSAL_LOG_BUDGET:
+            if entry is not None:
+                entry[1] += 1  # goes out with this key's next line
+            else:
+                self._count_unlogged(key[0], 1)
+            return
+        self._lines += 1
         suppressed = entry[1] if entry is not None else 0
         if entry is not None:
             del self._seen[key]  # re-inserted below, as the newest
@@ -227,24 +289,55 @@ class _RefusalLog:
         if not expired:
             expired = [next(iter(self._seen))]  # the oldest
         for key in expired:
-            when, suppressed = self._seen.pop(key)
+            _, suppressed = self._seen.pop(key)
             if suppressed:
-                host, code, reason, outcome = key
-                logger.warning(
-                    "Refused /ws handshake: %d more with code=%s reason=%s client=%s as=%s not logged in the last %ds",
-                    suppressed, code, reason, host, outcome, int(now - when),
-                )
+                self._count_unlogged(key[0], suppressed)
+
+
+class _ErrorLog:
+    """A failed credential check logs its traceback at most once per
+    REFUSAL_LOG_INTERVAL_SECONDS (PR #360 review, L2): during a database
+    outage every handshake and every open socket's re-check fails, and
+    one traceback per attempt would fill the log. The next one logged
+    says how many were not."""
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._last: float | None = None
+        self._suppressed = 0
+
+    def exception(self, log: logging.Logger, message: str, *args) -> None:
+        """``log.exception(message, *args)``, rate-limited; call it from an
+        ``except`` block."""
+        now = self._clock()
+        if self._last is not None and now - self._last < REFUSAL_LOG_INTERVAL_SECONDS:
+            self._suppressed += 1
+            return
+        if self._suppressed:
+            message += " (%d more failed checks not logged in the last %ds)"
+            args = (*args, self._suppressed, int(now - self._last))
+        self._last = now
+        self._suppressed = 0
+        log.exception(message, *args)
 
 
 _gate = _RefusalGate()
 _refusal_log = _RefusalLog()
+_check_errors = _ErrorLog()
+
+
+def log_check_error(log: logging.Logger, message: str, *args) -> None:
+    """Log a failed credential check with its traceback, rate-limited
+    (``_ErrorLog``). Call it from the ``except`` block."""
+    _check_errors.exception(log, message, *args)
 
 
 def reset_refusal_limits() -> None:
-    """Forget every refusal counted so far (tests)."""
-    global _gate, _refusal_log
+    """Forget every refusal and failed check counted so far (tests)."""
+    global _gate, _refusal_log, _check_errors
     _gate = _RefusalGate()
     _refusal_log = _RefusalLog()
+    _check_errors = _ErrorLog()
 
 
 def _can_deny(websocket) -> bool:
@@ -297,9 +390,13 @@ async def refuse(websocket, code: int, reason: str, team_id: str | None) -> None
       ``Retry-After`` (CHT-1635). A client that never answers the close
       frame holds its connection for the server's close timeout
       (REFUSAL_HOLD_SECONDS), where the old 403 dropped it at once, and
-      the caps bound how many such connections one address, and all of
-      them together, can hold. A browser sees 1006 and backs off; its
-      next attempt, under the cap, gets the code.
+      the caps bound how many such connections one client (an IPv4
+      address or an IPv6 /64), and all of them together, can hold in
+      this process. A browser sees 1006 and backs off; its next attempt,
+      under the cap, gets the code. While the total cap is full, every
+      refused client gets the 429, so a tab whose credential has expired
+      keeps retrying instead of signing out until the flood ends (PR #360
+      review, L1); a good credential is never refused, so never throttled.
 
     Without the ASGI denial-response extension both fall back: a 4011 is
     accepted and closed with its code (and counts against the caps), and
@@ -313,10 +410,12 @@ async def refuse(websocket, code: int, reason: str, team_id: str | None) -> None
     configures the ``app`` loggers under uvicorn's default logging, where
     only WARNING and up reach the output (PR #359 re-review, 1).
     ``team_id`` is the client's text, so it is logged quoted and cut
-    short. The line is rate-limited per client address, code, reason and
-    outcome (``_RefusalLog``, CHT-1635): the first is always logged, and a
-    later one says how many were not."""
-    host = _client_host(websocket)
+    short. The line is rate-limited (``_RefusalLog``, CHT-1635): once a
+    minute per client, code, reason and outcome, and at most
+    REFUSAL_LOG_BUDGET lines a minute in all, past which refusals are
+    folded into one summary line. uvicorn's own access lines for the
+    handshake are not limited here."""
+    host = _client_key(_client_host(websocket))
     can_deny = _can_deny(websocket)
     unavailable = code == CLOSE_INTERNAL_ERROR and can_deny
     wait = None if unavailable else _gate.admit(host)
@@ -446,5 +545,5 @@ async def watch(token: str, team_id: str, *, interval: float | None = None) -> W
         except WsRefused as exc:
             return exc
         except Exception:
-            logger.exception("WebSocket credential re-check failed for team=%s", team_id)
+            log_check_error(logger, "WebSocket credential re-check failed for team=%s", team_id)
             return WsRefused(CLOSE_INTERNAL_ERROR, "Credential check failed")

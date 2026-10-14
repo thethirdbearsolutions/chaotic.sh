@@ -100,15 +100,25 @@ CHT-1615). A failed check (a database outage, say) is an HTTP 503 with
 log shows a closed refusal as accepted; each refusal is logged on
 `app.ws_auth` (WARNING: code, reason, client address, team, how it was
 sent, never the credential), which is the line to watch for token
-guessing. That line is rate-limited: the first for each client address,
-code and reason is always written, then at most one a minute, which
-says how many were not. A client that never answers the close frame
-holds its connection for the server's close timeout (10 s), where a 403
-drops it at once, so the server caps the refusals in flight: past 8 in
-10 s from one address, or 256 in all, a refusal is an HTTP 429 with
-`Retry-After`, which drops the connection at once (CHT-1635). Behind a
-reverse proxy the address is the proxy's unless `FORWARDED_ALLOW_IPS`
-trusts it, and then every client shares the one cap. It takes the credential from an
+guessing. That line is rate-limited: the first for each client, code,
+reason and outcome is written, then at most one a minute, which says how
+many were not; and at most 100 such lines a minute in all, past which
+refusals are counted into one summary line a minute. A failed check's
+traceback is logged at most once a minute too. uvicorn's own access
+lines for each handshake (two INFO lines for a 429) are not limited, so
+a flood still grows the access log. A client that never answers the
+close frame holds its connection for the server's close timeout (10 s),
+where a 403 drops it at once, so each server process (each uvicorn
+worker) caps the refusals in flight: past 8 in 10 s from one client, or
+256 in all, a refusal is an HTTP 429 with `Retry-After`, which drops the
+connection at once (CHT-1635). A client is an IPv4 address or an IPv6
+/64. While the total cap is full, every refused client gets the 429, so
+a tab whose credential has expired keeps retrying instead of signing out
+until the flood ends; a good credential is never refused, so never
+throttled. Behind a reverse proxy the client address is taken from its
+forwarding headers only if `FORWARDED_ALLOW_IPS` trusts the proxy
+(loopback is trusted by default); an untrusted proxy makes every client
+share one cap. /ws takes the credential from an
 `Authorization: Bearer` header on the upgrade request, or from a
 `chaotic.bearer.<token>` entry in `Sec-WebSocket-Protocol` (the web app's
 way, offered beside `chaotic`), so it stays out of the URL. The old
