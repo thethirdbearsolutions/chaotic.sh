@@ -68,7 +68,8 @@ from app.db.transactions import atomic
 
 from app.enums import HolderVia, RevocationTarget, TokenKind
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeRevocationEvent
-from app.services.push_service import PushService
+from app.services import credential_events
+from app.services.credential_events import CredentialsEnded, require_revoking, revoking
 
 logger = logging.getLogger(__name__)
 
@@ -254,8 +255,13 @@ _refresh_lock = asyncio.Lock()
 
 
 class _ReuseDetected(Exception):
-    """Raised inside the refresh lock when a reuse revoked a session, so
-    the notice is written after the lock is released."""
+    """Raised inside the refresh lock when a reuse is detected, so the
+    session is revoked, and the notice written, after the lock is
+    released: the revocation runs the credential-ended hooks, and
+    neither they nor the notice may hold up every other refresh in the
+    process (PR #356 review, 3). Revoking a moment later is still safe:
+    revocation is by session, so it ends any token a rotation issued in
+    between too."""
 
     def __init__(self, session: OxydeHolderSession):
         super().__init__(session.id)
@@ -398,7 +404,7 @@ class TokenService:
         """Mark a code or ticket revoked, and revoke the session it started
         if it started one, in one transaction (the revoking UPDATE comes
         first, so it holds SQLite's write lock before reading the link)."""
-        async with atomic():
+        async with revoking():
             await OxydeAuthToken.objects.filter(id=code_id, revoked_at__isnull=True).update(revoked_at=_now())
             code = await OxydeAuthToken.objects.get_or_none(id=code_id)
             if code is not None and code.holder_session_id is not None:
@@ -588,8 +594,11 @@ class TokenService:
             async with _refresh_lock:
                 return await self._refresh_locked(digest, oauth_client_id=oauth_client_id, scopes=scopes)
         except _ReuseDetected as reuse:
-            # Outside the lock: the notice (a DB write and a broadcast)
-            # must not hold up every other refresh in the server.
+            # Outside the lock: the revocation (and its hooks) and the
+            # notice (a DB write and a broadcast) must not hold up every
+            # other refresh in the server.
+            if not await self.revoke_session(reuse.session.id, actor_id=None, reason=REASON_REFRESH_REUSE):
+                raise TokenError("invalid_grant", "this connection has been revoked") from None
             await self._notify_reuse(reuse.session)
             raise TokenError(
                 "invalid_grant", "this refresh token was already used; the connection has been revoked",
@@ -613,9 +622,7 @@ class TokenService:
             replay = await self._grace_replay(row, digest, now)
             if replay is not None:
                 return replay
-            if await self.revoke_session(session.id, actor_id=None, reason=REASON_REFRESH_REUSE):
-                raise _ReuseDetected(session)
-            raise TokenError("invalid_grant", "this connection has been revoked")
+            raise _ReuseDetected(session)
         if row.expires_at <= now or session.idle_expires_at <= now or session.absolute_expires_at <= now:
             raise TokenError("invalid_grant", "this refresh token has expired")
 
@@ -823,7 +830,9 @@ class TokenService:
         written then. Deliberately not gated on OAUTH_ENABLED: turning
         OAuth off must never stop a revocation. Every revocation of a
         session must come through here (module docstring)."""
-        async with atomic():
+        # revoking(): its push devices and sockets end with it, after the
+        # commit (CHT-1625); inside a caller's revoking() it joins that.
+        async with revoking():
             revoked = await self._revoke_session_in_tx(holder_session_id, actor_id=actor_id, reason=reason)
         _forget_grace_pairs(holder_session_id)
         return revoked
@@ -835,15 +844,18 @@ class TokenService:
         updates, writing NO ``revocation_events`` row: the caller must
         write exactly one after this returns, in its own transaction
         (``RevocationService._record`` does; that row moves the epoch
-        once for the whole action). The two updates are atomic on their
-        own either way: a savepoint inside the caller's transaction, a
-        transaction of their own outside one. Returns (sessions revoked, tokens revoked);
+        once for the whole action). Call it inside the caller's
+        ``revoking()`` (else ``RuntimeError``; CHT-1625): the
+        credential-ended hooks for the sessions it revoked run after that
+        commits. The two updates are atomic on their own: a savepoint
+        inside the caller's transaction. Returns (sessions revoked, tokens revoked);
         sessions already revoked are left as they are and not counted."""
         ids = list(dict.fromkeys(holder_session_ids))
+        require_revoking()
         if not ids:
             return 0, 0
         now = _now()
-        async with atomic():
+        async with revoking():
             # The conditional UPDATE first, as in _revoke_session_in_tx: it
             # takes the write lock before the tokens are read.
             sessions = await OxydeHolderSession.objects.filter(id__in=ids, revoked_at__isnull=True).update(
@@ -852,13 +864,23 @@ class TokenService:
             tokens = await OxydeAuthToken.objects.filter(
                 holder_session_id__in=ids, revoked_at__isnull=True,
             ).update(revoked_at=now)
-            # A signed-out device stops being pushed to (CHT-1604).
-            await PushService().delete_for_sessions(ids)
+            # Only the sessions this call revoked (PR #356 review, 7): the
+            # ones it stamped, under the write lock it holds.
+            changed = [
+                row.id for row in await OxydeHolderSession.objects.filter(
+                    id__in=ids, revoked_at=now, revoked_reason=reason,
+                ).all()
+            ] if sessions else []
+            await credential_events.ended(CredentialsEnded.of(reason, holder_session_ids=changed))
         for holder_session_id in ids:
             _forget_grace_pairs(holder_session_id)
         return sessions, tokens
 
     async def _revoke_session_in_tx(self, holder_session_id: str, *, actor_id: str | None, reason: str) -> bool:
+        """The one primitive that revokes a single session. Inside
+        ``revoking()`` (else ``RuntimeError``), which runs the
+        credential-ended hooks after the commit (CHT-1625)."""
+        require_revoking()
         now = _now()
         # The conditional UPDATE first: it takes the write lock, so the
         # token update and the epoch below see every token a concurrent
@@ -871,8 +893,6 @@ class TokenService:
         tokens = await OxydeAuthToken.objects.filter(
             holder_session_id=holder_session_id, revoked_at__isnull=True,
         ).update(revoked_at=now)
-        # A signed-out device stops being pushed to (CHT-1604).
-        await PushService().delete_for_sessions([holder_session_id])
         session = await OxydeHolderSession.objects.get(id=holder_session_id)
         await OxydeRevocationEvent.objects.create(
             seq=await revocation_epoch() + 1,
@@ -883,4 +903,5 @@ class TokenService:
             cascade_counts=json.dumps({"auth_tokens": tokens}),
             reason=reason,
         )
+        await credential_events.ended(CredentialsEnded.of(reason, holder_session_ids=[holder_session_id]))
         return True

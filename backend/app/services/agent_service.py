@@ -18,6 +18,7 @@ from app.oxyde_models.ritual import OxydeRitualAttestation, OxydeRitualRejection
 from app.enums import AgentKind
 from app.schemas.agent import AgentCreate, AgentUpdate
 from app.services.api_key_service import APIKeyService
+from app.services.credential_events import revoking
 from app.services.revocation_service import (
     REASON_PRINCIPAL_DEACTIVATED,
     REASON_PRINCIPAL_DELETED,
@@ -289,7 +290,7 @@ class AgentService:
         (authorship is ON DELETE SET NULL) but lose their author, and
         ticket_limbo.requested_by_id still cascades.
         """
-        async with atomic():
+        async with revoking():
             counts = await self.authored_counts(agent.id)
             if any(counts.values()):
                 raise AgentHasAuthoredContentError(agent.name, counts, agent.id)
@@ -343,7 +344,7 @@ class AgentService:
     ) -> tuple[OxydeUser | None, int]:
         changed = False
         identities: list[OxydeUser] = []
-        async with atomic():
+        async with revoking():
             if not active:
                 await OxydeAPIKey.objects.filter(principal_user_id=agent.id).update(is_active=False)
             current = await OxydeUser.objects.filter(id=agent.id, is_agent=True).first()

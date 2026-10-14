@@ -143,6 +143,11 @@ async def _run(events: list[tuple[str, Any, Any]]) -> None:
             logger.exception("on-commit callback %s failed", value)
 
 
+def active() -> bool:
+    """Whether this task is inside this module's atomic()."""
+    return _current() is not None
+
+
 async def on_commit(callback: Callback) -> None:
     """Run ``callback()`` after the current transaction commits, or now
     if there is none (module docstring)."""

@@ -13,9 +13,10 @@ A device belongs to its user (CASCADE). It also names the credential it
 was registered with, where that credential has a row: the app's holder
 session (`holder_session`, CHT-1602) or a `ck_` API key (`credential`).
 Deleting either deletes the device (CASCADE), and revoking either deletes
-it too, in the revoking transaction (`TokenService` for sessions,
-`RevocationService.revoke_for_keys` for keys), so a signed-out or revoked
-phone stops getting notifications at once. A device registered with a
+it too, right after the revoking transaction commits (the credential-ended
+hook, `app.services.credential_events`, CHT-1625; a startup sweep catches
+a process that died in between), so a signed-out or revoked phone stops
+getting notifications at once. A device registered with a
 web-login JWT names neither; it goes when that JWT expires (below).
 
 Each registration rebinds the device to the credential it came with

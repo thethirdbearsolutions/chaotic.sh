@@ -43,7 +43,6 @@ from datetime import datetime, timedelta, timezone
 import unicodedata
 
 from oxyde import IntegrityError, execute_raw
-from app.db.transactions import atomic
 from oxyde.db.transaction import get_active_transaction
 
 from app.config import get_settings
@@ -55,6 +54,7 @@ from app.oxyde_models.user import OxydeUser
 from app.schemas.agent import AgentRegister
 from app.schemas.api_key import APIKeyCreate
 from app.services.api_key_service import APIKeyService
+from app.services.credential_events import revoking
 from app.services.revocation_service import RevocationService
 from app.utils.datetimes import ensure_utc
 
@@ -168,7 +168,7 @@ class RegistrationService:
         self, caller: OxydeUser, calling_key: OxydeAPIKey | None, req: AgentRegister,
     ) -> Registration:
         settings = get_settings()
-        async with atomic():
+        async with revoking():
             # First statement: the database-wide writer lock (see register).
             await execute_raw("UPDATE users SET can_register = can_register WHERE 0")
             team_id, project_id, holder_id = await self._authorize(caller, calling_key, req)

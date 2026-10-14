@@ -27,6 +27,7 @@ from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
 from app.oxyde_models.user import OxydeUser
 from app.schemas.api_key import APIKeyCreate
 from app.services.api_key_service import APIKeyService
+from app.services.credential_events import revoking
 from app.services.revocation_service import (
     REASON_KEY_REVOKED,
     REASON_MEMBER_REMOVED,
@@ -208,8 +209,8 @@ class TestConnectedApps:
         assert (await client.get("/api/oauth/connections")).status_code == 401
 
     async def test_the_batch_is_atomic_on_its_own(self, oauth_on, test_team, test_user, monkeypatch):
-        """Outside any transaction, a failure between its two updates
-        leaves the sessions unrevoked."""
+        """A failure between its two updates leaves the sessions
+        unrevoked, even when the caller's transaction commits."""
         agent = await make_agent(test_team, test_user)
         issued = await connector_token(agent, test_team, test_user)
         original = OxydeAuthToken.objects.filter
@@ -220,8 +221,9 @@ class TestConnectedApps:
             return original(*args, **kwargs)
 
         monkeypatch.setattr(OxydeAuthToken.objects, "filter", failing_filter)
-        with pytest.raises(RuntimeError):
-            await TokenService().revoke_sessions_batch([issued.holder_session_id], actor_id=None, reason="t")
+        async with revoking():  # commits: only the batch's savepoint rolls back
+            with pytest.raises(RuntimeError, match="boom"):
+                await TokenService().revoke_sessions_batch([issued.holder_session_id], actor_id=None, reason="t")
         monkeypatch.undo()
         assert not await _revoked(issued)
 
@@ -311,7 +313,8 @@ class TestKeyRevocation:
             holder_user_id=test_user.id, resource=BASE, scopes=("chaotic:write",), minted_by_credential_id=key.id,
         )
         await TokenService().redeem_single_use(raw, TokenKind.CLAIM_TICKET)
-        counts = await RevocationService().revoke_for_keys([key.id], actor_id=None)
+        async with revoking():
+            counts = await RevocationService().revoke_for_keys([key.id], actor_id=None)
         assert (counts.holder_sessions, counts.tokens) == (1, 0)
 
     async def test_a_key_with_nothing_to_cascade_writes_no_event(self, client, test_user, auth_headers):
@@ -457,9 +460,10 @@ class TestMemberRemoval:
             team_id=test_team.id, principal_user_id=agent.id, holder_user_id=test_user.id,
             credential_id=key.id, resource=BASE, scopes=("chaotic:write",), offline=False,
         )
-        counts = await RevocationService().revoke_for_member(
-            test_team.id, bob.id, revoked_key_ids=[key.id], actor_id=None,
-        )
+        async with revoking():
+            counts = await RevocationService().revoke_for_member(
+                test_team.id, bob.id, revoked_key_ids=[key.id], actor_id=None,
+            )
         assert (counts.holder_sessions, counts.tokens) == (1, 0)
         assert await _revoked(issued)
 
@@ -523,7 +527,8 @@ class TestRegistrationAndTeams:
         elsewhere = await make_agent(other, test_user, email="elsewhere@example.com")
         await connector_token(agent, test_team, test_user)
         await connector_token(elsewhere, other, test_user)
-        counts = await RevocationService().revoke_for_principals([test_user.id], actor_id=None, as_holder=True)
+        async with revoking():
+            counts = await RevocationService().revoke_for_principals([test_user.id], actor_id=None, as_holder=True)
         assert counts.holder_sessions == 2
         [event] = await _events(RevocationTarget.IDENTITY, test_user.id)
         assert event.team_id is None

@@ -48,7 +48,12 @@ The check is repeated while the socket is open (``watch``), every
 ``WS_AUTH_RECHECK_SECONDS`` (30 by default): a credential that has been
 revoked or has expired, a user deactivated, or a member removed from the
 team is closed with the code above at the next check, and stops getting
-broadcasts at once. An OAuth access token lives ten minutes, so a socket
+broadcasts at once. A revocation made in this process closes the socket
+before that, as soon as it commits (CHT-1616: a key or holder session
+revoked, a user deactivated or deleted, a member removed, a team
+deleted; ``app.websocket.on_credentials_ended``, run by
+``app.services.credential_events``); the re-check stays as the backstop
+for expiry and for revocations made by another process. An OAuth access token lives ten minutes, so a socket
 opened with one closes (4001) when it expires; a client that can refresh
 (the native app) reconnects with its new token. The web app cannot
 refresh its login JWT, so on 4001 it signs out (or, if another tab has

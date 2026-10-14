@@ -33,14 +33,15 @@ import ipaddress
 import re
 import socket
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.asymmetric import ec
-from oxyde import IntegrityError
-from app.db.transactions import atomic
+from oxyde import IntegrityError, execute_raw
 
 from app.config import get_settings
+from app.db.transactions import atomic
 from app.enums import InboxEntryKind, PushTransport
 from app.oauth.cimd import is_public_address
 from app.oauth.clients import has_only_uri_characters
@@ -48,6 +49,9 @@ from app.oxyde_models.push import OxydePushDevice, OxydePushPreference
 from app.oxyde_models.oauth import OxydeHolderSession
 from app.utils import vapid
 from app.utils.vapid import b64url
+
+if TYPE_CHECKING:
+    from app.services.credential_events import CredentialsEnded
 
 MAX_ENDPOINT_LENGTH = 2048
 # A person's registrations; each is a POST per inbox entry, so this bounds
@@ -417,7 +421,8 @@ class PushService:
 
     async def delete_for_sessions(self, holder_session_ids: list[str]) -> int:
         """Devices registered with these holder sessions, which were just
-        revoked. Called inside the revoking transaction."""
+        revoked. Called by ``on_credentials_ended``, after the revoking
+        transaction committed (CHT-1625)."""
         if not holder_session_ids:
             return 0
         return await OxydePushDevice.objects.filter(holder_session_id__in=list(holder_session_ids)).delete()
@@ -427,6 +432,22 @@ class PushService:
         if not key_ids:
             return 0
         return await OxydePushDevice.objects.filter(credential_id__in=list(key_ids)).delete()
+
+    async def delete_stale_bindings(self) -> int:
+        """Devices bound to a key that is revoked or a holder session that
+        is revoked. ``on_credentials_ended`` deletes them right after the
+        revocation commits; this catches a process that died in between
+        (run at startup, CHT-1625)."""
+        # One statement with subqueries: the lists of dead keys and
+        # sessions only grow, and would not fit in an IN (...) of
+        # parameters.
+        rows = await execute_raw(
+            "DELETE FROM push_devices"
+            " WHERE credential_id IN (SELECT id FROM api_keys WHERE is_active = 0)"
+            " OR holder_session_id IN (SELECT id FROM holder_sessions WHERE revoked_at IS NOT NULL)"
+            " RETURNING id"
+        )
+        return len(rows)
 
     # --- preferences ----------------------------------------------------------
 
@@ -480,3 +501,12 @@ class PushService:
             return True
         row = await OxydePushPreference.objects.filter(user_id=user_id, kind=kind).first()
         return row.enabled if row is not None else DEFAULT_KIND_ENABLED.get(kind, True)
+
+
+async def on_credentials_ended(event: CredentialsEnded) -> None:
+    """The credential-ended hook (``app.services.credential_events``): a
+    device registered with a revoked key or a revoked holder session
+    stops being pushed to (CHT-1604)."""
+    service = PushService()
+    await service.delete_for_sessions(list(event.holder_session_ids))
+    await service.delete_for_keys(list(event.key_ids))

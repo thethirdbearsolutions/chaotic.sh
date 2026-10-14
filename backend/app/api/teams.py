@@ -15,9 +15,9 @@ from app.schemas.team import (
     TeamInvitationResponse,
 )
 from app.config import get_settings
-from app.db.transactions import atomic
 from app.oxyde_models.team import OxydeTeamMember
 from app.services.agent_service import AgentService
+from app.services.credential_events import revoking
 from app.services.team_service import TeamService
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
@@ -250,7 +250,7 @@ async def remove_member(
     # they created pass to the admin removing them, or, when they leave on
     # their own, to the team's longest-standing owner.
     agent_service = AgentService()
-    async with atomic():
+    async with revoking():
         await team_service.remove_member(member)
         if user_id != current_user.id:
             new_owner_id = current_user.id
