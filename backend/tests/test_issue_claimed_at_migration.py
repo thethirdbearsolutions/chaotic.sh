@@ -87,7 +87,15 @@ def at_before(tmp_path):
                     "old_value, new_value, created_at) VALUES (?, ?, 'u1', ?, 'status', ?, ?, ?)",
                     (f"{issue_id}-{i}", issue_id, kind, old, new, at),
                 )
-        # Activities that are not a claim do not count.
+        # Activities that are not a claim do not count: a status change
+        # that never touches IN_PROGRESS, another field, and a ritual
+        # activity that happens to name `status` (only STATUS_CHANGED and
+        # LEASE_EXPIRED rows are evidence; PR #373 final check).
+        c.execute(
+            "INSERT INTO issue_activities (id, issue_id, user_id, activity_type, field_name, "
+            "old_value, new_value, created_at) VALUES ('noise-3', 'canceled', 'u1', 'RITUAL_ATTESTED', "
+            "'status', 'IN_PROGRESS', 'IN_PROGRESS', '2026-10-06 00:00:00')"
+        )
         c.execute(
             "INSERT INTO issue_activities (id, issue_id, user_id, activity_type, field_name, "
             "old_value, new_value, created_at) VALUES ('noise-1', 'backlog', 'u1', 'STATUS_CHANGED', "
@@ -151,7 +159,7 @@ def test_backfill_is_one_grouped_pass(tmp_path):
     with closing(sqlite3.connect(":memory:")) as c:
         c.execute("CREATE TABLE issues (id TEXT PRIMARY KEY, status TEXT, updated_at TEXT, claimed_at TEXT)")
         c.execute(
-            "CREATE TABLE issue_activities (id TEXT, issue_id TEXT, field_name TEXT, "
+            "CREATE TABLE issue_activities (id TEXT, issue_id TEXT, activity_type TEXT, field_name TEXT, "
             "old_value TEXT, new_value TEXT, created_at TEXT)"
         )
         plan = " ".join(row[3] for row in c.execute("EXPLAIN QUERY PLAN " + sql))

@@ -2,6 +2,7 @@
 
 Uses Oxyde ORM (Phase 2 migration from SQLAlchemy).
 """
+import json
 import logging
 import re
 import random
@@ -280,6 +281,23 @@ _SORT_PYTHON_KEYS = {
     "priority": lambda i: (_get_order(_PRIORITY_ORDER, i.priority), i.created_at),
     "status": lambda i: (_get_order(_STATUS_ORDER, i.status), i.created_at),
 }
+
+
+def _without_status_conditions(ritual):
+    """`ritual` with its `status__*` conditions dropped, for evaluating
+    a create (see IssueService._claim_rituals_for_new_issue). Conditions
+    that do not parse are left as they are, so evaluation still refuses
+    to match them."""
+    from types import SimpleNamespace
+
+    try:
+        conditions = json.loads(ritual.conditions) if ritual.conditions else None
+    except (TypeError, ValueError):
+        return ritual
+    if not isinstance(conditions, dict):
+        return ritual
+    kept = {k: v for k, v in conditions.items() if not k.startswith("status__")}
+    return SimpleNamespace(conditions=json.dumps(kept))
 
 
 class IssueService:
@@ -995,10 +1013,11 @@ class IssueService:
     async def _claim_rituals_for_new_issue(self, project_id: str, issue_in: IssueCreate) -> list:
         """The active claim rituals whose conditions match the issue
         `issue_in` would create, for a create straight into in_progress
-        or done (CHT-1672). Evaluated against the ticket as requested,
-        status included: `estimate__gte`, labels and the like apply as
-        they would to a claim of it, and a `status` condition sees the
-        status the create asks for (PR #373 re-review F4). A
+        or done (CHT-1672). `estimate__gte`, labels and the like are
+        evaluated against the ticket as requested. A `status` condition
+        is treated as matched: it describes the status a ticket is
+        claimed *from*, which a create has none of, so the conservative
+        reading is that it applies (PR #373 final check). A
         ROUND_ROBIN or percentage group reports every matching member:
         there is no issue id yet to seed its selection, which is why the
         refusal tells the caller to create the ticket first.
@@ -1018,7 +1037,10 @@ class IssueService:
         )
         probe.labels = labels
         ritual_service = RitualService()
-        return [r for r in claim_rituals if ritual_service._evaluate_conditions(r, probe)]
+        return [
+            r for r in claim_rituals
+            if ritual_service._evaluate_conditions(_without_status_conditions(r), probe)
+        ]
 
     async def _get_next_issue_number_for_key(self, project_key: str) -> int:
         """Get the next issue number for a project key."""

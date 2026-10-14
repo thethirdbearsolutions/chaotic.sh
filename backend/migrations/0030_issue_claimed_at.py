@@ -10,9 +10,9 @@ ctx.execute:
 
 Backfill: every ticket that has demonstrably been claimed gets a value,
 so its close is not gated by claim rituals it already passed. That is:
-- tickets with a status activity (STATUS_CHANGED, LEASE_EXPIRED, any
-  type) whose old or new value is IN_PROGRESS in any spelling ever
-  stored, which get the earliest one's time;
+- tickets with a STATUS_CHANGED or LEASE_EXPIRED activity on `status`
+  whose old or new value is IN_PROGRESS in any spelling ever stored,
+  which get the earliest one's time;
 - otherwise, tickets currently in IN_PROGRESS, IN_REVIEW or DONE, which
   get their updated_at.
 An in_review or done ticket that never went through in_progress counts
@@ -49,7 +49,8 @@ def upgrade(ctx):
     # issue_activities, then one UPDATE: issue_activities has no index on
     # issue_id, so a per-issue correlated subquery would rescan it for
     # every issue while holding the write lock (PR #373 re-review F2).
-    # A status activity that names IN_PROGRESS as either side proves a
+    # A status change or lease release (activity_type stored as the
+    # enum name) that names IN_PROGRESS as either side proves a
     # claim: new_value for a move into it, old_value for a move out of
     # it (a ticket created in_progress writes no STATUS_CHANGED row on
     # the way in, only on the way out, or a LEASE_EXPIRED row). Every
@@ -58,7 +59,7 @@ def upgrade(ctx):
     ctx.execute(
         "WITH first_claim AS ("
         "SELECT issue_id, MIN(created_at) AS at FROM issue_activities "
-        "WHERE field_name = 'status' AND ("
+        "WHERE activity_type IN ('STATUS_CHANGED', 'LEASE_EXPIRED') AND field_name = 'status' AND ("
         "new_value IN ('IN_PROGRESS', 'in_progress', 'IssueStatus.IN_PROGRESS') "
         "OR old_value IN ('IN_PROGRESS', 'in_progress', 'IssueStatus.IN_PROGRESS')) "
         "GROUP BY issue_id) "

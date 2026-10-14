@@ -396,28 +396,27 @@ class TestCreateAsDone:
         assert big.status_code == 409
         assert [r["name"] for r in big.json()["detail"]["pending_rituals"]] == ["big-claim"]
 
-    async def test_status_conditions_see_the_requested_status(
-        self, client, auth_headers, test_project, make_ritual,
+    @pytest.mark.parametrize("asked", ["in_progress", "done"])
+    async def test_status_conditions_count_as_matched(
+        self, client, auth_headers, test_project, make_ritual, asked,
     ):
-        """PR #373 re-review F4: a status condition is evaluated against
-        the status the create asks for, not a notional backlog."""
+        """A claim ritual's status condition describes the status a ticket
+        is claimed from; a create has none, so it is treated as matched
+        (PR #373 final check), while other conditions still apply."""
         await make_ritual(
-            name="done-only", trigger=RitualTrigger.TICKET_CLAIM, conditions='{"status__eq": "done"}',
+            name="from-open", trigger=RitualTrigger.TICKET_CLAIM,
+            conditions='{"status__in": ["backlog", "todo"]}',
         )
         await make_ritual(
-            name="backlog-only", trigger=RitualTrigger.TICKET_CLAIM, conditions='{"status__eq": "backlog"}',
+            name="from-open-big", trigger=RitualTrigger.TICKET_CLAIM,
+            conditions='{"status__in": ["backlog", "todo"], "estimate__gte": 5}',
         )
-        done = await client.post(
+        response = await client.post(
             f"/api/projects/{test_project.id}/issues", headers=auth_headers,
-            json={"title": "Done", "status": "done"},
+            json={"title": "Straight there", "status": asked, "estimate": 1},
         )
-        assert done.status_code == 409
-        assert [r["name"] for r in done.json()["detail"]["pending_rituals"]] == ["done-only"]
-        started = await client.post(
-            f"/api/projects/{test_project.id}/issues", headers=auth_headers,
-            json={"title": "Started", "status": "in_progress"},
-        )
-        assert started.status_code in (200, 201), started.text
+        assert response.status_code == 409
+        assert [r["name"] for r in response.json()["detail"]["pending_rituals"]] == ["from-open"]
 
     async def test_label_conditions_see_the_new_tickets_labels(
         self, client, auth_headers, test_project, test_team, make_ritual,
