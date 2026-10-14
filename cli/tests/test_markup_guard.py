@@ -2,27 +2,38 @@
 
 Rich parses every string it prints as markup, so a name with `[/bold]` in
 it crashed a command mid-print and a `[link=...]` restyled the terminal
-(CHT-1526). `markup.Table` escapes its cells, title and caption itself;
-for everything else this test reads the CLI's source and fails on:
+(CHT-1526). `markup.Table` escapes its cells, title, caption, column
+headers and footers itself; for everything else this test reads the CLI's
+source and fails on:
 
 - unescaped: a value in a markup string handed to a sink, or in a string
   assigned to a `*_markup` name, appended to one, or returned by a
   `*_markup` function, that is not `esc(...)`, `escape(...)`,
   `markup(...)`/`Markup(...)`, a `*_markup` name or call, or a constant.
-  The sinks: `.print/.log/.rule/.status` on any console (a receiver whose
-  name contains "console", or `Console()`), `rich.print`, `Panel(...)`
-  (body, title, subtitle), `Text.from_markup`, `Prompt/Confirm.ask`,
-  `progress.add_task`, `Tree(...)`/`tree.add(...)`, and the str arguments
-  of `Group`/`Columns`/`Padding`. A bare variable passed to a sink counts
-  too, unless it holds a renderable built in the same function
-  (`Table(...)`, `Markdown(...)`, ...).
+  The sinks: `.print/.log/.rule/.status/.input` on any console (a
+  receiver whose name contains "console", `Console()`, or a name bound to
+  one, by assignment or import alias), `rich.print`, `Panel(...)` (body,
+  `renderable=`, title, subtitle), `Text.from_markup`, `Prompt/Confirm.ask`
+  (under any import alias), `Live(...)`, `Tree(...)`, and these methods
+  on a Rich object: `progress.add_task`, `progress.update(description=)`,
+  `status.update`, `live.update`, `tree.add`. A receiver is that Rich
+  object when every binding of it in its function says so (`Tree(...)`,
+  `tree.add(...)`, `Progress(...)`, `console.status(...)`, `Live(...)`,
+  or an annotation naming the class); with no such binding (an
+  unannotated parameter, an attribute) its name decides, by its last
+  `_`-separated word: `tree`/`branch`, `progress`, `status`, `live`. So
+  `branches = set(); branches.add(name)` and `client.add_task(name)` are
+  not sinks. Also the str arguments of `Group`/`Columns`/`Padding`. A bare
+  variable passed to a sink counts too, unless it holds a renderable built
+  in the same function (`Table(...)`, `Markdown(...)`, ...).
 - markup_false: esc()/escape() or a `*_markup` value in a
   `console.print(..., markup=False)`, where the tags and backslashes are
   printed as they are.
 - nested: esc()/escape() around a string that already contains esc(),
   escape() or a `*_markup` value, which escapes it twice.
-- table_title: esc()/escape() in a `Table(title=/caption=)`, which
-  markup.Table escapes itself.
+- table_title: esc()/escape() in a `Table(title=/caption=)`, a
+  positional `Table(...)` header, or an `add_column(...)` header or footer,
+  all of which markup.Table escapes itself.
 - rich_table: an import of `rich.table`. The table_title rule (and the
   cell escaping it relies on) holds only for markup.Table.
 - markup_binding: a `*_markup` name bound where its value is not checked:
@@ -33,6 +44,15 @@ for everything else this test reads the CLI's source and fails on:
 Text that is markup on purpose lives in a name ending in `_markup`, or is
 built by a function whose name ends in `_markup`; that name is the whole
 allowlist, so there is no list of exceptions to keep.
+
+One shape this rules out: a helper that takes markup in and prints it.
+`def show(body): console.print(body)` is `unescaped` (a plain parameter
+is server text as far as the guard knows), `def show(body_markup)` is a
+`markup_binding`, and `console.print(Markup(body))` is `unescaped` again.
+The legal shape is the other way round: a `*_markup` function that
+*returns* the markup (its returns are checked), and the caller prints it.
+The same holds for a renderable passed in as a parameter: print it where
+it is built, or build it in the helper.
 """
 import ast
 import re
@@ -51,6 +71,13 @@ NUMERIC_SPEC = re.compile(r"^[<>=^]?[+ -]?#?0?\d*,?(\.\d+)?[dfegn%]$")
 # Rich renderables (not markup strings) a variable may hold.
 RENDERABLES = {"Table", "Markdown", "Panel", "Padding", "Text", "Group", "Columns", "Syntax", "Tree"}
 PROMPTS = {"Prompt", "Confirm", "IntPrompt", "FloatPrompt"}
+CONSOLE_METHODS = {"print", "log", "rule", "status", "input"}
+# Rich objects whose methods take markup: what binds one, and the last
+# `_`-word of a name that is taken to be one when nothing binds it.
+TREE = ({"Tree", "add"}, {"tree", "branch"})
+PROGRESS = ({"Progress"}, {"progress"})
+STATUS = ({"Status", "status"}, {"status"})
+LIVE = ({"Live"}, {"live"})
 # Containers whose str arguments Rich renders as markup.
 CONTAINERS = {"Group", "Columns", "Padding"}
 
@@ -66,21 +93,16 @@ def _is_markup_name(name):
     return name is not None and name.lower().endswith("_markup")
 
 
-def _is_console(node):
+def _is_console(node, aliases=()):
     if isinstance(node, ast.Name):
-        return "console" in node.id.lower()
+        return "console" in node.id.lower() or node.id in aliases
     if isinstance(node, ast.Attribute):
         return "console" in node.attr.lower()
     return _call_name(node) == "Console"
 
 
-def _is_console_print(call):
-    f = call.func
-    if not isinstance(f, ast.Attribute):
-        return False
-    if f.attr == "print" and isinstance(f.value, ast.Name) and f.value.id == "rich":
-        return True  # rich.print
-    return f.attr in ("print", "log", "rule", "status") and _is_console(f.value)
+def _last_word(name):
+    return name.lower().rsplit("_", 1)[-1]
 
 
 def _contains_escaper(node):
@@ -117,6 +139,27 @@ class _Checker:
             a.asname or a.name for n in ast.walk(self.tree)
             if isinstance(n, ast.ImportFrom) and n.module == "rich" for a in n.names if a.name == "print"
         }
+        # Local names for a Prompt class: `from rich.prompt import Prompt as P`.
+        self.prompts = PROMPTS | {
+            a.asname for n in ast.walk(self.tree)
+            if isinstance(n, ast.ImportFrom) and n.module == "rich.prompt"
+            for a in n.names if a.name in PROMPTS and a.asname
+        }
+        # Names bound to a console without "console" in them: `out = console`,
+        # `from .shared import console as out`.
+        self.consoles = {
+            a.asname for n in ast.walk(self.tree) if isinstance(n, ast.ImportFrom)
+            for a in n.names if a.asname and "console" in a.name.lower()
+        }
+        assigns = [n for n in ast.walk(self.tree) if isinstance(n, ast.Assign)]
+        while True:
+            found = {
+                t.id for n in assigns if _is_console(n.value, self.consoles)
+                for t in n.targets if isinstance(t, ast.Name) and "console" not in t.id.lower()
+            } - self.consoles
+            if not found:
+                break
+            self.consoles |= found
         self.parents = {}
         for p in ast.walk(self.tree):
             for c in ast.iter_child_nodes(p):
@@ -127,7 +170,59 @@ class _Checker:
         self.problems.append(f"{rel}:{node.lineno}: [{rule}] {what}")
 
     def _is_print(self, call):
-        return _is_console_print(call) or (isinstance(call.func, ast.Name) and call.func.id in self.rich_prints)
+        f = call.func
+        if isinstance(f, ast.Name):
+            return f.id in self.rich_prints
+        if not isinstance(f, ast.Attribute):
+            return False
+        if f.attr == "print" and isinstance(f.value, ast.Name) and f.value.id == "rich":
+            return True  # rich.print
+        return f.attr in CONSOLE_METHODS and _is_console(f.value, self.consoles)
+
+    def _bindings(self, name: ast.Name):
+        """What each binding of `name` in its function says it holds: the
+        value or annotation, or None for one that says nothing (an
+        unannotated parameter, a loop target)."""
+        fn = self._function(name)
+        out = []
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            a = fn.args
+            for p in (*a.posonlyargs, *a.args, *a.kwonlyargs):
+                if p.arg == name.id:
+                    out.append(p.annotation)
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name.id for t in n.targets):
+                out.append(n.value)
+            elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == name.id:
+                out.append(n.annotation)
+            elif (isinstance(n, ast.withitem) and isinstance(n.optional_vars, ast.Name)
+                  and n.optional_vars.id == name.id):
+                out.append(n.context_expr)
+            elif isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)) \
+                    and any(t.id == name.id for t in _targets(n.target)):
+                out.append(None)
+        return out
+
+    def _is_rich(self, receiver, kind):
+        """`receiver` is the Rich object `kind` (TREE, PROGRESS, ...)."""
+        ctors, words = kind
+        if isinstance(receiver, ast.Call):
+            return _call_name(receiver) in ctors
+        if isinstance(receiver, ast.Attribute):
+            return _last_word(receiver.attr) in words
+        if not isinstance(receiver, ast.Name):
+            return False
+        known = [b for b in self._bindings(receiver) if b is not None]
+        if not known:
+            return _last_word(receiver.id) in words
+        def says(b):
+            if isinstance(b, ast.Call):
+                return _call_name(b) in ctors
+            if isinstance(b, ast.Constant) and isinstance(b.value, str):
+                return b.value.rsplit(".", 1)[-1] in ctors
+            n = b.attr if isinstance(b, ast.Attribute) else b.id if isinstance(b, ast.Name) else None
+            return n in ctors
+        return all(says(b) for b in known)
 
     def _inside_checked(self, node):
         """A Markup() call within a sink is checked from the sink."""
@@ -287,23 +382,39 @@ class _Checker:
                     for k in node.keywords:
                         if k.arg in ("title", "subtitle"):
                             self._check_value(k.value)
+                        elif k.arg == "renderable":
+                            self._check_value(k.value, bare_ok=True)
                 elif name in MARKERS and not self._inside_checked(node):
                     for a in node.args:
                         self._check_value(a)
-                elif name == "Table":
-                    for k in node.keywords:
-                        if k.arg in ("title", "caption") and _contains_escaper(k.value):
-                            self._flag("table_title", k.value, ast.get_source_segment(self.src, k.value))
+                elif name in ("Table", "add_column"):
+                    names = ("title", "caption") if name == "Table" else ("header", "footer")
+                    heads = node.args if name == "Table" else node.args[:2]
+                    for v in [*heads, *(k.value for k in node.keywords if k.arg in names)]:
+                        if _contains_escaper(v):
+                            self._flag("table_title", v, ast.get_source_segment(self.src, v))
                 elif name == "append" and isinstance(receiver, ast.Name) and _is_markup_name(receiver.id):
                     for a in node.args:
                         self._check_value(a)
-                elif name == "ask" and isinstance(receiver, ast.Name) and receiver.id in PROMPTS:
+                elif name == "ask" and (
+                        (isinstance(receiver, ast.Name) and receiver.id in self.prompts)
+                        or (isinstance(receiver, ast.Attribute) and receiver.attr in PROMPTS)):
                     self._check_first(node, "prompt")
-                elif name == "add_task":
+                elif name == "add_task" and self._is_rich(receiver, PROGRESS):
                     self._check_first(node, "description")
-                elif name == "Tree" or (name == "add" and isinstance(receiver, ast.Name)
-                                        and any(w in receiver.id.lower() for w in ("tree", "branch"))):
+                elif name == "Tree" or (name == "add" and self._is_rich(receiver, TREE)):
                     self._check_first(node, "label", bare_ok=True)
+                elif name == "Live":
+                    self._check_first(node, "renderable", bare_ok=True)
+                elif name == "update" and receiver is not None:
+                    if self._is_rich(receiver, PROGRESS):
+                        for k in node.keywords:
+                            if k.arg == "description":
+                                self._check_value(k.value)
+                    elif self._is_rich(receiver, STATUS):
+                        self._check_first(node, "status")
+                    elif self._is_rich(receiver, LIVE):
+                        self._check_first(node, "renderable", bare_ok=True)
                 elif name in CONTAINERS:
                     args = node.args[:1] if name == "Padding" else node.args
                     for a in args:
@@ -365,6 +476,20 @@ def f(name, size_mb, rows, x):
     Text.from_markup(f"[b]{esc(name)}[/b]")
     for n in x:
         console.print(n, markup=False)
+    # Not Rich objects (CHT-1703): a set, a plural, a client, a param typed set.
+    branches = set()
+    branches.add(name)
+    worktrees.add(name)
+    client.add_task(name)
+    stats.update(name=name)
+    table.add_column("Name", footer="Total")
+    with console.status("Working") as status:
+        status.update(f"Working on {esc(name)}")
+    console.print(Panel(renderable=table))
+
+
+def g(branches: set[str], name):
+    branches.add(name)
 
 
 def status_markup(x):
@@ -412,6 +537,29 @@ BAD["unescaped"] += [
     "Padding(name, 1)",
     'a_markup, b = name, 1',
 ]
+# The sinks the #386 re-review found unchecked, and Rich objects bound
+# under a name that does not say so (CHT-1703).
+BAD["unescaped"] += [
+    'Panel(renderable=f"{name}")',
+    'console.input(f"{name}? ")',
+    'status.update(f"{name}")',
+    'progress.update(e, description=f"{name}")',
+    'Live(f"{name}")',
+    "live.update(name)",
+    "out = console; out.print(name)",
+    "rp.Prompt.ask(name)",
+    'with console.status("x") as s: s.update(name)',
+    "bar = Progress(); bar.add_task(name)",
+    "self.progress.add_task(name)",
+    't = Tree("x"); t.add(name)',
+    "branch.add(name)",
+]
+BAD["table_title"] += [
+    "table.add_column(esc(name))",
+    'table.add_column("A", footer=esc(name))',
+    "table.add_column(header=esc(name))",
+    "Table(esc(name))",
+]
 BAD["nested"] += ["console.print(esc(lines_markup))"]
 BAD["markup_false"] += ["console.print(lines_markup, markup=False)"]
 
@@ -429,6 +577,17 @@ def test_clean_source_passes(tmp_path):
 
 def test_an_aliased_rich_print_is_a_sink(tmp_path):
     problems = _check_source(tmp_path, "from rich import print as rprint\ndef f(name):\n    rprint(f'{name}')\n")
+    assert len(problems) == 1 and "[unescaped] name" in problems[0], problems
+
+
+@pytest.mark.parametrize("source", [
+    "from rich.prompt import Confirm as C\ndef f(name):\n    C.ask(name)\n",
+    "from .shared import console as out\ndef f(name):\n    out.print(name)\n",
+    "def f(name, node: Tree):\n    node.add(name)\n",
+    "def f(name, p: 'rich.progress.Progress'):\n    p.add_task(name)\n",
+])
+def test_an_aliased_or_annotated_sink_is_a_sink(tmp_path, source):
+    problems = _check_source(tmp_path, source)
     assert len(problems) == 1 and "[unescaped] name" in problems[0], problems
 
 

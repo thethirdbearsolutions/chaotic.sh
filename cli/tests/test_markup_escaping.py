@@ -246,6 +246,16 @@ def test_a_restore_error_is_escaped_once(tmp_path):
     assert "OSError: bad [x] thing" in text and "\\[" not in text
 
 
+def test_table_headers_and_footers_are_text_unless_markup():
+    """CHT-1703: headers were the one Table string still parsed as markup."""
+    table = Table(EVIL, show_footer=True)
+    table.add_column(EVIL + "2", footer=EVIL + "3")
+    table.add_column(header=Markup("[bold]ok[/bold]"))
+    table.add_row("a", "b", "c")
+    text = _render(table)
+    assert all(f"{EVIL}{n}" in text for n in ("", "2", "3")) and "[bold]" not in text and "ok" in text
+
+
 def test_table_title_and_caption_are_text_unless_markup():
     table = Table(title=EVIL, caption=Markup("[bold]ok[/bold]"))
     table.add_column("A column wider than the title")
