@@ -11,6 +11,7 @@ as it was. The downgrade
 drops the index again.
 """
 import hashlib
+import os
 import sqlite3
 import subprocess
 import sys
@@ -47,12 +48,8 @@ async def main(path):
     finally:
         await disconnect_all()
 
-code = 0
-try:
+def run():
     asyncio.run(main(sys.argv[1]))
-except BaseException:
-    traceback.print_exc()
-    code = 1
 """ + _SETTLE_AND_EXIT
 
 
@@ -108,8 +105,8 @@ def _file_digests(path: str) -> dict[str, str | None]:
     """The database and its sidecars, byte for byte.
 
     An empty -wal counts as absent: it holds no frames, so a reader has
-    nothing to replay from it, and SQLite deletes it at the next last
-    close. One is left when a process dies inside SQLite's close, which
+    nothing to replay from it, and SQLite deletes it when the last
+    connection to the database (still in WAL mode) next closes. One is left when a process dies inside SQLite's close, which
     unlinks the -shm before the -wal (CHT-1583; `_SETTLE_AND_EXIT` is
     what keeps the child scripts from doing that). The main file and
     every non-empty sidecar are still compared byte for byte."""
@@ -167,6 +164,9 @@ def test_rows_already_sharing_a_hash_stop_the_migration_and_change_nothing(at_00
     assert "k1, k5" in message and "k4, k6" in message
     assert "k2" not in message and "k3" not in message
     assert "nothing was changed" in message
+    # A clean exit 1, not an abort in interpreter teardown (rc -6), which
+    # is how the child used to die mid-close (CHT-1583).
+    assert message.startswith("migrate failed (1):")
     # Not even the hashes are printed.
     assert KEYS["k1"][1] not in message
     assert _file_digests(at_0021) == files
@@ -204,3 +204,36 @@ def test_an_empty_wal_compares_as_absent_and_nothing_else_does(tmp_path):
     assert _file_digests(path)["-wal"] is not None
     open(path + "-shm", "wb").close()
     assert _file_digests(path)["-shm"] is not None
+
+
+_SIDECARS_CLOSE_LATE = """
+import os, sys, threading, time, traceback
+
+def run():
+    path = sys.argv[1]
+    for suffix in ("-wal", "-shm"):
+        open(path + suffix, "wb").close()
+
+    def close_late():
+        time.sleep(0.5)
+        os.unlink(path + "-shm")
+        os.unlink(path + "-wal")
+
+    threading.Thread(target=close_late, daemon=True).start()
+    raise RuntimeError("refused")
+""" + _SETTLE_AND_EXIT
+
+
+def test_a_child_waits_for_a_late_close_and_exits_1(tmp_path):
+    """The child script tail waits for a close still in flight (here a
+    thread that removes the sidecars after the error) before exiting, and
+    exits 1 on an error (CHT-1583). Without the wait the child is gone
+    while both sidecars still exist."""
+    path = str(tmp_path / "x.db")
+    result = subprocess.run(
+        [sys.executable, "-c", _SIDECARS_CLOSE_LATE, path],
+        capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+    )
+    assert result.returncode == 1, result.stderr
+    assert "RuntimeError: refused" in result.stderr
+    assert not os.path.exists(path + "-wal") and not os.path.exists(path + "-shm")

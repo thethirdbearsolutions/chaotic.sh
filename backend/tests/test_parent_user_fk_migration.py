@@ -29,10 +29,23 @@ NOW = "2026-10-13T00:00:00+00:00"
 # it does when the last connection is closed (bounded: if something else
 # still has the file open they stay, and the test sees that). Then exit
 # with os._exit, on failure as well as success: under pytest-xdist,
-# Oxyde's native runtime aborts the process while being torn down by
-# interpreter finalization, after the work is done, and a failed
-# migration used to take that path.
+# Oxyde's native runtime aborts the process (rc -6) while being torn down
+# by interpreter finalization, after the work is done, and a failed
+# migration used to take that path. A script defines `run()` and ends
+# with this. An error is printed and exits 1; SystemExit keeps its code
+# and KeyboardInterrupt exits 130, as the interpreter would.
 _SETTLE_AND_EXIT = """
+try:
+    run()
+    code = 0
+except SystemExit as exit_:
+    code = exit_.code if isinstance(exit_.code, int) else (0 if exit_.code is None else 1)
+except KeyboardInterrupt:
+    code = 130
+except Exception:
+    traceback.print_exc()
+    code = 1
+
 deadline = time.monotonic() + 5
 while time.monotonic() < deadline and any(os.path.exists(sys.argv[1] + s) for s in ("-wal", "-shm")):
     time.sleep(0.01)
@@ -55,12 +68,8 @@ async def main(path, target):
     finally:
         await disconnect_all()
 
-code = 0
-try:
+def run():
     asyncio.run(main(sys.argv[1], sys.argv[2]))
-except BaseException:
-    traceback.print_exc()
-    code = 1
 """ + _SETTLE_AND_EXIT
 
 
