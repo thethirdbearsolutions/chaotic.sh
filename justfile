@@ -11,7 +11,7 @@ default:
 # `chaotic system install`/`upgrade` run this recipe on the server.
 sync:
     cd backend && uv sync --locked --extra dev
-    cd cli && uv sync --locked --extra dev
+    cd cli && uv sync --locked
     cd e2e && uv sync --locked
 
 # Re-resolve every uv.lock after a pyproject.toml change (then commit them)

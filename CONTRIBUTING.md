@@ -18,7 +18,7 @@ Without `just`, sync each project from the repo root:
 
 ```bash
 (cd backend && uv sync --locked --extra dev)
-(cd cli && uv sync --locked --extra dev)
+(cd cli && uv sync --locked)
 (cd e2e && uv sync --locked)
 ```
 

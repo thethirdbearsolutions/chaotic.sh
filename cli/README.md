@@ -5,8 +5,16 @@ Command-line interface for the Chaotic issue tracker.
 ## Installation
 
 ```bash
+uv tool install chaotic-cli
+```
+
+For development, from a checkout (`just sync-cli` does the same):
+
+```bash
 cd cli
-pip install -e .
+uv sync --locked    # the CLI plus its dev group (pytest, ruff)
+uv run chaotic --help
+uv run pytest -q
 ```
 
 ## Configuration
