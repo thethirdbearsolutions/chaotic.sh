@@ -19,7 +19,7 @@ from contextlib import closing
 import pytest
 
 from .test_api_key_principal_migration import SQLALCHEMY_API_KEYS
-from .test_parent_user_fk_migration import BACKEND, _migrate
+from .test_parent_user_fk_migration import _SETTLE_AND_EXIT, BACKEND, _migrate
 
 MIGRATION = "0022_api_key_hash_unique"
 INDEX = "ux_api_keys_key_hash"
@@ -34,7 +34,7 @@ KEYS = {
 }
 
 _ROLLBACK = """
-import asyncio, os, sys
+import asyncio, os, sys, time, traceback
 from oxyde import AsyncDatabase, PoolSettings, disconnect_all
 from oxyde.migrations.executor import rollback_migrations
 
@@ -47,11 +47,13 @@ async def main(path):
     finally:
         await disconnect_all()
 
-asyncio.run(main(sys.argv[1]))
-sys.stdout.flush()
-sys.stderr.flush()
-os._exit(0)
-"""
+code = 0
+try:
+    asyncio.run(main(sys.argv[1]))
+except BaseException:
+    traceback.print_exc()
+    code = 1
+""" + _SETTLE_AND_EXIT
 
 
 def _seed(path: str, keys: dict[str, tuple[str, str]]) -> None:
@@ -103,14 +105,23 @@ def at_0021(request, tmp_path):
 
 
 def _file_digests(path: str) -> dict[str, str | None]:
-    """The database and its sidecars, byte for byte."""
+    """The database and its sidecars, byte for byte.
+
+    An empty -wal counts as absent: it holds no frames, so a reader has
+    nothing to replay from it, and SQLite deletes it at the next last
+    close. One is left when a process dies inside SQLite's close, which
+    unlinks the -shm before the -wal (CHT-1583; `_SETTLE_AND_EXIT` is
+    what keeps the child scripts from doing that). The main file and
+    every non-empty sidecar are still compared byte for byte."""
     digests = {}
     for suffix in ("", "-wal", "-shm", "-journal"):
         try:
             with open(path + suffix, "rb") as f:
-                digests[suffix] = hashlib.sha256(f.read()).hexdigest()
+                content = f.read()
         except FileNotFoundError:
             digests[suffix] = None
+            continue
+        digests[suffix] = None if suffix == "-wal" and not content else hashlib.sha256(content).hexdigest()
     return digests
 
 
@@ -179,3 +190,17 @@ def test_downgrade_drops_the_index(at_0021):
     assert not _applied(at_0021)
     assert _index_sql(at_0021) is None
     assert _rows(at_0021) == before
+
+
+def test_an_empty_wal_compares_as_absent_and_nothing_else_does(tmp_path):
+    path = str(tmp_path / "x.db")
+    with open(path, "wb") as f:
+        f.write(b"main")
+    absent = _file_digests(path)
+    open(path + "-wal", "wb").close()
+    assert _file_digests(path) == absent
+    with open(path + "-wal", "wb") as f:
+        f.write(b"frame")
+    assert _file_digests(path)["-wal"] is not None
+    open(path + "-shm", "wb").close()
+    assert _file_digests(path)["-shm"] is not None
