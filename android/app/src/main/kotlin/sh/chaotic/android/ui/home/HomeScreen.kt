@@ -41,7 +41,7 @@ import sh.chaotic.android.ui.common.SyncProblemBanner
 import sh.chaotic.android.ui.common.rememberNow
 import sh.chaotic.android.ui.inbox.InboxList
 import sh.chaotic.android.ui.inbox.InboxRowActions
-import sh.chaotic.android.ui.inbox.RejectDialog
+import sh.chaotic.android.ui.inbox.RejectPanel
 import sh.chaotic.android.ui.inbox.UndoSnackbar
 import sh.chaotic.android.ui.sprint.SprintList
 import sh.chaotic.android.ui.theme.ChaoticTheme
@@ -108,16 +108,6 @@ fun HomeContent(
     val snackbar = remember { SnackbarHostState() }
     var rejecting by remember { mutableStateOf<InboxEntry?>(null) }
     UndoSnackbar(state.undo, snackbar, writes)
-    rejecting?.let { entry ->
-        RejectDialog(
-            entry = entry,
-            onReject = { note ->
-                rejecting = null
-                writes.onReject(entry, note)
-            },
-            onCancel = { rejecting = null },
-        )
-    }
     Scaffold(
         modifier = modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbar) },
@@ -150,6 +140,16 @@ fun HomeContent(
             }
             SyncProblemBanner(state.problem)
             RefusalList(state.refusals, writes.onDismissRefusal)
+            rejecting?.let { entry ->
+                RejectPanel(
+                    entry = entry,
+                    onReject = { note ->
+                        rejecting = null
+                        writes.onReject(entry, note)
+                    },
+                    onCancel = { rejecting = null },
+                )
+            }
             PullToRefreshBox(
                 isRefreshing = state.refreshing,
                 onRefresh = onRefresh,

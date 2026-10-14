@@ -20,7 +20,7 @@ import sh.chaotic.android.ui.home.HomeContent
 import sh.chaotic.android.ui.home.HomeState
 import sh.chaotic.android.ui.home.HomeWrites
 import sh.chaotic.android.ui.home.UndoOffer
-import sh.chaotic.android.ui.inbox.RejectDialog
+import sh.chaotic.android.ui.inbox.RejectPanel
 import sh.chaotic.android.ui.issue.Fetch
 import sh.chaotic.android.ui.issue.IssueContent
 import sh.chaotic.android.ui.issue.IssueState
@@ -114,13 +114,18 @@ class WriteScreensTest {
         compose.onNodeWithText("CHT-1611  Gate: human review").performTouchInput { swipeLeft() }
         compose.onNodeWithText("Reject CHT-1611?").assertIsDisplayed()
         assertEquals(emptyList(), calls)
+        compose.onNodeWithText("Why (required: the requester reads this)").performTextInput("Needs tests")
+        compose.onNodeWithText("Reject").performClick()
+
+        assertEquals(listOf("reject:g1:Needs tests"), calls)
+        compose.onNodeWithText("Reject CHT-1611?").assertDoesNotExist()
     }
 
     @Test
     fun aRejectionNeedsAReason() {
         compose.setContent {
             ChaoticTheme {
-                RejectDialog(gate, onReject = { calls += "reject:${gate.id}:$it" }, onCancel = {})
+                RejectPanel(gate, onReject = { calls += "reject:${gate.id}:$it" }, onCancel = {})
             }
         }
 

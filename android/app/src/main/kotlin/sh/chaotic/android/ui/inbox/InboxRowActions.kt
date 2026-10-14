@@ -1,7 +1,12 @@
 package sh.chaotic.android.ui.inbox
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -16,6 +21,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.withTimeoutOrNull
 import sh.chaotic.android.R
 import sh.chaotic.android.ui.home.HomeWrites
@@ -66,14 +72,21 @@ private fun undoMessage(offer: UndoOffer): String = when (offer.kind) {
     else -> stringResource(R.string.undo_archived, offer.label)
 }
 
-/** The reason a rejection needs: the server requires one, and the attester reads it to know what to fix. */
+/**
+ * The reason a rejection needs: the server requires one, and the attester
+ * reads it to know what to fix. Shown in place above the inbox rather than
+ * as a dialog: a separate dialog window never lets the Compose tests on
+ * Robolectric settle, and the list stays visible for context.
+ */
 @Composable
-fun RejectDialog(entry: InboxEntry, onReject: (String) -> Unit, onCancel: () -> Unit) {
+fun RejectPanel(entry: InboxEntry, onReject: (String) -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier) {
     var note by rememberSaveable(entry.id) { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text(stringResource(R.string.reject_title, entry.issueIdentifier ?: entry.title)) },
-        text = {
+    Card(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                stringResource(R.string.reject_title, entry.issueIdentifier ?: entry.title),
+                style = MaterialTheme.typography.titleMedium,
+            )
             OutlinedTextField(
                 value = note,
                 onValueChange = { note = it },
@@ -81,14 +94,12 @@ fun RejectDialog(entry: InboxEntry, onReject: (String) -> Unit, onCancel: () -> 
                 minLines = 2,
                 modifier = Modifier.fillMaxWidth(),
             )
-        },
-        confirmButton = {
-            TextButton(onClick = { onReject(note) }, enabled = note.isNotBlank()) {
-                Text(stringResource(R.string.inbox_reject))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
+                TextButton(onClick = { onReject(note) }, enabled = note.isNotBlank()) {
+                    Text(stringResource(R.string.inbox_reject))
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
-        },
-    )
+        }
+    }
 }
