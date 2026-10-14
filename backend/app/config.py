@@ -353,10 +353,10 @@ def normalise_cors_origin(entry: str) -> str:
     scheme = parsed.scheme  # urlsplit lower-cases it
     host = parsed.hostname  # urlsplit lower-cases it and drops IPv6 brackets
     if ":" in host:
-        try:  # browsers write an IPv6 host compressed: [::1], not [0:0::1]
-            host = ipaddress.IPv6Address(host).compressed
-        except ValueError:
-            raise ValueError(f"CORS_ORIGINS entry {entry!r} has an invalid IPv6 address") from None
+        # Brackets back, the address as written (lower-cased). Not
+        # rewritten: Python's compressed form of an IPv4-mapped address
+        # (dotted, in recent point releases) is not what browsers send
+        # (PR #390 re-review).
         host = f"[{host}]"
     if port is not None and port != _DEFAULT_PORTS.get(scheme):
         host = f"{host}:{port}"

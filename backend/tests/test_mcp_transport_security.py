@@ -124,6 +124,38 @@ def test_the_guard_stays_on_with_an_entry_kept_as_written(cors, raw):
     assert settings.allowed_origins == raw.split(",")
 
 
+def test_a_malformed_entry_does_not_stop_the_guard_being_built(cors, caplog):
+    """`http://[fe80::1` is kept as written by Settings (and logged);
+    deriving its Host must not raise (PR #390 re-review; this crashed
+    the import on main too)."""
+    with caplog.at_level("ERROR", logger="app.config"):
+        settings = cors("https://tracker.example.com,http://[fe80::1")
+    assert settings.allowed_origins == ["https://tracker.example.com", "http://[fe80::1"]
+    assert settings.allowed_hosts == ["tracker.example.com", "tracker.example.com:*"]
+    assert any("http://[fe80::1" in r.getMessage() for r in caplog.records)
+
+
+def test_app_main_imports_with_a_malformed_entry():
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "CORS_ORIGINS": "https://tracker.example.com,http://[fe80::1"}
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.main"], env=env, capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+
+
+@pytest.mark.parametrize("raw, hosts", [
+    ("https://[::1]:443", ["[::1]", "[::1]:*"]),
+    ("http://[2001:db8::1]", ["[2001:db8::1]", "[2001:db8::1]:*"]),
+    ("http://[2001:db8::1]:6274", ["[2001:db8::1]:6274"]),
+])
+def test_an_ipv6_entry_without_a_port_allows_any_port(cors, raw, hosts):
+    assert cors(raw).allowed_hosts == hosts
+
+
 def test_a_hand_written_origin_reaches_the_guard_normalised(cors):
     settings = cors("https://Tracker.Example.com/")
     assert settings.allowed_origins == ["https://tracker.example.com"]

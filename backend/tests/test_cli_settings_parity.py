@@ -126,6 +126,10 @@ def test_server_normalises_the_grid_to_what_the_cli_would_store():
         canonical = _cli_canonical(url)
         if canonical is None:
             continue
+        if host.startswith("[") and host.lower() not in canonical:
+            # The CLI rewrites IPv6 text ([0:0::1] -> [::1]); the server
+            # keeps it as written, only lower-cased (PR #390 re-review).
+            continue
         assert _server_origin(url) == canonical, (url, canonical)
         if url.rstrip("/") != canonical:
             rewritten += 1
@@ -145,6 +149,18 @@ _ORIGIN_CASES = [
     ("http://LOCALHOST:6274/", "http://localhost:6274"),
     ("https://[2001:DB8::1]:8443", "https://[2001:db8::1]:8443"),
 ]
+
+
+@pytest.mark.parametrize("raw, expected", [
+    # IPv4-mapped: the first is what a browser sends (WHATWG writes hex
+    # pieces); neither is rewritten into the other, on any Python.
+    ("http://[::ffff:7f00:1]:6274", "http://[::ffff:7f00:1]:6274"),
+    ("http://[::FFFF:7F00:1]/", "http://[::ffff:7f00:1]"),
+    ("http://[::ffff:127.0.0.1]", "http://[::ffff:127.0.0.1]"),
+    ("https://[2001:0DB8:0:0::1]:443", "https://[2001:0db8:0:0::1]"),
+])
+def test_ipv6_hosts_are_lower_cased_not_rewritten(raw, expected):
+    assert _server_origin(raw) == expected
 
 
 @pytest.mark.parametrize("raw, expected", _ORIGIN_CASES)

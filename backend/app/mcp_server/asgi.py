@@ -31,7 +31,7 @@ host/domain an operator picks (no fixed hostname to hardcode):
 """
 from __future__ import annotations
 
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 from chaotic_mcp_tools import add_tools
 from fastapi import FastAPI
@@ -81,10 +81,18 @@ def _transport_security() -> TransportSecuritySettings:
     for origin in origins:
         # Lower-cased, like the Host header _HostCaseFold hands the SDK:
         # an entry kept as written (not an origin) may carry capitals.
-        netloc = urlparse(origin).netloc.lower()
+        try:
+            parts = urlsplit(origin)
+            netloc, port = parts.netloc.lower(), parts.port
+        except ValueError:
+            # Kept as written by Settings, which logged it (`https://[::1`,
+            # a bad port): no host to derive. It stays in allowed_origins,
+            # matching nothing, and must not stop the import (PR #390).
+            continue
         if netloc:
             allowed_hosts.append(netloc)
-            if ":" not in netloc:
+            # No port in the entry (bracketed IPv6 included): any port.
+            if port is None and not netloc.endswith(":"):
                 allowed_hosts.append(f"{netloc}:*")
     return TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
