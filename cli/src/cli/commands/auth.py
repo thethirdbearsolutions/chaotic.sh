@@ -12,6 +12,7 @@ from .shared import _client, console, parse_duration
 
 # How the consent screen labels an app (frontend/src/oauth-consent.js).
 TRUST_LABELS = {
+    "builtin": "official Chaotic app",
     "recognized": "recognized",
     "cimd": "identified by its website",
     "unverified": "unverified (registered itself)",
@@ -255,11 +256,17 @@ def register(cli):
         for c in connections:
             agent = c.get("agent") or {}
             projects = c.get("project_ids")
+            if c.get("acts_as") == "person":
+                # A built-in app signed in as you on one device (CHT-1602).
+                device = c.get("device_name")
+                acts_as = f"you ({device})" if device else "you"
+            else:
+                acts_as = agent.get("name") or "-"
             table.add_row(
                 escape(c["id"][:8]),
                 escape(_app_name(c)),
                 escape(_trust_label(c)),
-                escape(agent.get("name") or "-"),
+                escape(acts_as),
                 escape(c.get("team_name") or "-"),
                 "all" if projects is None else str(len(projects)),
                 escape(c.get("policy") or "-"),

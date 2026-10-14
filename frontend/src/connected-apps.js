@@ -1,7 +1,10 @@
 /**
  * Connected apps (CHT-1523): the OAuth connections the signed-in person
  * approved, with what each can do, and a Disconnect button. Only their
- * own; the server filters on the consenting person.
+ * own; the server filters on the consenting person. A built-in app's
+ * sign-in (CHT-1602) is listed once per device ("Pixel 8 · Chaotic for
+ * Android"); disconnecting it signs that device out and deletes its push
+ * registration.
  */
 
 import { api } from './api.js';
@@ -52,12 +55,12 @@ export function renderConnections() {
         container.innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.dashboard,
             heading: 'No connected apps',
-            description: 'Apps you approve over OAuth, such as an MCP connector, appear here.',
+            description: 'Apps you approve over OAuth, such as an MCP connector or Chaotic for Android, appear here.',
         });
         return;
     }
 
-    container.innerHTML = connections.map(c => `
+    container.innerHTML = connections.map(c => c.acts_as === 'person' ? renderDevice(c) : `
         <div class="api-key-item connected-app-item">
             <div class="api-key-info">
                 <div class="api-key-name">${escapeHtml(appName(c))} ${trustBadge(c.client || { trust: 'unverified' })}</div>
@@ -73,6 +76,26 @@ export function renderConnections() {
             <button class="btn btn-danger-outline" data-action="revoke-connection" data-connection-id="${escapeAttr(c.id)}" data-connection-name="${escapeAttr(appName(c))}">Disconnect</button>
         </div>
     `).join('');
+}
+
+/** A built-in app signed in as the person on one device (CHT-1602). */
+function renderDevice(c) {
+    const device = c.device_name || 'A device';
+    const label = `${device} · ${appName(c)}`;
+    return `
+        <div class="api-key-item connected-app-item connected-app-device">
+            <div class="api-key-info">
+                <div class="api-key-name">${escapeHtml(label)} ${trustBadge(c.client || { trust: 'unverified' })}</div>
+                <div class="api-key-meta">
+                    <span>as you</span>
+                    <span>started in ${escapeHtml(c.team_name || 'a team')}</span>
+                    <span class="api-key-date">Signed in ${formatDate(c.created_at)}</span>
+                    ${c.last_used_at ? `<span class="api-key-date">Last used ${formatDate(c.last_used_at)}</span>` : ''}
+                </div>
+            </div>
+            <button class="btn btn-danger-outline" data-action="revoke-connection" data-connection-id="${escapeAttr(c.id)}" data-connection-name="${escapeAttr(label)}">Sign out</button>
+        </div>
+    `;
 }
 
 export async function revokeConnection(connectionId, name) {

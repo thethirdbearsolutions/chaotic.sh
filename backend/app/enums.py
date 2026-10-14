@@ -218,10 +218,14 @@ class HolderVia(str, Enum):
     "MCP OAuth and token service" §4.1). OAUTH: a human consented to an
     OAuth client acting as the principal. CLAIM_TICKET: a single-use
     claim ticket was redeemed. GRANTEE_CREDENTIAL: a grantee's `ck_` key
-    claimed the identity directly. WEB_LOGIN joins with CHT-1524."""
+    claimed the identity directly. APP: a human signed in to a built-in
+    first-party app (``app.oauth.builtin``, CHT-1602); the session acts
+    as that human, for the whole server, never at /mcp. WEB_LOGIN joins
+    with CHT-1524."""
     OAUTH = "oauth"
     CLAIM_TICKET = "claim_ticket"
     GRANTEE_CREDENTIAL = "grantee_credential"
+    APP = "app"
 
 
 class TokenKind(str, Enum):

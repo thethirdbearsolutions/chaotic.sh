@@ -156,4 +156,34 @@ describe('connected-apps module', () => {
         await revokeConnection('hs-1', 'Claude');
         expect(showApiError).toHaveBeenCalledWith('disconnect app', error);
     });
+
+    it('lists a built-in app sign-in per device, as you (CHT-1602)', () => {
+        setConnections([{
+            ...CONNECTION,
+            id: 'hs-2',
+            acts_as: 'person',
+            agent: null,
+            device_name: 'Pixel <8>',
+            client: {
+                client_id: 'builtin:sh.chaotic.android', name: 'Chaotic for Android', trust: 'builtin',
+                host: null, registration: 'builtin',
+            },
+        }]);
+        renderConnections();
+        expect(container.textContent).toContain('Pixel <8> · Chaotic for Android');
+        expect(container.querySelector('.api-key-name').innerHTML).toContain('Pixel &lt;8&gt;');
+        expect(container.textContent).toContain('as you');
+        expect(container.textContent).toContain('started in Chaotic');
+        expect(container.textContent).toContain('Official Chaotic app');
+        const button = container.querySelector('[data-action="revoke-connection"]');
+        expect(button.textContent).toBe('Sign out');
+        expect(button.dataset.connectionId).toBe('hs-2');
+    });
+
+    it('names an unnamed device', () => {
+        setConnections([{ ...CONNECTION, acts_as: 'person', agent: null, device_name: null, team_name: null }]);
+        renderConnections();
+        expect(container.textContent).toContain('A device · Claude');
+        expect(container.textContent).toContain('started in a team');
+    });
 });

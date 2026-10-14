@@ -36,12 +36,13 @@ from app.api.deps import CurrentUser, HumanUser, security
 from app.auth.credentials import CredentialKind, classify
 from app.auth.access import reads, writes
 from app.config import get_settings
-from app.enums import OAuthClientRegistration
+from app.enums import HolderVia, OAuthClientRegistration
 from app.oauth import ratelimit
 from app.oxyde_models.oauth import OxydeOAuthClient
 from app.oxyde_models.team import OxydeTeam
 from app.oxyde_models.user import OxydeUser
-from app.oauth.clients import canonical_resource, redirect_uri_matches, redirect_uri_problem
+from app.oauth.builtin import builtin_of
+from app.oauth.clients import canonical_resource_for, redirect_uri_matches, redirect_uri_problem
 from app.oauth.discovery import AUTHORIZE_PATH, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH, oauth_enabled
 from app.oauth.errors import FRAME_HEADERS, NO_STORE, OAuthHTTPError
 from app.schemas.oauth import (
@@ -231,7 +232,8 @@ async def authorize(request: Request) -> Response:
     # tightened (a cached metadata document) is not re-validated, and
     # this URI is where the browser will be sent (CHT-1519 review B1).
     if redirect_uri_problem(
-        redirect_uri, allow_private_use=client.registration == OAuthClientRegistration.CIMD,
+        redirect_uri,
+        allow_private_use=client.registration in (OAuthClientRegistration.CIMD, OAuthClientRegistration.BUILTIN),
     ):
         return _error_page("The app's redirect_uri is not one this server will send a browser to.")
 
@@ -260,9 +262,15 @@ async def authorize(request: Request) -> Response:
         return fail("invalid_request", "code_challenge_method must be S256")
     if not _S256_CHALLENGE.match(challenge):
         return fail("invalid_request", "code_challenge is not an S256 challenge")
-    resource = params.get("resource")
-    if resource is not None and canonical_resource(resource, iss) is None:
-        return fail("invalid_target", "resource must be this server's /mcp endpoint")
+    # A built-in app signs in for the whole server (`<base>`); every other
+    # client connects to /mcp (CHT-1602, design D2).
+    builtin = builtin_of(client) is not None
+    resource = canonical_resource_for(params.get("resource"), iss, builtin=builtin)
+    if resource is None:
+        return fail(
+            "invalid_target",
+            "resource must be this server's base URL" if builtin else "resource must be this server's /mcp endpoint",
+        )
     scopes = normalize_requested_scope(params.get("scope"))
     if scopes is None:
         return fail("invalid_scope", "unknown scope requested")
@@ -275,6 +283,7 @@ async def authorize(request: Request) -> Response:
 
     stored = await OAuthConsentService().create_request(
         client=client, redirect_uri=redirect_uri, state=state, code_challenge=challenge, scopes=scopes,
+        resource=resource,
     )
     return _redirect(f"{iss}{CONSENT_PATH}/{stored.id}")
 
@@ -287,7 +296,7 @@ MAX_FORM_BYTES = 16 * 1024
 _MAX_FORM_FIELDS = 32
 _TOKEN_PARAMS = (
     "grant_type", "client_id", "client_secret", "code", "redirect_uri", "code_verifier",
-    "refresh_token", "scope", "resource",
+    "refresh_token", "scope", "resource", "device_name",
 )
 _REVOKE_PARAMS = ("token", "token_type_hint", "client_id", "client_secret")
 
@@ -419,7 +428,9 @@ async def approve_authorization_request(
     request_id: str, choice: AuthorizationApproval, user: HumanUser, response: Response,
 ) -> AuthorizationDecision:
     """Approve: mint a single-use code for the chosen agent, team,
-    projects and policy, and return the client redirect carrying it."""
+    projects and policy (for a built-in app, CHT-1602: for the person
+    approving, in the chosen team), and return the client redirect
+    carrying it."""
     _consent_enabled()
     try:
         redirect, agent_id = await OAuthConsentService().approve(request_id, user, choice)
@@ -496,6 +507,17 @@ async def _require_person(
 Person = Annotated[OxydeUser, Depends(_require_person)]
 
 
+def _device_name(row) -> str | None:
+    """What a built-in app called its device at sign-in (display-only
+    holder metadata, cleaned when stored)."""
+    try:
+        holder = json.loads(row.holder) if row.holder else {}
+    except ValueError:
+        return None
+    name = holder.get("device_name") if isinstance(holder, dict) else None
+    return name if isinstance(name, str) and name else None
+
+
 async def _connection_responses(rows) -> list[ConnectionResponse]:
     def ids(attr):
         return list({getattr(r, attr) for r in rows if getattr(r, attr)})
@@ -510,13 +532,16 @@ async def _connection_responses(rows) -> list[ConnectionResponse]:
         agent = agents.get(row.principal_user_id)
         team = teams.get(row.team_id)
         identity = client_service.identity(client) if client else None
+        person = row.via == HolderVia.APP
         out.append(ConnectionResponse(
             id=row.id,
             client=ConsentClient(
                 client_id=client.id, name=identity.name, trust=identity.trust, host=identity.host,
                 registration=client.registration.value,
             ) if client else None,
-            agent=TokenAgent(id=agent.id, name=agent.name, kind=agent.kind) if agent else None,
+            acts_as="person" if person else "agent",
+            device_name=_device_name(row) if person else None,
+            agent=TokenAgent(id=agent.id, name=agent.name, kind=agent.kind) if agent and not person else None,
             team_id=row.team_id,
             team_name=team.name if team else None,
             project_ids=json.loads(row.scope_project_ids) if row.scope_project_ids is not None else None,

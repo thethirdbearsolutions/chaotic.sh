@@ -184,3 +184,22 @@ async def require_human_session(
 
 
 HumanUser = Annotated[User, Depends(require_human_session)]
+
+
+APP_SESSION_REFUSED = {
+    "error_code": "app_session_refused",
+    "message": "A signed-in app can't do this; use the Chaotic web app or the command-line tool.",
+}
+
+
+async def refuse_app_session(principal: CurrentPrincipal) -> None:
+    """Refuse a built-in app's session (CHT-1602) on account-level routes:
+    minting API keys or agent keys, and changing or deleting the account.
+    The app acts as the person, but a phone's revocable sign-in must not
+    be able to mint a credential that outlives its revocation, or take
+    over the account it signed in to. Other credentials pass."""
+    if principal.is_app_session:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(APP_SESSION_REFUSED))
+
+
+NotAppSession = Annotated[None, Depends(refuse_app_session)]

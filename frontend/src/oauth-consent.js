@@ -16,6 +16,11 @@
  *   - the policy (only write until RBAC policies exist);
  *   - how long it stays connected when the app asked for offline access.
  *
+ * A built-in first-party app (``acts_as: "person"``, CHT-1602: Chaotic
+ * for Android) gets a different page: "Sign in to Chaotic for Android as
+ * you", a team picker and nothing else. No "Acts as", no projects: the
+ * app acts as the person, in every team they belong to.
+ *
  * Approve and Deny POST with the login in the Authorization header (never
  * a cookie, so a cross-site form can't forge them) and then navigate to
  * the redirect the server returns, but only to an https, http or
@@ -80,6 +85,7 @@ function showOnly(el) {
 }
 
 const TRUST_LABELS = {
+    builtin: 'Official Chaotic app',
     recognized: 'Recognized app',
     cimd: 'Identified by its website',
     unverified: 'Unverified app (registered itself)',
@@ -145,11 +151,55 @@ function policyRadios(request) {
 }
 
 /**
+ * The sign-in page of a built-in first-party app (CHT-1602): it acts as
+ * the person, so they pick a team and nothing else.
+ * @param {HTMLElement} el
+ * @param {object} request - GET /api/oauth/requests/{id}, acts_as "person"
+ */
+export function renderAppSignIn(el, request) {
+    const teamId = request.suggested_team_id || (request.teams[0] && request.teams[0].id) || '';
+    const app = escapeHtml(request.client.name);
+    const noTeams = request.teams.length === 0;
+    const offline = request.offline_access
+        ? `<p class="oauth-note">You stay signed in on this device while you use the app at least once every
+             ${request.refresh_idle_days} days, for at most ${request.refresh_absolute_days} days. You can sign
+             the device out at any time from Connected apps.</p>`
+        : '';
+    el.innerHTML = `
+        <div class="oauth-consent oauth-app-sign-in">
+            <h1>Sign in to <span class="oauth-app">${app}</span> as you?</h1>
+            <p>${trustBadge(request.client)}</p>
+            <p>The app will act as <strong>you</strong>: it can read your inbox and do what you can do in
+                every team you belong to, such as approving gates, commenting and changing status.
+                It can't create API keys or change your account.</p>
+            <form id="oauth-consent-form">
+                <fieldset>
+                    <legend>Start in team</legend>
+                    <select id="oauth-team" ${noTeams ? 'disabled' : ''}>${teamOptions(request, teamId)}</select>
+                    ${noTeams ? '<p class="oauth-warning">You need to belong to a team first.</p>' : ''}
+                    <p class="oauth-muted">Leaving this team signs the device out.</p>
+                </fieldset>
+                ${offline}
+                <p id="oauth-error" class="oauth-warning hidden" role="alert"></p>
+                <div class="oauth-actions">
+                    <button type="button" id="oauth-deny" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" id="oauth-approve" class="btn btn-primary" ${noTeams ? 'disabled' : ''}>
+                        Sign in</button>
+                </div>
+            </form>
+        </div>`;
+}
+
+/**
  * Render the consent form for an authorization request.
  * @param {HTMLElement} el
  * @param {object} request - GET /api/oauth/requests/{id}
  */
 export function renderConsent(el, request) {
+    if (request.acts_as === 'person') {
+        renderAppSignIn(el, request);
+        return;
+    }
     const teamId = request.suggested_team_id || (request.teams[0] && request.teams[0].id) || '';
     const team = request.teams.find((t) => t.id === teamId);
     const app = escapeHtml(request.client.name);
@@ -224,7 +274,12 @@ function syncAgentName(el, request) {
  * @param {HTMLElement} el
  */
 export function readChoice(el) {
-    const agentId = el.querySelector('#oauth-agent').value || null;
+    const agentSelect = el.querySelector('#oauth-agent');
+    if (!agentSelect) {
+        // A built-in app's sign-in (CHT-1602): a team, as the person.
+        return { team_id: el.querySelector('#oauth-team').value, policy: 'write' };
+    }
+    const agentId = agentSelect.value || null;
     const projectIds = [...el.querySelectorAll('input[name="oauth-project"]:checked')].map((c) => c.value);
     const policy = el.querySelector('input[name="oauth-policy"]:checked');
     const choice = {
@@ -279,6 +334,7 @@ function renderSignInAgain(el, reload) {
 function wire(el, requestId, request, navigate) {
     const teamSelect = el.querySelector('#oauth-team');
     teamSelect?.addEventListener('change', () => {
+        if (!el.querySelector('#oauth-agent')) return; // a built-in app's sign-in
         const team = request.teams.find((t) => t.id === teamSelect.value);
         el.querySelector('#oauth-agent').innerHTML = agentOptions(team, null);
         el.querySelector('#oauth-projects').innerHTML = projectChecks(team);

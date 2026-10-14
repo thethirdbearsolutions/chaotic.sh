@@ -357,12 +357,19 @@ class InboxService:
         who answers for it. Either the client misbehaved or someone else
         has a copy of the token; either way the app stops working until it
         is reconnected, and this is the explanation."""
-        name = principal.name if principal is not None else "an agent"
+        from app.enums import HolderVia
+
+        if session.via == HolderVia.APP:
+            # A built-in app signed in as the recipient (CHT-1602).
+            title = "An app signed in as you was signed out"
+        else:
+            name = principal.name if principal is not None else "an agent"
+            title = f"A connection acting as {name} was revoked"
         entry = await OxydeInboxEntry.objects.create(
             recipient_user_id=session.holder_user_id,
             kind=InboxEntryKind.AGENT_STATUS,
             team_id=session.team_id,
-            title=f"A connection acting as {name} was revoked",
+            title=title,
             body=(
                 "One of its refresh tokens was used twice, which happens when a token "
                 "has been copied. Every token of the connection was revoked. If you still "

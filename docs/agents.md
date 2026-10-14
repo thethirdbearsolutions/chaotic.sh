@@ -515,6 +515,38 @@ returns JSON whose `issuer` is exactly your `APP_BASE_URL`, and an
 unauthenticated `POST /mcp` answers 401 with a `WWW-Authenticate`
 header that names `resource_metadata`.
 
+#### The Chaotic Android app signs in as you
+
+The native app (application id `sh.chaotic.android`, CHT-1602) uses the
+same OAuth server, but it is not a connector and does not act as an
+agent. It is built into the server as the OAuth client
+`builtin:sh.chaotic.android`, resolved from code: the server fetches
+nothing to recognise it (an air-gapped server works), and nobody can
+change where its sign-in is sent. Its redirect is fixed,
+`sh.chaotic.android:/oauth2redirect`, with PKCE S256, `offline_access`
+and rotating refresh tokens like every connection.
+
+Signing in shows "Sign in to Chaotic for Android as you?" with a team
+to start in, and no agent or project choice. The app then acts as you,
+in every team you belong to, on REST and the `/ws` live feed: it can
+approve gates, comment and change status as you. Its tokens are for the
+whole server (`resource=https://your-chaotic-host`) and are refused at
+`/mcp`; it cannot mint API keys or agent keys, register agents, or
+change or delete your account. Leaving the team you picked signs the
+device out.
+
+Every other OAuth client, whatever it calls itself or wherever it
+redirects, still acts only as an agent and only at `/mcp`.
+
+Each phone is listed in Connected Apps as its own row ("Pixel 8 ·
+Chaotic for Android"). *Sign out* there ends that device's session and
+deletes its push registration.
+
+The server needs only `OAUTH_ENABLED=true` and `APP_BASE_URL` (below)
+for the app. The app reads `/.well-known/oauth-authorization-server`
+first; a 404 there means OAuth is off, and the app tells you that the
+server's admin must set those two.
+
 ### API keys (CLI, scripts, headless sessions)
 
 A `ck_...` API key in an `Authorization: Bearer` header works on `/mcp`

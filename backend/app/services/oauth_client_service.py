@@ -24,7 +24,12 @@ the count is over. A burst of parallel requests can't each read "one
 under the limit" and all insert. New CIMD fetches are rate limited per
 source address in memory (``app.oauth.ratelimit``), since a failed
 fetch leaves no row to count.
-* Built-in names (``app.oauth.clients.KNOWN_CLIENTS``): advisory, a
+* **Built-in** (``app.oauth.builtin``, CHT-1602): the first-party
+  native apps, resolved from a constant in code and never fetched. Their
+  row exists only because sessions and tokens reference it: ``resolve``
+  writes it from the constant every time (so nothing stored can change
+  the app's redirect), keeping ``is_active`` (an admin's disable stands).
+* Known names (``app.oauth.clients.KNOWN_CLIENTS``): advisory, a
   "recognized" badge on consent; no rows.
 
 Nothing here decides who the client may act as. That is consent
@@ -45,6 +50,7 @@ from app.db.transactions import atomic
 from app.config import get_settings
 from app.enums import OAuthClientRegistration
 from app.oauth import cimd, ratelimit
+from app.oauth.builtin import BuiltinClient, builtin_client, builtin_of
 from app.oauth.clients import (
     DCR_MAX_CLIENT_NAME,
     KNOWN_CLIENTS,
@@ -89,6 +95,7 @@ class ClientIdentity:
     client_id: str
     name: str
     registration: OAuthClientRegistration
+    # "builtin" (a first-party app built into this server, CHT-1602),
     # "recognized" (a known client's CIMD), "cimd" (a metadata document
     # from `host`), or "unverified" (registered dynamically; nothing
     # about it is proven).
@@ -130,6 +137,11 @@ def hash_client_secret(secret: str) -> str:
 
 
 def redirect_uris_of(client: OxydeOAuthClient) -> list[str]:
+    """The client's registered redirect URIs. A built-in client's come
+    from its constant, whatever its row says."""
+    builtin = builtin_of(client)
+    if builtin is not None:
+        return list(builtin.redirect_uris)
     try:
         uris = json.loads(client.redirect_uris)
     except (TypeError, ValueError):
@@ -148,6 +160,9 @@ class OAuthClientService:
         OAuthClientError ("invalid_client", or "too_many_requests")."""
         if not client_id:
             raise OAuthClientError("invalid_client", "client_id is required")
+        builtin = builtin_client(client_id)
+        if builtin is not None:
+            return await self._resolve_builtin(builtin)
         if cimd.looks_like_cimd(client_id):
             return await self._resolve_cimd(client_id, source_ip)
         if client_id.startswith(DCR_PREFIX):
@@ -160,6 +175,32 @@ class OAuthClientService:
             ):
                 return row
         raise OAuthClientError("invalid_client", "unknown client_id")
+
+    @staticmethod
+    async def _resolve_builtin(builtin: BuiltinClient) -> OxydeOAuthClient:
+        """A built-in client's row, written from the constant (module
+        docstring). Never fetched; no rate limit (nothing leaves the
+        server)."""
+        fields = dict(
+            registration=OAuthClientRegistration.BUILTIN,
+            client_name=builtin.name,
+            redirect_uris=builtin.redirect_uris_json(),
+            token_endpoint_auth_method="none",
+            client_secret_hash=None,
+            metadata_json=json.dumps(builtin.metadata()),
+        )
+        row = await OxydeOAuthClient.objects.get_or_none(id=builtin.client_id)
+        if row is None:
+            try:
+                return await OxydeOAuthClient.objects.create(id=builtin.client_id, **fields)
+            except IntegrityError:
+                pass  # a concurrent authorize created it first
+        # In place, keeping is_active: an admin's disable stands.
+        await OxydeOAuthClient.objects.filter(id=builtin.client_id).update(**fields)
+        row = await OxydeOAuthClient.objects.get(id=builtin.client_id)
+        if not row.is_active:
+            raise OAuthClientError("invalid_client", "this client has been disabled on this server")
+        return row
 
     @staticmethod
     def _expired_unused(row: OxydeOAuthClient, now: datetime) -> bool:
@@ -220,6 +261,18 @@ class OAuthClientService:
         return refreshed
 
     def identity(self, client: OxydeOAuthClient) -> ClientIdentity:
+        builtin = builtin_of(client)
+        if builtin is not None:
+            # Named from the constant, not the row.
+            return ClientIdentity(
+                client_id=client.id,
+                name=builtin.name,
+                registration=client.registration,
+                trust="builtin",
+                host=None,
+                redirect_hosts=tuple(dict.fromkeys(redirect_host(u) for u in builtin.redirect_uris)),
+                loopback_only=False,
+            )
         uris = redirect_uris_of(client)
         hosts = tuple(dict.fromkeys(redirect_host(u) for u in uris))
         if client.registration == OAuthClientRegistration.CIMD:

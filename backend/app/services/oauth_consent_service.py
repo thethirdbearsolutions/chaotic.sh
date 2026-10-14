@@ -19,6 +19,12 @@ and sends it as a header, never a cookie: a top-level ``GET
    of it and returns the client's redirect with ``code``, ``state`` and
    ``iss``.
 
+A built-in first-party app (``app.oauth.builtin``, CHT-1602) is the one
+exception to "acts as an agent": its consent is "sign in as you". The
+human picks a team and nothing else (no agent, no projects), and the
+code it mints acts as that human for the whole server (``<base>``).
+Which kind a request is comes from its client_id alone.
+
 Every authorization shows consent; nothing is silently re-approved, and
 the known-clients badge never skips it. The human-only check on the
 endpoints is in ``app.api.oauth`` (``require_human_session``); this
@@ -36,6 +42,7 @@ from app.db.transactions import atomic
 
 from app.config import get_settings
 from app.enums import AgentKind, HolderVia, OAuthClientRegistration, TokenKind
+from app.oauth.builtin import builtin_of
 from app.oauth.clients import is_loopback_redirect, redirect_host, redirect_uri_problem
 from app.oauth.discovery import RESOURCE_SCOPES
 from app.oxyde_models.oauth import OxydeHolderSession, OxydeOAuthAuthorizationRequest, OxydeOAuthClient
@@ -129,11 +136,11 @@ class OAuthConsentService:
 
     async def create_request(
         self, *, client: OxydeOAuthClient, redirect_uri: str, state: str | None, code_challenge: str,
-        scopes: list[str],
+        scopes: list[str], resource: str | None = None,
     ) -> OxydeOAuthAuthorizationRequest:
-        """Store a request that /oauth/authorize has fully validated. The
-        requested resource is not kept: every connector token is for
-        ``/mcp``.
+        """Store a request that /oauth/authorize has fully validated,
+        with the canonical resource it resolved (``<base>/mcp`` for a
+        connector, the default; ``<base>`` for a built-in app).
 
         Sweeps expired requests first: anyone can create one, so they
         must not accumulate. Nothing references a request once it has
@@ -146,7 +153,7 @@ class OAuthConsentService:
             redirect_uri=redirect_uri,
             state=state,
             code_challenge=code_challenge,
-            resource=mcp_resource(),
+            resource=resource or mcp_resource(),
             scope=" ".join(scopes),
             expires_at=_now() + REQUEST_TTL,
         )
@@ -187,7 +194,8 @@ class OAuthConsentService:
         identity = OAuthClientService().identity(client)
         scopes = split_scope(request.scope)
         settings = get_settings()
-        teams = await self._teams(user)
+        person = builtin_of(client) is not None
+        teams = await self._teams(user, with_agents=not person)
         team_ids = {t.id for t in teams}
         suggested_team, suggested_agent = await self._suggestion(client, user)
         if suggested_agent and not any(
@@ -218,24 +226,28 @@ class OAuthConsentService:
             refresh_idle_days=settings.oauth_refresh_idle_ttl_seconds // 86400,
             refresh_absolute_days=settings.oauth_refresh_absolute_ttl_seconds // 86400,
             teams=teams,
-            default_agent_name=self._default_agent_name(identity.name, user),
+            default_agent_name="" if person else self._default_agent_name(identity.name, user),
             suggested_team_id=suggested_team,
-            suggested_agent_id=suggested_agent,
+            suggested_agent_id=None if person else suggested_agent,
+            acts_as="person" if person else "agent",
         )
 
     @staticmethod
     def _default_agent_name(client_name: str, user: OxydeUser) -> str:
         return f"{client_name} ({user.name})"[:255]
 
-    async def _teams(self, user: OxydeUser) -> list[ConsentTeam]:
+    async def _teams(self, user: OxydeUser, *, with_agents: bool = True) -> list[ConsentTeam]:
         """The viewer's teams, each with its projects and the agents in it
-        the viewer may connect as. Never more than the viewer's own
-        access: a human's access is team membership."""
+        the viewer may connect as (none for a built-in app, which signs
+        in as the viewer). Never more than the viewer's own access: a
+        human's access is team membership."""
         out = []
         agents_service = AgentService()
         for team in await TeamService().get_user_teams(user.id):
             projects = await OxydeProject.objects.filter(team_id=team.id).order_by("name").all()
-            agents = [a for a in await agents_service.list_by_team(team.id) if await self._may_connect_as(user, a)]
+            agents = [
+                a for a in await agents_service.list_by_team(team.id) if await self._may_connect_as(user, a)
+            ] if with_agents else []
             out.append(ConsentTeam(
                 id=team.id,
                 name=team.name,
@@ -285,7 +297,7 @@ class OAuthConsentService:
         app can copy another's name and loopback host (review N1/Q2).
         Advisory only: it pre-selects, the human still chooses."""
         sessions = await OxydeHolderSession.objects.filter(
-            holder_user_id=user.id, via=HolderVia.OAUTH, oauth_client_id=client.id,
+            holder_user_id=user.id, via__in=[HolderVia.OAUTH, HolderVia.APP], oauth_client_id=client.id,
         ).order_by("-created_at").limit(1).all()
         if sessions:
             return sessions[0].team_id, sessions[0].principal_user_id
@@ -294,12 +306,23 @@ class OAuthConsentService:
     # --- 3. decisions --------------------------------------------------------------
 
     async def approve(self, request_id: str, user: OxydeUser, choice: AuthorizationApproval) -> tuple[str, str]:
-        """Approve: returns (redirect with code, agent id). Raises
-        ConsentError. Everything is validated before the request is
-        consumed, so a refused approval can be corrected and resent."""
+        """Approve: returns (redirect with code, agent id; None for a
+        built-in app, which signs in as ``user``). Raises ConsentError.
+        Everything is validated before the request is consumed, so a
+        refused approval can be corrected and resent."""
         request = await self._bound(request_id, user)
         client = await self._client(request)
         scopes = split_scope(request.scope)
+        person = builtin_of(client) is not None
+        if person and (choice.agent_id is not None or choice.agent_name is not None or choice.project_ids):
+            raise ConsentError(422, {
+                "error_code": "app_signs_in_as_you",
+                "message": "This app signs in as you in the whole team: choose a team, not an agent or projects.",
+            })
+        # Belt and braces: the resource was fixed by /oauth/authorize from
+        # the same client_id, so a mismatch here is a stored row gone wrong.
+        if request.resource != (issuer() if person else mcp_resource()):
+            raise _gone()
 
         member = await TeamService().get_member(choice.team_id, user.id)
         if member is None:
@@ -322,7 +345,9 @@ class OAuthConsentService:
 
         agent = None
         new_name = None
-        if choice.agent_id is not None:
+        if person:
+            pass  # the principal is the viewer
+        elif choice.agent_id is not None:
             agent = await AgentService().get_by_id(choice.agent_id)
             if agent is None or agent.agent_team_id != choice.team_id or not await self._may_connect_as(user, agent):
                 raise ConsentError(status.HTTP_403_FORBIDDEN, {
@@ -357,16 +382,16 @@ class OAuthConsentService:
             if consumed != 1:
                 raise _gone()
 
-            if agent is None:
+            if agent is None and not person:
                 agent = await self._create_agent(new_name, user, choice.team_id, client, request.redirect_uri)
             await OAuthClientService().mark_authorized(client.id)
             granted = [scope] + ([OFFLINE_ACCESS] if OFFLINE_ACCESS in scopes else [])
             _row, code = await TokenService().mint_single_use(
                 TokenKind.AUTH_CODE,
                 team_id=choice.team_id,
-                principal_user_id=agent.id,
+                principal_user_id=user.id if person else agent.id,
                 holder_user_id=user.id,
-                resource=request.resource or mcp_resource(),
+                resource=request.resource,
                 scopes=granted,
                 policy_name=choice.policy,
                 scope_project_ids=project_ids,
@@ -376,7 +401,7 @@ class OAuthConsentService:
                 auth_request_id=request.id,
             )
         redirect = with_query(request.redirect_uri, {"code": code, "state": request.state, "iss": issuer()})
-        return redirect, agent.id
+        return redirect, (None if person else agent.id)
 
     async def deny(self, request_id: str, user: OxydeUser) -> str:
         request = await self._bound(request_id, user)

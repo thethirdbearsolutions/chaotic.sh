@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.db.transactions import atomic
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, can_manage_agent, get_api_key_record
+from app.api.deps import CurrentUser, NotAppSession, can_manage_agent, get_api_key_record
 from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated
 from app.services.agent_service import AgentService
 from app.services.api_key_service import APIKeyService
@@ -17,6 +17,7 @@ router = APIRouter()
 async def create_api_key(
     api_key_in: APIKeyCreate,
     current_user: CurrentUser,
+    _app_session: NotAppSession,
     calling_key: Annotated[object | None, Depends(get_api_key_record)],
 ):
     """Create a new API key. The full key is only shown once.

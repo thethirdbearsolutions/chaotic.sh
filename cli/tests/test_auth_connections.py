@@ -74,6 +74,21 @@ class TestList:
         assert name in result.output
         assert "\x1b]8;" not in result.output  # no OSC-8 hyperlink
 
+    def test_app_sign_in_acts_as_you(self, cli_runner):
+        """A built-in app's sign-in, one per device (CHT-1602)."""
+        from cli.main import cli, client
+
+        device = {**CONNECTION, "acts_as": "person", "agent": None, "device_name": "Pixel [b]8[/b]",
+                  "client": {"client_id": "builtin:sh.chaotic.android", "name": "Chaotic for Android",
+                             "trust": "builtin", "host": None, "registration": "builtin"}}
+        unnamed = {**device, "id": "3f1c2b9a-0000-4000-8000-000000000003", "device_name": None}
+        client.list_connections = MagicMock(return_value=[device, unnamed])
+        result = cli_runner.invoke(cli, ["auth", "connections", "list"])
+        assert result.exit_code == 0, result.output
+        assert "Chaotic for Android" in result.output and "official Chaotic app" in result.output
+        assert "you (Pixel [b]8[/b])" in result.output
+        assert result.output.count("you") >= 2
+
     def test_empty(self, cli_runner):
         from cli.main import cli, client
 

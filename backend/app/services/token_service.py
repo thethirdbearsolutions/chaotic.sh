@@ -67,6 +67,7 @@ from app.config import get_settings
 from app.db.transactions import atomic
 
 from app.enums import HolderVia, RevocationTarget, TokenKind
+from app.oauth.builtin import is_builtin
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeRevocationEvent
 from app.services import credential_events
 from app.services.credential_events import CredentialsEnded, require_revoking, revoking
@@ -110,6 +111,11 @@ VALIDATION_CACHE_SECONDS = 30.0
 _VALIDATION_CACHE_MAX = 10_000
 # `last_used_at` is informational; write it at most this often (as for keys).
 LAST_USED_WRITE_INTERVAL = timedelta(seconds=60)
+
+# Sessions a human consented to on an OAuth consent page: an OAuth
+# connector (OAUTH) or a built-in app (APP, CHT-1602). They take the
+# OAuth lifetimes, and a refresh token only with offline_access.
+_CONSENTED = frozenset({HolderVia.OAUTH, HolderVia.APP})
 
 REASON_REFRESH_REUSE = "refresh_reuse"
 REASON_CODE_REUSE = "code_reuse"
@@ -222,15 +228,37 @@ def mcp_resource() -> str:
     return issuer() + MCP_RESOURCE_PATH
 
 
-def audience_accepts(token_resource: str, endpoint_resource: str) -> bool:
+def audience_accepts(token_resource: str, endpoint_resource: str, via: HolderVia | None = None) -> bool:
     """May a token issued for `token_resource` be used at an endpoint whose
     resource is `endpoint_resource` (I16)? Exactly its own resource; and a
     token issued for the whole server (`<base>`, claim holders) also at
-    /mcp. A connector token (`<base>/mcp`) is never accepted on REST."""
+    /mcp. A connector token (`<base>/mcp`) is never accepted on REST.
+
+    A built-in app's token (`via` APP, CHT-1602) acts as a person and is
+    accepted only at exactly its own resource (`<base>`: REST and /ws),
+    never at /mcp: an MCP client acting as a person is what design D2
+    rules out."""
     if token_resource == endpoint_resource:
         return True
+    if via == HolderVia.APP:
+        return False
     base = issuer()
     return token_resource == base and endpoint_resource == base + MCP_RESOURCE_PATH
+
+
+def check_code_binding(*, oauth_client_id: str | None, principal_user_id: str, holder_user_id: str,
+                       resource: str) -> None:
+    """Design D2, enforced where a code is minted and again where it
+    starts a session (CHT-1602). A built-in app's code acts as the human
+    who consented (principal is holder) for the whole server (`<base>`);
+    every other client's code acts as someone else (an agent; the
+    resolver checks it is one) at /mcp only. Raises ValueError: a caller
+    that gets here wrong has a bug, not a bad request."""
+    if is_builtin(oauth_client_id):
+        if principal_user_id != holder_user_id or resource != issuer():
+            raise ValueError("a built-in app's code acts as the consenting human, for the whole server")
+    elif principal_user_id == holder_user_id or resource != mcp_resource():
+        raise ValueError("an OAuth connector's code acts as an agent, at /mcp only (design D2)")
 
 
 def _wrong_audience() -> TokenError:
@@ -317,6 +345,10 @@ class TokenService:
             ttl = settings.oauth_code_ttl_seconds
             if not (oauth_client_id and code_challenge and redirect_uri):
                 raise ValueError("an authorization code needs a client, a PKCE challenge and a redirect_uri")
+            check_code_binding(
+                oauth_client_id=oauth_client_id, principal_user_id=principal_user_id,
+                holder_user_id=holder_user_id, resource=resource,
+            )
         elif kind == TokenKind.CLAIM_TICKET:
             ttl = settings.claim_ticket_ttl_seconds
             if not minted_by_credential_id:
@@ -432,7 +464,16 @@ class TokenService:
         (PKCE for a code)."""
         _require_enabled()
         if redeemed.kind == TokenKind.AUTH_CODE:
-            via = HolderVia.OAUTH
+            # Decided by the client_id alone (app.oauth.builtin), and the
+            # code's bindings re-checked against it (design D2, CHT-1602).
+            via = HolderVia.APP if is_builtin(redeemed.oauth_client_id) else HolderVia.OAUTH
+            try:
+                check_code_binding(
+                    oauth_client_id=redeemed.oauth_client_id, principal_user_id=redeemed.principal_user_id,
+                    holder_user_id=redeemed.holder_user_id, resource=redeemed.resource,
+                )
+            except ValueError:
+                raise TokenError("invalid_grant", "this code was not issued for this kind of client") from None
         elif redeemed.kind == TokenKind.CLAIM_TICKET:
             via = HolderVia.CLAIM_TICKET
         else:
@@ -443,7 +484,7 @@ class TokenService:
             if not set(requested) <= set(granted):
                 raise TokenError("invalid_scope", "the scope may only narrow what was granted")
             granted = requested
-        offline = via != HolderVia.OAUTH or "offline_access" in granted
+        offline = via not in _CONSENTED or "offline_access" in granted
         now = _now()
         async with atomic():
             # The INSERT first, so this transaction holds the write lock
@@ -514,7 +555,7 @@ class TokenService:
         if holder_json is not None and len(holder_json) > HOLDER_JSON_MAX:
             raise ValueError(f"holder metadata is display-only and capped at {HOLDER_JSON_MAX} characters of JSON")
         settings = get_settings()
-        if via == HolderVia.OAUTH:
+        if via in _CONSENTED:
             idle, absolute = settings.oauth_refresh_idle_ttl_seconds, settings.oauth_refresh_absolute_ttl_seconds
         else:
             idle, absolute = settings.claim_refresh_idle_ttl_seconds, settings.claim_refresh_absolute_ttl_seconds
@@ -635,7 +676,7 @@ class TokenService:
 
         settings = get_settings()
         idle = (
-            settings.oauth_refresh_idle_ttl_seconds if session.via == HolderVia.OAUTH
+            settings.oauth_refresh_idle_ttl_seconds if session.via in _CONSENTED
             else settings.claim_refresh_idle_ttl_seconds
         )
         session.idle_expires_at = min(now + timedelta(seconds=idle), session.absolute_expires_at)
@@ -749,7 +790,7 @@ class TokenService:
         validated = self._cached(digest, now, epoch)
         if validated is None:
             validated = await self._validate_from_db(digest, now, epoch, resource)
-        elif not audience_accepts(validated.resource, resource):
+        elif not audience_accepts(validated.resource, resource, validated.via):
             raise _wrong_audience()
         return validated
 
@@ -783,7 +824,7 @@ class TokenService:
             raise TokenError("invalid_token", "the access token's connection has been revoked or has expired")
         # Before the bookkeeping below: a token refused at this resource
         # leaves no trace (no first use, no last-used time; CHT-1576).
-        if not audience_accepts(row.resource, resource):
+        if not audience_accepts(row.resource, resource, session.via):
             raise _wrong_audience()
         # Two bookkeeping writes on the authentication path, both best
         # effort: under write contention they can wait out the busy
