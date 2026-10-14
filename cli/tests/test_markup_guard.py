@@ -212,7 +212,9 @@ class _Checker:
             return _last_word(receiver.attr) in words
         if not isinstance(receiver, ast.Name):
             return False
-        known = [b for b in self._bindings(receiver) if b is not None]
+        # `x = None` before the real binding says nothing either.
+        known = [b for b in self._bindings(receiver)
+                 if b is not None and not (isinstance(b, ast.Constant) and b.value is None)]
         if not known:
             return _last_word(receiver.id) in words
         def says(b):
@@ -553,6 +555,7 @@ BAD["unescaped"] += [
     "self.progress.add_task(name)",
     't = Tree("x"); t.add(name)',
     "branch.add(name)",
+    't = None; t = Tree("x"); t.add(name)',
 ]
 BAD["table_title"] += [
     "table.add_column(esc(name))",
