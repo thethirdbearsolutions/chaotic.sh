@@ -208,6 +208,9 @@ USER_FKS_ALLOWED_TO_CASCADE = {
     # alone, and nothing else refers to them (CHT-1604, 0026).
     ("push_devices", "user_id"),
     ("push_preferences", "user_id"),
+    # Stored answers to a user's own keyed writes, for their replay: a
+    # cache, not a record of who did what (CHT-1621, 0029).
+    ("idempotency_records", "user_id"),
 }
 
 

@@ -54,6 +54,7 @@ class TestSecretFormat:
         ("app/oxyde_db.py", "uuid4"): "primary-key default for a str pk column",
         ("app/services/agent_service.py", "uuid4"): "placeholder agent email, not a credential",
         ("app/services/registration_service.py", "uuid4"): "suffix of a placeholder agent email",
+        ("app/api/idempotency.py", "uuid4"): "idempotency claim token: names a request, grants nothing",
         ("app/services/issue_service.py", "random"): "shuffles issue order for display",
         ("app/services/ritual_selection.py", "random"): "seeded ritual sampling, deterministic by design",
         ("app/services/push_sender.py", "urandom"): "RFC 8188 per-message salt for Web Push encryption, sent in clear",

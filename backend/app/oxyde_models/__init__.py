@@ -44,8 +44,10 @@ from app.oxyde_models.oauth import (
     OxydeRevocationEvent,
 )
 from app.oxyde_models.push import OxydePushDevice, OxydePushPreference
+from app.oxyde_models.idempotency import OxydeIdempotencyRecord
 
 __all__ = [
+    "OxydeIdempotencyRecord",
     "OxydePushDevice",
     "OxydePushPreference",
     "OxydeUser",

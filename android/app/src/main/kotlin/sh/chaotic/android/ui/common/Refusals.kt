@@ -53,9 +53,10 @@ fun RefusalList(refusals: List<WriteRefusal>, onDismiss: (String) -> Unit, modif
 }
 
 /**
- * Writes the server kept failing (CHT-1613): they are no longer sent on
- * their own, nor shown as done, until the person sends them again or
- * discards them.
+ * Writes the server kept failing (CHT-1613), or too old to send on their
+ * own (CHT-1621): they are no longer sent, nor shown as done, until the
+ * person sends them again or discards them. Retrying one too old is
+ * refused, with why.
  */
 @Composable
 fun StalledList(
@@ -63,6 +64,7 @@ fun StalledList(
     onRetry: (String) -> Unit,
     onDiscard: (String) -> Unit,
     modifier: Modifier = Modifier,
+    nowMillis: Long = System.currentTimeMillis(),
 ) {
     if (stalled.isEmpty()) return
     Column(modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer)) {
@@ -73,7 +75,8 @@ fun StalledList(
             ) {
                 Column(Modifier.weight(1f)) {
                     Notice(couldNot(write.kind, write.label), MaterialTheme.typography.labelLarge)
-                    Notice(stringResource(R.string.stalled_reason), MaterialTheme.typography.bodySmall)
+                    val reason = if (write.tooOld(nowMillis)) R.string.stalled_too_old else R.string.stalled_reason
+                    Notice(stringResource(reason), MaterialTheme.typography.bodySmall)
                     val text = write.value
                     if (write.kind == WriteKind.COMMENT && text != null) {
                         SelectionContainer { Notice(text, MaterialTheme.typography.bodyMedium) }
