@@ -13,11 +13,13 @@ import sh.chaotic.android.GRACE
 import sh.chaotic.android.di.cacheOwner
 import sh.chaotic.android.ownerOf
 import sh.chaotic.android.testSessions
+import sh.chaotic.auth.SessionManager
 import sh.chaotic.sync.CacheSession
 import sh.chaotic.sync.FakeRemote
 import sh.chaotic.sync.InMemoryCacheStore
 import sh.chaotic.sync.InboxAction
 import sh.chaotic.sync.InboxChange
+import sh.chaotic.sync.InboxSyncer
 import sh.chaotic.sync.TEAM_A
 import sh.chaotic.sync.WriteQueue
 import sh.chaotic.sync.entry
@@ -54,6 +56,9 @@ class NotificationDecisionsTest {
         ),
     )
 
+    private fun decisions(sessions: SessionManager, session: CacheSession, notifier: AndroidNotifier) =
+        NotificationDecisions(context, sessions, WriteQueue(remote, session), InboxSyncer(remote, session), notifier)
+
     private fun text(): String =
         manager.activeNotifications.single().notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
 
@@ -64,7 +69,7 @@ class NotificationDecisionsTest {
         sessions.load()
         val session = CacheSession(store) { sessions.cacheOwner() }
         val notifier = AndroidNotifier(context) { sessions.cacheOwner() }
-        val decisions = NotificationDecisions(context, sessions, WriteQueue(remote, session), notifier)
+        val decisions = decisions(sessions, session, notifier)
         val adaEntry = PushPayload.Entry("g1", "gate_pending", "CHT-7", "Ship it", null, "issue:i1")
         notifier.apply(NotificationPlanner.onEntry(adaEntry, emptyList()))
 
@@ -84,11 +89,13 @@ class NotificationDecisionsTest {
         session.begin()
         store.applyInbox(InboxChange(false, listOf(gate("g2")), emptySet(), setOf(TEAM_A), "c"))
         val notifier = AndroidNotifier(context) { sessions.cacheOwner() }
-        val decisions = NotificationDecisions(context, sessions, WriteQueue(remote, session), notifier)
+        val decisions = decisions(sessions, session, notifier)
 
         decisions.onTap(DecisionTap("g1", ownerOf(ADA), "gate_pending", "CHT-7", DecisionTap.REJECT), null)
 
         assertTrue("no longer waiting" in text())
         assertEquals(emptyList(), store.pendingWrites())
+        // It caught up with the server first, in case the push came before its entry's sync.
+        assertTrue(remote.sinceSent.isNotEmpty())
     }
 }

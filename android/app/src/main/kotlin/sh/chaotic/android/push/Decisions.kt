@@ -15,9 +15,11 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import sh.chaotic.android.R
 import sh.chaotic.auth.SessionManager
 import sh.chaotic.sync.FlushOutcome
+import sh.chaotic.sync.InboxSyncer
 import sh.chaotic.sync.NotificationDecision
 import sh.chaotic.sync.WriteQueue
 import sh.chaotic.sync.WriteStatus
@@ -87,6 +89,7 @@ constructor(
     @param:ApplicationContext private val context: Context,
     private val sessions: SessionManager,
     private val queue: WriteQueue,
+    private val syncer: InboxSyncer,
     private val notifier: AndroidNotifier,
 ) {
     suspend fun onTap(tap: DecisionTap, typed: String?) {
@@ -97,7 +100,12 @@ constructor(
             else -> typed?.trim()?.takeIf { it.isNotEmpty() } ?: context.getString(R.string.decision_canned_note)
         }
         val approve = note == null
-        val result = queue.decideFromNotification(tap.owner, tap.entryId, note)
+        var result = queue.decideFromNotification(tap.owner, tap.entryId, note)
+        if (result == NotificationDecision.Gone) {
+            // A push can arrive before the sync that brings its entry in: catch up once, then look again.
+            val synced = withTimeoutOrNull(CATCH_UP_MILLIS) { syncer.sync() }
+            if (synced != null) result = queue.decideFromNotification(tap.owner, tap.entryId, note)
+        }
         // Whatever came of it, the buttons go; the notice says what happened.
         notifier.withdraw(tap.entryId)
         notifier.showDecision(tap.entryId, onTapNotice(notifier.title(tap.kind, tap.issue), approve, result))
@@ -163,6 +171,9 @@ constructor(
     private fun string(id: Int) = context.getString(id)
 
     private companion object {
+        /** How long a tap waits for a sync to bring in an entry the cache does not hold yet. */
+        const val CATCH_UP_MILLIS = 8_000L
+
         const val MIN_FOLLOW_UP_MILLIS = 15_000L
 
         /** When the queue cannot say: about when its first retry falls due. */
