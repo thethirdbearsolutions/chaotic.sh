@@ -142,6 +142,7 @@ def _upgrade(args=("--no-backup",), **overrides):
         "verify_deployed_commit": dict(return_value=(True, "ab71cd5")),
         "checkout_version": dict(return_value=(True, None)),
         "restore_backup": dict(return_value=True),
+        "resync_checkout": dict(return_value=(True, "re-synced")),
         "run_migrations": dict(return_value=(True, "ok")),
         "rebuild_frontend": dict(return_value=(True, "built")),
     }
@@ -519,7 +520,7 @@ class TestFailedMigrationRollsBack:
                 patch.object(system, "verify_installed_cli", return_value=(False, "CLI reinstall did not take: cli/system.py")):
             ok, message = system.run_migrations(progress=progress)
         assert ok is False and "did not take" in message
-        assert progress == {"migrate_started": False}
+        assert progress == {"migrate_started": False, "cli_reinstall_started": True, "cli_installed": False}
         assert not [c for c in ran if "oxyde" in c], "migrated after a CLI reinstall that did not take"
 
         result, m = _upgrade(
@@ -717,6 +718,340 @@ class TestOwnProcessGroup:
             ok, message = system.run_migrations(progress=progress)
         assert (ok, message) == (False, "Dependency sync timed out")
         assert progress["migrate_started"] is False
+
+
+class TestRollbackResync:
+    """CHT-1694: by the time anything rolls back, the upgrade has synced the
+    server's venv for the commit it is abandoning. The rollback puts it
+    back for the previous commit before restarting it, and a re-sync that
+    fails is reported without stopping the restart. The CLI the upgrade
+    installed and verified stays (it is the upgrade tool); one whose
+    reinstall started and did not verify is replaced by the previous
+    commit's; one never touched is left alone."""
+
+    def test_health_failure_resyncs_the_previous_checkout_before_restarting_it(self):
+        calls = []
+        result, m = _upgrade(
+            health_check=dict(return_value=False),
+            checkout_version=dict(side_effect=lambda *a, **k: calls.append(("checkout", a)) or (True, None)),
+            resync_checkout=dict(side_effect=lambda **k: calls.append(("resync", k)) or (True, "Server dependencies synced")),
+            start_service=dict(side_effect=lambda: calls.append(("start",)) or True),
+        )
+
+        assert result.exit_code == 1
+        assert calls == [
+            ("checkout", ("v0.1.0a20",)), ("start",),  # the upgrade
+            ("checkout", (_COMMITS[0],)),               # the rollback
+            ("resync", {"reinstall": False, "abandoned_commit": _COMMITS[1]}), ("start",),
+        ]
+        out = _flat(result.output)
+        # The upgrade's CLI was installed and verified: it stays.
+        assert "Re-syncing dependencies for the previous version" in out
+        assert "CLI: keeping the version this upgrade installed and verified" in out
+        assert "re-run the upgrade rather than 'chaotic system reconfigure'" in out
+        assert "may not match" not in out
+        assert "Rolled back to previous version" in out
+
+    @staticmethod
+    def _fails_at(stage):
+        """A run_migrations that records progress as the real one does and
+        fails at `stage`: "sync" (before the CLI reinstall), "reinstall"
+        (it started and did not verify) or "migrate" (after it verified)."""
+        def run(fake_initial=False, progress=None):
+            progress.update(
+                cli_reinstall_started=stage in ("reinstall", "migrate"),
+                cli_installed=stage == "migrate",
+                migrate_started=stage == "migrate",
+            )
+            return False, {"sync": "Migration failed:\nerror: no network",
+                           "reinstall": "CLI reinstall did not take: cli/x.py",
+                           "migrate": "Migration failed:\n0030 boom"}[stage]
+        return dict(side_effect=run)
+
+    def test_migrate_failure_after_a_verified_cli_keeps_that_cli(self, tmp_path):
+        result, m = _upgrade(
+            run_migrations=self._fails_at("migrate"),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+        )
+
+        assert result.exit_code == 1
+        m["resync_checkout"].assert_called_once_with(reinstall=False, abandoned_commit=_COMMITS[1])
+        assert "CLI: keeping the version this upgrade installed and verified" in _flat(result.output)
+
+    def test_a_cli_reinstall_that_did_not_verify_is_replaced_by_the_previous_cli(self, tmp_path):
+        """Never leave a half-installed CLI behind."""
+        result, m = _upgrade(
+            run_migrations=self._fails_at("reinstall"),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+            resync_checkout=dict(return_value=(True, "Server dependencies synced; CLI reinstalled (verified)")),
+        )
+
+        assert result.exit_code == 1
+        m["resync_checkout"].assert_called_once_with(reinstall=True, abandoned_commit=_COMMITS[1])
+        out = _flat(result.output)
+        assert "Re-syncing dependencies and the CLI for the previous version" in out
+        assert "CLI: reinstalled from the previous version (19ae385) and verified" in out
+
+    def test_a_cli_the_upgrade_never_touched_is_left_alone(self, tmp_path):
+        """Review M1: a sync that failed before the reinstall leaves the
+        pre-upgrade CLI intact; reinstalling it would only add downtime
+        and a failure that is not there."""
+        result, m = _upgrade(
+            run_migrations=self._fails_at("sync"),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+            resync_checkout=dict(return_value=(False, "Dependency sync failed:\nerror: no network")),
+        )
+
+        assert result.exit_code == 1
+        m["resync_checkout"].assert_called_once_with(reinstall=False, abandoned_commit=_COMMITS[1])
+        out = _flat(result.output)
+        assert "CLI: unchanged (the upgrade never reinstalled it)" in out
+        assert "half-installed" not in out
+        assert "uv tool install" not in out
+
+    def test_a_failed_resync_of_the_previous_cli_says_it_may_be_half_installed(self, tmp_path):
+        result, m = _upgrade(
+            run_migrations=self._fails_at("reinstall"),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+            resync_checkout=dict(return_value=(False, "CLI reinstall timed out")),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "virtualenv and the installed CLI may not match the code" in out
+        assert "uv tool install --force --reinstall" in out
+        assert "CLI: may be half-installed" in out
+        m["start_service"].assert_called_once()
+
+    def test_a_failed_resync_is_reported_and_the_old_code_still_restarts_once(self):
+        result, m = _upgrade(
+            health_check=dict(return_value=False),
+            resync_checkout=dict(return_value=(False, "Dependency sync failed:\nerror: no network")),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "Dependency sync failed: error: no network" in out
+        assert "its virtualenv may not match the code. Starting it anyway" in out
+        assert "just sync-backend" in out and "uv tool install" not in out  # the verified new CLI stays
+        assert "CLI: keeping the version this upgrade installed" in out
+        # No second rollback: one checkout back, one re-sync, one restart.
+        assert [c.args for c in m["checkout_version"].call_args_list] == [("v0.1.0a20",), (_COMMITS[0],)]
+        m["resync_checkout"].assert_called_once()
+        assert m["start_service"].call_count == 2  # new code, then the rollback's
+        assert "Rolled back to previous version" in out
+        assert out.rindex("Server is") > out.index("may not match")
+
+    def test_ctrl_c_during_the_resync_still_restarts(self):
+        result, m = _upgrade(
+            health_check=dict(return_value=False),
+            resync_checkout=dict(side_effect=KeyboardInterrupt),
+        )
+
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        out = _flat(result.output)
+        assert "Interrupted (Ctrl-C)" in out and "may not match" in out
+        assert m["start_service"].call_count == 2
+
+    def test_an_unexpected_error_in_the_resync_still_restarts(self):
+        result, m = _upgrade(
+            health_check=dict(return_value=False),
+            resync_checkout=dict(side_effect=RuntimeError("surprise")),
+        )
+
+        assert result.exit_code == 1
+        assert "RuntimeError: surprise" in _flat(result.output)
+        assert m["start_service"].call_count == 2
+
+    def test_a_failed_checkout_skips_the_resync_and_the_database_restore(self, tmp_path):
+        """Review M2: the new code is what will run, and it refuses the old
+        schema; restoring the backup under it would make the server
+        certain to be DOWN."""
+        (tmp_path / "chaotic.db").write_bytes(b"")
+        backup = tmp_path / "chaotic.db.backup-20261014-000000"
+        backup.write_bytes(b"")
+        outcomes = iter([(True, None), (False, "fatal: Unable to create '.git/index.lock': File exists.")])
+        result, m = _upgrade(
+            args=(),
+            health_check=dict(return_value=False),
+            checkout_version=dict(side_effect=lambda *a, **k: next(outcomes)),
+            create_backup=dict(return_value=backup),
+            cleanup_old_backups=dict(return_value=None),
+            DATABASE_PATH=dict(new=tmp_path / "chaotic.db"),
+            is_port_in_use=dict(return_value=False),
+            is_service_running=dict(side_effect=iter([True] + [False] * 20).__next__),
+            wait_for_service_settled=dict(return_value="inactive"),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "Could not check out the previous commit 19ae385: fatal: Unable to create" in out
+        assert "still on the new code" in out
+        assert "NOT restoring the database backup: the checkout is still on the new code" in out
+        assert f"--restore {backup.name}" in out
+        m["restore_backup"].assert_not_called()
+        m["resync_checkout"].assert_not_called()
+        assert m["start_service"].call_count == 2
+
+    def test_a_checkout_that_times_out_still_restarts(self):
+        """Review M2: checkout_version caught only CalledProcessError, so a
+        git timeout escaped _roll_back without a restart."""
+        def run(cmd, **kwargs):
+            if cmd[:3] == ["git", "reset", "--hard"]:
+                raise subprocess.TimeoutExpired(cmd, 60)
+            return MagicMock(returncode=0, stdout="")
+
+        with patch.object(system, "run_command", side_effect=run):
+            assert system.checkout_version("19ae385", force=True) == (False, "git timed out")
+        with patch.object(system, "run_command", side_effect=OSError("no git")):
+            assert system.checkout_version("19ae385") == (False, "no git")
+
+        with patch.object(system, "stop_service", return_value=True), \
+                patch.object(system, "wait_for_service_settled", return_value="inactive"), \
+                patch.object(system, "get_current_commit", return_value=_COMMITS[1]), \
+                patch.object(system, "run_command", side_effect=run), \
+                patch.object(system, "resync_checkout") as resync, \
+                patch.object(system, "start_service", return_value=True) as start, \
+                patch.object(system, "is_service_running", return_value=True), \
+                patch.object(system, "health_check", return_value=True), \
+                patch.object(system, "console") as console:
+            system._roll_back(_COMMITS[0], None, port=24267)
+        out = _flat(" ".join(str(c.args[0]) for c in console.print.call_args_list if c.args))
+        assert "Could not check out the previous commit 19ae385: git timed out" in out
+        resync.assert_not_called()
+        start.assert_called_once()
+
+    def test_no_resync_without_a_previous_commit(self):
+        with patch.object(system, "stop_service", return_value=True), \
+                patch.object(system, "wait_for_service_settled", return_value="inactive"), \
+                patch.object(system, "checkout_version") as checkout, \
+                patch.object(system, "resync_checkout") as resync, \
+                patch.object(system, "start_service", return_value=True), \
+                patch.object(system, "is_service_running", return_value=True), \
+                patch.object(system, "health_check", return_value=True):
+            system._roll_back(None, None, port=24267)
+        checkout.assert_not_called()
+        resync.assert_not_called()
+
+
+class TestResyncCheckout:
+    def _git_diff(self, returncode, sync_error=None):
+        """run_command: `git diff --quiet` exits `returncode`; `just` runs
+        (or raises `sync_error`)."""
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            if cmd[:2] == ["git", "diff"]:
+                return subprocess.CompletedProcess(cmd, returncode, "", "")
+            if sync_error is not None:
+                raise sync_error
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return run, calls
+
+    def test_changed_server_dependencies_are_synced_in_their_own_group(self):
+        run, calls = self._git_diff(1)
+        with patch.object(system, "run_command", side_effect=run), \
+                patch.object(system, "reinstall_cli") as reinstall:
+            assert system.resync_checkout(reinstall=False, abandoned_commit="ab71cd5") == (
+                True, "Server dependencies synced")
+        diff, sync = calls
+        assert diff[0] == ["git", "diff", "--quiet", "ab71cd5", "HEAD", "--",
+                           "backend/uv.lock", "backend/pyproject.toml"]
+        assert sync == (["just", "sync-backend"], dict(cwd=system.PROJECT_DIR, timeout=300, own_group=True))
+        reinstall.assert_not_called()
+
+    def test_unchanged_server_dependencies_are_not_resynced(self):
+        """Review L1: nothing to put back, and nothing to fail."""
+        run, calls = self._git_diff(0)
+        with patch.object(system, "run_command", side_effect=run):
+            ok, message = system.resync_checkout(reinstall=False, abandoned_commit="ab71cd5")
+        assert ok is True and "unchanged" in message
+        assert [c[0][0] for c in calls] == ["git"]
+
+    def test_git_unable_to_tell_means_resync(self):
+        run, calls = self._git_diff(128)
+        with patch.object(system, "run_command", side_effect=run):
+            assert system.resync_checkout(reinstall=False, abandoned_commit="ab71cd5")[0] is True
+        assert calls[-1][0] == ["just", "sync-backend"]
+
+    def test_no_abandoned_commit_means_resync(self):
+        run, calls = self._git_diff(0)
+        with patch.object(system, "run_command", side_effect=run):
+            system.resync_checkout(reinstall=False)
+        assert [c[0] for c in calls] == [["just", "sync-backend"]]
+
+    def test_then_reinstalls_the_cli_when_asked(self):
+        run, _ = self._git_diff(1)
+        with patch.object(system, "run_command", side_effect=run), \
+                patch.object(system, "reinstall_cli", return_value=(True, "CLI reinstalled (verified)")) as reinstall:
+            assert system.resync_checkout(abandoned_commit="ab71cd5") == (
+                True, "Server dependencies synced; CLI reinstalled (verified)")
+        reinstall.assert_called_once_with()
+
+    def test_a_cli_reinstall_failure_is_the_result(self):
+        run, _ = self._git_diff(0)
+        with patch.object(system, "run_command", side_effect=run), \
+                patch.object(system, "reinstall_cli", return_value=(False, "CLI reinstall did not take")):
+            assert system.resync_checkout(abandoned_commit="ab71cd5") == (False, "CLI reinstall did not take")
+
+    def test_sync_failures_stop_before_the_reinstall(self):
+        cases = [
+            (subprocess.CalledProcessError(1, ["just"], output="out", stderr="err"), "Dependency sync failed:\nout\nerr"),
+            (subprocess.TimeoutExpired(["just"], 300), "Dependency sync timed out"),
+            (FileNotFoundError(2, "No such file or directory", "just"), "Dependency sync failed: [Errno 2] No such file or directory: 'just'"),
+        ]
+        for error, expected in cases:
+            run, _ = self._git_diff(1, sync_error=error)
+            with patch.object(system, "run_command", side_effect=run), \
+                    patch.object(system, "reinstall_cli") as reinstall:
+                assert system.resync_checkout(abandoned_commit="ab71cd5") == (False, expected)
+            reinstall.assert_not_called()
+
+
+class TestRunMigrationsRecordsTheCliStage:
+    """Review M1: the real run_migrations, only its subprocesses mocked:
+    cli_installed is set only once the reinstall verified, and
+    cli_reinstall_started only once it was attempted."""
+
+    def _run(self, sync_ok=True, verify=(True, "CLI reinstalled (verified against the checkout)")):
+        def run(cmd, **kwargs):
+            if cmd[:2] == ["just", "sync"] and not sync_ok:
+                raise subprocess.CalledProcessError(1, cmd, output="", stderr="error: no network")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        progress = {}
+        seen_during_verify = {}
+
+        def verify_cli(cli_dir):
+            seen_during_verify.update(progress)
+            return verify
+
+        with patch.object(system, "run_command", side_effect=run), \
+                patch.object(system, "verify_installed_cli", side_effect=verify_cli):
+            ok, _ = system.run_migrations(progress=progress)
+        return ok, progress, seen_during_verify
+
+    def test_a_verified_reinstall_sets_cli_installed_only_after_verification(self):
+        ok, progress, during = self._run()
+        assert ok is True
+        assert during == {"migrate_started": False, "cli_reinstall_started": True, "cli_installed": False}
+        assert progress == {"migrate_started": True, "cli_reinstall_started": True, "cli_installed": True}
+        assert system._cli_state(progress) == "new"
+
+    def test_a_reinstall_that_did_not_verify_is_partial(self):
+        ok, progress, _ = self._run(verify=(False, "CLI reinstall did not take: cli/x.py"))
+        assert ok is False
+        assert progress == {"migrate_started": False, "cli_reinstall_started": True, "cli_installed": False}
+        assert system._cli_state(progress) == "partial"
+
+    def test_a_sync_failure_never_touches_the_cli(self):
+        ok, progress, during = self._run(sync_ok=False)
+        assert ok is False
+        assert during == {}, "verification ran after a failed sync"
+        assert progress == {"migrate_started": False, "cli_reinstall_started": False, "cli_installed": False}
+        assert system._cli_state(progress) == "unchanged"
 
 
 class TestRunMigrationsReportsOxydesOutput:
@@ -934,6 +1269,7 @@ class TestRollBackRestoreGuard:
              patch("cli.system.is_service_running", return_value=False), \
              patch("cli.system.is_port_in_use", return_value=port_in_use), \
              patch("cli.system.restore_backup", return_value=True) as restore, \
+             patch("cli.system.resync_checkout", return_value=(True, "re-synced")), \
              patch("cli.system.start_service", return_value=True), \
              patch("cli.system.health_check", return_value=True), \
              patch("cli.system.console") as console:

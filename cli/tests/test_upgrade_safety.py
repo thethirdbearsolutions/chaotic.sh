@@ -61,6 +61,7 @@ def upgrade_patches():
          patch("cli.system.load_server_json", return_value={}), \
          patch("cli.system.checkout_version", return_value=(True, None)) as checkout, \
          patch("cli.system.run_migrations", return_value=(True, "ok")), \
+         patch("cli.system.resync_checkout", return_value=(True, "re-synced")), \
          patch("cli.system.rebuild_frontend", return_value=(True, "built")), \
          patch("cli.system.start_service", return_value=True), \
          patch("cli.system.health_check", return_value=True), \
@@ -208,6 +209,7 @@ class TestIdentityAfterRestart:
             "verify_deployed_commit": dict(return_value=(None if served is None else served == "ab71cd5", served)),
             "checkout_version": dict(return_value=(True, None)),
             "restore_backup": dict(return_value=True),
+            "resync_checkout": dict(return_value=(True, "re-synced")),
             "run_migrations": dict(return_value=(True, "ok")),
             "rebuild_frontend": dict(return_value=(True, "built")),
         }
