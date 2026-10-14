@@ -266,7 +266,7 @@ def register(cli):
 
         for a, nested in _grouped_by_registrar(agents):
             agent_id = a["id"][:8] + "..."
-            name = a["name"]
+            name = escape(a["name"])
             if a.get("can_register"):
                 kind = "registrar"
             elif a.get("kind") == "session":
