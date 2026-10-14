@@ -348,8 +348,8 @@ class Client:
     def login(self, email: str, password: str) -> dict:
         return self._request("POST", "/auth/login", {"email": email, "password": password})
 
-    def get_me(self) -> dict:
-        return self._request("GET", "/auth/me")
+    def get_me(self, *, as_configured: bool = False) -> dict:
+        return self._request("GET", "/auth/me", as_configured=as_configured)
 
     # Users (CHT-1383)
     def get_user(self, user_id: str) -> dict:

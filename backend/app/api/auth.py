@@ -76,4 +76,6 @@ async def get_me(current_user: CurrentUser):
         registered_by_id=current_user.registered_by_id,
         registered_by_name=registered_by_name,
         can_register=current_user.can_register,
+        agent_team_id=current_user.agent_team_id,
+        agent_project_id=current_user.agent_project_id,
     )

@@ -46,6 +46,9 @@ class TestScope:
         assert await backend.resolve_project("KEY", None) == ("resolved-KEY", "test-team-123")
 
     async def test_resolve_project_without_a_default_is_an_input_error(self, backend, monkeypatch):
+        from cli.main import client
+        # A person's key, not a project-scoped agent's (CHT-1690).
+        monkeypatch.setattr(client, "get_me", MagicMock(return_value={"id": "u-1", "is_agent": False}))
         monkeypatch.setattr("cli.main.get_current_project", lambda: None)
         with pytest.raises(ToolInputError, match="No project selected"):
             await backend.resolve_project(None, None)
@@ -54,6 +57,9 @@ class TestScope:
         """The stdio-specific answer: a profile with no current project
         widens to the team instead of erroring (the HTTP adapter has no
         profile and behaves like resolve_project)."""
+        from cli.main import client
+        # A person's key, not a project-scoped agent's (CHT-1690).
+        monkeypatch.setattr(client, "get_me", MagicMock(return_value={"id": "u-1", "is_agent": False}))
         monkeypatch.setattr("cli.main.get_current_project", lambda: None)
         assert await backend.optional_project(None, None) == (None, "test-team-123")
 
@@ -68,6 +74,7 @@ class TestScope:
         from cli.main import client
         monkeypatch.setattr("cli.main.get_current_team", lambda: None)
         monkeypatch.setattr(client, "get_teams", MagicMock(return_value=[]))
+        monkeypatch.setattr(client, "get_me", MagicMock(return_value={"id": "u-1", "is_agent": False}))
         with pytest.raises(ToolInputError, match="No team selected"):
             await backend.resolve_team(None)
 
@@ -95,6 +102,109 @@ class TestScope:
         from cli.main import client
         client.get_me = MagicMock(return_value={"id": "user-1"})
         assert await backend.me_id() == "user-1"
+
+
+class TestProjectScopedKey:
+    """CHT-1690: a project-scoped agent key is issued in its project's
+    team, so the key's only team is found as for any agent (CHT-1687),
+    but with no project passed or configured the stdio server said "No
+    project selected" where the HTTP /mcp uses the key's own project.
+    It now uses it too."""
+
+    PROJECT = {"id": "p-1", "key": "DEMO", "name": "Demo", "team_id": "t-1"}
+
+    @pytest.fixture(autouse=True)
+    def _project_key(self, monkeypatch):
+        from cli import config
+        from cli.main import client
+        monkeypatch.setattr("cli.main.get_current_team", config.get_current_team)
+        monkeypatch.setattr("cli.main.get_current_project", lambda: None)
+        monkeypatch.setattr(config, "load_config", lambda: {})
+        monkeypatch.setenv("CHAOTIC_API_KEY", "ck_project_agent")
+        monkeypatch.delenv("CHAOTIC_API_URL", raising=False)
+        self.teams = MagicMock(return_value=[{"id": "t-1", "name": "Team", "key": "TM"}])
+        self.me = MagicMock(return_value={"id": "a-1", "is_agent": True,
+                                          "agent_team_id": "t-1", "agent_project_id": "p-1"})
+        self.project = MagicMock(return_value=dict(self.PROJECT))
+        monkeypatch.setattr(client, "get_teams", self.teams)
+        monkeypatch.setattr(client, "get_me", self.me)
+        monkeypatch.setattr(client, "get_project", self.project)
+
+    async def test_project_tools_use_the_keys_project(self, backend):
+        assert await backend.resolve_project(None, None) == ("p-1", "t-1")
+        assert await backend.optional_project(None, None) == ("p-1", "t-1")
+        self.me.assert_called_once_with(as_configured=True)
+        self.project.assert_called_once_with("p-1")
+
+    async def test_the_scope_is_looked_up_once_per_process(self, backend):
+        await backend.resolve_project(None, None)
+        await backend.optional_project(None, None)
+        await backend.resolve_project(None, None)
+        assert self.me.call_count == 1 and self.project.call_count == 1
+
+    async def test_a_failed_lookup_is_not_kept(self, backend):
+        self.me.side_effect = [APIError("boom", status_code=503), self.me.return_value]
+        with pytest.raises(BackendError):
+            await backend.resolve_project(None, None)
+        assert await backend.resolve_project(None, None) == ("p-1", "t-1")
+
+    async def test_optional_project_keeps_the_team_when_the_lookup_fails(self, backend):
+        """Review L1: optional_project made no request before CHT-1690, so
+        a 5xx on /auth/me or the project falls back to the team-wide
+        answer instead of failing the call, and is asked again later."""
+        self.me.side_effect = [APIError("boom", status_code=503), self.me.return_value]
+        assert await backend.optional_project(None, None) == (None, "t-1")
+        assert await backend.optional_project(None, None) == ("p-1", "t-1")
+        self.me.side_effect = None
+        self.project.side_effect = APIError("boom", status_code=502)
+        from cli import mcp_backend
+        mcp_backend._key_projects.clear()
+        assert await backend.optional_project(None, None) == (None, "t-1")
+
+    async def test_a_deleted_project_says_so(self, backend):
+        """Review N2: the HTTP /mcp's message, not a bare 404."""
+        self.project.side_effect = APIError("Project not found", status_code=404)
+        for call in (backend.resolve_project, backend.optional_project):
+            with pytest.raises(ToolInputError, match="scoped project no longer exists"):
+                await call(None, None)
+
+    async def test_a_passed_project_does_not_ask_who_the_key_is(self, backend, monkeypatch):
+        monkeypatch.setattr("cli.main.resolve_project_id", lambda v: f"resolved-{v}")
+        assert await backend.resolve_project("DEMO", None) == ("resolved-DEMO", "t-1")
+        self.me.assert_not_called()
+
+    async def test_a_configured_project_does_not_ask_who_the_key_is(self, backend, monkeypatch):
+        monkeypatch.setattr("cli.main.get_current_project", lambda: "p-conf")
+        assert await backend.resolve_project(None, None) == ("p-conf", "t-1")
+        assert await backend.optional_project(None, None) == ("p-conf", "t-1")
+        self.me.assert_not_called()
+
+    async def test_a_team_scoped_agent_keeps_the_no_project_message(self, backend):
+        self.me.return_value = {"id": "a-2", "is_agent": True, "agent_team_id": "t-1", "agent_project_id": None}
+        with pytest.raises(ToolInputError, match="No project selected"):
+            await backend.resolve_project(None, None)
+        assert await backend.optional_project(None, None) == (None, "t-1")
+        self.project.assert_not_called()
+
+    async def test_the_keys_team_is_kept_for_the_process(self, backend):
+        from cli import config
+        await backend.resolve_project(None, None)
+        assert config.process_team(config.get_api_url(), "ck_project_agent") == "t-1"
+
+    async def test_a_teamless_project_key_gets_the_http_mcps_message(self, backend):
+        """Safeguard: such a key cannot authenticate today, but if one
+        ever lists no team, "No team selected" advice cannot help it."""
+        self.teams.return_value = []
+        self.me.return_value = {"id": "a-1", "is_agent": True, "agent_team_id": None, "agent_project_id": "p-1"}
+        with pytest.raises(ToolInputError, match="scoped to a single project, not a team") as e:
+            await backend.resolve_team(None)
+        assert "team list" not in str(e.value) and "quickstart" not in str(e.value)
+
+    async def test_a_failed_safeguard_lookup_keeps_the_no_team_message(self, backend):
+        self.teams.return_value = []
+        self.me.side_effect = APIError("boom", status_code=503)
+        with pytest.raises(ToolInputError, match="No team selected"):
+            await backend.resolve_team(None)
 
 
 class TestDefaultTeam:

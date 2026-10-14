@@ -35,6 +35,8 @@ def _no_process_team(monkeypatch):
     from cli import config
     monkeypatch.setattr(config, "_process_teams", {})
     monkeypatch.setattr(config, "_only_teams", {})
+    from cli import mcp_backend
+    monkeypatch.setattr(mcp_backend, "_key_projects", {})
 
 
 @pytest.fixture

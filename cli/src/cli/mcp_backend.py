@@ -47,6 +47,26 @@ def _main():
     return sys.modules['cli.main']
 
 
+# The project a project-scoped agent key is confined to, or None for any
+# other key, per (server, key) (CHT-1690). A key's scope does not change,
+# so /auth/me is asked once per process; a failed lookup is not kept.
+_key_projects: dict[tuple[str, str], dict | None] = {}
+
+# The HTTP /mcp's words for a project-scoped key without a team. Such a
+# key cannot authenticate today (it is always issued in its project's
+# team), so this is a safeguard against "No team selected" advice that
+# could not help it.
+PROJECT_SCOPED_TEAM_WIDE = (
+    "This API key is scoped to a single project, not a team -- "
+    "team-wide tools (activity_recent, project_list, "
+    "all_projects=true) aren't available for it. Pass `project` "
+    "instead, or use a team-scoped or human API key."
+)
+
+# The HTTP /mcp's words for a project-scoped key whose project was deleted.
+PROJECT_SCOPE_GONE = "This API key's scoped project no longer exists."
+
+
 class RestBackend:
     capabilities = Capabilities(team_param=False)
 
@@ -92,6 +112,10 @@ class RestBackend:
             config.set_process_team(teams[0]["id"])
             return teams[0]["id"]
         if not teams:
+            # A failed scope lookup leaves the general message (CHT-1690
+            # review L1): the safeguard must not turn it into an outage.
+            if await self._key_project_or_none():
+                raise ToolInputError(PROJECT_SCOPED_TEAM_WIDE)
             raise ToolInputError(
                 "No team selected. Run 'chaotic team list' to see available teams, "
                 "or 'chaotic quickstart' if you don't have one yet."
@@ -101,6 +125,38 @@ class RestBackend:
             f"No team selected, and this key has access to several teams ({options}). "
             "Run 'chaotic team use <key>' in the directory the MCP server starts in."
         )
+
+    async def _key_project(self) -> dict | None:
+        """The project the configured key is confined to when it is a
+        project-scoped agent key (/auth/me: an agent with a project),
+        else None (CHT-1690). Asked only when no project was passed or
+        configured, and once per process, so a set-up profile never
+        pays for it."""
+        from . import config
+        slot = config._team_slot(config.get_api_url(), config.get_api_key() or config.get_token() or "")
+        if slot in _key_projects:
+            return _key_projects[slot]
+        me = await self._call(functools.partial(self._client().get_me, as_configured=True)) or {}
+        project = None
+        if me.get("is_agent") and me.get("agent_project_id"):
+            try:
+                project = await self._call(self._client().get_project, me["agent_project_id"])
+            except BackendError as e:
+                if e.http_status == 404:
+                    raise ToolInputError(PROJECT_SCOPE_GONE) from e
+                raise
+        _key_projects[slot] = project
+        return project
+
+    async def _key_project_or_none(self) -> dict | None:
+        """_key_project for callers that have a pre-CHT-1690 answer to
+        fall back on: a failed lookup (5xx, network) counts as "not
+        project-scoped" for this call and is asked again next time. A
+        deleted project still says so."""
+        try:
+            return await self._key_project()
+        except (BackendError, TransportError):
+            return None
 
     async def _call(self, fn, *args, **kwargs):
         """Run a blocking client/resolver call off the event loop and
@@ -136,18 +192,32 @@ class RestBackend:
         if project:
             return await self._call(_main().resolve_project_id, project), team_id
         project_id = _main().get_current_project()
-        if not project_id:
-            raise ToolInputError(
-                "No project selected. Pass `project` explicitly, or run "
-                "'chaotic project use <project_id>' in the CLI first."
-            )
-        return project_id, team_id
+        if project_id:
+            return project_id, team_id
+        # Nothing passed or configured: a project-scoped key's own
+        # project, the default the HTTP /mcp applies (CHT-1690).
+        key_project = await self._key_project()
+        if key_project:
+            return key_project["id"], key_project["team_id"]
+        raise ToolInputError(
+            "No project selected. Pass `project` explicitly, or run "
+            "'chaotic project use <project_id>' in the CLI first."
+        )
 
     async def optional_project(self, project: str | None, team: str | None) -> tuple[str | None, str]:
         team_id = await self._require_team()
         if project:
             return await self._call(_main().resolve_project_id, project), team_id
-        return _main().get_current_project(), team_id
+        project_id = _main().get_current_project()
+        if project_id:
+            return project_id, team_id
+        # As in resolve_project: a project-scoped key is never team-wide.
+        # Unlike there, a failed lookup keeps the old answer, the team
+        # (CHT-1690 review L1): this call used to make no request at all.
+        key_project = await self._key_project_or_none()
+        if key_project:
+            return key_project["id"], key_project["team_id"]
+        return None, team_id
 
     async def team_for_project(self, project_id: str | None) -> str:
         # The profile's (or the key's only) team is the only team this
