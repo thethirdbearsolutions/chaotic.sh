@@ -30,14 +30,14 @@ import java.io.IOException
 class AuthInterceptor(private val sessions: SessionManager, private val interactive: Boolean) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
-        val baseUrl = runBlocking { sessions.server() }?.baseUrl
+        val baseUrl = fromSession { sessions.server() }?.baseUrl
         val ours = baseUrl != null && ServerUrl.isSameOrigin(original.url, baseUrl)
         return if (ours) authenticated(chain, markInteractive(original)) else chain.proceed(original)
     }
 
     private fun authenticated(chain: Interceptor.Chain, request: Request): Response {
         val token =
-            if (request.header(AUTHORIZATION) == null) runBlocking { sessions.accessToken() } else null
+            if (request.header(AUTHORIZATION) == null) fromSession { sessions.accessToken() } else null
         return if (token == null) chain.proceed(request) else withRetryOn401(chain, request, token)
     }
 
@@ -47,7 +47,7 @@ class AuthInterceptor(private val sessions: SessionManager, private val interact
         val retryable = response.code == HTTP_UNAUTHORIZED && request.body?.isOneShot() != true
         val retryToken =
             try {
-                if (retryable) runBlocking { sessions.refreshAfterRejection(token) } else null
+                if (retryable) fromSession { sessions.refreshAfterRejection(token) } else null
             } catch (e: IOException) {
                 response.close()
                 throw e
@@ -55,6 +55,21 @@ class AuthInterceptor(private val sessions: SessionManager, private val interact
         if (retryToken == null) return response
         response.close()
         return chain.proceed(request.withBearer(retryToken))
+    }
+
+    /**
+     * Runs a session call on this OkHttp thread. Anything it throws reaches
+     * the caller as an [IOException], the one failure OkHttp delivers to a
+     * call's callback: any other exception thrown from an interceptor on an
+     * enqueued call kills the dispatcher thread and the app with it.
+     */
+    @Suppress("TooGenericExceptionCaught")
+    private fun <T> fromSession(block: suspend () -> T): T = try {
+        runBlocking { block() }
+    } catch (e: IOException) {
+        throw e
+    } catch (e: Exception) {
+        throw IOException("the session could not supply a token (${e.javaClass.simpleName})", e)
     }
 
     private fun markInteractive(request: Request): Request = if (interactive && request.method !in SAFE_METHODS) {

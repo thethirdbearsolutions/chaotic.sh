@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import okhttp3.Dispatcher
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -42,8 +43,26 @@ interface SessionTokens {
  * own credentials in the body, and the authenticating interceptor would
  * otherwise try to refresh through itself.
  */
-class TokenEndpoint(private val http: OkHttpClient, private val clock: () -> Long = System::currentTimeMillis) :
-    SessionTokens {
+class TokenEndpoint(base: OkHttpClient, private val clock: () -> Long = System::currentTimeMillis) : SessionTokens {
+    /**
+     * [base]'s connection pool, but its own [Dispatcher]. A refresh is
+     * started from inside [AuthInterceptor], which holds one of the
+     * authenticated client's dispatcher slots while it waits: if the
+     * refresh were queued on that same dispatcher, a burst of requests to
+     * the server (OkHttp runs five per host) would fill every slot with
+     * callers waiting for a refresh that could never start (PR #363
+     * review, H1). Redirects are not followed: a token request answered
+     * with a redirect is a misconfigured server, and following one would
+     * resend the refresh token to wherever it points.
+     */
+    private val http: OkHttpClient =
+        base
+            .newBuilder()
+            .dispatcher(Dispatcher())
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+
     /**
      * Redeems an authorization code. [deviceName] is what Connected apps
      * will call this device ("Pixel 8"); the server cleans and shortens it.
@@ -65,6 +84,7 @@ class TokenEndpoint(private val http: OkHttpClient, private val clock: () -> Lon
                 .add("redirect_uri", redirectUri)
                 .add("resource", server.baseUrl)
         if (!deviceName.isNullOrBlank()) form.add("device_name", deviceName)
+        val issuedAt = clock()
         val issued = post(server.tokenEndpoint, form.build())
         val person =
             issued.chaotic?.person?.takeIf { issued.chaotic.actsAs == ACTS_AS_PERSON }
@@ -77,7 +97,8 @@ class TokenEndpoint(private val http: OkHttpClient, private val clock: () -> Lon
             person = person,
             accessToken = issued.accessToken,
             refreshToken = refreshToken,
-            accessTokenExpiresAtMillis = expiresAt(issued),
+            accessTokenExpiresAtMillis = issuedAt + issued.expiresIn * MILLIS_PER_SECOND,
+            accessTokenIssuedAtMillis = issuedAt,
         )
     }
 
@@ -95,6 +116,7 @@ class TokenEndpoint(private val http: OkHttpClient, private val clock: () -> Lon
                 .add("refresh_token", session.refreshToken)
                 .add("resource", session.server.baseUrl)
                 .build()
+        val issuedAt = clock()
         val issued = post(session.server.tokenEndpoint, form)
         val person = issued.chaotic?.person?.takeIf { issued.chaotic.actsAs == ACTS_AS_PERSON }
         return session.copy(
@@ -102,7 +124,8 @@ class TokenEndpoint(private val http: OkHttpClient, private val clock: () -> Lon
             accessToken = issued.accessToken,
             // RFC 6749 §6: a server may keep the refresh token; this one rotates it.
             refreshToken = issued.refreshToken ?: session.refreshToken,
-            accessTokenExpiresAtMillis = expiresAt(issued),
+            accessTokenExpiresAtMillis = issuedAt + issued.expiresIn * MILLIS_PER_SECOND,
+            accessTokenIssuedAtMillis = issuedAt,
         )
     }
 
@@ -138,8 +161,6 @@ class TokenEndpoint(private val http: OkHttpClient, private val clock: () -> Lon
                 .build()
         return http.newCall(request).await().use { response -> parse(response) }
     }
-
-    private fun expiresAt(issued: TokenResponseBody): Long = clock() + issued.expiresIn * MILLIS_PER_SECOND
 
     private companion object {
         const val ACTS_AS_PERSON = "person"

@@ -32,8 +32,15 @@ sealed interface WsDecision {
      * access token lives ten minutes, so this is how a long-lived socket
      * normally ends. Connect again only if that returns a different token;
      * if it returns null the device is signed out.
+     *
+     * Wait [delayMillis] first. The first 4001 after a good connection
+     * (the token expired) waits nothing; 4001 again on a fresh token,
+     * before the connection is established, backs off like any retry, and
+     * after [WsReconnectPolicy.MAX_REAUTHENTICATIONS] in a row the policy
+     * answers [Stop]: a server that refuses every new token will not
+     * accept the next one either.
      */
-    data object Reauthenticate : WsDecision
+    data class Reauthenticate(val delayMillis: Long) : WsDecision
 
     /** 4003 (the person may not watch this team, or is deactivated), or a refusal retrying cannot change. */
     data object Stop : WsDecision
@@ -51,7 +58,8 @@ sealed interface WsDecision {
  *   a server message has arrived or it has stayed open
  *   [OPEN_SETTLE_MILLIS] (the web app's `WS_OPEN_SETTLE_MS`).
  * - 4001 is [WsDecision.Reauthenticate] and 4003 is [WsDecision.Stop]:
- *   both terminal for the connection, never retried as they are.
+ *   both terminal for the connection, never retried as they are; repeated
+ *   4001s back off and are capped.
  * - 4011 (the server's credential check failed) is retried with backoff.
  * - HTTP 503 (the check failed, before accept) and 429 (too many refusals
  *   from this address) are retried after the larger of the backoff and
@@ -70,6 +78,7 @@ class WsReconnectPolicy(
     private val random: Random = Random.Default,
 ) {
     private var failures = 0
+    private var reauthentications = 0
     private var openedAtMillis: Long? = null
     private var messageReceived = false
 
@@ -91,7 +100,10 @@ class WsReconnectPolicy(
     }
 
     fun decide(end: WsEnd, nowMillis: Long): WsDecision {
-        if (isEstablished(nowMillis)) failures = 0
+        if (isEstablished(nowMillis)) {
+            failures = 0
+            reauthentications = 0
+        }
         openedAtMillis = null
         messageReceived = false
         return when (end) {
@@ -102,7 +114,7 @@ class WsReconnectPolicy(
     }
 
     private fun closed(code: Int): WsDecision = when (code) {
-        CLOSE_UNAUTHENTICATED -> WsDecision.Reauthenticate
+        CLOSE_UNAUTHENTICATED -> reauthenticate()
         CLOSE_FORBIDDEN -> WsDecision.Stop
         else -> retry()
     }
@@ -111,7 +123,7 @@ class WsReconnectPolicy(
         end.status == HTTP_SERVICE_UNAVAILABLE || end.status == HTTP_TOO_MANY_REQUESTS ->
             retry(retryAfterMillis(end.retryAfter, nowMillis))
 
-        end.status == HTTP_UNAUTHORIZED -> WsDecision.Reauthenticate
+        end.status == HTTP_UNAUTHORIZED -> reauthenticate()
 
         // A server without the ASGI denial extension sends its own 403
         // for a refusal over the caps (ws_auth.refuse); a real 4003
@@ -121,6 +133,15 @@ class WsReconnectPolicy(
         end.status in HTTP_CLIENT_ERRORS -> WsDecision.Stop
 
         else -> retry()
+    }
+
+    private fun reauthenticate(): WsDecision {
+        reauthentications++
+        return when {
+            reauthentications > MAX_REAUTHENTICATIONS -> WsDecision.Stop
+            reauthentications == 1 -> WsDecision.Reauthenticate(0)
+            else -> WsDecision.Reauthenticate(retry().delayMillis)
+        }
     }
 
     private fun retry(atLeastMillis: Long = 0): WsDecision.Retry {
@@ -135,6 +156,9 @@ class WsReconnectPolicy(
         const val CLOSE_UNAUTHENTICATED = 4001
         const val CLOSE_FORBIDDEN = 4003
         const val CLOSE_INTERNAL_ERROR = 4011
+
+        /** 4001s in a row, with no established connection between them, before giving up. */
+        const val MAX_REAUTHENTICATIONS = 3
 
         /** How long an opened socket must stay up to count as accepted without a message (`WS_OPEN_SETTLE_MS`). */
         const val OPEN_SETTLE_MILLIS = 1_000L

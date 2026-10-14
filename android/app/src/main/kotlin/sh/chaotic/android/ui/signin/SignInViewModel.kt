@@ -31,6 +31,7 @@ import sh.chaotic.auth.SessionManager
 import sh.chaotic.auth.TokenEndpoint
 import java.io.IOException
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 data class SignInUiState(val serverInput: String = "", val busy: Boolean = false, val error: String? = null)
 
@@ -114,6 +115,7 @@ constructor(
         }
     }
 
+    @Suppress("TooGenericExceptionCaught") // see the last catch
     private fun exchange(server: ServerConfig, code: String, verifier: String) {
         mutableUi.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
@@ -126,6 +128,13 @@ constructor(
                 fail("The server refused the sign-in (${e.error}).")
             } catch (e: IOException) {
                 fail("Could not finish signing in: ${e.message ?: e.javaClass.simpleName}.")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // SessionManager.signedIn keeps a session it cannot store, so
+                // a Keystore failure should not reach here; this is the
+                // backstop that keeps any other failure off the main thread.
+                fail("Could not finish signing in (${e.javaClass.simpleName}).")
             }
         }
     }

@@ -22,7 +22,7 @@ class WsReconnectPolicyTest {
 
     @Test
     fun unauthenticatedIsTerminalForTheCredential() {
-        assertEquals(WsDecision.Reauthenticate, policy().decide(WsEnd.Closed(4001), 0))
+        assertEquals(WsDecision.Reauthenticate(0), policy().decide(WsEnd.Closed(4001), 0))
     }
 
     @Test
@@ -72,7 +72,7 @@ class WsReconnectPolicyTest {
 
     @Test
     fun otherHandshakeStatuses() {
-        assertEquals(WsDecision.Reauthenticate, policy().decide(WsEnd.HandshakeRefused(401), 0))
+        assertEquals(WsDecision.Reauthenticate(0), policy().decide(WsEnd.HandshakeRefused(401), 0))
         // The server's own 403 is the over-cap fallback; a real 4003 is a close code.
         assertIs<WsDecision.Retry>(policy().decide(WsEnd.HandshakeRefused(403), 0))
         assertEquals(WsDecision.Stop, policy().decide(WsEnd.HandshakeRefused(404), 0))
@@ -124,6 +124,38 @@ class WsReconnectPolicyTest {
         repeat(100) {
             val delay = delayOf(policy.decide(WsEnd.ConnectionLost, 0))
             assertTrue(delay in 500..1_000, "delay $delay")
+        }
+    }
+
+    @Test
+    fun repeatedUnauthenticatedClosesBackOffAndGiveUp() {
+        // A fresh token refused again before the connection is established:
+        // back off, and stop after MAX_REAUTHENTICATIONS in a row.
+        val policy = policy()
+
+        val decisions = (1..4).map { policy.decide(WsEnd.Closed(4001), 0) }
+
+        assertEquals(
+            listOf(
+                WsDecision.Reauthenticate(0),
+                WsDecision.Reauthenticate(1_000),
+                WsDecision.Reauthenticate(2_000),
+                WsDecision.Stop,
+            ),
+            decisions,
+        )
+    }
+
+    @Test
+    fun anEstablishedConnectionResetsTheReauthenticationCount() {
+        // A long-lived socket whose token expires every ten minutes is closed
+        // with 4001 each time; that must never add up to giving up.
+        val policy = policy()
+        repeat(10) { round ->
+            val opened = round * 600_000L
+            policy.onOpen(opened)
+            policy.onMessage()
+            assertEquals(WsDecision.Reauthenticate(0), policy.decide(WsEnd.Closed(4001), opened + 600_000))
         }
     }
 }

@@ -160,6 +160,25 @@ class SessionManagerTest {
         assertTrue(manager.state.value is AuthState.SignedIn)
     }
 
+    @Test
+    fun theRefreshMarginIsAQuarterOfAShortLifetime() = runTest {
+        // Issued for 60 s (the server's minimum): used for 45 s, not
+        // refreshed on every request (PR #363 review, L1).
+        val issued = NOW - 40_000
+        val short = session(expiresAt = issued + 60_000).copy(accessTokenIssuedAtMillis = issued)
+        val (manager, _) = manager(short)
+
+        assertEquals("at_1", manager.accessToken())
+        assertEquals(0, tokens.refreshes.get())
+
+        assertEquals(15_000, SessionManager.expiryMarginMillis(short))
+        assertEquals(
+            60_000,
+            SessionManager.expiryMarginMillis(short.copy(accessTokenExpiresAtMillis = issued + 600_000)),
+        )
+        assertEquals(60_000, SessionManager.expiryMarginMillis(session(expiresAt = NOW)))
+    }
+
     private companion object {
         const val NOW = 5_000_000L
     }

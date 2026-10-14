@@ -20,8 +20,11 @@ data class Session(
     val refreshToken: String,
     /** When [accessToken] stops working, by the device clock (epoch milliseconds). */
     val accessTokenExpiresAtMillis: Long,
+    /** When [accessToken] was issued, by the device clock; 0 if unknown. Sizes the refresh margin. */
+    val accessTokenIssuedAtMillis: Long = 0,
 ) {
     override fun toString(): String =
         "Session(server=${server.baseUrl}, person=${person.id}, accessToken=<redacted>, " +
-            "refreshToken=<redacted>, accessTokenExpiresAtMillis=$accessTokenExpiresAtMillis)"
+            "refreshToken=<redacted>, accessTokenExpiresAtMillis=$accessTokenExpiresAtMillis, " +
+            "accessTokenIssuedAtMillis=$accessTokenIssuedAtMillis)"
 }

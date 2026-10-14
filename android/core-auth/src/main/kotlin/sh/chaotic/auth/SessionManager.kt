@@ -1,5 +1,6 @@
 package sh.chaotic.auth
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,6 +52,15 @@ class SessionManager(
     @Volatile private var session: Session? = null
 
     @Volatile private var loaded = false
+
+    /**
+     * The store does not hold what [session] says (a write or clear failed:
+     * a Keystore or disk error). Retried on the next locked operation. The
+     * in-memory session is the truth meanwhile: after a refresh the old
+     * refresh token is spent, so the new one must never be dropped because
+     * it could not be written.
+     */
+    private var unsaved = false
     private val mutableState = MutableStateFlow<AuthState>(AuthState.Loading)
 
     val state: StateFlow<AuthState> = mutableState.asStateFlow()
@@ -60,13 +70,17 @@ class SessionManager(
         mutex.withLock { ensureLoaded() }
     }
 
-    /** Stores the session a sign-in just produced. */
+    /**
+     * Takes the session a sign-in just produced. It is in effect at once;
+     * if it cannot be stored, it is kept in memory and storing is retried.
+     */
     suspend fun signedIn(newSession: Session) {
         mutex.withLock {
-            store.write(newSession)
             session = newSession
             loaded = true
+            unsaved = true
             mutableState.value = AuthState.SignedIn(newSession.server.baseUrl, newSession.person)
+            persistLocked()
         }
     }
 
@@ -80,14 +94,14 @@ class SessionManager(
     }
 
     /**
-     * An access token that is good for at least [EXPIRY_MARGIN_MILLIS] more,
+     * An access token that is not about to expire ([expiryMarginMillis]),
      * refreshing first if needed; null when signed out (or the refresh
      * just ended the session). Throws [java.io.IOException] when a refresh
      * was needed and could not reach the server.
      */
     suspend fun accessToken(): String? = mutex.withLock {
         val current = ensureLoaded() ?: return@withLock null
-        if (clock() < current.accessTokenExpiresAtMillis - EXPIRY_MARGIN_MILLIS) {
+        if (clock() < current.accessTokenExpiresAtMillis - expiryMarginMillis(current)) {
             current.accessToken
         } else {
             refreshLocked(current)?.accessToken
@@ -126,7 +140,7 @@ class SessionManager(
 
     private suspend fun ensureLoaded(): Session? {
         if (!loaded) {
-            session = store.read()
+            session = readStore()
             loaded = true
             val current = session
             mutableState.value =
@@ -136,6 +150,7 @@ class SessionManager(
                     AuthState.SignedIn(current.server.baseUrl, current.person)
                 }
         }
+        if (unsaved) persistLocked()
         return session
     }
 
@@ -147,24 +162,68 @@ class SessionManager(
                 endLocked(SessionEnded.REFUSED_BY_SERVER)
                 return null
             }
-        // Stored before it is used: the old refresh token is already spent.
-        store.write(refreshed)
+        // In memory first: the old refresh token is already spent, so the
+        // new one must survive even if storing it fails.
         session = refreshed
+        unsaved = true
         if (refreshed.person != current.person) {
             mutableState.value = AuthState.SignedIn(refreshed.server.baseUrl, refreshed.person)
         }
+        persistLocked()
         return refreshed
     }
 
     private suspend fun endLocked(reason: SessionEnded) {
-        store.clear()
         session = null
         loaded = true
+        unsaved = true
         mutableState.value = AuthState.SignedOut(reason)
+        persistLocked()
+    }
+
+    /** A store that cannot be read (a broken Keystore, a disk error) reads as signed out; nothing is deleted. */
+    @Suppress("TooGenericExceptionCaught") // any store failure, never a crash
+    private suspend fun readStore(): Session? = try {
+        store.read()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Writes (or clears) the store to match [session]; on failure leaves [unsaved] set for the next try. */
+    @Suppress("TooGenericExceptionCaught") // any store failure, never a crash
+    private suspend fun persistLocked() {
+        try {
+            val current = session
+            if (current == null) store.clear() else store.write(current)
+            unsaved = false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            unsaved = true
+        }
     }
 
     companion object {
-        /** Refresh this long before the access token expires, so a request never races its expiry. */
+        /** Refresh at most this long before the access token expires, so a request never races its expiry. */
         const val EXPIRY_MARGIN_MILLIS = 60_000L
+
+        /** For a short-lived token the margin is this fraction of its lifetime instead. */
+        private const val MARGIN_FRACTION_OF_LIFETIME = 4
+
+        /**
+         * min(60 s, a quarter of the token's lifetime): a token issued for
+         * 60 s (the server's minimum) is used for 45 s, not refreshed on
+         * every request.
+         */
+        fun expiryMarginMillis(session: Session): Long {
+            val lifetime = session.accessTokenExpiresAtMillis - session.accessTokenIssuedAtMillis
+            return if (session.accessTokenIssuedAtMillis <= 0 || lifetime <= 0) {
+                EXPIRY_MARGIN_MILLIS
+            } else {
+                minOf(EXPIRY_MARGIN_MILLIS, lifetime / MARGIN_FRACTION_OF_LIFETIME)
+            }
+        }
     }
 }

@@ -1,6 +1,7 @@
 package sh.chaotic.auth
 
 import kotlinx.coroutines.test.runTest
+import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.OkHttpClient
 import org.junit.After
@@ -57,6 +58,7 @@ class TokenEndpointTest {
         assertEquals("at_1", session.accessToken)
         assertEquals("rt_1", session.refreshToken)
         assertEquals(now + 600_000, session.accessTokenExpiresAtMillis)
+        assertEquals(now, session.accessTokenIssuedAtMillis)
         assertEquals(Person("u1", "Ada", "ada@example.com"), session.person)
         assertEquals(config, session.server)
     }
@@ -141,6 +143,15 @@ class TokenEndpointTest {
 
         server.enqueue(json("<html>proxy error</html>", 400))
         assertFailsWith<TransientServerException> { endpoint.refresh(session(baseUrl = config.baseUrl)) }
+    }
+
+    @Test
+    fun redirectsAreNotFollowed() = runTest {
+        // Following one would resend the refresh token wherever it points.
+        server.enqueue(MockResponse.Builder().code(307).addHeader("Location", server.url("/elsewhere")).build())
+
+        assertFailsWith<TransientServerException> { endpoint.refresh(session(baseUrl = config.baseUrl)) }
+        assertEquals(1, server.requestCount)
     }
 
     @Test
