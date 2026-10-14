@@ -22,7 +22,7 @@ from app.oauth import cimd, ratelimit
 from app.oauth.builtin import ANDROID, BUILTIN_PREFIX
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeOAuthClient
 from app.oxyde_models.push import OxydePushDevice
-from app.oxyde_models.team import OxydeTeamMember
+from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
 from app.oxyde_models.user import OxydeUser
 from app.services import push_service
 from app.services import token_service as ts
@@ -103,11 +103,11 @@ async def _request_id(client, cid=APP_ID, **kwargs):
     return response.headers["location"].rsplit("/", 1)[1]
 
 
-async def _app_code(client, web_headers, team_id, **kwargs):
+async def _app_code(client, web_headers, **kwargs):
+    """authorize -> consent approve for the app: nothing is chosen, it
+    signs in account-wide."""
     request_id = await _request_id(client, **kwargs)
-    approved = await client.post(
-        f"/api/oauth/requests/{request_id}/approve", json={"team_id": team_id}, headers=web_headers,
-    )
+    approved = await client.post(f"/api/oauth/requests/{request_id}/approve", json={}, headers=web_headers)
     assert approved.status_code == 200, approved.text
     assert approved.json()["agent_id"] is None
     redirect = approved.json()["redirect"]
@@ -127,7 +127,7 @@ async def _exchange(client, code, **overrides):
 
 @pytest.fixture
 async def app_tokens(client, oauth_on, no_fetch, web_headers, test_team):
-    response = await _exchange(client, await _app_code(client, web_headers, test_team.id))
+    response = await _exchange(client, await _app_code(client, web_headers))
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -158,7 +158,7 @@ class TestBuiltinClient:
             "client_id": APP_ID, "name": "Chaotic for Android", "trust": "builtin", "host": None,
             "registration": "builtin",
         }
-        assert all(team["agents"] == [] for team in view["teams"])
+        assert view["teams"] == [] and view["suggested_team_id"] is None
         assert view["redirect_uri"] == APP_REDIRECT and view["loopback_redirect"] is False
 
     async def test_a_tampered_row_cannot_change_the_redirect(self, client, oauth_on, no_fetch):
@@ -212,18 +212,22 @@ class TestBuiltinClient:
 
 
 class TestConsent:
-    @pytest.mark.parametrize("extra", [{"agent_id": "x"}, {"agent_name": "Bot"}, {"project_ids": ["p"]}])
-    async def test_only_a_team_is_chosen(self, client, oauth_on, no_fetch, web_headers, test_team, extra):
+    @pytest.mark.parametrize("extra", [
+        {"team_id": "TEAM"}, {"agent_id": "x"}, {"agent_name": "Bot"}, {"project_ids": ["p"]},
+    ])
+    async def test_nothing_is_chosen(self, client, oauth_on, no_fetch, web_headers, test_team, extra):
+        if extra.get("team_id") == "TEAM":
+            extra = {"team_id": test_team.id}
         request_id = await _request_id(client)
         response = await client.post(
-            f"/api/oauth/requests/{request_id}/approve", json={"team_id": test_team.id, **extra}, headers=web_headers,
+            f"/api/oauth/requests/{request_id}/approve", json=extra, headers=web_headers,
         )
         assert response.status_code == 422
         assert response.json()["detail"]["error_code"] == "app_signs_in_as_you"
 
     async def test_no_agent_is_created(self, client, oauth_on, no_fetch, web_headers, test_team):
         before = await OxydeUser.objects.filter(is_agent=True).count()
-        await _app_code(client, web_headers, test_team.id)
+        await _app_code(client, web_headers)
         assert await OxydeUser.objects.filter(is_agent=True).count() == before
 
     async def test_needs_the_web_login(self, client, oauth_on, no_fetch, auth_headers):
@@ -232,11 +236,17 @@ class TestConsent:
         assert response.status_code == 403
         assert response.json()["detail"]["error_code"] == "web_login_required"
 
-    async def test_reconnect_suggests_the_last_team(self, client, oauth_on, no_fetch, web_headers, test_team,
-                                                    app_tokens):
-        request_id = await _request_id(client)
-        view = (await client.get(f"/api/oauth/requests/{request_id}", headers=web_headers)).json()
-        assert view["suggested_team_id"] == test_team.id and view["suggested_agent_id"] is None
+    async def test_a_person_in_no_team_can_sign_in(self, client, oauth_on, no_fetch, web_headers, test_user):
+        response = await _exchange(client, await _app_code(client, web_headers))
+        assert response.status_code == 200, response.text
+        assert response.json()["chaotic"]["team_id"] is None
+
+    async def test_a_connector_still_needs_a_team(self, client, oauth_on, web_headers):
+        cid = (await _register(client)).json()["client_id"]
+        request_id = await _request_id(client, cid, redirect_uri="https://app.example/cb", resource=MCP)
+        response = await client.post(f"/api/oauth/requests/{request_id}/approve", json={}, headers=web_headers)
+        assert response.status_code == 422
+        assert response.json()["detail"]["error_code"] == "team_required"
 
 
 # --- tokens -------------------------------------------------------------------
@@ -248,11 +258,11 @@ class TestAppSession:
         chaotic = app_tokens["chaotic"]
         assert chaotic["acts_as"] == "person" and "agent" not in chaotic
         assert chaotic["person"] == {"id": test_user.id, "name": test_user.name, "email": test_user.email}
-        assert chaotic["team_id"] == test_team.id and chaotic["project_ids"] is None
+        assert chaotic["team_id"] is None and chaotic["project_ids"] is None
         session = await OxydeHolderSession.objects.get(id=chaotic["holder_session_id"])
         assert session.via == HolderVia.APP
         assert session.principal_user_id == session.holder_user_id == test_user.id
-        assert session.resource == BASE and session.oauth_client_id == APP_ID
+        assert session.resource == BASE and session.oauth_client_id == APP_ID and session.team_id is None
         assert json.loads(session.holder)["device_name"] == "Pixel 8"
 
     async def test_acts_as_the_person_on_rest(self, client, app_tokens, test_user, test_team):
@@ -279,23 +289,23 @@ class TestAppSession:
     async def test_the_mcp_resource_is_refused_at_the_token_endpoint(
         self, client, oauth_on, no_fetch, web_headers, test_team,
     ):
-        code = await _app_code(client, web_headers, test_team.id)
+        code = await _app_code(client, web_headers)
         response = await _exchange(client, code, resource=MCP)
         assert response.status_code == 400 and response.json()["error"] == "invalid_target"
 
     async def test_device_name_is_cleaned_and_optional(self, client, oauth_on, no_fetch, web_headers, test_team):
-        code = await _app_code(client, web_headers, test_team.id)
+        code = await _app_code(client, web_headers)
         body = (await _exchange(client, code, device_name="  Pixel\x00 8\n\n" + "x" * 200)).json()
         session = await OxydeHolderSession.objects.get(id=body["chaotic"]["holder_session_id"])
         name = json.loads(session.holder)["device_name"]
         assert name.startswith("Pixel 8 x") and len(name) == 64
-        code = await _app_code(client, web_headers, test_team.id)
+        code = await _app_code(client, web_headers)
         body = (await _exchange(client, code, device_name=None)).json()
         session = await OxydeHolderSession.objects.get(id=body["chaotic"]["holder_session_id"])
         assert "device_name" not in json.loads(session.holder)
 
     async def test_without_offline_access_no_refresh_token(self, client, oauth_on, no_fetch, web_headers, test_team):
-        code = await _app_code(client, web_headers, test_team.id, scope="chaotic:write")
+        code = await _app_code(client, web_headers, scope="chaotic:write")
         body = (await _exchange(client, code)).json()
         assert "refresh_token" not in body
 
@@ -360,6 +370,42 @@ class TestAppSession:
             assert response.status_code == 403, (path, response.text)
             assert response.json()["detail"]["error_code"] == "app_session_refused"
 
+    async def test_access_granting_routes_refuse_an_app_session(
+        self, client, app_tokens, auth_headers, test_team, test_user, test_user2,
+    ):
+        """PR #361 review M2: nothing that outlives the session, whoever
+        it grants: invitations, accepting one, a new team, member roles,
+        an agent's registrar capability, reactivating an agent."""
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role="MEMBER")
+        agent = await OxydeUser.objects.create(
+            email="r@example.com", hashed_password="x", name="Bot", is_agent=True, is_active=False,
+            parent_user_id=test_user.id, agent_team_id=test_team.id,
+        )
+        invite = await client.post(
+            f"/api/teams/{test_team.id}/invitations", json={"email": "someone@example.com"}, headers=auth_headers,
+        )
+        assert invite.status_code == 201, invite.text
+        from app.oxyde_models.team import OxydeTeamInvitation
+        invite_token = (await OxydeTeamInvitation.objects.get(id=invite.json()["id"])).token
+        headers = _bearer(app_tokens["access_token"])
+        refused = [
+            ("post", f"/api/teams/{test_team.id}/invitations", {"email": "outsider@example.com", "role": "admin"}),
+            ("post", f"/api/teams/invitations/{invite_token}/accept", None),
+            ("post", "/api/teams", {"name": "Phone team", "key": "PHN"}),
+            ("patch", f"/api/teams/{test_team.id}/members/{test_user2.id}", {"role": "admin"}),
+            ("patch", f"/api/agents/{agent.id}", {"can_register": True}),
+            ("post", f"/api/agents/{agent.id}/reactivate", None),
+        ]
+        for method, path, body in refused:
+            response = await getattr(client, method)(path, headers=headers, **({"json": body} if body else {}))
+            assert response.status_code == 403, (path, response.text)
+            assert response.json()["detail"]["error_code"] == "app_session_refused", path
+        member = await OxydeTeamMember.objects.get(team_id=test_team.id, user_id=test_user2.id)
+        assert member.role.value == "member"
+        # Renaming an agent creates nothing that outlives the session.
+        renamed = await client.patch(f"/api/agents/{agent.id}", json={"name": "Renamed bot"}, headers=headers)
+        assert renamed.status_code == 200, renamed.text
+
     async def test_an_app_session_cannot_manage_connected_apps(self, client, app_tokens):
         response = await client.get("/api/oauth/connections", headers=_bearer(app_tokens["access_token"]))
         assert response.status_code == 403
@@ -370,15 +416,76 @@ class TestAppSession:
         err = await _refused(rest_resolver, app_tokens["access_token"])
         assert err.failure is CredentialFailure.INACTIVE
 
-    async def test_leaving_the_team_ends_it(self, app_tokens, test_user, test_team):
+    async def test_leaving_a_team_keeps_the_session_but_not_the_team(
+        self, client, app_tokens, test_user, test_team, test_project, test_user2,
+    ):
+        """Account-wide: leaving a team does not sign the device out, but
+        that team is out of reach on the very next request, on REST and
+        /ws, while the person's other teams stay reachable."""
+        from app.ws_auth import CLOSE_FORBIDDEN, WsRefused, authenticate
+
         token = app_tokens["access_token"]
-        # The backstop: membership is re-checked on every request.
-        await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=test_user.id).delete()
-        await _refused(rest_resolver, token)
-        # And the cascade revokes the session itself.
+        headers = _bearer(token)
+        other = await OxydeTeam.objects.create(name="Other", key="OTH")
+        await OxydeTeamMember.objects.create(team_id=other.id, user_id=test_user.id, role="MEMBER")
+        assert (await client.get(f"/api/teams/{test_team.id}", headers=headers)).status_code == 200
+        assert (await client.get(f"/api/projects/{test_project.id}", headers=headers)).status_code == 200
+        assert (await authenticate(token, test_team.id)).user.id == test_user.id
+
+        # Leave test_team, through the real path: its cascades run and
+        # find nothing of the app's to revoke (the session has no team).
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role="OWNER")
         async with revoking():
+            await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=test_user.id).delete()
             counts = await RevocationService().revoke_for_member(test_team.id, test_user.id, actor_id=None)
+        assert counts.holder_sessions == 0
+        session = await OxydeHolderSession.objects.get(id=app_tokens["chaotic"]["holder_session_id"])
+        assert session.revoked_at is None
+
+        assert (await client.get(f"/api/teams/{test_team.id}", headers=headers)).status_code == 403
+        assert (await client.get(f"/api/projects/{test_project.id}", headers=headers)).status_code in (403, 404)
+        listed = (await client.get("/api/teams", headers=headers)).json()
+        assert [t["id"] for t in listed] == [other.id]
+        with pytest.raises(WsRefused) as refused:
+            await authenticate(token, test_team.id)
+        assert refused.value.code == CLOSE_FORBIDDEN
+        # The rest of the account still works.
+        assert (await client.get(f"/api/teams/{other.id}", headers=headers)).status_code == 200
+        assert (await authenticate(token, other.id)).user.id == test_user.id
+
+    async def test_a_team_deleted_does_not_sign_the_device_out(self, app_tokens, test_user, test_team):
+        async with revoking():
+            await RevocationService().revoke_for_team(test_team.id, actor_id=None)
+        await OxydeTeam.objects.filter(id=test_team.id).delete()
+        assert (await rest_resolver.resolve(app_tokens["access_token"])).user.id == test_user.id
+
+    async def test_deactivating_the_person_ends_it(self, app_tokens, test_user):
+        async with revoking():
+            await OxydeUser.objects.filter(id=test_user.id).update(is_active=False)
+            counts = await RevocationService().revoke_for_principals([test_user.id], actor_id=None)
         assert counts.holder_sessions == 1
+        await _refused(rest_resolver, app_tokens["access_token"])
+
+    async def test_the_interactive_human_exemption_applies(
+        self, client, app_tokens, auth_headers, test_project, test_issue,
+    ):
+        """Like the web app, the app sends X-Chaotic-Interactive: 1 and is
+        treated as an interactive human (CHT-1302): here, claiming without
+        an estimate where the project requires one. Without the header it
+        is gated like any non-interactive caller."""
+        response = await client.patch(
+            f"/api/projects/{test_project.id}", headers=auth_headers, json={"require_estimate_on_claim": True},
+        )
+        assert response.status_code == 200
+        headers = _bearer(app_tokens["access_token"])
+        gated = await client.patch(f"/api/issues/{test_issue.id}", headers=headers, json={"status": "in_progress"})
+        assert gated.status_code == 400, gated.text
+        exempt = await client.patch(
+            f"/api/issues/{test_issue.id}", headers={**headers, "X-Chaotic-Interactive": "1"},
+            json={"status": "in_progress"},
+        )
+        assert exempt.status_code == 200, exempt.text
+        assert exempt.json()["status"] == "in_progress"
 
 
 # --- Connected apps -----------------------------------------------------------
@@ -409,7 +516,7 @@ class TestConnectedApps:
         assert row["id"] == app_tokens["chaotic"]["holder_session_id"]
         assert row["acts_as"] == "person" and row["agent"] is None and row["device_name"] == "Pixel 8"
         assert row["client"]["trust"] == "builtin" and row["client"]["name"] == "Chaotic for Android"
-        assert row["team_id"] == test_team.id
+        assert row["team_id"] is None and row["team_name"] is None
 
     async def test_revoking_a_device_signs_it_out_and_deletes_its_push_registration(
         self, client, app_tokens, web_headers, fake_dns,
@@ -511,13 +618,19 @@ class TestOtherClientsStayAgents:
             with pytest.raises(ValueError, match="design D2"):
                 await service.mint_single_use(TokenKind.AUTH_CODE, principal_user_id=agent.id, resource=BASE,
                                               oauth_client_id=cid, **common)
-        # And the built-in client never acts as anyone but the consenting human, for <base>.
-        with pytest.raises(ValueError, match="built-in"):
-            await service.mint_single_use(TokenKind.AUTH_CODE, principal_user_id=agent.id, resource=BASE,
-                                          oauth_client_id=APP_ID, **common)
-        with pytest.raises(ValueError, match="built-in"):
-            await service.mint_single_use(TokenKind.AUTH_CODE, principal_user_id=test_user.id, resource=MCP,
-                                          oauth_client_id=APP_ID, **common)
+            with pytest.raises(ValueError, match="design D2"):  # a connector acts in a team
+                await service.mint_single_use(TokenKind.AUTH_CODE, principal_user_id=agent.id, resource=MCP,
+                                              oauth_client_id=cid, **{**common, "team_id": None})
+        # And the built-in client never acts as anyone but the consenting
+        # human, account-wide, for <base>.
+        app = {**common, "team_id": None}
+        for bad in (
+            dict(principal_user_id=agent.id, resource=BASE, **app),
+            dict(principal_user_id=test_user.id, resource=MCP, **app),
+            dict(principal_user_id=test_user.id, resource=BASE, **common),  # with a team
+        ):
+            with pytest.raises(ValueError, match="built-in"):
+                await service.mint_single_use(TokenKind.AUTH_CODE, oauth_client_id=APP_ID, **bad)
 
     async def test_a_forged_code_does_not_start_a_person_session(self, oauth_on, test_team, test_user, db):
         """A code row altered in the database to name the human starts nothing."""
@@ -553,9 +666,14 @@ class TestOtherClientsStayAgents:
     async def test_a_forged_app_session_acting_as_someone_else_is_refused(
         self, client, app_tokens, test_user2, test_team,
     ):
-        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role="MEMBER")
         session_id = app_tokens["chaotic"]["holder_session_id"]
         await OxydeHolderSession.objects.filter(id=session_id).update(principal_user_id=test_user2.id)
+        await _refused(rest_resolver, app_tokens["access_token"])
+
+    async def test_a_forged_app_session_with_a_team_is_refused(self, client, app_tokens, test_team):
+        """An app session is account-wide; one that names a team is not one."""
+        session_id = app_tokens["chaotic"]["holder_session_id"]
+        await OxydeHolderSession.objects.filter(id=session_id).update(team_id=test_team.id)
         await _refused(rest_resolver, app_tokens["access_token"])
 
     async def test_an_agent_connector_is_never_an_app_session(self, client, oauth_on, test_team, test_user, db):

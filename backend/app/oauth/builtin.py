@@ -3,8 +3,8 @@
 
 A built-in client is resolved from the constant below, never by fetching
 anything: a self-hosted or air-gapped server needs no egress to
-chaotic.sh, and whoever controls that domain cannot change where the
-app's codes are sent. Its ``client_id`` is not a URL (``builtin:<app
+chaotic.sh, and whoever controls that domain cannot change the redirect
+URIs this server accepts for the app. Its ``client_id`` is not a URL (``builtin:<app
 id>``), so no server, this one or an older one, ever reads it as a
 Client ID Metadata Document. The same metadata is published at
 ``https://chaotic.sh/oauth/android-client.json`` for documentation only
@@ -25,6 +25,19 @@ application id (``sh.chaotic.android:/oauth2redirect``). The client is
 public (``token_endpoint_auth_method`` ``none``): PKCE S256 is its proof,
 as for every client here, and refresh tokens rotate with reuse detection
 as for every connection (``TokenService.refresh``).
+
+Residual risk (PR #361 review, M1): Android does not reserve a
+private-use scheme for one app. Any app installed on the phone can
+register ``sh.chaotic.android:``, start this flow itself (PKCE protects
+a code from interception, not from an app that began the flow), and if
+the person approves, receive a session that acts as them. The consent
+page therefore does not claim the request comes from the official app,
+and asks the person to continue only if they just started signing in
+from it. The fix is an Android App Links redirect (an https URL on a
+domain whose ``assetlinks.json`` names the release signing key), which
+needs that key, so it is a follow-up: add the https URI to
+``ANDROID_REDIRECT_URIS`` and, once every released build uses it, drop
+the private-use one.
 """
 from __future__ import annotations
 
@@ -65,12 +78,20 @@ class BuiltinClient:
 
 ANDROID_APP_ID = "sh.chaotic.android"
 
+# Every redirect the app may use, matched exactly. One line per URI: the
+# Android App Links https redirect (module docstring, residual risk) is
+# added here, and the private-use one removed once no released build
+# needs it.
+ANDROID_REDIRECT_URIS: tuple[str, ...] = (
+    f"{ANDROID_APP_ID}:/oauth2redirect",  # RFC 8252 §7.1 private-use scheme
+)
+
 ANDROID = BuiltinClient(
     client_id=BUILTIN_PREFIX + ANDROID_APP_ID,
     name="Chaotic for Android",
     app_id=ANDROID_APP_ID,
     platform="Android",
-    redirect_uris=(f"{ANDROID_APP_ID}:/oauth2redirect",),
+    redirect_uris=ANDROID_REDIRECT_URIS,
 )
 
 BUILTIN_CLIENTS: dict[str, BuiltinClient] = {c.client_id: c for c in (ANDROID,)}

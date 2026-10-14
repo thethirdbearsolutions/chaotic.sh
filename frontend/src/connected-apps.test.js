@@ -173,8 +173,8 @@ describe('connected-apps module', () => {
         expect(container.textContent).toContain('Pixel <8> · Chaotic for Android');
         expect(container.querySelector('.api-key-name').innerHTML).toContain('Pixel &lt;8&gt;');
         expect(container.textContent).toContain('as you');
-        expect(container.textContent).toContain('started in Chaotic');
-        expect(container.textContent).toContain('Official Chaotic app');
+        expect(container.textContent).toContain('every team you belong to');
+        expect(container.textContent).toContain('Built-in sign-in');
         const button = container.querySelector('[data-action="revoke-connection"]');
         expect(button.textContent).toBe('Sign out');
         expect(button.dataset.connectionId).toBe('hs-2');
@@ -184,6 +184,5 @@ describe('connected-apps module', () => {
         setConnections([{ ...CONNECTION, acts_as: 'person', agent: null, device_name: null, team_name: null }]);
         renderConnections();
         expect(container.textContent).toContain('A device · Claude');
-        expect(container.textContent).toContain('started in a team');
     });
 });

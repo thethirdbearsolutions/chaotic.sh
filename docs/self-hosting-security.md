@@ -381,8 +381,21 @@ and no outbound access is needed; its redirect,
 `sh.chaotic.android:/oauth2redirect`, comes from the code, not from
 anything stored or published. The same metadata is published at
 `https://chaotic.sh/oauth/android-client.json` for reference only; the
-server never reads it. An admin can still disable it by setting
-`is_active` to false on its `oauth_clients` row.
+server never reads it.
+
+Residual risk: that redirect is a private-use URI scheme, which any
+Android app on the same phone can also register. A malicious app could
+start the sign-in itself and, if the person approves the page, receive a
+session acting as them. The consent page does not claim the request
+comes from the official app, and tells the person to continue only if
+they just started signing in from it. Moving to a verified https
+redirect (Android App Links) closes this and is planned before release.
+
+An admin can disable the app by setting `is_active` to false on its
+`oauth_clients` row. That blocks new sign-ins and refreshes at once, but
+access tokens already issued keep working until they expire (at most 10
+minutes). To end a sign-in immediately, revoke its session: each person
+can in Connected Apps (an admin-wide bulk revocation is CHT-1449).
 
 ## Behind a reverse proxy: `FORWARDED_ALLOW_IPS`
 
@@ -470,11 +483,17 @@ end its own connection.
 
 Every connection's tokens act as an agent and are accepted only at
 `/mcp` (design decision D2), with one exception: the built-in Android
-app's (above). Its tokens act as the person who signed in, are issued
+app's (above). Its tokens act as the person who signed in, account-wide
+(the session has no team: every request is gated per team by that
+person's membership at that moment, as for their web login), are issued
 for the whole server (`resource` is `APP_BASE_URL`), and are accepted on
-REST and `/ws` but never at `/mcp`. That person's account changes, API
-keys and agent keys are refused to them (403 `app_session_refused`), so
-a phone's sign-in cannot mint a credential that outlives it. A client
+REST and `/ws` but never at `/mcp`. A member removed from a team, or a
+team deleted, does not end an app sign-in; deactivating or deleting the
+person does. Everything that would outlive the sign-in is refused to it
+(403 `app_session_refused`): API keys, agent keys and agent
+registration, team invitations and accepting them, creating a team,
+changing a member's role, turning on an agent's `can_register`,
+reactivating an agent, and changing or deleting the account. A client
 that is not the built-in app cannot get such a token: the code is
 refused when minted, when redeemed and when used.
 

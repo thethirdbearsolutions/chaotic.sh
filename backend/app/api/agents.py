@@ -4,7 +4,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.auth.access import reads, registers, writes
 from app.api.deps import (
-    CurrentUser, NotAppSession, can_manage_agent, check_user_team_access, get_api_key_record,
+    CurrentPrincipal, CurrentUser, NotAppSession, can_manage_agent, check_not_app_session,
+    check_user_team_access, get_api_key_record,
 )
 from app.enums import AgentKind
 from app.schemas.agent import (
@@ -256,10 +257,15 @@ async def update_agent(
     agent_id: str,
     agent_in: AgentUpdate,
     current_user: CurrentUser,
+    principal: CurrentPrincipal,
 ):
     """Update an agent's name or avatar, or make it a registrar
     (`can_register`, CHT-1498). Allowed to its creator while in the
-    agent's team and to that team's admins."""
+    agent's team and to that team's admins. A built-in app's session may
+    rename, but not change `can_register` (CHT-1602): a registrar mints
+    keys, a capability that would outlive the session."""
+    if agent_in.can_register is not None:
+        check_not_app_session(principal)
     agent_service = AgentService()
     agent = await agent_service.get_by_id(agent_id)
 
@@ -415,6 +421,7 @@ async def deactivate_agent(
 async def reactivate_agent(
     agent_id: str,
     current_user: CurrentUser,
+    _app_session: NotAppSession,
 ) -> AgentResponse:
     """Undo a deactivation (CHT-1494). Its revoked keys stay revoked:
     mint a new one with POST /agents/{agent_id}/keys. Same authorization

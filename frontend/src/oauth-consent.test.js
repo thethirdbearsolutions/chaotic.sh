@@ -269,10 +269,7 @@ describe('a built-in app signs in as the person (CHT-1602)', () => {
             redirect_uri: 'sh.chaotic.android:/oauth2redirect',
             redirect_host: 'sh.chaotic.android:/oauth2redirect',
             default_agent_name: '',
-            teams: [
-                { id: 't1', name: 'Team One', key: 'ONE', projects: [{ id: 'p1', name: 'Proj', key: 'PR' }], agents: [] },
-                { id: 't2', name: 'Team <Two>', key: 'TWO', projects: [], agents: [] },
-            ],
+            teams: [],
             ...overrides,
         });
     }
@@ -282,36 +279,29 @@ describe('a built-in app signs in as the person (CHT-1602)', () => {
         vi.clearAllMocks();
     });
 
-    it('asks to sign in as you, with a team picker and no agent or projects', () => {
+    it('asks to sign in as you, with nothing to choose', () => {
         const el = document.createElement('div');
-        renderConsent(el, appRequest({ suggested_team_id: 't2' }));
+        renderConsent(el, appRequest());
         expect(el.textContent).toContain('Sign in to Chaotic for Android as you?');
-        expect(el.textContent).toContain('Official Chaotic app');
+        expect(el.textContent).toContain('Built-in sign-in');
+        expect(el.textContent).toContain('Continue only if you just tapped Sign in');
+        expect(el.textContent).toContain('every team you belong to');
+        expect(el.querySelector('#oauth-team')).toBeNull();
         expect(el.querySelector('#oauth-agent')).toBeNull();
         expect(el.querySelector('input[name="oauth-project"]')).toBeNull();
         expect(el.textContent).not.toContain('Acts as');
-        expect(el.querySelector('#oauth-team').value).toBe('t2');
-        expect(el.innerHTML).toContain('Team &lt;Two&gt;');
-        expect(readChoice(el)).toEqual({ team_id: 't2', policy: 'write' });
+        expect(el.querySelector('#oauth-approve').disabled).toBe(false);
+        expect(readChoice(el)).toEqual({ policy: 'write' });
     });
 
-    it('disables sign-in without a team', () => {
-        const el = document.createElement('div');
-        renderConsent(el, appRequest({ teams: [] }));
-        expect(el.querySelector('#oauth-approve').disabled).toBe(true);
-    });
-
-    it('approves with only the team and goes back to the app', async () => {
+    it('approves with no team and goes back to the app', async () => {
         api.getOAuthRequest.mockResolvedValue(appRequest());
         api.approveOAuthRequest.mockResolvedValue({ redirect: 'sh.chaotic.android:/oauth2redirect?code=cac_x' });
         const navigate = vi.fn();
         await showConsent('req_0123456789abcdef', navigate);
-        const team = document.getElementById('oauth-team');
-        team.value = 't2';
-        team.dispatchEvent(new Event('change'));
         document.getElementById('oauth-consent-form').dispatchEvent(new Event('submit', { cancelable: true }));
         await flush();
-        expect(api.approveOAuthRequest).toHaveBeenCalledWith('req_0123456789abcdef', { team_id: 't2', policy: 'write' });
+        expect(api.approveOAuthRequest).toHaveBeenCalledWith('req_0123456789abcdef', { policy: 'write' });
         expect(navigate).toHaveBeenCalledWith('sh.chaotic.android:/oauth2redirect?code=cac_x');
     });
 });

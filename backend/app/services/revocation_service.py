@@ -41,6 +41,12 @@ event's team is the one team every revoked session was in, or NULL when
 they span teams (or there were none). A rollback of the outer
 transaction rolls all of it back with the change.
 
+A built-in app's sign-in (``HolderVia.APP``, CHT-1602) acts as a person
+and has no team, so only the principal cascades reach it (the person
+deactivated or deleted); a member removal or team deletion leaves it
+alone, and the routes' per-team membership checks keep it out of a team
+the person has left.
+
 Not here yet (CHT-1449): the admin view, bulk revocation with dry-run,
 and revoking an OAuth client or a grant.
 """

@@ -303,37 +303,37 @@ async def _verify_oauth_access(token: str, audience: str | None) -> Principal:
 
 async def _verify_app_session(validated, invalid: Callable[..., CredentialError]) -> Principal:
     """A built-in first-party app's session (``HolderVia.APP``, CHT-1602):
-    it acts as the person who signed in. ``validate_access`` has already
-    refused it anywhere but its own resource (``<base>``: REST and /ws),
-    so never at /mcp. Re-checked on every request, as for a login:
+    it acts as the person who signed in, account-wide. ``validate_access``
+    has already refused it anywhere but its own resource (``<base>``: REST
+    and /ws), so never at /mcp. Re-checked on every request, as for a
+    login:
 
     * the session is the built-in client's, and acts as the very human
       who holds it (principal is holder): anything else is not an app
       session, whatever its ``via`` says;
-    * the person exists, is not an agent, and is active (inactive: 403);
-    * no project scope and no key behind it: neither exists for an app;
-    * the person is still in the session's team (the team picked at
-      sign-in). Leaving it revokes the session (RevocationService); this
-      is the backstop, as for an agent connection's holder.
+    * it is account-wide: no team, no project scope, no key behind it;
+    * the person exists, is not an agent, and is active (inactive: 403).
 
-    The principal reaches what that person reaches, in every team, as
-    their web login does: REST has no layer that narrows a person to one
-    team."""
+    It is not tied to any team, so leaving or deleting a team does not
+    end it; only signing out, revocation, refresh reuse, or the person
+    being deactivated or deleted do. The principal is the person, so
+    every route's own team check (``check_user_team_access``, the /ws
+    ``team_id`` check) gates each request by their membership at that
+    moment, exactly as for their web login: a team they have left is
+    out of reach on the very next request."""
     kind = CredentialKind.OAUTH_ACCESS
     if (
         not is_builtin(validated.oauth_client_id)
         or validated.principal_user_id != validated.holder_user_id
+        or validated.team_id is not None
         or validated.scope_project_ids is not None
         or validated.credential_id is not None
-        or validated.team_id is None
     ):
         raise invalid()
     user = await UserService().get_by_id(validated.principal_user_id)
     if not user:
         raise invalid("User not found")
     if user.is_agent:
-        raise invalid()
-    if await TeamService().get_member(validated.team_id, user.id) is None:
         raise invalid()
     if not user.is_active:
         raise CredentialError(CredentialFailure.INACTIVE, "User is inactive", kind=kind)

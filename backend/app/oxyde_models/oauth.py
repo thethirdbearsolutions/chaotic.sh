@@ -140,7 +140,9 @@ class OxydeHolderSession(Model):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     # The team the principal acts in. Also the session's scope: the
     # session reaches at most this team, narrowed by scope_project_ids.
-    # NULL only for an account-wide session (WEB_LOGIN, CHT-1524).
+    # NULL only for an account-wide session: a built-in app's (APP,
+    # CHT-1602), which acts as a person and is gated per team by their
+    # membership on every request; WEB_LOGIN (CHT-1524) later.
     team: OxydeTeam | None = Field(default=None, db_on_delete="CASCADE")
     # The user every request on this session acts as (ADR-0008).
     principal_user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
@@ -198,7 +200,7 @@ class OxydeAuthToken(Model):
     # §4.1.3), so an expiry GC must keep a spent code at least until its
     # session's absolute expiry.
     holder_session: OxydeHolderSession | None = Field(default=None, db_on_delete="CASCADE")
-    # The session's team; NULL with it (account-wide WEB_LOGIN, CHT-1524).
+    # The session's team; NULL with it (account-wide: APP, CHT-1602).
     team: OxydeTeam | None = Field(default=None, db_on_delete="CASCADE")
     principal_user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     holder_user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")

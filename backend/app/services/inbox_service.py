@@ -359,16 +359,24 @@ class InboxService:
         is reconnected, and this is the explanation."""
         from app.enums import HolderVia
 
+        team_id = session.team_id
         if session.via == HolderVia.APP:
-            # A built-in app signed in as the recipient (CHT-1602).
+            # A built-in app signed in as the recipient (CHT-1602). Its
+            # session has no team, and an inbox entry needs one: the
+            # first of their teams, as for a push-device notice; a person
+            # in no team has no inbox and gets none.
             title = "An app signed in as you was signed out"
+            team_ids = await self.current_team_ids(session.holder_user_id)
+            if not team_ids:
+                return
+            team_id = team_ids[0]
         else:
             name = principal.name if principal is not None else "an agent"
             title = f"A connection acting as {name} was revoked"
         entry = await OxydeInboxEntry.objects.create(
             recipient_user_id=session.holder_user_id,
             kind=InboxEntryKind.AGENT_STATUS,
-            team_id=session.team_id,
+            team_id=team_id,
             title=title,
             body=(
                 "One of its refresh tokens was used twice, which happens when a token "
@@ -376,7 +384,7 @@ class InboxService:
                 "use the app, reconnect it; if you don't recognise this, check who has access."
             ),
         )
-        await self._broadcast(session.team_id, "created", entry)
+        await self._broadcast(team_id, "created", entry)
         await self._push([entry])
 
     async def add_push_device_entry(

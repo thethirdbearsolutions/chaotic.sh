@@ -192,14 +192,23 @@ APP_SESSION_REFUSED = {
 }
 
 
-async def refuse_app_session(principal: CurrentPrincipal) -> None:
-    """Refuse a built-in app's session (CHT-1602) on account-level routes:
-    minting API keys or agent keys, and changing or deleting the account.
-    The app acts as the person, but a phone's revocable sign-in must not
-    be able to mint a credential that outlives its revocation, or take
-    over the account it signed in to. Other credentials pass."""
+def check_not_app_session(principal: Principal) -> None:
+    """Raise 403 ``app_session_refused`` for a built-in app's session
+    (CHT-1602). For a route that refuses it only for some bodies."""
     if principal.is_app_session:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(APP_SESSION_REFUSED))
+
+
+async def refuse_app_session(principal: CurrentPrincipal) -> None:
+    """Refuse a built-in app's session (CHT-1602) on every route that
+    creates something that outlives the session or takes over the
+    account: a credential (API keys, agent keys, registration), access
+    for someone (invitations, accepting one, team creation, member
+    roles), an agent capability (``can_register``, reactivation), or a
+    change to the account itself. The app acts as the person, but a
+    phone's revocable sign-in must leave nothing behind that its
+    revocation does not end. Other credentials pass."""
+    check_not_app_session(principal)
 
 
 NotAppSession = Annotated[None, Depends(refuse_app_session)]

@@ -148,7 +148,7 @@ class ValidatedToken:
     via: HolderVia
     principal_user_id: str
     holder_user_id: str
-    team_id: str | None  # None only for an account-wide (WEB_LOGIN) session
+    team_id: str | None  # None only for an account-wide session (APP, CHT-1602; WEB_LOGIN later)
     scope_project_ids: tuple[str, ...] | None  # None: the whole team
     scopes: tuple[str, ...]
     policy_name: str
@@ -247,18 +247,19 @@ def audience_accepts(token_resource: str, endpoint_resource: str, via: HolderVia
 
 
 def check_code_binding(*, oauth_client_id: str | None, principal_user_id: str, holder_user_id: str,
-                       resource: str) -> None:
+                       resource: str, team_id: str | None) -> None:
     """Design D2, enforced where a code is minted and again where it
     starts a session (CHT-1602). A built-in app's code acts as the human
-    who consented (principal is holder) for the whole server (`<base>`);
-    every other client's code acts as someone else (an agent; the
-    resolver checks it is one) at /mcp only. Raises ValueError: a caller
-    that gets here wrong has a bug, not a bad request."""
+    who consented (principal is holder), account-wide (no team), for the
+    whole server (`<base>`); every other client's code acts as someone
+    else (an agent; the resolver checks it is one) in one team, at /mcp
+    only. Raises ValueError: a caller that gets here wrong has a bug, not
+    a bad request."""
     if is_builtin(oauth_client_id):
-        if principal_user_id != holder_user_id or resource != issuer():
-            raise ValueError("a built-in app's code acts as the consenting human, for the whole server")
-    elif principal_user_id == holder_user_id or resource != mcp_resource():
-        raise ValueError("an OAuth connector's code acts as an agent, at /mcp only (design D2)")
+        if principal_user_id != holder_user_id or resource != issuer() or team_id is not None:
+            raise ValueError("a built-in app's code acts as the consenting human, account-wide, for the whole server")
+    elif principal_user_id == holder_user_id or resource != mcp_resource() or team_id is None:
+        raise ValueError("an OAuth connector's code acts as an agent in a team, at /mcp only (design D2)")
 
 
 def _wrong_audience() -> TokenError:
@@ -322,7 +323,7 @@ class TokenService:
         self,
         kind: TokenKind,
         *,
-        team_id: str,
+        team_id: str | None,
         principal_user_id: str,
         holder_user_id: str,
         resource: str,
@@ -347,10 +348,12 @@ class TokenService:
                 raise ValueError("an authorization code needs a client, a PKCE challenge and a redirect_uri")
             check_code_binding(
                 oauth_client_id=oauth_client_id, principal_user_id=principal_user_id,
-                holder_user_id=holder_user_id, resource=resource,
+                holder_user_id=holder_user_id, resource=resource, team_id=team_id,
             )
         elif kind == TokenKind.CLAIM_TICKET:
             ttl = settings.claim_ticket_ttl_seconds
+            if not team_id:
+                raise ValueError("a claim ticket acts in a team")
             if not minted_by_credential_id:
                 raise ValueError("a claim ticket needs the credential that minted it")
         else:
@@ -470,7 +473,7 @@ class TokenService:
             try:
                 check_code_binding(
                     oauth_client_id=redeemed.oauth_client_id, principal_user_id=redeemed.principal_user_id,
-                    holder_user_id=redeemed.holder_user_id, resource=redeemed.resource,
+                    holder_user_id=redeemed.holder_user_id, resource=redeemed.resource, team_id=redeemed.team_id,
                 )
             except ValueError:
                 raise TokenError("invalid_grant", "this code was not issued for this kind of client") from None

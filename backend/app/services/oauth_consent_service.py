@@ -21,8 +21,10 @@ and sends it as a header, never a cookie: a top-level ``GET
 
 A built-in first-party app (``app.oauth.builtin``, CHT-1602) is the one
 exception to "acts as an agent": its consent is "sign in as you". The
-human picks a team and nothing else (no agent, no projects), and the
-code it mints acts as that human for the whole server (``<base>``).
+human chooses nothing (no team, no agent, no projects): the code it
+mints acts as that human, account-wide, for the whole server
+(``<base>``), and every request is still gated per team by that human's
+membership, as for their web login.
 Which kind a request is comes from its client_id alone.
 
 Every authorization shows consent; nothing is silently re-approved, and
@@ -195,7 +197,8 @@ class OAuthConsentService:
         scopes = split_scope(request.scope)
         settings = get_settings()
         person = builtin_of(client) is not None
-        teams = await self._teams(user, with_agents=not person)
+        # A built-in app signs in account-wide: nothing to pick.
+        teams = [] if person else await self._teams(user)
         team_ids = {t.id for t in teams}
         suggested_team, suggested_agent = await self._suggestion(client, user)
         if suggested_agent and not any(
@@ -227,7 +230,7 @@ class OAuthConsentService:
             refresh_absolute_days=settings.oauth_refresh_absolute_ttl_seconds // 86400,
             teams=teams,
             default_agent_name="" if person else self._default_agent_name(identity.name, user),
-            suggested_team_id=suggested_team,
+            suggested_team_id=None if person else suggested_team,
             suggested_agent_id=None if person else suggested_agent,
             acts_as="person" if person else "agent",
         )
@@ -236,18 +239,15 @@ class OAuthConsentService:
     def _default_agent_name(client_name: str, user: OxydeUser) -> str:
         return f"{client_name} ({user.name})"[:255]
 
-    async def _teams(self, user: OxydeUser, *, with_agents: bool = True) -> list[ConsentTeam]:
+    async def _teams(self, user: OxydeUser) -> list[ConsentTeam]:
         """The viewer's teams, each with its projects and the agents in it
-        the viewer may connect as (none for a built-in app, which signs
-        in as the viewer). Never more than the viewer's own access: a
-        human's access is team membership."""
+        the viewer may connect as. Never more than the viewer's own
+        access: a human's access is team membership."""
         out = []
         agents_service = AgentService()
         for team in await TeamService().get_user_teams(user.id):
             projects = await OxydeProject.objects.filter(team_id=team.id).order_by("name").all()
-            agents = [
-                a for a in await agents_service.list_by_team(team.id) if await self._may_connect_as(user, a)
-            ] if with_agents else []
+            agents = [a for a in await agents_service.list_by_team(team.id) if await self._may_connect_as(user, a)]
             out.append(ConsentTeam(
                 id=team.id,
                 name=team.name,
@@ -314,20 +314,28 @@ class OAuthConsentService:
         client = await self._client(request)
         scopes = split_scope(request.scope)
         person = builtin_of(client) is not None
-        if person and (choice.agent_id is not None or choice.agent_name is not None or choice.project_ids):
+        if person and (
+            choice.team_id is not None or choice.agent_id is not None or choice.agent_name is not None
+            or choice.project_ids
+        ):
             raise ConsentError(422, {
                 "error_code": "app_signs_in_as_you",
-                "message": "This app signs in as you in the whole team: choose a team, not an agent or projects.",
+                "message": "This app signs in as you, in every team you belong to: "
+                           "there is no team, agent or project to choose.",
             })
         # Belt and braces: the resource was fixed by /oauth/authorize from
         # the same client_id, so a mismatch here is a stored row gone wrong.
         if request.resource != (issuer() if person else mcp_resource()):
             raise _gone()
 
-        member = await TeamService().get_member(choice.team_id, user.id)
-        if member is None:
-            raise ConsentError(status.HTTP_403_FORBIDDEN, "Not a member of this team")
-        project_ids = await self._check_projects(choice.team_id, choice.project_ids)
+        project_ids = None
+        if not person:
+            if choice.team_id is None:
+                raise ConsentError(422, {"error_code": "team_required", "message": "Choose a team."})
+            member = await TeamService().get_member(choice.team_id, user.id)
+            if member is None:
+                raise ConsentError(status.HTTP_403_FORBIDDEN, "Not a member of this team")
+            project_ids = await self._check_projects(choice.team_id, choice.project_ids)
 
         scope = f"chaotic:{choice.policy}"
         if scope not in POLICY_SCOPES:
@@ -388,7 +396,7 @@ class OAuthConsentService:
             granted = [scope] + ([OFFLINE_ACCESS] if OFFLINE_ACCESS in scopes else [])
             _row, code = await TokenService().mint_single_use(
                 TokenKind.AUTH_CODE,
-                team_id=choice.team_id,
+                team_id=None if person else choice.team_id,
                 principal_user_id=user.id if person else agent.id,
                 holder_user_id=user.id,
                 resource=request.resource,

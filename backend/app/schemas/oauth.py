@@ -106,15 +106,17 @@ class AuthorizationRequestView(BaseModel):
     suggested_agent_id: str | None = None
     # Who the connection will act as (CHT-1602): "agent" for every app
     # but a built-in first-party one, which signs in as the viewer
-    # ("person"): the page then offers a team and nothing else, and
-    # `teams[].agents` is empty.
+    # ("person"), account-wide: the page then offers no choice, and
+    # `teams` is empty.
     acts_as: Literal["agent", "person"] = "agent"
 
 
 class AuthorizationApproval(BaseModel):
     """POST /api/oauth/requests/{id}/approve."""
 
-    team_id: str
+    # Required for a connector; must be absent for a built-in app, which
+    # signs in account-wide (CHT-1602).
+    team_id: str | None = None
     # An existing agent the viewer manages; None creates a new one.
     agent_id: str | None = None
     agent_name: str | None = Field(default=None, min_length=1, max_length=255)
@@ -157,15 +159,15 @@ class TokenConnection(BaseModel):
     OAuth, so under its own key. ``project_ids`` None means the whole
     team. ``acts_as`` says which of ``agent`` (every connector) and
     ``person`` (a built-in first-party app, CHT-1602: its tokens act as
-    the person who signed in, on REST and /ws) is set. For a person,
-    ``team_id`` is the team they picked: the app's starting team, which
-    the session ends with if they leave it; the tokens reach every team
-    the person is in, as their web login does."""
+    the person who signed in, on REST and /ws) is set. A person's
+    session is account-wide: ``team_id`` is None, and each request
+    reaches a team only while the person is a member of it, as their web
+    login does."""
 
     acts_as: Literal["agent", "person"] = "agent"
     agent: TokenAgent | None = None
     person: TokenPerson | None = None
-    team_id: str
+    team_id: str | None
     project_ids: list[str] | None = None
     holder_session_id: str
 

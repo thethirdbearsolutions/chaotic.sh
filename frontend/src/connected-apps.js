@@ -88,7 +88,7 @@ function renderDevice(c) {
                 <div class="api-key-name">${escapeHtml(label)} ${trustBadge(c.client || { trust: 'unverified' })}</div>
                 <div class="api-key-meta">
                     <span>as you</span>
-                    <span>started in ${escapeHtml(c.team_name || 'a team')}</span>
+                    <span>every team you belong to</span>
                     <span class="api-key-date">Signed in ${formatDate(c.created_at)}</span>
                     ${c.last_used_at ? `<span class="api-key-date">Last used ${formatDate(c.last_used_at)}</span>` : ''}
                 </div>
