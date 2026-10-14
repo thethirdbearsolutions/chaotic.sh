@@ -195,9 +195,13 @@ class OAuthClientService:
                 return await OxydeOAuthClient.objects.create(id=builtin.client_id, **fields)
             except IntegrityError:
                 pass  # a concurrent authorize created it first
-        # In place, keeping is_active: an admin's disable stands.
-        await OxydeOAuthClient.objects.filter(id=builtin.client_id).update(**fields)
-        row = await OxydeOAuthClient.objects.get(id=builtin.client_id)
+            row = await OxydeOAuthClient.objects.get(id=builtin.client_id)
+        if any(getattr(row, name) != value for name, value in fields.items()):
+            # In place, keeping is_active: an admin's disable stands. Only
+            # when something differs: /oauth/authorize is unauthenticated,
+            # and an unchanged row needs no write.
+            await OxydeOAuthClient.objects.filter(id=builtin.client_id).update(**fields)
+            row = await OxydeOAuthClient.objects.get(id=builtin.client_id)
         if not row.is_active:
             raise OAuthClientError("invalid_client", "this client has been disabled on this server")
         return row
