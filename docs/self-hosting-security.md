@@ -94,7 +94,12 @@ goes through the same resolver (`backend/app/ws_auth.py`, CHT-1603) and
 checks team membership before registering the socket for any broadcast.
 A refused handshake is accepted and closed at once, with nothing sent,
 so the client gets the close code (4001 sign in again, 4003 forbidden,
-4011 retry; CHT-1615). It takes the credential from an
+4011 retry; CHT-1615). The access log shows such a handshake as
+accepted; each refusal is logged on `app.ws_auth` (INFO: code, reason,
+client address, team, never the credential), which is the line to
+watch for token guessing. A client that never answers the close frame
+holds its connection for the server's close timeout (10 s), where the
+old 403 dropped it at once (CHT-1635). It takes the credential from an
 `Authorization: Bearer` header on the upgrade request, or from a
 `chaotic.bearer.<token>` entry in `Sec-WebSocket-Protocol` (the web app's
 way, offered beside `chaotic`), so it stays out of the URL. The old

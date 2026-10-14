@@ -54,7 +54,8 @@ def in_flight() -> int:
 async def drain() -> None:
     """Wait for every fire-and-forget task, including any it schedules
     (shutdown, tests). Unbounded: the shutdown drain in ``app.main``
-    bounds it (CHT-1634)."""
+    bounds the waiting (CHT-1634), not a send already in its thread
+    (CHT-1636)."""
     while _background_tasks:
         await asyncio.gather(*list(_background_tasks), return_exceptions=True)
         for task in [t for t in _background_tasks if t.done()]:

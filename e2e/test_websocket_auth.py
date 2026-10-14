@@ -3,8 +3,9 @@
 The backend suite (tests/test_ws_auth.py) pins the rules with a fake
 socket; this checks what only a real handshake shows: the header and
 subprotocol paths reach the app, the server selects ``chaotic`` and
-never echoes the bearer entry, a refusal before accept fails the
-handshake, a revoked key's open socket is closed with 4001 at once
+never echoes the bearer entry, a refused handshake is accepted and
+closed with its code (4001 / 4003 / 4011, CHT-1615) rather than failed
+with HTTP 403, a revoked key's open socket is closed with 4001 at once
 (CHT-1616), and the periodic re-check still catches a revocation no
 hook saw.
 """
@@ -103,6 +104,15 @@ class TestHandshake:
             with pytest.raises(ConnectionClosed) as exc:
                 ws.recv(timeout=5)
         assert exc.value.rcvd.code == 4001
+
+    def test_a_missing_team_id_is_refused_4003(self, auth_token):
+        """Refused by the endpoint with a code, not by query validation
+        before accept (PR #359 review, 7)."""
+        with connect(f"{BASE}/ws", additional_headers={"Authorization": f"Bearer {auth_token}"},
+                     open_timeout=5) as ws:
+            with pytest.raises(ConnectionClosed) as exc:
+                ws.recv(timeout=5)
+        assert exc.value.rcvd.code == 4003
 
     def test_a_failed_check_reaches_the_client_as_4011(self, monkeypatch, auth_token, test_team):
         """4011 (retry) is told apart from 4003 (stop) too."""

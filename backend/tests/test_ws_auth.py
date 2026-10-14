@@ -289,6 +289,49 @@ class TestEndpoint:
         ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=4011)
 
+    async def test_a_refusal_is_logged_without_the_credential(self, test_team, caplog):
+        """PR #359 review, 1: the access log shows a refused handshake as
+        accepted, so the app logs the refusal: code, reason, client and
+        team, never the token."""
+        secret = "ck_" + "ab" * 24
+        ws = FakeWebSocket(headers={"Authorization": f"Bearer {secret}"})
+        ws.client = ("203.0.113.7", 51234)
+        with caplog.at_level(logging.INFO, logger="app.ws_auth"):
+            await websocket_endpoint(ws, team_id=test_team.id)
+        [record] = [r for r in caplog.records if r.name == "app.ws_auth" and "Refused" in r.getMessage()]
+        line = record.getMessage()
+        assert record.levelno == logging.INFO
+        assert "code=4001" in line
+        assert "203.0.113.7:51234" in line
+        assert repr(test_team.id) in line
+        assert secret not in caplog.text and "abab" not in caplog.text
+
+    async def test_a_refusal_log_quotes_and_cuts_the_team_id(self, caplog):
+        ws = FakeWebSocket()
+        hostile = "x\nFAKE LOG LINE" + "y" * 200
+        with caplog.at_level(logging.INFO, logger="app.ws_auth"):
+            await websocket_endpoint(ws, team_id=hostile)
+        line = next(r.getMessage() for r in caplog.records if "Refused" in r.getMessage())
+        assert "\n" not in line
+        assert "y" * 100 not in line
+        assert "client=-" in line  # no address known
+
+    async def test_a_check_error_refusal_is_logged_too(self, test_team, caplog):
+        ws = FakeWebSocket()
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=RuntimeError("db down"))):
+            with caplog.at_level(logging.INFO, logger="app.ws_auth"):
+                await websocket_endpoint(ws, team_id=test_team.id, token="x")
+        assert "code=4011" in caplog.text
+
+    @pytest.mark.parametrize("team_id", [None, ""])
+    async def test_a_missing_team_id_is_refused_4003(self, test_user, team_id):
+        """Refused with a code, not by query validation before accept
+        (PR #359 review, 7)."""
+        ws = FakeWebSocket(headers={"Authorization": f"Bearer {jwt_for(test_user)}"})
+        await websocket_endpoint(ws, team_id=team_id)
+        ws.accept.assert_awaited_once_with(subprotocol=None)
+        ws.close.assert_awaited_once_with(code=4003)
+
     @pytest.mark.parametrize("fails", ["accept", "close"])
     async def test_a_client_gone_during_the_refusal_is_harmless(self, test_team, fails):
         ws = FakeWebSocket()

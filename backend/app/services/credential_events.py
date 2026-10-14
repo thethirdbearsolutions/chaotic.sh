@@ -174,22 +174,30 @@ async def dispatch(events: Iterable[CredentialsEnded]) -> None:
     except Exception:  # pragma: no cover -- an import error in a hook module
         logger.exception("could not load the credential-ended hooks")
         return
-    progress = {"done": 0}
+    left: dict[str, int] = {}  # hook name -> runs not finished
     try:
-        await asyncio.wait_for(_run_hooks(hooks, events, progress), DISPATCH_TIMEOUT_SECONDS)
+        await asyncio.wait_for(_run_hooks(hooks, events, left), DISPATCH_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         logger.error(
-            "credential-ended dispatch stopped after %ss: %d of %d hook runs left (reasons=%s)",
-            DISPATCH_TIMEOUT_SECONDS, len(hooks) * len(events) - progress["done"],
-            len(hooks) * len(events), sorted({e.reason for e in events}),
+            "credential-ended dispatch stopped after %ss; hook runs left: %s (reasons=%s)",
+            DISPATCH_TIMEOUT_SECONDS,
+            ", ".join(f"{name} x{count}" for name, count in left.items() if count),
+            sorted({e.reason for e in events}),
         )
 
 
-async def _run_hooks(hooks: list[Hook], events: list[CredentialsEnded], progress: dict) -> None:
+def _hook_name(hook: Hook) -> str:
+    return f"{getattr(hook, '__module__', '?')}.{getattr(hook, '__qualname__', hook)}"
+
+
+async def _run_hooks(hooks: list[Hook], events: list[CredentialsEnded], left: dict[str, int]) -> None:
+    for hook in hooks:
+        name = _hook_name(hook)
+        left[name] = left.get(name, 0) + len(events)
     # Hook by hook, so the socket hook has closed every socket before
     # the push hook writes anything.
     for hook in hooks:
-        name = getattr(hook, "__qualname__", hook)
+        name = _hook_name(hook)
         for event in events:
             try:
                 await asyncio.wait_for(hook(event), HOOK_TIMEOUT_SECONDS)
@@ -200,7 +208,7 @@ async def _run_hooks(hooks: list[Hook], events: list[CredentialsEnded], progress
                 )
             except Exception:
                 logger.exception("credential-ended hook %s failed (reason=%s)", name, event.reason)
-            progress["done"] += 1
+            left[name] -= 1
 
 
 def _held() -> _Held | None:

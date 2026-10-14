@@ -42,7 +42,7 @@ with the code, CHT-1615): 4001 when the credential is missing,
 malformed, of a kind /ws does not take, unknown, expired or revoked (the
 client should sign in again); 4003 when the credential is good but its
 user is deactivated or an agent, its scope does not allow reading, or it
-has no access to ``team_id``; 4011 when the check itself failed (the
+has no access to ``team_id`` (or names none); 4011 when the check itself failed (the
 client should retry). A user who no longer exists is 4001, as it is 401
 on REST (it was 4003 before CHT-1567). A client cannot tell a refused
 handshake from an open socket closed at once, and need not: the code
@@ -102,7 +102,15 @@ QUERY_TOKEN_DEPRECATION = (
 _warned_query_token = False
 
 
-async def refuse(websocket, code: int) -> None:
+def _client_address(websocket) -> str:
+    client = getattr(websocket, "client", None)
+    if client is None:
+        return "-"
+    host, port = client[0], client[1]
+    return f"{host}:{port}"
+
+
+async def refuse(websocket, code: int, reason: str, team_id: str | None) -> None:
     """Refuse a handshake so the client sees ``code`` (CHT-1615): accept
     the socket, then close it at once with the code. Nothing is sent in
     between, and the socket is never registered for broadcasts.
@@ -119,7 +127,22 @@ async def refuse(websocket, code: int) -> None:
 
     ``chaotic`` is selected if the client offered it, as on a good
     handshake: a browser that offered subprotocols fails a handshake
-    whose response selects none, and would see 1006 again."""
+    whose response selects none, and would see 1006 again.
+
+    Each refusal is logged (INFO, ``app.ws_auth``) with its code, reason,
+    client address and team, never the credential: the access log now
+    shows a refused handshake as accepted, so this line is the only
+    server-side record of it (PR #359 review, 1). ``team_id`` is the
+    client's text, so it is logged quoted and cut short.
+
+    The connection stays open until the client answers the close frame,
+    or for the server's close timeout (10 s with uvicorn's websockets
+    implementations) if it never does; the 403 path dropped it at once
+    (PR #359 review, 2; CHT-1635)."""
+    logger.info(
+        "Refused /ws handshake: code=%s reason=%s client=%s team=%r",
+        code, reason, _client_address(websocket), (team_id or "")[:64],
+    )
     subprotocol = SUBPROTOCOL if SUBPROTOCOL in _offered_subprotocols(websocket) else None
     try:
         await websocket.accept(subprotocol=subprotocol)

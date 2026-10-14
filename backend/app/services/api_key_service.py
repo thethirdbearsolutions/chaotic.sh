@@ -239,10 +239,16 @@ class APIKeyService:
         (CHT-1523; RevocationService)."""
         from app.services.revocation_service import RevocationService
 
-        async with revoking():
-            api_key.is_active = False
-            await api_key.save(update_fields={"is_active"})
-            await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)
+        was_active = api_key.is_active
+        try:
+            async with revoking():
+                api_key.is_active = False
+                await api_key.save(update_fields={"is_active"})
+                await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)
+        except BaseException:
+            # Rolled back: the caller's object says what the database does.
+            api_key.is_active = was_active
+            raise
         await api_key.refresh()
         return api_key
 
@@ -252,12 +258,21 @@ class APIKeyService:
         holder sessions and tickets, then after the commit its push
         devices and sockets) and nothing ends unreported (CHT-1629).
         A key already revoked is revoked again, harmlessly: the cascade
-        ends only what is still live."""
+        ends only what is still live. No production path calls it today
+        (``DELETE /api/api-keys/{id}`` revokes); it is kept safe for the
+        first one that does."""
         from app.services.revocation_service import RevocationService
 
-        async with revoking():
-            if api_key.is_active:
-                api_key.is_active = False
-                await api_key.save(update_fields={"is_active"})
-            await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)
-            await api_key.delete()
+        was_active = api_key.is_active
+        try:
+            async with revoking():
+                if api_key.is_active:
+                    api_key.is_active = False
+                    await api_key.save(update_fields={"is_active"})
+                await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)
+                await api_key.delete()
+        except BaseException:
+            # Rolled back: the caller's object says what the database does
+            # (PR #359 review, 5).
+            api_key.is_active = was_active
+            raise

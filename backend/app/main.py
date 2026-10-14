@@ -103,7 +103,8 @@ async def lifespan(app: FastAPI):
     # Shutdown. Deliveries in flight get a few seconds before the
     # database closes under them (CHT-1628): push deliveries, the
     # on-commit dispatches that can still schedule one, and emails
-    # (CHT-1634).
+    # (CHT-1634; an SMTP send already in its thread is not bounded by
+    # this, see _drain_at_shutdown).
     await _drain_at_shutdown(push_sender.SHUTDOWN_DRAIN_SECONDS)
     await close_oxyde()
 
@@ -120,11 +121,20 @@ async def _drain_in_flight() -> None:
 
 async def _drain_at_shutdown(timeout: float) -> bool:
     """Wait up to ``timeout`` in all for the work requests left running;
-    cancel what is left then. False if anything was."""
+    cancel what is left then. False if anything was.
+
+    The bound is on the waiting. An email already handed to smtplib runs
+    in a thread that cancelling cannot stop: it may still be sent, and
+    the interpreter's exit waits for it, up to smtplib's own timeouts
+    (CHT-1636; PR #359 review, 3)."""
     try:
         await asyncio.wait_for(_drain_in_flight(), timeout)
     except asyncio.TimeoutError:
-        logger.warning("Push deliveries and emails still in flight after %ss at shutdown; dropped", timeout)
+        logger.warning(
+            "Push deliveries and emails still in flight after %ss at shutdown; abandoned "
+            "(an email already being sent may still go out)",
+            timeout,
+        )
         return False
     except Exception:
         logger.exception("could not drain push deliveries and emails at shutdown")
@@ -346,7 +356,7 @@ def _log_watcher_failure(task: asyncio.Task) -> None:
 @app.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    team_id: Annotated[str, Query()],
+    team_id: Annotated[str | None, Query()] = None,
     token: Annotated[str | None, Query(deprecated=True)] = None,
 ):
     """WebSocket endpoint for real-time updates.
@@ -363,14 +373,19 @@ async def websocket_endpoint(
     # socket is registered, so they cannot close it (PR #356 review, 2).
     generation = credential_events.generation()
     try:
+        if not team_id:
+            # Optional in the signature only so that a missing one is
+            # refused with a code like the rest, not by validation before
+            # accept (HTTP 403 / 1006; PR #359 review, 7).
+            raise ws_auth.WsRefused(ws_auth.CLOSE_FORBIDDEN, "No team_id")
         presented = ws_auth.presented_credential(websocket, token)
         principal = await ws_auth.authenticate(presented.token, team_id)
     except ws_auth.WsRefused as exc:
-        await ws_auth.refuse(websocket, exc.code)
+        await ws_auth.refuse(websocket, exc.code, exc.reason, team_id)
         return
     except Exception:
         logger.exception("WebSocket auth error during team validation")
-        await ws_auth.refuse(websocket, ws_auth.CLOSE_INTERNAL_ERROR)
+        await ws_auth.refuse(websocket, ws_auth.CLOSE_INTERNAL_ERROR, "Credential check failed", team_id)
         return
 
     # Recorded with its principal, so a revocation in this process closes

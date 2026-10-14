@@ -249,7 +249,11 @@ class TestIsolation:
         assert len(seen) == 10  # registered before the slow hook: ran on every event
         assert len(ran) < 10  # stopped part-way through the slow hook
         assert "dispatch stopped after 0.1s" in caplog.text
-        assert "hook runs left" in caplog.text
+        # The line names the hook that was left, and how many runs.
+        line = next(r.getMessage() for r in caplog.records if "dispatch stopped" in r.getMessage())
+        assert "hook runs left:" in line
+        assert f"{__name__}.{TestIsolation.__name__}.test_the_whole_dispatch_is_capped.<locals>.slow x" in line
+        assert "seen" not in line.split("left:")[1].split("(reasons")[0]  # finished hooks are not listed
 
     async def test_each_hook_runs_on_every_event_before_the_next_hook(self, seen, monkeypatch):
         """The socket hook closes every socket before the push hook
@@ -398,6 +402,24 @@ class TestWhatEachPathReports:
         await APIKeyService().delete(key)
         assert [e.key_ids for e in seen] == [frozenset({key.id})] * 2
         assert await OxydeAPIKey.objects.filter(id=key.id).count() == 0
+
+    @pytest.mark.parametrize("method", ["revoke", "delete"])
+    async def test_a_failed_call_leaves_the_object_as_the_database_has_it(
+        self, seen, monkeypatch, test_user, method,
+    ):
+        """PR #359 review, 5: the transaction rolled back, so the caller's
+        object must not say the key is revoked."""
+        key, _raw = await APIKeyService().create(test_user.id, APIKeyCreate(name="k"))
+
+        async def broken(self, *args, **kwargs):
+            raise RuntimeError("cascade failed")
+
+        monkeypatch.setattr(RevocationService, "revoke_for_keys", broken)
+        with pytest.raises(RuntimeError):
+            await getattr(APIKeyService(), method)(key)
+        assert key.is_active is True
+        assert (await OxydeAPIKey.objects.get(id=key.id)).is_active is True
+        assert seen == []
 
     async def test_a_failed_delete_ends_nothing(self, seen, monkeypatch, test_user):
         key, _raw = await APIKeyService().create(test_user.id, APIKeyCreate(name="k"))
