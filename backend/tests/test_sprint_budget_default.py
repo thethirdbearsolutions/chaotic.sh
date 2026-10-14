@@ -503,15 +503,27 @@ async def test_follows_default_with_budget_is_rejected(client, auth_headers, tes
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("value", [False, None])
-async def test_follows_default_only_accepts_true(client, auth_headers, test_project, value):
+async def test_follows_default_false_is_rejected(client, auth_headers, test_project):
     _, planned = await SprintService().ensure_sprints_exist(test_project.id)
     resp = await client.patch(
         f"/api/sprints/{planned.id}", headers=auth_headers,
-        json={"budget_follows_default": value},
+        json={"budget_follows_default": False},
     )
     assert resp.status_code == 422
     assert "only accepts true" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_follows_default_null_means_not_set(client, auth_headers, test_project):
+    """A client that sends every field, null for unset, can still PATCH a
+    budget (PR #391 self-review R1)."""
+    _, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    resp = await client.patch(
+        f"/api/sprints/{planned.id}", headers=auth_headers,
+        json={"budget": 7, "budget_follows_default": None},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["budget"] == 7 and resp.json()["budget_explicit"] is True
 
 
 @pytest.mark.asyncio

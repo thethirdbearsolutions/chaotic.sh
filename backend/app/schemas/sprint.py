@@ -22,8 +22,9 @@ class SprintUpdate(BaseModel):
     budget: int | None = Field(default=None, ge=1)
     # True makes a planned sprint follow the project's default_sprint_budget
     # again: it clears budget_explicit and takes the current default
-    # (CHT-1701). Only true is accepted; to set a budget by hand, send
-    # `budget` instead, which cannot be sent with this.
+    # (CHT-1701). null means "not set", for clients that send every field;
+    # false is refused: to set a budget by hand, send `budget` instead,
+    # which cannot be sent with true.
     budget_follows_default: bool | None = Field(
         default=None,
         description=(
@@ -34,7 +35,7 @@ class SprintUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _follows_default_excludes_budget(self):
-        if "budget_follows_default" not in self.model_fields_set:
+        if self.budget_follows_default is None:
             return self
         if self.budget_follows_default is not True:
             raise ValueError(
