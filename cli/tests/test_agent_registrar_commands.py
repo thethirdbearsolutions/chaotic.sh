@@ -3,7 +3,7 @@
 `config set-session-identity`, and what `auth whoami` / `agent list`
 show about an agent's kind."""
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -172,6 +172,43 @@ class TestAgentListKind:
         assert result.exit_code == 0
         assert "Kind" in result.output
         assert "registrar" in result.output and "session" in result.output
+
+
+class TestAgentListIdle:
+    """CHT-1501: idle session identities are hidden unless --all, and the
+    rest are listed under their registrar."""
+
+    ROWS = [
+        {"id": "sess-1111", "name": "s-one", "agent_project_id": None, "kind": "session",
+         "registered_by_id": "reg-aaaa", "parent_user_name": "Ada", "created_at": "2026-10-02T00:00:00Z"},
+        {"id": "bot-bbbb", "name": "claude-bot", "agent_project_id": None, "kind": "assistant",
+         "parent_user_name": "Ada", "created_at": "2026-10-01T00:00:00Z"},
+        {"id": "reg-aaaa", "name": "Claude Code", "agent_project_id": None, "kind": "service",
+         "can_register": True, "parent_user_name": "Ada", "created_at": "2026-10-01T00:00:00Z"},
+        {"id": "sess-2222", "name": "s-two", "agent_project_id": None, "kind": "session",
+         "registered_by_id": "gone-0000", "idle": True, "parent_user_name": "Ada",
+         "created_at": "2026-10-01T00:00:00Z"},
+    ]
+
+    @pytest.mark.parametrize("args,hide_idle", [([], True), (["--all"], False)])
+    def test_asks_the_server_to_hide_idle_unless_all(self, cli_runner, args, hide_idle):
+        from cli.main import cli, client
+        client.get_team_agents = MagicMock(return_value=[])
+        result = cli_runner.invoke(cli, ["agent", "list", *args])
+        assert result.exit_code == 0, result.output
+        client.get_team_agents.assert_called_once_with(ANY, hide_idle=hide_idle)
+
+    def test_sessions_are_nested_under_their_registrar(self, cli_runner):
+        from cli.main import cli, client
+        client.get_team_agents = MagicMock(return_value=self.ROWS)
+        result = cli_runner.invoke(cli, ["agent", "list", "--all"])
+        assert result.exit_code == 0, result.output
+        lines = result.output.splitlines()
+        at = {name: next(i for i, line in enumerate(lines) if name in line)
+              for name in ("claude-bot", "Claude Code", "s-one", "s-two")}
+        assert at["claude-bot"] < at["Claude Code"] < at["s-one"] < at["s-two"]
+        assert "└ s-one" in lines[at["s-one"]]
+        assert "└" not in lines[at["s-two"]] and "(idle)" in lines[at["s-two"]]
 
 
 class TestWhoami:

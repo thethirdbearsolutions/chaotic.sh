@@ -249,8 +249,9 @@ function renderGroupedByAssignee(list, issues) {
     const unassignedKey = '__unassigned__';
     groups[unassignedKey] = [];
 
-    // Create groups for each assignee (members + agents)
-    const assigneeOptions = getAssigneeOptionList();
+    // Create groups for each assignee (members + agents), idle session
+    // identities included: their issues are not unassigned (CHT-1501).
+    const assigneeOptions = getAssigneeOptionList({ includeIdle: true });
     assigneeOptions.forEach(({ assignee }) => {
         groups[assignee.id] = [];
     });

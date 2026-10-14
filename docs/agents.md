@@ -365,6 +365,16 @@ every later registration. `chaotic auth whoami` shows the session identity, its
 `CHAOTIC_SESSION_IDENTITY=off chaotic auth whoami` to see the registrar
 itself. Subagents of a session share its identity.
 
+**Idle identities are hidden from lists.** One identity per session adds
+up, so a session identity whose keys have gone unused for 7 days is
+*idle*: `chaotic agent list` and the web app's assignee pickers leave it
+out (`chaotic agent list --all` shows it, marked idle; the API flag is
+`GET /api/teams/{id}/agents?hide_idle=true`, and every listed identity
+carries `last_used_at` and `idle`). The rest are listed under the
+registrar that registered them. Hiding is only a display filter: an idle
+identity still resolves by id or name for `--assignee`, `agent
+deactivate` and the rest, and using its key makes it active again.
+
 Notes:
 
 - **Off by default.** Without the setting, or outside Claude Code (no

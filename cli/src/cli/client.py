@@ -910,9 +910,11 @@ class Client:
         body = {"external_ref": external_ref, **{k: v for k, v in kwargs.items() if v is not None}}
         return self._request("POST", "/agents/register", body, as_configured=True)
 
-    def get_team_agents(self, team_id: str) -> list:
-        """List all agents for a team."""
-        return self._request("GET", f"/teams/{team_id}/agents")
+    def get_team_agents(self, team_id: str, hide_idle: bool | None = None) -> list:
+        """List a team's agents. Every caller that resolves a name or id
+        wants them all; `hide_idle` leaves out idle session identities
+        (CHT-1501), which only `agent list` asks for."""
+        return self._request("GET", self._with_query(f"/teams/{team_id}/agents", hide_idle=hide_idle or None))
 
     def get_agent(self, agent_id: str) -> dict:
         """Get agent by ID."""
