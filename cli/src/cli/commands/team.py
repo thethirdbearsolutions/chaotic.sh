@@ -2,7 +2,7 @@
 import sys
 
 import click
-from rich.table import Table
+from ..markup import Table, esc
 from rich.panel import Panel
 
 from .shared import _client, console, resolve_content_value
@@ -64,7 +64,7 @@ def register(cli):
         if m.is_json_output():
             m.output_json(result)
             return
-        console.print(f"[green]Team created: {result['name']} ({result['key']})[/green]")
+        console.print(f"[green]Team created: {esc(result['name'])} ({esc(result['key'])})[/green]")
         console.print(f"[dim]Set as current team[/dim]")
 
     @team.command("use")
@@ -82,7 +82,7 @@ def register(cli):
         t = _client().get_team(team_id)
         m.set_current_team(team_id)
         m.set_current_project(None)  # Reset project when changing teams
-        console.print(f"[green]Switched to team: {t['name']}[/green]")
+        console.print(f"[green]Switched to team: {esc(t['name'])}[/green]")
 
     @team.command("show")
     @_main().json_option
@@ -96,9 +96,9 @@ def register(cli):
             m.output_json(t)
             return
         console.print(Panel(
-            f"[bold]{t['name']}[/bold]\n"
-            f"Key: {t['key']}\n"
-            f"Description: {t.get('description') or 'None'}",
+            f"[bold]{esc(t['name'])}[/bold]\n"
+            f"Key: {esc(t['key'])}\n"
+            f"Description: {esc(t.get('description') or 'None')}",
             title="Current Team"
         ))
 
@@ -132,7 +132,7 @@ def register(cli):
         """Invite a member to the team."""
         m = _main()
         _client().invite_member(m.get_current_team(), email, role)
-        console.print(f"[green]Invitation sent to {email}[/green]")
+        console.print(f"[green]Invitation sent to {esc(email)}[/green]")
 
     @team.command("accept-invite")
     @click.argument("token")
@@ -174,7 +174,7 @@ def register(cli):
         team_id = m.get_current_team()
         user_id = m.resolve_assignee_id(user)
         _client().update_member_role(team_id, user_id, role)
-        console.print(f"[green]Member role updated to {role}.[/green]")
+        console.print(f"[green]Member role updated to {esc(role)}.[/green]")
 
     @team.command("invitations")
     @_main().json_option

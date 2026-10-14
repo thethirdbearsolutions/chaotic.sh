@@ -8,7 +8,7 @@ attest, doc create, ...).
 import sys
 
 import click
-from rich.table import Table
+from ..markup import Table, esc
 
 from .shared import _client, console
 
@@ -99,7 +99,7 @@ def register(cli):
         for display only).
         """
         _client().mark_inbox_read(entry_id)
-        console.print(f"[green]Marked {entry_id} as read.[/green]")
+        console.print(f"[green]Marked {esc(entry_id)} as read.[/green]")
 
     @inbox.command("mark-all-read")
     @_main().json_option
@@ -112,6 +112,6 @@ def register(cli):
         if m.is_json_output():
             m.output_json(result)
             return
-        console.print(f"[green]Marked {result.get('marked_count', 0)} entries as read.[/green]")
+        console.print(f"[green]Marked {esc(result.get('marked_count', 0))} entries as read.[/green]")
 
     return inbox

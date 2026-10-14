@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import click
 from rich.markup import escape
 from rich.panel import Panel
-from rich.table import Table
+from ..markup import Table
 
 from .shared import _client, console, parse_duration
 
@@ -163,7 +163,7 @@ def register(cli):
             last_used = (k.get("last_used_at") or "")[:10] or "-"
             expires = (k.get("expires_at") or "")[:10] or "-"
             active = "Yes" if k.get("is_active") else "No"
-            table.add_row(*(escape(cell) for cell in (key_id, name, prefix, created, last_used, active, expires)))
+            table.add_row(key_id, name, prefix, created, last_used, active, expires)
 
         console.print(table)
 
@@ -274,15 +274,15 @@ def register(cli):
             else:
                 acts_as = agent.get("name") or "-"
             table.add_row(
-                escape(c["id"][:8]),
-                escape(_app_name(c)),
-                escape(_trust_label(c)),
-                escape(acts_as),
-                escape(team),
+                c["id"][:8],
+                _app_name(c),
+                _trust_label(c),
+                acts_as,
+                team,
                 "all" if projects is None else str(len(projects)),
-                escape(c.get("policy") or "-"),
-                escape((c.get("created_at") or "")[:10] or "-"),
-                escape((c.get("last_used_at") or "")[:10] or "-"),
+                c.get("policy") or "-",
+                (c.get("created_at") or "")[:10] or "-",
+                (c.get("last_used_at") or "")[:10] or "-",
             )
 
         console.print(table)

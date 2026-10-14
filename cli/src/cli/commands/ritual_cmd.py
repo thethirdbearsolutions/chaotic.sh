@@ -5,7 +5,7 @@ import sys
 import click
 from rich.markup import escape
 from rich.panel import Panel
-from rich.table import Table
+from ..markup import Markup, Table, esc, markup
 
 from ..principals import principal_markup
 from .shared import _client, console, format_ritual_line, print_ritual_prompt, resolve_content_value, resolve_document_id
@@ -67,23 +67,23 @@ def register(cli):
         if ticket_id:
             issue = _client().get_issue_by_identifier(ticket_id)
             if not issue:
-                console.print(f"[red]Issue '{ticket_id}' not found.[/red]")
+                console.print(f"[red]Issue '{esc(ticket_id)}' not found.[/red]")
                 raise SystemExit(1)
             pending_rituals = _client().get_pending_issue_rituals(issue["id"])
             rituals_list = pending_rituals.get("pending_rituals", [])
             if not rituals_list:
-                console.print(f"[green]No pending rituals for {ticket_id}.[/green]")
+                console.print(f"[green]No pending rituals for {esc(ticket_id)}.[/green]")
                 return
-            console.print(f"\n[bold]Pending Rituals for {ticket_id}:[/bold]")
+            console.print(f"\n[bold]Pending Rituals for {esc(ticket_id)}:[/bold]")
             for r in rituals_list:
-                mode = f"[dim]({r.get('approval_mode', 'auto')})[/dim]"
+                mode = f"[dim]({esc(r.get('approval_mode', 'auto'))})[/dim]"
                 if r.get("attestation"):
                     if r["attestation"].get("approved_at"):
-                        console.print(f"  [green]\u2713[/green] {r['name']} {mode}")
+                        console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode}")
                     else:
-                        console.print(f"  [yellow]\u23f3[/yellow] {r['name']} {mode} - attested, pending approval")
+                        console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode} - attested, pending approval")
                 else:
-                    console.print(f"  [red]\u25cb[/red] {r['name']} {mode}")
+                    console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode}")
                     print_ritual_prompt(r['prompt'])
             return
 
@@ -100,21 +100,21 @@ def register(cli):
         if status["pending_rituals"]:
             console.print("\n[bold]Pending Sprint Rituals:[/bold]")
             for r in status["pending_rituals"]:
-                mode = f"[dim]({r['approval_mode']})[/dim]"
+                mode = f"[dim]({esc(r['approval_mode'])})[/dim]"
                 if r.get("attestation"):
                     if r["attestation"].get("approved_at"):
-                        console.print(f"  [green]\u2713[/green] {r['name']} {mode}")
+                        console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode}")
                     else:
-                        console.print(f"  [yellow]\u23f3[/yellow] {r['name']} {mode} - attested, pending approval")
+                        console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode} - attested, pending approval")
                 else:
-                    console.print(f"  [red]\u25cb[/red] {r['name']} {mode}")
+                    console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode}")
                     print_ritual_prompt(r['prompt'])
 
         # Skip completed rituals if --pending flag is set
         if status["completed_rituals"] and not pending:
             console.print("\n[bold]Completed Sprint Rituals:[/bold]")
             for r in status["completed_rituals"]:
-                console.print(f"  [green]\u2713[/green] {r['name']}")
+                console.print(f"  [green]\u2713[/green] {esc(r['name'])}")
 
         # Always show all configured rituals grouped by trigger type
         rituals = _client().get_rituals(project_id, include_inactive=deleted)
@@ -168,7 +168,7 @@ def register(cli):
         rit = next((r for r in rituals if r["name"].lower() == ritual_name.lower()), None)
 
         if not rit:
-            console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
+            console.print(f"[red]Ritual '{esc(ritual_name)}' not found.[/red]")
             console.print("Run `chaotic ritual list` to see available rituals.")
             raise SystemExit(1)
 
@@ -178,7 +178,7 @@ def register(cli):
 
         # Header
         active_badge = "" if rit.get("is_active", True) else " [red](deleted)[/red]"
-        console.print(f"[bold]{rit['name']}[/bold]{active_badge}")
+        console.print(f"[bold]{esc(rit['name'])}[/bold]{active_badge}")
 
         # Trigger
         trigger_desc = {
@@ -186,7 +186,7 @@ def register(cli):
             "ticket_close": "Ticket close",
             "ticket_claim": "Ticket claim",
         }.get(rit.get("trigger", "every_sprint"), rit.get("trigger", "every_sprint"))
-        console.print(f"  Trigger: {trigger_desc}")
+        console.print(f"  Trigger: {esc(trigger_desc)}")
 
         # Mode
         mode_desc = {
@@ -194,32 +194,32 @@ def register(cli):
             "review": "Review (agent attests, human approves)",
             "gate": "Gate (human only)",
         }.get(rit.get("approval_mode", "auto"), rit.get("approval_mode", "auto"))
-        console.print(f"  Mode: {mode_desc}")
+        console.print(f"  Mode: {esc(mode_desc)}")
 
         # Note required
         note_req = rit.get("note_required", True)
-        console.print(f"  Note required: {'yes' if note_req else 'no'}")
+        console.print(f"  Note required: {esc('yes' if note_req else 'no')}")
         if rit.get("artifact"):
-            console.print(f"  Artifact: {rit['artifact']} (attestations are bound to one)")
+            console.print(f"  Artifact: {esc(rit['artifact'])} (attestations are bound to one)")
 
         # Prompt
-        console.print(f"  Prompt: \"{rit.get('prompt', '')}\"")
+        console.print(f"  Prompt: \"{esc(rit.get('prompt', ''))}\"")
 
         # Conditions
         conditions = rit.get("conditions")
         if conditions:
-            console.print(f"  Conditions: {json_module.dumps(conditions)}")
+            console.print(f"  Conditions: {esc(json_module.dumps(conditions))}")
 
         # Group
         if rit.get("group_id"):
             groups = _client().get_ritual_groups(project_id)
             group = next((g for g in groups if g["id"] == rit["group_id"]), None)
             group_name = group["name"] if group else rit["group_id"][:8]
-            console.print(f"  Group: {group_name}")
+            console.print(f"  Group: {esc(group_name)}")
             if rit.get("weight") is not None:
-                console.print(f"  Weight: {rit['weight']}")
+                console.print(f"  Weight: {esc(rit['weight'])}")
             if rit.get("percentage") is not None:
-                console.print(f"  Percentage: {rit['percentage']}%")
+                console.print(f"  Percentage: {esc(rit['percentage'])}%")
 
     @ritual.command("pending")
     @click.argument("ticket_id", required=False)
@@ -237,12 +237,12 @@ def register(cli):
         if ticket_id:
             issue = _client().get_issue_by_identifier(ticket_id)
             if not issue:
-                console.print(f"[red]Issue '{ticket_id}' not found.[/red]")
+                console.print(f"[red]Issue '{esc(ticket_id)}' not found.[/red]")
                 raise SystemExit(1)
             pending_rituals = _client().get_pending_issue_rituals(issue["id"])
             rituals_list = pending_rituals.get("pending_rituals", [])
             if not rituals_list:
-                console.print(f"[green]No pending rituals for {ticket_id}.[/green]")
+                console.print(f"[green]No pending rituals for {esc(ticket_id)}.[/green]")
                 return
             # Find first un-attested ritual
             r = None
@@ -253,21 +253,21 @@ def register(cli):
             if not r:
                 # All attested — show first (pending approval or approved)
                 r = rituals_list[0]
-            mode = f"[dim]({r.get('approval_mode', 'auto')})[/dim]"
+            mode = f"[dim]({esc(r.get('approval_mode', 'auto'))})[/dim]"
             if r.get("attestation"):
                 if r["attestation"].get("approved_at"):
-                    console.print(f"[green]\u2713[/green] {r['name']} {mode} - approved")
+                    console.print(f"[green]\u2713[/green] {esc(r['name'])} {mode} - approved")
                     return
                 else:
-                    console.print(f"[yellow]\u23f3[/yellow] {r['name']} {mode} - attested, pending approval")
+                    console.print(f"[yellow]\u23f3[/yellow] {esc(r['name'])} {mode} - attested, pending approval")
                     raise SystemExit(1)
             else:
                 rejection = r.get("last_rejection")
                 if rejection and not rejection.get("superseded_at"):
                     print_rejection(rejection)
-                console.print(f"\n[bold]Next pending ritual for {ticket_id}:[/bold] {r['name']} {mode}")
+                console.print(f"\n[bold]Next pending ritual for {esc(ticket_id)}:[/bold] {esc(r['name'])} {mode}")
                 print_ritual_prompt(r['prompt'])
-                console.print(f"\n  [dim]Usage: chaotic ritual attest {r['name']} --ticket {ticket_id} --note \"your note here\"[/dim]")
+                console.print(f"\n  [dim]Usage: chaotic ritual attest {esc(r['name'])} --ticket {esc(ticket_id)} --note \"your note here\"[/dim]")
                 raise SystemExit(1)
         else:
             status = _client().get_limbo_status(project_id)
@@ -284,18 +284,18 @@ def register(cli):
             if not next_r:
                 # All attested — show first (pending approval or approved)
                 next_r = pending_rituals[0]
-            mode = f"[dim]({next_r.get('approval_mode', 'auto')})[/dim]"
+            mode = f"[dim]({esc(next_r.get('approval_mode', 'auto'))})[/dim]"
             if next_r.get("attestation"):
                 if next_r["attestation"].get("approved_at"):
-                    console.print(f"[green]\u2713[/green] {next_r['name']} {mode} - approved")
+                    console.print(f"[green]\u2713[/green] {esc(next_r['name'])} {mode} - approved")
                     return
                 else:
-                    console.print(f"[yellow]\u23f3[/yellow] {next_r['name']} {mode} - attested, pending approval")
+                    console.print(f"[yellow]\u23f3[/yellow] {esc(next_r['name'])} {mode} - attested, pending approval")
                     raise SystemExit(1)
             else:
-                console.print(f"\n[bold]Next pending ritual:[/bold] {next_r['name']} {mode}")
+                console.print(f"\n[bold]Next pending ritual:[/bold] {esc(next_r['name'])} {mode}")
                 print_ritual_prompt(next_r['prompt'])
-                console.print(f"\n  [dim]Usage: chaotic ritual attest {next_r['name']} --note \"your note here\"[/dim]")
+                console.print(f"\n  [dim]Usage: chaotic ritual attest {esc(next_r['name'])} --note \"your note here\"[/dim]")
                 raise SystemExit(1)
 
     @ritual.command("attest")
@@ -323,7 +323,7 @@ def register(cli):
         rit = next((r for r in rituals if r["name"] == ritual_name), None)
 
         if not rit:
-            console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
+            console.print(f"[red]Ritual '{esc(ritual_name)}' not found.[/red]")
             console.print("Run `chaotic ritual list` to see available rituals.")
             raise SystemExit(1)
         document_id = resolve_document_id(document_ref, m.get_current_team()) if document_ref else None
@@ -332,19 +332,19 @@ def register(cli):
         if rit.get("note_required", True) and not (note and note.strip()):
             console.print("[red]Error: Attestation requires a note.[/red]")
             console.print()
-            console.print(f"[bold]This ritual asks:[/bold] \"{rit['prompt']}\"")
+            console.print(f"[bold]This ritual asks:[/bold] \"{esc(rit['prompt'])}\"")
             console.print()
             if ticket_id:
-                console.print(f"[dim]Usage: chaotic ritual attest {ritual_name} --ticket {ticket_id} --note \"your note here\"[/dim]")
+                console.print(f"[dim]Usage: chaotic ritual attest {esc(ritual_name)} --ticket {esc(ticket_id)} --note \"your note here\"[/dim]")
             else:
-                console.print(f"[dim]Usage: chaotic ritual attest {ritual_name} --note \"your note here\"[/dim]")
+                console.print(f"[dim]Usage: chaotic ritual attest {esc(ritual_name)} --note \"your note here\"[/dim]")
             raise SystemExit(1)
 
         # Check if this is a ticket-level ritual (close or claim)
         if rit.get("trigger") in ("ticket_close", "ticket_claim"):
             if not ticket_id:
                 trigger_type = "ticket-close" if rit.get("trigger") == "ticket_close" else "ticket-claim"
-                console.print(f"[red]Ritual '{ritual_name}' is a {trigger_type} ritual. Use --ticket <issue-id>.[/red]")
+                console.print(f"[red]Ritual '{esc(ritual_name)}' is a {esc(trigger_type)} ritual. Use --ticket <issue-id>.[/red]")
                 raise SystemExit(1)
 
             # Get the issue to get its ID
@@ -354,9 +354,9 @@ def register(cli):
             )
 
             if result.get("approved_at"):
-                console.print(f"[green]Ritual '{ritual_name}' cleared for {ticket_id}.[/green]")
+                console.print(f"[green]Ritual '{esc(ritual_name)}' cleared for {esc(ticket_id)}.[/green]")
             else:
-                console.print(f"[yellow]Ritual '{ritual_name}' attested for {ticket_id}, pending human approval.[/yellow]")
+                console.print(f"[yellow]Ritual '{esc(ritual_name)}' attested for {esc(ticket_id)}, pending human approval.[/yellow]")
         else:
             # Sprint ritual
             if ticket_id:
@@ -368,13 +368,13 @@ def register(cli):
                 # Check if limbo cleared
                 status = _client().get_limbo_status(project_id)
                 if not status["in_limbo"]:
-                    console.print(f"[green]Ritual '{ritual_name}' cleared. Limbo complete.[/green]")
+                    console.print(f"[green]Ritual '{esc(ritual_name)}' cleared. Limbo complete.[/green]")
                 else:
                     pending_count = len(status["pending_rituals"])
-                    console.print(f"[green]Ritual '{ritual_name}' cleared.[/green] {pending_count} remaining.")
+                    console.print(f"[green]Ritual '{esc(ritual_name)}' cleared.[/green] {esc(pending_count)} remaining.")
                     console.print("Run `chaotic ritual list` to continue.")
             else:
-                console.print(f"[yellow]Ritual '{ritual_name}' attested, pending human approval.[/yellow]")
+                console.print(f"[yellow]Ritual '{esc(ritual_name)}' attested, pending human approval.[/yellow]")
 
     @ritual.command("create")
     @click.argument("name")
@@ -427,7 +427,7 @@ def register(cli):
             groups = _client().get_ritual_groups(project_id)
             matching = next((g for g in groups if g["name"] == group), None)
             if not matching:
-                console.print(f"[red]Ritual group '{group}' not found.[/red]")
+                console.print(f"[red]Ritual group '{esc(group)}' not found.[/red]")
                 console.print("Run `chaotic ritual group list` to see available groups.")
                 raise SystemExit(1)
             group_id = matching["id"]
@@ -447,7 +447,7 @@ def register(cli):
         trigger_desc = {"every_sprint": "sprint-close", "ticket_close": "ticket-close", "ticket_claim": "ticket-claim"}.get(trigger, trigger)
         group_info = f" (group: {group})" if group else ""
         artifact_info = f", attestations bound to a {artifact}" if artifact else ""
-        console.print(f"[green]Ritual created: {result['name']} ({trigger_desc}){group_info}{artifact_info}[/green]")
+        console.print(f"[green]Ritual created: {esc(result['name'])} ({esc(trigger_desc)}){esc(group_info)}{esc(artifact_info)}[/green]")
 
     @ritual.command("update")
     @click.argument("ritual_name")
@@ -484,7 +484,7 @@ def register(cli):
         rit = next((r for r in rituals if r["name"] == ritual_name), None)
 
         if not rit:
-            console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
+            console.print(f"[red]Ritual '{esc(ritual_name)}' not found.[/red]")
             console.print("Run `chaotic ritual list` to see available rituals.")
             raise SystemExit(1)
 
@@ -509,7 +509,7 @@ def register(cli):
             try:
                 kwargs["conditions"] = json_module.loads(conditions)
             except json_module.JSONDecodeError:
-                console.print(f"[red]Invalid JSON for conditions: {conditions}[/red]")
+                console.print(f"[red]Invalid JSON for conditions: {esc(conditions)}[/red]")
                 raise SystemExit(1)
 
         # Handle group: empty string means remove, otherwise resolve name to ID
@@ -520,7 +520,7 @@ def register(cli):
                 groups = _client().get_ritual_groups(project_id)
                 matching = next((g for g in groups if g["name"] == group), None)
                 if not matching:
-                    console.print(f"[red]Ritual group '{group}' not found.[/red]")
+                    console.print(f"[red]Ritual group '{esc(group)}' not found.[/red]")
                     console.print("Run `chaotic ritual group list` to see available groups.")
                     raise SystemExit(1)
                 kwargs["group_id"] = matching["id"]
@@ -530,7 +530,7 @@ def register(cli):
             raise SystemExit(1)
 
         result = _client().update_ritual(rit["id"], **kwargs)
-        console.print(f"[green]Ritual '{result['name']}' updated.[/green]")
+        console.print(f"[green]Ritual '{esc(result['name'])}' updated.[/green]")
 
     @ritual.command("delete")
     @click.argument("ritual_name")
@@ -553,7 +553,7 @@ def register(cli):
         rit = next((r for r in rituals if r["name"] == ritual_name), None)
 
         if not rit:
-            console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
+            console.print(f"[red]Ritual '{esc(ritual_name)}' not found.[/red]")
             console.print("Run `chaotic ritual list` to see available rituals.")
             raise SystemExit(1)
 
@@ -563,7 +563,7 @@ def register(cli):
                 raise SystemExit(0)
 
         _client().delete_ritual(rit["id"])
-        console.print(f"[green]Ritual '{ritual_name}' deleted.[/green]")
+        console.print(f"[green]Ritual '{esc(ritual_name)}' deleted.[/green]")
 
     @ritual.command("restore")
     @click.argument("ritual_name")
@@ -584,16 +584,16 @@ def register(cli):
         rit = next((r for r in rituals if r["name"] == ritual_name), None)
 
         if not rit:
-            console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
+            console.print(f"[red]Ritual '{esc(ritual_name)}' not found.[/red]")
             console.print("Run `chaotic ritual list --deleted` to see deleted rituals.")
             raise SystemExit(1)
 
         if rit.get("is_active", True):
-            console.print(f"[yellow]Ritual '{ritual_name}' is already active.[/yellow]")
+            console.print(f"[yellow]Ritual '{esc(ritual_name)}' is already active.[/yellow]")
             return
 
         _client().update_ritual(rit["id"], is_active=True)
-        console.print(f"[green]Ritual '{ritual_name}' restored.[/green]")
+        console.print(f"[green]Ritual '{esc(ritual_name)}' restored.[/green]")
 
     @ritual.command("status")
     @click.argument("identifier", required=False)
@@ -632,48 +632,48 @@ def register(cli):
                 console.print(f"[dim]No ticket-level rituals configured for this project.[/dim]")
                 return
 
-            console.print(f"[bold]Ticket-level rituals for {effective_ticket_id}:[/bold]")
+            console.print(f"[bold]Ticket-level rituals for {esc(effective_ticket_id)}:[/bold]")
 
             for r in completed:
-                console.print(f"  [green]\u2713[/green] {r['name']}")
+                console.print(f"  [green]\u2713[/green] {esc(r['name'])}")
                 # Show attestation details for completed rituals
                 if r.get("attestation"):
                     att = r["attestation"]
                     if att.get("note"):
-                        console.print(f"      [dim]Note: {att['note']}[/dim]")
+                        console.print(f"      [dim]Note: {esc(att['note'])}[/dim]")
                     if att.get("attested_at"):
                         attested_date = att["attested_at"][:10]
-                        console.print(f"      [dim]Attested: {attested_date}[/dim]")
+                        console.print(f"      [dim]Attested: {esc(attested_date)}[/dim]")
 
             for r in pending:
-                mode = f"[dim]({r['approval_mode']})[/dim]"
+                mode = f"[dim]({esc(r['approval_mode'])})[/dim]"
                 if r.get("attestation"):
                     if r["attestation"].get("approved_at"):
-                        console.print(f"  [green]\u2713[/green] {r['name']} {mode}")
+                        console.print(f"  [green]\u2713[/green] {esc(r['name'])} {mode}")
                     else:
-                        console.print(f"  [yellow]\u23f3[/yellow] {r['name']} {mode} - pending approval")
+                        console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} {mode} - pending approval")
                         # Show attestation note for pending approval
                         att = r["attestation"]
                         if att.get("note"):
-                            console.print(f"      [dim]Note: {att['note']}[/dim]")
+                            console.print(f"      [dim]Note: {esc(att['note'])}[/dim]")
                 else:
-                    console.print(f"  [red]\u25cb[/red] {r['name']} {mode}")
+                    console.print(f"  [red]\u25cb[/red] {esc(r['name'])} {mode}")
                     print_ritual_prompt(r['prompt'])
 
             if pending:
-                console.print(f"\n[dim]Run 'chaotic ritual attest <name> --ticket {effective_ticket_id}' to attest.[/dim]")
+                console.print(f"\n[dim]Run 'chaotic ritual attest <name> --ticket {esc(effective_ticket_id)}' to attest.[/dim]")
         else:
             # Show sprint limbo status
             status = _client().get_limbo_status(project_id)
 
             if status["in_limbo"]:
                 pending_count = len(status["pending_rituals"])
-                console.print(f"[yellow]IN LIMBO[/yellow] - {pending_count} ritual(s) pending")
+                console.print(f"[yellow]IN LIMBO[/yellow] - {esc(pending_count)} ritual(s) pending")
                 for r in status["pending_rituals"]:
                     if r.get("attestation") and not r["attestation"].get("approved_at"):
-                        console.print(f"  [yellow]\u23f3[/yellow] {r['name']} - pending approval")
+                        console.print(f"  [yellow]\u23f3[/yellow] {esc(r['name'])} - pending approval")
                     else:
-                        console.print(f"  [red]\u25cb[/red] {r['name']}")
+                        console.print(f"  [red]\u25cb[/red] {esc(r['name'])}")
             else:
                 console.print("[green]Not in limbo[/green]")
 
@@ -696,17 +696,17 @@ def register(cli):
         rit = next((r for r in rituals if r["name"] == ritual_name), None)
 
         if not rit:
-            console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
+            console.print(f"[red]Ritual '{esc(ritual_name)}' not found.[/red]")
             console.print("Run `chaotic ritual list` to see available rituals.")
             raise SystemExit(1)
 
         if rit.get("trigger") in ("ticket_close", "ticket_claim"):
             if not ticket_id:
-                console.print(f"[red]Ritual '{ritual_name}' is a ticket-level ritual. Use --ticket <issue-id>.[/red]")
+                console.print(f"[red]Ritual '{esc(ritual_name)}' is a ticket-level ritual. Use --ticket <issue-id>.[/red]")
                 raise SystemExit(1)
             issue = _client().get_issue_by_identifier(ticket_id)
             _client().approve_issue_attestation(rit["id"], issue["id"])
-            console.print(f"[green]Ritual '{ritual_name}' approved for {ticket_id}.[/green]")
+            console.print(f"[green]Ritual '{esc(ritual_name)}' approved for {esc(ticket_id)}.[/green]")
             return
         if ticket_id:
             console.print("[yellow]Note: --ticket ignored for sprint rituals.[/yellow]")
@@ -716,10 +716,10 @@ def register(cli):
         # Check if limbo cleared
         status = _client().get_limbo_status(project_id)
         if not status["in_limbo"]:
-            console.print(f"[green]Ritual '{ritual_name}' approved. Limbo complete.[/green]")
+            console.print(f"[green]Ritual '{esc(ritual_name)}' approved. Limbo complete.[/green]")
         else:
             pending_count = len(status["pending_rituals"])
-            console.print(f"[green]Ritual '{ritual_name}' approved.[/green] {pending_count} remaining.")
+            console.print(f"[green]Ritual '{esc(ritual_name)}' approved.[/green] {esc(pending_count)} remaining.")
             console.print("Run `chaotic ritual list` to continue.")
 
     @ritual.command("reject")
@@ -747,18 +747,18 @@ def register(cli):
         rituals = _client().get_rituals(project_id)
         rit = next((r for r in rituals if r["name"] == ritual_name), None)
         if not rit:
-            console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
+            console.print(f"[red]Ritual '{esc(ritual_name)}' not found.[/red]")
             console.print("Run `chaotic ritual list` to see available rituals.")
             raise SystemExit(1)
         if rit.get("trigger") not in ("ticket_close", "ticket_claim"):
-            console.print(f"[red]Ritual '{ritual_name}' is not a ticket-level ritual; only a ticket's close/claim rituals can be rejected.[/red]")
+            console.print(f"[red]Ritual '{esc(ritual_name)}' is not a ticket-level ritual; only a ticket's close/claim rituals can be rejected.[/red]")
             raise SystemExit(1)
 
         issue = _client().get_issue_by_identifier(ticket_id)
         rejection = _client().reject_ritual_for_issue(rit["id"], issue["id"], note.strip())
         attester = principal_markup(rejection.get("attester"), rejection.get("attested_by_name"))
         to = f" {attester} has been told why." if attester else ""
-        console.print(f"[yellow]Ritual '{ritual_name}' rejected for {ticket_id}.[/yellow]{to}")
+        console.print(f"[yellow]Ritual '{esc(ritual_name)}' rejected for {esc(ticket_id)}.[/yellow]{to}")
 
     @ritual.command("complete")
     @click.argument("ritual_name")
@@ -781,7 +781,7 @@ def register(cli):
         rit = next((r for r in rituals if r["name"] == ritual_name), None)
 
         if not rit:
-            console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
+            console.print(f"[red]Ritual '{esc(ritual_name)}' not found.[/red]")
             console.print("Run `chaotic ritual list` to see available rituals.")
             raise SystemExit(1)
         document_id = resolve_document_id(document_ref, m.get_current_team()) if document_ref else None
@@ -790,7 +790,7 @@ def register(cli):
         if rit.get("trigger") in ("ticket_close", "ticket_claim"):
             if not ticket_id:
                 trigger_type = "ticket-close" if rit.get("trigger") == "ticket_close" else "ticket-claim"
-                console.print(f"[red]Ritual '{ritual_name}' is a {trigger_type} ritual. Use --ticket <issue-id>.[/red]")
+                console.print(f"[red]Ritual '{esc(ritual_name)}' is a {esc(trigger_type)} ritual. Use --ticket <issue-id>.[/red]")
                 raise SystemExit(1)
 
             # Get the issue to get its ID
@@ -798,7 +798,7 @@ def register(cli):
             _client().complete_gate_ritual_for_issue(
                 rit["id"], issue["id"], note, document_id=document_id, url=url,
             )
-            console.print(f"[green]Ritual '{ritual_name}' completed for {ticket_id}.[/green]")
+            console.print(f"[green]Ritual '{esc(ritual_name)}' completed for {esc(ticket_id)}.[/green]")
         else:
             # Sprint ritual
             if ticket_id:
@@ -809,10 +809,10 @@ def register(cli):
             # Check if limbo cleared
             status = _client().get_limbo_status(project_id)
             if not status["in_limbo"]:
-                console.print(f"[green]Ritual '{ritual_name}' completed. Limbo complete.[/green]")
+                console.print(f"[green]Ritual '{esc(ritual_name)}' completed. Limbo complete.[/green]")
             else:
                 pending_count = len(status["pending_rituals"])
-                console.print(f"[green]Ritual '{ritual_name}' completed.[/green] {pending_count} remaining.")
+                console.print(f"[green]Ritual '{esc(ritual_name)}' completed.[/green] {esc(pending_count)} remaining.")
                 console.print("Run `chaotic ritual list` to continue.")
 
     @ritual.command("history")
@@ -863,18 +863,18 @@ def register(cli):
             else:
                 status_str = "[yellow]Pending[/yellow]"
 
-            # Free text: cut first, then escape, so the cut cannot split
-            # an escape sequence and a `[/]` cannot reach Rich as markup
-            # (CHT-1606).
-            note = escape((entry.get("rejection_note") or entry.get("note") or "")[:40])
+            # Free text, cut to 40 characters; markup.Table escapes it
+            # after the cut, so the cut cannot split an escape sequence
+            # (CHT-1606, CHT-1526).
+            note = (entry.get("rejection_note") or entry.get("note") or "")[:40]
 
             table.add_row(
                 date,
-                escape(entry.get("ritual_name", "?")),
+                entry.get("ritual_name", "?"),
                 type_display,
-                escape(context),
-                principal_markup(entry.get("attester"), entry.get("attested_by_name", "?")),
-                status_str,
+                context,
+                markup(principal_markup(entry.get("attester"), entry.get("attested_by_name", "?"))),
+                Markup(status_str),
                 note,
             )
 
@@ -904,14 +904,14 @@ def register(cli):
             issue_id = resolve_issue_id(ticket, team_id)
 
             if not yes:
-                console.print(f"[yellow]Warning: This will force-clear ticket limbo for {ticket}.[/yellow]")
+                console.print(f"[yellow]Warning: This will force-clear ticket limbo for {esc(ticket)}.[/yellow]")
                 if not m.confirm_action("Are you sure?"):
                     console.print("[dim]Cancelled.[/dim]")
                     return
 
             result = _client().force_clear_ticket_limbo(issue_id)
             cleared = result.get("cleared_count", 0)
-            console.print(f"[green]Cleared {cleared} ticket limbo record(s) for {ticket}.[/green]")
+            console.print(f"[green]Cleared {esc(cleared)} ticket limbo record(s) for {esc(ticket)}.[/green]")
         else:
             # Sprint-level limbo clearing (existing behavior)
             status = _client().get_limbo_status(project_id)
@@ -922,14 +922,14 @@ def register(cli):
             pending_count = len(status["pending_rituals"])
 
             if not yes:
-                console.print(f"[yellow]Warning: This will skip {pending_count} pending ritual(s).[/yellow]")
+                console.print(f"[yellow]Warning: This will skip {esc(pending_count)} pending ritual(s).[/yellow]")
                 if not m.confirm_action("Are you sure you want to force-clear limbo?"):
                     console.print("[dim]Cancelled.[/dim]")
                     return
 
             result = _client().force_clear_limbo(project_id)
             next_name = result.get("next_sprint_name", "the next sprint")
-            console.print(f"[green]Limbo cleared. {next_name} is now active.[/green]")
+            console.print(f"[green]Limbo cleared. {esc(next_name)} is now active.[/green]")
 
     # Ritual Group commands
     @ritual.group("group")
@@ -965,11 +965,11 @@ def register(cli):
                 "percentage": "Percentage (independent chance)",
             }.get(group["selection_mode"], group["selection_mode"])
 
-            console.print(f"  [cyan]{group['name']}[/cyan] - {mode_desc}")
+            console.print(f"  [cyan]{esc(group['name'])}[/cyan] - {esc(mode_desc)}")
             triggers = group.get("triggers") or []
             if len(triggers) > 1:
                 console.print(
-                    f"    [red]mixed triggers: {', '.join(triggers)} -- members must share a trigger; "
+                    f"    [red]mixed triggers: {esc(', '.join(triggers))} -- members must share a trigger; "
                     f"move the odd ones out (CHT-1403)[/red]"
                 )
 
@@ -980,10 +980,10 @@ def register(cli):
                 for r in group_rituals:
                     if group["selection_mode"] == "percentage":
                         pct = r.get("percentage", 0)
-                        console.print(f"    \u2022 {r['name']} ({pct}%)")
+                        console.print(f"    \u2022 {esc(r['name'])} ({esc(pct)}%)")
                     else:
                         wt = r.get("weight", 1.0)
-                        console.print(f"    \u2022 {r['name']} (weight: {wt})")
+                        console.print(f"    \u2022 {esc(r['name'])} (weight: {esc(wt)})")
             else:
                 console.print("    [dim](no rituals in group)[/dim]")
             console.print()
@@ -1008,7 +1008,7 @@ def register(cli):
         m = _main()
         project_id = m.get_current_project()
         result = _client().create_ritual_group(project_id, name, mode)
-        console.print(f"[green]Ritual group created: {result['name']} ({mode})[/green]")
+        console.print(f"[green]Ritual group created: {esc(result['name'])} ({mode})[/green]")
 
     @ritual_group.command("update")
     @click.argument("name")
@@ -1030,7 +1030,7 @@ def register(cli):
         group = next((g for g in groups if g["name"] == name), None)
 
         if not group:
-            console.print(f"[red]Ritual group '{name}' not found.[/red]")
+            console.print(f"[red]Ritual group '{esc(name)}' not found.[/red]")
             console.print("Run `chaotic ritual group list` to see available groups.")
             raise SystemExit(1)
 
@@ -1045,7 +1045,7 @@ def register(cli):
             raise SystemExit(1)
 
         result = _client().update_ritual_group(group["id"], **kwargs)
-        console.print(f"[green]Ritual group '{result['name']}' updated.[/green]")
+        console.print(f"[green]Ritual group '{esc(result['name'])}' updated.[/green]")
 
     @ritual_group.command("delete")
     @click.argument("name")
@@ -1067,7 +1067,7 @@ def register(cli):
         group = next((g for g in groups if g["name"] == name), None)
 
         if not group:
-            console.print(f"[red]Ritual group '{name}' not found.[/red]")
+            console.print(f"[red]Ritual group '{esc(name)}' not found.[/red]")
             console.print("Run `chaotic ritual group list` to see available groups.")
             raise SystemExit(1)
 
@@ -1077,6 +1077,6 @@ def register(cli):
                 return
 
         _client().delete_ritual_group(group["id"])
-        console.print(f"[green]Ritual group '{name}' deleted. Rituals ungrouped.[/green]")
+        console.print(f"[green]Ritual group '{esc(name)}' deleted. Rituals ungrouped.[/green]")
 
     return ritual

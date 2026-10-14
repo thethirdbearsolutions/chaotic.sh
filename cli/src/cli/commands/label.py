@@ -2,7 +2,7 @@
 import sys
 
 import click
-from rich.table import Table
+from ..markup import Table, esc
 
 from .shared import _client, console, resolve_content_value
 
@@ -55,7 +55,7 @@ def register(cli):
         """Create a new label."""
         m = _main()
         result = _client().create_label(m.get_current_team(), name, color=color, description=description or None)
-        console.print(f"[green]Label created: {result['name']}[/green]")
+        console.print(f"[green]Label created: {esc(result['name'])}[/green]")
 
     @label.command("update")
     @click.argument("label_id")

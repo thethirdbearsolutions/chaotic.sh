@@ -4,7 +4,7 @@ import sys
 import click
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.table import Table
+from ..markup import Markup, Table, esc
 
 from .shared import _client, _warn_off_scale_estimate, console, resolve_content_value
 
@@ -66,7 +66,7 @@ def register(cli):
             for label_name in labels:
                 label = next((l for l in all_labels if l["name"].lower() == label_name.lower()), None)
                 if not label:
-                    console.print(f"[red]Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}[/red]")
+                    console.print(f"[red]Label '{esc(label_name)}' not found. Available labels: {esc(', '.join(l['name'] for l in all_labels))}[/red]")
                     raise SystemExit(1)
                 label_ids.append(label["id"])
             data["label_ids"] = label_ids
@@ -78,9 +78,9 @@ def register(cli):
 
         result = _client().create_issue(project_id, title, **data)
         _warn_off_scale_estimate(project_id, data.get("estimate"))
-        console.print(f"[green]Epic created: {result['identifier']} - {result['title']}[/green]")
+        console.print(f"[green]Epic created: {esc(result['identifier'])} - {esc(result['title'])}[/green]")
         console.print(f"\n[dim]Add sub-issues with:[/dim]")
-        console.print(f"  chaotic issue create --parent {result['identifier']} \"Sub-issue title\"")
+        console.print(f"  chaotic issue create --parent {esc(result['identifier'])} \"Sub-issue title\"")
 
     @epic.command("list")
     @click.option("--status", help="Filter by status (backlog, todo, in_progress, in_review, done, canceled). Comma-separated for multiple.")
@@ -152,7 +152,7 @@ def register(cli):
         issue = _client().get_issue_by_identifier(identifier)
 
         if issue.get('issue_type') != 'epic':
-            console.print(f"[yellow]{identifier} is not an epic (type: {issue.get('issue_type', 'task')}). Use 'chaotic issue show' instead.[/yellow]")
+            console.print(f"[yellow]{esc(identifier)} is not an epic (type: {esc(issue.get('issue_type', 'task'))}). Use 'chaotic issue show' instead.[/yellow]")
             return
 
         # JSON output
@@ -167,13 +167,13 @@ def register(cli):
 
         # Build panel
         panel_lines = [
-            f"[bold]{issue['title']}[/bold]\n",
-            f"[dim]Status:[/dim] {issue['status'].replace('_', ' ').title()}",
-            f"[dim]Priority:[/dim] {issue['priority'].replace('_', ' ').title()}",
-            f"[dim]Estimate:[/dim] {'-' if issue.get('estimate') is None else issue['estimate']} points",
+            f"[bold]{esc(issue['title'])}[/bold]\n",
+            f"[dim]Status:[/dim] {esc(issue['status'].replace('_', ' ').title())}",
+            f"[dim]Priority:[/dim] {esc(issue['priority'].replace('_', ' ').title())}",
+            f"[dim]Estimate:[/dim] {esc('-' if issue.get('estimate') is None else issue['estimate'])} points",
         ]
 
-        console.print(Panel("\n".join(panel_lines), title=f"Epic {issue['identifier']}"))
+        console.print(Panel("\n".join(panel_lines), title=f"Epic {esc(issue['identifier'])}"))
 
         # Description
         description = issue.get('description') or 'No description'
@@ -181,7 +181,7 @@ def register(cli):
         if issue.get('description'):
             console.print(Markdown(description))
         else:
-            console.print(f"  {description}")
+            console.print(f"  {esc(description)}")
 
         # Sub-issue tree
         try:
@@ -191,7 +191,7 @@ def register(cli):
 
         if sub_issues:
             done_count = sum(1 for s in sub_issues if s.get('status') in ('done', 'canceled'))
-            console.print(f"\n[bold]Sub-issues ({done_count}/{len(sub_issues)} done):[/bold]")
+            console.print(f"\n[bold]Sub-issues ({esc(done_count)}/{esc(len(sub_issues))} done):[/bold]")
 
             table = Table(show_header=True)
             table.add_column("", width=3)  # checkmark
@@ -205,7 +205,7 @@ def register(cli):
                 done = s.get('status') in ('done', 'canceled')
                 mark = "[green]\u2713[/green]" if done else "[dim]\u2717[/dim]"
                 table.add_row(
-                    mark,
+                    Markup(mark),
                     s.get("identifier", "-"),
                     (s.get("title", "")[:45] + ("..." if len(s.get("title", "")) > 45 else "")),
                     s["status"].replace("_", " ").title(),
@@ -216,6 +216,6 @@ def register(cli):
             console.print(table)
         else:
             console.print("\n[dim]No sub-issues yet. Add one with:[/dim]")
-            console.print(f"  chaotic issue create --parent {issue['identifier']} \"Sub-issue title\"")
+            console.print(f"  chaotic issue create --parent {esc(issue['identifier'])} \"Sub-issue title\"")
 
     return epic

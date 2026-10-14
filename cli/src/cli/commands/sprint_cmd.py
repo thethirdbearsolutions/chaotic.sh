@@ -5,7 +5,7 @@ import click
 import httpx
 from rich.markup import escape
 from rich.panel import Panel
-from rich.table import Table
+from ..markup import Table, esc
 
 from .shared import _client, console, print_sprint_panel, resolve_content_value
 
@@ -43,23 +43,23 @@ def _print_budget_panel(result):
 
     if budget is None:
         console.print(Panel(
-            f"[bold]{name}[/bold]\n"
+            f"[bold]{esc(name)}[/bold]\n"
             f"Budget: [dim]Unlimited[/dim]\n"
-            f"Spent: {spent} points",
+            f"Spent: {esc(spent)} points",
             title="Sprint Budget"
         ))
         return
 
     remaining = budget - spent
     if remaining < 0:
-        status_line = f"Arrears: [red]{abs(remaining)} points over budget[/red]\nStatus: [red bold]BLOCKED - close sprint to continue[/red bold]"
+        status_line = f"Arrears: [red]{esc(abs(remaining))} points over budget[/red]\nStatus: [red bold]BLOCKED - close sprint to continue[/red bold]"
     else:
-        status_line = f"Remaining: {remaining} points\nStatus: [green]OK[/green]"
+        status_line = f"Remaining: {esc(remaining)} points\nStatus: [green]OK[/green]"
 
     console.print(Panel(
-        f"[bold]{name}[/bold]\n"
-        f"Budget: {budget} points\n"
-        f"Spent: {spent} points\n"
+        f"[bold]{esc(name)}[/bold]\n"
+        f"Budget: {esc(budget)} points\n"
+        f"Spent: {esc(spent)} points\n"
         f"{status_line}\n"
         f"[dim]spent = points from tickets CLOSED while this sprint is active "
         f"(unestimated = 1pt); one active sprint at a time, close to rotate; "
@@ -204,7 +204,7 @@ def register(cli):
             if m.is_json_output():
                 m.output_json(result)
                 return
-            console.print(f"[green]Budget for '{result['name']}' set to {set_amount} points.[/green]")
+            console.print(f"[green]Budget for '{esc(result['name'])}' set to {esc(set_amount)} points.[/green]")
             return
 
         result = _client().get_sprint(target_id) if target_id else _client().get_current_sprint(project_id)
@@ -302,16 +302,16 @@ def register(cli):
             # so arrears still blocks this project until the rituals clear.
             # Closing again does nothing but fail (CHT-1270).
             console.print(
-                f"[yellow]Sprint '{result['name']}' in {key} entered limbo: it has not rotated yet, "
-                f"and {key} stays blocked until its sprint rituals are done.[/yellow]"
+                f"[yellow]Sprint '{esc(result['name'])}' in {esc(key)} entered limbo: it has not rotated yet, "
+                f"and {esc(key)} stays blocked until its sprint rituals are done.[/yellow]"
             )
             if project_id != current_project_id:
-                console.print(f"Run `chaotic project use {key}`, then `chaotic ritual pending` to continue.")
+                console.print(f"Run `chaotic project use {esc(key)}`, then `chaotic ritual pending` to continue.")
             else:
                 console.print("Run `chaotic ritual pending` to continue.")
             return
 
-        console.print(f"[green]Sprint '{result['name']}' in {key} closed. Next sprint is now active.[/green]")
+        console.print(f"[green]Sprint '{esc(result['name'])}' in {esc(key)} closed. Next sprint is now active.[/green]")
         # Say what the caller actually needs to know -- "am I unblocked?" --
         # from the sprint that is active now, not the closed one, which
         # stays over budget forever (CHT-1351, CHT-1270). The close has
@@ -324,15 +324,15 @@ def register(cli):
         budget = active.get("budget")
         spent = active.get("points_spent") or 0
         if budget is None:
-            console.print(f"Now active: '{active.get('name')}' (no budget). {key} is no longer in arrears.")
+            console.print(f"Now active: '{esc(active.get('name'))}' (no budget). {esc(key)} is no longer in arrears.")
         elif spent > budget:
             console.print(
-                f"[red]Now active: '{active.get('name')}' ({spent}/{budget} points), "
+                f"[red]Now active: '{esc(active.get('name'))}' ({esc(spent)}/{esc(budget)} points), "
                 f"which is itself over budget.[/red]"
             )
         else:
             console.print(
-                f"Now active: '{active.get('name')}' ({spent}/{budget} points). {key} is no longer in arrears."
+                f"Now active: '{esc(active.get('name'))}' ({esc(spent)}/{esc(budget)} points). {esc(key)} is no longer in arrears."
             )
 
     @sprint.command("update")
@@ -371,7 +371,7 @@ def register(cli):
             return
 
         result = _client().update_sprint(sprint_id, **data)
-        console.print(f"[green]Sprint '{result['name']}' updated.[/green]")
+        console.print(f"[green]Sprint '{esc(result['name'])}' updated.[/green]")
 
     @sprint.command("add")
     @click.argument("identifiers", nargs=-1, required=True)
@@ -407,14 +407,14 @@ def register(cli):
             try:
                 issue = _client().get_issue_by_identifier(identifier)
                 _client().update_issue(issue["id"], sprint_id=sprint_id)
-                console.print(f"[green]Added {issue['identifier']} to current sprint.[/green]")
+                console.print(f"[green]Added {esc(issue['identifier'])} to current sprint.[/green]")
                 results.append({"identifier": issue["identifier"], "id": issue["id"], "success": True})
             except (m.APIError, httpx.HTTPError) as e:
                 # httpx.HTTPError too: a transient transport failure
                 # (ConnectError/Timeout) mid-batch shouldn't discard the
                 # per-issue results accumulated so far by escaping to the
                 # outer handle_error (CHT-1222).
-                console.print(f"[red]Failed to add {identifier}: {escape(str(e))}[/red]")
+                console.print(f"[red]Failed to add {esc(identifier)}: {escape(str(e))}[/red]")
                 results.append({"identifier": identifier, "success": False, "error": str(e)})
 
         any_failed = any(not r["success"] for r in results)
@@ -447,12 +447,12 @@ def register(cli):
             try:
                 issue = _client().get_issue_by_identifier(identifier)
                 _client().update_issue(issue["id"], sprint_id=None)
-                console.print(f"[green]Removed {issue['identifier']} from sprint.[/green]")
+                console.print(f"[green]Removed {esc(issue['identifier'])} from sprint.[/green]")
                 results.append({"identifier": issue["identifier"], "id": issue["id"], "success": True})
             except (m.APIError, httpx.HTTPError) as e:
                 # See sprint_add: transport errors also get per-issue
                 # reporting instead of aborting the batch (CHT-1222).
-                console.print(f"[red]Failed to remove {identifier}: {escape(str(e))}[/red]")
+                console.print(f"[red]Failed to remove {esc(identifier)}: {escape(str(e))}[/red]")
                 results.append({"identifier": identifier, "success": False, "error": str(e)})
 
         any_failed = any(not r["success"] for r in results)

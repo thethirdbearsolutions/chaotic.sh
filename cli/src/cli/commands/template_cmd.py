@@ -16,7 +16,7 @@ from pathlib import Path
 
 import click
 import yaml
-from rich.table import Table
+from ..markup import Table, esc
 
 from .shared import _client, console, resolve_content_value
 
@@ -112,34 +112,34 @@ def _print_apply_report(report: dict):
     """Human-readable rendering of a TemplateApplyReport."""
     prefix = "[dim](dry run)[/dim] " if report.get("dry_run") else ""
     console.print(
-        f"{prefix}Applied template [bold]{report['template']}[/bold] "
-        f"to project {report['project_key']}:"
+        f"{prefix}Applied template [bold]{esc(report['template'])}[/bold] "
+        f"to project {esc(report['project_key'])}:"
     )
     for change in report["rituals"]:
         fields = ", ".join(change.get("fields_changed") or [])
         if change["action"] == "create":
-            console.print(f"  [green]+[/green] created ritual '{change['name']}'")
+            console.print(f"  [green]+[/green] created ritual '{esc(change['name'])}'")
         elif change["action"] == "update":
-            console.print(f"  [cyan]~[/cyan] updated ritual '{change['name']}' ({fields})")
+            console.print(f"  [cyan]~[/cyan] updated ritual '{esc(change['name'])}' ({esc(fields)})")
         elif change["action"] == "skipped":
             console.print(
-                f"  [yellow]![/yellow] skipped ritual '{change['name']}' "
-                f"(differs: {fields}) -- re-run and confirm, or use --yes"
+                f"  [yellow]![/yellow] skipped ritual '{esc(change['name'])}' "
+                f"(differs: {esc(fields)}) -- re-run and confirm, or use --yes"
             )
         else:
-            console.print(f"  [dim]=[/dim] ritual '{change['name']}' unchanged")
+            console.print(f"  [dim]=[/dim] ritual '{esc(change['name'])}' unchanged")
     for change in report["settings"]:
         if change["action"] == "set":
             console.print(
-                f"  [cyan]~[/cyan] setting {change['field']}: "
-                f"{change['old_value']} -> {change['new_value']}"
+                f"  [cyan]~[/cyan] setting {esc(change['field'])}: "
+                f"{esc(change['old_value'])} -> {esc(change['new_value'])}"
             )
         else:
-            console.print(f"  [dim]=[/dim] setting {change['field']} unchanged")
+            console.print(f"  [dim]=[/dim] setting {esc(change['field'])} unchanged")
     if not report["rituals"] and not report["settings"]:
         console.print("  [dim](template is empty -- nothing to apply)[/dim]")
     for warning in report.get("warnings", []):
-        console.print(f"  [yellow]Warning: {warning}[/yellow]")
+        console.print(f"  [yellow]Warning: {esc(warning)}[/yellow]")
 
 
 def _apply_with_confirmation(template: dict, project_id: str, yes: bool = False) -> dict:
@@ -225,8 +225,8 @@ def register(cli):
             return
         ritual_count = len(result["body"]["sections"].get("rituals", []))
         console.print(
-            f"[green]Template created: {result['name']} "
-            f"({ritual_count} ritual(s) from {project['key']})[/green]"
+            f"[green]Template created: {esc(result['name'])} "
+            f"({esc(ritual_count)} ritual(s) from {esc(project['key'])})[/green]"
         )
 
     @template.command("list")
@@ -271,9 +271,9 @@ def register(cli):
             m.output_json(t)
             return
 
-        console.print(f"[bold]{t['name']}[/bold]")
+        console.print(f"[bold]{esc(t['name'])}[/bold]")
         if t.get("description"):
-            console.print(f"  {t['description']}")
+            console.print(f"  {esc(t['description'])}")
 
         sections = t["body"]["sections"]
         rituals = sections.get("rituals", [])
@@ -286,10 +286,10 @@ def register(cli):
                     "ticket_claim": "ticket-claim",
                 }.get(r.get("trigger"), r.get("trigger"))
                 mode = r.get("approval_mode", "auto")
-                console.print(f"  [cyan]{r['name']}[/cyan] ({trigger_desc}, {mode})")
+                console.print(f"  [cyan]{esc(r['name'])}[/cyan] ({esc(trigger_desc)}, {esc(mode)})")
                 first_line = (r.get("prompt") or "").strip().splitlines()[0] if r.get("prompt") else ""
                 if first_line:
-                    console.print(f"    [dim]{first_line}[/dim]")
+                    console.print(f"    [dim]{esc(first_line)}[/dim]")
         else:
             console.print("\n[dim]No rituals in this template.[/dim]")
 
@@ -297,13 +297,13 @@ def register(cli):
         if settings:
             console.print("\n[bold]Settings:[/bold]")
             for key, value in settings.items():
-                console.print(f"  {key}: {value}")
+                console.print(f"  {esc(key)}: {esc(value)}")
 
         unknown = sorted(set(sections) - {"rituals", "settings"})
         if unknown:
             console.print(
                 f"\n[yellow]Contains section(s) this CLI version doesn't "
-                f"understand: {', '.join(unknown)}[/yellow]"
+                f"understand: {esc(', '.join(unknown))}[/yellow]"
             )
 
     @template.command("apply")
@@ -366,7 +366,7 @@ def register(cli):
                 console.print("[dim]Cancelled.[/dim]")
                 return
         _client().delete_template(template["id"])
-        console.print(f"[green]Template '{name}' deleted.[/green]")
+        console.print(f"[green]Template '{esc(name)}' deleted.[/green]")
 
     @template.command("export")
     @click.argument("name")
@@ -384,7 +384,7 @@ def register(cli):
         text = _yaml_dump(_template_to_doc(template))
         if output_path:
             Path(output_path).write_text(text)
-            console.print(f"[green]Exported template '{name}' to {output_path}[/green]")
+            console.print(f"[green]Exported template '{esc(name)}' to {esc(output_path)}[/green]")
         else:
             click.echo(text, nl=False)
 
@@ -437,10 +437,10 @@ def register(cli):
             return
         ritual_count = len(result["body"]["sections"].get("rituals", []))
         console.print(
-            f"[green]Template imported: {result['name']} "
-            f"({ritual_count} ritual(s))[/green]"
+            f"[green]Template imported: {esc(result['name'])} "
+            f"({esc(ritual_count)} ritual(s))[/green]"
         )
-        console.print(f"[dim]Apply it with 'chaotic template apply {result['name']}'.[/dim]")
+        console.print(f"[dim]Apply it with 'chaotic template apply {esc(result['name'])}'.[/dim]")
 
     @template.command("install")
     @click.argument("pack", required=False)
@@ -468,11 +468,11 @@ def register(cli):
                 return
             console.print("[bold]Available starter packs:[/bold]\n")
             for p in packs.values():
-                console.print(f"  [cyan]{p['name']}[/cyan]")
-                console.print(f"    {p.get('description', '')}")
+                console.print(f"  [cyan]{esc(p['name'])}[/cyan]")
+                console.print(f"    {esc(p.get('description', ''))}")
                 rituals = p.get("sections", {}).get("rituals", [])
                 names = ", ".join(r["name"] for r in rituals)
-                console.print(f"    [dim]rituals: {names}[/dim]\n")
+                console.print(f"    [dim]rituals: {esc(names)}[/dim]\n")
             console.print("[dim]Install one with 'chaotic template install <pack>'.[/dim]")
             return
 
@@ -492,7 +492,7 @@ def register(cli):
         if m.is_json_output():
             m.output_json(result)
             return
-        console.print(f"[green]Installed pack '{pack}' as template '{result['name']}'.[/green]")
-        console.print(f"[dim]Apply it with 'chaotic template apply {result['name']}'.[/dim]")
+        console.print(f"[green]Installed pack '{esc(pack)}' as template '{esc(result['name'])}'.[/green]")
+        console.print(f"[dim]Apply it with 'chaotic template apply {esc(result['name'])}'.[/dim]")
 
     return template
