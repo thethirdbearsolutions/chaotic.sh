@@ -74,6 +74,7 @@ import { setCurrentTeam, setState, getDetailNavContext, getSelectedSprintIndex }
 import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
+import { getProjects } from './projects.js';
 import {
     getSprints,
     setSprints,
@@ -86,6 +87,8 @@ import {
     viewSprintByPath,
     showEditBudgetModal,
     handleUpdateBudget,
+    followDefaultBudget,
+    UNLIMITED_DEFAULT_WARNING,
     completeSprint,
     loadLimboStatus,
     showLimboDetailsModal,
@@ -970,6 +973,152 @@ describe('handleUpdateBudget', () => {
         await handleUpdateBudget(event, 's1', 'p1');
 
         expect(showApiError).toHaveBeenCalledWith('update budget', expect.objectContaining({ message: 'forbidden' }));
+    });
+});
+
+describe('follow project default budget (CHT-1708)', () => {
+    const planned = (extra) => ({ id: 's2', name: 'Next Sprint', status: 'planned', budget: 15, project_id: 'p1', ...extra });
+
+    function mockReload(fetched) {
+        api.getCurrentSprint.mockResolvedValue({});
+        api.getSprints.mockResolvedValue(fetched);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+        setState('currentProject', 'p1');
+    }
+
+    let confirmSpy;
+    beforeEach(() => {
+        confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        getProjects.mockReturnValue([{ id: 'p1', default_sprint_budget: 12 }]);
+    });
+    afterEach(() => {
+        confirmSpy.mockRestore();
+        getProjects.mockReturnValue([]);
+    });
+
+    it('shows the button on a planned sprint whose budget was set by hand', () => {
+        setSprints([planned({ budget_explicit: true })]);
+        renderSprints();
+        const button = document.querySelector('[data-action="follow-default-budget"]');
+        expect(button).not.toBeNull();
+        expect(button.dataset.sprintId).toBe('s2');
+        expect(button.textContent).toContain('Follow project default');
+    });
+
+    it('hides it when the budget already follows the default, or the server does not say', () => {
+        for (const extra of [{ budget_explicit: false }, {}]) {
+            setSprints([planned(extra)]);
+            renderSprints();
+            expect(document.querySelector('[data-action="follow-default-budget"]')).toBeNull();
+        }
+    });
+
+    it('never shows it on the active sprint, even one set by hand', () => {
+        setSprints([{ id: 's1', name: 'Now', status: 'active', budget: 20, points_spent: 3, budget_explicit: true, project_id: 'p1' }]);
+        renderSprints();
+        expect(document.querySelector('[data-action="follow-default-budget"]')).toBeNull();
+    });
+
+    it('sends budget_follows_default, reloads, and names the old value', async () => {
+        setSprints([planned({ budget_explicit: true })]);
+        api.updateSprint.mockResolvedValue({ id: 's2', name: 'Next Sprint', budget: 12, budget_explicit: false });
+        mockReload([planned({ budget: 12, budget_explicit: false })]);
+
+        await followDefaultBudget('s2');
+
+        expect(confirmSpy).not.toHaveBeenCalled();
+        expect(api.updateSprint).toHaveBeenCalledWith('s2', { budget_follows_default: true });
+        expect(api.getSprints).toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledWith(
+            "'Next Sprint' follows the project default budget again: 12 points (was 15 points).", 'success',
+        );
+        expect(showToast).not.toHaveBeenCalledWith(UNLIMITED_DEFAULT_WARNING, 'warning');
+        expect(document.querySelector('[data-action="follow-default-budget"]')).toBeNull();
+    });
+
+    it('confirms first when the project default is unlimited, and warns after', async () => {
+        getProjects.mockReturnValue([{ id: 'p1', default_sprint_budget: null }]);
+        setSprints([planned({ budget_explicit: true })]);
+        api.updateSprint.mockResolvedValue({ id: 's2', name: 'Next Sprint', budget: null, budget_explicit: false });
+        mockReload([planned({ budget: null, budget_explicit: false })]);
+
+        await followDefaultBudget('s2');
+
+        expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining(UNLIMITED_DEFAULT_WARNING));
+        expect(UNLIMITED_DEFAULT_WARNING).toContain('arrears will not apply');
+        expect(showToast).toHaveBeenCalledWith(
+            "'Next Sprint' follows the project default budget again: unlimited (was 15 points).", 'success',
+        );
+        expect(showToast).toHaveBeenCalledWith(UNLIMITED_DEFAULT_WARNING, 'warning');
+    });
+
+    it('sends nothing when the unlimited confirmation is declined', async () => {
+        getProjects.mockReturnValue([{ id: 'p1', default_sprint_budget: null }]);
+        confirmSpy.mockReturnValue(false);
+        setSprints([planned({ budget_explicit: true })]);
+
+        await followDefaultBudget('s2');
+
+        expect(api.updateSprint).not.toHaveBeenCalled();
+        expect(showToast).not.toHaveBeenCalled();
+    });
+
+    it('does not confirm when the project is not known on the client', async () => {
+        getProjects.mockReturnValue([]);
+        setSprints([planned({ budget_explicit: true })]);
+        api.updateSprint.mockResolvedValue({ id: 's2', name: 'Next Sprint', budget: null });
+        mockReload([]);
+
+        await followDefaultBudget('s2');
+
+        expect(confirmSpy).not.toHaveBeenCalled();
+        expect(api.updateSprint).toHaveBeenCalled();
+        // The after-the-fact warning still covers this case.
+        expect(showToast).toHaveBeenCalledWith(UNLIMITED_DEFAULT_WARNING, 'warning');
+    });
+
+    it('reports an API error, re-enables the button, and reloads the stale card', async () => {
+        setSprints([planned({ budget_explicit: true })]);
+        const error = new Error('Only a planned sprint can follow the project default budget');
+        api.updateSprint.mockRejectedValue(error);
+        // Meanwhile the sprint was activated: the reload drops the NEXT card.
+        mockReload([planned({ status: 'active', budget_explicit: true, points_spent: 0 })]);
+        const button = document.createElement('button');
+
+        await followDefaultBudget('s2', button);
+
+        expect(showApiError).toHaveBeenCalledWith('reset budget to project default', error);
+        expect(showToast).not.toHaveBeenCalled();
+        expect(button.disabled).toBe(false);
+        expect(api.getSprints).toHaveBeenCalled();
+        expect(document.querySelector('[data-action="follow-default-budget"]')).toBeNull();
+    });
+
+    it('reports success with a refresh note when only the reload fails', async () => {
+        setSprints([planned({ budget_explicit: true })]);
+        api.updateSprint.mockResolvedValue({ id: 's2', name: 'Next Sprint', budget: 12 });
+        api.getCurrentSprint.mockResolvedValue({});
+        api.getSprints.mockRejectedValue(new Error('network'));
+        setState('currentProject', 'p1');
+
+        await followDefaultBudget('s2');
+
+        expect(showApiError).not.toHaveBeenCalledWith('reset budget to project default', expect.anything());
+        expect(showToast).toHaveBeenCalledWith(
+            "'Next Sprint' follows the project default budget again: 12 points (was 15 points). Refresh to see it.",
+            'success',
+        );
+    });
+
+    it('is wired to the follow-default-budget action', async () => {
+        api.updateSprint.mockResolvedValue({ id: 's2', name: 'Next Sprint', budget: 12 });
+        mockReload([]);
+        const button = document.createElement('button');
+
+        sprintsActions['follow-default-budget']({}, { sprintId: 's2' }, button);
+        await vi.waitFor(() => expect(showToast).toHaveBeenCalled());
+
+        expect(api.updateSprint).toHaveBeenCalledWith('s2', { budget_follows_default: true });
     });
 });
 
