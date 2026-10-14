@@ -13,6 +13,7 @@ Profile support:
 - Profile config is loaded instead of config.json
 - Useful for multiple agents (claude, codex, etc.) on same workstation
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -332,10 +333,40 @@ def set_token(token: str | None):
     save_global_config(config)
 
 
+# Teams this process settled on when none is configured: the stdio MCP
+# server's default, the key's only accessible team (CHT-1687). In memory
+# only, and per (server, credential), so a key changed while the server
+# runs does not inherit the old key's team. A configured current_team
+# always wins. Only cli.mcp_backend sets it; the plain CLI never does.
+_process_teams: dict[tuple[str, str], str] = {}
+
+
+def _process_team_slot() -> tuple[str, str] | None:
+    credential = get_api_key() or get_token()
+    if not credential:
+        return None
+    return get_api_url().rstrip("/"), hashlib.sha256(credential.encode()).hexdigest()[:16]
+
+
+def set_process_team(team_id: str) -> None:
+    """Use `team_id` for the rest of this process, with the current server
+    and credential, when no current team is configured. Never written to a
+    config file."""
+    slot = _process_team_slot()
+    if slot:
+        _process_teams[slot] = team_id
+
+
 def get_current_team() -> str | None:
-    """Get current team ID (prefers local, falls back to global)."""
+    """Get current team ID (prefers local, falls back to global, then to
+    this process's default for the current server and credential, see
+    set_process_team)."""
     config = load_config()
-    return config.get("current_team")
+    team_id = config.get("current_team")
+    if team_id or not _process_teams:
+        return team_id
+    slot = _process_team_slot()
+    return _process_teams.get(slot) if slot else None
 
 
 def set_current_team(team_id: str | None, local: bool = True):

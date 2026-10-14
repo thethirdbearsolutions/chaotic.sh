@@ -28,6 +28,15 @@ def _no_session_identity(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_process_team(monkeypatch):
+    """The in-memory default teams (CHT-1687) never carry over from one
+    test to the next."""
+    from cli import config, session_identity
+    monkeypatch.setattr(config, "_process_teams", {})
+    monkeypatch.setattr(session_identity, "_registrar_teams", {})
+
+
 @pytest.fixture
 def cli_runner():
     """Create a Click test runner with profile set."""

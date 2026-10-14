@@ -361,7 +361,7 @@ def _server_error(response: httpx.Response) -> tuple[str, object]:
 
 def _registrar_call(method: str, url: str, credential: str, body: dict | None = None) -> dict:
     """One request with the registrar credential. Only this module makes
-    them, and only to /auth/me and /agents/register."""
+    them, and only to /auth/me, /teams and /agents/register."""
     headers = {"Authorization": f"Bearer {credential}", "Content-Type": "application/json",
                "X-Chaotic-Interactive": "0"}
     with httpx.Client() as client:
@@ -405,6 +405,35 @@ def default_name(registrar_name: str, ref: str) -> str:
 
 def _whoami(credential: str, api_url: str) -> dict:
     return _registrar_call("GET", f"{api_url}/auth/me", credential)
+
+
+# A person registrar's only team, per (server, registrar), for a session
+# with no current team (CHT-1687). A lookup memo for session_key only;
+# it does not become the CLI's current team.
+_registrar_teams: dict[tuple[str, str], str] = {}
+
+
+def _registrar_team(credential: str, api_url: str) -> str:
+    """The person registrar's only team, asked with its own key (the
+    session key is what is being registered). Several or none is an
+    error that says what to run."""
+    memo = (api_url, fingerprint(credential))
+    if memo in _registrar_teams:
+        return _registrar_teams[memo]
+    teams = _registrar_call("GET", f"{api_url}/teams", credential)
+    teams = teams if isinstance(teams, list) else []
+    if len(teams) == 1:
+        _registrar_teams[memo] = teams[0]["id"]
+        return teams[0]["id"]
+    if teams:
+        options = ", ".join(f"{t.get('name')} ({t.get('key')})" for t in teams)
+        raise SessionIdentityError(
+            f"session_identity is auto but no team is selected, and the registrar is in several "
+            f"teams ({options}): run `chaotic team use <key>`. {NO_FALLBACK}"
+        )
+    raise SessionIdentityError(
+        f"session_identity is auto but no team is selected (`chaotic team use`). {NO_FALLBACK}"
+    )
 
 
 def _register(ref: str, credential: str, api_url: str, team_id: str | None, me: dict) -> dict:
@@ -471,7 +500,9 @@ def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: s
             "(`chaotic auth set-key`, or CHAOTIC_API_KEY)."
         )
     fp = fingerprint(credential)
-    team_id = _config.get_current_team()
+    # No current team: a person registrar's only team, once it is known
+    # (an agent registrar's slot has no team anyway).
+    team_id = _config.get_current_team() or _registrar_teams.get((api_url, fp))
     agent_slot = cache_path(ref, api_url, fp, None)
 
     def person_slot():
@@ -501,6 +532,13 @@ def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: s
             if key:
                 return key
             me = _whoami(credential, api_url)
+            if not me.get("is_agent") and not team_id:
+                # A person registers in a team; with none selected, its
+                # only one (CHT-1687). Its key may already be cached there.
+                team_id = _registrar_team(credential, api_url)
+                key = cached(trusted)
+                if key:
+                    return key
             slot_team = None if me.get("is_agent") else team_id
             new_record = _register(ref, credential, api_url, slot_team, me)
             write_cache(cache_path(ref, api_url, fp, slot_team), new_record)
