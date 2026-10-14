@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, status, Query, Header
 from app.auth.access import reads, writes
+from app.api.idempotency import IdempotentRoute, idempotent
 from app.api.deps import CurrentUser, check_user_project_access, check_user_team_access
 from app.utils import ensure_utc
 
@@ -69,7 +70,8 @@ def _activity_type_value(raw, enum_cls):
 from app.services.issue_service import Issue
 from app.websocket import broadcast_issue_event, broadcast_comment_event, broadcast_activity_event, broadcast_relation_event
 
-router = APIRouter()
+# Idempotency-Key on the app's writes (CHT-1621): the @idempotent routes.
+router = APIRouter(route_class=IdempotentRoute)
 
 
 async def _validate_assignee(
@@ -1094,6 +1096,7 @@ async def get_issue(issue_id: str, current_user: CurrentUser) -> IssueResponse:
 
 @router.patch("/{issue_id}", response_model=IssueResponse)
 @writes
+@idempotent
 async def update_issue(
     issue_id: str,
     issue_in: IssueUpdate,
@@ -1521,6 +1524,7 @@ async def list_sub_issues(
     status_code=status.HTTP_201_CREATED,
 )
 @writes
+@idempotent
 async def create_comment(
     issue_id: str,
     comment_in: IssueCommentCreate,

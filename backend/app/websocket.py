@@ -109,7 +109,22 @@ class ConnectionManager:
         )
 
     async def broadcast_to_team(self, team_id: str, message: dict):
-        """Broadcast a message to all connections in a team."""
+        """Broadcast a message to all connections in a team: now, or,
+        inside a transaction (``app.db.transactions.atomic``), once it
+        has committed, and not at all if it rolls back. A client that
+        refetches on the event must find what it announces; a keyed
+        write runs inside one for its whole request (CHT-1621)."""
+        from app.db import transactions
+
+        if transactions.active():
+            async def send() -> None:
+                await self._send_to_team(team_id, message)
+
+            await transactions.on_commit(send)
+            return
+        await self._send_to_team(team_id, message)
+
+    async def _send_to_team(self, team_id: str, message: dict):
         # A snapshot (PR #352 review, finding 1): each send awaits, and a
         # connection can be added or removed meanwhile (a client closing,
         # or /ws closing a socket whose credential failed its re-check).

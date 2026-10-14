@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from datetime import datetime, timedelta, timezone
 
 from app.auth.access import Access, is_registrar, reads, scopes_permit, writes
+from app.api.idempotency import IdempotentRoute, idempotent
 from app.api.deps import CurrentPrincipal, CurrentUser
 from app.enums import InboxActionKind, InboxActionNote, InboxEntryKind, InboxEntryState
 from app.schemas.inbox import (
@@ -22,7 +23,8 @@ from app.services.principals import load_principals
 from app.utils.sync_cursor import InvalidCursorError, SyncPosition, decode_cursor, encode_cursor, teams_digest
 from app.websocket import broadcast_inbox_event
 
-router = APIRouter()
+# Idempotency-Key on the app's writes (CHT-1621): the @idempotent routes.
+router = APIRouter(route_class=IdempotentRoute)
 
 # How far behind "now" a sync cursor stays (CHT-1622). updated_at is
 # stamped before the write commits, so a row can become visible with a
@@ -272,6 +274,7 @@ async def get_unread_count(current_user: CurrentUser, team_id: str | None = None
 
 @router.post("/{entry_id}/read", response_model=InboxEntryResponse)
 @writes
+@idempotent
 async def mark_inbox_read(
     entry_id: str, current_user: CurrentUser, principal: CurrentPrincipal,
 ) -> InboxEntryResponse:
@@ -301,6 +304,7 @@ async def mark_inbox_read(
 
 @router.post("/{entry_id}/archive", response_model=InboxEntryResponse)
 @writes
+@idempotent
 async def archive_inbox_entry(
     entry_id: str, current_user: CurrentUser, principal: CurrentPrincipal,
 ) -> InboxEntryResponse:

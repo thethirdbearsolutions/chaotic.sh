@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
+from app.api.idempotency import IdempotentRoute, idempotent
 from app.api.deps import CurrentUser, check_user_project_access
 from app.schemas.ritual import (
     _coerce_enum,
@@ -41,7 +42,8 @@ from app.enums import ApprovalMode, RitualTrigger, ActivityType
 from app.services.principals import fill_principals, load_principals
 from app.websocket import broadcast_attestation_event
 
-router = APIRouter()
+# Idempotency-Key on the app's writes (CHT-1621): the @idempotent routes.
+router = APIRouter(route_class=IdempotentRoute)
 logger = logging.getLogger(__name__)
 
 
@@ -688,6 +690,7 @@ async def attest_ritual_for_issue(
 
 @router.post("/{ritual_id}/complete-issue/{issue_id}", response_model=RitualAttestationResponse)
 @writes
+@idempotent
 async def complete_gate_ritual_for_issue(
     ritual_id: str,
     issue_id: str,
@@ -861,6 +864,7 @@ async def _already_resolved(resolution: str, resolved_by: str | None, resolved_a
 
 @router.post("/{ritual_id}/approve-issue/{issue_id}", response_model=RitualAttestationResponse)
 @writes
+@idempotent
 async def approve_issue_attestation(
     ritual_id: str,
     issue_id: str,
@@ -927,6 +931,7 @@ def _rejection_response(rejection, ritual) -> RitualRejectionResponse:
 
 @router.post("/{ritual_id}/reject-issue/{issue_id}", response_model=RitualRejectionResponse)
 @writes
+@idempotent
 async def reject_issue_attestation(
     ritual_id: str,
     issue_id: str,
