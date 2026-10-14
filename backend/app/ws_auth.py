@@ -129,17 +129,20 @@ async def refuse(websocket, code: int, reason: str, team_id: str | None) -> None
     handshake: a browser that offered subprotocols fails a handshake
     whose response selects none, and would see 1006 again.
 
-    Each refusal is logged (INFO, ``app.ws_auth``) with its code, reason,
-    client address and team, never the credential: the access log now
-    shows a refused handshake as accepted, so this line is the only
-    server-side record of it (PR #359 review, 1). ``team_id`` is the
-    client's text, so it is logged quoted and cut short.
+    Each refusal is logged (WARNING, ``app.ws_auth``) with its code,
+    reason, client address and team, never the credential: the access log
+    now shows a refused handshake as accepted, so this line is the only
+    server-side record of it (PR #359 review, 1). WARNING, because nothing
+    configures the ``app`` loggers under uvicorn's default logging, where
+    only WARNING and up reach the output (PR #359 re-review, 1).
+    ``team_id`` is the client's text, so it is logged quoted and cut
+    short.
 
     The connection stays open until the client answers the close frame,
     or for the server's close timeout (10 s with uvicorn's websockets
     implementations) if it never does; the 403 path dropped it at once
     (PR #359 review, 2; CHT-1635)."""
-    logger.info(
+    logger.warning(
         "Refused /ws handshake: code=%s reason=%s client=%s team=%r",
         code, reason, _client_address(websocket), (team_id or "")[:64],
     )

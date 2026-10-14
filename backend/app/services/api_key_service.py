@@ -67,6 +67,19 @@ class AgentKeyNeedsHolderError(ValueError):
     the human who holds it (CHT-1537)."""
 
 
+
+def _rolled_back(written: bool, exc: BaseException) -> bool:
+    """Whether a ``revoking()`` block that raised ``exc`` rolled back, so
+    the caller's object must get its old ``is_active`` back (PR #359
+    review, 5). A body that did not finish rolled back. A cancellation
+    once it had finished almost always lands while the hooks run, after
+    the commit (the hooks can take up to 15 s, the commit a moment;
+    CHT-1632): the write stands, and is kept. Anything else raised by the
+    exit is the commit failing."""
+    if not written:
+        return True
+    return not isinstance(exc, asyncio.CancelledError)
+
 class APIKeyService:
     """Service for API key operations."""
 
@@ -239,15 +252,16 @@ class APIKeyService:
         (CHT-1523; RevocationService)."""
         from app.services.revocation_service import RevocationService
 
-        was_active = api_key.is_active
+        was_active, written = api_key.is_active, False
         try:
             async with revoking():
                 api_key.is_active = False
                 await api_key.save(update_fields={"is_active"})
                 await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)
-        except BaseException:
-            # Rolled back: the caller's object says what the database does.
-            api_key.is_active = was_active
+                written = True
+        except BaseException as exc:
+            if _rolled_back(written, exc):
+                api_key.is_active = was_active
             raise
         await api_key.refresh()
         return api_key
@@ -263,7 +277,7 @@ class APIKeyService:
         first one that does."""
         from app.services.revocation_service import RevocationService
 
-        was_active = api_key.is_active
+        was_active, written = api_key.is_active, False
         try:
             async with revoking():
                 if api_key.is_active:
@@ -271,8 +285,8 @@ class APIKeyService:
                     await api_key.save(update_fields={"is_active"})
                 await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)
                 await api_key.delete()
-        except BaseException:
-            # Rolled back: the caller's object says what the database does
-            # (PR #359 review, 5).
-            api_key.is_active = was_active
+                written = True
+        except BaseException as exc:
+            if _rolled_back(written, exc):
+                api_key.is_active = was_active
             raise

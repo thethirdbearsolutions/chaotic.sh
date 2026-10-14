@@ -95,8 +95,8 @@ checks team membership before registering the socket for any broadcast.
 A refused handshake is accepted and closed at once, with nothing sent,
 so the client gets the close code (4001 sign in again, 4003 forbidden,
 4011 retry; CHT-1615). The access log shows such a handshake as
-accepted; each refusal is logged on `app.ws_auth` (INFO: code, reason,
-client address, team, never the credential), which is the line to
+accepted; each refusal is logged on `app.ws_auth` (WARNING: code,
+reason, client address, team, never the credential), which is the line to
 watch for token guessing. A client that never answers the close frame
 holds its connection for the server's close timeout (10 s), where the
 old 403 dropped it at once (CHT-1635). It takes the credential from an

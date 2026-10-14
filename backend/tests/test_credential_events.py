@@ -421,6 +421,34 @@ class TestWhatEachPathReports:
         assert (await OxydeAPIKey.objects.get(id=key.id)).is_active is True
         assert seen == []
 
+    @pytest.mark.parametrize("method", ["revoke", "delete"])
+    async def test_cancelled_while_the_hooks_run_keeps_the_committed_state(self, seen, test_user, method):
+        """PR #359 re-review, 2: a request cancelled during the hook
+        dispatch, after the commit, must not put is_active back."""
+        key, _raw = await APIKeyService().create(test_user.id, APIKeyCreate(name="k"))
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def blocking(event):
+            started.set()
+            await release.wait()
+
+        remove = credential_events.register(blocking)
+        try:
+            task = asyncio.create_task(getattr(APIKeyService(), method)(key))
+            await asyncio.wait_for(started.wait(), 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert key.is_active is False
+            rows = await OxydeAPIKey.objects.filter(id=key.id).all()
+            assert [r.is_active for r in rows] == ([False] if method == "revoke" else [])
+        finally:
+            release.set()
+            remove()
+            from app.db.transactions import drain_detached
+
+            await asyncio.wait_for(drain_detached(), 5)
+
     async def test_a_failed_delete_ends_nothing(self, seen, monkeypatch, test_user):
         key, _raw = await APIKeyService().create(test_user.id, APIKeyCreate(name="k"))
 

@@ -300,11 +300,44 @@ class TestEndpoint:
             await websocket_endpoint(ws, team_id=test_team.id)
         [record] = [r for r in caplog.records if r.name == "app.ws_auth" and "Refused" in r.getMessage()]
         line = record.getMessage()
-        assert record.levelno == logging.INFO
+        assert record.levelno == logging.WARNING
         assert "code=4001" in line
         assert "203.0.113.7:51234" in line
         assert repr(test_team.id) in line
         assert secret not in caplog.text and "abab" not in caplog.text
+
+    def test_the_refusal_line_reaches_the_output_under_uvicorns_logging(self, tmp_path):
+        """PR #359 re-review, 1: caplog adds its own handler, so the test
+        above would pass for a line production never prints. Run a fresh
+        interpreter with uvicorn's default logging config (what
+        ``uvicorn app.main:app`` gets) and read its stderr."""
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = (
+            "import asyncio, logging.config\n"
+            "from unittest.mock import AsyncMock\n"
+            "from uvicorn.config import LOGGING_CONFIG\n"
+            "logging.config.dictConfig(LOGGING_CONFIG)\n"
+            "import app.main\n"  # whatever logging setup the app itself does
+            "from app.ws_auth import refuse\n"
+            "class Ws:\n"
+            "    scope = {}\n"
+            "    client = ('198.51.100.9', 4242)\n"
+            "    accept = AsyncMock()\n"
+            "    close = AsyncMock()\n"
+            "asyncio.run(refuse(Ws(), 4001, 'Invalid token', 'team-1'))\n"
+        )
+        backend = Path(__file__).resolve().parents[1]
+        env = {**os.environ, "SECRET_KEY": "x" * 32, "DATABASE_URL": f"sqlite:///{tmp_path}/unused.db"}
+        result = subprocess.run(
+            [sys.executable, "-c", script], cwd=backend, env=env, capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        output = result.stdout + result.stderr
+        assert "Refused /ws handshake: code=4001 reason=Invalid token client=198.51.100.9:4242" in output
 
     async def test_a_refusal_log_quotes_and_cuts_the_team_id(self, caplog):
         ws = FakeWebSocket()
