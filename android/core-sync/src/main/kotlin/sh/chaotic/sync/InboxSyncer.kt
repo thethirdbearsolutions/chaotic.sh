@@ -52,6 +52,7 @@ class InboxSyncer(
 
     suspend fun sync(): SyncOutcome = mutex.withLock { syncLocked() }
 
+    @Suppress("ReturnCount") // each way a run ends is an early return
     private suspend fun syncLocked(): SyncOutcome {
         var cursor = store.inboxCursor()
         var restartedForBadCursor = false

@@ -1,12 +1,10 @@
 package sh.chaotic.sync
 
-/**
- * What the app caches, in its own shape rather than the generated API
- * models: only the fields the screens draw, with timestamps already parsed.
- * Enum-like fields (`kind`, `status`, `priority`, `type`) keep the server's
- * wire value, so a value a newer server adds is stored and shown as is
- * rather than lost.
- */
+// What the app caches, in its own shape rather than the generated API
+// models: only the fields the screens draw, with timestamps already parsed.
+// Enum-like fields (`kind`, `status`, `priority`, `type`) keep the server's
+// wire value, so a value a newer server adds is stored and shown as is
+// rather than lost.
 
 /** A person, or an agent with the person who owns it (the server's PrincipalSummary). */
 data class Principal(val id: String, val name: String, val isAgent: Boolean = false, val ownerName: String? = null)

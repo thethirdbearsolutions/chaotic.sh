@@ -22,6 +22,15 @@ data class InboxChange(
     val cursor: String?,
 )
 
+/** Everything a [CacheStore] holds, for tests and diagnostics; screens observe the store's own queries. */
+data class CacheSnapshot(
+    val cursor: String?,
+    val inbox: List<InboxEntry>,
+    val teams: List<Team>,
+    val issues: List<IssueDetail>,
+    val sprintCards: List<SprintCard>,
+)
+
 /**
  * The device cache. :app implements it on Room; [InMemoryCacheStore] is the
  * same contract in memory, for tests and previews. Every call is one
@@ -53,4 +62,7 @@ interface CacheStore {
 
     /** Sign-out: nothing of this account may outlive it. */
     suspend fun clearAll()
+
+    /** Inbox ordered by id, teams by id, issues by id (comments and activity oldest first), cards by project id. */
+    suspend fun snapshot(): CacheSnapshot
 }

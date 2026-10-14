@@ -256,7 +256,10 @@ class InboxSyncerTest {
 
         val outcome = syncer.sync()
 
-        assertEquals<SyncOutcome>(SyncOutcome.Failed(SyncOutcome.Reason.SERVER, status = 503, retryAfterMillis = 7_000), outcome)
+        assertEquals<SyncOutcome>(
+            SyncOutcome.Failed(SyncOutcome.Reason.SERVER, status = 503, retryAfterMillis = 7_000),
+            outcome,
+        )
         assertEquals("c1", store.inboxCursor())
         assertEquals(listOf("e1"), store.inbox().map { it.id })
     }

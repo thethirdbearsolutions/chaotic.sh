@@ -44,10 +44,10 @@ class ApiRemote(
     override suspend fun projects(teamId: String): Remote<List<Project>> {
         val all = mutableListOf<Project>()
         while (all.size < MAX_PROJECTS) {
+            val skip = all.size
             val page =
-                call({ nestedApi.listTeamProjectsApiTeamsTeamIdProjectsGet(teamId, skip = all.size, limit = PAGE) }) {
-                    projects ->
-                    projects.map { it.toProject() }
+                call({ nestedApi.listTeamProjectsApiTeamsTeamIdProjectsGet(teamId, skip = skip, limit = PAGE) }) {
+                    it.map { project -> project.toProject() }
                 }
             if (page !is Remote.Ok) return page
             all += page.value

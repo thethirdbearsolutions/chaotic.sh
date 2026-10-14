@@ -14,12 +14,12 @@ import sh.chaotic.api.models.TeamResponse
 
 // From the generated API models to the cache's own records.
 
-internal fun PrincipalSummary.toPrincipal() =
-    Principal(id = id, name = name, isAgent = isAgent == true, ownerName = ownerName)
-
 /** A summary when the server sent one, else just the name it sent beside the id. */
-private fun principal(summary: PrincipalSummary?, id: String?, name: String?): Principal? =
-    summary?.toPrincipal() ?: if (id != null && name != null) Principal(id = id, name = name) else null
+private fun principal(summary: PrincipalSummary?, id: String?, name: String?): Principal? = when {
+    summary != null -> Principal(summary.id, summary.name, summary.isAgent == true, summary.ownerName)
+    id != null && name != null -> Principal(id = id, name = name)
+    else -> null
+}
 
 internal fun InboxSyncResponse.toSyncPage() = SyncPage(
     entries = propertyEntries.map { SyncedEntry(it.toInboxEntry(), open = it.isOpen()) },

@@ -18,22 +18,32 @@ import kotlin.test.assertNull
 class ApiRemoteTest {
     private val requests = mutableListOf<HttpRequestData>()
 
-    private fun remote(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData) =
-        ApiRemote(
-            "https://chaotic.example",
-            MockEngine { request ->
-                requests += request
-                handler(request)
-            },
-            nowMillis = { 0 },
-        )
+    private fun remote(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData) = ApiRemote(
+        "https://chaotic.example",
+        MockEngine { request ->
+            requests += request
+            handler(request)
+        },
+        nowMillis = { 0 },
+    )
 
-    private fun MockRequestHandleScope.json(body: String, status: HttpStatusCode = HttpStatusCode.OK, vararg headers: Pair<String, String>) =
-        respond(
-            content = body,
-            status = status,
-            headers = headersOf(*(headers.map { it.first to listOf(it.second) } + (HttpHeaders.ContentType to listOf("application/json"))).toTypedArray()),
-        )
+    private fun MockRequestHandleScope.json(
+        body: String,
+        status: HttpStatusCode = HttpStatusCode.OK,
+        vararg headers: Pair<String, String>,
+    ) = respond(
+        content = body,
+        status = status,
+        headers = headersOf(
+            *(
+                headers.map {
+                    it.first to listOf(
+                        it.second,
+                    )
+                } + (HttpHeaders.ContentType to listOf("application/json"))
+                ).toTypedArray(),
+        ),
+    )
 
     private fun syncEntry(id: String, state: String?, extra: String = "") =
         """
@@ -122,7 +132,11 @@ class ApiRemoteTest {
     @Test
     fun anHtmlPageIsUnreadable() = runTest {
         val api = remote {
-            respond("<html>Sign in to the hotel wifi</html>", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "text/html"))
+            respond(
+                "<html>Sign in to the hotel wifi</html>",
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType, "text/html"),
+            )
         }
 
         assertIs<Remote.Unreadable>(api.syncInbox(null, 200))

@@ -4,6 +4,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /** [CacheStore] in memory: the reference for what the Room store must do, and the tests' fake. */
+@Suppress("TooManyFunctions") // the CacheStore interface plus a reader per table for tests
 class InMemoryCacheStore : CacheStore {
     private val mutex = Mutex()
     private var cursor: String? = null
@@ -78,6 +79,16 @@ class InMemoryCacheStore : CacheStore {
         teams.clear()
         issues.clear()
         sprintCards.clear()
+    }
+
+    override suspend fun snapshot(): CacheSnapshot = mutex.withLock {
+        CacheSnapshot(
+            cursor = cursor,
+            inbox = inbox.values.sortedBy { it.id },
+            teams = teams.values.sortedBy { it.id },
+            issues = issues.values.sortedBy { it.issue.id },
+            sprintCards = sprintCards.values.sortedBy { it.projectId },
+        )
     }
 
     private fun retainTeamsLocked(keep: Set<String>) {

@@ -33,7 +33,10 @@ data class SyncPage(
     val teamIds: Set<String>,
 )
 
-/** An entry as the sync sent it: [open] false is a tombstone (resolved, archived, or a state this app does not know). */
+/**
+ * An entry as the sync sent it: [open] false is a tombstone (resolved,
+ * archived, or a state this app does not know).
+ */
 data class SyncedEntry(val entry: InboxEntry, val open: Boolean)
 
 data class LimboInfo(val inLimbo: Boolean, val pendingRituals: List<String>)

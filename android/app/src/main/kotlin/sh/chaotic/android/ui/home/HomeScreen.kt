@@ -1,66 +1,159 @@
 package sh.chaotic.android.ui.home
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import sh.chaotic.android.R
+import sh.chaotic.android.ui.common.SyncProblemBanner
+import sh.chaotic.android.ui.common.rememberNow
+import sh.chaotic.android.ui.inbox.InboxList
+import sh.chaotic.android.ui.sprint.SprintList
 import sh.chaotic.android.ui.theme.ChaoticTheme
+import sh.chaotic.sync.InboxEntry
+import sh.chaotic.sync.InboxSections
+import sh.chaotic.sync.Principal
+import sh.chaotic.sync.Team
 
 @Composable
-fun HomeScreen(baseUrl: String, viewModel: HomeViewModel = hiltViewModel()) {
-    val me by viewModel.me.collectAsStateWithLifecycle()
-    HomeContent(baseUrl = baseUrl, me = me, onRetry = viewModel::refresh, onSignOut = viewModel::signOut)
+fun HomeScreen(onOpenIssue: (issueId: String, teamId: String) -> Unit, viewModel: HomeViewModel = hiltViewModel()) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    // Poll only while the app is on screen; push (CHT-1612) covers the rest.
+    LaunchedEffect(lifecycle, viewModel) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { viewModel.runWhileVisible() }
+    }
+    HomeContent(
+        state = state,
+        nowMillis = rememberNow(),
+        onRefresh = viewModel::refresh,
+        onSelectTab = viewModel::selectTab,
+        onSelectTeam = viewModel::selectTeam,
+        onOpen = { entry -> entry.issueId?.let { onOpenIssue(it, entry.teamId) } },
+        onSignOut = viewModel::signOut,
+    )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeContent(
-    baseUrl: String,
-    me: MeState,
-    onRetry: () -> Unit,
+fun HomeContent(
+    state: HomeState,
+    nowMillis: Long,
+    onRefresh: () -> Unit,
+    onSelectTab: (HomeTab) -> Unit,
+    onSelectTeam: (String?) -> Unit,
+    onOpen: (InboxEntry) -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Scaffold(modifier = modifier.fillMaxSize()) { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(stringResource(R.string.home_title), style = MaterialTheme.typography.headlineMedium)
-            when (me) {
-                MeState.Loading -> CircularProgressIndicator()
-
-                is MeState.Loaded -> {
-                    Text(
-                        stringResource(R.string.home_signed_in_as, me.name),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(me.email, style = MaterialTheme.typography.bodyMedium)
-                }
-
-                is MeState.Failed -> {
-                    Text(me.message, color = MaterialTheme.colorScheme.error)
-                    OutlinedButton(onClick = onRetry) { Text(stringResource(R.string.home_retry)) }
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.home_title)) },
+                actions = {
+                    if (state.teams.size > 1) TeamPicker(state.teams, state.teamId, onSelectTeam)
+                    OverflowMenu(onSignOut)
+                },
+            )
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            PrimaryTabRow(selectedTabIndex = state.tab.ordinal) {
+                Tab(
+                    selected = state.tab == HomeTab.INBOX,
+                    onClick = { onSelectTab(HomeTab.INBOX) },
+                    text = {
+                        BadgedBox(
+                            badge = { if (state.inbox.unread > 0) Badge { Text(state.inbox.unread.toString()) } },
+                        ) { Text(stringResource(R.string.home_tab_inbox)) }
+                    },
+                )
+                Tab(
+                    selected = state.tab == HomeTab.SPRINT,
+                    onClick = { onSelectTab(HomeTab.SPRINT) },
+                    text = { Text(stringResource(R.string.home_tab_sprint)) },
+                )
+            }
+            SyncProblemBanner(state.problem)
+            PullToRefreshBox(
+                isRefreshing = state.refreshing,
+                onRefresh = onRefresh,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                when (state.tab) {
+                    HomeTab.INBOX -> InboxList(state.inbox, nowMillis, onOpen)
+                    HomeTab.SPRINT -> SprintList(state.sprintCards)
                 }
             }
-            Text(baseUrl, style = MaterialTheme.typography.bodySmall)
-            Button(onClick = onSignOut) { Text(stringResource(R.string.home_sign_out)) }
+        }
+    }
+}
+
+@Composable
+private fun TeamPicker(teams: List<Team>, selected: String?, onSelect: (String?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val all = stringResource(R.string.home_all_teams)
+    Box {
+        TextButton(onClick = { open = true }) {
+            Text(stringResource(R.string.home_pick_team, teams.firstOrNull { it.id == selected }?.name ?: all))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text(all) }, onClick = {
+                open = false
+                onSelect(null)
+            })
+            teams.forEach { team ->
+                DropdownMenuItem(text = { Text(team.name) }, onClick = {
+                    open = false
+                    onSelect(team.id)
+                })
+            }
+        }
+    }
+}
+
+@Composable
+private fun OverflowMenu(onSignOut: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(painterResource(R.drawable.ic_more_vert), contentDescription = stringResource(R.string.home_more))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text(stringResource(R.string.home_sign_out)) }, onClick = {
+                open = false
+                onSignOut()
+            })
         }
     }
 }
@@ -68,11 +161,27 @@ private fun HomeContent(
 @Preview
 @Composable
 private fun HomePreview() {
+    val now = 1_800_000_000_000L
     ChaoticTheme {
         HomeContent(
-            baseUrl = "https://chaotic.example.com",
-            me = MeState.Loaded("Ada", "ada@example.com"),
-            onRetry = {},
+            state = HomeState(
+                teams = listOf(Team("t1", "Third Bear", "TB"), Team("t2", "Side", "SD")),
+                inbox = InboxSections.of(
+                    listOf(
+                        InboxEntry(
+                            id = "1", teamId = "t1", kind = "review_requested", title = "Review: design note",
+                            issueId = "i1", issueIdentifier = "CHT-1611",
+                            source = Principal("a", "Claude", isAgent = true, ownerName = "ethan"),
+                            createdAtMillis = now - 600_000, updatedAtMicros = 0,
+                        ),
+                    ),
+                ),
+            ),
+            nowMillis = now,
+            onRefresh = {},
+            onSelectTab = {},
+            onSelectTeam = {},
+            onOpen = {},
             onSignOut = {},
         )
     }

@@ -9,6 +9,9 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.android.lint)
+    // CacheStoreContract: the CacheStore rules every implementation must
+    // pass, run here against InMemoryCacheStore and in :app against Room.
+    `java-test-fixtures`
 }
 
 java {
@@ -27,6 +30,10 @@ dependencies {
     // WsReconnectPolicy.retryAfterMillis reads Retry-After the same way for polling.
     implementation(project(":core-auth"))
     api(libs.kotlinx.coroutines.core)
+
+    testFixturesApi(libs.kotlin.test)
+    testFixturesApi(libs.junit)
+    testFixturesApi(libs.kotlinx.coroutines.test)
 
     testImplementation(libs.kotlin.test)
     testImplementation(libs.junit)

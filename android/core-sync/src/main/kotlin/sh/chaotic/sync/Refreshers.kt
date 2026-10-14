@@ -53,6 +53,7 @@ class CacheRefresher(
      * and keep it as opened now. Issues not opened for [ISSUE_RETENTION_DAYS]
      * are pruned on the way.
      */
+    @Suppress("ReturnCount") // a failure of any of the three calls ends the refresh
     suspend fun refreshIssue(issueId: String, teamId: String): RefreshOutcome {
         val now = nowMillis()
         store.pruneIssuesOpenedBefore(now - TimeUnit.DAYS.toMillis(ISSUE_RETENTION_DAYS))
@@ -85,12 +86,17 @@ class CacheRefresher(
         val results = coroutineScope {
             projects.value.map { project -> async { gate.withPermit { sprintCard(project) } } }.awaitAll()
         }
-        results.firstOrNull { it !is Remote.Ok }?.let { return failure(it, teamId) }
-        store.replaceSprintCards(teamId, results.mapNotNull { (it as Remote.Ok).value })
-        return RefreshOutcome.Refreshed
+        val failed = results.firstOrNull { it !is Remote.Ok }
+        return if (failed != null) {
+            failure(failed, teamId)
+        } else {
+            store.replaceSprintCards(teamId, results.mapNotNull { (it as Remote.Ok).value })
+            RefreshOutcome.Refreshed
+        }
     }
 
     /** The project's card; null when the project went away between the list and this call. */
+    @Suppress("ReturnCount") // a failure of either call ends this project's card
     private suspend fun sprintCard(project: Project): Remote<SprintCard?> {
         val sprint = remote.currentSprint(project.id)
         val current =

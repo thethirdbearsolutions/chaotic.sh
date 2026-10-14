@@ -38,7 +38,10 @@ class PresentationTest {
 
     @Test
     fun whoNamesAgentsWithTheirOwner() {
-        assertEquals(Who.Agent("Claude", "ethan"), Who.of(Principal("u1", "Claude", isAgent = true, ownerName = "ethan")))
+        assertEquals(
+            Who.Agent("Claude", "ethan"),
+            Who.of(Principal("u1", "Claude", isAgent = true, ownerName = "ethan")),
+        )
         assertEquals(Who.Person("Ada"), Who.of(Principal("u2", "Ada")))
         assertEquals(Who.System, Who.of(null))
     }

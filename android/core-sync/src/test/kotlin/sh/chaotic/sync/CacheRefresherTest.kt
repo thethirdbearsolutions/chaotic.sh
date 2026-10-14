@@ -14,7 +14,12 @@ class CacheRefresherTest {
     private var now = TimeUnit.DAYS.toMillis(100)
     private val refresher = CacheRefresher(remote, store, nowMillis = { now })
 
-    private fun comment(id: String, at: Long) = Comment(id = id, issueId = "i1", content = "c $id", createdAtMillis = at)
+    private fun comment(id: String, at: Long) = Comment(
+        id = id,
+        issueId = "i1",
+        content = "c $id",
+        createdAtMillis = at,
+    )
 
     @Test
     fun anOpenedIssueIsCachedWithItsCommentsInOrder() = runTest {
@@ -34,7 +39,15 @@ class CacheRefresherTest {
         store.replaceTeams(listOf(Team(TEAM_A, "A", "A"), Team(TEAM_B, "B", "B")))
         store.saveIssue(IssueDetail(issue("i1", TEAM_A), emptyList(), emptyList()))
         store.replaceSprintCards(TEAM_A, listOf(card("pa")))
-        store.applyInbox(InboxChange(false, listOf(entry("a1"), entry("b1", teamId = TEAM_B)), emptySet(), setOf(TEAM_A, TEAM_B), "c1"))
+        store.applyInbox(
+            InboxChange(
+                false,
+                listOf(entry("a1"), entry("b1", teamId = TEAM_B)),
+                emptySet(),
+                setOf(TEAM_A, TEAM_B),
+                "c1",
+            ),
+        )
         remote.issues["i1"] = Remote.HttpError(403)
 
         assertEquals<RefreshOutcome>(RefreshOutcome.TeamLost, refresher.refreshIssue("i1", TEAM_A))
@@ -100,9 +113,15 @@ class CacheRefresherTest {
 
     @Test
     fun sprintCardsCarryLimboRitualNames() = runTest {
-        remote.projects[TEAM_A] = Remote.Ok(listOf(Project("p1", TEAM_A, "Web", "WEB"), Project("p2", TEAM_A, "App", "APP")))
-        remote.sprints["p1"] = Remote.Ok(CurrentSprint("s1", "p1", "Sprint 4", budget = 20, pointsSpent = 25, limbo = false))
-        remote.sprints["p2"] = Remote.Ok(CurrentSprint("s2", "p2", "Sprint 9", budget = null, pointsSpent = 3, limbo = true))
+        remote.projects[TEAM_A] = Remote.Ok(
+            listOf(Project("p1", TEAM_A, "Web", "WEB"), Project("p2", TEAM_A, "App", "APP")),
+        )
+        remote.sprints["p1"] = Remote.Ok(
+            CurrentSprint("s1", "p1", "Sprint 4", budget = 20, pointsSpent = 25, limbo = false),
+        )
+        remote.sprints["p2"] = Remote.Ok(
+            CurrentSprint("s2", "p2", "Sprint 9", budget = null, pointsSpent = 3, limbo = true),
+        )
         remote.limbos["p2"] = Remote.Ok(LimboInfo(inLimbo = true, pendingRituals = listOf("retro", "demo")))
 
         assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshSprintCards(TEAM_A))
@@ -128,7 +147,9 @@ class CacheRefresherTest {
 
     @Test
     fun aProjectDeletedMidRefreshIsSkipped() = runTest {
-        remote.projects[TEAM_A] = Remote.Ok(listOf(Project("p1", TEAM_A, "Web", "WEB"), Project("p2", TEAM_A, "Gone", "GONE")))
+        remote.projects[TEAM_A] = Remote.Ok(
+            listOf(Project("p1", TEAM_A, "Web", "WEB"), Project("p2", TEAM_A, "Gone", "GONE")),
+        )
         remote.sprints["p1"] = Remote.Ok(CurrentSprint("s1", "p1", "Sprint 4", 20, 5, false))
 
         assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshSprintCards(TEAM_A))
@@ -147,7 +168,9 @@ class CacheRefresherTest {
     @Test
     fun aSprintFailureKeepsTheCardsCached() = runTest {
         store.replaceSprintCards(TEAM_A, listOf(card("p1", spent = 1)))
-        remote.projects[TEAM_A] = Remote.Ok(listOf(Project("p1", TEAM_A, "Web", "WEB"), Project("p2", TEAM_A, "App", "APP")))
+        remote.projects[TEAM_A] = Remote.Ok(
+            listOf(Project("p1", TEAM_A, "Web", "WEB"), Project("p2", TEAM_A, "App", "APP")),
+        )
         remote.sprints["p1"] = Remote.Ok(CurrentSprint("s1", "p1", "Sprint 4", 20, 5, false))
         remote.sprints["p2"] = Remote.HttpError(502)
 
