@@ -5,7 +5,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('./assignees.js', () => ({
     selectAssigneeFilter: vi.fn(),
-    getPendingAssigneeFilter: vi.fn(() => null),
 }));
 
 vi.mock('./state.js', () => ({

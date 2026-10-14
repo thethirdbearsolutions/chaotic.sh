@@ -212,6 +212,50 @@ describe('selectTeam', () => {
     expect(mockNavigateTo).not.toHaveBeenCalled();
   });
 
+  // A first load straight to /issues?assignee=<id> relies on this: the
+  // issues view reads ?assignee= in handleRoute, and selectAssigneeFilter
+  // can only select an id once members and agents are loaded (CHT-1692).
+  it('waits for team members and agents before handleRoute on initial load (CHT-1692)', async () => {
+    const deferred = () => {
+      let resolve;
+      const promise = new Promise((r) => { resolve = r; });
+      return { promise, resolve };
+    };
+    const members = deferred();
+    const agents = deferred();
+    api.getTeamMembers.mockReturnValue(members.promise);
+    mockLoadTeamAgentsQuiet.mockReturnValue(agents.promise);
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+
+    const done = selectTeam({ id: 'team-1', name: 'Test' }, true);
+    await flush();
+    expect(mockHandleRoute).not.toHaveBeenCalled();
+
+    members.resolve([]);
+    await flush();
+    expect(mockBuildAssignees).toHaveBeenCalled();
+    expect(mockHandleRoute).not.toHaveBeenCalled();
+
+    agents.resolve();
+    await done;
+    expect(mockHandleRoute).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for team members before handleRoute even when agents load first (CHT-1692)', async () => {
+    let resolveMembers;
+    api.getTeamMembers.mockReturnValue(new Promise((r) => { resolveMembers = r; }));
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+
+    const done = selectTeam({ id: 'team-1', name: 'Test' }, true);
+    await flush();
+    expect(mockLoadTeamAgentsQuiet).toHaveBeenCalled();
+    expect(mockHandleRoute).not.toHaveBeenCalled();
+
+    resolveMembers([]);
+    await done;
+    expect(mockHandleRoute).toHaveBeenCalledTimes(1);
+  });
+
   it('calls navigateTo on subsequent selections', async () => {
     await selectTeam({ id: 'team-1', name: 'Test' }, false);
     expect(mockNavigateTo).toHaveBeenCalledWith('my-issues');

@@ -74,7 +74,6 @@ import { renderIssues } from './issue-list.js';
 import { showApiError } from './ui.js';
 
 import { registerActions } from './event-delegation.js';
-import { buildAssignees, updateAssigneeFilter, resetAssignees } from './assignees.js';
 
 import {
     toggleMultiSelect,
@@ -674,70 +673,6 @@ describe('issues-view', () => {
             expect(document.querySelector('#exclude-label-filter-dropdown input[value="lbl-x"]').checked).toBe(true);
             expect(document.querySelector('#exclude-label-filter-dropdown input[value="lbl-y"]').checked).toBe(false);
             expect(document.querySelector('#exclude-label-filter-dropdown input[value="lbl-z"]').checked).toBe(true);
-        });
-
-        describe('?assignee= before the team agents load (CHT-1692)', () => {
-            const agent = { id: 'agent-7', name: 'Agent Seven', parent_user_id: 'user-1' };
-            const setUrl = (search) => Object.defineProperty(window, 'location', {
-                value: { search, pathname: '/issues', href: `http://localhost/issues${search}` },
-                writable: true,
-                configurable: true,
-            });
-
-            beforeEach(() => {
-                resetAssignees();
-                getCurrentView.mockReturnValue('issues');
-            });
-            afterEach(() => {
-                resetAssignees();
-            });
-
-            it('applies the assignee once the agents load', () => {
-                setUrl('?assignee=agent-7');
-                const select = document.getElementById('assignee-filter');
-                const onChange = vi.fn();
-                select.addEventListener('change', onChange);
-
-                // Cold load: the issues view reads the URL first...
-                loadFiltersFromUrl();
-                // ...and a URL sync in that window keeps the id.
-                syncFiltersToUrl();
-                expect(replaceStateSpy.mock.calls.at(-1)[2]).toContain('assignee=agent-7');
-
-                // ...then the team's agents arrive.
-                buildAssignees(() => [], () => [agent]);
-                updateAssigneeFilter();
-
-                expect(select.value).toBe('agent-7');
-                // The issues view reloads its list for the filter.
-                expect(onChange).toHaveBeenCalledTimes(1);
-                syncFiltersToUrl();
-                expect(replaceStateSpy.mock.calls.at(-1)[2]).toContain('assignee=agent-7');
-            });
-
-            it('does not override a filter the user chose meanwhile', () => {
-                setUrl('?assignee=agent-7');
-                loadFiltersFromUrl();
-                setAssigneeFilter('');
-
-                buildAssignees(() => [], () => [agent]);
-                updateAssigneeFilter();
-
-                expect(document.getElementById('assignee-filter').value).toBe('');
-            });
-
-            it('is dropped when the issues view is left before the agents load', () => {
-                setUrl('?assignee=agent-7');
-                loadFiltersFromUrl();
-                getCurrentView.mockReturnValue('board');
-
-                buildAssignees(() => [], () => [agent]);
-                updateAssigneeFilter();
-                getCurrentView.mockReturnValue('issues');
-                updateAssigneeFilter();
-
-                expect(document.getElementById('assignee-filter').value).toBe('');
-            });
         });
 
         it('falls back to team-scoped localStorage when URL has no params (CHT-1042)', () => {
