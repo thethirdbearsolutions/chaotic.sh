@@ -80,7 +80,12 @@ class ProjectService:
 
     async def delete(self, project: OxydeProject) -> None:
         """Delete a project and cascade to child records."""
+        from app.services.inbox_service import InboxService
+
         async with atomic():
+            # Inbox entries about the project's issues and documents point
+            # at nothing once they go (CHT-1626).
+            await InboxService().resolve_for_project(project.id)
             # Cascade: sprints
             await OxydeSprint.objects.filter(project_id=project.id).delete()
             # Cascade: document children then documents

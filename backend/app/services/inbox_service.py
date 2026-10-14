@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from oxyde import execute_raw
 
+from app.db.transactions import on_commit
 from app.enums import ActivityType, ApprovalMode, InboxEntryKind, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
@@ -95,18 +96,30 @@ class InboxService:
         return existing is not None
 
     async def _broadcast(self, team_id: str, event_type: str, entry) -> None:
+        """Tell the team's sockets, once the entry is committed: a client
+        that refetches on the event must find it (a writer can run inside
+        a transaction, as the ritual mode change's carry does)."""
+        payload = {
+            "id": entry.id,
+            "recipient_user_id": entry.recipient_user_id,
+            "kind": entry.kind.name if hasattr(entry.kind, "name") else entry.kind,
+            "issue_id": entry.issue_id,
+            "document_id": entry.document_id,
+            "ritual_id": entry.ritual_id,
+        }
+
+        async def send() -> None:
+            try:
+                from app.websocket import broadcast_inbox_event
+                await broadcast_inbox_event(team_id, event_type, payload)
+            except Exception:
+                logger.exception("Failed to broadcast inbox event %s for entry=%s", event_type, entry.id)
+
         try:
-            from app.websocket import broadcast_inbox_event
-            await broadcast_inbox_event(team_id, event_type, {
-                "id": entry.id,
-                "recipient_user_id": entry.recipient_user_id,
-                "kind": entry.kind.name if hasattr(entry.kind, "name") else entry.kind,
-                "issue_id": entry.issue_id,
-                "document_id": entry.document_id,
-                "ritual_id": entry.ritual_id,
-            })
-        except Exception:
-            logger.exception("Failed to broadcast inbox event %s for entry=%s", event_type, entry.id)
+            await on_commit(send)
+        except RuntimeError:  # inside oxyde.atomic(): nothing would call it later
+            logger.exception("Inbox event %s for entry=%s broadcast before commit", event_type, entry.id)
+            await send()
 
     async def _push(self, entries: list, actor_id: str | None = None) -> None:
         """Push the new entries to their recipients' devices (CHT-1605),
@@ -117,10 +130,13 @@ class InboxService:
 
     async def notify_gate_pending(
         self, *, ritual, issue, project, requested_by_name: str, requested_by_id: str | None = None,
+        email: bool = True,
     ) -> None:
         """A GATE ritual just became blocking on `issue`. Fan out an
         inbox entry + email to every team admin. The requester, when an
-        admin, gets the entry but no push (CHT-1605).
+        admin, gets the entry but no push (CHT-1605). ``email=False``
+        when nobody asked anew: a request carried over from REVIEW mode
+        (CHT-1626).
         """
         admins = await self._team_admins(project.team_id)
         title = f"Gate pending: {ritual.name} on {issue.identifier}"
@@ -143,7 +159,7 @@ class InboxService:
             await self._broadcast(project.team_id, "created", entry)
 
             recipient_email = getattr(member.user, "email", None) if member.user else None
-            if recipient_email:
+            if recipient_email and email:
                 self._dispatch_gate_pending_email(
                     to=recipient_email, issue=issue, ritual=ritual,
                     requested_by_name=requested_by_name, email_svc=email_svc,
@@ -500,6 +516,56 @@ class InboxService:
         return await self._resolve({
             "ritual_id": ritual_id, "kind__in": [k.name for k in self._DECISION_KINDS],
         })
+
+    # Ids per IN (...) list: well under SQLite's bound-variable limit.
+    _RESOLVE_CHUNK = 500
+
+    async def resolve_for_project(self, project_id: str) -> int:
+        """Settle the entries about the issues and documents of a project
+        about to be deleted (CHT-1626). The database cascade removes the
+        issues without going through ``IssueService.delete``, and an
+        entry's ``issue_id`` has no foreign key, so without this their
+        entries would stay open with approve/reject actions that 404.
+        Call it inside the delete's transaction, before the rows go:
+        the push withdrawals wait for the commit."""
+        from app.oxyde_models.document import OxydeDocument
+        from app.oxyde_models.issue import OxydeIssue
+
+        unread = 0
+        for model, column in ((OxydeIssue, "issue_id"), (OxydeDocument, "document_id")):
+            ids = [row["id"] for row in await model.objects.filter(project_id=project_id).values("id").all()]
+            for start in range(0, len(ids), self._RESOLVE_CHUNK):
+                unread += await self._resolve({f"{column}__in": ids[start:start + self._RESOLVE_CHUNK]})
+        return unread
+
+    _ASK_KINDS = (InboxEntryKind.GATE_PENDING, InboxEntryKind.REVIEW_REQUESTED)
+
+    async def open_decision_issue_ids(self, ritual_id: str) -> list[str]:
+        """The issues with an open GATE_PENDING or REVIEW_REQUESTED entry
+        of this ritual."""
+        rows = await OxydeInboxEntry.objects.filter(
+            ritual_id=ritual_id, kind__in=[k.name for k in self._ASK_KINDS], resolved_at=None,
+        ).values("issue_id").all()
+        return sorted({row["issue_id"] for row in rows if row["issue_id"]})
+
+    async def settle_decisions_except(self, ritual_id: str, keep: dict[str, InboxEntryKind]) -> int:
+        """Settle this ritual's open GATE_PENDING and REVIEW_REQUESTED
+        entries, except, for each issue in ``keep``, those of the kind
+        given for it: a mode change (CHT-1626). GATE_REJECTED entries
+        are left alone; the rejection still stands. One resolve per
+        group of issues, not per issue."""
+        groups: dict[tuple[str, ...], list[str]] = {}
+        for issue_id in await self.open_decision_issue_ids(ritual_id):
+            kinds = tuple(k.name for k in self._ASK_KINDS if keep.get(issue_id) is not k)
+            groups.setdefault(kinds, []).append(issue_id)
+        unread = 0
+        for kinds, ids in groups.items():
+            for start in range(0, len(ids), self._RESOLVE_CHUNK):
+                unread += await self._resolve({
+                    "ritual_id": ritual_id, "issue_id__in": ids[start:start + self._RESOLVE_CHUNK],
+                    "kind__in": list(kinds),
+                })
+        return unread
 
     async def resolve_for_document(self, document_id: str) -> int:
         """Settle the entries about a deleted document (CHT-1607)."""

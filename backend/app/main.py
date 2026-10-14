@@ -16,7 +16,7 @@ from app.config import get_settings
 from app.oxyde_db import init_oxyde, close_oxyde, bootstrap_if_empty, verify_migrations_current
 from app.api import api_router
 from app.websocket import SocketOwner, manager
-from app.services import credential_events
+from app.services import credential_events, push_sender
 from app.services.push_service import PushService
 from app import ws_auth
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
@@ -100,7 +100,12 @@ async def lifespan(app: FastAPI):
     # SDK's documented pattern; see mcp_server/asgi.py).
     async with mcp_lifespan():
         yield
-    # Shutdown
+    # Shutdown. Deliveries in flight get a few seconds before the
+    # database closes under them (CHT-1628).
+    try:
+        await push_sender.drain(timeout=push_sender.SHUTDOWN_DRAIN_SECONDS)
+    except Exception:
+        logger.exception("could not drain push deliveries at shutdown")
     await close_oxyde()
 
 

@@ -75,4 +75,8 @@ class OxydeInboxEntry(Model):
                 ("recipient_user_id", "updated_at", "id"),
                 name="inbox_entries_recipient_updated_idx",
             ),
+            # Settling the entries of an issue or document that went away,
+            # in bulk when a project is deleted (CHT-1626).
+            Index(("issue_id",), name="inbox_entries_issue_id_idx"),
+            Index(("document_id",), name="inbox_entries_document_id_idx"),
         ]

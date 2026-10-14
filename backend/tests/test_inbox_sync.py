@@ -595,6 +595,329 @@ class TestReferentsGoAway:
         later = await _sync(client, auth_headers, since=cursor)
         assert [(e["id"], e["state"]) for e in later["entries"]] == [(entry["id"], "resolved")]
 
+    async def _to_auto(self, client, auth_headers, ritual, entry_id, cursor):
+        """CHT-1626: an AUTO ritual waits on nobody; its approve/reject
+        actions would answer 400."""
+        from app.enums import ApprovalMode
+        from app.schemas.ritual import RitualUpdate
+
+        await RitualService().update(ritual, RitualUpdate(approval_mode=ApprovalMode.AUTO))
+        later = await _sync(client, auth_headers, since=cursor)
+        assert [(e["id"], e["state"]) for e in later["entries"]] == [(entry_id, "resolved")]
+
+    async def test_gate_ritual_turning_auto_sends_a_tombstone(
+        self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
+    ):
+        entry, cursor = await self._gate(client, auth_headers, test_issue, test_user)
+        await self._to_auto(client, auth_headers, gate_claim_ritual, entry["id"], cursor)
+
+    async def test_review_ritual_turning_auto_sends_a_tombstone(
+        self, client, db, test_issue, test_user, auth_headers, review_close_ritual,
+    ):
+        await _close_review(test_issue, test_user.id, review_close_ritual)
+        body = await _sync(client, auth_headers)
+        [entry] = [e for e in body["entries"] if e["kind"] == "review_requested"]
+        await self._to_auto(client, auth_headers, review_close_ritual, entry["id"], body["next_cursor"])
+
+    async def _switch(self, ritual, mode):
+        from app.schemas.ritual import RitualUpdate
+
+        await RitualService().update(ritual, RitualUpdate(approval_mode=mode))
+
+    async def test_review_turning_gate_carries_the_request_and_the_gate_completes(
+        self, client, db, test_issue, test_user, auth_headers, review_close_ritual,
+    ):
+        """Review finding 1: the issue still waits on a human, so the
+        request moves to a gate_pending entry, and completing that gate
+        approves the attestation made in REVIEW mode."""
+        from app.enums import ApprovalMode
+        from app.oxyde_models.issue import OxydeIssue
+        from app.oxyde_models.ritual import OxydeRitualAttestation
+
+        await _close_review(test_issue, test_user.id, review_close_ritual)
+        body = await _sync(client, auth_headers)
+        [review] = [e for e in body["entries"] if e["kind"] == "review_requested"]
+
+        await self._switch(review_close_ritual, ApprovalMode.GATE)
+        later = await _sync(client, auth_headers, since=body["next_cursor"])
+        states = {(e["id"], e["kind"]): e["state"] for e in later["entries"]}
+        assert states.pop((review["id"], "review_requested")) == "resolved"
+        [((gate_id, kind), state)] = states.items()
+        assert (kind, state) == ("gate_pending", "open")
+
+        [gate] = [e for e in later["entries"] if e["id"] == gate_id]
+        resp = await client.post(_by_kind(gate)["approve"]["path"], json={"note": "ok"}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        attestation = await OxydeRitualAttestation.objects.get(
+            ritual_id=review_close_ritual.id, issue_id=test_issue.id,
+        )
+        assert attestation.approved_at is not None and attestation.approved_by == test_user.id
+        assert (await OxydeIssue.objects.get(id=test_issue.id)).status == IssueStatus.DONE
+        assert (await OxydeInboxEntry.objects.get(id=gate_id)).resolved_at is not None
+
+    async def _review_turned_gate(self, test_issue, test_user, ritual):
+        from app.enums import ApprovalMode
+
+        await _close_review(test_issue, test_user.id, ritual)
+        await self._switch(ritual, ApprovalMode.GATE)
+        return await RitualService().get_by_id(ritual.id)
+
+    async def test_completing_a_carried_gate_records_the_completers_note(
+        self, client, db, test_issue, test_user, auth_headers, review_close_ritual,
+    ):
+        """Re-review N1: the completion is the completer's, not the
+        attestation left from REVIEW mode approved in their name."""
+        from app.oxyde_models.ritual import OxydeRitualAttestation
+
+        ritual = await self._review_turned_gate(test_issue, test_user, review_close_ritual)
+        resp = await client.post(
+            f"/api/rituals/{ritual.id}/complete-issue/{test_issue.id}",
+            json={"note": "I checked it myself"}, headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        [attestation] = await OxydeRitualAttestation.objects.filter(
+            ritual_id=ritual.id, issue_id=test_issue.id,
+        ).all()
+        assert attestation.note == "I checked it myself"
+        assert attestation.attested_by == attestation.approved_by == test_user.id
+        assert attestation.attested_at == attestation.approved_at
+
+    async def test_a_rejected_carried_attestation_is_never_approved(
+        self, client, db, test_issue, test_user, auth_headers, review_close_ritual,
+    ):
+        """Re-review N1: REVIEW->GATE, reject, complete. The reject deletes
+        the attestation (copied onto the rejection, as a REVIEW reject
+        does), and the completion is the admin's own."""
+        from app.oxyde_models.ritual import OxydeRitualAttestation, OxydeRitualRejection
+
+        ritual = await self._review_turned_gate(test_issue, test_user, review_close_ritual)
+        await RitualService().reject_for_issue(ritual, test_issue.id, test_user.id, "evidence is wrong")
+        assert await OxydeRitualAttestation.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).count() == 0
+        [rejection] = await OxydeRitualRejection.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).all()
+        assert rejection.attestation_note == "done"
+
+        await RitualService().complete_gate_ritual_for_issue(ritual, test_issue.id, test_user.id, note="I checked")
+        [attestation] = await OxydeRitualAttestation.objects.filter(
+            ritual_id=ritual.id, issue_id=test_issue.id,
+        ).all()
+        assert attestation.note == "I checked" and attestation.approved_at is not None
+
+    async def test_a_reject_racing_a_carried_completion_lets_the_completion_through(
+        self, db, test_issue, test_user, review_close_ritual, monkeypatch,
+    ):
+        """Re-review 2, R1: a reject deletes the carried attestation
+        between complete's read and its compare-and-set. The completion
+        is then a fresh one (no 500), and supersedes the rejection."""
+        from app.oxyde_models.ritual import OxydeRitualAttestation, OxydeRitualRejection
+
+        ritual = await self._review_turned_gate(test_issue, test_user, review_close_ritual)
+        service = RitualService()
+        real = RitualService.get_issue_attestation
+        calls = []
+
+        async def read_then_reject(self, ritual_id, issue_id):
+            row = await real(self, ritual_id, issue_id)
+            calls.append(row)
+            if len(calls) == 1:
+                await real_reject(ritual, issue_id, test_user.id, "evidence is wrong")
+            return row
+
+        real_reject = service.reject_for_issue
+        monkeypatch.setattr(RitualService, "get_issue_attestation", read_then_reject)
+        attestation = await service.complete_gate_ritual_for_issue(
+            ritual, test_issue.id, test_user.id, note="mine",
+        )
+        assert attestation is not None and attestation.note == "mine" and attestation.approved_at is not None
+        assert await OxydeRitualAttestation.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).count() == 1
+        [rejection] = await OxydeRitualRejection.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).all()
+        assert rejection.superseded_at is not None
+
+    async def test_a_carried_gate_rejection_goes_to_the_requester(
+        self, db, test_team, test_issue, test_user, test_user2, review_close_ritual,
+    ):
+        """Re-review 2, R2: a human attested in REVIEW mode, someone
+        else asked to close; the rejection is addressed to who asked."""
+        from app.enums import ApprovalMode
+        from app.oxyde_models.ritual import OxydeRitualRejection
+
+        await RitualService().attest_for_issue(
+            ritual=review_close_ritual, issue_id=test_issue.id, user_id=test_user2.id, note="done",
+        )
+        with pytest.raises(TicketRitualsError):
+            await IssueService().update(
+                test_issue, IssueUpdate(status=IssueStatus.DONE), user_id=test_user.id, is_human_request=False,
+            )
+        await self._switch(review_close_ritual, ApprovalMode.GATE)
+        ritual = await RitualService().get_by_id(review_close_ritual.id)
+        await RitualService().reject_for_issue(ritual, test_issue.id, test_user.id, "no")
+        [rejection] = await OxydeRitualRejection.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).all()
+        assert (rejection.attested_by_id, rejection.attestation_note) == (test_user.id, "done")
+
+    async def test_a_plain_gate_completion_keeps_the_note(
+        self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
+    ):
+        from app.oxyde_models.ritual import OxydeRitualAttestation
+
+        await _claim_gate(test_issue, test_user.id)
+        await RitualService().complete_gate_ritual_for_issue(
+            gate_claim_ritual, test_issue.id, test_user.id, note="looked at it",
+        )
+        attestation = await OxydeRitualAttestation.objects.get(ritual_id=gate_claim_ritual.id, issue_id=test_issue.id)
+        assert (attestation.note, attestation.approved_by) == ("looked at it", test_user.id)
+
+    async def test_a_carried_review_request_is_not_pushed_to_the_attester(
+        self, db, test_issue, test_user, review_close_ritual, monkeypatch,
+    ):
+        """Re-review N2: as at attest time, the attester causes it."""
+        from app.enums import ApprovalMode
+
+        ritual = await self._review_turned_gate(test_issue, test_user, review_close_ritual)
+        pushed = []
+
+        async def capture(self, entries, actor_id=None):
+            pushed.append(([e.kind for e in entries], actor_id))
+        monkeypatch.setattr(InboxService, "_push", capture)
+        await self._switch(ritual, ApprovalMode.REVIEW)
+        assert pushed == [([InboxEntryKind.REVIEW_REQUESTED], test_user.id)]
+
+    async def test_the_carry_commits_with_the_mode_change(
+        self, db, test_issue, test_user, gate_claim_ritual, monkeypatch,
+    ):
+        """Re-review N3: inside the change's transaction, so a failed
+        carry leaves the mode as it was."""
+        from app.enums import ApprovalMode
+        from app.oxyde_models.ritual import OxydeRitual
+
+        await _claim_gate(test_issue, test_user.id)
+
+        async def broken(self, ritual_id, keep):
+            raise RuntimeError("inbox down")
+        monkeypatch.setattr(InboxService, "settle_decisions_except", broken)
+        with pytest.raises(RuntimeError, match="inbox down"):
+            await self._switch(gate_claim_ritual, ApprovalMode.AUTO)
+        assert (await OxydeRitual.objects.get(id=gate_claim_ritual.id)).approval_mode == ApprovalMode.GATE
+
+    async def test_gate_turning_review_waits_for_the_attestation(
+        self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
+    ):
+        """GATE to REVIEW: nobody has attested, so nothing waits on a
+        human until someone does; then the review request is written."""
+        from app.enums import ApprovalMode
+
+        entry, cursor = await self._gate(client, auth_headers, test_issue, test_user)
+        await self._switch(gate_claim_ritual, ApprovalMode.REVIEW)
+        later = await _sync(client, auth_headers, since=cursor)
+        assert [(e["id"], e["state"]) for e in later["entries"]] == [(entry["id"], "resolved")]
+
+        await RitualService().attest_for_issue(
+            ritual=await RitualService().get_by_id(gate_claim_ritual.id),
+            issue_id=test_issue.id, user_id=test_user.id, note="done",
+        )
+        asked = await _sync(client, auth_headers, since=later["next_cursor"])
+        assert [(e["kind"], e["state"]) for e in asked["entries"]] == [("review_requested", "open")]
+
+    async def test_a_mode_change_leaves_rejections_open(
+        self, client, db, test_team, test_issue, test_user, auth_headers, gate_claim_ritual,
+    ):
+        """Review finding 2: the rejection still stands, and the
+        requester still has to answer it."""
+        from app.enums import ApprovalMode
+
+        rejected = await _entry(
+            test_user.id, test_team.id, kind=InboxEntryKind.GATE_REJECTED,
+            ritual_id=gate_claim_ritual.id, issue_id=test_issue.id,
+        )
+        await self._switch(gate_claim_ritual, ApprovalMode.AUTO)
+        assert (await OxydeInboxEntry.objects.get(id=rejected.id)).resolved_at is None
+
+    async def test_project_delete_settles_across_chunks(
+        self, client, db, test_team, test_project, test_issue, test_user, auth_headers, monkeypatch,
+    ):
+        """Review finding 8: more issues than one IN (...) list holds."""
+        from app.oxyde_models.issue import OxydeIssue
+        from app.oxyde_models.project import OxydeProject
+        from app.services.project_service import ProjectService
+
+        monkeypatch.setattr(InboxService, "_RESOLVE_CHUNK", 1)
+        other = await OxydeIssue.objects.create(
+            project_id=test_project.id, identifier=f"{test_project.key}-99", number=99,
+            title="other", creator_id=test_user.id,
+        )
+        entries = [
+            await _entry(test_user.id, test_team.id, issue_id=issue_id) for issue_id in (test_issue.id, other.id)
+        ]
+        await ProjectService().delete(await OxydeProject.objects.get(id=test_project.id))
+        for e in entries:
+            assert (await OxydeInboxEntry.objects.get(id=e.id)).resolved_at is not None
+
+    async def test_other_ritual_edits_leave_the_entry_open(
+        self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
+    ):
+        from app.enums import ApprovalMode
+        from app.schemas.ritual import RitualUpdate
+
+        entry, cursor = await self._gate(client, auth_headers, test_issue, test_user)
+        await RitualService().update(
+            gate_claim_ritual, RitualUpdate(prompt="reworded", approval_mode=ApprovalMode.GATE),
+        )
+        assert (await _sync(client, auth_headers, since=cursor))["entries"] == []
+        row = await OxydeInboxEntry.objects.get(id=entry["id"])
+        assert row.resolved_at is None
+
+    async def test_deleting_the_project_sends_tombstones(
+        self, client, db, test_team, test_project, test_issue, test_user, auth_headers, gate_claim_ritual,
+        monkeypatch,
+    ):
+        """CHT-1626: the issues go by database cascade, past
+        IssueService.delete; their entries and the documents' are settled,
+        and a withdrawal is pushed for each once the delete commits."""
+        from app.oxyde_models.document import OxydeDocument
+        from app.oxyde_models.project import OxydeProject
+        from app.services import push_sender
+        from app.services.project_service import ProjectService
+
+        flushed = []
+
+        async def capture(items):
+            flushed.append(sorted(i[0] for i in items))
+        monkeypatch.setattr(push_sender, "_flush_resolved", capture)
+
+        gate, _ = await self._gate(client, auth_headers, test_issue, test_user)
+        doc = await OxydeDocument.objects.create(
+            team_id=test_team.id, project_id=test_project.id, title="D", content="", author_id=test_user.id,
+        )
+        on_doc = await _entry(test_user.id, test_team.id, document_id=doc.id, project_id=test_project.id)
+        elsewhere = await _entry(test_user.id, test_team.id, issue_id="another-projects-issue")
+        cursor = (await _sync(client, auth_headers))["next_cursor"]
+
+        await ProjectService().delete(await OxydeProject.objects.get(id=test_project.id))
+
+        later = await _sync(client, auth_headers, since=cursor)
+        assert sorted((e["id"], e["state"]) for e in later["entries"]) == sorted(
+            [(gate["id"], "resolved"), (on_doc.id, "resolved")]
+        )
+        assert (await OxydeInboxEntry.objects.get(id=elsewhere.id)).resolved_at is None
+        assert flushed == [sorted([gate["id"], on_doc.id])]
+
+    async def test_resolving_inside_a_rolled_back_delete_pushes_nothing(
+        self, client, db, test_project, test_issue, test_user, auth_headers, gate_claim_ritual, monkeypatch,
+    ):
+        from app.db.transactions import atomic
+        from app.services import push_sender
+
+        flushed = []
+
+        async def capture(items):
+            flushed.append(items)
+        monkeypatch.setattr(push_sender, "_flush_resolved", capture)
+        gate, _ = await self._gate(client, auth_headers, test_issue, test_user)
+        with pytest.raises(RuntimeError):
+            async with atomic():
+                await InboxService().resolve_for_project(test_project.id)
+                raise RuntimeError("the delete failed")
+        assert flushed == []
+        assert (await OxydeInboxEntry.objects.get(id=gate["id"])).resolved_at is None
+
     async def test_force_clearing_the_ticket_sends_a_tombstone(
         self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
     ):

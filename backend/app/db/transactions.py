@@ -20,9 +20,13 @@ nested ``atomic()`` (a savepoint) that exits with an exception is
 dropped with the savepoint; what was registered in one that succeeds
 waits for the outermost commit. Callbacks run in the order registered
 (a ``flush`` at the place of its key's first item), after the commit
-has returned, in the task that committed; each runs on its own, and one
-that raises is logged and cannot fail the request, whose write has
-already committed. A callback that has slow work to do schedules it.
+has returned; each runs on its own, and one that raises is logged and
+cannot fail the request, whose write has already committed. A callback
+that has slow work to do schedules it. The committing task waits for
+them, but they run in a task of their own, shielded from its
+cancellation: a request cancelled while they run (a client gone) is
+still cancelled, and the callbacks it has not reached still run, since
+what they report has committed (CHT-1632).
 
 Registering inside a transaction opened with Oxyde's own ``atomic()``
 raises RuntimeError: the callback could neither run now (the write is
@@ -109,8 +113,8 @@ class atomic:  # noqa: N801 -- a drop-in for oxyde.atomic
             await self._inner.__aexit__(exc_type, exc, tb)
         finally:
             _frame.reset(self._token)
-        if exc_type is None and not frame.rollback:
-            await _run(frame.events)
+        if exc_type is None and not frame.rollback and frame.events:
+            await _dispatch(frame.events)
         return False
 
     def set_rollback(self, rollback: bool = True) -> None:
@@ -118,6 +122,37 @@ class atomic:  # noqa: N801 -- a drop-in for oxyde.atomic
         nothing registered in it runs."""
         self._inner.set_rollback(rollback)
         self._frame.rollback = bool(rollback)
+
+
+# Dispatches whose committing task was cancelled, kept referenced until
+# they finish.
+_detached: set[asyncio.Task] = set()
+
+
+async def _dispatch(events: list[tuple[str, Any, Any]]) -> None:
+    """Run ``events`` in a task the committing task's cancellation does
+    not reach (module docstring)."""
+    task = asyncio.ensure_future(_run(events))
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        if not task.done():
+            _detached.add(task)
+            task.add_done_callback(_detached_done)
+        raise
+
+
+def _detached_done(task: asyncio.Task) -> None:
+    _detached.discard(task)
+    if not task.cancelled():
+        task.exception()  # retrieved: _run logged it before re-raising
+
+
+async def drain_detached() -> None:
+    """Wait for the dispatches whose committing task was cancelled
+    (shutdown, tests)."""
+    while _detached:
+        await asyncio.gather(*list(_detached), return_exceptions=True)
 
 
 async def _run(events: list[tuple[str, Any, Any]]) -> None:
@@ -141,6 +176,12 @@ async def _run(events: list[tuple[str, Any, Any]]) -> None:
                 await flush(items)
         except Exception:
             logger.exception("on-commit callback %s failed", value)
+        except BaseException:
+            # Cancelled (a shutdown that stopped waiting) or worse: the
+            # callbacks after this one are lost, which must not pass
+            # silently, nor be swallowed (CHT-1632 review, finding 7).
+            logger.exception("on-commit callback %s interrupted; later callbacks dropped", value)
+            raise
 
 
 def active() -> bool:

@@ -8,6 +8,7 @@ from app.db.transactions import atomic
 
 logger = logging.getLogger(__name__)
 from app.enums import (
+    InboxEntryKind,
     RitualArtifact,
     ApprovalMode,
     RitualTrigger,
@@ -407,6 +408,9 @@ class RitualService:
         leaving = bool(ritual.group_id) and new_group_id != ritual.group_id
         deactivating = update_data.get("is_active") is False and ritual.is_active
 
+        # A mode change moves what each issue waits on (CHT-1626).
+        mode_changed = update_data.get("approval_mode", ritual.approval_mode) != ritual.approval_mode
+
         async with atomic():
             if leaving or deactivating:
                 await self._repoint_group_past(ritual)
@@ -415,6 +419,8 @@ class RitualService:
             ritual.updated_at = datetime.now(timezone.utc)
             changed_fields = set(update_data.keys()) | {"updated_at"}
             await ritual.save(update_fields=changed_fields)
+            if mode_changed and ritual.is_active:
+                await self._carry_decisions_to_mode(ritual)
 
         if deactivating:
             await self._resolve_inbox_for_ritual(ritual.id)
@@ -431,6 +437,77 @@ class RitualService:
             await InboxService().resolve_for_ritual(ritual_id)
         except Exception:
             logger.exception("Failed to resolve inbox entries of inactive ritual=%s", ritual_id)
+
+    async def _carry_decisions_to_mode(self, ritual: OxydeRitual) -> None:
+        """After ``ritual`` changed approval mode, make its inbox ask for
+        what each issue now waits on (CHT-1626). An issue that still waits
+        on a human gets the new mode's entry: GATE_PENDING in GATE mode
+        while the ritual is not approved for it, REVIEW_REQUESTED in
+        REVIEW mode while an attestation awaits approval. Every other
+        open GATE_PENDING or REVIEW_REQUESTED entry of the ritual is
+        settled: its actions no longer fit the ritual (a gate cannot be
+        approved as a review, nor the reverse), and in AUTO mode, or in
+        REVIEW mode before anyone has attested, nobody needs to act.
+        GATE_REJECTED entries stay: the rejection still stands and the
+        requester still has to answer it. Considered: the issues with an
+        open entry of the ritual, and those with an open intent it
+        blocks.
+
+        Runs inside the mode change's transaction, so no approval can
+        land between the change and the carry (PR #358 re-review, N3);
+        a failure here fails the change. A fixed number of queries
+        whatever the number of issues, plus the writes."""
+        from app.services.inbox_service import InboxService
+
+        inbox = InboxService()
+        issue_ids = set(await inbox.open_decision_issue_ids(ritual.id))
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            ritual_id=ritual.id, resolved_at=None,
+        ).all()
+        if blockers:
+            limbos = await OxydeTicketLimbo.objects.filter(
+                id__in=sorted({b.limbo_id for b in blockers}), cleared_at=None,
+            ).all()
+            issue_ids |= {limbo.issue_id for limbo in limbos}
+        if not issue_ids:
+            return
+        ordered = sorted(issue_ids)
+        attestations = {
+            a.issue_id: a for a in await OxydeRitualAttestation.objects.filter(
+                ritual_id=ritual.id, issue_id__in=ordered,
+            ).all()
+        }
+        waiting: dict[str, InboxEntryKind] = {}
+        for issue_id in ordered:
+            attestation = attestations.get(issue_id)
+            unapproved = attestation is not None and attestation.approved_at is None
+            if ritual.approval_mode == ApprovalMode.GATE and (attestation is None or unapproved):
+                waiting[issue_id] = InboxEntryKind.GATE_PENDING
+            elif ritual.approval_mode == ApprovalMode.REVIEW and unapproved:
+                waiting[issue_id] = InboxEntryKind.REVIEW_REQUESTED
+        await inbox.settle_decisions_except(ritual.id, waiting)
+        if not waiting:
+            return
+        project = await OxydeProject.objects.get_or_none(id=ritual.project_id)
+        if project is None:
+            return
+        issues = {i.id: i for i in await OxydeIssue.objects.filter(id__in=sorted(waiting)).all()}
+        for issue_id, kind in waiting.items():
+            issue = issues.get(issue_id)
+            if issue is None:
+                continue
+            if kind is InboxEntryKind.GATE_PENDING:
+                # No email: nobody asked again; the request moved.
+                await inbox.notify_gate_pending(
+                    ritual=ritual, issue=issue, project=project,
+                    requested_by_name="Someone", email=False,
+                )
+            else:
+                # Not pushed to the attester, as at attest time (N2).
+                await inbox.notify_review_requested(
+                    ritual=ritual, issue=issue, project=project, attested_by_name="Someone",
+                    attested_by_id=attestations[issue_id].attested_by,
+                )
 
     async def delete(self, ritual: OxydeRitual, deleted_by_id: str | None = None) -> None:
         """Soft-delete a ritual by marking it inactive.
@@ -1321,10 +1398,42 @@ class RitualService:
         ritual_name = ritual.name
 
         existing = await self.get_issue_attestation(ritual_id, issue_id)
-        if existing:
+        if existing and existing.approved_at is not None:
             return existing
-
         now = datetime.now(timezone.utc)
+        if existing:
+            # Attested while the ritual was in REVIEW mode and never
+            # approved; it is a GATE now (CHT-1626 review, finding 1).
+            # Returning it as it was left the issue blocked with nothing
+            # able to approve it. The completion replaces it, as a fresh
+            # one would read: the completer's note and artifact, by them,
+            # now. The attester's evidence is never approved in the
+            # completer's name (PR #358 re-review, N1). Compare-and-set on
+            # approved_at, like _approve_atomic: a concurrent approver wins.
+            completion = dict(
+                attested_by=user_id, attested_at=now, approved_by=user_id, approved_at=now,
+                note=note, artifact_ref=artifact_ref,
+            )
+            updated = await OxydeRitualAttestation.objects.filter(
+                id=existing.id, approved_at=None,
+            ).update(**completion)
+            if updated:
+                for field, value in completion.items():
+                    setattr(existing, field, value)
+                await OxydeIssueActivity.objects.create(
+                    issue_id=issue_id, user_id=user_id,
+                    activity_type=ActivityType.RITUAL_ATTESTED, field_name=ritual_name, new_value=note,
+                )
+                return await self._after_gate_completed(ritual, issue_id, user_id, existing)
+            # Lost the race. An approver who won is answered with their
+            # row. A reject that deleted the attestation in between leaves
+            # nothing, and the completion goes ahead as a fresh one below:
+            # a human may complete a gate after a rejection, which it then
+            # supersedes (PR #358 re-review 2, R1).
+            fresh = await self.get_issue_attestation(ritual_id, issue_id)
+            if fresh is not None:
+                return fresh
+
         try:
             attestation = await OxydeRitualAttestation.objects.create(
                 ritual_id=ritual_id,
@@ -1349,6 +1458,13 @@ class RitualService:
                 return existing
             raise
 
+        return await self._after_gate_completed(ritual, issue_id, user_id, attestation)
+
+    async def _after_gate_completed(
+        self, ritual: OxydeRitual, issue_id: str, user_id: str, attestation: OxydeRitualAttestation,
+    ) -> OxydeRitualAttestation:
+        """What follows a gate's completion: rejections, limbo, inbox."""
+        ritual_id = ritual.id
         # A human completed the gate after all: any rejection of the
         # request is moot (CHT-1606).
         try:
@@ -1609,7 +1725,9 @@ class RitualService:
             artifact are copied onto the rejection first.
           * GATE: the open request's blocker stays unresolved. The
             requester sees the reason and asks again, which re-notifies
-            the approvers (IssueService._open_intent_with_limbo).
+            the approvers (IssueService._open_intent_with_limbo). An
+            unapproved attestation left from REVIEW mode is deleted, as
+            for REVIEW, and what it said is copied onto the rejection.
 
         A "bounce" variant (the ticket also returns to todo) would add a
         step after the record is written, in `_after_reject`; nothing
@@ -1692,6 +1810,29 @@ class RitualService:
                         attested_by_id=intent.requested_by_id,
                         attested_at=intent.requested_at,
                     )
+                    if attestation is not None:
+                        # Evidence attested in REVIEW mode before the ritual
+                        # became a GATE: rejected, it goes, as a REVIEW
+                        # reject's does, so no completion can approve it
+                        # (PR #358 re-review, N1). Copied onto the
+                        # rejection first.
+                        deleted = await OxydeRitualAttestation.objects.filter(
+                            id=attestation.id, approved_at=None,
+                        ).delete()
+                        if not deleted:
+                            fresh = await self.get_issue_attestation(ritual.id, issue_id)
+                            raise RitualAlreadyResolvedError(
+                                "approved",
+                                fresh.approved_by if fresh else None,
+                                fresh.approved_at if fresh else None,
+                            )
+                        # Still addressed to the requester, who has to
+                        # answer it (re-review 2, R2); what the attestation
+                        # said is kept with it.
+                        record.update(
+                            attestation_note=attestation.note,
+                            artifact_ref=attestation.artifact_ref,
+                        )
 
                 # attested_by on an attestation has no foreign key (0017),
                 # so a legacy row can name a user that is gone; this table's
