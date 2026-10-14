@@ -6,7 +6,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from ..markup import Markup, Table, esc
 
-from .shared import _client, _warn_off_scale_estimate, console, resolve_content_value
+from .shared import _client, _warn_off_scale_estimate, console, fetch_all_labels, resolve_content_value
 
 
 def _main():
@@ -61,7 +61,7 @@ def register(cli):
             data["estimate"] = estimate
         if labels:
             team_id = m.get_current_team()
-            all_labels = _client().get_labels(team_id)
+            all_labels = fetch_all_labels(team_id)
             label_ids = []
             for label_name in labels:
                 label = next((l for l in all_labels if l["name"].lower() == label_name.lower()), None)

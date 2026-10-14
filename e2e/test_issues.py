@@ -785,3 +785,126 @@ class TestIssueCreateParentLabelsTeam:
         assert [i["id"] for i in api_client.get_issues(project_id=elsewhere["project"]["id"])] == [
             elsewhere["parent"]["id"]
         ]
+
+
+class TestIssueUpdateLabelsTeam:
+    """CHT-1711: `issue update --label/--remove-label` look label names up
+    in the issue's own project team, not the CLI's current team, and see
+    every label of that team rather than the API's default page of 100."""
+
+    @pytest.fixture
+    def elsewhere(self, api_client):
+        team = api_client.create_team(name="E2E Elsewhere", key="ELS")
+        project = api_client.create_project(team_id=team["id"], name="Elsewhere", key="ELW")
+        label = api_client.create_label(team["id"], "only-elsewhere")
+        issue = api_client.create_issue(project["id"], "Issue in another team")
+        return {"team": team, "project": project, "label": label, "issue": issue}
+
+    def _invoke(self, auth_token, test_team, test_project, args):
+        from unittest.mock import patch
+        from click.testing import CliRunner
+        from cli.main import cli as chaotic_cli
+
+        with patch("cli.main.get_token", return_value=auth_token), \
+             patch("cli.main.get_current_team", return_value=test_team["id"]), \
+             patch("cli.main.get_current_project", return_value=test_project["id"]):
+            return CliRunner().invoke(chaotic_cli, args)
+
+    def _label_ids(self, api_client, issue):
+        return [l["id"] for l in api_client.get_issue(issue["id"])["labels"]]
+
+    def test_label_resolves_in_the_issues_team(self, api_client, auth_token, test_team, test_project, elsewhere):
+        result = self._invoke(
+            auth_token, test_team, test_project,
+            ["issue", "update", elsewhere["issue"]["identifier"], "--label", "only-elsewhere"],
+        )
+        assert result.exit_code == 0, result.output
+        assert self._label_ids(api_client, elsewhere["issue"]) == [elsewhere["label"]["id"]]
+
+    def test_remove_label_resolves_in_the_issues_team(
+        self, api_client, auth_token, test_team, test_project, elsewhere,
+    ):
+        api_client.add_label_to_issue(elsewhere["issue"]["id"], elsewhere["label"]["id"])
+        result = self._invoke(
+            auth_token, test_team, test_project,
+            ["issue", "update", elsewhere["issue"]["identifier"], "--remove-label", "only-elsewhere"],
+        )
+        assert result.exit_code == 0, result.output
+        assert self._label_ids(api_client, elsewhere["issue"]) == []
+
+    def test_a_same_named_current_team_label_is_not_used(
+        self, api_client, auth_token, test_team, test_project, elsewhere,
+    ):
+        """A name that exists in both teams resolves to the issue team's
+        label, not the current team's (which the server would refuse)."""
+        api_client.create_label(test_team["id"], "only-elsewhere")
+        result = self._invoke(
+            auth_token, test_team, test_project,
+            ["issue", "update", elsewhere["issue"]["identifier"], "--label", "only-elsewhere"],
+        )
+        assert result.exit_code == 0, result.output
+        assert self._label_ids(api_client, elsewhere["issue"]) == [elsewhere["label"]["id"]]
+
+    def test_a_current_team_only_label_is_not_found(
+        self, api_client, auth_token, test_team, test_project, elsewhere,
+    ):
+        api_client.create_label(test_team["id"], "only-here")
+        result = self._invoke(
+            auth_token, test_team, test_project,
+            ["issue", "update", elsewhere["issue"]["identifier"], "--label", "only-here"],
+        )
+        assert result.exit_code != 0
+        assert "Label 'only-here' not found" in result.output, result.output
+        assert self._label_ids(api_client, elsewhere["issue"]) == []
+
+
+class TestLabelLookupPastFirstPage:
+    """CHT-1711: label names resolve even when the team has more labels
+    than the API's default page size of 100."""
+
+    @pytest.fixture
+    def many_labels(self, api_client, test_team):
+        # Labels list in name order, so "zz-last" sorts after the first 100.
+        for i in range(100):
+            api_client.create_label(test_team["id"], f"filler-{i:03d}")
+        return api_client.create_label(test_team["id"], "zz-last")
+
+    def _invoke(self, auth_token, test_team, test_project, args):
+        from unittest.mock import patch
+        from click.testing import CliRunner
+        from cli.main import cli as chaotic_cli
+
+        with patch("cli.main.get_token", return_value=auth_token), \
+             patch("cli.main.get_current_team", return_value=test_team["id"]), \
+             patch("cli.main.get_current_project", return_value=test_project["id"]):
+            return CliRunner().invoke(chaotic_cli, args)
+
+    def test_issue_update_finds_the_101st_label(self, api_client, auth_token, test_team, test_project, many_labels):
+        issue = api_client.create_issue(test_project["id"], "Needs the last label")
+        result = self._invoke(
+            auth_token, test_team, test_project, ["issue", "update", issue["identifier"], "--label", "zz-last"],
+        )
+        assert result.exit_code == 0, result.output
+        assert [l["id"] for l in api_client.get_issue(issue["id"])["labels"]] == [many_labels["id"]]
+
+    def test_issue_create_finds_the_101st_label(self, api_client, auth_token, test_team, test_project, many_labels):
+        import json
+        result = self._invoke(
+            auth_token, test_team, test_project, ["issue", "create", "Labelled", "--label", "zz-last", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert [l["id"] for l in json.loads(result.stdout)["labels"]] == [many_labels["id"]]
+
+    def test_paging_follows_the_servers_skip(self, api_client, auth_token, test_team, test_project):
+        """Pins fetch_all_labels against the real skip/limit semantics with
+        a small page size: it pages, stops on the short page, and sees all."""
+        from unittest.mock import patch
+        from cli.commands.shared import fetch_all_labels
+        for i in range(12):
+            api_client.create_label(test_team["id"], f"paged-{i:02d}")
+        with patch("cli.main.client", api_client), \
+             patch("cli.commands.shared.LABEL_PAGE_SIZE", 5), \
+             patch.object(api_client, "get_labels", wraps=api_client.get_labels) as spy:
+            labels = fetch_all_labels(test_team["id"])
+        assert sorted(l["name"] for l in labels) == [f"paged-{i:02d}" for i in range(12)]
+        assert [c.kwargs.get("skip", 0) for c in spy.call_args_list] == [0, 5, 10]
