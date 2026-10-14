@@ -374,8 +374,17 @@ def check_combination(settings: dict[str, str], skip: frozenset[str] = frozenset
     errors: list[str] = []
     warnings: list[str] = []
     settings = {name: value for name, value in settings.items() if name not in skip}
-    for name in settings:
-        if name in KNOWN and not _problem(name, settings[name]):
+    for name in sorted(settings):
+        if name not in KNOWN:
+            continue
+        problem = _problem(name, settings[name])
+        if problem:
+            # A value from the service file or a drop-in was never
+            # checked by `set` (CHT-1676 review): report it, judge as unset.
+            errors.append(problem)
+            skip = skip | {name}
+            del settings[name]
+        else:
             settings[name] = normalize(name, settings[name])[0]
 
     if settings.get("OAUTH_ENABLED") == "true":

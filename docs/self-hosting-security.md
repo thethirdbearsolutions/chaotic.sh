@@ -288,7 +288,13 @@ give something else once it is written to the file, it reports that
 too, prefixed "Once server.json is written to the service file". A
 service file whose `HOST` or `PORT` is not what server.json says is an
 error: until they agree, `set` and `upgrade` leave the file alone, and
-`reconfigure` would write server.json's value into it (CHT-1676).
+`reconfigure` would write server.json's value into it (CHT-1676). So is
+a drop-in that sets `HOST`, `PORT`, `SECRET_KEY`, the database or
+`PATH`, which would override whatever `reconfigure` writes; and a value
+in the unit or a drop-in the server would refuse. Only
+`~/.config/systemd/user/chaotic.service.d/` is read, and a drop-in that
+resets the environment (an empty `Environment=`, `UnsetEnvironment=`,
+`EnvironmentFile=`) gets a warning that `check` cannot vouch for it.
 
 **Turning OAuth on.** Behind a TLS-terminating reverse proxy at
 `https://chaotic.example.com`:

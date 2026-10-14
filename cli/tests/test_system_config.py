@@ -874,7 +874,8 @@ def test_adoption_refusal_names_the_hand_added_line(server):
         "[Install]", "Environment=APP_BASE_URL=https://chaotic.example.com\n[Install]"))
     result = server.invoke("set", "OAUTH_ENABLED", "true")
     assert result.exit_code == 1
-    assert "APP_BASE_URL is set in the service file by hand; adopt it first" in result.output
+    assert "APP_BASE_URL is set in the service file or a drop-in by hand; adopt it first" in result.output
+    assert "'chaotic system config adopt APP_BASE_URL'" in result.output
 
 
 class TestStdin:
@@ -1116,3 +1117,105 @@ class TestReconfigureKeepsHandSetLines:
         result = _reconfigure("--port", "24300")
         assert result.exit_code == 1 and "SECRET_KEY" in result.output
         assert server.unit.read_text() == before
+
+
+class TestReviewFindings:
+    """PR #370 review: values from the unit or a drop-in were never
+    checked by `set`, drop-ins can set what the server is, and
+    reconfigure/adopt had misleading or half-done paths."""
+
+    def test_an_unparseable_url_in_the_unit_is_reported_not_raised(self, server):
+        _hand_unit(server, {"OAUTH_ENABLED": "true", "APP_BASE_URL": "http://[::1"})
+        result = server.invoke("check")
+        assert result.exit_code == 1 and "APP_BASE_URL" in result.output
+        assert "Traceback" not in result.output and "Error:" in result.output
+
+    def test_a_value_the_server_would_refuse_is_an_error(self, server):
+        _hand_unit(server, {"OAUTH_ENABLED": "maybe"})
+        result = server.invoke("check")
+        assert result.exit_code == 1 and "true or false" in result.output
+
+    def test_an_invalid_server_json_url_is_not_also_reported_missing(self, server):
+        server.write({"OAUTH_ENABLED": "true", "APP_BASE_URL": "ftp://chaotic.example.com"}, unit_settings=OAUTH)
+        result = server.invoke("check")
+        assert result.exit_code == 1 and "absolute http(s) URL" in result.output
+        assert "is not set" not in result.output
+
+    def test_a_dropin_setting_the_port_is_an_error_and_blocks_reconfigure(self, server):
+        _dropin(server, f"[Service]\nEnvironment=PORT=9999\nEnvironment=SECRET_KEY={SECRET}x\n")
+        result = server.invoke("check")
+        assert result.exit_code == 1 and "Drop-in override.conf sets PORT, SECRET_KEY" in result.output
+        assert SECRET not in result.output
+        before = server.unit.read_text()
+        server.running = False
+        refused = _reconfigure("--port", "24300")
+        assert refused.exit_code == 1 and "drop-in would keep overriding" in refused.output
+        assert server.unit.read_text() == before and server.info()["port"] == PORT
+
+    def test_a_dropin_that_resets_the_environment_is_a_warning(self, server):
+        _dropin(server, "[Service]\nEnvironment=\n")
+        result = server.invoke("check")
+        assert result.exit_code == 0 and "may not be the ones the server gets" in result.output
+
+    def test_an_ordinary_port_change_says_nothing_about_drift(self, server):
+        server.running = False
+        result = _reconfigure("--port", "24300")
+        assert result.exit_code == 0, result.output
+        assert "The service file says" not in result.output
+
+    def test_a_failed_backup_changes_nothing(self, server, tmp_path):
+        (tmp_path / "backups").write_text("not a directory")
+        before, info = server.unit.read_text(), server.info()
+        server.running = False
+        result = _reconfigure("--port", "24300")
+        assert result.exit_code == 1 and "Nothing was changed" in result.output
+        assert server.unit.read_text() == before and server.info() == info
+
+    def test_a_secret_mismatch_names_the_consequence(self, server):
+        server.json.write_text(json.dumps({"host": HOST, "port": PORT, "secret_key": "another-secret"}))
+        before = server.unit.read_text()
+        server.running = False
+        result = _reconfigure("--port", "24300")
+        assert result.exit_code == 1 and "every session is logged out" in result.output
+        assert "config adopt" not in result.output and server.unit.read_text() == before
+
+    def test_a_string_port_in_server_json_is_no_change(self, server):
+        server.json.write_text(json.dumps({"host": HOST, "port": str(PORT), "secret_key": SECRET}))
+        result = _reconfigure("--port", str(PORT))
+        assert result.exit_code == 0 and "No changes" in result.output
+
+    def test_adopt_skips_a_bad_value_and_adopts_the_rest(self, server):
+        _hand_unit(server, {"OAUTH_DCR_ENABLED": "maybe", "CORS_ORIGINS": "https://chaotic.example.com"})
+        result = server.invoke("adopt")
+        assert "Not adopting OAUTH_DCR_ENABLED" in result.output
+        assert server.info()["settings"] == {"CORS_ORIGINS": "https://chaotic.example.com"}
+        # The bad line is still in the unit, so the rewrite is blocked; it says so honestly.
+        assert result.exit_code == 1 and "server.json now holds CORS_ORIGINS" in result.output
+        assert "will not see this setting" not in result.output
+
+    def test_adopt_partial_success_names_what_is_left(self, server):
+        _hand_unit(server, {"OAUTH_DCR_ENABLED": "false", "FOO": "1"})
+        result = server.invoke("adopt")
+        assert result.exit_code == 1
+        assert "adopt FOO --force" in result.output and "server.json now holds OAUTH_DCR_ENABLED" in result.output
+
+    def test_adopt_takes_the_dropins_value_over_the_units(self, server):
+        _hand_unit(server, {"OAUTH_DCR_ENABLED": "true"})
+        _dropin(server, "[Service]\nEnvironment=OAUTH_DCR_ENABLED=false\n")
+        result = server.invoke("adopt")
+        assert result.exit_code == 0, result.output
+        assert server.info()["settings"] == {"OAUTH_DCR_ENABLED": "false"}
+        assert server.unit.read_text() == generate_systemd_service(PORT, SECRET, HOST, {"OAUTH_DCR_ENABLED": "false"})
+
+    def test_adopt_a_reserved_name_says_why(self, server):
+        result = server.invoke("adopt", "PATH")
+        assert result.exit_code == 1 and "is not a setting" in result.output
+
+    def test_launchd_drift(self, server, tmp_path):
+        plist = tmp_path / "chaotic.plist"
+        plist.write_text(generate_launchd_plist(PORT, SECRET, "0.0.0.0"))
+        with patch("cli.system.get_os", return_value="darwin"), \
+             patch("cli.system.get_service_file_path", return_value=plist):
+            result = server.invoke("check")
+        assert result.exit_code == 1
+        assert "server.json says HOST 127.0.0.1 but the service file says 0.0.0.0" in result.output
