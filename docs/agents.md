@@ -368,7 +368,9 @@ itself. Subagents of a session share its identity.
 **Idle identities are hidden from lists.** One identity per session adds
 up, so a session identity whose keys have gone unused for 7 days is
 *idle*: `chaotic agent list` and the web app's assignee pickers leave it
-out (`chaotic agent list --all` shows it, marked idle; the API flag is
+out (`chaotic agent list --all` shows it, marked idle; `agent list
+--json` follows `--all` the same way, so a script that enumerates agents
+should pass `--all`; the API flag is
 `GET /api/teams/{id}/agents?hide_idle=true`, and every listed identity
 carries `last_used_at` and `idle`). The rest are listed under the
 registrar that registered them. Hiding is only a display filter: an idle

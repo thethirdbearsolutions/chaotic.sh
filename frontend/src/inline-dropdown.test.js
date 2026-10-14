@@ -246,6 +246,19 @@ describe('inline-dropdown', () => {
             expect(dropdown.innerHTML).toContain('Unassigned');
         });
 
+        it('keeps the current assignee listed even when idle (CHT-1501)', async () => {
+            getIssues.mockReturnValue([{ id: 'issue-1', assignee_id: 'idle-1' }]);
+            getAssigneeOptionList.mockReturnValue([]);
+            const mockEvent = {
+                preventDefault: vi.fn(),
+                currentTarget: { getBoundingClientRect: () => ({ left: 0, right: 0, top: 0, bottom: 0 }) },
+            };
+
+            await showInlineDropdown(mockEvent, 'assignee', 'issue-1');
+
+            expect(getAssigneeOptionList).toHaveBeenCalledWith({ keepId: 'idle-1' });
+        });
+
         it('renders estimate options', async () => {
             getEstimateOptions.mockReturnValue([
                 { value: null, label: 'None' },

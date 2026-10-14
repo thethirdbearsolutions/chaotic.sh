@@ -4,6 +4,8 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 import logging
 import uuid
+
+from oxyde import execute_raw
 from datetime import datetime, timedelta, timezone
 from app.db.transactions import atomic
 from app.oxyde_models.user import OxydeUser
@@ -242,18 +244,23 @@ class AgentService:
         fresh or renewed identity is in use), any key, rotated out or not.
         An identity with no key at all counts from its own `created_at`.
         `last_used_at` is written at most every LAST_USED_WRITE_INTERVAL,
-        far finer than IDLE_SESSION_AFTER."""
-        sessions = [a for a in agents if a.kind == AgentKind.SESSION]
-        if not sessions:
-            return {}
-        last = {a.id: ensure_utc(a.created_at) for a in sessions}
-        has_key: set[str] = set()
-        keys = await OxydeAPIKey.objects.filter(principal_user_id__in=list(last)).all()
-        for key in keys:
-            used = ensure_utc(key.last_used_at or key.created_at)
-            if key.principal_user_id not in has_key or used > last[key.principal_user_id]:
-                last[key.principal_user_id] = used
-            has_key.add(key.principal_user_id)
+        far finer than IDLE_SESSION_AFTER.
+
+        One grouped query per 500 identities (the bound-parameter limit),
+        however many keys renewals have left behind (CHT-1689)."""
+        last = {a.id: ensure_utc(a.created_at) for a in agents if a.kind == AgentKind.SESSION}
+        ids = list(last)
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            rows = await execute_raw(
+                # Stored datetimes are naive UTC text (0006), so MAX orders them.
+                "SELECT principal_user_id AS id, MAX(COALESCE(last_used_at, created_at)) AS used "
+                f"FROM api_keys WHERE principal_user_id IN ({', '.join('?' * len(chunk))}) "
+                "GROUP BY principal_user_id",
+                chunk,
+            )
+            for row in rows:
+                last[row["id"]] = ensure_utc(row["used"])
         return last
 
     async def list_by_project(self, project_id: str) -> list[OxydeUser]:

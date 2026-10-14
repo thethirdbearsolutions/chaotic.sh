@@ -9,6 +9,7 @@ import {
     formatAssigneeOptionLabel,
     getAssigneeOptionList,
     updateAssigneeFilter,
+    selectAssigneeFilter,
     resetAssignees,
 } from './assignees.js';
 
@@ -137,6 +138,39 @@ describe('assignees', () => {
                 { id: 's1', name: 'Session', parent_user_id: 'u9', kind: 'session', registered_by_id: 'r1' },
             ]);
             expect(names(getAssigneeOptionList())).toEqual(['Registrar:false', 'Session:2']);
+        });
+    });
+
+    describe('idle identities in the assignee filter (CHT-1501)', () => {
+        const agents = [
+            { id: 'a1', name: 'Bot One', parent_user_id: 'u1' },
+            { id: 'idle-1', name: 'Idle Session', parent_user_id: 'u1', kind: 'session', idle: true },
+        ];
+        const optionValues = () => Array.from(document.getElementById('assignee-filter').options).map(o => o.value);
+
+        beforeEach(() => {
+            document.body.innerHTML = '<select id="assignee-filter"></select>';
+            buildAssignees(() => mockMembers, () => agents);
+            updateAssigneeFilter();
+        });
+
+        it('leaves an idle identity out of the filter', () => {
+            expect(optionValues()).toContain('a1');
+            expect(optionValues()).not.toContain('idle-1');
+        });
+
+        it('a ?assignee= link to an idle identity keeps its filter', () => {
+            selectAssigneeFilter('idle-1');
+            const filter = document.getElementById('assignee-filter');
+            expect(filter.value).toBe('idle-1');
+            // A later rebuild (team reload) keeps it.
+            updateAssigneeFilter();
+            expect(filter.value).toBe('idle-1');
+        });
+
+        it('an unknown id is not invented', () => {
+            selectAssigneeFilter('nobody');
+            expect(optionValues()).not.toContain('nobody');
         });
     });
 

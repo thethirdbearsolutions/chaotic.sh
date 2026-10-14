@@ -76,6 +76,12 @@ def agent_response(agent, *, show_ref: bool = True, last_used_at=None) -> AgentR
     )
 
 
+async def _last_used(agent):
+    """`last_used_at` for ``agent_response`` (None unless a session
+    identity), so every response states `idle` truly (CHT-1501)."""
+    return (await AgentService.session_last_used([agent])).get(agent.id)
+
+
 @router.post(
     "/teams/{team_id}/agents",
     response_model=AgentCreated,
@@ -269,9 +275,8 @@ async def get_agent(
             detail="Not authorized to view this agent",
         )
 
-    last_used = await agent_service.session_last_used([agent])
     return agent_response(
-        agent, show_ref=await sees_external_ref(current_user, agent), last_used_at=last_used.get(agent.id),
+        agent, show_ref=await sees_external_ref(current_user, agent), last_used_at=await _last_used(agent),
     )
 
 
@@ -321,7 +326,9 @@ async def update_agent(
 
     agent = await agent_service.update(agent, agent_in)
 
-    return agent_response(agent, show_ref=await sees_external_ref(current_user, agent))
+    return agent_response(
+        agent, show_ref=await sees_external_ref(current_user, agent), last_used_at=await _last_used(agent),
+    )
 
 
 @router.post(
@@ -482,7 +489,9 @@ async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> Age
             detail="Agent not found",
         )
 
-    response = agent_response(agent, show_ref=await sees_external_ref(current_user, agent))
+    response = agent_response(
+        agent, show_ref=await sees_external_ref(current_user, agent), last_used_at=await _last_used(agent),
+    )
     response.deactivated_identities = retired
     return response
 
@@ -547,7 +556,7 @@ async def register_agent(
     if not reg.created:
         response.status_code = status.HTTP_200_OK
     return AgentRegistered(
-        agent=agent_response(reg.agent),
+        agent=agent_response(reg.agent, last_used_at=await _last_used(reg.agent)),
         created=reg.created,
         api_key=reg.full_key,
         api_key_id=reg.api_key.id,

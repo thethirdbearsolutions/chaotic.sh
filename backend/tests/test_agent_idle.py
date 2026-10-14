@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.oxyde_models.api_key import OxydeAPIKey
+from app.oxyde_models.user import OxydeUser
 from app.services.agent_service import IDLE_SESSION_AFTER, AgentService, is_idle
 
 REF = "claude-code:session:2b1f0000-aaaa-bbbb-cccc-0000000015a1"
@@ -108,6 +109,88 @@ class TestIdle:
 
         assert response.status_code == 200, response.text
         assert response.json()["assignee_id"] == identity_id
+
+
+class TestLastUsedSources:
+    """Review of PR #372: which key decides, in every shape of key history."""
+
+    async def test_an_older_key_used_more_recently_wins(self, client, auth_headers, test_team, session_identity):
+        _, identity_id, _ = session_identity
+        now = datetime.now(timezone.utc)
+        old = await OxydeAPIKey.objects.filter(principal_user_id=identity_id).first()
+        await OxydeAPIKey.objects.filter(id=old.id).update(created_at=now - timedelta(days=30), last_used_at=now - timedelta(days=1))
+        newer = await client.post(f"/api/agents/{identity_id}/keys", headers=auth_headers)
+        assert newer.status_code in (200, 201), newer.text
+        await OxydeAPIKey.objects.filter(principal_user_id=identity_id).exclude(id=old.id).update(
+            created_at=now - timedelta(days=20), last_used_at=None,
+        )
+
+        listed = await _list(client, auth_headers, test_team.id, hide_idle="true")
+
+        assert listed[identity_id]["idle"] is False
+        assert datetime.fromisoformat(listed[identity_id]["last_used_at"]) > now - timedelta(days=2)
+
+    @pytest.mark.parametrize("recent", [True, False])
+    async def test_a_revoked_key_still_counts_by_its_last_use(
+        self, client, auth_headers, test_team, session_identity, recent,
+    ):
+        _, identity_id, _ = session_identity
+        await _age_keys(identity_id, by=timedelta(hours=1) if recent else IDLE_SESSION_AFTER + timedelta(hours=1))
+        await OxydeAPIKey.objects.filter(principal_user_id=identity_id).update(is_active=False)
+
+        everything = await _list(client, auth_headers, test_team.id)
+
+        assert everything[identity_id]["idle"] is (not recent)
+
+    @pytest.mark.parametrize("age,idle", [(timedelta(0), False), (IDLE_SESSION_AFTER + timedelta(hours=1), True)])
+    async def test_no_keys_counts_from_the_identity_itself(
+        self, client, auth_headers, test_team, session_identity, age, idle,
+    ):
+        _, identity_id, _ = session_identity
+        await OxydeAPIKey.objects.filter(principal_user_id=identity_id).delete()
+        await OxydeUser.objects.filter(id=identity_id).update(created_at=datetime.now(timezone.utc) - age)
+
+        assert (await _list(client, auth_headers, test_team.id))[identity_id]["idle"] is idle
+
+    async def test_a_non_session_agent_with_old_keys_is_never_idle(
+        self, client, auth_headers, test_team, session_identity,
+    ):
+        registrar_id, _, _ = session_identity
+        await _age_keys(registrar_id)
+
+        listed = await _list(client, auth_headers, test_team.id, hide_idle="true")
+
+        assert (listed[registrar_id]["idle"], listed[registrar_id]["last_used_at"]) == (False, None)
+
+
+class TestEveryResponseStatesIdle:
+    """Review L1: no AgentResponse claims an idle identity is in use."""
+
+    async def test_rename_and_deactivate_and_reactivate(self, client, auth_headers, test_team, session_identity):
+        _, identity_id, _ = session_identity
+        await _age_keys(identity_id)
+
+        renamed = await client.patch(f"/api/agents/{identity_id}", json={"name": "Renamed"}, headers=auth_headers)
+        deactivated = await client.post(f"/api/agents/{identity_id}/deactivate", headers=auth_headers)
+        hidden = await _list(client, auth_headers, test_team.id, hide_idle="true")
+        reactivated = await client.post(f"/api/agents/{identity_id}/reactivate", headers=auth_headers)
+
+        for response in (renamed, deactivated, reactivated):
+            assert response.status_code == 200, response.text
+            assert response.json()["idle"] is True and response.json()["last_used_at"] is not None
+        # A deactivated identity follows the same rule.
+        assert identity_id not in hidden
+
+    async def test_register_reports_the_renewed_identity_in_use(self, client, auth_headers, test_team):
+        created = await client.post(
+            f"/api/teams/{test_team.id}/agents", json={"name": "Registrar", "can_register": True}, headers=auth_headers,
+        )
+        registered = await client.post(
+            "/api/agents/register", json={"external_ref": REF}, headers=_bearer(created.json()["api_key"]),
+        )
+
+        agent = registered.json()["agent"]
+        assert agent["idle"] is False and agent["last_used_at"] is not None
 
 
 class TestHelpers:

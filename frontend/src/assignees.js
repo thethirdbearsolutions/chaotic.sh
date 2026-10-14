@@ -118,11 +118,17 @@ export function getAssigneeOptionList({ includeIdle = false, keepId = null } = {
     return options;
 }
 
-export function updateAssigneeFilter() {
+/**
+ * Rebuild the assignee filter's options, keeping its selection (and the
+ * selection's option even when it is an idle session identity).
+ * @param {{keepId?: string|null}} [opts] - an id to keep listed besides
+ *   the current selection, and select (CHT-1501)
+ */
+export function updateAssigneeFilter({ keepId = null } = {}) {
     const assigneeFilter = document.getElementById('assignee-filter');
     if (!assigneeFilter) return;
 
-    const currentSelection = assigneeFilter.value;
+    const currentSelection = keepId || assigneeFilter.value;
 
     let options = `
         <option value="">All Assignees</option>
@@ -139,6 +145,23 @@ export function updateAssigneeFilter() {
     if (currentSelection) {
         assigneeFilter.value = currentSelection;
     }
+}
+
+/**
+ * Select `assigneeId` in the assignee filter, as a `?assignee=` link asks.
+ * An idle session identity has no option until asked for, so add it
+ * first: setting a <select> to a value it lacks silently clears it
+ * (CHT-1501).
+ * @param {string} assigneeId
+ */
+export function selectAssigneeFilter(assigneeId) {
+    const assigneeFilter = document.getElementById('assignee-filter');
+    if (!assigneeFilter || !assigneeId) return;
+    const listed = Array.from(assigneeFilter.options).some(o => o.value === assigneeId);
+    if (!listed && getAssigneeById(assigneeId)) {
+        updateAssigneeFilter({ keepId: assigneeId });
+    }
+    assigneeFilter.value = assigneeId;
 }
 
 /**
