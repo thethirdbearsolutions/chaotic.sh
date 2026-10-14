@@ -59,6 +59,9 @@ abstract class CacheDao {
     @Query("SELECT * FROM inbox_entry ORDER BY id")
     abstract suspend fun allInbox(): List<InboxEntryEntity>
 
+    @Query("SELECT * FROM inbox_entry WHERE id = :id")
+    abstract suspend fun inboxEntry(id: String): InboxEntryEntity?
+
     @Query("SELECT * FROM team ORDER BY id")
     abstract suspend fun allTeams(): List<TeamEntity>
 

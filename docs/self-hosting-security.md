@@ -721,7 +721,14 @@ is what brings a paused device back. The subscription's
 private key is made and kept by the UnifiedPush connector library,
 sealed with an Android Keystore key; the app never logs an endpoint, a
 key or a message. Notifications are private on the lock screen: one
-that hides sensitive content shows only that something is waiting. On a
+that hides sensitive content shows only that something is waiting. The
+exception is a gate or review waiting on you, which has Approve, Reject
+and Reject-with-note buttons that work from the lock screen without
+unlocking (CHT-1665). Its hidden-content version shows the kind and the
+issue (`Gate waiting on you · CHT-12`) so you can see what the buttons
+decide, but never the entry's text. A button acts only when the account
+it was posted for is still signed in, and only on an entry in that
+account's cache. Anyone holding the phone can press these buttons. On a
 phone with no distributor the app says so once, and syncs the inbox in
 the background every 15 minutes instead, notifying about what that
 brings in. The app's tests decrypt bodies made by the server's own

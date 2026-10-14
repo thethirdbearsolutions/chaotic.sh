@@ -70,6 +70,19 @@ abstract class CacheStoreContract {
     }
 
     @Test
+    fun inboxEntryReadsOneCachedEntryById() = runTest {
+        val store = createStore()
+        val gate = entry("e1", 5_000).copy(
+            issueId = "i1",
+            actions = listOf(InboxAction(InboxAction.APPROVE, "/api/rituals/r1/complete-issue/i1", "optional")),
+        )
+        store.applyInbox(change(upserts = listOf(gate, entry("e2"))))
+
+        assertEquals(gate, store.inboxEntry("e1"))
+        assertNull(store.inboxEntry("nope"))
+    }
+
+    @Test
     fun applyInboxReplacesById() = runTest {
         val store = createStore()
         store.applyInbox(change(upserts = listOf(entry("e1", 1_000))))

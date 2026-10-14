@@ -30,6 +30,11 @@
                 <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
             </intent-filter>
         </service>
+
+        <!-- Approve and Reject on gate and review notifications (CHT-1665); only this app's own PendingIntents reach it. -->
+        <receiver
+            android:name=".push.DecisionReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

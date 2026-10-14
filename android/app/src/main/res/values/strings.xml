@@ -124,4 +124,24 @@
     <string name="push_no_distributor_text">Chaotic delivers notifications through UnifiedPush, which needs a distributor app such as ntfy. Without one, Chaotic checks your inbox about every 15 minutes instead.</string>
     <string name="push_no_distributor_get">Get ntfy</string>
     <string name="push_no_distributor_ok">OK</string>
+
+    <!-- Approve and Reject on gate and review notifications (CHT-1665) -->
+    <string name="decision_approve">Approve</string>
+    <string name="decision_reject">Reject</string>
+    <string name="decision_reject_with_note">Reject with note</string>
+    <string name="decision_note_label">Why reject it?</string>
+    <string name="decision_canned_note">Rejected from phone</string>
+    <string name="decision_approving">Approving…</string>
+    <string name="decision_rejecting">Rejecting…</string>
+    <string name="decision_waiting">Not sent yet. It goes as soon as the server can be reached.</string>
+    <string name="decision_approved">Approved</string>
+    <string name="decision_rejected">Rejected</string>
+    <string name="decision_refused">Not done: the server refused it.</string>
+    <string name="decision_refused_public">Not done. Unlock to see why.</string>
+    <string name="decision_stalled">Not sent: the server kept failing. Open Chaotic to retry or discard it.</string>
+    <string name="decision_gone">This is no longer waiting on you. Nothing was sent.</string>
+    <string name="decision_not_offered">You cannot decide this one now. Nothing was sent.</string>
+    <string name="decision_already_queued">A decision on this is already on its way.</string>
+    <string name="decision_signed_out">This was for an account that is not signed in here now. Nothing was sent.</string>
+    <string name="decision_sending">Sending your decision</string>
 </resources>

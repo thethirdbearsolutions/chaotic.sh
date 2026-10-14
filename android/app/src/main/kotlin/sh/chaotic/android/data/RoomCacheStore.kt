@@ -3,6 +3,7 @@ package sh.chaotic.android.data
 import sh.chaotic.sync.CacheSnapshot
 import sh.chaotic.sync.CacheStore
 import sh.chaotic.sync.InboxChange
+import sh.chaotic.sync.InboxEntry
 import sh.chaotic.sync.IssueDetail
 import sh.chaotic.sync.PendingWrite
 import sh.chaotic.sync.SprintCard
@@ -18,6 +19,8 @@ class RoomCacheStore(private val dao: CacheDao) : CacheStore {
     override suspend fun inboxVersions(ids: Collection<String>): Map<String, Long> =
         ids.distinct().chunked(CacheDao.MAX_VARIABLES).flatMap { dao.inboxVersions(it) }
             .associate { it.id to it.updatedAtMicros }
+
+    override suspend fun inboxEntry(id: String): InboxEntry? = dao.inboxEntry(id)?.toEntry()
 
     override suspend fun applyInbox(change: InboxChange) = dao.applyInbox(change)
 

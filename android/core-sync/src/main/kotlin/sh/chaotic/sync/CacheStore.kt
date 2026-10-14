@@ -49,6 +49,9 @@ interface CacheStore {
 
     suspend fun applyInbox(change: InboxChange)
 
+    /** The cached inbox entry [id], or null when it is not cached (CHT-1665). */
+    suspend fun inboxEntry(id: String): InboxEntry?
+
     /** Replace the team list, and drop everything cached for a team not in it. */
     suspend fun replaceTeams(teams: List<Team>)
 

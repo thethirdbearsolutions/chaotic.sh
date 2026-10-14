@@ -29,6 +29,41 @@ sealed interface FlushOutcome {
     data object Unauthorized : FlushOutcome
 }
 
+/** What an Approve or Reject on a notification did ([WriteQueue.decideFromNotification]). */
+sealed interface NotificationDecision {
+    /** Queued, to go at once: [key] is the write's, for [WriteQueue.status]. */
+    data class Queued(val key: String) : NotificationDecision
+
+    /** The entry is not in this person's cache: decided, archived, or never theirs. Nothing was sent. */
+    data object Gone : NotificationDecision
+
+    /** The server did not offer this decision on the entry (the person may not decide it now). */
+    data object NotOffered : NotificationDecision
+
+    /** A decision on this entry is already on its way. */
+    data object AlreadyQueued : NotificationDecision
+
+    /** Nobody is signed in, or someone other than the notification's person is. Nothing was sent. */
+    data object SignedOut : NotificationDecision
+}
+
+/** Where one queued write is now ([WriteQueue.status]). */
+sealed interface WriteStatus {
+    /** Still queued, to be sent again. */
+    data object Waiting : WriteStatus
+
+    /** Still queued, but no longer sent on its own: the person retries or discards it in the app. */
+    data object Stalled : WriteStatus
+
+    /** Sent and taken (or taken back, which a notification's write never is). */
+    data object Done : WriteStatus
+
+    data class Refused(val refusal: WriteRefusal) : WriteStatus
+
+    /** Nobody is signed in any more, or someone else is: the write went with their cache. */
+    data object SignedOut : WriteStatus
+}
+
 /**
  * The offline write queue (CHT-1613). The person's actions are queued in
  * the cache through [session], so they belong to whoever is signed in and
@@ -120,6 +155,60 @@ class WriteQueue(
         val reason = note.trim().takeIf { it.isNotEmpty() }?.take(MAX_NOTE_CHARS) ?: return null
         val action = entry.action(InboxAction.REJECT) ?: return null
         return decide(entry, WriteKind.REJECT, action, reason, undoMillis)
+    }
+
+    /**
+     * Approve ([note] null) or reject (with [note]) the entry [entryId]
+     * from a notification's button (CHT-1665), at once: there is no undo
+     * on a lock screen. The entry is looked up in the cache, through the
+     * session, and only when [owner] (the person the notification was
+     * posted for) is the one signed in: a notification left over from an
+     * earlier sign-in, or for an entry this person's cache does not hold,
+     * acts on nothing. The lookup and the queueing are one transaction,
+     * so a sign-out in between cannot put the write in the next person's
+     * queue.
+     */
+    @Suppress("ReturnCount") // each reason not to queue is an early return
+    suspend fun decideFromNotification(owner: String, entryId: String, note: String? = null): NotificationDecision {
+        val reason = note?.trim()?.take(MAX_NOTE_CHARS)
+        // The server requires a reason to reject; the app gives a canned one when none was typed.
+        if (reason != null && reason.isEmpty()) return NotificationDecision.NotOffered
+        val kind = if (reason == null) WriteKind.APPROVE else WriteKind.REJECT
+        val ticket = session.begin() ?: return NotificationDecision.SignedOut
+        if (session.ownerOf(ticket) != owner) return NotificationDecision.SignedOut
+        return session.write(ticket) {
+            val entry = inboxEntry(entryId)
+            val action = entry?.action(if (kind == WriteKind.APPROVE) InboxAction.APPROVE else InboxAction.REJECT)
+            val before = pendingWrites()
+            when {
+                entry == null -> NotificationDecision.Gone
+
+                action == null -> NotificationDecision.NotOffered
+
+                !undecided(entryId, before) -> NotificationDecision.AlreadyQueued
+
+                else -> {
+                    val write = entry.pendingWrite(kind, action, reason, undoMillis = 0)
+                    enqueue(write, before)
+                    NotificationDecision.Queued(write.key)
+                }
+            }
+        } ?: NotificationDecision.SignedOut
+    }
+
+    /** Where the write [key] is now: still queued, done, or refused (with why). */
+    suspend fun status(key: String): WriteStatus {
+        val ticket = session.begin() ?: return WriteStatus.SignedOut
+        return session.write(ticket) {
+            val write = pendingWrites().firstOrNull { it.key == key }
+            val refusal = refusals().firstOrNull { it.key == key }
+            when {
+                write != null && write.stalled -> WriteStatus.Stalled
+                write != null -> WriteStatus.Waiting
+                refusal != null -> WriteStatus.Refused(refusal)
+                else -> WriteStatus.Done
+            }
+        } ?: WriteStatus.SignedOut
     }
 
     suspend fun archive(entry: InboxEntry, undoMillis: Long = UNDO_MILLIS): String? {
@@ -420,11 +509,14 @@ class WriteQueue(
         action: InboxAction,
         value: String?,
         undoMillis: Long,
-    ): String? = queue(entry.pendingWrite(kind, action, value, undoMillis)) { queued ->
-        // One decision per entry: a second swipe while the first waits is not a second request.
-        // A stalled one is not on its way, so it does not stand in for a new one.
-        queued.none { it.entryId == entry.id && it.kind in DECISIONS && !it.stalled }
-    }
+    ): String? = queue(entry.pendingWrite(kind, action, value, undoMillis)) { queued -> undecided(entry.id, queued) }
+
+    /**
+     * One decision per entry: a second swipe while the first waits is not a second request.
+     * A stalled one is not on its way, so it does not stand in for a new one.
+     */
+    private fun undecided(entryId: String, queued: List<PendingWrite>) =
+        queued.none { it.entryId == entryId && it.kind in DECISIONS && !it.stalled }
 
     private fun InboxEntry.pendingWrite(
         kind: WriteKind,
@@ -453,14 +545,17 @@ class WriteQueue(
         val queued = session.write(ticket) {
             val before = pendingWrites()
             val ok = allowed(before)
-            if (ok) {
-                queueWrite(write)
-                // A stalled write this one replaces would only undo it if retried.
-                before.filter { it.stalled && write.supersedes(it) }.forEach { removeWrite(it.key) }
-            }
+            if (ok) enqueue(write, before)
             ok
         }
         return write.key.takeIf { queued == true }
+    }
+
+    /** Add [write] to the queue, which held [before]. */
+    private suspend fun CacheStore.enqueue(write: PendingWrite, before: List<PendingWrite>) {
+        queueWrite(write)
+        // A stalled write this one replaces would only undo it if retried.
+        before.filter { it.stalled && write.supersedes(it) }.forEach { removeWrite(it.key) }
     }
 
     companion object {
