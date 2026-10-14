@@ -270,3 +270,29 @@ async def test_agent_key_of_deactivated_holder_cannot_mint(client, db, test_team
         "/api/api-keys", json={"name": "self"}, headers={"Authorization": f"Bearer {key}"},
     )
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_mint_rechecks_a_holder_deactivated_after_sign_in(db, test_team):
+    """The mint route's own in-transaction re-check (CHT-1552): a holder
+    deactivated between sign-in and the insert mints nothing. Called
+    in-process with the principal already resolved, so sign-in's check
+    cannot be what refuses it."""
+    from fastapi import HTTPException
+
+    from app.api.api_keys import create_api_key
+    from app.oxyde_models.api_key import OxydeAPIKey
+
+    holder = await OxydeUser.objects.create(
+        email="race-1552@example.com", hashed_password=get_password_hash("password123"), name="Racer",
+    )
+    agent, key = await _agent_key_held_by(test_team, holder)
+    calling_key = await APIKeyService().validate_key(key)
+    holder.is_active = False
+    await holder.save(update_fields={"is_active"})
+
+    with pytest.raises(HTTPException) as refused:
+        await create_api_key(APIKeyCreate(name="raced"), agent, None, calling_key)
+    assert refused.value.status_code == 401
+    assert refused.value.detail == "Invalid API key"
+    assert await OxydeAPIKey.objects.filter(principal_user_id=agent.id).count() == 1

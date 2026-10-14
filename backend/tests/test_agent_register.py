@@ -270,6 +270,18 @@ class TestCaller:
         response = await _register(client, key)
         assert response.status_code == 401 and response.json()["detail"] == "Invalid API key"
 
+    async def test_a_registered_identitys_key_dies_with_its_holder(self, client, registrar, test_user):
+        """The identity's key is held by the registrar key's holder, so
+        deactivating that human ends the identity's key too (CHT-1552)."""
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        assert (await client.get("/api/auth/me", headers=_bearer(session_key))).status_code == 200
+
+        await OxydeUser.objects.filter(id=test_user.id).update(is_active=False)
+
+        response = await client.get("/api/auth/me", headers=_bearer(session_key))
+        assert response.status_code == 401 and response.json()["detail"] == "Invalid API key"
+
     async def test_a_holder_deactivated_after_sign_in_is_refused_by_register(self, registrar, test_user):
         """The in-transaction re-check: a holder deactivated between sign-in
         and the register transaction is still refused (CHT-1498, CHT-1552)."""

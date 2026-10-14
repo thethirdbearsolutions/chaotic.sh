@@ -393,7 +393,10 @@ def _registrar_call(method: str, url: str, credential: str, body: dict | None = 
             )
     message, detail = _server_error(response)
     if response.status_code == 401:
-        message = f"the configured key was rejected ({message}); check `chaotic auth set-key`"
+        message = (
+            f"the configured key was rejected ({message}); it may be revoked or its holder "
+            "deactivated; check `chaotic auth set-key`"
+        )
     raise SessionIdentityError(
         f"Session identity registration failed: {message.rstrip('.')}. {NO_FALLBACK}",
         status_code=response.status_code, detail=detail,
