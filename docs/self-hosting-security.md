@@ -102,23 +102,30 @@ log shows a closed refusal as accepted; each refusal is logged on
 sent, never the credential), which is the line to watch for token
 guessing. That line is rate-limited: the first for each client, code,
 reason and outcome is written, then at most one a minute, which says how
-many were not; and at most 100 such lines a minute in all, past which
-refusals are counted into one summary line a minute. A failed check's
-traceback is logged at most once a minute too. uvicorn's own access
-lines for each handshake (two INFO lines for a 429) are not limited, so
-a flood still grows the access log. A client that never answers the
-close frame holds its connection for the server's close timeout (10 s),
-where a 403 drops it at once, so each server process (each uvicorn
-worker) caps the refusals in flight: past 8 in 10 s from one client, or
-256 in all, a refusal is an HTTP 429 with `Retry-After`, which drops the
-connection at once (CHT-1635). A client is an IPv4 address or an IPv6
-/64. While the total cap is full, every refused client gets the 429, so
-a tab whose credential has expired keeps retrying instead of signing out
-until the flood ends; a good credential is never refused, so never
-throttled. Behind a reverse proxy the client address is taken from its
-forwarding headers only if `FORWARDED_ALLOW_IPS` trusts the proxy
-(loopback is trusted by default); an untrusted proxy makes every client
-share one cap. /ws takes the credential from an
+many were not and when they happened; and at most 100 such lines a
+minute in all, past which refusals are counted into one summary line a
+minute. Those counts are written with a later refusal, so the last ones
+of a flood that stops wait for the next (CHT-1641). A failed check's
+traceback is always logged the first time for each kind of failure (call
+site, exception type and message), then at most once a minute per kind.
+uvicorn's own access lines for each handshake (two INFO lines for a 429)
+are not limited, so a flood still grows the access log (CHT-1640). A
+client that never answers the close frame holds its connection for the
+server's close timeout (10 s), where a 403 drops it at once, so each
+server process (each uvicorn worker) caps the refusals in flight: past 8
+in 10 s from one client, or 256 in all, a refusal is an HTTP 429 with
+`Retry-After`, which drops the connection at once (CHT-1635). A client
+is an IPv4 address or an IPv6 /64, so the IPv4 clients behind a NAT64
+gateway share one cap, as do those behind one NAT. While the total cap
+is full, every refused client gets the 429, so a tab whose credential
+has expired keeps retrying instead of signing out until the flood ends;
+a good credential is never refused, so never throttled. Behind a reverse
+proxy the client address is taken from its forwarding headers only if
+`FORWARDED_ALLOW_IPS` trusts the proxy (loopback is trusted by default);
+an untrusted proxy makes every client share one cap. A trusted proxy
+that forwards something other than an IP address makes each such string
+a client of its own, still bounded by the total cap and the line budget.
+/ws takes the credential from an
 `Authorization: Bearer` header on the upgrade request, or from a
 `chaotic.bearer.<token>` entry in `Sec-WebSocket-Protocol` (the web app's
 way, offered beside `chaotic`), so it stays out of the URL. The old

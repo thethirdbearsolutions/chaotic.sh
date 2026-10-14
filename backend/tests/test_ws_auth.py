@@ -898,12 +898,14 @@ class TestRefusalLimits:
         with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
             for i in range(5):
                 await refuse_from("198.51.100.1", code=4011, reason="Credential check failed", port=40000 + i)
-            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+                clock.now += 1
+            clock.now += 3600  # the next one comes much later
             await refuse_from("198.51.100.1", code=4011, reason="Credential check failed", port=41000)
         first, second = refusal_lines(caplog)
         assert "more like it" not in first
         assert "client=198.51.100.1:41000" in second
-        assert "(4 more like it not logged in the last 60s)" in second
+        # When they happened, not how long since the last line (PR #360 re-review, L4).
+        assert "(4 more like it not logged, between 3604s and 3601s ago)" in second
 
     async def test_a_forgotten_key_logs_its_count(self, clock, caplog, monkeypatch):
         monkeypatch.setattr(ws_auth, "_MAX_LOG_KEYS", 2)
@@ -916,7 +918,7 @@ class TestRefusalLimits:
             clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
             await refuse_from("198.51.100.4", code=4011, reason="Credential check failed")
         lines = refusal_lines(caplog)
-        assert any("2 more refusals from 1 clients not logged in the last 60s" in line for line in lines), lines
+        assert any("2 more refusals from 1 clients not logged, 60s ago" in line for line in lines), lines
 
     async def test_one_ipv6_64_is_one_client(self, clock, caplog):
         """PR #360 review, M1: one IPv6 host can source from any address in
@@ -928,7 +930,7 @@ class TestRefusalLimits:
         lines = refusal_lines(caplog)
         assert len(lines) == 2, lines
         # The line still names the address the refusal came from.
-        assert "client=2001:db8:1:2::0:40000" in lines[0]
+        assert "client=[2001:db8:1:2::0]:40000" in lines[0]
         # Another /64 is another client.
         assert held(await refuse_from("2001:db8:1:3::1"))
 
@@ -989,7 +991,100 @@ class TestRefusalLimits:
         errors = [r for r in caplog.records if "team validation" in r.getMessage()]
         assert len(errors) == 2
         assert all(r.exc_info for r in errors)
-        assert "(19 more failed checks not logged in the last 60s)" in errors[1].getMessage()
+        assert "(19 more like it not logged, 60s ago)" in errors[1].getMessage()
+
+    async def test_a_new_kind_of_failure_always_gets_its_traceback(self, clock, caplog, test_team):
+        """PR #360 re-review, M2: an outage's repeats must not hide the
+        first traceback of a different failure, at any call site."""
+        failures = [OSError("database is locked"), OSError("database is locked"), KeyError("real bug")]
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=failures)):
+            with caplog.at_level(logging.ERROR):
+                for _ in failures:
+                    await websocket_endpoint(FakeWebSocket(denial=True), team_id=test_team.id, token="x")
+        logged = [r.exc_info[0] for r in caplog.records if "team validation" in r.getMessage()]
+        assert logged == [OSError, KeyError]
+
+    def test_failure_kinds_ignore_digits_and_ids(self, clock, caplog):
+        log = logging.getLogger("app.main")
+        with caplog.at_level(logging.ERROR):
+            for exc in [
+                OSError("timeout after 31 ms on conn 7f3a9c0e1b2d"),
+                OSError("timeout after 57 ms on conn 0c1d2e3f4a5b"),
+                ValueError("timeout after 31 ms on conn 7f3a9c0e1b2d"),  # another type
+            ]:
+                try:
+                    raise exc
+                except Exception:
+                    ws_auth.log_check_error(log, "check failed")
+            try:
+                raise OSError("timeout after 1 ms on conn 7f3a9c0e1b2d")
+            except Exception:
+                ws_auth.log_check_error(log, "another call site")
+        assert [r.exc_info[0] for r in caplog.records] == [OSError, ValueError, OSError]
+        assert caplog.records[-1].getMessage() == "another call site"
+
+    def test_failure_kinds_are_bounded_and_a_forgotten_count_is_reported(self, clock, caplog, monkeypatch):
+        monkeypatch.setattr(ws_auth, "_MAX_ERROR_KINDS", 2)
+        log = logging.getLogger("app.main")
+
+        def fail(exc_type):
+            try:
+                raise exc_type("boom")
+            except Exception:
+                ws_auth.log_check_error(log, "check failed")
+
+        with caplog.at_level(logging.ERROR):
+            fail(OSError)
+            fail(OSError)  # suppressed
+            fail(KeyError)
+            clock.now += 5
+            fail(ValueError)  # forgets OSError, with its count
+            fail(TypeError)
+        assert len(ws_auth._check_errors._kinds) == 2
+        messages = [r.getMessage() for r in caplog.records]
+        assert len(messages) == 4
+        assert messages[2] == "check failed (and 1 failed checks of other kinds not logged, 5s ago)"
+        assert messages[3] == "check failed"
+
+        # Each forgotten kind's count goes out with the next traceback.
+        caplog.clear()
+        with caplog.at_level(logging.ERROR):
+            fail(ValueError)  # suppressed, at 5
+            clock.now += 2
+            fail(TypeError)  # suppressed, at 7
+            fail(OSError)  # forgets ValueError
+            fail(KeyError)  # forgets TypeError
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            fail(KeyError)  # a repeat with nothing suppressed: no count
+            fail(RuntimeError)
+        messages = [r.getMessage() for r in caplog.records]
+        assert messages == [
+            "check failed (and 1 failed checks of other kinds not logged, 2s ago)",
+            "check failed (and 1 failed checks of other kinds not logged, 0s ago)",
+            "check failed",
+            "check failed",
+        ]
+
+    def test_an_unlogged_span_covers_every_count_folded_in(self):
+        unlogged = ws_auth._Unlogged()
+        unlogged.add(50.0, 2, first=40.0)
+        unlogged.add(55.0, 3, first=30.0)
+        unlogged.add(58.0)
+        assert unlogged.suffix(60.0) == (6, "between 30s and 2s ago")
+
+    def test_a_check_error_logged_outside_an_except_block(self, clock, caplog):
+        with caplog.at_level(logging.ERROR):
+            ws_auth.log_check_error(logging.getLogger("app.main"), "check failed")
+            ws_auth.log_check_error(logging.getLogger("app.main"), "check failed")
+        assert len(caplog.records) == 1
+
+    async def test_a_key_logged_again_with_nothing_suppressed_has_no_count(self, clock, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            await refuse_from("198.51.100.1", code=4011, reason="Credential check failed")
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await refuse_from("198.51.100.1", code=4011, reason="Credential check failed")
+        lines = refusal_lines(caplog)
+        assert len(lines) == 2 and "not logged" not in lines[1]
 
     async def test_a_flood_never_logs_the_credential(self, db, clock, caplog):
         secret = "ck_" + "cd" * 24

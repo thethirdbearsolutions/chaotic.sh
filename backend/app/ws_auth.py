@@ -77,8 +77,10 @@ import asyncio
 import ipaddress
 import logging
 import math
+import re
+import sys
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 
 from fastapi import HTTPException
@@ -116,6 +118,8 @@ def _client_address(websocket) -> str:
     if client is None:
         return "-"
     host, port = client[0], client[1]
+    if ":" in str(host):
+        return f"[{host}]:{port}"  # an IPv6 address: its port would be ambiguous
     return f"{host}:{port}"
 
 
@@ -217,6 +221,32 @@ class _RefusalGate:
         return None
 
 
+class _Unlogged:
+    """What a limiter left out: how many, and when the first and the last
+    of them happened, so a summary written late says when they were, not
+    how long since the previous line (PR #360 re-review, L4)."""
+
+    __slots__ = ("count", "first", "last")
+
+    def __init__(self):
+        self.count = 0
+        self.first = 0.0
+        self.last = 0.0
+
+    def add(self, now: float, count: int = 1, first: float | None = None) -> None:
+        if not self.count:
+            self.first = now if first is None else first
+        elif first is not None:
+            self.first = min(self.first, first)
+        self.count += count
+        self.last = now
+
+    def suffix(self, now: float) -> tuple[int, str]:
+        """The count, and when: ``12s ago`` or ``between 70s and 12s ago``."""
+        first, last = int(now - self.first), int(now - self.last)
+        return self.count, (f"{first}s ago" if first == last else f"between {first}s and {last}s ago")
+
+
 class _RefusalLog:
     """Logs the refusal lines so a flood cannot fill the log.
 
@@ -228,34 +258,37 @@ class _RefusalLog:
     room, go into one summary line ("N more refusals from M clients not
     logged"), written with the first refusal after the interval ends. A
     flood from many clients therefore writes the first line of the
-    first REFUSAL_LOG_BUDGET of them and one summary a minute."""
+    first REFUSAL_LOG_BUDGET of them and one summary a minute. Counts say
+    when the refusals they stand for happened (``_Unlogged``); a count is
+    written only when a later refusal comes (CHT-1641)."""
 
     def __init__(self, clock=time.monotonic):
         self._clock = clock
-        # key -> [when last logged, how many suppressed since]
+        # key -> [when last logged, what was not logged since]
         self._seen: dict[tuple, list] = {}
         self._window_start: float | None = None
         self._lines = 0
-        self._unlogged = 0
+        self._unlogged = _Unlogged()
         self._unlogged_clients: set[str] = set()
 
     def _roll(self, now: float) -> None:
         if self._window_start is not None and now - self._window_start < REFUSAL_LOG_INTERVAL_SECONDS:
             return
-        if self._unlogged:
+        if self._unlogged.count:
+            count, when = self._unlogged.suffix(now)
             logger.warning(
-                "Refused /ws handshake: %d more refusals from %s%d clients not logged in the last %ds",
-                self._unlogged,
+                "Refused /ws handshake: %d more refusals from %s%d clients not logged, %s",
+                count,
                 "at least " if len(self._unlogged_clients) >= _MAX_LOG_KEYS else "",
-                len(self._unlogged_clients), int(now - self._window_start),
+                len(self._unlogged_clients), when,
             )
         self._window_start = now
         self._lines = 0
-        self._unlogged = 0
+        self._unlogged = _Unlogged()
         self._unlogged_clients = set()
 
-    def _count_unlogged(self, client: str, refusals: int) -> None:
-        self._unlogged += refusals
+    def _count_unlogged(self, client: str, now: float, count: int = 1, first: float | None = None) -> None:
+        self._unlogged.add(now, count, first)
         if len(self._unlogged_clients) < _MAX_LOG_KEYS:
             self._unlogged_clients.add(client)
 
@@ -264,24 +297,24 @@ class _RefusalLog:
         self._roll(now)
         entry = self._seen.get(key)
         if entry is not None and now - entry[0] < REFUSAL_LOG_INTERVAL_SECONDS:
-            entry[1] += 1
+            entry[1].add(now)
             return
         if self._lines >= REFUSAL_LOG_BUDGET:
             if entry is not None:
-                entry[1] += 1  # goes out with this key's next line
+                entry[1].add(now)  # goes out with this key's next line
             else:
-                self._count_unlogged(key[0], 1)
+                self._count_unlogged(key[0], now)
             return
         self._lines += 1
-        suppressed = entry[1] if entry is not None else 0
         if entry is not None:
             del self._seen[key]  # re-inserted below, as the newest
+            if entry[1].count:
+                count, when = entry[1].suffix(now)
+                message += " (%d more like it not logged, %s)"
+                args = (*args, count, when)
         elif len(self._seen) >= _MAX_LOG_KEYS:
             self._evict(now)
-        self._seen[key] = [now, 0]
-        if suppressed:
-            message += " (%d more like it not logged in the last %ds)"
-            args = (*args, suppressed, int(now - entry[0]))
+        self._seen[key] = [now, _Unlogged()]
         logger.warning(message, *args)
 
     def _evict(self, now: float) -> None:
@@ -289,35 +322,71 @@ class _RefusalLog:
         if not expired:
             expired = [next(iter(self._seen))]  # the oldest
         for key in expired:
-            _, suppressed = self._seen.pop(key)
-            if suppressed:
-                self._count_unlogged(key[0], suppressed)
+            _, unlogged = self._seen.pop(key)
+            if unlogged.count:
+                self._count_unlogged(key[0], unlogged.last, unlogged.count, unlogged.first)
+
+
+_DIGITS_AND_IDS = re.compile(r"[0-9a-fA-F]{8,}|\d+")
+# How many kinds of failed check ``_ErrorLog`` tells apart.
+_MAX_ERROR_KINDS = 64
 
 
 class _ErrorLog:
-    """A failed credential check logs its traceback at most once per
-    REFUSAL_LOG_INTERVAL_SECONDS (PR #360 review, L2): during a database
-    outage every handshake and every open socket's re-check fails, and
-    one traceback per attempt would fill the log. The next one logged
-    says how many were not."""
+    """Logs a failed credential check with its traceback, rate-limited
+    (PR #360 review, L2): during a database outage every handshake and
+    every open socket's re-check fails, and one traceback per attempt
+    would fill the log.
+
+    Limited per kind of failure (PR #360 re-review, M2): the call site
+    (its message), the exception type, and the exception's message with
+    digits and ids blanked out. The first failure of each kind is always
+    logged with its traceback, so a new failure is never hidden behind an
+    outage's; its repeats are logged at most once per
+    REFUSAL_LOG_INTERVAL_SECONDS, saying how many were not. At most
+    _MAX_ERROR_KINDS kinds are remembered, the least recently seen
+    forgotten first; a forgotten kind's count goes out with the next
+    traceback written. As with ``_RefusalLog``, a count is written only
+    when a later failure comes (CHT-1641)."""
 
     def __init__(self, clock=time.monotonic):
         self._clock = clock
-        self._last: float | None = None
-        self._suppressed = 0
+        # kind -> [when last logged, what was not logged since]
+        self._kinds: OrderedDict[tuple, list] = OrderedDict()
+        self._forgotten = _Unlogged()
+
+    @staticmethod
+    def _kind(message: str, exc: BaseException | None) -> tuple:
+        if exc is None:
+            return (message, None, "")
+        return (message, type(exc), _DIGITS_AND_IDS.sub("#", str(exc))[:200])
 
     def exception(self, log: logging.Logger, message: str, *args) -> None:
         """``log.exception(message, *args)``, rate-limited; call it from an
         ``except`` block."""
         now = self._clock()
-        if self._last is not None and now - self._last < REFUSAL_LOG_INTERVAL_SECONDS:
-            self._suppressed += 1
-            return
-        if self._suppressed:
-            message += " (%d more failed checks not logged in the last %ds)"
-            args = (*args, self._suppressed, int(now - self._last))
-        self._last = now
-        self._suppressed = 0
+        kind = self._kind(message, sys.exc_info()[1])
+        entry = self._kinds.get(kind)
+        if entry is not None:
+            self._kinds.move_to_end(kind)
+            if now - entry[0] < REFUSAL_LOG_INTERVAL_SECONDS:
+                entry[1].add(now)
+                return
+            if entry[1].count:
+                count, when = entry[1].suffix(now)
+                message += " (%d more like it not logged, %s)"
+                args = (*args, count, when)
+        else:
+            while len(self._kinds) >= _MAX_ERROR_KINDS:
+                _, (_, unlogged) = self._kinds.popitem(last=False)
+                if unlogged.count:
+                    self._forgotten.add(unlogged.last, unlogged.count, unlogged.first)
+        self._kinds[kind] = [now, _Unlogged()]
+        if self._forgotten.count:
+            count, when = self._forgotten.suffix(now)
+            message += " (and %d failed checks of other kinds not logged, %s)"
+            args = (*args, count, when)
+            self._forgotten = _Unlogged()
         log.exception(message, *args)
 
 
