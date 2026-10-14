@@ -627,9 +627,13 @@ export async function handleUpdateBudget(event, sprintId, projectId) {
         const updateData = {};
         if (nameInput) updateData.name = nameInput;
         // Setting the project default already moves every planned sprint
-        // that follows it, this one included, so a planned sprint is not
-        // pinned to the value as well.
-        const followsDefault = scope === 'default' && sprint?.status === 'planned';
+        // that follows it, this one included, so such a sprint is not
+        // pinned to the value as well. A planned sprint whose budget was
+        // already set by hand (budget_explicit) does not follow the
+        // default, so it still gets the budget sent.
+        const followsDefault = scope === 'default'
+            && sprint?.status === 'planned'
+            && sprint?.budget_explicit === false;
         if (budgetChanged && !followsDefault) updateData.budget = budget;
         if (Object.keys(updateData).length) {
             await api.updateSprint(sprintId, updateData);

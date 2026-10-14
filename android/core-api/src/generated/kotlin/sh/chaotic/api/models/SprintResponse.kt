@@ -45,6 +45,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param activatedAt 
  * @param closedAt 
  * @param budget 
+ * @param budgetExplicit 
  * @param pointsSpent 
  * @param limbo 
  * @param createdAt 
@@ -77,6 +78,9 @@ data class SprintResponse (
 
     @SerialName(value = "budget")
     val budget: kotlin.Int?,
+
+    @SerialName(value = "budget_explicit")
+    val budgetExplicit: kotlin.Boolean,
 
     @SerialName(value = "points_spent")
     val pointsSpent: kotlin.Int,

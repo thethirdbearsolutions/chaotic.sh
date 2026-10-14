@@ -74,7 +74,7 @@ class TestDateTimeUTCType:
             id="s-1", project_id="p-1", name="Sprint 1",
             description=None, status="active",
             activated_at=naive, closed_at=naive,
-            budget=None, points_spent=0,
+            budget=None, budget_explicit=False, points_spent=0,
             limbo=False, created_at=naive, updated_at=naive,
         )
         assert resp.created_at.tzinfo == timezone.utc

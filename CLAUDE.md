@@ -87,9 +87,10 @@ smell — treat the following as invariants:
   kept, and an active or closed sprint's budget never changes with the
   default. A hand-set budget applies to that sprint only; to change future
   sprints, change the default. One exception: while the default is null
-  (unlimited), a hand-set budget on the sprint being activated carries to
-  the new planned sprint, still marked hand-set, so rotation cannot
-  silently switch arrears off (CHT-1495).
+  (unlimited), activation never overwrites a budget and the sprint being
+  activated passes its budget to the new planned sprint, so rotation
+  cannot silently switch arrears off. The carried budget is not hand-set,
+  so a default set later still reaches it (CHT-1495).
 - **Arrears is a hard stop.** Going over budget blocks moving any ticket into
   `in_progress` / `done` / `canceled` (project-wide, keyed on the active
   sprint — other transitions like `todo`/`in_review` are unaffected) until you

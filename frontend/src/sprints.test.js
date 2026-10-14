@@ -877,7 +877,7 @@ describe('handleUpdateBudget', () => {
 
     it('project default option on a planned sprint does not pin it', async () => {
         showEditBudgetModal('s2', 'Sprint 2', 20, 'p1');
-        setSprints([{ id: 's2', status: 'planned', name: 'Sprint 2' }]);
+        setSprints([{ id: 's2', status: 'planned', name: 'Sprint 2', budget_explicit: false }]);
         api.updateSprint.mockResolvedValue({});
         api.updateProject.mockResolvedValue({});
         api.getCurrentSprint.mockResolvedValue({});
@@ -892,6 +892,27 @@ describe('handleUpdateBudget', () => {
 
         expect(api.updateSprint).toHaveBeenCalledWith('s2', { name: 'Sprint 2' });
         expect(api.updateProject).toHaveBeenCalledWith('p1', { default_sprint_budget: 32 });
+    });
+
+    it('project default option still sends budget to a hand-set planned sprint', async () => {
+        // Default 20, Next pinned at 13 by hand: setting 30 as the default
+        // must not leave it at 13 (re-review R2).
+        showEditBudgetModal('s2', 'Sprint 2', 13, 'p1');
+        setSprints([{ id: 's2', status: 'planned', name: 'Sprint 2', budget_explicit: true }]);
+        api.updateSprint.mockResolvedValue({});
+        api.updateProject.mockResolvedValue({});
+        api.getCurrentSprint.mockResolvedValue({});
+        api.getSprints.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        document.getElementById('sprint-budget').value = '30';
+        document.querySelector('input[name="budget-scope"][value="default"]').checked = true;
+        setState('currentProject', 'p1');
+
+        await handleUpdateBudget({ preventDefault: vi.fn() }, 's2', 'p1');
+
+        expect(api.updateSprint).toHaveBeenCalledWith('s2', { budget: 30, name: 'Sprint 2' });
+        expect(api.updateProject).toHaveBeenCalledWith('p1', { default_sprint_budget: 30 });
     });
 
     it('planned option sets other planned sprints by hand', async () => {

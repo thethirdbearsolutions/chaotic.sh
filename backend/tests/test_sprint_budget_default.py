@@ -209,31 +209,56 @@ async def test_rename_only_patch_does_not_pin_budget(client, auth_headers, test_
 
 @pytest.mark.asyncio
 async def test_null_default_carries_hand_set_budget_forward(client, auth_headers, test_project):
-    """With no project default, a budget set by hand on the sprint being
-    activated carries to the new planned sprint, so rotation cannot
-    silently switch arrears off (PR #384 review M1)."""
+    """With no project default, the budget of the sprint being activated
+    carries to the new planned sprint, so rotation cannot silently switch
+    arrears off (PR #384 review M1). The carried budget still follows a
+    default set later (re-review R1)."""
     current, planned = await SprintService().ensure_sprints_exist(test_project.id)
     assert planned.budget is None
 
     resp = await client.patch(f"/api/sprints/{planned.id}", headers=auth_headers, json={"budget": 15})
     assert resp.status_code == 200
+    assert resp.json()["budget_explicit"] is True
     await _close(client, auth_headers, current.id)
 
     active, new_planned = await _sprints(test_project.id)
     assert active.id == planned.id and active.budget == 15
     assert new_planned.budget == 15
-    assert new_planned.budget_explicit is True
+    assert new_planned.budget_explicit is False
 
-    # It keeps carrying on later rotations while the default stays null.
+    # It keeps carrying on later rotations while the default stays null:
+    # activation under a null default does not overwrite it.
     await _close(client, auth_headers, active.id)
-    _, after = await _sprints(test_project.id)
+    second_active, after = await _sprints(test_project.id)
+    assert second_active.id == new_planned.id and second_active.budget == 15
     assert after.budget == 15
 
-    # Once a default exists, the default wins for sprints not set by hand;
-    # the carried budget was set by hand, so it is kept.
+    # A default set later reaches the carried budget.
     await _set_default(client, auth_headers, test_project.id, 40)
     await after.refresh()
-    assert after.budget == 15
+    assert after.budget == 40
+
+
+@pytest.mark.asyncio
+async def test_carried_budget_takes_default_set_at_activation(client, auth_headers, test_project):
+    """Unlimited -> default: a carried budget is not hand-set, so a default
+    set without propagation (here written straight to the row) still wins
+    when the sprint activates (re-review R1)."""
+    current, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    resp = await client.patch(f"/api/sprints/{planned.id}", headers=auth_headers, json={"budget": 15})
+    assert resp.status_code == 200
+    await _close(client, auth_headers, current.id)
+    active, carried = await _sprints(test_project.id)
+    assert carried.budget == 15 and carried.budget_explicit is False
+
+    test_project.default_sprint_budget = 30
+    await test_project.save(update_fields={"default_sprint_budget"})
+    await _close(client, auth_headers, active.id)
+
+    now_active, new_planned = await _sprints(test_project.id)
+    assert now_active.id == carried.id
+    assert now_active.budget == 30
+    assert new_planned.budget == 30
 
 
 @pytest.mark.asyncio

@@ -231,11 +231,15 @@ class SprintService:
 
         Budget rule (CHT-1495): the activating sprint takes the project's
         default as it is now unless its budget was set by hand, and the new
-        planned sprint starts at the default. One exception keeps a null
-        ("unlimited") default from silently switching arrears off: when the
-        default is null and the activating sprint's budget was set by hand,
-        the new planned sprint carries that budget forward, marked as set
-        by hand.
+        planned sprint starts at the default. A null ("unlimited") default
+        is the exception, so that rotation cannot silently switch arrears
+        off: at activation a null default never overwrites a budget, and
+        the new planned sprint carries the activating sprint's budget
+        forward. The carried budget is *not* marked as set by hand, so a
+        default set later (unlimited -> 30, or a later change) still
+        reaches it. Clearing the default to null does reach planned
+        sprints, through adopt_default_budget: that is a deliberate change
+        of default, not a rotation.
         """
         next_sprint.status = SprintStatus.ACTIVE
         next_sprint.activated_at = datetime.now(timezone.utc)
@@ -248,10 +252,11 @@ class SprintService:
         # after next_sprint was read must not be overwritten (PR #384
         # review M3).
         default_budget = await self._get_project_default_budget(next_sprint.project_id)
-        await execute_raw(
-            "UPDATE sprints SET budget = ? WHERE id = ? AND budget_explicit = 0",
-            [default_budget, next_sprint.id],
-        )
+        if default_budget is not None:
+            await execute_raw(
+                "UPDATE sprints SET budget = ? WHERE id = ? AND budget_explicit = 0",
+                [default_budget, next_sprint.id],
+            )
         await next_sprint.refresh()
 
         # Only create a new PLANNED sprint if one doesn't already exist
@@ -266,11 +271,7 @@ class SprintService:
         # used to copy the sprint being activated, which was itself a
         # snapshot of the default from when *it* was created, so a changed
         # default never reached a rotation.
-        new_budget = default_budget
-        new_explicit = False
-        if default_budget is None and next_sprint.budget_explicit:
-            new_budget = next_sprint.budget
-            new_explicit = True
+        new_budget = default_budget if default_budget is not None else next_sprint.budget
 
         # Create new Next sprint
         sprint_num = await self._get_next_sprint_number(next_sprint.project_id)
@@ -279,7 +280,6 @@ class SprintService:
             name=f"Sprint {sprint_num}",
             status=SprintStatus.PLANNED,
             budget=new_budget,
-            budget_explicit=new_explicit,
         )
         await new_next.refresh()
 

@@ -36,6 +36,9 @@ class SprintResponse(BaseModel):
     activated_at: DateTimeUTC | None
     closed_at: DateTimeUTC | None
     budget: int | None
+    # True once the budget was set by hand (CHT-1495). A planned sprint
+    # with False follows the project's default_sprint_budget.
+    budget_explicit: bool
     points_spent: int
     limbo: bool
     created_at: DateTimeUTC
