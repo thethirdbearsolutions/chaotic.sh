@@ -31,7 +31,25 @@ vi.mock('./api.js', () => ({
 import { api } from './api.js';
 import { getWebsocket, setWebsocket, getCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
-import { connectWebSocket, dispatch, subscribe, getReconnectDelay, resetWsState, wsProtocols, WS_SUBPROTOCOL } from './ws.js';
+import {
+    connectWebSocket, dispatch, subscribe, getReconnectDelay, resetWsState, wsProtocols, WS_SUBPROTOCOL,
+    WS_OPEN_SETTLE_MS,
+} from './ws.js';
+
+/**
+ * Open the socket and let it settle (CHT-1615): the client counts it as
+ * up only once it has stayed open WS_OPEN_SETTLE_MS.
+ */
+function openAndSettle(ws) {
+    const fake = vi.isFakeTimers();
+    if (!fake) vi.useFakeTimers();
+    try {
+        ws.onopen();
+        vi.advanceTimersByTime(WS_OPEN_SETTLE_MS);
+    } finally {
+        if (!fake) vi.useRealTimers();
+    }
+}
 
 describe('ws.js', () => {
     beforeEach(() => {
@@ -191,7 +209,7 @@ describe('ws.js', () => {
                 showToast.mockClear();
                 vi.advanceTimersByTime(1500);
                 const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
-                ws2.onopen();
+                openAndSettle(ws2);
                 expect(showToast).toHaveBeenCalledWith('Live updates reconnected', 'success');
             } finally {
                 vi.useRealTimers();
@@ -216,7 +234,7 @@ describe('ws.js', () => {
 
                     vi.advanceTimersByTime(1500); // internal reconnect fires
                     const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
-                    ws2.onopen();
+                    openAndSettle(ws2);
 
                     expect(handler).toHaveBeenCalledTimes(1);
                 } finally {
@@ -230,7 +248,7 @@ describe('ws.js', () => {
 
                 connectWebSocket('team-1');
                 const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
-                ws.onopen();
+                openAndSettle(ws);
 
                 expect(handler).not.toHaveBeenCalled();
             });
@@ -245,7 +263,7 @@ describe('ws.js', () => {
 
                 connectWebSocket('team-2'); // deliberate switch — fresh connect, resets wsFailCount
                 const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
-                ws2.onopen();
+                openAndSettle(ws2);
 
                 expect(handler).not.toHaveBeenCalled();
             });
@@ -305,7 +323,7 @@ describe('ws.js', () => {
 
                 expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
                 const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
-                ws2.onopen();
+                openAndSettle(ws2);
                 // Not a reconnect from team-2's perspective — no misleading toast
                 expect(showToast).not.toHaveBeenCalledWith('Live updates reconnected', 'success');
             });
@@ -321,7 +339,7 @@ describe('ws.js', () => {
                     expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
 
                     const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
-                    ws2.onopen();
+                    openAndSettle(ws2);
                     expect(showToast).toHaveBeenCalledWith('Live updates reconnected', 'success');
                     expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
                 } finally {
@@ -370,7 +388,7 @@ describe('ws.js', () => {
                 ws.onclose();
                 expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
 
-                ws.onopen();
+                openAndSettle(ws);
                 expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
             });
 
@@ -380,6 +398,132 @@ describe('ws.js', () => {
                 const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
                 expect(() => ws.onclose()).not.toThrow();
                 expect(() => ws.onopen()).not.toThrow();
+            });
+        });
+
+        // CHT-1615: the server refuses a handshake by accepting it and
+        // closing it at once with the code, so onopen alone does not end
+        // an outage.
+        describe('a refused handshake opens, then closes (CHT-1615)', () => {
+            function lastSocket() {
+                return setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+            }
+
+            it('an open alone does not end the outage until it settles', () => {
+                const handler = vi.fn();
+                subscribe('connection:reconnected', handler);
+                vi.useFakeTimers();
+                try {
+                    connectWebSocket('team-1');
+                    lastSocket().onclose({ code: 1006 });
+                    vi.advanceTimersByTime(1500);
+                    showToast.mockClear();
+                    const ws2 = lastSocket();
+                    ws2.onopen();
+                    vi.advanceTimersByTime(WS_OPEN_SETTLE_MS - 1);
+                    expect(showToast).not.toHaveBeenCalled();
+                    expect(handler).not.toHaveBeenCalled();
+                    expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+                    vi.advanceTimersByTime(1);
+                    expect(showToast).toHaveBeenCalledWith('Live updates reconnected', 'success');
+                    expect(handler).toHaveBeenCalledTimes(1);
+                    expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            it('a message settles it at once', () => {
+                const handler = vi.fn();
+                subscribe('connection:reconnected', handler);
+                vi.useFakeTimers();
+                try {
+                    connectWebSocket('team-1');
+                    lastSocket().onclose({ code: 1006 });
+                    vi.advanceTimersByTime(1500);
+                    const ws2 = lastSocket();
+                    ws2.onopen();
+                    ws2.onmessage({ data: JSON.stringify({ type: 'created', entity: 'issue', data: {} }) });
+                    expect(handler).toHaveBeenCalledTimes(1);
+                    vi.advanceTimersByTime(WS_OPEN_SETTLE_MS);
+                    ws2.onmessage({ data: JSON.stringify({ type: 'created', entity: 'issue', data: {} }) });
+                    expect(handler).toHaveBeenCalledTimes(1); // once per connection
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            it('a 4011 refusal keeps the backoff growing and the toasts quiet', () => {
+                const handler = vi.fn();
+                subscribe('connection:reconnected', handler);
+                vi.useFakeTimers();
+                vi.spyOn(Math, 'random').mockReturnValue(0.5); // no jitter
+                try {
+                    connectWebSocket('team-1');
+                    lastSocket().onclose({ code: 1006 }); // outage: next try in 1 s
+                    vi.advanceTimersByTime(1000);
+                    expect(MockWebSocket).toHaveBeenCalledTimes(2);
+                    showToast.mockClear();
+                    const refused = lastSocket();
+                    refused.onopen();
+                    refused.onclose({ code: 4011 }); // next try in 2 s, not 1 s again
+                    vi.advanceTimersByTime(WS_OPEN_SETTLE_MS + 500);
+                    expect(MockWebSocket).toHaveBeenCalledTimes(2);
+                    vi.advanceTimersByTime(500);
+                    expect(MockWebSocket).toHaveBeenCalledTimes(3);
+                    expect(showToast).not.toHaveBeenCalled();
+                    expect(handler).not.toHaveBeenCalled();
+                    expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+                } finally {
+                    Math.random.mockRestore();
+                    vi.useRealTimers();
+                }
+            });
+
+            it.each([
+                [4001, 'unauthorized'],
+                [4003, 'forbidden'],
+            ])('a %i refusal after an outage stops without a reconnected toast or resync', (code, type) => {
+                const reconnected = vi.fn();
+                const stopped = vi.fn();
+                subscribe('connection:reconnected', reconnected);
+                subscribe(`connection:${type}`, stopped);
+                vi.useFakeTimers();
+                try {
+                    localStorage.setItem('chaotic_token', 'test-token');
+                    connectWebSocket('team-1');
+                    lastSocket().onclose({ code: 1006 });
+                    vi.advanceTimersByTime(1500);
+                    const refused = lastSocket();
+                    refused.onopen();
+                    refused.onclose({ code });
+                    vi.advanceTimersByTime(60000);
+                    expect(stopped).toHaveBeenCalledWith({ code, teamId: 'team-1' }, { type, entity: 'connection' });
+                    expect(reconnected).not.toHaveBeenCalled();
+                    expect(showToast).not.toHaveBeenCalledWith('Live updates reconnected', 'success');
+                    expect(MockWebSocket).toHaveBeenCalledTimes(2);
+                } finally {
+                    localStorage.removeItem('chaotic_token');
+                    vi.useRealTimers();
+                }
+            });
+
+            it('a team switch before the old socket settles drops its settle', () => {
+                const handler = vi.fn();
+                subscribe('connection:reconnected', handler);
+                vi.useFakeTimers();
+                try {
+                    connectWebSocket('team-1');
+                    lastSocket().onclose({ code: 1006 });
+                    vi.advanceTimersByTime(1500);
+                    lastSocket().onopen(); // the reconnect opens, not yet settled
+                    connectWebSocket('team-2');
+                    vi.advanceTimersByTime(WS_OPEN_SETTLE_MS);
+                    expect(handler).not.toHaveBeenCalled();
+                    expect(showToast).not.toHaveBeenCalledWith('Live updates reconnected', 'success');
+                } finally {
+                    vi.useRealTimers();
+                }
             });
         });
 

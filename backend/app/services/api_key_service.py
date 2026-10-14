@@ -246,6 +246,18 @@ class APIKeyService:
         await api_key.refresh()
         return api_key
 
-    async def delete(self, api_key: OxydeAPIKey) -> None:
-        """Delete an API key."""
-        await api_key.delete()
+    async def delete(self, api_key: OxydeAPIKey, *, actor_id: str | None = None) -> None:
+        """Delete an API key. It is revoked first, in the same
+        transaction, so what depended on it ends as on ``revoke`` (its
+        holder sessions and tickets, then after the commit its push
+        devices and sockets) and nothing ends unreported (CHT-1629).
+        A key already revoked is revoked again, harmlessly: the cascade
+        ends only what is still live."""
+        from app.services.revocation_service import RevocationService
+
+        async with revoking():
+            if api_key.is_active:
+                api_key.is_active = False
+                await api_key.save(update_fields={"is_active"})
+            await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)
+            await api_key.delete()

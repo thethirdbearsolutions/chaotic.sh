@@ -91,7 +91,10 @@ either a JWT (`decode_token`) or an API key (`ck_...`, validated via
 inactive. The credential itself is resolved by
 `backend/app/auth/credentials.py`, which `/mcp` shares (CHT-1560). The `/ws` WebSocket endpoint
 goes through the same resolver (`backend/app/ws_auth.py`, CHT-1603) and
-checks team membership before accepting. It takes the credential from an
+checks team membership before registering the socket for any broadcast.
+A refused handshake is accepted and closed at once, with nothing sent,
+so the client gets the close code (4001 sign in again, 4003 forbidden,
+4011 retry; CHT-1615). It takes the credential from an
 `Authorization: Bearer` header on the upgrade request, or from a
 `chaotic.bearer.<token>` entry in `Sec-WebSocket-Protocol` (the web app's
 way, offered beside `chaotic`), so it stays out of the URL. The old

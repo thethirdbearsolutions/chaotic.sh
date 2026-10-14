@@ -241,24 +241,60 @@ class TestEndpoint:
         (lambda u: "garbage", 4001),
         (lambda u: jwt_for(u, expires_delta=timedelta(seconds=-5)), 4001),
     ])
-    async def test_refused_before_accept(self, test_user, test_team, make_token, code):
+    async def test_refused_handshake_is_accepted_then_closed_with_the_code(
+        self, test_user, test_team, make_token, code,
+    ):
+        """CHT-1615: a close before accept would reach the client as an
+        HTTP 403 whatever the code; accepted then closed, the code
+        reaches it. Nothing is sent and the socket is never registered."""
+        from app.websocket import manager
+
         ws = FakeWebSocket()
         await websocket_endpoint(ws, team_id=test_team.id, token=make_token(test_user))
+        ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=code)
-        ws.accept.assert_not_awaited()
+        ws.send_json.assert_not_awaited()
+        assert ws not in manager.active_connections.get(test_team.id, set())
+        assert ws not in manager.owners
 
-    async def test_cross_team_refused_before_accept(self, test_user, test_team):
+    async def test_cross_team_is_refused_4003(self, test_user, test_team):
         other = await OxydeTeam.objects.create(name="Other", key="OTH")
         ws = FakeWebSocket(headers={"Authorization": f"Bearer {jwt_for(test_user)}"})
         await websocket_endpoint(ws, team_id=other.id)
+        ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=4003)
-        ws.accept.assert_not_awaited()
+
+    @pytest.mark.parametrize("subprotocols", [
+        ["chaotic", "chaotic.bearer.garbage"],
+        ["chaotic", "chaotic.bearer.one", "chaotic.bearer.two"],  # refused while reading them
+    ])
+    async def test_a_refusal_selects_chaotic_when_offered(self, test_team, subprotocols):
+        """A browser that offered subprotocols fails a handshake that
+        selects none, and would see 1006 instead of the code."""
+        ws = FakeWebSocket(subprotocols=subprotocols)
+        await websocket_endpoint(ws, team_id=test_team.id)
+        ws.accept.assert_awaited_once_with(subprotocol="chaotic")
+        ws.close.assert_awaited_once_with(code=4001)
+
+    async def test_only_the_bearer_entry_offered_selects_none(self, test_team):
+        ws = FakeWebSocket(subprotocols=["chaotic.bearer.garbage"])
+        await websocket_endpoint(ws, team_id=test_team.id)
+        ws.accept.assert_awaited_once_with(subprotocol=None)
+        ws.close.assert_awaited_once_with(code=4001)
 
     async def test_check_error_is_4011(self, test_team):
         ws = FakeWebSocket()
         with patch("app.ws_auth.authenticate", AsyncMock(side_effect=RuntimeError("db down"))):
             await websocket_endpoint(ws, team_id=test_team.id, token="x")
+        ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=4011)
+
+    @pytest.mark.parametrize("fails", ["accept", "close"])
+    async def test_a_client_gone_during_the_refusal_is_harmless(self, test_team, fails):
+        ws = FakeWebSocket()
+        getattr(ws, fails).side_effect = RuntimeError("client went away")
+        await websocket_endpoint(ws, team_id=test_team.id, token="garbage")
+        ws.accept.assert_awaited_once()
 
     async def test_non_disconnect_exception_still_cleans_up_connection(self, test_user, test_team):
         """CHT-1225: receive_text() raising anything other than

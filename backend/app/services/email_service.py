@@ -46,6 +46,21 @@ def fire_and_forget(coro) -> asyncio.Task:
     return task
 
 
+def in_flight() -> int:
+    """How many fire-and-forget tasks have not finished."""
+    return sum(1 for t in _background_tasks if not t.done())
+
+
+async def drain() -> None:
+    """Wait for every fire-and-forget task, including any it schedules
+    (shutdown, tests). Unbounded: the shutdown drain in ``app.main``
+    bounds it (CHT-1634)."""
+    while _background_tasks:
+        await asyncio.gather(*list(_background_tasks), return_exceptions=True)
+        for task in [t for t in _background_tasks if t.done()]:
+            _background_tasks.discard(task)
+
+
 class EmailService:
     """Renders and sends the two plain-text email templates."""
 

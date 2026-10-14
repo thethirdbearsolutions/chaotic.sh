@@ -36,13 +36,17 @@ A credential presented in more than one place must be the same in each,
 or the handshake is refused. ``team_id`` stays in the query: it is not a
 secret.
 
-Close codes: 4001 when the credential is missing, malformed, of a kind /ws
-does not take, unknown, expired or revoked (the client should sign in
-again); 4003 when the credential is good but its user is deactivated or
-an agent, its scope does not allow reading, or it has no access to
-``team_id``; 4011
-when the check itself failed. A user who no longer exists is 4001, as it
-is 401 on REST (it was 4003 before CHT-1567).
+Close codes, sent the same way whether the handshake is refused or an
+open socket is closed (``refuse`` accepts the handshake, then closes it
+with the code, CHT-1615): 4001 when the credential is missing,
+malformed, of a kind /ws does not take, unknown, expired or revoked (the
+client should sign in again); 4003 when the credential is good but its
+user is deactivated or an agent, its scope does not allow reading, or it
+has no access to ``team_id``; 4011 when the check itself failed (the
+client should retry). A user who no longer exists is 4001, as it is 401
+on REST (it was 4003 before CHT-1567). A client cannot tell a refused
+handshake from an open socket closed at once, and need not: the code
+says what to do.
 
 The check is repeated while the socket is open (``watch``), every
 ``WS_AUTH_RECHECK_SECONDS`` (30 by default): a credential that has been
@@ -57,7 +61,11 @@ for expiry and for revocations made by another process. An OAuth access token li
 opened with one closes (4001) when it expires; a client that can refresh
 (the native app) reconnects with its new token. The web app cannot
 refresh its login JWT, so on 4001 it signs out (or, if another tab has
-signed in since, just stops), and on 4003 it stops reconnecting.
+signed in since, just stops), and on 4003 it stops reconnecting. Since
+a refused handshake opens before it closes, a client should not take
+``onopen`` as "the credential was good": the web app counts a socket as
+up (clearing its backoff) only once it has stayed open a moment or a
+message has arrived (``WS_OPEN_SETTLE_MS``, ``frontend/src/ws.js``).
 """
 from __future__ import annotations
 
@@ -92,6 +100,33 @@ QUERY_TOKEN_DEPRECATION = (
     "subprotocols 'chaotic' and 'chaotic.bearer.<token>'."
 )
 _warned_query_token = False
+
+
+async def refuse(websocket, code: int) -> None:
+    """Refuse a handshake so the client sees ``code`` (CHT-1615): accept
+    the socket, then close it at once with the code. Nothing is sent in
+    between, and the socket is never registered for broadcasts.
+
+    A close before accept never reaches the client as a code: the server
+    turns it into an HTTP 403 on the handshake, whatever the code. A
+    distinct denial status (401 / 403 / 503) would reach a native client
+    (OkHttp hands ``onFailure`` the response) but not a browser: a
+    failed handshake reaches a page only as a close with code 1006, by
+    design, so the web app could not tell "sign in again" from
+    "forbidden". A close frame after accept reaches both, as
+    ``CloseEvent.code`` and as OkHttp's ``onClosing(code, ...)``, the same
+    way a mid-connection close does.
+
+    ``chaotic`` is selected if the client offered it, as on a good
+    handshake: a browser that offered subprotocols fails a handshake
+    whose response selects none, and would see 1006 again."""
+    subprotocol = SUBPROTOCOL if SUBPROTOCOL in _offered_subprotocols(websocket) else None
+    try:
+        await websocket.accept(subprotocol=subprotocol)
+        await websocket.close(code=code)
+    except Exception:
+        # The client went away during the handshake: nobody to tell.
+        logger.debug("WebSocket refusal (%s) not delivered", code, exc_info=True)
 
 
 class WsRefused(Exception):

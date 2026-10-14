@@ -31,8 +31,15 @@ ContextVars, but not Oxyde's transaction) is outside it.
 Each hook runs on its own, bounded by ``HOOK_TIMEOUT_SECONDS``: one that
 raises or times out is logged and the others still run, and nothing a
 hook does can undo or fail the revocation, which has already committed.
-The revoking request does wait for its hooks (the socket hook first: it
-is in memory). Hooks are in-process: a revocation made by another
+The revoking request does wait for its hooks, so the whole dispatch is
+bounded too, by ``DISPATCH_TIMEOUT_SECONDS`` (CHT-1629): deleting a user
+reports several events, and per-hook bounds alone would add up. Hooks
+run hook by hook over every event, the socket hook first (it is in
+memory and cannot block), so no socket waits on a slow push write. A
+timeout bounds the waiting, not the work: a database query a timeout
+abandons still runs to its end on its pooled connection, and the next
+query waits for it (``tests/test_credential_events.py``,
+``TestIsolation``). Hooks are in-process: a revocation made by another
 process (a second worker, a script against the database) does not reach
 this one's sockets; the periodic ``/ws`` re-check
 (``app.ws_auth.watch``) is the backstop for that. A process that died
@@ -101,6 +108,10 @@ Hook = Callable[[CredentialsEnded], Awaitable[None]]
 # logged): the revoking request waits for its hooks (PR #356 review, 3).
 HOOK_TIMEOUT_SECONDS = 5.0
 
+# How long one dispatch (every hook on every event) may take in all,
+# whatever the number of events and hooks (CHT-1629).
+DISPATCH_TIMEOUT_SECONDS = 15.0
+
 # Extra hooks (tests); the dependents themselves are in _builtin_hooks.
 _extra_hooks: list[Hook] = []
 
@@ -149,7 +160,8 @@ def register(hook: Hook) -> Callable[[], None]:
 
 async def dispatch(events: Iterable[CredentialsEnded]) -> None:
     """Run every hook on every event, each on its own and each bounded by
-    ``HOOK_TIMEOUT_SECONDS`` (module docstring). Never raises (except
+    ``HOOK_TIMEOUT_SECONDS``, the whole bounded by
+    ``DISPATCH_TIMEOUT_SECONDS`` (module docstring). Never raises (except
     the caller's own cancellation)."""
     global _generation
 
@@ -162,9 +174,23 @@ async def dispatch(events: Iterable[CredentialsEnded]) -> None:
     except Exception:  # pragma: no cover -- an import error in a hook module
         logger.exception("could not load the credential-ended hooks")
         return
-    for event in events:
-        for hook in hooks:
-            name = getattr(hook, "__qualname__", hook)
+    progress = {"done": 0}
+    try:
+        await asyncio.wait_for(_run_hooks(hooks, events, progress), DISPATCH_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        logger.error(
+            "credential-ended dispatch stopped after %ss: %d of %d hook runs left (reasons=%s)",
+            DISPATCH_TIMEOUT_SECONDS, len(hooks) * len(events) - progress["done"],
+            len(hooks) * len(events), sorted({e.reason for e in events}),
+        )
+
+
+async def _run_hooks(hooks: list[Hook], events: list[CredentialsEnded], progress: dict) -> None:
+    # Hook by hook, so the socket hook has closed every socket before
+    # the push hook writes anything.
+    for hook in hooks:
+        name = getattr(hook, "__qualname__", hook)
+        for event in events:
             try:
                 await asyncio.wait_for(hook(event), HOOK_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
@@ -174,6 +200,7 @@ async def dispatch(events: Iterable[CredentialsEnded]) -> None:
                 )
             except Exception:
                 logger.exception("credential-ended hook %s failed (reason=%s)", name, event.reason)
+            progress["done"] += 1
 
 
 def _held() -> _Held | None:
