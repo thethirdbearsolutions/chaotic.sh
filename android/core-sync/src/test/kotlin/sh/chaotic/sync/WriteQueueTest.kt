@@ -348,13 +348,33 @@ class WriteQueueTest {
         remote.answerWrite = { answers.removeFirst() }
         val key = assertNotNull(queue.comment(issue(), "once"))
 
-        assertEquals(FlushOutcome.Done(WriteQueue.FIRST_RETRY_MILLIS), queue.flush())
+        // Again after exactly the server's Retry-After, not counted as a failure.
+        assertEquals(FlushOutcome.Done(1_000), queue.flush())
+        assertEquals(0, store.pendingWrites().single().attempts)
         assertEquals(emptyList(), store.refusals())
-        now += WriteQueue.FIRST_RETRY_MILLIS
+        now += 1_000
         assertEquals(FlushOutcome.Done(null), queue.flush())
 
         assertEquals(listOf(key, key), remote.writesSent.map { it.idempotencyKey })
         assertEquals(emptyList(), store.pendingWrites())
+    }
+
+    @Test
+    fun aServerThatKeepsSayingBusyFallsBackToTheBackoff() = runTest {
+        remote.answerWrite = { Remote.HttpError(503, WriteQueue.BUSY, retryAfterMillis = 1_000) }
+        queue.comment(issue(), "busy")
+
+        repeat(WriteQueue.MAX_HINTED_RETRIES) {
+            assertEquals(FlushOutcome.Done(1_000), queue.flush())
+            now += 1_000
+        }
+        // Then it counts, and waits as any failure does.
+        assertEquals(FlushOutcome.Done(WriteQueue.FIRST_RETRY_MILLIS), queue.flush())
+        assertEquals(1, store.pendingWrites().single().attempts)
+        // A hint after a counted failure is honoured again.
+        now += WriteQueue.FIRST_RETRY_MILLIS
+        assertEquals(FlushOutcome.Done(1_000), queue.flush())
+        assertEquals(1, store.pendingWrites().single().attempts)
     }
 
     @Test

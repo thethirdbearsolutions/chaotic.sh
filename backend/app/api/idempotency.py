@@ -19,12 +19,15 @@ On a route marked ``@idempotent``, sent with the header:
      again, status and body, with ``Idempotent-Replayed: true``, and
      nothing is done;
    * an answer older than that, a tombstone kept for
-     ``TOMBSTONE_RETENTION`` (30 days): 409 ``idempotency_key_expired``.
-     The write was done; it is not done again, and its answer is gone;
+     ``TOMBSTONE_RETENTION`` (30 days): 409 ``idempotency_key_expired``,
+     saying what the first answer was (done, or refused with its
+     status, which the tombstone keeps). It is not done again, and the
+     answer itself is gone;
    * no answer yet, claimed less than ``STALE_CLAIM`` ago: 409
      ``idempotency_in_flight`` with ``Retry-After``. The first request
-     is still running; the resend is answered at once rather than
-     waiting on it, and its retry gets the first one's answer;
+     has claimed the key and not yet begun step 2 (once it has, the
+     resend's claim waits on its write lock, below, and then finds its
+     answer); its retry gets the first one's answer;
    * no answer, claimed longer ago: the request that claimed it died
      before its write committed (the write and its answer commit
      together), so this request takes the claim over;
@@ -34,13 +37,20 @@ On a route marked ``@idempotent``, sent with the header:
 2. **Write**, in one transaction around the endpoint, with its answer
    stored in the same transaction (only if the claim is still this
    request's: a request that outlived ``STALE_CLAIM`` and lost its claim
-   rolls its write back), so the answer exists if and only if the write
-   committed. The transaction is deferred: the endpoint's reads take no
-   lock, and SQLite's write lock is held from its first write to the
-   commit, which includes building the response after the write. That
-   is the cost of the guarantee, and the reason the claim is separate:
-   no other request waits on a keyed request's reads, and a duplicate
-   never waits on it at all.
+   rolls everything back, refusal-path writes included), so the answer
+   exists if and only if the write committed.
+
+   The transaction's first statement takes SQLite's write lock (a
+   zero-row UPDATE, as ``IssueService._take_relation_write_lock``
+   does). A deferred transaction that has read cannot wait for the lock
+   later: if anyone committed since its first read, its first write
+   fails at once (SQLITE_BUSY_SNAPSHOT, CHT-1411), and every endpoint
+   reads before it writes. Taken first, the lock is waited for (up to
+   the busy timeout) instead, and nothing can commit under the
+   endpoint. The window is the endpoint alone: authentication, the
+   claim, the sweep and reading the body come before it, and the
+   response is sent after the commit. Other writers queue behind it for
+   that long; a duplicate of it waits too, and then replays its answer.
 
    * 2xx, and a 4xx that is the request's answer: stored, and committed
      with whatever the request wrote (a refused request commits what it
@@ -283,12 +293,33 @@ async def _claim(user_id: str, key: str, method: str, path: str, digest: str) ->
                 raise _in_flight()
             return _Claim(existing.id, token)
         if existing.created_at <= now - REPLAY_WINDOW:
-            raise _refusal(
-                status.HTTP_409_CONFLICT, "idempotency_key_expired",
-                f"This write was already done, more than {int(REPLAY_WINDOW.total_seconds() // 3600)} hours ago, "
-                "and its answer is no longer kept. It was not done again.",
-            )
+            raise _expired(existing)
         raise _Replay(existing)
+
+
+def _expired(record: OxydeIdempotencyRecord) -> HTTPException:
+    """The answer to a resend of a key whose answer is past the replay
+    window: what the first answer was, without it."""
+    hours = int(REPLAY_WINDOW.total_seconds() // 3600)
+    if record.refused:
+        message = (
+            f"This request was already answered more than {hours} hours ago: it was refused "
+            f"({record.status}). That answer is no longer kept, and the request was not sent again."
+        )
+    else:
+        message = (
+            f"This write was already done, more than {hours} hours ago, and its answer is no "
+            "longer kept. It was not done again."
+        )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "error_code": "idempotency_key_expired",
+            "message": message,
+            "original_status": record.status,
+            "original_refused": record.refused,
+        },
+    )
 
 
 async def _answer(claim: _Claim, *, status_code: int, refused: bool, body: str | None,
@@ -304,12 +335,20 @@ async def _answer(claim: _Claim, *, status_code: int, refused: bool, body: str |
         raise _ClaimLost(claim.id)
 
 
-async def _release(claim: _Claim) -> None:
-    """Drop this request's claim (a resend is then a fresh attempt)."""
-    await execute_raw(
-        "DELETE FROM idempotency_records WHERE id = ? AND claim_token = ? AND status IS NULL",
+async def _release(claim: _Claim) -> bool:
+    """Drop this request's claim (a resend is then a fresh attempt).
+    False when it was no longer this request's."""
+    released = await execute_raw(
+        "DELETE FROM idempotency_records WHERE id = ? AND claim_token = ? AND status IS NULL RETURNING id",
         [claim.id, claim.token],
     )
+    return bool(released)
+
+
+async def _take_write_lock() -> None:
+    """SQLite's write lock, as step 2's first statement (module
+    docstring): a write statement that changes nothing."""
+    await execute_raw("UPDATE idempotency_records SET status = status WHERE 0", [])
 
 
 async def _release_after_rollback(claim: _Claim) -> None:
@@ -373,6 +412,7 @@ async def _idempotency_scope(request: Request, principal: CurrentPrincipal):
     refusal: HTTPException | None = None
     try:
         async with atomic():
+            await _take_write_lock()
             try:
                 yield
             except HTTPException as exc:
@@ -383,8 +423,9 @@ async def _idempotency_scope(request: Request, principal: CurrentPrincipal):
                         claim, status_code=exc.status_code, refused=True,
                         body=json.dumps(jsonable_encoder(exc.detail)), headers=dict(exc.headers or {}),
                     )
-                else:
-                    await _release(claim)
+                elif not await _release(claim):
+                    # Taken over: what this request wrote must not commit.
+                    raise _ClaimLost(claim.id) from exc
                 refusal = exc
             else:
                 response: Response | None = getattr(request.state, _RESPONSE, None)

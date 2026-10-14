@@ -243,7 +243,10 @@ class TestExpiry:
         await self._age(hours=25)
         resp = await _comment(client, auth_headers, test_issue, key="k-1")
         assert resp.status_code == 409
-        assert resp.json()["detail"]["error_code"] == "idempotency_key_expired"
+        detail = resp.json()["detail"]
+        assert detail["error_code"] == "idempotency_key_expired"
+        assert detail["original_status"] == 201 and detail["original_refused"] is False
+        assert "already done" in detail["message"]
         assert len(await _comments(test_issue)) == 1
 
     async def test_and_after_the_sweep_cleared_its_answer(self, client, auth_headers, test_issue):
@@ -255,6 +258,18 @@ class TestExpiry:
         resp = await _comment(client, auth_headers, test_issue, key="k-1")
         assert resp.json()["detail"]["error_code"] == "idempotency_key_expired"
         assert len(await _comments(test_issue)) == 1
+
+    async def test_a_late_resend_of_a_refused_request_is_not_called_done(self, client, auth_headers):
+        url = "/api/inbox/00000000-0000-0000-0000-000000000000/read"
+        first = await client.post(url, headers=_keyed(auth_headers, "k-1"))
+        assert first.status_code == 404
+        await self._age(hours=25)
+        resp = await client.post(url, headers=_keyed(auth_headers, "k-1"))
+        detail = resp.json()["detail"]
+        assert resp.status_code == 409
+        assert detail["error_code"] == "idempotency_key_expired"
+        assert detail["original_status"] == 404 and detail["original_refused"] is True
+        assert "refused (404)" in detail["message"] and "already done" not in detail["message"]
 
     async def test_a_late_resend_of_another_request_is_still_a_reused_key(self, client, auth_headers, test_issue):
         await _comment(client, auth_headers, test_issue, key="k-1")
@@ -536,12 +551,21 @@ class TestConcurrentResend:
         assert second.headers[REPLAYED_HEADER] == "true"
         assert len(await _comments(test_issue)) == 1
 
-    async def test_a_resend_while_the_first_runs_is_told_to_retry(self, pool_of_four, client, auth_headers, test_issue):
-        """Both arrive before either answers: the duplicate is answered at
-        once (it does not wait on the first), and its retry gets the first
-        one's answer. The write is done once."""
+    async def test_a_resend_before_the_first_begins_its_write_is_told_to_retry(
+        self, pool_of_four, client, auth_headers, test_issue,
+    ):
+        """The first has claimed the key but not begun step 2: the
+        duplicate is answered at once, and its retry gets the first one's
+        answer. The write is done once."""
+        original = idempotency._take_write_lock
         entered = asyncio.Event()
-        with _slow_comment(entered, 0.3, before_write=True):
+
+        async def slow_to_start() -> None:
+            entered.set()
+            await asyncio.sleep(0.3)
+            await original()
+
+        with patch.object(idempotency, "_take_write_lock", slow_to_start):
             first_task = asyncio.ensure_future(_comment(client, auth_headers, test_issue, key="k-1"))
             await entered.wait()
             second = await _comment(client, auth_headers, test_issue, key="k-1")
@@ -555,28 +579,52 @@ class TestConcurrentResend:
         assert retried.json() == first.json() and retried.headers[REPLAYED_HEADER] == "true"
         assert len(await _comments(test_issue)) == 1
 
-    async def test_a_keyed_request_takes_no_lock_while_it_reads(
+    async def test_a_commit_during_a_keyed_request_s_reads_cannot_fail_it(
         self, pool_of_four, client, auth_headers, test_issue,
     ):
-        """The claim commits on its own, so a keyed request holds SQLite's
-        write lock only from its own first write: another writer is not
-        held up by its reads. The price: a keyed request whose reads
-        another commit overtook cannot then write (SQLite's snapshot
-        rule), and is answered with a retryable 503; nothing was written,
-        the claim is released, and the retry does the write once."""
+        """The probe from the re-review: the keyed request has read and
+        pauses before writing while another writer tries to commit. Step 2
+        took the write lock first, so the other writer waits for it
+        (within the busy timeout) instead of overtaking it; both succeed,
+        and nothing answers 503."""
+        original = IssueService.create_comment
         entered = asyncio.Event()
-        with _slow_comment(entered, 0.5, before_write=True):
+
+        async def read_then_pause(self, *args, **kwargs):
+            await OxydeIssue.objects.filter(id=test_issue.id).first()
+            entered.set()
+            await asyncio.sleep(0.15)
+            return await original(self, *args, **kwargs)
+
+        with patch.object(IssueService, "create_comment", read_then_pause):
             keyed = asyncio.ensure_future(_comment(client, auth_headers, test_issue, key="k-1"))
             await entered.wait()
             other = await client.patch(f"/api/issues/{test_issue.id}", json={"title": "Meanwhile"}, headers=auth_headers)
             first = await keyed
+        assert first.status_code == 201, first.text
         assert other.status_code == 200, other.text
-        assert first.status_code == 503, first.text
-        assert first.json()["detail"]["error_code"] == "idempotency_busy"
-        assert await _comments(test_issue) == []
+        assert len(await _comments(test_issue)) == 1
+        assert (await OxydeIssue.objects.get(id=test_issue.id)).title == "Meanwhile"
 
-        retried = await _comment(client, auth_headers, test_issue, key="k-1")
-        assert retried.status_code == 201
+    async def test_a_keyed_request_waits_for_a_writer_that_finishes_in_time(
+        self, pool_of_four, client, auth_headers, test_issue,
+    ):
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def hold() -> None:
+            async with atomic():
+                await execute_raw("UPDATE users SET can_register = can_register WHERE 0", [])
+                started.set()
+                await release.wait()
+
+        holder = asyncio.ensure_future(hold())
+        await started.wait()
+        keyed = asyncio.ensure_future(_comment(client, auth_headers, test_issue, key="k-1"))
+        await asyncio.sleep(0.1)
+        release.set()
+        await holder
+        resp = await keyed
+        assert resp.status_code == 201, resp.text
         assert len(await _comments(test_issue)) == 1
 
     async def test_a_resend_while_the_first_writes_waits_for_it(
@@ -621,6 +669,23 @@ class TestConcurrentResend:
         retried = await _comment(client, auth_headers, test_issue, key="k-1")
         assert retried.status_code == 201
         assert len(await _comments(test_issue)) == 1
+
+    async def test_a_request_that_lost_its_claim_commits_nothing_even_when_refused(
+        self, client, auth_headers, test_issue,
+    ):
+        """A refusal that is not stored (a 409) releases the claim and
+        commits what the request wrote; if the claim was taken over, the
+        release finds nothing, and nothing commits."""
+        async def taken_over_then_refused(*args, **kwargs):
+            await execute_raw("UPDATE idempotency_records SET claim_token = 'someone-else'", [])
+            raise HTTPException(status_code=409, detail={"error_code": "sprint_in_arrears"})
+
+        with patch("app.api.issues.fill_principals", side_effect=taken_over_then_refused):
+            resp = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["error_code"] == "idempotency_in_flight"
+        # The comment was written before the refusal, and went with it.
+        assert await _comments(test_issue) == []
 
     async def test_a_live_claim_is_in_flight(self, client, auth_headers, test_user, test_issue):
         path = f"/api/issues/{test_issue.id}/comments"

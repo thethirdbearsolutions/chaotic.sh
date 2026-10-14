@@ -62,9 +62,12 @@ sealed interface FlushOutcome {
  *   write that a newer one supersedes ([PendingWrite.supersedes]) is
  *   dropped instead of stalling, and a stalled one is dropped when a
  *   newer one is queued, so a retry never undoes the newer change.
- * - 409 `idempotency_in_flight`: the server is still doing this write
- *   from an earlier send whose answer was lost. Waits and goes again, as
- *   for a 429; the next send gets that earlier send's answer.
+ * - 409 `idempotency_in_flight` (the server is still doing this write
+ *   from an earlier send whose answer was lost) or 503 `idempotency_busy`
+ *   (other writes held the database): goes again after exactly the
+ *   server's Retry-After, without counting as a failure, up to
+ *   [MAX_HINTED_RETRIES] times in a row; after that, as any passing
+ *   failure. The next send gets the earlier send's answer.
  * - Any other 4xx: refused (arrears, limbo, someone else already decided
  *   the gate, a value the server will not take, or 409
  *   `idempotency_key_expired`: the write was done long ago and its answer
@@ -97,6 +100,9 @@ class WriteQueue(
     private val picking = Mutex()
     private var sending: String? = null
     private var failures = 0
+
+    /** In-flight or busy answers in a row, per write; kept only while the app runs. */
+    private val hinted = HashMap<String, Int>()
 
     // What a person can do. Each returns the write's key (for an undo), or
     // null when there is nothing to do: the server did not offer that
@@ -301,7 +307,15 @@ class WriteQueue(
 
     /** Record the server's answer to [write]: done, refused, or to be tried again later. */
     private suspend fun CacheStore.record(write: PendingWrite, result: Remote<Any?>) {
+        val hint = (result as? Remote.HttpError)?.takeIf { it.isBusyHint() }?.retryAfterMillis ?: 0
+        val bounces = hinted.remove(write.key) ?: 0
         when {
+            hint > 0 && bounces < MAX_HINTED_RETRIES -> {
+                // The server says when: go again then, not counted against the write.
+                hinted[write.key] = bounces + 1
+                rescheduleWrite(write.key, write.attempts, nowMillis() + hint.coerceAtMost(MAX_RETRY_MILLIS))
+            }
+
             result is Remote.Ok -> completeWrite(write.key, effect(write, result.value))
 
             result is Remote.HttpError && !result.isTransient() ->
@@ -475,6 +489,12 @@ class WriteQueue(
         /** The server's answer while it is still doing an earlier send of the same write. */
         const val IN_FLIGHT = "idempotency_in_flight"
 
+        /** The server's answer when other writes held its database too long. */
+        const val BUSY = "idempotency_busy"
+
+        /** In-flight or busy answers in a row sent again after just the server's Retry-After. */
+        const val MAX_HINTED_RETRIES = 5
+
         const val FIRST_RETRY_MILLIS = 5_000L
         const val MAX_RETRY_MILLIS = 15 * 60_000L
 
@@ -503,7 +523,12 @@ class WriteQueue(
         private const val HTTP_TOO_MANY = 429
         private const val HTTP_SERVER = 500
 
+        private const val HTTP_UNAVAILABLE = 503
+
         private val DECISIONS = setOf(WriteKind.APPROVE, WriteKind.REJECT, WriteKind.ARCHIVE)
+
+        private fun Remote.HttpError.isBusyHint() =
+            (status == HTTP_CONFLICT && errorCode == IN_FLIGHT) || (status == HTTP_UNAVAILABLE && errorCode == BUSY)
 
         private fun Remote.HttpError.isTransient() =
             status >= HTTP_SERVER || status == HTTP_TIMEOUT || status == HTTP_TOO_EARLY || status == HTTP_TOO_MANY ||
