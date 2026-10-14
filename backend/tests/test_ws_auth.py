@@ -8,7 +8,10 @@ fake socket against real credentials; e2e/test_websocket_auth.py drives
 the real handshake.
 """
 import asyncio
+import base64
 import logging
+import os
+import uuid
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -32,10 +35,16 @@ class FakeWebSocket:
     """Enough of starlette's WebSocket for the endpoint: headers, the
     offered subprotocols, and a receive that blocks until closed."""
 
-    def __init__(self, *, headers=None, subprotocols=None):
+    def __init__(self, *, headers=None, subprotocols=None, client=None, denial=False):
         self.headers = Headers(headers or {})
         self.scope = {"type": "websocket", "subprotocols": list(subprotocols or [])}
+        if denial:
+            # The server takes an HTTP response for a handshake (uvicorn does).
+            self.scope["extensions"] = {"websocket.http.response": {}}
+        if client is not None:
+            self.client = client
         self.accept = AsyncMock()
+        self.send_denial_response = AsyncMock()
         self.send_json = AsyncMock()
         self._closed = asyncio.Event()
         self.close = AsyncMock(side_effect=lambda code=1000: self._closed.set())
@@ -282,12 +291,37 @@ class TestEndpoint:
         ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=4001)
 
-    async def test_check_error_is_4011(self, test_team):
+    async def test_check_error_is_an_http_503(self, test_team):
+        """CHT-1637: a failed check is refused before accept, with a 503 and
+        Retry-After, so a tab on a bundle from before CHT-1615 (which
+        counts any onopen as up and resyncs) sees 1006 and backs off."""
+        ws = FakeWebSocket(denial=True)
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=RuntimeError("db down"))):
+            await websocket_endpoint(ws, team_id=test_team.id, token="x")
+        ws.accept.assert_not_awaited()
+        ws.close.assert_not_awaited()
+        [response] = ws.send_denial_response.await_args.args
+        assert response.status_code == 503
+        assert response.headers["retry-after"] == str(ws_auth.RETRY_AFTER_SECONDS)
+
+    async def test_check_error_is_4011_without_the_denial_extension(self, test_team):
+        """A server that cannot send an HTTP response for a handshake gets
+        the close code, as before."""
         ws = FakeWebSocket()
         with patch("app.ws_auth.authenticate", AsyncMock(side_effect=RuntimeError("db down"))):
             await websocket_endpoint(ws, team_id=test_team.id, token="x")
         ws.accept.assert_awaited_once_with(subprotocol=None)
         ws.close.assert_awaited_once_with(code=4011)
+        ws.send_denial_response.assert_not_awaited()
+
+    async def test_a_credential_refusal_keeps_its_close_code_with_the_denial_extension(self, test_team):
+        """4001 / 4003 must reach a browser as codes, so they are still
+        accepted and closed when the server could send a status."""
+        ws = FakeWebSocket(denial=True)
+        await websocket_endpoint(ws, team_id=test_team.id, token="garbage")
+        ws.accept.assert_awaited_once_with(subprotocol=None)
+        ws.close.assert_awaited_once_with(code=4001)
+        ws.send_denial_response.assert_not_awaited()
 
     async def test_a_refusal_is_logged_without_the_credential(self, test_team, caplog):
         """PR #359 review, 1: the access log shows a refused handshake as
@@ -740,3 +774,390 @@ class TestWatcherFailure:
             _log_watcher_failure(failed)
         assert caplog.records[0].getMessage() == "WebSocket credential watcher failed"
         assert caplog.records[0].exc_info[1].args == ("boom",)
+
+
+class Unprintable(Exception):
+    def __str__(self):
+        raise RuntimeError("cannot print me")
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """Both refusal limiters on one clock the test moves."""
+    clock = FakeClock()
+    monkeypatch.setattr(ws_auth, "_gate", ws_auth._RefusalGate(clock))
+    monkeypatch.setattr(ws_auth, "_refusal_log", ws_auth._RefusalLog(clock))
+    monkeypatch.setattr(ws_auth, "_check_errors", ws_auth._ErrorLog(clock))
+    return clock
+
+
+def refusal_lines(caplog):
+    return [r.getMessage() for r in caplog.records if r.name == "app.ws_auth" and "Refused" in r.getMessage()]
+
+
+async def refuse_from(host, *, code=4001, reason="Invalid token", denial=True, port=40000):
+    ws = FakeWebSocket(client=(host, port), denial=denial)
+    await ws_auth.refuse(ws, code, reason, "team-1")
+    return ws
+
+
+def held(ws) -> bool:
+    """Refused by accept then close: the connection is held until the
+    client answers the close frame."""
+    return ws.accept.await_count == 1 and ws.close.await_count == 1
+
+
+class TestRefusalLimits:
+    """CHT-1635: a refusal that is accepted and closed holds its connection
+    until the client answers the close frame, up to the server's close
+    timeout; the caps bound how many one address, and all together, can
+    hold, and the refusal line is rate-limited so a flood cannot fill
+    the log."""
+
+    async def test_one_address_holds_at_most_the_cap(self, clock):
+        cap = ws_auth.MAX_HELD_REFUSALS_PER_CLIENT
+        sockets = [await refuse_from("198.51.100.1", port=40000 + i) for i in range(cap)]
+        assert all(held(ws) for ws in sockets)
+
+        over = await refuse_from("198.51.100.1", port=50000)
+        over.accept.assert_not_awaited()
+        over.close.assert_not_awaited()
+        [response] = over.send_denial_response.await_args.args
+        assert response.status_code == 429
+        assert int(response.headers["retry-after"]) >= ws_auth.RETRY_AFTER_SECONDS
+
+        # Another address is not affected.
+        assert held(await refuse_from("198.51.100.2"))
+
+    async def test_the_cap_frees_up_after_the_close_timeout(self, clock):
+        for i in range(ws_auth.MAX_HELD_REFUSALS_PER_CLIENT):
+            await refuse_from("198.51.100.1", port=40000 + i)
+        assert not held(await refuse_from("198.51.100.1"))
+        clock.now += ws_auth.REFUSAL_HOLD_SECONDS - 1
+        assert not held(await refuse_from("198.51.100.1"))
+        clock.now += 1
+        assert held(await refuse_from("198.51.100.1"))
+
+    async def test_throttled_refusals_do_not_extend_the_window(self, clock):
+        """Only refusals that hold a connection are counted: a 429 drops it
+        at once, so a client hammering past the cap is not locked out
+        beyond the close timeout."""
+        for i in range(ws_auth.MAX_HELD_REFUSALS_PER_CLIENT):
+            await refuse_from("198.51.100.1", port=40000 + i)
+        for _ in range(50):
+            clock.now += 0.1
+            await refuse_from("198.51.100.1")
+        clock.now += ws_auth.REFUSAL_HOLD_SECONDS - 5
+        assert held(await refuse_from("198.51.100.1"))
+
+    async def test_all_addresses_together_hold_at_most_the_total_cap(self, clock, monkeypatch):
+        monkeypatch.setattr(ws_auth, "MAX_HELD_REFUSALS", 5)
+        sockets = [await refuse_from(f"203.0.113.{i}") for i in range(5)]
+        assert all(held(ws) for ws in sockets)
+        over = await refuse_from("203.0.113.99")
+        assert over.send_denial_response.await_args.args[0].status_code == 429
+        clock.now += ws_auth.REFUSAL_HOLD_SECONDS
+        assert held(await refuse_from("203.0.113.99"))
+
+    async def test_the_address_table_stays_bounded(self, clock, monkeypatch):
+        monkeypatch.setattr(ws_auth, "MAX_HELD_REFUSALS", 5)
+        for i in range(200):
+            clock.now += ws_auth.REFUSAL_HOLD_SECONDS  # each one expires before the next
+            await refuse_from(f"2001:db8:{i:x}::1")  # a /64 each
+        assert len(ws_auth._gate._by_host) <= ws_auth.MAX_HELD_REFUSALS + 1
+
+    async def test_without_the_denial_extension_a_throttled_refusal_closes_before_accept(self, clock):
+        for i in range(ws_auth.MAX_HELD_REFUSALS_PER_CLIENT):
+            await refuse_from("198.51.100.1", denial=False, port=40000 + i)
+        over = await refuse_from("198.51.100.1", denial=False)
+        over.accept.assert_not_awaited()
+        over.close.assert_awaited_once_with(code=4001)  # the server's 403: dropped at once
+
+    async def test_a_503_holds_nothing_and_is_not_counted(self, clock):
+        for _ in range(3 * ws_auth.MAX_HELD_REFUSALS_PER_CLIENT):
+            ws = await refuse_from("198.51.100.1", code=4011, reason="Credential check failed")
+            assert ws.send_denial_response.await_args.args[0].status_code == 503
+        assert held(await refuse_from("198.51.100.1"))
+
+    async def test_a_flood_logs_one_line_per_client_and_reason(self, clock, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            for i in range(100):
+                clock.now += 0.01
+                await refuse_from("198.51.100.1", port=40000 + i)
+            await refuse_from("198.51.100.1", reason="User not found")
+            await refuse_from("198.51.100.2")
+        lines = refusal_lines(caplog)
+        assert len(lines) == 4, lines
+        # The first of each is logged in full, the throttled one too.
+        assert "reason=Invalid token client=198.51.100.1:40000" in lines[0] and "as=close" in lines[0]
+        assert "as=http-429" in lines[1]
+        assert "reason=User not found client=198.51.100.1" in lines[2]
+        assert "client=198.51.100.2" in lines[3]
+
+    async def test_the_next_line_says_how_many_were_not_logged(self, clock, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            for i in range(5):
+                await refuse_from("198.51.100.1", code=4011, reason="Credential check failed", port=40000 + i)
+                clock.now += 1
+            clock.now += 3600  # the next one comes much later
+            await refuse_from("198.51.100.1", code=4011, reason="Credential check failed", port=41000)
+        first, second = refusal_lines(caplog)
+        assert "more like it" not in first
+        assert "client=198.51.100.1:41000" in second
+        # When they happened, not how long since the last line (PR #360 re-review, L4).
+        assert "(4 more like it not logged, between 3604s and 3601s ago)" in second
+
+    async def test_a_forgotten_key_logs_its_count(self, clock, caplog, monkeypatch):
+        monkeypatch.setattr(ws_auth, "_MAX_LOG_KEYS", 2)
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            for _ in range(3):
+                await refuse_from("198.51.100.1", code=4011, reason="Credential check failed")
+            await refuse_from("198.51.100.2", code=4011, reason="Credential check failed")
+            await refuse_from("198.51.100.3", code=4011, reason="Credential check failed")
+            assert len(ws_auth._refusal_log._seen) <= 2
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await refuse_from("198.51.100.4", code=4011, reason="Credential check failed")
+        lines = refusal_lines(caplog)
+        assert any("2 more refusals from 1 clients not logged, 60s ago" in line for line in lines), lines
+
+    async def test_one_ipv6_64_is_one_client(self, clock, caplog):
+        """PR #360 review, M1: one IPv6 host can source from any address in
+        its /64, so the /64 is what the cap and the log limiter count.
+        200 refusals from one /64 hold 8 sockets and write 2 lines."""
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            sockets = [await refuse_from(f"2001:db8:1:2::{i:x}") for i in range(200)]
+        assert sum(held(ws) for ws in sockets) == ws_auth.MAX_HELD_REFUSALS_PER_CLIENT
+        lines = refusal_lines(caplog)
+        assert len(lines) == 2, lines
+        # The line still names the address the refusal came from.
+        assert "client=[2001:db8:1:2::0]:40000" in lines[0]
+        # Another /64 is another client.
+        assert held(await refuse_from("2001:db8:1:3::1"))
+
+    @pytest.mark.parametrize("host, key", [
+        ("198.51.100.7", "198.51.100.7"),
+        ("::ffff:198.51.100.7", "198.51.100.7"),
+        ("2001:db8:1:2:aaaa:bbbb:cccc:dddd", "2001:db8:1:2::/64"),
+        ("fe80::1%eth0", "fe80::/64"),
+        ("-", "-"),
+        ("/run/chaotic.sock", "/run/chaotic.sock"),
+    ])
+    def test_client_key(self, host, key):
+        assert ws_auth._client_key(host) == key
+
+    async def test_an_ipv4_mapped_address_shares_its_ipv4_cap(self, clock):
+        for i in range(ws_auth.MAX_HELD_REFUSALS_PER_CLIENT):
+            await refuse_from("198.51.100.7", port=40000 + i)
+        assert not held(await refuse_from("::ffff:198.51.100.7"))
+
+    async def test_many_clients_log_within_the_budget_and_one_summary(self, clock, caplog, monkeypatch):
+        """PR #360 review, M1: a flood of distinct clients writes at most
+        REFUSAL_LOG_BUDGET lines a minute, then one summary line. (Smaller
+        limits than production, to keep the test light.)"""
+        monkeypatch.setattr(ws_auth, "REFUSAL_LOG_BUDGET", 20)
+        monkeypatch.setattr(ws_auth, "_MAX_LOG_KEYS", 50)
+        budget = ws_auth.REFUSAL_LOG_BUDGET
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            for i in range(120):
+                await refuse_from(f"2001:db8:{i:x}::1")
+            assert len(refusal_lines(caplog)) == budget
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await refuse_from("198.51.100.1")
+        lines = refusal_lines(caplog)
+        assert len(lines) == budget + 2
+        assert f"{120 - budget} more refusals from at least {ws_auth._MAX_LOG_KEYS} clients" in lines[budget]
+        assert "client=198.51.100.1" in lines[-1]
+
+    async def test_a_known_key_over_the_budget_keeps_its_count(self, clock, caplog, monkeypatch):
+        monkeypatch.setattr(ws_auth, "REFUSAL_LOG_BUDGET", 2)
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            await refuse_from("198.51.100.1")
+            await refuse_from("198.51.100.1")  # suppressed: 1
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await refuse_from("198.51.100.2")
+            await refuse_from("198.51.100.3")
+            await refuse_from("198.51.100.1")  # over the budget: counted on its entry
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await refuse_from("198.51.100.1")
+        lines = refusal_lines(caplog)
+        assert "client=198.51.100.1" in lines[-1] and "(2 more like it not logged" in lines[-1], lines
+
+    async def test_a_failed_check_logs_one_traceback_a_minute(self, clock, caplog, test_team):
+        """PR #360 review, L2: every handshake fails during an outage, and
+        a traceback per attempt would fill the log."""
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=RuntimeError("db down"))):
+            with caplog.at_level(logging.ERROR):
+                for _ in range(20):
+                    await websocket_endpoint(FakeWebSocket(denial=True), team_id=test_team.id, token="x")
+                clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+                await websocket_endpoint(FakeWebSocket(denial=True), team_id=test_team.id, token="x")
+        errors = [r for r in caplog.records if "team validation" in r.getMessage()]
+        assert len(errors) == 2
+        assert all(r.exc_info for r in errors)
+        assert "(19 more like it not logged, 60s ago)" in errors[1].getMessage()
+
+    async def test_a_new_kind_of_failure_always_gets_its_traceback(self, clock, caplog, test_team):
+        """PR #360 re-review, M2: an outage's repeats must not hide the
+        first traceback of a different failure, at any call site."""
+        failures = [OSError("database is locked"), OSError("database is locked"), KeyError("real bug")]
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=failures)):
+            with caplog.at_level(logging.ERROR):
+                for _ in failures:
+                    await websocket_endpoint(FakeWebSocket(denial=True), team_id=test_team.id, token="x")
+        logged = [r.exc_info[0] for r in caplog.records if "team validation" in r.getMessage()]
+        assert logged == [OSError, KeyError]
+
+    def test_failure_kinds_ignore_digits_and_ids(self, clock, caplog):
+        log = logging.getLogger("app.main")
+        with caplog.at_level(logging.ERROR):
+            for exc in [
+                OSError("timeout after 31 ms on conn 7f3a9c0e1b2d"),
+                OSError("timeout after 57 ms on conn 0c1d2e3f4a5b"),
+                ValueError("timeout after 31 ms on conn 7f3a9c0e1b2d"),  # another type
+            ]:
+                try:
+                    raise exc
+                except Exception:
+                    ws_auth.log_check_error(log, "check failed")
+            try:
+                raise OSError("timeout after 1 ms on conn 7f3a9c0e1b2d")
+            except Exception:
+                ws_auth.log_check_error(log, "another call site")
+        assert [r.exc_info[0] for r in caplog.records] == [OSError, ValueError, OSError]
+        assert caplog.records[-1].getMessage() == "another call site"
+
+    @pytest.mark.parametrize("make", [
+        lambda n: f"no row for {uuid.uuid4()}",
+        lambda n: f"lookup {uuid.uuid4().hex} failed",
+        lambda n: f"bad token {base64.urlsafe_b64encode(os.urandom(30 + n % 7)).decode()}",
+        lambda n: "jwt " + ".".join(base64.urlsafe_b64encode(os.urandom(24)).decode().rstrip("=") for _ in range(3)),
+        lambda n: f"retry {n} of 200 after {n * 7} ms",
+    ])
+    def test_ids_tokens_and_numbers_do_not_make_new_kinds(self, clock, caplog, make):
+        """PR #360 re-review 2, L5: 200 failures that differ only in an id,
+        a token or a number are one kind: one traceback."""
+        log = logging.getLogger("app.main")
+        with caplog.at_level(logging.ERROR):
+            for n in range(200):
+                try:
+                    raise OSError(make(n))
+                except Exception:
+                    ws_auth.log_check_error(log, "check failed")
+        assert len(caplog.records) == 1
+
+    def test_only_the_start_of_a_long_message_makes_the_kind(self, clock, caplog):
+        log = logging.getLogger("app.main")
+        with caplog.at_level(logging.ERROR):
+            for tail in ("a b " * 500, "c d " * 500):
+                try:
+                    raise OSError("database is locked " + "x y " * 100 + tail)
+                except Exception:
+                    ws_auth.log_check_error(log, "check failed")
+        assert len(caplog.records) == 1
+
+    async def test_an_unprintable_failure_at_the_handshake_is_still_refused(self, clock, caplog, test_team):
+        """PR #360 re-review 2, L6: an exception whose __str__ raises must
+        not escape the limiter and skip the refusal."""
+        ws = FakeWebSocket(denial=True)
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=Unprintable())):
+            with caplog.at_level(logging.ERROR):
+                await websocket_endpoint(ws, team_id=test_team.id, token="x")
+        assert ws.send_denial_response.await_args.args[0].status_code == 503
+        [record] = [r for r in caplog.records if "team validation" in r.getMessage()]
+        assert record.exc_info[0] is Unprintable
+        assert ws_auth._check_errors._kinds  # recorded, as "<unprintable>"
+        assert list(ws_auth._check_errors._kinds)[0][2] == "<unprintable>"
+
+    async def test_an_unprintable_failure_in_the_recheck_still_closes_4011(self, clock, test_user, test_team):
+        token = jwt_for(test_user)
+        with patch("app.ws_auth.authenticate", AsyncMock(side_effect=Unprintable())):
+            refused = await asyncio.wait_for(watch(token, test_team.id, interval=0.01), 5)
+        assert refused.code == 4011
+
+    def test_failure_kinds_are_bounded_and_a_forgotten_count_is_reported(self, clock, caplog, monkeypatch):
+        monkeypatch.setattr(ws_auth, "_MAX_ERROR_KINDS", 2)
+        log = logging.getLogger("app.main")
+
+        def fail(exc_type):
+            try:
+                raise exc_type("boom")
+            except Exception:
+                ws_auth.log_check_error(log, "check failed")
+
+        with caplog.at_level(logging.ERROR):
+            fail(OSError)
+            fail(OSError)  # suppressed
+            fail(KeyError)
+            clock.now += 5
+            fail(ValueError)  # forgets OSError, with its count
+            fail(TypeError)
+        assert len(ws_auth._check_errors._kinds) == 2
+        messages = [r.getMessage() for r in caplog.records]
+        assert len(messages) == 4
+        assert messages[2] == "check failed (and 1 failed checks of other kinds not logged, 5s ago)"
+        assert messages[3] == "check failed"
+
+        # Each forgotten kind's count goes out with the next traceback.
+        caplog.clear()
+        with caplog.at_level(logging.ERROR):
+            fail(ValueError)  # suppressed, at 5
+            clock.now += 2
+            fail(TypeError)  # suppressed, at 7
+            fail(OSError)  # forgets ValueError
+            fail(KeyError)  # forgets TypeError
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            fail(KeyError)  # a repeat with nothing suppressed: no count
+            fail(RuntimeError)
+        messages = [r.getMessage() for r in caplog.records]
+        assert messages == [
+            "check failed (and 1 failed checks of other kinds not logged, 2s ago)",
+            "check failed (and 1 failed checks of other kinds not logged, 0s ago)",
+            "check failed",
+            "check failed",
+        ]
+
+    def test_an_unlogged_span_covers_every_count_folded_in(self):
+        unlogged = ws_auth._Unlogged()
+        unlogged.add(50.0, 2, first=40.0)
+        unlogged.add(55.0, 3, first=30.0)
+        unlogged.add(58.0)
+        assert unlogged.suffix(60.0) == (6, "between 30s and 2s ago")
+
+    def test_a_check_error_logged_outside_an_except_block(self, clock, caplog):
+        with caplog.at_level(logging.ERROR):
+            ws_auth.log_check_error(logging.getLogger("app.main"), "check failed")
+            ws_auth.log_check_error(logging.getLogger("app.main"), "check failed")
+        assert len(caplog.records) == 1
+
+    async def test_a_key_logged_again_with_nothing_suppressed_has_no_count(self, clock, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            await refuse_from("198.51.100.1", code=4011, reason="Credential check failed")
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await refuse_from("198.51.100.1", code=4011, reason="Credential check failed")
+        lines = refusal_lines(caplog)
+        assert len(lines) == 2 and "not logged" not in lines[1]
+
+    async def test_a_flood_never_logs_the_credential(self, db, clock, caplog):
+        secret = "ck_" + "cd" * 24
+        with caplog.at_level(logging.DEBUG, logger="app.ws_auth"):
+            for i in range(30):
+                ws = FakeWebSocket(
+                    headers={"Authorization": f"Bearer {secret}"}, client=("198.51.100.1", 40000 + i), denial=True,
+                )
+                await websocket_endpoint(ws, team_id="team-1")
+            clock.now += ws_auth.REFUSAL_LOG_INTERVAL_SECONDS
+            await websocket_endpoint(
+                FakeWebSocket(headers={"Authorization": f"Bearer {secret}"}, client=("198.51.100.1", 1), denial=True),
+                team_id="team-1",
+            )
+        lines = refusal_lines(caplog)
+        assert len(lines) == 3 and all("code=4001 reason=Invalid API key" in line for line in lines), lines
+        assert secret not in caplog.text and "cdcd" not in caplog.text

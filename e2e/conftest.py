@@ -126,6 +126,18 @@ def test_server():
 
 
 @pytest.fixture(autouse=True)
+def reset_ws_refusal_limits():
+    """Each test starts with no /ws refusals counted (CHT-1635): the caps
+    on refusals in flight and the refusal-log limiter are process-wide,
+    and would otherwise carry from one test to the next. The e2e server
+    runs in this process, so this resets its state."""
+    from app import ws_auth
+
+    ws_auth.reset_refusal_limits()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def reset_db_between_tests():
     """Delete all data between tests for isolation."""
     yield

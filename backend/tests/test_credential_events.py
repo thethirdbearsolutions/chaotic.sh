@@ -231,6 +231,14 @@ class TestIsolation:
         monkeypatch.setattr(credential_events, "DISPATCH_TIMEOUT_SECONDS", 0.1)
         ran = []
 
+        async def no_push_writes(event):
+            pass
+
+        # The push hook writes to the database (two deletes per event),
+        # which can take the whole 0.1 s on a loaded worker before the
+        # hooks under test run at all (CHT-1642).
+        monkeypatch.setattr("app.services.push_service.on_credentials_ended", no_push_writes)
+
         async def slow(event):
             ran.append(event.reason)
             await asyncio.sleep(0.04)

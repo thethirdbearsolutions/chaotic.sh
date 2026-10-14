@@ -384,7 +384,7 @@ async def websocket_endpoint(
         await ws_auth.refuse(websocket, exc.code, exc.reason, team_id)
         return
     except Exception:
-        logger.exception("WebSocket auth error during team validation")
+        ws_auth.log_check_error(logger, "WebSocket auth error during team validation")
         await ws_auth.refuse(websocket, ws_auth.CLOSE_INTERNAL_ERROR, "Credential check failed", team_id)
         return
 
@@ -408,7 +408,7 @@ async def websocket_endpoint(
             await manager.close(websocket, team_id, exc.code)
             return
         except Exception:
-            logger.exception("WebSocket credential re-check after connect failed for team=%s", team_id)
+            ws_auth.log_check_error(logger, "WebSocket credential re-check after connect failed for team=%s", team_id)
             await manager.close(websocket, team_id, ws_auth.CLOSE_INTERNAL_ERROR)
             return
 
