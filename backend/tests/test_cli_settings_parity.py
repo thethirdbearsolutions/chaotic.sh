@@ -16,6 +16,7 @@ the CLI would have stored, or told the operator to write.
 import importlib.util
 import io
 import itertools
+import re
 import sys
 from pathlib import Path
 
@@ -79,8 +80,10 @@ def _server_origin(url: str) -> str | None:
 
 
 def test_cli_accepted_cors_origins_are_left_as_stored_by_the_server():
-    """Every origin `config set CORS_ORIGINS` accepts, the server starts
-    with, normalised to exactly what the CLI stored."""
+    """Every origin `config set CORS_ORIGINS` accepts, the server keeps
+    exactly as the CLI stored it. Idempotence over the CLI's own output:
+    it pins trailing-slash stripping, not the rules the CLI refuses on
+    (capitals, a default port); the next test pins those."""
     accepted = 0
     for scheme, host, port, tail in itertools.product(SCHEMES, HOSTS, PORTS, TAILS):
         url = f"{scheme}://{host}{port}{tail}"
@@ -91,6 +94,42 @@ def test_cli_accepted_cors_origins_are_left_as_stored_by_the_server():
         assert _server_origin(url) == stored, (url, stored)
         assert _server_origin(stored) == stored, (url, stored)
     assert accepted > 50
+
+
+_SUGGESTION = re.compile(r"(?:lower case: |; use )'([^']*)'$")
+
+
+def _cli_canonical(url: str) -> str | None:
+    """What `config set` ends up storing for `url` when the operator
+    follows each of its suggestions ("must be written in lower case: ...",
+    "use ..."), or None if it refuses outright."""
+    value = url
+    for _ in range(4):
+        stored, problem = cli_settings.normalize("CORS_ORIGINS", value)
+        if problem is None:
+            return stored
+        suggestion = _SUGGESTION.search(problem)
+        if not suggestion:
+            return None
+        value = suggestion.group(1)
+    return None
+
+
+def test_server_normalises_the_grid_to_what_the_cli_would_store():
+    """Over the whole grid: wherever the CLI, followed through its
+    suggestions, would store a value, the server rewrites the raw value to
+    exactly that. Pins lower-casing and default-port dropping, which the
+    CLI refuses rather than rewrites (PR #390 review)."""
+    rewritten = 0
+    for scheme, host, port, tail in itertools.product(SCHEMES, HOSTS, PORTS, TAILS):
+        url = f"{scheme}://{host}{port}{tail}"
+        canonical = _cli_canonical(url)
+        if canonical is None:
+            continue
+        assert _server_origin(url) == canonical, (url, canonical)
+        if url.rstrip("/") != canonical:
+            rewritten += 1
+    assert rewritten > 50  # capitals and default ports, not just slashes
 
 
 # (written by hand, what a browser sends): the server rewrites the first

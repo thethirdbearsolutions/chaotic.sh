@@ -79,7 +79,9 @@ def _transport_security() -> TransportSecuritySettings:
 
     allowed_hosts: list[str] = []
     for origin in origins:
-        netloc = urlparse(origin).netloc
+        # Lower-cased, like the Host header _HostCaseFold hands the SDK:
+        # an entry kept as written (not an origin) may carry capitals.
+        netloc = urlparse(origin).netloc.lower()
         if netloc:
             allowed_hosts.append(netloc)
             if ":" not in netloc:
@@ -145,14 +147,32 @@ def mcp_lifespan():
     return get_fastmcp().session_manager.run()  # pragma: no cover
 
 
+class _HostCaseFold:
+    """Lower-case the Host header before the SDK's DNS-rebinding guard
+    reads it (PR #390 review). Host names are case-insensitive, but the
+    SDK compares Host to allowed_hosts by exact string, and those are now
+    derived from lower-cased origins (CHT-1707): without this a client
+    sending Host as typed (``curl https://Tracker.example.com/mcp``)
+    would get a 421."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = [(k, v.lower()) if k == b"host" else (k, v) for k, v in scope["headers"]]
+            scope = {**scope, "headers": headers}
+        await self.app(scope, receive, send)
+
+
 def mount_mcp(app: FastAPI) -> None:
     """Register the two /mcp routes plus the key-redaction middleware.
     Call this before any catch-all route (app.main's SPA fallback) is
     registered, so /mcp gets first look.
     """
     session_manager = get_fastmcp().session_manager
-    header_app = BearerHeaderAuth(StreamableHTTPASGIApp(session_manager))
-    capability_app = CapabilityURLAuth(StreamableHTTPASGIApp(session_manager))
+    header_app = BearerHeaderAuth(_HostCaseFold(StreamableHTTPASGIApp(session_manager)))
+    capability_app = CapabilityURLAuth(_HostCaseFold(StreamableHTTPASGIApp(session_manager)))
 
     # App-level (pre-routing) so even requests that never reach the
     # capability route -- 405s, CORS preflights, the SPA catch-all --

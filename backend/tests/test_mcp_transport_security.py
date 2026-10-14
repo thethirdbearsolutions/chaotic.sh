@@ -84,21 +84,44 @@ def test_cors_origin_list_is_the_one_parse(monkeypatch, raw, expected):
         get_settings.cache_clear()
 
 
-@pytest.mark.parametrize("raw", [
-    "https://tracker.example.com/path", "https://tracker.example.com?q", "https://tracker.example.com#f",
-    "https://user:pw@tracker.example.com", "https://user@tracker.example.com", "tracker.example.com",
-    "null", "https://tracker.example.com:99999", "https://a.example.com,https://b.example.com/x",
-    "https://bücher.example", "https://a example.com", "https://a.example.com\thttps://b.example.com",
-])
-def test_a_value_that_is_not_an_origin_refuses_startup(raw):
-    """Settings refuses to build, naming the entry, rather than guessing
-    at an origin or dropping one (CHT-1707): dropping could empty the
-    list, which turns the /mcp guard off."""
-    from pydantic import ValidationError
+# (CORS_ORIGINS, the list on main before CHT-1707, which this must still give)
+_STARTS_AS_TODAY = [
+    ("null", ["null"]),
+    ("*,null", ["*", "null"]),
+    ("*, https://a.example.com/app", ["*", "https://a.example.com/app"]),
+    ("*, https://A.example.com/", ["*", "https://A.example.com/"]),
+    ("https://a.example.com,https://a.example.com/app", ["https://a.example.com", "https://a.example.com/app"]),
+    ("https://a.example.com https://b.example.com", ["https://a.example.com https://b.example.com"]),
+    ("tracker.example.com", ["tracker.example.com"]),
+    ("https://user@tracker.example.com", ["https://user@tracker.example.com"]),
+    ("https://tracker.example.com:99999", ["https://tracker.example.com:99999"]),
+    ("https://*.example.com", ["https://*.example.com"]),
+    ("https://bücher.example", ["https://bücher.example"]),
+]
+
+
+@pytest.mark.parametrize("raw, expected", _STARTS_AS_TODAY)
+def test_a_value_that_is_not_an_origin_still_starts(raw, expected, caplog):
+    """The server never refuses to start over CORS_ORIGINS (PR #390
+    review): an entry that is not an origin is logged and kept as
+    written, so it matches nothing, as before; with `*` present nothing
+    is judged; `null` is a real Origin value."""
     from app.config import Settings
 
-    with pytest.raises(ValidationError, match="CORS_ORIGINS entry"):
-        Settings(cors_origins=raw)
+    with caplog.at_level("ERROR", logger="app.config"):
+        assert Settings(cors_origins=raw).cors_origin_list == expected
+    judged = "*" not in expected and expected != ["null"]
+    assert bool(caplog.records) == judged
+    for record in caplog.records:
+        assert "CORS_ORIGINS entry" in record.getMessage() and "kept as written" in record.getMessage()
+
+
+@pytest.mark.parametrize("raw", ["null", "https://a.example.com/app", "https://a.example.com,https://a.example.com/app"])
+def test_the_guard_stays_on_with_an_entry_kept_as_written(cors, raw):
+    """The list never shrinks, so the /mcp guard never turns off."""
+    settings = cors(raw)
+    assert settings.enable_dns_rebinding_protection is True
+    assert settings.allowed_origins == raw.split(",")
 
 
 def test_a_hand_written_origin_reaches_the_guard_normalised(cors):

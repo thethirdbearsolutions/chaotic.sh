@@ -249,12 +249,29 @@ class Settings(BaseSettings):
         entry as normalise_cors_origin writes it, joined by commas. Both
         the CORS middleware and the /mcp guard compare Origin by exact
         string, so ``https://Tracker.example.com/`` written by hand would
-        otherwise allow nothing. An entry that is not an origin at all
-        refuses startup: unlike a dropped FORWARDED_ALLOW_IPS entry,
-        dropping it could leave an empty list, which turns the /mcp
-        DNS-rebinding guard off. `chaotic system config check` reports
-        such a value before a restart does."""
-        return ",".join(normalise_cors_origin(entry.strip()) for entry in value.split(",") if entry.strip())
+        otherwise allow nothing.
+
+        Never refuses startup (PR #390 review): an entry that is not an
+        origin is logged as an ERROR and kept as written, matching
+        nothing, exactly as before. The list never shrinks, so the /mcp
+        guard cannot turn off. With ``*`` present the other entries do
+        not matter and are not judged. ``null`` is a real Origin value
+        and is kept as is. `chaotic system config check` reports such
+        entries too."""
+        entries = [entry.strip() for entry in value.split(",") if entry.strip()]
+        if "*" in entries:
+            return ",".join(entries)
+        kept = []
+        for entry in entries:
+            if entry == "null":
+                kept.append(entry)
+                continue
+            try:
+                kept.append(normalise_cors_origin(entry))
+            except ValueError as exc:
+                logger.error("%s; it is kept as written and will never match a browser's Origin.", exc)
+                kept.append(entry)
+        return ",".join(kept)
 
     @property
     def oauth_issuer(self) -> str:
@@ -303,7 +320,8 @@ def normalise_cors_origin(entry: str) -> str:
     (CHT-1707): scheme and host lower-cased, no trailing ``/``, no default
     port. ``*`` is kept as is. Raises ValueError for an entry that is not
     an origin (no scheme or host, credentials, a path, query or fragment,
-    a bad port), naming the entry, rather than guessing what was meant.
+    a bad port, a ``*`` in the host), naming the entry, rather than
+    guessing what was meant; Settings logs that and keeps the entry.
 
     The CLI (cli/src/cli/server_settings.py) refuses at `config set` what
     this rewrites, so every value it stores is left unchanged here
@@ -324,15 +342,21 @@ def normalise_cors_origin(entry: str) -> str:
         port = parsed.port
     except ValueError:
         raise ValueError(f"CORS_ORIGINS entry {entry!r} is not a valid URL (check the host and port)") from None
+    if "*" in parsed.netloc:
+        raise ValueError(f"CORS_ORIGINS entry {entry!r} has a wildcard host; list each origin, or use '*' alone")
     if not parsed.scheme or not parsed.hostname:
         raise ValueError(f"CORS_ORIGINS entry {entry!r} is not an origin such as https://tracker.example.com")
     if "@" in parsed.netloc:
         raise ValueError(f"CORS_ORIGINS entry {entry!r} must not carry credentials")
     if parsed.path or parsed.query or parsed.fragment or "?" in trimmed or "#" in trimmed:
         raise ValueError(f"CORS_ORIGINS entry {entry!r} must be a bare origin, with no path, query or fragment")
-    scheme = parsed.scheme.lower()
+    scheme = parsed.scheme  # urlsplit lower-cases it
     host = parsed.hostname  # urlsplit lower-cases it and drops IPv6 brackets
     if ":" in host:
+        try:  # browsers write an IPv6 host compressed: [::1], not [0:0::1]
+            host = ipaddress.IPv6Address(host).compressed
+        except ValueError:
+            raise ValueError(f"CORS_ORIGINS entry {entry!r} has an invalid IPv6 address") from None
         host = f"[{host}]"
     if port is not None and port != _DEFAULT_PORTS.get(scheme):
         host = f"{host}:{port}"
