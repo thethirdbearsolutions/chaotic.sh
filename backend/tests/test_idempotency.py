@@ -1,9 +1,11 @@
 """Idempotency-Key on the app's writes (CHT-1621).
 
 A resend of a keyed write (same user, same key, within 24 h) gets the
-first answer without the write being done again; the same key for a
-different request is a 422; nothing changes without the header. See
-app/api/idempotency.py.
+first answer without the write being done again; later, until 30 days,
+it is refused (409 idempotency_key_expired), never done again; while the
+first is still running it is told so (409 idempotency_in_flight); the
+same key for a different request is a 422; nothing changes without the
+header. See app/api/idempotency.py.
 """
 import asyncio
 import json
@@ -16,8 +18,10 @@ from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from oxyde import execute_raw
 
+from app.api import idempotency
 from app.api.idempotency import (
     HEADER,
+    INTERACTIVE_HEADER,
     REPLAYED_HEADER,
     IdempotentRoute,
     _idempotency_scope,
@@ -228,40 +232,77 @@ class TestScope:
 
 
 class TestExpiry:
-    async def _age(self, hours: float) -> None:
-        old = datetime.now(timezone.utc) - timedelta(hours=hours)
+    async def _age(self, **delta) -> None:
+        old = datetime.now(timezone.utc) - timedelta(**delta)
         await execute_raw("UPDATE idempotency_records SET created_at = ?", [old])
 
-    async def test_a_key_older_than_a_day_is_a_new_write(self, client, auth_headers, test_issue):
+    async def test_a_resend_after_the_replay_window_is_refused_not_done_again(self, client, auth_headers, test_issue):
+        """The late resend (a write stalled, or offline over a weekend)
+        must not be a second comment."""
         await _comment(client, auth_headers, test_issue, key="k-1")
-        await self._age(25)
+        await self._age(hours=25)
+        resp = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["error_code"] == "idempotency_key_expired"
+        assert len(await _comments(test_issue)) == 1
+
+    async def test_and_after_the_sweep_cleared_its_answer(self, client, auth_headers, test_issue):
+        await _comment(client, auth_headers, test_issue, key="k-1")
+        await self._age(days=29)
+        await idempotency.sweep()
+        [record] = await OxydeIdempotencyRecord.objects.all()
+        assert record.status == 201 and record.response_body is None and record.response_headers is None
+        resp = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert resp.json()["detail"]["error_code"] == "idempotency_key_expired"
+        assert len(await _comments(test_issue)) == 1
+
+    async def test_a_late_resend_of_another_request_is_still_a_reused_key(self, client, auth_headers, test_issue):
+        await _comment(client, auth_headers, test_issue, key="k-1")
+        await self._age(hours=25)
+        resp = await client.patch(
+            f"/api/issues/{test_issue.id}", json={"title": "Renamed"}, headers=_keyed(auth_headers, "k-1"),
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["error_code"] == "idempotency_key_reused"
+
+    async def test_within_the_day_it_is_still_a_resend(self, client, auth_headers, test_issue):
+        await _comment(client, auth_headers, test_issue, key="k-1")
+        await self._age(hours=23)
+        resp = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert resp.headers[REPLAYED_HEADER] == "true"
+
+    async def test_after_the_tombstone_the_key_is_new(self, client, auth_headers, test_issue):
+        await _comment(client, auth_headers, test_issue, key="k-1")
+        await self._age(days=31)
         resp = await _comment(client, auth_headers, test_issue, key="k-1")
         assert resp.status_code == 201
         assert REPLAYED_HEADER not in resp.headers
         assert len(await _comments(test_issue)) == 2
         assert await OxydeIdempotencyRecord.objects.count() == 1
 
-    async def test_within_the_day_it_is_still_a_resend(self, client, auth_headers, test_issue):
-        await _comment(client, auth_headers, test_issue, key="k-1")
-        await self._age(23)
-        resp = await _comment(client, auth_headers, test_issue, key="k-1")
-        assert resp.headers[REPLAYED_HEADER] == "true"
-
-    async def test_a_claim_sweeps_every_dead_key(self, client, auth_headers, test_issue):
+    async def test_the_sweep_deletes_what_is_past_the_tombstone(self, client, auth_headers, test_issue):
         await _comment(client, auth_headers, test_issue, key="old-1")
         await _comment(client, auth_headers, test_issue, key="old-2")
-        await self._age(30)
+        await self._age(days=31)
         await _comment(client, auth_headers, test_issue, key="new")
-        assert [r.idempotency_key for r in await OxydeIdempotencyRecord.objects.all()] == ["new"]
+        await idempotency.sweep()
+        [record] = await OxydeIdempotencyRecord.objects.all()
+        assert record.idempotency_key == "new" and record.response_body is not None
 
-    async def test_an_expired_key_reused_for_another_request_is_new(self, client, auth_headers, test_issue):
-        await _comment(client, auth_headers, test_issue, key="k-1")
-        await self._age(25)
-        resp = await client.patch(
-            f"/api/issues/{test_issue.id}", json={"title": "Renamed"}, headers=_keyed(auth_headers, "k-1"),
-        )
-        assert resp.status_code == 200
-        assert REPLAYED_HEADER not in resp.headers
+    async def test_a_claim_sweeps_at_most_every_few_minutes(self, client, auth_headers, test_issue):
+        with patch.object(idempotency, "_next_sweep", 0.0), patch.object(idempotency, "sweep") as swept:
+            await _comment(client, auth_headers, test_issue, key="k-1")
+            await _comment(client, auth_headers, test_issue, key="k-2")
+        assert swept.await_count == 1
+
+    async def test_a_failing_sweep_does_not_fail_the_write(self, client, auth_headers, test_issue):
+        from tests.conftest import push_errors
+
+        with patch.object(idempotency, "_next_sweep", 0.0), \
+             patch.object(idempotency, "sweep", side_effect=RuntimeError("disk")):
+            resp = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert resp.status_code == 201
+        push_errors.clear()
 
 
 class TestIssuePatch:
@@ -278,17 +319,59 @@ class TestIssuePatch:
         assert resent.json()["title"] == "First"
         assert (await OxydeIssue.objects.get(id=test_issue.id)).title == "Later"
 
-    async def test_a_refusal_is_the_answer_too(self, client, auth_headers, test_issue, review_close_ritual):
-        """A 409 (a pending close ritual) is stored and replayed as it was."""
+    async def test_a_conflict_is_not_stored(self, client, auth_headers, test_issue, review_close_ritual):
+        """A 409 (here a pending close ritual) says how things stand now:
+        a resend asks again rather than being told the old answer."""
         url = f"/api/issues/{test_issue.id}"
         first = await client.patch(url, json={"status": "done"}, headers=_keyed(auth_headers, "k-1"))
         again = await client.patch(url, json={"status": "done"}, headers=_keyed(auth_headers, "k-1"))
 
         assert first.status_code == again.status_code == 409
-        assert again.json() == first.json()
+        assert REPLAYED_HEADER not in again.headers
+        assert await OxydeIdempotencyRecord.objects.count() == 0
+
+    async def test_a_conflict_resolved_since_lets_the_resend_through(self, client, auth_headers, test_issue):
+        """The arrears case: refused, the person fixes it, the same queued
+        write goes through."""
+        from app.oxyde_models.issue import OxydeIssue as Issue
+
+        url = f"/api/issues/{test_issue.id}"
+        with patch("app.api.issues.IssueService.update",
+                   side_effect=HTTPException(status_code=409, detail={"error_code": "sprint_in_arrears"})):
+            refused = await client.patch(url, json={"title": "T"}, headers=_keyed(auth_headers, "k-1"))
+        assert refused.status_code == 409
+        resp = await client.patch(url, json={"title": "T"}, headers=_keyed(auth_headers, "k-1"))
+        assert resp.status_code == 200
+        assert (await Issue.objects.get(id=test_issue.id)).title == "T"
+
+    @pytest.mark.parametrize("code", [408, 425, 429])
+    async def test_a_retry_me_status_is_not_stored(self, client, auth_headers, test_issue, code):
+        with patch("app.api.issues.fill_principals", side_effect=HTTPException(status_code=code, detail="later")):
+            resp = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert resp.status_code == code
+        assert await OxydeIdempotencyRecord.objects.count() == 0
+
+    async def test_a_stored_refusal_replays_in_the_form_it_was_sent(self, client, auth_headers, test_issue):
+        """The detail is stored as it was rendered (jsonable_encoder): an
+        enum as its value, a tuple as a list."""
+        detail = {"status": IssueStatus.DONE, "issue_ids": ("a", "b")}
+        with patch("app.api.issues.fill_principals", side_effect=HTTPException(status_code=400, detail=detail)):
+            first = await _comment(client, auth_headers, test_issue, key="k-1")
+        again = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert first.status_code == again.status_code == 400
+        assert again.json() == first.json() == {"detail": {"status": "done", "issue_ids": ["a", "b"]}}
         assert again.headers[REPLAYED_HEADER] == "true"
-        record = await OxydeIdempotencyRecord.objects.get(idempotency_key="k-1")
-        assert record.refused is True and record.status == 409
+
+    async def test_the_interactive_signal_is_part_of_the_request(self, client, auth_headers, test_issue):
+        """X-Chaotic-Interactive changes what an update may do (CHT-1302),
+        so the same key with it flipped is another request."""
+        url = f"/api/issues/{test_issue.id}"
+        await client.patch(url, json={"title": "T"}, headers=_keyed(auth_headers, "k-1"))
+        resp = await client.patch(
+            url, json={"title": "T"}, headers={**_keyed(auth_headers, "k-1"), INTERACTIVE_HEADER: "1"},
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["error_code"] == "idempotency_key_reused"
 
     async def test_what_a_refused_request_wrote_is_kept(self, client, auth_headers, test_issue, review_close_ritual):
         """Refused writes commit what they did before the refusal, as they
@@ -321,7 +404,8 @@ class TestFailures:
         with patch("app.api.issues.fill_principals", side_effect=RuntimeError("boom")):
             failed = await _comment(lenient_client, auth_headers, test_issue, key="k-1")
         assert failed.status_code == 500
-        # The comment was written before the failure, and went with it.
+        # The comment was written before the failure, and went with it,
+        # and the claim was released.
         assert await _comments(test_issue) == []
         assert await OxydeIdempotencyRecord.objects.count() == 0
 
@@ -329,6 +413,17 @@ class TestFailures:
         assert retried.status_code == 201
         assert REPLAYED_HEADER not in retried.headers
         assert len(await _comments(test_issue)) == 1
+
+    async def test_a_claim_that_cannot_be_released_goes_stale(self, lenient_client, auth_headers, test_issue):
+        """The release after a rollback failed too: the claim stays, and
+        is taken over once stale (TestConcurrentResend)."""
+        with patch("app.api.issues.fill_principals", side_effect=RuntimeError("boom")), \
+             patch.object(idempotency, "_release", side_effect=RuntimeError("disk")):
+            failed = await _comment(lenient_client, auth_headers, test_issue, key="k-1")
+        assert failed.status_code == 500
+        assert await _comments(test_issue) == []
+        [claim] = await OxydeIdempotencyRecord.objects.all()
+        assert claim.status is None
 
     async def test_an_http_5xx_is_not_stored(self, lenient_client, auth_headers, test_issue):
         with patch("app.api.issues.fill_principals", side_effect=HTTPException(status_code=503, detail="later")):
@@ -352,6 +447,20 @@ class TestFailures:
         assert resp.status_code == 201
         assert ("comment", 1) in seen
 
+    async def test_a_route_without_the_key_still_broadcasts(self, client, auth_headers, test_issue):
+        """Outside a transaction a broadcast goes at once, as before."""
+        from app.websocket import manager
+
+        seen = []
+
+        async def send(team_id, message):
+            seen.append((message["entity"], await OxydeIssueComment.objects.filter(issue_id=test_issue.id).count()))
+
+        with patch.object(manager, "_send_to_team", side_effect=send):
+            resp = await _comment(client, auth_headers, test_issue)
+        assert resp.status_code == 201
+        assert ("comment", 1) in seen
+
     async def test_a_broadcast_in_a_rolled_back_transaction_is_dropped(self, db):
         from app.websocket import manager
 
@@ -371,20 +480,52 @@ class TestFailures:
             assert sent[-1] == {"type": "z"}
 
 
-class TestConcurrentResend:
-    async def test_a_resend_while_the_first_runs_waits_and_replays(self, client, auth_headers, test_issue):
-        """Both arrive before either answers: the write is done once and
-        both get its answer."""
-        original = IssueService.create_comment
-        entered = asyncio.Event()
+async def _claim_row(user, key: str, path: str, *, claimed_minutes_ago: float) -> None:
+    """An unanswered claim, as a request that is running (or died) leaves it."""
+    claimed = datetime.now(timezone.utc) - timedelta(minutes=claimed_minutes_ago)
+    await OxydeIdempotencyRecord.objects.create(
+        user_id=user.id, idempotency_key=key, method="POST", path=path,
+        request_hash="h", claim_token="other", claimed_at=claimed, created_at=claimed,
+    )
 
-        async def slow(self, *args, **kwargs):
-            comment = await original(self, *args, **kwargs)
+
+@pytest_asyncio.fixture
+async def pool_of_four(client):
+    """The production shape: several connections, so a keyed request and
+    others meet on SQLite's locks rather than on a busy pool. A short
+    busy timeout makes a wait on the write lock fail fast."""
+    from oxyde import AsyncDatabase, PoolSettings
+
+    from app.config import get_settings
+
+    url = get_settings().database_url.replace("sqlite+aiosqlite:///", "sqlite:///")
+    pool = AsyncDatabase(url, overwrite=True, settings=PoolSettings(max_connections=4, sqlite_busy_timeout=300))
+    await pool.connect()
+    return pool
+
+
+def _slow_comment(entered: asyncio.Event, seconds: float, *, before_write: bool):
+    original = IssueService.create_comment
+
+    async def slow(self, *args, **kwargs):
+        if before_write:
             entered.set()
-            await asyncio.sleep(0.2)
-            return comment
+            await asyncio.sleep(seconds)
+            return await original(self, *args, **kwargs)
+        comment = await original(self, *args, **kwargs)
+        entered.set()
+        await asyncio.sleep(seconds)
+        return comment
 
-        with patch.object(IssueService, "create_comment", slow):
+    return patch.object(IssueService, "create_comment", slow)
+
+
+class TestConcurrentResend:
+    async def test_on_one_connection_the_resend_gets_the_first_answer(self, client, auth_headers, test_issue):
+        """The test harness's single connection: the resend cannot run
+        until the first has committed, and then replays it."""
+        entered = asyncio.Event()
+        with _slow_comment(entered, 0.2, before_write=False):
             first_task = asyncio.ensure_future(_comment(client, auth_headers, test_issue, key="k-1"))
             await entered.wait()
             second = await _comment(client, auth_headers, test_issue, key="k-1")
@@ -395,35 +536,128 @@ class TestConcurrentResend:
         assert second.headers[REPLAYED_HEADER] == "true"
         assert len(await _comments(test_issue)) == 1
 
-    async def test_on_two_connections_the_resend_queues_on_the_write_lock(self, client, auth_headers, test_issue, tmp_path):
-        """The production shape: a pool of several connections, so the
-        resend's claim meets the first one's write lock rather than a busy
-        pool."""
-        from oxyde import AsyncDatabase, PoolSettings
-        from app.config import get_settings
-
-        url = get_settings().database_url.replace("sqlite+aiosqlite:///", "sqlite:///")
-        pool = AsyncDatabase(url, overwrite=True, settings=PoolSettings(max_connections=4))
-        await pool.connect()
-
-        original = IssueService.create_comment
+    async def test_a_resend_while_the_first_runs_is_told_to_retry(self, pool_of_four, client, auth_headers, test_issue):
+        """Both arrive before either answers: the duplicate is answered at
+        once (it does not wait on the first), and its retry gets the first
+        one's answer. The write is done once."""
         entered = asyncio.Event()
-
-        async def slow(self, *args, **kwargs):
-            comment = await original(self, *args, **kwargs)
-            entered.set()
-            await asyncio.sleep(0.3)
-            return comment
-
-        with patch.object(IssueService, "create_comment", slow):
+        with _slow_comment(entered, 0.3, before_write=True):
             first_task = asyncio.ensure_future(_comment(client, auth_headers, test_issue, key="k-1"))
             await entered.wait()
             second = await _comment(client, auth_headers, test_issue, key="k-1")
             first = await first_task
+        retried = await _comment(client, auth_headers, test_issue, key="k-1")
 
-        assert first.status_code == second.status_code == 201, (first.text, second.text)
-        assert second.json() == first.json()
+        assert first.status_code == 201, first.text
+        assert second.status_code == 409
+        assert second.json()["detail"]["error_code"] == "idempotency_in_flight"
+        assert second.headers["Retry-After"] == "1"
+        assert retried.json() == first.json() and retried.headers[REPLAYED_HEADER] == "true"
         assert len(await _comments(test_issue)) == 1
+
+    async def test_a_keyed_request_takes_no_lock_while_it_reads(
+        self, pool_of_four, client, auth_headers, test_issue,
+    ):
+        """The claim commits on its own, so a keyed request holds SQLite's
+        write lock only from its own first write: another writer is not
+        held up by its reads. The price: a keyed request whose reads
+        another commit overtook cannot then write (SQLite's snapshot
+        rule), and is answered with a retryable 503; nothing was written,
+        the claim is released, and the retry does the write once."""
+        entered = asyncio.Event()
+        with _slow_comment(entered, 0.5, before_write=True):
+            keyed = asyncio.ensure_future(_comment(client, auth_headers, test_issue, key="k-1"))
+            await entered.wait()
+            other = await client.patch(f"/api/issues/{test_issue.id}", json={"title": "Meanwhile"}, headers=auth_headers)
+            first = await keyed
+        assert other.status_code == 200, other.text
+        assert first.status_code == 503, first.text
+        assert first.json()["detail"]["error_code"] == "idempotency_busy"
+        assert await _comments(test_issue) == []
+
+        retried = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert retried.status_code == 201
+        assert len(await _comments(test_issue)) == 1
+
+    async def test_a_resend_while_the_first_writes_waits_for_it(
+        self, pool_of_four, client, auth_headers, test_issue,
+    ):
+        """In the first one's write phase the duplicate's claim queues on
+        the write lock (within the busy timeout) and then replays."""
+        entered = asyncio.Event()
+        with _slow_comment(entered, 0.1, before_write=False):
+            first_task = asyncio.ensure_future(_comment(client, auth_headers, test_issue, key="k-1"))
+            await entered.wait()
+            second = await _comment(client, auth_headers, test_issue, key="k-1")
+            first = await first_task
+        assert first.status_code == second.status_code == 201
+        assert second.json() == first.json() and second.headers[REPLAYED_HEADER] == "true"
+        assert len(await _comments(test_issue)) == 1
+
+    async def test_a_claim_that_cannot_get_the_lock_is_a_retryable_503(
+        self, pool_of_four, client, auth_headers, test_issue,
+    ):
+        """Another writer holds SQLite's write lock past the busy timeout:
+        the claim cannot be made, and the answer says to retry."""
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def hold() -> None:
+            async with atomic():
+                # Takes the write lock and changes nothing (as RegistrationService does).
+                await execute_raw("UPDATE users SET can_register = can_register WHERE 0", [])
+                started.set()
+                await release.wait()
+
+        holder = asyncio.ensure_future(hold())
+        await started.wait()
+        try:
+            resp = await _comment(client, auth_headers, test_issue, key="k-1")
+        finally:
+            release.set()
+            await holder
+        assert resp.status_code == 503
+        assert resp.json()["detail"]["error_code"] == "idempotency_busy"
+        assert resp.headers["Retry-After"] == "1"
+        retried = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert retried.status_code == 201
+        assert len(await _comments(test_issue)) == 1
+
+    async def test_a_live_claim_is_in_flight(self, client, auth_headers, test_user, test_issue):
+        path = f"/api/issues/{test_issue.id}/comments"
+        await _claim_row(test_user, "k-1", path, claimed_minutes_ago=1)
+        with patch("app.api.idempotency._fingerprint", return_value="h"):
+            resp = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["error_code"] == "idempotency_in_flight"
+        assert await _comments(test_issue) == []
+
+    async def test_a_dead_request_s_claim_is_taken_over(self, client, auth_headers, test_user, test_issue):
+        """An unanswered claim means its write never committed (they commit
+        together); once stale, the resend does the write."""
+        path = f"/api/issues/{test_issue.id}/comments"
+        await _claim_row(test_user, "k-1", path, claimed_minutes_ago=11)
+        with patch("app.api.idempotency._fingerprint", return_value="h"):
+            resp = await _comment(client, auth_headers, test_issue, key="k-1")
+            again = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert resp.status_code == 201
+        assert again.headers[REPLAYED_HEADER] == "true"
+        assert len(await _comments(test_issue)) == 1
+
+    async def test_a_request_that_lost_its_claim_does_not_commit(self, client, auth_headers, test_issue):
+        """A request that outlived STALE_CLAIM, whose claim another resend
+        took over, rolls its write back rather than doing it twice."""
+        original = IssueService.create_comment
+
+        async def taken_over(self, *args, **kwargs):
+            comment = await original(self, *args, **kwargs)
+            await execute_raw("UPDATE idempotency_records SET claim_token = 'someone-else'", [])
+            return comment
+
+        with patch.object(IssueService, "create_comment", taken_over):
+            resp = await _comment(client, auth_headers, test_issue, key="k-1")
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["error_code"] == "idempotency_in_flight"
+        assert await _comments(test_issue) == []
 
 
 class TestRituals:
@@ -490,6 +724,15 @@ class TestInbox:
         assert first.status_code == again.status_code == 200
         assert again.json() == first.json()
         assert again.headers[REPLAYED_HEADER] == "true"
+
+    async def test_a_body_that_is_not_json_is_compared_as_bytes(self, client, auth_headers, entry):
+        url = f"/api/inbox/{entry.id}/read"
+        first = await client.post(url, content=b"\xff", headers=_keyed(auth_headers, "k-1"))
+        again = await client.post(url, content=b"\xff", headers=_keyed(auth_headers, "k-1"))
+        other = await client.post(url, content=b"\xfe", headers=_keyed(auth_headers, "k-1"))
+        assert first.status_code == again.status_code == 200
+        assert again.headers[REPLAYED_HEADER] == "true"
+        assert other.status_code == 422
 
     async def test_a_404_is_replayed_as_a_404(self, client, auth_headers):
         url = "/api/inbox/00000000-0000-0000-0000-000000000000/read"

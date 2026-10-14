@@ -287,6 +287,88 @@ class WriteQueueTest {
     }
 
     @Test
+    fun aWriteOlderThanTheServersReplayWindowIsNotSentOnItsOwn() = runTest {
+        // Offline for a day: the write may have reached the server before the connection went.
+        val late = assertNotNull(queue.comment(issue(), "sent before the network went"))
+        now += WriteQueue.REPLAY_WINDOW_MILLIS
+
+        assertEquals(FlushOutcome.Done(null), queue.flush())
+
+        assertTrue(remote.writesSent.isEmpty())
+        val stalled = store.pendingWrites().single()
+        assertTrue(stalled.stalled)
+        assertTrue(stalled.tooOld(now))
+        // Nor shown as done.
+        val detail = assertNotNull(store.issue("i1"))
+        assertEquals(emptyList(), PendingOverlay.issue(detail, store.pendingWrites(), me = null).comments)
+
+        // A retry is refused, with why, and the text is kept; nothing is sent.
+        assertFalse(queue.retry(late))
+        assertTrue(remote.writesSent.isEmpty())
+        assertEquals(emptyList(), store.pendingWrites())
+        val refusal = store.refusals().single()
+        assertEquals(WriteQueue.TOO_OLD, refusal.errorCode)
+        assertEquals(WriteQueue.TOO_OLD_MESSAGE, refusal.message)
+        assertEquals("sent before the network went", refusal.value)
+    }
+
+    @Test
+    fun aWriteJustInsideTheWindowStillGoes() = runTest {
+        queue.comment(issue(), "in time")
+        now += WriteQueue.REPLAY_WINDOW_MILLIS - 1
+
+        assertEquals(FlushOutcome.Done(null), queue.flush())
+
+        assertEquals(1, remote.writesSent.size)
+        assertEquals(emptyList(), store.pendingWrites())
+    }
+
+    @Test
+    fun aTooOldChangeANewerOneSupersedesIsDroppedNotStalled() = runTest {
+        queue.update(issue(), IssueFields.STATUS, "done")
+        now += WriteQueue.REPLAY_WINDOW_MILLIS
+        // A newer value for the same field, queued before the next flush.
+        val older = store.pendingWrites().single()
+        store.queueWrite(older.copy(key = "newer", value = "todo", createdAtMillis = now, notBeforeMillis = now))
+
+        queue.flush()
+
+        assertEquals(listOf("newer"), remote.writesSent.map { it.idempotencyKey })
+        assertEquals(emptyList(), store.pendingWrites())
+    }
+
+    @Test
+    fun aWriteTheServerIsStillDoingIsSentAgainAndGetsItsAnswer() = runTest {
+        val answers = ArrayDeque<Remote<Any?>>(
+            listOf(
+                Remote.HttpError(409, WriteQueue.IN_FLIGHT, retryAfterMillis = 1_000, message = "still being done"),
+                Remote.Ok(null),
+            ),
+        )
+        remote.answerWrite = { answers.removeFirst() }
+        val key = assertNotNull(queue.comment(issue(), "once"))
+
+        assertEquals(FlushOutcome.Done(WriteQueue.FIRST_RETRY_MILLIS), queue.flush())
+        assertEquals(emptyList(), store.refusals())
+        now += WriteQueue.FIRST_RETRY_MILLIS
+        assertEquals(FlushOutcome.Done(null), queue.flush())
+
+        assertEquals(listOf(key, key), remote.writesSent.map { it.idempotencyKey })
+        assertEquals(emptyList(), store.pendingWrites())
+    }
+
+    @Test
+    fun aWriteTheServerSaysWasDoneLongAgoIsRefused() = runTest {
+        remote.answerWrite = { Remote.HttpError(409, "idempotency_key_expired", message = "already done") }
+        queue.comment(issue(), "late")
+
+        queue.flush()
+
+        assertEquals(emptyList(), store.pendingWrites())
+        assertEquals("idempotency_key_expired", store.refusals().single().errorCode)
+    }
+
+    @Test
     fun aWriteThatNeverGetsAnAnswerStallsWhileTheServerAnswers() = runTest {
         // This write times out every time, but the server answers: it is not offline (CHT-1670).
         remote.answersProbe = true

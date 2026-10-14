@@ -1,19 +1,27 @@
 """The Idempotency-Key store (CHT-1621, migration 0029).
 
-One row per write a client sent with an ``Idempotency-Key`` header, for
-the user the request acted as (the principal: a person, or an agent,
-never the human holding an agent's key). The row is written in the same
-transaction as the write it records, so it exists exactly when the
-write committed. ``app.api.idempotency`` says how it is used.
+One row per key a user sent on a keyed write. The user is the principal
+the request acted as (a person, or an agent; never the human holding an
+agent's key). ``app.api.idempotency`` says how it is used. A row is, in
+turn:
 
-``status`` and the response columns are NULL only while the claiming
-transaction is still open; a committed row always carries the answer.
-``refused`` is True when that answer was an ``HTTPException`` (replayed
-by raising it again, so the app's exception handler renders it as it
-did the first time), False for a response body stored as sent.
-
-Rows older than ``app.api.idempotency.RETENTION`` are dead: a key reused
-after that is a new write, and every claim deletes the dead rows.
+* **claimed**: ``status`` NULL. Inserted and committed on its own, in a
+  short transaction, before the write runs, so a duplicate sees it at
+  once and is told the write is in flight. ``claim_token`` names the
+  request that holds it; ``claimed_at`` when it took it. A claim older
+  than ``app.api.idempotency.STALE_CLAIM`` belongs to a request that
+  died (the write and its answer commit together, so an unanswered
+  claim means the write never committed), and the next resend takes it
+  over.
+* **answered**: ``status`` and the response columns set, in the same
+  transaction as the write. ``refused`` is True when the answer was an
+  ``HTTPException`` (replayed by raising it again, so the app's handler
+  renders it as it did the first time), False for a body stored as sent.
+  A resend within ``REPLAY_WINDOW`` of ``created_at`` gets it back.
+* **a tombstone**: an answered row past ``REPLAY_WINDOW``. Its body is
+  cleared by the sweep, but the row stays until ``TOMBSTONE_RETENTION``,
+  so a late resend is refused (409 ``idempotency_key_expired``) instead
+  of done a second time.
 
 Every index is declared in ``Meta.indexes`` under the name 0029 creates
 it with (CHT-1410).
@@ -32,7 +40,7 @@ def _now() -> datetime:
 
 
 class OxydeIdempotencyRecord(Model):
-    """The first answer to one keyed write, for its replay."""
+    """One keyed write: its claim, then its answer, then its tombstone."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     user: OxydeUser | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
@@ -41,14 +49,20 @@ class OxydeIdempotencyRecord(Model):
     # What the key was first used for: a resend must match all three.
     method: str = Field()
     path: str = Field()
-    # SHA-256 of the method, path, query and body (JSON canonicalised).
+    # SHA-256 of the method, path, query, X-Chaotic-Interactive and body
+    # (JSON canonicalised).
     request_hash: str = Field()
+    # Which request holds the claim, and since when (see above).
+    claim_token: str = Field()
+    claimed_at: DateTimeUTC = Field(default_factory=_now)
     status: int | None = Field(default=None)
     refused: bool = Field(default=False)
     # A response's body as sent, or a refusal's ``detail`` as JSON.
     response_body: str | None = Field(default=None)
     # JSON object: a response's content-type, or a refusal's headers.
     response_headers: str | None = Field(default=None)
+    # When the key was first claimed: the replay window and the
+    # tombstone's retention run from here.
     created_at: DateTimeUTC = Field(default_factory=_now)
 
     class Meta:
@@ -56,6 +70,6 @@ class OxydeIdempotencyRecord(Model):
         table_name = "idempotency_records"
         indexes = [
             Index(("user_id", "idempotency_key"), unique=True, name="ux_idempotency_records_user_key"),
-            # The expiry sweep deletes by age.
+            # The sweep clears bodies and deletes rows by age.
             Index(("created_at",), name="ix_idempotency_records_created_at"),
         ]

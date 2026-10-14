@@ -2,32 +2,56 @@
 
 The Android app queues what a person does and sends it when it can
 (CHT-1613). Each queued write carries a key the app made once, when the
-person acted, sent as ``Idempotency-Key`` on every attempt. A write
-whose answer was lost (a timeout, a dropped connection, a lock-screen
-action retried) is sent again with the same key, and must not be done
-twice: the second comment, the second status change.
+person acted, and sends it as ``Idempotency-Key`` on every attempt. A
+write whose answer was lost (a timeout, a dropped connection, a
+lock-screen action retried) is sent again with the same key, and must
+not be done twice: the second comment, or a status change resent after
+a later one, undoing it.
 
-So, on a route marked ``@idempotent`` and sent with the header:
+On a route marked ``@idempotent``, sent with the header:
 
-* The first request with a key is done as usual, and its answer is
-  stored (``OxydeIdempotencyRecord``) in the same transaction as the
-  write it answers: the record exists if and only if the write
-  committed. A refusal (any 4xx) is an answer too, and is stored with
-  whatever the request wrote before it was refused, as it would have
-  committed without a key. A 5xx, or anything else that raises, rolls
-  back the write and stores nothing, so a resend is a fresh attempt.
-* A resend (same user, same key, within ``RETENTION``) gets the first
-  answer, status and body, without the write being done again, with
-  ``Idempotent-Replayed: true``. A refusal is replayed by raising the
-  same ``HTTPException``, so it renders as it did the first time.
-* The same key with a different method, path, query or body is a 422
-  ``idempotency_key_reused``; nothing is done.
-* A resend that arrives while the first is still running waits for it:
-  the claim is the transaction's first write, so it queues on the
-  database's write lock (SQLite's busy timeout, or Postgres's wait on
-  the uncommitted unique key), then finds the first one's committed
-  record and replays it. If the first rolled back, the resend claims
-  the key and does the write itself. The write cannot run twice.
+1. **Claim**, in a short transaction of its own, before the endpoint
+   runs: the key's record (``OxydeIdempotencyRecord``) is inserted,
+   unanswered, and committed. The claim holds SQLite's write lock only
+   for that insert. If the key already has a record:
+
+   * an answer within ``REPLAY_WINDOW`` (24 h): that answer is sent
+     again, status and body, with ``Idempotent-Replayed: true``, and
+     nothing is done;
+   * an answer older than that, a tombstone kept for
+     ``TOMBSTONE_RETENTION`` (30 days): 409 ``idempotency_key_expired``.
+     The write was done; it is not done again, and its answer is gone;
+   * no answer yet, claimed less than ``STALE_CLAIM`` ago: 409
+     ``idempotency_in_flight`` with ``Retry-After``. The first request
+     is still running; the resend is answered at once rather than
+     waiting on it, and its retry gets the first one's answer;
+   * no answer, claimed longer ago: the request that claimed it died
+     before its write committed (the write and its answer commit
+     together), so this request takes the claim over;
+   * a different method, path, query, ``X-Chaotic-Interactive`` or
+     body: 422 ``idempotency_key_reused``, and nothing is done.
+
+2. **Write**, in one transaction around the endpoint, with its answer
+   stored in the same transaction (only if the claim is still this
+   request's: a request that outlived ``STALE_CLAIM`` and lost its claim
+   rolls its write back), so the answer exists if and only if the write
+   committed. The transaction is deferred: the endpoint's reads take no
+   lock, and SQLite's write lock is held from its first write to the
+   commit, which includes building the response after the write. That
+   is the cost of the guarantee, and the reason the claim is separate:
+   no other request waits on a keyed request's reads, and a duplicate
+   never waits on it at all.
+
+   * 2xx, and a 4xx that is the request's answer: stored, and committed
+     with whatever the request wrote (a refused request commits what it
+     did before the refusal, as it does without a key).
+   * A 4xx that only says how things stand right now (408, 409, 425,
+     429: the sprint is in arrears or limbo, a ritual is pending, the
+     ticket is claimed, someone already decided): not stored. The claim
+     is released in the same transaction, so a resend asks again.
+   * A 5xx, or anything else that raises: the write rolls back and the
+     claim is released, so a resend is a fresh attempt. SQLite's busy
+     errors become a 503 ``idempotency_busy`` with ``Retry-After``.
 
 A request without the header is untouched: no transaction is opened
 around it, and nothing is stored.
@@ -37,20 +61,24 @@ as: a person (whichever of their sessions or API keys sent it), or an
 agent. An agent and the human who holds its key have separate scopes,
 since they are separate actors; one person's app and CLI share one, so a
 key means one intended write of that person whichever client resends it.
-The replay comes after authentication and the scope check
+The claim comes after authentication and the scope check
 (``CurrentPrincipal``), so a credential that may not call the route
 cannot read a stored answer either.
 
-The transaction spans the whole request, so anything the request does
-that leaves the process must wait for its commit: WebSocket broadcasts
-do (``app.websocket.ConnectionManager.broadcast_to_team`` defers to
+Anything the keyed request does that leaves the process must wait for
+its commit: WebSocket broadcasts do
+(``app.websocket.ConnectionManager.broadcast_to_team`` defers to
 ``on_commit`` inside a transaction), as push and credential events
 already did (CHT-1605).
 
+The client's side of the windows: the app does not send a write older
+than ``REPLAY_WINDOW`` on its own (``WriteQueue.REPLAY_WINDOW_MILLIS``,
+shorter than this one), since a write that late may already have been
+done; the person is asked instead.
+
 How it is wired: ``@idempotent`` marks the endpoint; ``IdempotentRoute``
 (the ``route_class`` of the routers that have such endpoints) gives a
-marked route the ``_idempotency_scope`` dependency, which claims the key
-and holds the transaction across the endpoint, and hands it the
+marked route the ``_idempotency_scope`` dependency, and hands it the
 response once FastAPI has serialized it. MCP calls the same functions
 in-process with no header and so is never affected.
 """
@@ -58,10 +86,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import time
+import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import Depends, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response
 from fastapi.routing import APIRoute
 from oxyde import IntegrityError, execute_raw
@@ -69,15 +102,42 @@ from oxyde import IntegrityError, execute_raw
 from app.api.deps import CurrentPrincipal
 from app.db.transactions import atomic
 from app.oxyde_models.idempotency import OxydeIdempotencyRecord
+from app.services.registration_service import is_sqlite_busy
+
+logger = logging.getLogger(__name__)
 
 HEADER = "Idempotency-Key"
 REPLAYED_HEADER = "Idempotent-Replayed"
-# How long a key is remembered. A resend later than this is a new write.
-RETENTION = timedelta(hours=24)
+# What a resend must also match: it changes what update_issue does.
+INTERACTIVE_HEADER = "X-Chaotic-Interactive"
+
+# How long an answer is replayed.
+REPLAY_WINDOW = timedelta(hours=24)
+# How long a key is remembered at all: a resend after the replay window
+# and before this is refused, not done again.
+TOMBSTONE_RETENTION = timedelta(days=30)
+# How long an unanswered claim belongs to the request that made it. Far
+# longer than any request runs; after it, the request is taken to have
+# died, and its write with it.
+STALE_CLAIM = timedelta(minutes=10)
+# How often one process sweeps (clears expired answers, deletes rows
+# past retention). What a resend gets never depends on the sweep.
+SWEEP_EVERY_SECONDS = 600.0
 MAX_KEY_LENGTH = 255
+RETRY_AFTER_SECONDS = 1
+
+# Refusals that describe the moment, not the request: not stored.
+_NOT_STORED = frozenset({
+    status.HTTP_408_REQUEST_TIMEOUT,
+    status.HTTP_409_CONFLICT,
+    status.HTTP_425_TOO_EARLY,
+    status.HTTP_429_TOO_MANY_REQUESTS,
+})
 
 _ATTR = "chaotic_idempotent"
 _RESPONSE = "idempotent_response"
+
+_next_sweep = 0.0
 
 
 def idempotent(fn):
@@ -89,6 +149,32 @@ def idempotent(fn):
 
 def is_idempotent(fn) -> bool:
     return bool(getattr(fn, _ATTR, False))
+
+
+def _stored(status_code: int) -> bool:
+    return status_code < status.HTTP_500_INTERNAL_SERVER_ERROR and status_code not in _NOT_STORED
+
+
+def _refusal(status_code: int, error_code: str, message: str, retry: bool = False) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"error_code": error_code, "message": message},
+        headers={"Retry-After": str(RETRY_AFTER_SECONDS)} if retry else None,
+    )
+
+
+def _in_flight() -> HTTPException:
+    return _refusal(
+        status.HTTP_409_CONFLICT, "idempotency_in_flight",
+        "This write is still being done; retry shortly to get its answer.", retry=True,
+    )
+
+
+def _busy() -> HTTPException:
+    return _refusal(
+        status.HTTP_503_SERVICE_UNAVAILABLE, "idempotency_busy",
+        "The server is busy with other writes; retry shortly.", retry=True,
+    )
 
 
 class _Replay(Exception):
@@ -116,13 +202,25 @@ class _Replay(Exception):
         )
 
 
+class _ClaimLost(Exception):
+    """This request's claim was taken over (it outlived ``STALE_CLAIM``):
+    its write must not commit."""
+
+
+@dataclass(frozen=True)
+class _Claim:
+    id: str
+    token: str
+
+
 def _valid_key(key: str) -> bool:
     return 0 < len(key) <= MAX_KEY_LENGTH and all(0x21 <= ord(c) <= 0x7E for c in key)
 
 
 async def _fingerprint(request: Request) -> str:
-    """What a resend must match: method, path, query and body. A JSON
-    body is compared by value, so key order and spacing do not matter."""
+    """What a resend must match: method, path, query, the interactive
+    signal and the body. A JSON body is compared by value, so key order
+    and spacing do not matter."""
     body = await request.body()
     try:
         canonical = (
@@ -133,66 +231,121 @@ async def _fingerprint(request: Request) -> str:
     except ValueError:  # not JSON (UnicodeDecodeError included): the bytes as sent
         canonical = body
     digest = hashlib.sha256()
-    for part in (request.method, request.url.path, request.url.query):
+    parts = (request.method, request.url.path, request.url.query, request.headers.get(INTERACTIVE_HEADER, ""))
+    for part in parts:
         digest.update(part.encode("utf-8"))
         digest.update(b"\0")
     digest.update(canonical)
     return digest.hexdigest()
 
 
-def _expired(record: OxydeIdempotencyRecord, now: datetime) -> bool:
-    return record.created_at <= now - RETENTION  # DateTimeUTC: always aware
+async def _claim(user_id: str, key: str, method: str, path: str, digest: str) -> _Claim:
+    """Claim ``key`` for this request, in a transaction of its own (step
+    1 of the module docstring); or raise what the resend gets instead."""
+    now = datetime.now(timezone.utc)
+    token = str(uuid.uuid4())
+    async with atomic():
+        try:
+            async with atomic():  # a savepoint: a failed insert must not end the transaction (Postgres)
+                record = await OxydeIdempotencyRecord.objects.create(
+                    user_id=user_id, idempotency_key=key, method=method, path=path,
+                    request_hash=digest, claim_token=token, claimed_at=now, created_at=now,
+                )
+                return _Claim(record.id, token)
+        except IntegrityError:
+            pass
+        existing = await OxydeIdempotencyRecord.objects.filter(user_id=user_id, idempotency_key=key).first()
+        if existing is not None and existing.created_at <= now - TOMBSTONE_RETENTION:
+            await existing.delete()  # forgotten: the key is new again
+            existing = None
+        if existing is None:  # forgotten, or swept since the insert failed
+            record = await OxydeIdempotencyRecord.objects.create(
+                user_id=user_id, idempotency_key=key, method=method, path=path,
+                request_hash=digest, claim_token=token, claimed_at=now, created_at=now,
+            )
+            return _Claim(record.id, token)
+        if (existing.method, existing.path, existing.request_hash) != (method, path, digest):
+            raise _refusal(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, "idempotency_key_reused",
+                f"This {HEADER} was already used for a different request "
+                f"({existing.method} {existing.path}). Use a new key for a new write.",
+            )
+        if existing.status is None:
+            if existing.claimed_at > now - STALE_CLAIM:
+                raise _in_flight()
+            # Its request died before its write committed: take it over.
+            taken = await execute_raw(
+                "UPDATE idempotency_records SET claim_token = ?, claimed_at = ? "
+                "WHERE id = ? AND claim_token = ? AND status IS NULL RETURNING id",
+                [token, now, existing.id, existing.claim_token],
+            )
+            if not taken:  # pragma: no cover -- the insert above holds the write lock
+                raise _in_flight()
+            return _Claim(existing.id, token)
+        if existing.created_at <= now - REPLAY_WINDOW:
+            raise _refusal(
+                status.HTTP_409_CONFLICT, "idempotency_key_expired",
+                f"This write was already done, more than {int(REPLAY_WINDOW.total_seconds() // 3600)} hours ago, "
+                "and its answer is no longer kept. It was not done again.",
+            )
+        raise _Replay(existing)
 
 
-async def _claim(user_id: str, key: str, method: str, path: str, digest: str) -> OxydeIdempotencyRecord:
-    """Insert the key's record, unanswered, as the transaction's first
-    write; or, when the key already has a live answer, raise ``_Replay``
-    (or the 422 when that answer was for a different request)."""
-    fields = dict(user_id=user_id, idempotency_key=key, method=method, path=path, request_hash=digest)
-    try:
-        async with atomic():  # a savepoint: a failed insert must not end the transaction (Postgres)
-            return await OxydeIdempotencyRecord.objects.create(**fields)
-    except IntegrityError:
-        pass
-    existing = await OxydeIdempotencyRecord.objects.filter(user_id=user_id, idempotency_key=key).first()
-    if existing is not None and _expired(existing, datetime.now(timezone.utc)):
-        await existing.delete()
-        existing = None
-    if existing is None:  # expired, or swept since the insert failed
-        return await OxydeIdempotencyRecord.objects.create(**fields)
-    if (existing.method, existing.path, existing.request_hash) != (method, path, digest):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={
-                "error_code": "idempotency_key_reused",
-                "message": (
-                    f"This {HEADER} was already used for a different request "
-                    f"({existing.method} {existing.path}). Use a new key for a new write."
-                ),
-            },
-        )
-    if existing.status is None:  # pragma: no cover -- a record is answered in the transaction that claims it
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"error_code": "idempotency_key_in_flight", "message": "This write is still in progress."},
-            headers={"Retry-After": "1"},
-        )
-    raise _Replay(existing)
-
-
-async def _answer(record: OxydeIdempotencyRecord, *, status_code: int, refused: bool, body: str | None,
+async def _answer(claim: _Claim, *, status_code: int, refused: bool, body: str | None,
                   headers: dict[str, str]) -> None:
-    record.status = status_code
-    record.refused = refused
-    record.response_body = body
-    record.response_headers = json.dumps(headers, sort_keys=True)
-    await record.save(update_fields={"status", "refused", "response_body", "response_headers"})
+    """Store the answer, inside the write's transaction, if the claim is
+    still this request's."""
+    answered = await execute_raw(
+        "UPDATE idempotency_records SET status = ?, refused = ?, response_body = ?, response_headers = ? "
+        "WHERE id = ? AND claim_token = ? AND status IS NULL RETURNING id",
+        [status_code, refused, body, json.dumps(headers, sort_keys=True), claim.id, claim.token],
+    )
+    if not answered:
+        raise _ClaimLost(claim.id)
 
 
-async def _sweep(now: datetime) -> None:
-    """Forget every key past ``RETENTION`` (by the created_at index).
-    Raw SQL: Oxyde has no range lookup on a DateTimeUTC field."""
-    await execute_raw("DELETE FROM idempotency_records WHERE created_at <= ?", [now - RETENTION])
+async def _release(claim: _Claim) -> None:
+    """Drop this request's claim (a resend is then a fresh attempt)."""
+    await execute_raw(
+        "DELETE FROM idempotency_records WHERE id = ? AND claim_token = ? AND status IS NULL",
+        [claim.id, claim.token],
+    )
+
+
+async def _release_after_rollback(claim: _Claim) -> None:
+    """``_release`` after the write's transaction rolled back. If this
+    fails too the claim goes stale, and a resend after ``STALE_CLAIM``
+    takes it over."""
+    try:
+        async with atomic():
+            await _release(claim)
+    except Exception:
+        logger.exception("could not release idempotency claim %s; it will go stale", claim.id)
+
+
+async def sweep(now: datetime | None = None) -> None:
+    """Clear answers past the replay window, and delete rows past the
+    tombstone's retention (and claims that old). Raw SQL: Oxyde has no
+    range lookup on a DateTimeUTC field."""
+    now = now or datetime.now(timezone.utc)
+    async with atomic():
+        await execute_raw(
+            "UPDATE idempotency_records SET response_body = NULL, response_headers = NULL "
+            "WHERE created_at <= ? AND status IS NOT NULL AND response_body IS NOT NULL",
+            [now - REPLAY_WINDOW],
+        )
+        await execute_raw("DELETE FROM idempotency_records WHERE created_at <= ?", [now - TOMBSTONE_RETENTION])
+
+
+async def _maybe_sweep() -> None:
+    global _next_sweep
+    if time.monotonic() < _next_sweep:
+        return
+    _next_sweep = time.monotonic() + SWEEP_EVERY_SECONDS
+    try:
+        await sweep()
+    except Exception:  # bookkeeping: never fails the write
+        logger.exception("idempotency sweep failed")
 
 
 async def _idempotency_scope(request: Request, principal: CurrentPrincipal):
@@ -204,40 +357,56 @@ async def _idempotency_scope(request: Request, principal: CurrentPrincipal):
         yield
         return
     if not _valid_key(key):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error_code": "invalid_idempotency_key",
-                "message": f"{HEADER} must be 1 to {MAX_KEY_LENGTH} printable ASCII characters, without spaces.",
-            },
+        raise _refusal(
+            status.HTTP_400_BAD_REQUEST, "invalid_idempotency_key",
+            f"{HEADER} must be 1 to {MAX_KEY_LENGTH} printable ASCII characters, without spaces.",
         )
     digest = await _fingerprint(request)
+    try:
+        claim = await _claim(principal.user.id, key, request.method, request.url.path, digest)
+    except Exception as exc:
+        if is_sqlite_busy(exc):
+            raise _busy() from exc
+        raise
+    await _maybe_sweep()
+
     refusal: HTTPException | None = None
-    async with atomic():
-        record = await _claim(principal.user.id, key, request.method, request.url.path, digest)
-        try:
-            yield
-        except HTTPException as exc:
-            if exc.status_code >= 500:
-                raise
-            await _answer(
-                record, status_code=exc.status_code, refused=True,
-                body=json.dumps(exc.detail, default=str), headers=dict(exc.headers or {}),
-            )
-            refusal = exc
-        else:
-            response: Response | None = getattr(request.state, _RESPONSE, None)
-            if response is None:
-                raise RuntimeError(f"{request.url.path}: an @idempotent route must be an IdempotentRoute")
-            if response.status_code >= 500:
-                raise RuntimeError(f"{request.url.path} answered {response.status_code}; not stored")
-            content_type = response.headers.get("content-type")
-            await _answer(
-                record, status_code=response.status_code, refused=False,
-                body=bytes(response.body).decode("utf-8"),
-                headers={"content-type": content_type} if content_type else {},
-            )
-        await _sweep(datetime.now(timezone.utc))
+    try:
+        async with atomic():
+            try:
+                yield
+            except HTTPException as exc:
+                if exc.status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+                    raise
+                if _stored(exc.status_code):
+                    await _answer(
+                        claim, status_code=exc.status_code, refused=True,
+                        body=json.dumps(jsonable_encoder(exc.detail)), headers=dict(exc.headers or {}),
+                    )
+                else:
+                    await _release(claim)
+                refusal = exc
+            else:
+                response: Response | None = getattr(request.state, _RESPONSE, None)
+                if response is None:
+                    raise RuntimeError(f"{request.url.path}: an @idempotent route must be an IdempotentRoute")
+                if response.status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+                    raise RuntimeError(f"{request.url.path} answered {response.status_code}; not stored")
+                content_type = response.headers.get("content-type")
+                await _answer(
+                    claim, status_code=response.status_code, refused=False,
+                    body=bytes(response.body).decode("utf-8"),
+                    headers={"content-type": content_type} if content_type else {},
+                )
+    except _ClaimLost as exc:
+        # Another resend took the claim over and may have done the write:
+        # this one rolled back. Its retry gets that one's answer.
+        raise _in_flight() from exc
+    except BaseException as exc:
+        await _release_after_rollback(claim)
+        if isinstance(exc, Exception) and is_sqlite_busy(exc):
+            raise _busy() from exc
+        raise
     if refusal is not None:
         raise refusal
 

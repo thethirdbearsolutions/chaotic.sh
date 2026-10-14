@@ -43,10 +43,14 @@ _API_DIR = pathlib.Path(api_pkg.__file__).parent
 _TOOLS_PATH = _API_DIR.parent / "mcp_server" / "backend.py"
 
 # Auth dependencies, not API functions: they return the current user row,
-# a bool, or an auth-method string, and are never a tool's output. And the
-# Idempotency-Key route plumbing (a decorator, a route class and its
-# dependency, CHT-1621), which no tool calls.
-_NOT_API_FUNCTIONS = {"deps", "idempotency"}
+# a bool, or an auth-method string, and are never a tool's output.
+_NOT_API_FUNCTIONS = {"deps"}
+
+# Single functions that are route plumbing, not API functions: the
+# Idempotency-Key endpoint marker and its test (CHT-1621). A decorator
+# returns the function it was given, not a schema. Anything else public
+# in their module is checked like the rest of app/api.
+_PLUMBING = {("idempotency", "idempotent"), ("idempotency", "is_idempotent")}
 
 
 def _route_decorated(node: ast.AST) -> bool:
@@ -70,7 +74,7 @@ def _public_functions():
         for node in tree.body:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            if node.name.startswith("_"):
+            if node.name.startswith("_") or (path.stem, node.name) in _PLUMBING:
                 continue
             out.append((path.stem, node.name, _route_decorated(node), node.returns is not None))
     return out

@@ -27,6 +27,8 @@ class OxydeIdempotencyRecord(Model):
     method: str
     path: str
     request_hash: str
+    claim_token: str
+    claimed_at: datetime
     status: int | None
     refused: bool
     response_body: str | None
@@ -44,6 +46,28 @@ class OxydeIdempotencyRecordQuery(Query[OxydeIdempotencyRecord]):
     def filter(
         self,
         *args: Any,
+        claim_token: str | None = None,
+        claim_token__contains: str | None = None,
+        claim_token__icontains: str | None = None,
+        claim_token__startswith: str | None = None,
+        claim_token__istartswith: str | None = None,
+        claim_token__endswith: str | None = None,
+        claim_token__iendswith: str | None = None,
+        claim_token__iexact: str | None = None,
+        claim_token__in: list[str] | None = None,
+        claim_token__isnull: bool | None = None,
+        claimed_at: datetime | None = None,
+        claimed_at__gt: datetime | None = None,
+        claimed_at__gte: datetime | None = None,
+        claimed_at__lt: datetime | None = None,
+        claimed_at__lte: datetime | None = None,
+        claimed_at__between: tuple[datetime, datetime] | None = None,
+        claimed_at__range: datetime | None = None,
+        claimed_at__year: int | None = None,
+        claimed_at__month: int | None = None,
+        claimed_at__day: int | None = None,
+        claimed_at__in: list[datetime] | None = None,
+        claimed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -158,6 +182,28 @@ class OxydeIdempotencyRecordQuery(Query[OxydeIdempotencyRecord]):
     def exclude(
         self,
         *args: Any,
+        claim_token: str | None = None,
+        claim_token__contains: str | None = None,
+        claim_token__icontains: str | None = None,
+        claim_token__startswith: str | None = None,
+        claim_token__istartswith: str | None = None,
+        claim_token__endswith: str | None = None,
+        claim_token__iendswith: str | None = None,
+        claim_token__iexact: str | None = None,
+        claim_token__in: list[str] | None = None,
+        claim_token__isnull: bool | None = None,
+        claimed_at: datetime | None = None,
+        claimed_at__gt: datetime | None = None,
+        claimed_at__gte: datetime | None = None,
+        claimed_at__lt: datetime | None = None,
+        claimed_at__lte: datetime | None = None,
+        claimed_at__between: tuple[datetime, datetime] | None = None,
+        claimed_at__range: datetime | None = None,
+        claimed_at__year: int | None = None,
+        claimed_at__month: int | None = None,
+        claimed_at__day: int | None = None,
+        claimed_at__in: list[datetime] | None = None,
+        claimed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -269,7 +315,7 @@ class OxydeIdempotencyRecordQuery(Query[OxydeIdempotencyRecord]):
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["created_at", "-created_at", "id", "-id", "idempotency_key", "-idempotency_key", "method", "-method", "path", "-path", "refused", "-refused", "request_hash", "-request_hash", "response_body", "-response_body", "response_headers", "-response_headers", "status", "-status", "user", "-user", "user_id", "-user_id"]) -> "OxydeIdempotencyRecordQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["claim_token", "-claim_token", "claimed_at", "-claimed_at", "created_at", "-created_at", "id", "-id", "idempotency_key", "-idempotency_key", "method", "-method", "path", "-path", "refused", "-refused", "request_hash", "-request_hash", "response_body", "-response_body", "response_headers", "-response_headers", "status", "-status", "user", "-user", "user_id", "-user_id"]) -> "OxydeIdempotencyRecordQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -285,7 +331,7 @@ class OxydeIdempotencyRecordQuery(Query[OxydeIdempotencyRecord]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"]) -> "OxydeIdempotencyRecordQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["claim_token", "claimed_at", "created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"]) -> "OxydeIdempotencyRecordQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -309,7 +355,7 @@ class OxydeIdempotencyRecordQuery(Query[OxydeIdempotencyRecord]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"]) -> "OxydeIdempotencyRecordQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["claim_token", "claimed_at", "created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"]) -> "OxydeIdempotencyRecordQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -317,11 +363,11 @@ class OxydeIdempotencyRecordQuery(Query[OxydeIdempotencyRecord]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"]) -> "OxydeIdempotencyRecordQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["claim_token", "claimed_at", "created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"]) -> "OxydeIdempotencyRecordQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"], flat: bool = False) -> "OxydeIdempotencyRecordQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["claim_token", "claimed_at", "created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"], flat: bool = False) -> "OxydeIdempotencyRecordQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -445,6 +491,28 @@ class OxydeIdempotencyRecordManager(QueryManager[OxydeIdempotencyRecord]):
     def filter(
         self,
         *args: Any,
+        claim_token: str | None = None,
+        claim_token__contains: str | None = None,
+        claim_token__icontains: str | None = None,
+        claim_token__startswith: str | None = None,
+        claim_token__istartswith: str | None = None,
+        claim_token__endswith: str | None = None,
+        claim_token__iendswith: str | None = None,
+        claim_token__iexact: str | None = None,
+        claim_token__in: list[str] | None = None,
+        claim_token__isnull: bool | None = None,
+        claimed_at: datetime | None = None,
+        claimed_at__gt: datetime | None = None,
+        claimed_at__gte: datetime | None = None,
+        claimed_at__lt: datetime | None = None,
+        claimed_at__lte: datetime | None = None,
+        claimed_at__between: tuple[datetime, datetime] | None = None,
+        claimed_at__range: datetime | None = None,
+        claimed_at__year: int | None = None,
+        claimed_at__month: int | None = None,
+        claimed_at__day: int | None = None,
+        claimed_at__in: list[datetime] | None = None,
+        claimed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -559,6 +627,28 @@ class OxydeIdempotencyRecordManager(QueryManager[OxydeIdempotencyRecord]):
     def exclude(
         self,
         *args: Any,
+        claim_token: str | None = None,
+        claim_token__contains: str | None = None,
+        claim_token__icontains: str | None = None,
+        claim_token__startswith: str | None = None,
+        claim_token__istartswith: str | None = None,
+        claim_token__endswith: str | None = None,
+        claim_token__iendswith: str | None = None,
+        claim_token__iexact: str | None = None,
+        claim_token__in: list[str] | None = None,
+        claim_token__isnull: bool | None = None,
+        claimed_at: datetime | None = None,
+        claimed_at__gt: datetime | None = None,
+        claimed_at__gte: datetime | None = None,
+        claimed_at__lt: datetime | None = None,
+        claimed_at__lte: datetime | None = None,
+        claimed_at__between: tuple[datetime, datetime] | None = None,
+        claimed_at__range: datetime | None = None,
+        claimed_at__year: int | None = None,
+        claimed_at__month: int | None = None,
+        claimed_at__day: int | None = None,
+        claimed_at__in: list[datetime] | None = None,
+        claimed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -670,11 +760,11 @@ class OxydeIdempotencyRecordManager(QueryManager[OxydeIdempotencyRecord]):
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"]) -> OxydeIdempotencyRecordQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["claim_token", "claimed_at", "created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"]) -> OxydeIdempotencyRecordQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"], flat: bool = False) -> OxydeIdempotencyRecordQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["claim_token", "claimed_at", "created_at", "id", "idempotency_key", "method", "path", "refused", "request_hash", "response_body", "response_headers", "status", "user", "user_id"], flat: bool = False) -> OxydeIdempotencyRecordQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -825,6 +915,8 @@ class OxydeIdempotencyRecordManager(QueryManager[OxydeIdempotencyRecord]):
         instance: OxydeIdempotencyRecord | None = None,
         client: Any | None = None,
         using: str | None = None,
+        claim_token: str | None = None,
+        claimed_at: datetime | None = None,
         created_at: datetime | None = None,
         id: str | None = None,
         idempotency_key: str | None = None,

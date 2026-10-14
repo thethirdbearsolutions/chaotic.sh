@@ -62,11 +62,25 @@ sealed interface FlushOutcome {
  *   write that a newer one supersedes ([PendingWrite.supersedes]) is
  *   dropped instead of stalling, and a stalled one is dropped when a
  *   newer one is queued, so a retry never undoes the newer change.
+ * - 409 `idempotency_in_flight`: the server is still doing this write
+ *   from an earlier send whose answer was lost. Waits and goes again, as
+ *   for a 429; the next send gets that earlier send's answer.
  * - Any other 4xx: refused (arrears, limbo, someone else already decided
- *   the gate, a value the server will not take). Dropped and kept as a
- *   [WriteRefusal] with the server's reason, never retried. A mark-read or
- *   archive of an entry that is gone (404) is dropped quietly: there is
- *   nothing left to tell the person.
+ *   the gate, a value the server will not take, or 409
+ *   `idempotency_key_expired`: the write was done long ago and its answer
+ *   is gone). Dropped and kept as a [WriteRefusal] with the server's
+ *   reason, never retried. A mark-read or archive of an entry that is
+ *   gone (404) is dropped quietly: there is nothing left to tell the
+ *   person.
+ *
+ * The server replays a key's answer for 24 hours, and after that only
+ * says the write was already done (for 30 days; see the server's
+ * app/api/idempotency.py). So a write older than [REPLAY_WINDOW_MILLIS]
+ * (counted from when the person acted, which is no later than its first
+ * send) is not sent on its own: it may already have been done, and a
+ * status change sent that late could undo a newer one. It stalls, and
+ * [retry] refuses it with that explanation; the person discards it, or
+ * does it again (a new write, with a new key).
  *
  * One flush at a time; [undo] never removes a write while it is being sent.
  */
@@ -190,6 +204,8 @@ class WriteQueue(
             when {
                 write == null -> false
                 superseded(write, queued) -> removeWrite(key).let { false }
+                // Too late to send safely (the class comment): refused here, with why.
+                write.tooOld(nowMillis()) -> refuseWrite(tooOldRefusal(write)).let { false }
                 else -> rescheduleWrite(key, attempts = 0, notBeforeMillis = nowMillis())
             }
         } ?: false
@@ -204,6 +220,7 @@ class WriteQueue(
     suspend fun flush(): FlushOutcome = flushing.withLock {
         val ticket = session.begin() ?: return@withLock FlushOutcome.Unauthorized
         val owner = session.ownerOf(ticket) ?: return@withLock FlushOutcome.Unauthorized
+        session.write(ticket) { stallTooOld(nowMillis()) } ?: return@withLock FlushOutcome.Unauthorized
         val tried = HashSet<String>()
         var outcome: FlushOutcome? = null
         while (outcome == null) outcome = flushOne(ticket, owner, tried)
@@ -300,6 +317,34 @@ class WriteQueue(
             }
         }
     }
+
+    /**
+     * Stall every write too old to send on its own (the class comment),
+     * or drop it when a newer one supersedes it, as a stalled write is.
+     */
+    private suspend fun CacheStore.stallTooOld(now: Long) {
+        val queued = pendingWrites()
+        for (write in queued.filter { !it.stalled && it.tooOld(now) }) {
+            if (superseded(write, queued)) {
+                removeWrite(write.key)
+            } else {
+                rescheduleWrite(write.key, MAX_ATTEMPTS, write.notBeforeMillis)
+            }
+        }
+    }
+
+    private fun tooOldRefusal(write: PendingWrite) = WriteRefusal(
+        key = write.key,
+        kind = write.kind,
+        label = write.label,
+        status = HTTP_CONFLICT,
+        errorCode = TOO_OLD,
+        message = TOO_OLD_MESSAGE,
+        entryId = write.entryId,
+        issueId = write.issueId,
+        atMillis = nowMillis(),
+        value = write.value.takeIf { write.kind == WriteKind.COMMENT },
+    )
 
     /** Whether a write queued after [write] supersedes it. */
     private fun superseded(write: PendingWrite, queued: List<PendingWrite>): Boolean =
@@ -411,6 +456,22 @@ class WriteQueue(
         /** The server's limit on a rejection's reason. */
         const val MAX_NOTE_CHARS = 10_000
 
+        /**
+         * How old a write may be and still be sent on its own (the class
+         * comment). Shorter than the server's 24-hour replay window, so a
+         * resend is always within it.
+         */
+        const val REPLAY_WINDOW_MILLIS = 23 * 60 * 60_000L
+
+        /** The [WriteRefusal.errorCode] of a write [retry] refused as too old. */
+        const val TOO_OLD = "write_too_old"
+        const val TOO_OLD_MESSAGE =
+            "This is more than a day old and may already have been done, so it was not sent. " +
+                "Do it again if it is still needed."
+
+        /** The server's answer while it is still doing an earlier send of the same write. */
+        const val IN_FLIGHT = "idempotency_in_flight"
+
         const val FIRST_RETRY_MILLIS = 5_000L
         const val MAX_RETRY_MILLIS = 15 * 60_000L
 
@@ -433,6 +494,7 @@ class WriteQueue(
         }
         private const val HTTP_UNAUTHORIZED = 401
         private const val HTTP_NOT_FOUND = 404
+        private const val HTTP_CONFLICT = 409
         private const val HTTP_TIMEOUT = 408
         private const val HTTP_TOO_EARLY = 425
         private const val HTTP_TOO_MANY = 429
@@ -441,7 +503,8 @@ class WriteQueue(
         private val DECISIONS = setOf(WriteKind.APPROVE, WriteKind.REJECT, WriteKind.ARCHIVE)
 
         private fun Remote.HttpError.isTransient() =
-            status >= HTTP_SERVER || status == HTTP_TIMEOUT || status == HTTP_TOO_EARLY || status == HTTP_TOO_MANY
+            status >= HTTP_SERVER || status == HTTP_TIMEOUT || status == HTTP_TOO_EARLY || status == HTTP_TOO_MANY ||
+                (status == HTTP_CONFLICT && errorCode == IN_FLIGHT)
 
         private fun Remote.HttpError.isQuietDrop(write: PendingWrite) =
             status == HTTP_NOT_FOUND && (write.kind == WriteKind.MARK_READ || write.kind == WriteKind.ARCHIVE)

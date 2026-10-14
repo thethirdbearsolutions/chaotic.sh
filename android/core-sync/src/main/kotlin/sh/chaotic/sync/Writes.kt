@@ -62,6 +62,12 @@ data class PendingWrite(
      */
     val stalled: Boolean get() = attempts >= WriteQueue.MAX_ATTEMPTS
 
+    /**
+     * Older than [WriteQueue.REPLAY_WINDOW_MILLIS] at [nowMillis]: too late
+     * to send on its own, since it may already have been done.
+     */
+    fun tooOld(nowMillis: Long): Boolean = nowMillis - createdAtMillis >= WriteQueue.REPLAY_WINDOW_MILLIS
+
     /** What it is about, for keeping writes to the same thing in order. */
     val targets: List<String> get() = listOfNotNull(entryId?.let { "entry:$it" }, issueId?.let { "issue:$it" })
 
