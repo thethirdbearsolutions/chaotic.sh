@@ -377,6 +377,23 @@ def known_only_team(api_url: str, credential: str) -> str | None:
     return team["id"] if team else None
 
 
+def process_team(api_url: str, credential: str) -> str | None:
+    """The team set_process_team chose for (api_url, credential), if any:
+    a lookup result, unlike a configured current_team."""
+    return _process_teams.get(_team_slot(api_url, credential))
+
+
+def forget_only_team(api_url: str, credential: str) -> None:
+    """Drop the remembered only team for (api_url, credential): the server
+    just refused a key in it, and the person may have left it. A process
+    default that was that same lookup answer goes with it, so the stdio
+    MCP server lists the teams again too."""
+    slot = _team_slot(api_url, credential)
+    team = _only_teams.pop(slot, None)
+    if team and _process_teams.get(slot) == team["id"]:
+        del _process_teams[slot]
+
+
 def accessible_teams(api_url: str, credential: str, fetch) -> list[dict]:
     """The teams `credential` can see on `api_url`: from this process's
     memo when it already found exactly one, else `fetch()` (a call to

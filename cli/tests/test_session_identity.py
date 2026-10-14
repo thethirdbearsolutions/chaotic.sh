@@ -698,12 +698,24 @@ class TestMcpDefaultTeam:
         monkeypatch.setattr(m, "client", Client())
         base = server.handler
         server.teams = [{"id": "team-only", "name": "Demo", "key": "DEMO"}]
+        server.teams_status = 200
+        server.refused = []
 
         def handler(request):
             bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
             if request.url.path == "/api/teams" and bearer in server.registrar_keys:
                 server.requests.append((request.method, "/teams", bearer))
+                if server.teams_status != 200:
+                    return httpx.Response(server.teams_status, json={"detail": "unavailable"})
                 return httpx.Response(200, json=server.teams)
+            if request.url.path == "/api/agents/register":
+                team = json.loads(request.content).get("team_id")
+                if team and team not in {t["id"] for t in server.teams}:
+                    # The server's rule: a person registers only in a team
+                    # they are a member of.
+                    server.requests.append((request.method, "/agents/register", bearer))
+                    server.refused.append(team)
+                    return httpx.Response(403, json={"detail": "Not a member of this team"})
             return base(request)
 
         server.handler = handler
@@ -800,6 +812,104 @@ class TestMcpDefaultTeam:
         before = len(teams_server.requests)
         assert Client()._request("GET", "/issues")["as"] == "sess-1-team-new"
         assert [r[1] for r in teams_server.requests[before:]] == ["/issues"]
+
+    def _moved_to_a_new_team(self, server):
+        server.teams[:] = [{"id": "team-new", "name": "New", "key": "NEW"}]
+
+    def test_a_stale_hint_with_no_usable_key_looks_the_team_up(self, auto, teams_server):
+        """Review M1: the session's key in the remembered team expired (its
+        slot is gone); nothing was refused, so the hint must not choose the
+        team to register in."""
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        Client()._request("GET", "/issues")
+        self._new_process()
+        self._moved_to_a_new_team(teams_server)
+        fp = si.fingerprint(REGISTRAR_KEY)
+        si.cache_path(REF, API, fp, "team-only").unlink()
+
+        assert Client()._request("GET", "/issues")["as"] == "sess-1-team-new"
+        assert [r["team_id"] for r in teams_server.registrations] == ["team-only", "team-new"]
+        assert teams_server.refused == []
+        assert si._hinted_team(REF, API, fp) == "team-new"
+
+    def test_an_expired_key_in_the_remembered_team_looks_the_team_up(self, auto, teams_server):
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        teams_server.expires_in = timedelta(seconds=1)  # inside EXPIRY_MARGIN: never usable
+        Client()._request("GET", "/issues")
+        self._new_process()
+        self._moved_to_a_new_team(teams_server)
+
+        assert Client()._request("GET", "/issues")["as"] == "sess-1-team-new"
+        assert teams_server.refused == []
+
+    def test_a_refused_key_in_the_same_process_lists_the_teams_again(self, auto, teams_server):
+        """Review M2: within one process (a long-running `chaotic mcp`), the
+        lookup memo is forgotten after a 401 too, not only the hint."""
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        Client()._request("GET", "/issues")
+        self._moved_to_a_new_team(teams_server)
+        teams_server.revoke_all()
+        before = len(teams_server.requests)
+
+        assert Client()._request("GET", "/issues")["as"] == "sess-1-team-new"
+        assert "/teams" in [r[1] for r in teams_server.requests[before:]]
+        assert teams_server.refused == []
+        assert teams_server.registrations[-1]["team_id"] == "team-new"
+        assert cli_config.known_only_team(API, REGISTRAR_KEY) == "team-new"
+
+    async def test_a_refused_key_under_the_mcp_default_team_lists_the_teams_again(self, auto, teams_server):
+        """Review M2 in `chaotic mcp` itself: the default team the server
+        took (the key's only team) goes with the memo after a 401."""
+        from cli.mcp_backend import RestBackend
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        assert await RestBackend().resolve_team(None) == "team-only"
+        await RestBackend().get_issue("DEMO-1")
+        self._moved_to_a_new_team(teams_server)
+        teams_server.revoke_all()
+
+        assert (await RestBackend().get_issue("DEMO-2"))["as"] == "sess-1-team-new"
+        assert teams_server.refused == []
+        assert await RestBackend().resolve_team(None) == "team-new"
+
+    def test_a_refused_registration_forgets_the_team(self, auto, teams_server):
+        """The registration in a looked-up team is refused (the person was
+        removed between the list and the registration): neither the hint
+        nor the memo keeps it."""
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        fp = si.fingerprint(REGISTRAR_KEY)
+        Client()._request("GET", "/issues")
+        teams_server.teams[:] = []  # removed from every team; the memo still says team-only
+        si.cache_path(REF, API, fp, "team-only").unlink()  # and its key is gone
+
+        with pytest.raises(si.SessionIdentityError):
+            si.session_key(REF, REGISTRAR_KEY, API)
+        assert teams_server.refused == ["team-only"]
+        assert not si.team_hint_path(REF, API, fp).exists()
+        assert cli_config.known_only_team(API, REGISTRAR_KEY) is None
+
+    async def test_the_hint_is_written_when_the_mcp_default_found_the_team(self, auto, teams_server):
+        """Review L1: the MCP server's first call was team-scoped, so the
+        team came from the shared memo, not session identity's lookup."""
+        from cli.mcp_backend import RestBackend
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        assert await RestBackend().resolve_team(None) == "team-only"
+        await RestBackend().get_issue("DEMO-1")
+        self._new_process()
+        before = len(teams_server.requests)
+
+        Client()._request("GET", "/issues")
+        assert [r[1] for r in teams_server.requests[before:]] == ["/issues"]
+
+    def test_a_failed_teams_lookup_is_not_remembered(self, auto, teams_server):
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        teams_server.teams_status = 503
+        with pytest.raises(APIError):
+            Client()._request("GET", "/issues")
+        assert cli_config.known_only_team(API, REGISTRAR_KEY) is None
+
+        teams_server.teams_status = 200
+        assert Client()._request("GET", "/issues")["as"] == "sess-1-team-only"
+        assert [r[1] for r in teams_server.requests].count("/teams") == 2
 
     def test_a_hint_for_another_slot_is_ignored(self, auto, teams_server):
         teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}

@@ -509,16 +509,22 @@ def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: s
             "(`chaotic auth set-key`, or CHAOTIC_API_KEY)."
         )
     fp = fingerprint(credential)
-    # No current team: a person registrar's only team, once it is known in
-    # this process or remembered by this session (an agent registrar's
-    # slot has no team anyway). The remembered one is not trusted after a
-    # refused key: that may be the team the person has left, so it is
-    # looked up again (CHT-1691).
-    team_id = (
-        _config.get_current_team()
-        or _config.known_only_team(api_url, credential)
-        or (None if failed_key else _hinted_team(ref, api_url, fp))
-    )
+    hint_path = team_hint_path(ref, api_url, fp)
+    # No current team: a person registrar's only team (an agent
+    # registrar's slot has no team anyway), from this process's lookup
+    # memo, else, only to FIND a cached key, the team this session
+    # remembered (CHT-1691). Neither is trusted after a refused key, which
+    # may be a team the person has left: the memo is forgotten and the
+    # teams are listed again.
+    configured_team = _config.get_current_team()
+    if configured_team and configured_team == _config.process_team(api_url, credential):
+        # The stdio MCP server's default: the key's only team, a lookup
+        # result like the memo, not a team chosen with `team use`.
+        configured_team = None
+    if failed_key and not configured_team:
+        _config.forget_only_team(api_url, credential)
+    memo_team = None if configured_team or failed_key else _config.known_only_team(api_url, credential)
+    team_id = configured_team or memo_team or (None if failed_key else _hinted_team(ref, api_url, fp))
     agent_slot = cache_path(ref, api_url, fp, None)
 
     def person_slot():
@@ -547,19 +553,37 @@ def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: s
             key = cached(trusted)
             if key:
                 return key
+            # No usable key: the remembered team was only a pointer to one.
+            # Register in the configured team, or the one the teams list
+            # says now (review M1: a stale hint must not pick the team).
+            team_id = configured_team or memo_team
             me = _whoami(credential, api_url)
-            if not me.get("is_agent") and not team_id:
-                # A person registers in a team; with none selected, its
-                # only one (CHT-1687). Its key may already be cached there.
-                team_id = _registrar_team(credential, api_url)
-                write_cache(team_hint_path(ref, api_url, fp), {
+            if not me.get("is_agent") and not configured_team:
+                if not team_id:
+                    # A person registers in a team; with none selected, its
+                    # only one (CHT-1687). Its key may already be cached there.
+                    team_id = _registrar_team(credential, api_url)
+                # Remember it for this session's later processes, whether
+                # it came from the lookup or the memo (review L1). Written
+                # before the key lookup and the registration on purpose:
+                # the team is right whether or not they succeed, and a
+                # refused registration removes it again below.
+                write_cache(hint_path, {
                     "external_ref": ref, "api_url": api_url, "registrar": fp, "team_id": team_id,
                 })
                 key = cached(trusted)
                 if key:
                     return key
             slot_team = None if me.get("is_agent") else team_id
-            new_record = _register(ref, credential, api_url, slot_team, me)
+            try:
+                new_record = _register(ref, credential, api_url, slot_team, me)
+            except SessionIdentityError:
+                if slot_team and not configured_team:
+                    # Refused in a team that was not chosen by hand: neither
+                    # the session nor this process should go back to it.
+                    hint_path.unlink(missing_ok=True)
+                    _config.forget_only_team(api_url, credential)
+                raise
             write_cache(cache_path(ref, api_url, fp, slot_team), new_record)
             return new_record["api_key"]
     except OSError as exc:
