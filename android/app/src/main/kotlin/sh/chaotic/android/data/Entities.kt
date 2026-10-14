@@ -262,6 +262,6 @@ data class SprintCardEntity(
     }
 }
 
-/** Small values the sync keeps, by key: the inbox cursor. */
+/** Small values the sync keeps, by key: the inbox cursor and whose cache this is. */
 @Entity(tableName = "sync_state")
 data class SyncStateEntity(@PrimaryKey val key: String, val value: String)

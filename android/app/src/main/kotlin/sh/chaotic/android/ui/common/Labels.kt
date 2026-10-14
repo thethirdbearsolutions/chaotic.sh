@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import sh.chaotic.android.R
 import sh.chaotic.sync.Principal
+import sh.chaotic.sync.UNKNOWN_VALUE
 import sh.chaotic.sync.Who
 
 @Composable
@@ -46,7 +47,7 @@ fun whoLabel(principal: Principal?): String = when (val who = Who.of(principal))
     Who.System -> stringResource(R.string.who_system)
 }
 
-/** A short label for an inbox entry's kind; a kind this app does not know shows as the server wrote it. */
+/** A short label for an inbox entry's kind; one newer than this app gets a neutral label. */
 @Composable
 fun kindLabel(kind: String): String = when (kind) {
     "gate_pending" -> stringResource(R.string.kind_gate_pending)
@@ -55,6 +56,7 @@ fun kindLabel(kind: String): String = when (kind) {
     "assignment" -> stringResource(R.string.kind_assignment)
     "gate_rejected" -> stringResource(R.string.kind_gate_rejected)
     "agent_status" -> stringResource(R.string.kind_agent_status)
+    UNKNOWN_VALUE -> stringResource(R.string.kind_unknown)
     else -> humanize(kind)
 }
 

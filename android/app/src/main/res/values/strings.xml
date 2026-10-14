@@ -30,6 +30,7 @@
     <string name="kind_assignment">Assigned</string>
     <string name="kind_gate_rejected">Rejected</string>
     <string name="kind_agent_status">Agent</string>
+    <string name="kind_unknown">Update</string>
 
     <string name="issue_back">Back</string>
     <string name="issue_status">Status</string>
@@ -44,6 +45,9 @@
     <string name="issue_not_cached">This issue is not saved on this device yet, and the server cannot be reached.</string>
     <string name="issue_gone">This issue was deleted.</string>
     <string name="issue_team_lost">You are no longer in this issue\'s team.</string>
+    <string name="markdown_show_more">Show more</string>
+    <string name="markdown_truncated">%1$d more characters are not shown here.</string>
+    <string name="issue_forbidden">The server would not show this issue to this app.</string>
 
     <string name="sprint_empty">No sprints to show yet. Pull to refresh.</string>
     <string name="sprint_points">%1$d of %2$d points spent</string>

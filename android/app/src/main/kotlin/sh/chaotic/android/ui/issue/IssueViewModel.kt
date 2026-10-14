@@ -31,8 +31,11 @@ enum class Fetch {
     /** 404: the issue was deleted (and dropped from the cache). */
     GONE,
 
-    /** 403: the person left the issue's team (and that team was dropped from the cache). */
+    /** The person left the issue's team (and that team was dropped from the cache). */
     TEAM_LOST,
+
+    /** A 403 while the person is still in the team: they may not see this issue. */
+    FORBIDDEN,
 }
 
 /** One issue, from the cache, refreshed from the server each time it is opened. */
@@ -70,11 +73,13 @@ constructor(
         fetch.value = Fetch.LOADING
         viewModelScope.launch {
             fetch.value = when (refresher.refreshIssue(route.issueId, route.teamId)) {
-                RefreshOutcome.Refreshed -> Fetch.DONE
+                RefreshOutcome.Refreshed, RefreshOutcome.Fresh -> Fetch.DONE
 
                 RefreshOutcome.Gone -> Fetch.GONE
 
                 RefreshOutcome.TeamLost -> Fetch.TEAM_LOST
+
+                RefreshOutcome.Forbidden -> Fetch.FORBIDDEN
 
                 // Signed out: the app is leaving this screen anyway.
                 RefreshOutcome.Unauthorized, is RefreshOutcome.Failed -> Fetch.FAILED

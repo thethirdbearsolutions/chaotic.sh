@@ -14,7 +14,11 @@ sealed interface SyncOutcome {
     data class Synced(val pages: Int, val retryAfterSeconds: Int? = null, val morePending: Boolean = false) :
         SyncOutcome
 
-    /** The credential was refused even after the session's refresh: the device is being signed out. */
+    /**
+     * Nobody is signed in any more: the credential was refused even after
+     * the session's refresh, or the person signed out (or another signed
+     * in) during the run, whose late pages were then dropped.
+     */
     data object Unauthorized : SyncOutcome
 
     /** Nothing changed in the cache; try again later. [retryAfterMillis] is the server's Retry-After, if any. */
@@ -40,50 +44,49 @@ sealed interface SyncOutcome {
  *   or deleted sends no tombstones).
  *
  * Runs are single-flight: a pull to refresh during a poll waits for it
- * rather than racing it with the same cursor.
+ * rather than racing it with the same cursor. Every page is written
+ * through [session], so a page that arrives after a sign-out or an
+ * account switch is dropped rather than written into the next person's
+ * cache (the run then ends as [SyncOutcome.Unauthorized]).
  */
 class InboxSyncer(
     private val remote: ChaoticRemote,
-    private val store: CacheStore,
+    private val session: CacheSession,
     private val pageSize: Int = DEFAULT_PAGE_SIZE,
     private val maxPages: Int = DEFAULT_MAX_PAGES,
 ) {
     private val mutex = Mutex()
+    private val store get() = session.store
 
-    suspend fun sync(): SyncOutcome = mutex.withLock { syncLocked() }
+    suspend fun sync(): SyncOutcome = mutex.withLock {
+        val ticket = session.begin() ?: return@withLock SyncOutcome.Unauthorized
+        syncLocked(ticket)
+    }
 
     @Suppress("ReturnCount") // each way a run ends is an early return
-    private suspend fun syncLocked(): SyncOutcome {
+    private suspend fun syncLocked(ticket: Long): SyncOutcome {
         var cursor = store.inboxCursor()
         var restartedForBadCursor = false
         var clearNext = false
         var pages = 0
         while (pages < maxPages) {
-            val page =
-                when (val result = remote.syncInbox(cursor, pageSize)) {
-                    is Remote.Ok -> result.value
-
-                    is Remote.HttpError -> {
-                        if (result.isInvalidCursor() && cursor != null && !restartedForBadCursor) {
-                            // The server cannot read this cursor any more (a new server
-                            // version, a restored database): start over from nothing.
-                            restartedForBadCursor = true
-                            clearNext = true
-                            cursor = null
-                            continue
-                        }
-                        return failure(result)
-                    }
-
-                    is Remote.Unreachable -> return SyncOutcome.Failed(SyncOutcome.Reason.UNREACHABLE)
-
-                    is Remote.Unreadable -> return SyncOutcome.Failed(SyncOutcome.Reason.UNREADABLE)
-                }
+            val result = remote.syncInbox(cursor, pageSize)
+            if (result.isInvalidCursor() && cursor != null && !restartedForBadCursor) {
+                // The server cannot read this cursor any more (a new server
+                // version, a restored database): start over from nothing.
+                restartedForBadCursor = true
+                clearNext = true
+                cursor = null
+                continue
+            }
+            val page = (result as? Remote.Ok)?.value ?: return failure(result as Remote.Failure)
             pages++
             val clear = clearNext || page.reset
             clearNext = false
             cursor = page.nextCursor ?: if (clear) null else cursor
-            store.applyInbox(merge(page, clear, cursor))
+            val change = merge(page, clear, cursor)
+            // Signed out, or someone else signed in, while the page was on its way.
+            session.write(ticket) { applyInbox(change) } ?: return SyncOutcome.Unauthorized
             if (!page.hasMore) return SyncOutcome.Synced(pages, page.retryAfterSeconds)
         }
         return SyncOutcome.Synced(pages, morePending = true)
@@ -114,9 +117,16 @@ class InboxSyncer(
         )
     }
 
-    private fun failure(error: Remote.HttpError): SyncOutcome = when (error.status) {
-        HTTP_UNAUTHORIZED -> SyncOutcome.Unauthorized
-        else -> SyncOutcome.Failed(SyncOutcome.Reason.SERVER, error.status, error.retryAfterMillis)
+    private fun failure(error: Remote.Failure): SyncOutcome = when (error) {
+        is Remote.HttpError -> if (error.status == HTTP_UNAUTHORIZED) {
+            SyncOutcome.Unauthorized
+        } else {
+            SyncOutcome.Failed(SyncOutcome.Reason.SERVER, error.status, error.retryAfterMillis)
+        }
+
+        is Remote.Unreachable -> SyncOutcome.Failed(SyncOutcome.Reason.UNREACHABLE)
+
+        is Remote.Unreadable -> SyncOutcome.Failed(SyncOutcome.Reason.UNREADABLE)
     }
 
     companion object {
@@ -128,6 +138,7 @@ class InboxSyncer(
         private const val HTTP_UNAUTHORIZED = 401
         private const val HTTP_BAD_REQUEST = 400
 
-        private fun Remote.HttpError.isInvalidCursor() = status == HTTP_BAD_REQUEST && errorCode == "invalid_cursor"
+        private fun Remote<*>.isInvalidCursor() =
+            this is Remote.HttpError && status == HTTP_BAD_REQUEST && errorCode == "invalid_cursor"
     }
 }

@@ -36,6 +36,7 @@ data class CacheSnapshot(
  * same contract in memory, for tests and previews. Every call is one
  * transaction.
  */
+@Suppress("TooManyFunctions") // one transaction per operation the sync and the refreshes need
 interface CacheStore {
     suspend fun inboxCursor(): String?
 
@@ -60,7 +61,13 @@ interface CacheStore {
     /** Replace [teamId]'s sprint cards with [cards]. */
     suspend fun replaceSprintCards(teamId: String, cards: List<SprintCard>)
 
-    /** Sign-out: nothing of this account may outlive it. */
+    /** Who the cache belongs to (see [CacheSession]); null when nobody claimed it since it was last emptied. */
+    suspend fun owner(): String?
+
+    /** Make [owner] the cache's owner, first emptying everything when it belonged to someone else. */
+    suspend fun claim(owner: String)
+
+    /** Sign-out: nothing of this account may outlive it, the owner included. */
     suspend fun clearAll()
 
     /** Inbox ordered by id, teams by id, issues by id (comments and activity oldest first), cards by project id. */

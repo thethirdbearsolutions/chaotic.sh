@@ -6,8 +6,12 @@ import androidx.room.RoomDatabase
 /**
  * The offline cache (CHT-1611). Everything in it can be fetched again from
  * the server, so a schema change does not migrate: the app is built with
- * a destructive fallback and the cache refills on the next sync. That is
- * also why the schema is not exported.
+ * a destructive fallback and the cache refills on the next sync.
+ *
+ * The fallback only covers a change that bumps [version]. A change that
+ * does not would crash every install on open (Room's identity check), so
+ * the schema is exported to app/schemas and CI requires each version's
+ * schema to be committed and never edited afterwards.
  */
 @Database(
     entities = [
@@ -20,7 +24,7 @@ import androidx.room.RoomDatabase
         SyncStateEntity::class,
     ],
     version = 1,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class ChaoticDatabase : RoomDatabase() {
     abstract fun cache(): CacheDao

@@ -2,6 +2,7 @@ package sh.chaotic.android.ui.markdown
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class MarkdownParserTest {
     private fun text(value: String) = MdSpan(value)
@@ -69,9 +70,48 @@ class MarkdownParserTest {
     fun linksKeepOnlyWebUrls() {
         assertEquals(
             // Any other scheme keeps the label and drops the link.
-            listOf(text("see "), MdSpan("the PR", url = "https://example.com/pr/1"), text(" or this")),
+            listOf(text("see "), MdSpan("the PR", url = "https://example.com/pr/1"), text(" (example.com) or this")),
             MarkdownParser.inline("see [the PR](https://example.com/pr/1) or [this](javascript:void)"),
         )
+    }
+
+    @Test
+    fun aLinkLabelledWithAnotherAddressShowsTheRealHost() {
+        assertEquals(
+            listOf(MdSpan("https://good.example", url = "https://evil.example/x"), text(" (evil.example)")),
+            MarkdownParser.inline("[https://good.example](https://evil.example/x)"),
+        )
+        // A label that is the address, or its host, shows nothing more.
+        assertEquals(
+            listOf(
+                MdSpan("https://a.example/", url = "https://a.example"),
+                text(" and "),
+                MdSpan("a.example", url = "https://a.example/p"),
+            ),
+            MarkdownParser.inline("[https://a.example/](https://a.example) and [a.example](https://a.example/p)"),
+        )
+    }
+
+    // The first took 15 s at this size (desktop JVM) when each `[` scanned ahead for its `]`;
+    // all of them together now take about a second.
+    @org.junit.Test(timeout = 10_000)
+    fun pathologicalInputIsLinear() {
+        val size = 1_000_000
+        listOf(
+            "[".repeat(size),
+            "[a](".repeat(size / 4),
+            "![".repeat(size / 2),
+            "[]".repeat(size / 2) + "x",
+            "`" + "a".repeat(size),
+            "*a ".repeat(size / 3),
+            "**a".repeat(size / 3),
+            "_a ".repeat(size / 3),
+        ).forEach { input ->
+            assertTrue(MarkdownParser.inline(input).isNotEmpty(), input.take(8))
+        }
+        // Unclosed brackets stay literal text.
+        assertEquals(listOf(MdBlock.Paragraph(listOf(text("[".repeat(size))))), MarkdownParser.parse("[".repeat(size)))
+        assertEquals(size / 4, MarkdownParser.parse("- [\n".repeat(size / 4)).size)
     }
 
     @Test

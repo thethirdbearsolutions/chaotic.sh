@@ -247,4 +247,53 @@ abstract class CacheStoreContract {
 
         assertEquals(CacheSnapshot(null, emptyList(), emptyList(), emptyList(), emptyList()), store.snapshot())
     }
+
+    @Test
+    fun claimKeepsTheCacheOfTheSameOwner() = runTest {
+        val store = createStore()
+        store.claim(OWNER)
+        store.applyInbox(change(upserts = listOf(entry("a1")), cursor = "c1"))
+
+        store.claim(OWNER)
+
+        assertEquals(OWNER, store.owner())
+        assertEquals("c1", store.inboxCursor())
+        assertEquals(listOf("a1"), store.snapshot().inbox.map { it.id })
+    }
+
+    @Test
+    fun claimByAnotherOwnerEmptiesEverythingFirst() = runTest {
+        val store = createStore()
+        store.claim(OWNER)
+        store.replaceTeams(listOf(Team(TEAM_A, "A", "A")))
+        store.applyInbox(change(upserts = listOf(entry("a1")), cursor = "c1"))
+        store.saveIssue(detail(issue("i1"), comment("c1", "i1", 1)))
+        store.replaceSprintCards(TEAM_A, listOf(card("p1")))
+
+        store.claim(OTHER_OWNER)
+
+        assertEquals(OTHER_OWNER, store.owner())
+        assertEquals(CacheSnapshot(null, emptyList(), emptyList(), emptyList(), emptyList()), store.snapshot())
+    }
+
+    @Test
+    fun anUnclaimedCacheIsEmptiedByTheFirstClaim() = runTest {
+        val store = createStore()
+        store.applyInbox(change(upserts = listOf(entry("a1")), cursor = "c1"))
+
+        store.claim(OWNER)
+
+        assertTrue(store.snapshot().inbox.isEmpty())
+        assertNull(store.inboxCursor())
+    }
+
+    @Test
+    fun clearAllForgetsTheOwner() = runTest {
+        val store = createStore()
+        store.claim(OWNER)
+
+        store.clearAll()
+
+        assertNull(store.owner())
+    }
 }

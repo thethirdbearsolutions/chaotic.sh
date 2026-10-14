@@ -1,6 +1,7 @@
 package sh.chaotic.sync
 
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -69,20 +70,85 @@ class PollScheduleTest {
     fun unauthorizedStopsPolling() {
         assertNull(PollSchedule().next(SyncOutcome.Unauthorized))
     }
+
+    @Test
+    fun aRunStoppedAtItsPageCapGoesOnSoon() {
+        val schedule = PollSchedule(intervalMillis = 60_000, morePendingMillis = 1_000)
+
+        assertEquals(1_000, schedule.next(SyncOutcome.Synced(50, morePending = true)))
+    }
+
+    @Test
+    fun itRemembersWhenTheNextRunIsDue() {
+        var now = 0L
+        val schedule = PollSchedule(intervalMillis = 60_000, nowMillis = { now })
+        assertEquals(0, schedule.untilDue())
+
+        schedule.next(SyncOutcome.Synced(1))
+        now = 20_000
+        assertEquals(40_000, schedule.untilDue())
+
+        now = 90_000
+        assertEquals(0, schedule.untilDue())
+
+        schedule.next(SyncOutcome.Unauthorized)
+        assertEquals(0, schedule.untilDue())
+    }
 }
 
 class SyncLoopTest {
     private val remote = FakeRemote()
     private val store = InMemoryCacheStore()
+    private val syncer = InboxSyncer(remote, CacheSession(store) { OWNER })
     private val trigger = SyncTrigger()
     private val outcomes = mutableListOf<SyncOutcome>()
 
-    private fun loop() = SyncLoop(
-        syncer = InboxSyncer(remote, store),
-        schedule = PollSchedule(intervalMillis = 60_000),
+    private fun TestScope.schedule() = PollSchedule(intervalMillis = 60_000, nowMillis = { testScheduler.currentTime })
+
+    private fun TestScope.loop(schedule: PollSchedule = schedule()) = SyncLoop(
+        syncer = syncer,
+        schedule = schedule,
         trigger = trigger,
         onOutcome = { outcomes += it },
     )
+
+    @Test
+    fun aLoopStartedAgainKeepsTheInterval() = runTest {
+        repeat(2) { remote.syncAnswers += Remote.Ok(page(cursor = "c$it")) }
+        val schedule = schedule()
+        val first = launch { loop(schedule).run() }
+        runCurrent()
+        first.cancel()
+
+        // The screen comes back 10 s later: no sync until the minute is up.
+        advanceTimeBy(10_000)
+        val second = launch { loop(schedule).run() }
+        runCurrent()
+        assertEquals(1, remote.sinceSent.size)
+        advanceTimeBy(50_001)
+        assertEquals(2, remote.sinceSent.size)
+
+        second.cancel()
+    }
+
+    @Test
+    fun aLoopStartedAgainKeepsTheServersRetryAfter() = runTest {
+        remote.syncAnswers += Remote.HttpError(503, retryAfterMillis = 300_000)
+        remote.syncAnswers += Remote.Ok(page(cursor = "c1"))
+        val schedule = schedule()
+        val first = launch { loop(schedule).run() }
+        runCurrent()
+        first.cancel()
+
+        advanceTimeBy(5_000)
+        val second = launch { loop(schedule).run() }
+        advanceTimeBy(290_000)
+        assertEquals(1, remote.sinceSent.size)
+        advanceTimeBy(5_001)
+        assertEquals(2, remote.sinceSent.size)
+
+        second.cancel()
+    }
 
     @Test
     fun pollsOnTheInterval() = runTest {

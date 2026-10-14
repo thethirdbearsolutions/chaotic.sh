@@ -79,6 +79,13 @@ android {
     }
 }
 
+// Room writes the cache's schema to app/schemas on every build. CI fails
+// when it differs from the committed copy, and when a committed version's
+// schema is edited, so a schema change cannot ship without a version bump.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(project(":core-api"))
     implementation(project(":core-auth"))

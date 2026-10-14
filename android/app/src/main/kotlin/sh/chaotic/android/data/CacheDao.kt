@@ -207,6 +207,14 @@ abstract class CacheDao {
         upsertSprintCards(cards.map(SprintCardEntity::of))
     }
 
+    /** Make [owner] the owner, first emptying everything when it belonged to anyone else (or nobody). */
+    @Transaction
+    open suspend fun claim(owner: String) {
+        if (syncValue(OWNER) == owner) return
+        clearAll()
+        putSyncValue(SyncStateEntity(OWNER, owner))
+    }
+
     @Transaction
     open suspend fun clearAll() {
         deleteAllInbox()
@@ -233,6 +241,9 @@ abstract class CacheDao {
 
     companion object {
         const val INBOX_CURSOR = "inbox_cursor"
+
+        /** Whose cache this is: core-sync's CacheSession owner key. */
+        const val OWNER = "owner"
 
         /** SQLite's bound on query variables on the oldest Android this app runs on (API 29). */
         const val MAX_VARIABLES = 999

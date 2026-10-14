@@ -1,5 +1,6 @@
 package sh.chaotic.sync
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -12,7 +13,13 @@ class CacheRefresherTest {
     private val remote = FakeRemote()
     private val store = InMemoryCacheStore()
     private var now = TimeUnit.DAYS.toMillis(100)
-    private val refresher = CacheRefresher(remote, store, nowMillis = { now })
+    private var signedIn: String? = OWNER
+    private val session = CacheSession(store) { signedIn }
+    private val refresher = CacheRefresher(remote, session, nowMillis = { now })
+
+    init {
+        runBlocking { store.claim(OWNER) }
+    }
 
     private fun comment(id: String, at: Long) = Comment(
         id = id,
@@ -49,6 +56,7 @@ class CacheRefresherTest {
             ),
         )
         remote.issues["i1"] = Remote.HttpError(403)
+        remote.teams = Remote.Ok(listOf(Team(TEAM_B, "B", "B")))
 
         assertEquals<RefreshOutcome>(RefreshOutcome.TeamLost, refresher.refreshIssue("i1", TEAM_A))
 
@@ -56,6 +64,116 @@ class CacheRefresherTest {
         assertEquals(listOf(TEAM_B), store.teams().map { it.id })
         assertEquals(listOf("b1"), store.inbox().map { it.id })
         assertTrue(store.sprintCards().isEmpty())
+    }
+
+    @Test
+    fun aForbiddenIssueInATeamStillListedDropsNothing() = runTest {
+        store.replaceTeams(listOf(Team(TEAM_A, "A", "A")))
+        store.saveIssue(IssueDetail(issue("i1", TEAM_A, openedAtMillis = now), emptyList(), emptyList()))
+        remote.issues["i1"] = Remote.HttpError(403)
+        remote.teams = Remote.Ok(listOf(Team(TEAM_A, "A", "A")))
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Forbidden, refresher.refreshIssue("i1", TEAM_A))
+
+        assertEquals(1, remote.teamCalls)
+        assertEquals(listOf(TEAM_A), store.teams().map { it.id })
+        assertEquals("i1", store.issue("i1")?.issue?.id)
+    }
+
+    @Test
+    fun aForbiddenWithAnErrorCodeIsNotAboutTheTeam() = runTest {
+        store.replaceTeams(listOf(Team(TEAM_A, "A", "A")))
+        store.saveIssue(IssueDetail(issue("i1", TEAM_A, openedAtMillis = now), emptyList(), emptyList()))
+        remote.issues["i1"] = Remote.HttpError(403, errorCode = "app_session_refused")
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Forbidden, refresher.refreshIssue("i1", TEAM_A))
+
+        assertEquals(0, remote.teamCalls)
+        assertEquals(listOf(TEAM_A), store.teams().map { it.id })
+        assertEquals("i1", store.issue("i1")?.issue?.id)
+    }
+
+    @Test
+    fun aForbiddenWhenTheTeamListFailsDropsNothing() = runTest {
+        store.replaceTeams(listOf(Team(TEAM_A, "A", "A")))
+        store.replaceSprintCards(TEAM_A, listOf(card("pa")))
+        remote.projects[TEAM_A] = Remote.HttpError(403)
+        remote.teams = Remote.Unreachable(IOException("offline"))
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Forbidden, refresher.refreshSprintCards(TEAM_A))
+
+        assertEquals(listOf("pa"), store.sprintCards().map { it.projectId })
+    }
+
+    @Test
+    fun anIssueArrivingAfterSignOutIsNotWritten() = runTest {
+        remote.issues["i1"] = Remote.Ok(issue("i1"))
+        remote.onIssue = {
+            // Ada signs out and Grace signs in while the issue is on its way.
+            session.end()
+            signedIn = OTHER_OWNER
+        }
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Unauthorized, refresher.refreshIssue("i1", TEAM_A))
+
+        assertNull(store.issue("i1"))
+        assertNull(store.owner())
+    }
+
+    @Test
+    fun aRefreshWhileSignedOutDoesNothing() = runTest {
+        signedIn = null
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Unauthorized, refresher.refreshTeams())
+        assertEquals(0, remote.teamCalls)
+    }
+
+    @Test
+    fun theTeamListIsNotFetchedAgainWhileFresh() = runTest {
+        remote.teams = Remote.Ok(listOf(Team(TEAM_A, "A", "A")))
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshTeams())
+        now += CacheRefresher.DEFAULT_TEAMS_MAX_AGE_MILLIS - 1
+        assertEquals<RefreshOutcome>(RefreshOutcome.Fresh, refresher.refreshTeams())
+        assertEquals(1, remote.teamCalls)
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshTeams(force = true))
+        now += CacheRefresher.DEFAULT_TEAMS_MAX_AGE_MILLIS
+        assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshTeams())
+        assertEquals(3, remote.teamCalls)
+    }
+
+    @Test
+    fun sprintCardsAreNotFetchedAgainWhileFreshAndAFailureIsNotRemembered() = runTest {
+        remote.projects[TEAM_A] = Remote.HttpError(502)
+        assertEquals<RefreshOutcome>(RefreshOutcome.Failed(502), refresher.refreshSprintCards(TEAM_A))
+
+        remote.projects[TEAM_A] = Remote.Ok(listOf(Project("p1", TEAM_A, "Web", "WEB")))
+        remote.sprints["p1"] = Remote.Ok(CurrentSprint("s1", "p1", "Sprint 4", 20, 5, false))
+        assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshSprintCards(TEAM_A))
+        assertEquals<RefreshOutcome>(RefreshOutcome.Fresh, refresher.refreshSprintCards(TEAM_A))
+        assertEquals(2, remote.projectCalls)
+
+        // Per team: another team's cards are still fetched.
+        remote.projects[TEAM_B] = Remote.Ok(emptyList())
+        assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshSprintCards(TEAM_B))
+        assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshSprintCards(TEAM_A, force = true))
+        now += CacheRefresher.DEFAULT_CARDS_MAX_AGE_MILLIS
+        assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshSprintCards(TEAM_A))
+        assertEquals(5, remote.projectCalls)
+    }
+
+    @Test
+    fun freshnessDoesNotCarryIntoTheNextPersonsSession() = runTest {
+        remote.teams = Remote.Ok(listOf(Team(TEAM_A, "A", "A")))
+        refresher.refreshTeams()
+
+        session.end()
+        signedIn = OTHER_OWNER
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshTeams())
+        assertEquals(2, remote.teamCalls)
+        assertEquals(OTHER_OWNER, store.owner())
     }
 
     @Test
@@ -206,10 +324,11 @@ class CacheRefresherTest {
         store.saveIssue(IssueDetail(issue("i1"), emptyList(), emptyList()))
         store.replaceSprintCards(TEAM_A, listOf(card("pa")))
 
-        store.clearAll()
+        session.end()
 
         assertTrue(store.inbox().isEmpty() && store.teams().isEmpty() && store.sprintCards().isEmpty())
         assertNull(store.issue("i1"))
         assertNull(store.inboxCursor())
+        assertNull(store.owner())
     }
 }

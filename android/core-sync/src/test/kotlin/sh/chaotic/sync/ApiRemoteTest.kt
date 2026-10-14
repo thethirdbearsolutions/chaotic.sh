@@ -55,6 +55,16 @@ class ApiRemoteTest {
         """.trimIndent()
 
     @Test
+    fun aKindNewerThanThisAppReadsAsUnknown() = runTest {
+        val newer = syncEntry("e1", "open").replace("gate_pending", "a_kind_from_the_future")
+        val api = remote { json("""{"entries": [$newer], "has_more": false, "team_ids": ["t1"]}""") }
+
+        val page = assertIs<Remote.Ok<SyncPage>>(api.syncInbox(null, 50)).value
+
+        assertEquals(UNKNOWN_VALUE, page.entries.single().entry.kind)
+    }
+
+    @Test
     fun syncSendsTheCursorAndReadsAPage() = runTest {
         val api = remote {
             json(

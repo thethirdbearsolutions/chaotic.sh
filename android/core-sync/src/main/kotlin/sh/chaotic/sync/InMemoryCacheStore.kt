@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.withLock
 class InMemoryCacheStore : CacheStore {
     private val mutex = Mutex()
     private var cursor: String? = null
+    private var owner: String? = null
     private val inbox = linkedMapOf<String, InboxEntry>()
     private val teams = linkedMapOf<String, Team>()
     private val issues = linkedMapOf<String, IssueDetail>()
@@ -73,7 +74,17 @@ class InMemoryCacheStore : CacheStore {
         cards.forEach { sprintCards[it.projectId] = it }
     }
 
-    override suspend fun clearAll() = mutex.withLock {
+    override suspend fun owner(): String? = mutex.withLock { owner }
+
+    override suspend fun claim(owner: String) = mutex.withLock {
+        if (this.owner != owner) clearLocked()
+        this.owner = owner
+    }
+
+    override suspend fun clearAll() = mutex.withLock { clearLocked() }
+
+    private fun clearLocked() {
+        owner = null
         cursor = null
         inbox.clear()
         teams.clear()

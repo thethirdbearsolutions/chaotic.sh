@@ -2,9 +2,13 @@ package sh.chaotic.sync
 
 // What the app caches, in its own shape rather than the generated API
 // models: only the fields the screens draw, with timestamps already parsed.
-// Enum-like fields (`kind`, `status`, `priority`, `type`) keep the server's
-// wire value, so a value a newer server adds is stored and shown as is
-// rather than lost.
+// Enum-like fields (`kind`, `status`, `priority`, `type`) are kept as the
+// server's wire value. One a newer server adds cannot be: the generated
+// client decodes it to a placeholder, which is stored as [UNKNOWN_VALUE]
+// and shown with a neutral label.
+
+/** An enum value this app's client does not know (a newer server's). */
+const val UNKNOWN_VALUE = "unknown"
 
 /** A person, or an agent with the person who owns it (the server's PrincipalSummary). */
 data class Principal(val id: String, val name: String, val isAgent: Boolean = false, val ownerName: String? = null)

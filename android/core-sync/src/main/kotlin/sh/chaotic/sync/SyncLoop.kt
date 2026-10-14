@@ -8,30 +8,55 @@ import kotlin.random.Random
  * When to sync the inbox next, from how the last run ended:
  *
  * - Synced: after [intervalMillis], or after the server's `retry_after`
- *   when that is longer (syncing sooner only returns the same rows).
+ *   when that is longer (syncing sooner only returns the same rows). A run
+ *   that stopped at its page cap with more to fetch goes on after
+ *   [morePendingMillis].
  * - Failed: back off from [intervalMillis] doubling up to [maxBackoffMillis],
  *   with equal jitter, and never sooner than a `Retry-After` the server sent
  *   (believed up to [maxBackoffMillis]: a misconfigured proxy must not park
  *   the inbox for days).
  * - Unauthorized: stop; the session is ending and polling cannot help.
  *
- * A success resets the backoff. Not thread-safe: one per [SyncLoop].
+ * A success resets the backoff. The schedule remembers when the next run
+ * is due ([untilDue]), so a loop stopped and started again (the screen
+ * left and came back) keeps the interval, the backoff and the server's
+ * Retry-After rather than syncing at once. Not thread-safe: one loop at a
+ * time.
  */
 class PollSchedule(
     private val intervalMillis: Long = DEFAULT_INTERVAL_MILLIS,
     private val maxBackoffMillis: Long = DEFAULT_MAX_BACKOFF_MILLIS,
     private val random: Random = Random.Default,
+    private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val morePendingMillis: Long = DEFAULT_MORE_PENDING_MILLIS,
 ) {
     private var failures = 0
+    private var dueAtMillis = 0L
 
-    /** Milliseconds until the next run, or null to stop polling. */
-    fun next(outcome: SyncOutcome): Long? = when (outcome) {
+    /** Milliseconds until the next run is due; 0 when it is due now (as it is before the first). */
+    fun untilDue(): Long = (dueAtMillis - nowMillis()).coerceAtLeast(0)
+
+    /** Milliseconds until the next run, or null to stop polling (the next start then runs at once). */
+    fun next(outcome: SyncOutcome): Long? {
+        val delay = delayAfter(outcome)
+        dueAtMillis = if (delay == null) 0 else nowMillis() + delay
+        return delay
+    }
+
+    private fun delayAfter(outcome: SyncOutcome): Long? = when (outcome) {
         is SyncOutcome.Synced -> {
             failures = 0
-            maxOf(intervalMillis, (outcome.retryAfterSeconds ?: 0) * MILLIS_PER_SECOND)
+            if (outcome.morePending) {
+                morePendingMillis
+            } else {
+                maxOf(intervalMillis, (outcome.retryAfterSeconds ?: 0) * MILLIS_PER_SECOND)
+            }
         }
 
-        SyncOutcome.Unauthorized -> null
+        SyncOutcome.Unauthorized -> {
+            failures = 0
+            null
+        }
 
         is SyncOutcome.Failed -> {
             val ceiling = (intervalMillis shl failures.coerceAtMost(MAX_DOUBLINGS)).coerceAtMost(maxBackoffMillis)
@@ -45,6 +70,9 @@ class PollSchedule(
         /** A minute between foreground polls; push (CHT-1612) and /ws make it sooner. */
         const val DEFAULT_INTERVAL_MILLIS = 60_000L
         const val DEFAULT_MAX_BACKOFF_MILLIS = 15 * 60_000L
+
+        /** A short pause between runs while a backlog drains, so one run never holds the lock for long. */
+        const val DEFAULT_MORE_PENDING_MILLIS = 1_000L
         private const val MAX_DOUBLINGS = 10
         private const val MILLIS_PER_SECOND = 1_000L
     }
@@ -70,11 +98,11 @@ class SyncTrigger {
 }
 
 /**
- * The foreground inbox poll: sync, wait as [schedule] says or until
- * [trigger] fires, repeat. Run it in a coroutine tied to the app being
- * on screen; it returns when the session is refused, and otherwise runs
- * until cancelled. [onOutcome] sees every run's result, for the UI's
- * refresh indicator and error line.
+ * The foreground inbox poll: wait until [schedule] says a run is due (or
+ * [trigger] fires), sync, repeat. Run it in a coroutine tied to the app
+ * being on screen, with a [schedule] that outlives it; it returns when
+ * the session is refused, and otherwise runs until cancelled.
+ * [onOutcome] sees every run's result, for the UI's error line.
  */
 class SyncLoop(
     private val syncer: InboxSyncer,
@@ -84,10 +112,11 @@ class SyncLoop(
 ) {
     suspend fun run() {
         while (true) {
+            val wait = schedule.untilDue()
+            if (wait > 0) trigger.await(wait)
             val outcome = syncer.sync()
             onOutcome(outcome)
-            val delayMillis = schedule.next(outcome) ?: return
-            trigger.await(delayMillis)
+            schedule.next(outcome) ?: return
         }
     }
 }

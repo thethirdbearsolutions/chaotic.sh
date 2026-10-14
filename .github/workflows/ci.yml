@@ -206,6 +206,37 @@ jobs:
       - name: Unit tests
         run: ./gradlew test
 
+      # The build above exported the cache's Room schema to app/schemas.
+      # It must match the committed copy: a schema change without a version
+      # bump rewrites the current version's file, and a bump adds a new
+      # file, which has to be committed.
+      - name: The committed Room schema is current
+        run: |
+          if [ -n "$(git status --porcelain -- app/schemas)" ]; then
+            git status --porcelain -- app/schemas
+            git diff -- app/schemas
+            git ls-files --others --exclude-standard -- app/schemas | while read -r f; do
+              echo "--- new file: $f"; cat "$f"
+            done
+            echo "The Room schema changed: bump ChaoticDatabase's version and commit app/schemas." >&2
+            exit 1
+          fi
+
+      # And a version's committed schema is never edited, only new versions
+      # added: editing one by hand would hide a change that kept the version.
+      - name: Committed Room schemas are append-only
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          edited=$(git diff --name-status FETCH_HEAD -- app/schemas | grep -v '^A' || true)
+          if [ -n "$edited" ]; then
+            echo "$edited"
+            echo "A committed Room schema was changed or removed: bump ChaoticDatabase's version instead." >&2
+            exit 1
+          fi
+
       - name: No non-free dependencies in the foss flavor
         run: ./gradlew :app:checkFossDependencies
 

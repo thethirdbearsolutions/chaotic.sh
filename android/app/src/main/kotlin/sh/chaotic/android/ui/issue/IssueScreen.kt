@@ -119,6 +119,7 @@ private enum class Notice(val message: Int, val isError: Boolean) {
     NOT_CACHED(R.string.issue_not_cached, true),
     GONE(R.string.issue_gone, true),
     TEAM_LOST(R.string.issue_team_lost, true),
+    FORBIDDEN(R.string.issue_forbidden, true),
     ;
 
     @Composable
@@ -131,6 +132,7 @@ private enum class Notice(val message: Int, val isError: Boolean) {
 private fun notice(state: IssueState): Notice? = when (state.fetch) {
     Fetch.GONE -> Notice.GONE
     Fetch.TEAM_LOST -> Notice.TEAM_LOST
+    Fetch.FORBIDDEN -> Notice.FORBIDDEN
     Fetch.LOADING -> if (state.detail == null) Notice.LOADING else null
     Fetch.FAILED -> if (state.detail == null) Notice.NOT_CACHED else null
     Fetch.DONE -> null

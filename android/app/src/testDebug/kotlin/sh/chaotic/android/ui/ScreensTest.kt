@@ -15,6 +15,8 @@ import sh.chaotic.android.ui.home.HomeTab
 import sh.chaotic.android.ui.issue.Fetch
 import sh.chaotic.android.ui.issue.IssueContent
 import sh.chaotic.android.ui.issue.IssueState
+import sh.chaotic.android.ui.markdown.MARKDOWN_COLLAPSED_CHARS
+import sh.chaotic.android.ui.markdown.MarkdownText
 import sh.chaotic.android.ui.theme.ChaoticTheme
 import sh.chaotic.sync.Comment
 import sh.chaotic.sync.InboxEntry
@@ -24,6 +26,7 @@ import sh.chaotic.sync.IssueDetail
 import sh.chaotic.sync.Principal
 import sh.chaotic.sync.SprintCard
 import sh.chaotic.sync.Team
+import sh.chaotic.sync.UNKNOWN_VALUE
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -179,5 +182,33 @@ class ScreensTest {
         }
 
         compose.onNodeWithText("You are no longer in this issue's team.").assertIsDisplayed()
+    }
+
+    @Test
+    fun aForbiddenIssueSaysSo() {
+        compose.setContent {
+            ChaoticTheme {
+                IssueContent(IssueState(null, Fetch.FORBIDDEN), nowMillis = now, onBack = {}, onRefresh = {})
+            }
+        }
+
+        compose.onNodeWithText("The server would not show this issue to this app.").assertIsDisplayed()
+    }
+
+    @Test
+    fun anUnknownKindHasANeutralLabel() {
+        home(HomeState(inbox = InboxSections.of(listOf(mention.copy(kind = UNKNOWN_VALUE)))))
+
+        compose.onNodeWithText("Update").assertIsDisplayed()
+    }
+
+    @Test
+    fun longMarkdownIsCutUntilAskedFor() {
+        val long = "word ".repeat(MARKDOWN_COLLAPSED_CHARS / 4)
+        compose.setContent { ChaoticTheme { MarkdownText(long) } }
+
+        compose.onNodeWithText("Show more").performClick()
+
+        compose.onNodeWithText("Show more").assertDoesNotExist()
     }
 }

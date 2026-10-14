@@ -43,6 +43,12 @@ data class HomeState(
  * Room cache and kept current by core-sync. The screen calls
  * [runWhileVisible] while it is on screen (the foreground poll); a pull
  * to refresh calls [refresh].
+ *
+ * The poll's schedule lives here rather than in the loop, so coming back
+ * to the screen (from an issue, or from the background) keeps the
+ * interval, the backoff and the server's Retry-After instead of syncing
+ * at once; the team list and sprint cards are skipped while fresh. Only a
+ * pull to refresh asks for everything now.
  */
 @HiltViewModel
 class HomeViewModel
@@ -59,6 +65,7 @@ constructor(
     private val tab = savedState.getStateFlow(KEY_TAB, HomeTab.INBOX.name)
     private val refreshing = MutableStateFlow(false)
     private val problem = MutableStateFlow<SyncProblem?>(null)
+    private val schedule = PollSchedule()
 
     private val teams = dao.observeTeams().map { rows -> rows.map { it.toTeam() } }
     private val entries = dao.observeInbox().map { rows -> rows.map { it.toEntry() } }
@@ -81,10 +88,10 @@ constructor(
             data.copy(refreshing = refreshing, problem = problem)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HomeState())
 
-    /** The foreground poll: teams once, then the inbox loop until cancelled (the screen left) or signed out. */
+    /** The foreground poll: teams unless fresh, then the inbox loop until cancelled (the screen left) or signed out. */
     suspend fun runWhileVisible() {
         refresher.refreshTeams()
-        SyncLoop(syncer, PollSchedule(), trigger) { problem.value = SyncProblem.of(it) }.run()
+        SyncLoop(syncer, schedule, trigger) { problem.value = SyncProblem.of(it) }.run()
     }
 
     /** Pull to refresh: the inbox, the team list, and the sprint cards shown. */
@@ -94,8 +101,8 @@ constructor(
         viewModelScope.launch {
             try {
                 problem.value = SyncProblem.of(syncer.sync())
-                refresher.refreshTeams()
-                refreshSprintCards(state.value.teamId)
+                refresher.refreshTeams(force = true)
+                refreshSprintCards(state.value.teamId, force = true)
             } finally {
                 refreshing.value = false
             }
@@ -116,10 +123,10 @@ constructor(
         viewModelScope.launch { sessions.signOut() }
     }
 
-    /** [teamId]'s cards, or every team's when it is null. */
-    private suspend fun refreshSprintCards(teamId: String?) {
+    /** [teamId]'s cards, or every team's when it is null; unless [force], those fetched recently are kept. */
+    private suspend fun refreshSprintCards(teamId: String?, force: Boolean = false) {
         val teamIds = teamId?.let(::listOf) ?: state.value.teams.map { it.id }
-        teamIds.forEach { refresher.refreshSprintCards(it) }
+        teamIds.forEach { refresher.refreshSprintCards(it, force) }
     }
 
     private companion object {

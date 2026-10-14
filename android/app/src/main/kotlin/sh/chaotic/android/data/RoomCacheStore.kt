@@ -8,6 +8,7 @@ import sh.chaotic.sync.SprintCard
 import sh.chaotic.sync.Team
 
 /** [CacheStore] on Room; app/src/test runs core-sync's CacheStoreContract against it. */
+@Suppress("TooManyFunctions") // the CacheStore interface, one function per operation
 class RoomCacheStore(private val dao: CacheDao) : CacheStore {
     override suspend fun inboxCursor(): String? = dao.syncValue(CacheDao.INBOX_CURSOR)
 
@@ -29,6 +30,10 @@ class RoomCacheStore(private val dao: CacheDao) : CacheStore {
 
     override suspend fun replaceSprintCards(teamId: String, cards: List<SprintCard>) =
         dao.replaceSprintCards(teamId, cards)
+
+    override suspend fun owner(): String? = dao.syncValue(CacheDao.OWNER)
+
+    override suspend fun claim(owner: String) = dao.claim(owner)
 
     override suspend fun clearAll() = dao.clearAll()
 

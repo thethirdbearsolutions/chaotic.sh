@@ -2,6 +2,7 @@ package sh.chaotic.sync
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import java.io.IOException
 import kotlin.test.Test
@@ -12,7 +13,13 @@ import kotlin.test.assertTrue
 class InboxSyncerTest {
     private val remote = FakeRemote()
     private val store = InMemoryCacheStore()
-    private val syncer = InboxSyncer(remote, store)
+    private var signedIn: String? = OWNER
+    private val session = CacheSession(store) { signedIn }
+    private val syncer = InboxSyncer(remote, session)
+
+    init {
+        runBlocking { store.claim(OWNER) }
+    }
 
     @Test
     fun firstSyncStoresOpenEntriesAndTheCursor() = runTest {
@@ -72,7 +79,7 @@ class InboxSyncerTest {
 
     @Test
     fun aRunStopsAtItsPageCapAndSaysMoreIsPending() = runTest {
-        val capped = InboxSyncer(remote, store, maxPages = 2)
+        val capped = InboxSyncer(remote, session, maxPages = 2)
         repeat(3) { remote.syncAnswers += Remote.Ok(page(open(entry("e$it")), cursor = "c$it", hasMore = true)) }
 
         assertEquals<SyncOutcome>(SyncOutcome.Synced(pages = 2, morePending = true), capped.sync())
@@ -321,5 +328,55 @@ class InboxSyncerTest {
         remote.syncAnswers += Remote.Ok(page(cursor = "c3"))
         syncer.sync()
         assertEquals(listOf<String?>(null, "c1", null), remote.sinceSent)
+    }
+
+    @Test
+    fun aPageInFlightAtSignOutIsDroppedAndTheNextPersonStartsFromNothing() = runTest {
+        remote.syncAnswers += Remote.Ok(page(open(entry("a0")), cursor = "ada-0"))
+        syncer.sync()
+        // Ada's next page is on its way when she signs out and Grace, in the
+        // same teams (so the same team digest), signs in.
+        remote.syncAnswers += Remote.Ok(page(open(entry("a1", 2_000)), cursor = "ada-1"))
+        remote.onSync = {
+            remote.onSync = {}
+            session.end()
+            signedIn = OTHER_OWNER
+        }
+
+        assertEquals<SyncOutcome>(SyncOutcome.Unauthorized, syncer.sync())
+
+        assertEquals(CacheSnapshot(null, emptyList(), emptyList(), emptyList(), emptyList()), store.snapshot())
+        assertNull(store.owner())
+
+        remote.syncAnswers += Remote.Ok(page(open(entry("g1")), cursor = "grace-1"))
+        assertEquals<SyncOutcome>(SyncOutcome.Synced(pages = 1), syncer.sync())
+
+        assertEquals(listOf<String?>(null, "ada-0", null), remote.sinceSent)
+        assertEquals(listOf("g1"), store.inbox().map { it.id })
+        assertEquals("grace-1", store.inboxCursor())
+        assertEquals(OTHER_OWNER, store.owner())
+    }
+
+    @Test
+    fun aCacheLeftByAnotherPersonIsEmptiedBeforeTheFirstSync() = runTest {
+        // Ada's cache and cursor survived (the process died before the sign-out's clear ran).
+        remote.syncAnswers += Remote.Ok(page(open(entry("a0")), cursor = "ada-0"))
+        syncer.sync()
+        signedIn = OTHER_OWNER
+        val afterRestart = InboxSyncer(remote, CacheSession(store) { signedIn })
+        remote.syncAnswers += Remote.Ok(page(open(entry("g1")), cursor = "grace-1"))
+
+        afterRestart.sync()
+
+        assertEquals(listOf<String?>(null, null), remote.sinceSent)
+        assertEquals(listOf("g1"), store.inbox().map { it.id })
+    }
+
+    @Test
+    fun signedOutASyncAsksNothing() = runTest {
+        signedIn = null
+
+        assertEquals<SyncOutcome>(SyncOutcome.Unauthorized, syncer.sync())
+        assertTrue(remote.sinceSent.isEmpty())
     }
 }

@@ -14,6 +14,12 @@ import sh.chaotic.api.models.TeamResponse
 
 // From the generated API models to the cache's own records.
 
+/** What the generated client decodes an enum value newer than this app to (enumUnknownDefaultCase). */
+private const val GENERATED_UNKNOWN = "unknown_default_open_api"
+
+/** An enum's wire value, with the generator's placeholder for a newer value read as [UNKNOWN_VALUE]. */
+private val String.wire: String get() = if (this == GENERATED_UNKNOWN) UNKNOWN_VALUE else this
+
 /** A summary when the server sent one, else just the name it sent beside the id. */
 private fun principal(summary: PrincipalSummary?, id: String?, name: String?): Principal? = when {
     summary != null -> Principal(summary.id, summary.name, summary.isAgent == true, summary.ownerName)
@@ -45,7 +51,7 @@ internal fun InboxEntryResponse.isOpen(): Boolean = when (state) {
 internal fun InboxEntryResponse.toInboxEntry() = InboxEntry(
     id = id,
     teamId = teamId,
-    kind = kind.value,
+    kind = kind.value.wire,
     title = title,
     body = body,
     projectId = projectId,
@@ -82,8 +88,8 @@ internal fun IssueResponse.toIssue(teamId: String) = Issue(
     identifier = identifier,
     title = title,
     description = description,
-    status = status.value,
-    priority = priority.value,
+    status = status.value.wire,
+    priority = priority.value.wire,
     estimate = estimate,
     assignee = principal(assignee, assigneeId, assigneeName),
     updatedAtMillis = Timestamps.millis(updatedAt),
@@ -101,7 +107,7 @@ internal fun IssueCommentResponse.toComment() = Comment(
 internal fun IssueActivityResponse.toActivity() = Activity(
     id = id,
     issueId = issueId,
-    type = activityType.value,
+    type = activityType.value.wire,
     field = fieldName,
     oldValue = oldValue,
     newValue = newValue,
