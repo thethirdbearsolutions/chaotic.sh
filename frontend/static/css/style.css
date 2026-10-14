@@ -8454,6 +8454,7 @@ input[type="checkbox"] {
     border: 1px solid var(--border-color);
 }
 .oauth-badge-recognized { border-color: var(--success-color); color: var(--success-color); }
+.oauth-badge-builtin { border-color: var(--success-color); color: var(--success-color); }
 .oauth-badge-unverified { border-color: var(--warning-color); color: var(--warning-color); }
 .oauth-warning { color: var(--warning-color); }
 .oauth-muted { color: var(--text-muted); font-size: var(--font-sm); }

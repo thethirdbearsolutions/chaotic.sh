@@ -23,6 +23,12 @@ form-encoded body and hand the parameters here. This module:
 * revokes (RFC 7009) the holder session behind an access or refresh
   token, when that token was issued to the authenticated client.
 
+A built-in first-party app (``app.oauth.builtin``, CHT-1602) goes
+through the same code: its codes start an APP session acting as the
+person who consented, its resource is ``<base>`` (never ``/mcp``), and
+its token request may name the device (``device_name``), which is
+display-only and shown in Connected apps.
+
 Every grant failure is an RFC 6749 §5.2 error code; ``invalid_grant``
 for anything wrong with a code or refresh token, as Claude requires.
 
@@ -40,11 +46,12 @@ import re
 from dataclasses import dataclass
 
 from app.config import get_settings
-from app.enums import TokenKind
-from app.oauth.clients import canonical_resource
+from app.enums import HolderVia, OAuthClientRegistration, TokenKind
+from app.oauth.builtin import builtin_of
+from app.oauth.clients import canonical_resource_for
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeOAuthClient
 from app.oxyde_models.user import OxydeUser
-from app.schemas.oauth import TokenAgent, TokenConnection, TokenResponse
+from app.schemas.oauth import TokenAgent, TokenConnection, TokenPerson, TokenResponse
 from app.services.oauth_client_service import OAuthClientService, hash_client_secret
 from app.services.token_service import (
     IssuedTokens,
@@ -61,6 +68,8 @@ REASON_CLIENT_REVOKED = "client_revoked"
 _CODE_VERIFIER = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 # A user agent is kept only as a short digest (display-only holder metadata).
 _UA_DIGEST_LENGTH = 16
+# What a built-in app may call the device it signs in on ("Pixel 8").
+DEVICE_NAME_MAX = 64
 
 
 class GrantError(Exception):
@@ -87,6 +96,16 @@ def _from_token_error(exc: TokenError) -> GrantError:
     return GrantError(error, exc.description)
 
 
+def _clean_device_name(name: str | None) -> str | None:
+    """A device name the app sent, made safe to display: printable
+    characters only, whitespace collapsed, at most DEVICE_NAME_MAX."""
+    if not name:
+        return None
+    kept = "".join(" " if c.isspace() else c for c in name if c.isspace() or c.isprintable())
+    cleaned = " ".join(kept.split())
+    return cleaned[:DEVICE_NAME_MAX] or None
+
+
 def s256(verifier: str) -> str:
     """RFC 7636 §4.2: BASE64URL(SHA256(ASCII(code_verifier))), unpadded."""
     return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode()
@@ -106,6 +125,9 @@ class TokenRequest:
     scope: str | None = None
     resource: str | None = None
     user_agent: str | None = None
+    # A built-in app's name for the device (CHT-1602); ignored for any
+    # other client.
+    device_name: str | None = None
 
 
 class OAuthGrantService:
@@ -124,6 +146,9 @@ class OAuthGrantService:
             raise _invalid_client("client_id is required")
         client = await OxydeOAuthClient.objects.get_or_none(id=client_id)
         if client is None or (not client.is_active and not allow_disabled):
+            raise _invalid_client("unknown or disabled client")
+        if client.registration == OAuthClientRegistration.BUILTIN and builtin_of(client) is None:
+            # A built-in client this server no longer has (CHT-1602).
             raise _invalid_client("unknown or disabled client")
         method = client.token_endpoint_auth_method
         if method == "none":
@@ -161,7 +186,7 @@ class OAuthGrantService:
             raise GrantError("invalid_request", "code_verifier is required (PKCE)")
         if not _CODE_VERIFIER.match(request.code_verifier):
             raise GrantError("invalid_request", "code_verifier must be 43 to 128 unreserved characters")
-        resource = self._resource(request.resource)
+        resource = self._resource(request.resource, client)
         service = TokenService()
         try:
             # Spent first: whatever is wrong below, this code is used up.
@@ -184,18 +209,22 @@ class OAuthGrantService:
         if resource is not None and resource != redeemed.resource:
             raise GrantError("invalid_target", "the resource is not the one this code was issued for")
         identity = OAuthClientService().identity(client)
+        holder = self._holder(identity.name, request.user_agent)
+        if builtin_of(client) is not None:
+            device = _clean_device_name(request.device_name)
+            if device:
+                holder["device_name"] = device
         try:
-            return await service.start_session_from(redeemed, holder=self._holder(identity.name, request.user_agent))
+            return await service.start_session_from(redeemed, holder=holder)
         except TokenError as exc:
             raise _from_token_error(exc) from None
 
     async def _refresh(self, client: OxydeOAuthClient, request: TokenRequest) -> IssuedTokens:
         if not request.refresh_token:
             raise GrantError("invalid_request", "refresh_token is required")
-        resource = self._resource(request.resource)
+        resource = self._resource(request.resource, client)
         if resource is not None:
-            # Every OAuth connection is for /mcp, but compare with the
-            # token's own resource rather than assume it.
+            # Compare with the token's own resource rather than assume it.
             row = await OxydeAuthToken.objects.get_or_none(token_hash=token_digest(request.refresh_token))
             if row is not None and row.kind == TokenKind.REFRESH and row.resource != resource:
                 raise GrantError("invalid_target", "the resource is not the one this token was issued for")
@@ -208,15 +237,20 @@ class OAuthGrantService:
             raise _from_token_error(exc) from None
 
     @staticmethod
-    def _resource(value: str | None) -> str | None:
+    def _resource(value: str | None, client: OxydeOAuthClient) -> str | None:
         """The canonical RFC 8707 resource a request names, None if it
-        names none. Either published identifier, with or without a
-        trailing slash (CHT-1564), means ``<issuer>/mcp``."""
+        names none. For a connector either published identifier, with or
+        without a trailing slash (CHT-1564), means ``<issuer>/mcp``; for a
+        built-in app only ``<issuer>`` is allowed (CHT-1602)."""
         if value is None:
             return None
-        canonical = canonical_resource(value, get_settings().oauth_issuer)
+        builtin = builtin_of(client) is not None
+        canonical = canonical_resource_for(value, get_settings().oauth_issuer, builtin=builtin)
         if canonical is None:
-            raise GrantError("invalid_target", "resource must be this server's /mcp endpoint")
+            raise GrantError(
+                "invalid_target",
+                "resource must be this server's base URL" if builtin else "resource must be this server's /mcp endpoint",
+            )
         return canonical
 
     @staticmethod
@@ -229,13 +263,20 @@ class OAuthGrantService:
     @staticmethod
     async def _response(issued: IssuedTokens) -> TokenResponse:
         session = await OxydeHolderSession.objects.get(id=issued.holder_session_id)
-        agent = await OxydeUser.objects.get(id=session.principal_user_id)
+        principal = await OxydeUser.objects.get(id=session.principal_user_id)
         project_ids = json.loads(session.scope_project_ids) if session.scope_project_ids is not None else None
         # Built with only the fields it has, for the route's
         # response_model_exclude_unset: no refresh_token key at all without
         # offline_access, while project_ids stays present as null (the
         # whole team).
         refresh = {"refresh_token": issued.refresh_token} if issued.refresh_token else {}
+        if session.via == HolderVia.APP:
+            who = {
+                "acts_as": "person",
+                "person": TokenPerson(id=principal.id, name=principal.name, email=principal.email),
+            }
+        else:
+            who = {"acts_as": "agent", "agent": TokenAgent(id=principal.id, name=principal.name, kind=principal.kind)}
         return TokenResponse(
             access_token=issued.access_token,
             token_type="Bearer",
@@ -243,7 +284,7 @@ class OAuthGrantService:
             **refresh,
             scope=" ".join(issued.scopes),
             chaotic=TokenConnection(
-                agent=TokenAgent(id=agent.id, name=agent.name, kind=agent.kind),
+                **who,
                 team_id=session.team_id,
                 project_ids=project_ids,
                 holder_session_id=session.id,

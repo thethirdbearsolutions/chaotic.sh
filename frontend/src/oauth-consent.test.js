@@ -257,3 +257,51 @@ describe('showConsent', () => {
         expect(document.getElementById('oauth-consent-screen')).not.toBeNull();
     });
 });
+
+describe('a built-in app signs in as the person (CHT-1602)', () => {
+    function appRequest(overrides = {}) {
+        return request({
+            acts_as: 'person',
+            client: {
+                client_id: 'builtin:sh.chaotic.android', name: 'Chaotic for Android', trust: 'builtin',
+                host: null, registration: 'builtin',
+            },
+            redirect_uri: 'sh.chaotic.android:/oauth2redirect',
+            redirect_host: 'sh.chaotic.android:/oauth2redirect',
+            default_agent_name: '',
+            teams: [],
+            ...overrides,
+        });
+    }
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="app"></div>';
+        vi.clearAllMocks();
+    });
+
+    it('asks to sign in as you, with nothing to choose', () => {
+        const el = document.createElement('div');
+        renderConsent(el, appRequest());
+        expect(el.textContent).toContain('Sign in to Chaotic for Android as you?');
+        expect(el.textContent).toContain('Built-in sign-in');
+        expect(el.textContent).toContain('Continue only if you just tapped Sign in');
+        expect(el.textContent).toContain('every team you belong to');
+        expect(el.querySelector('#oauth-team')).toBeNull();
+        expect(el.querySelector('#oauth-agent')).toBeNull();
+        expect(el.querySelector('input[name="oauth-project"]')).toBeNull();
+        expect(el.textContent).not.toContain('Acts as');
+        expect(el.querySelector('#oauth-approve').disabled).toBe(false);
+        expect(readChoice(el)).toEqual({ policy: 'write' });
+    });
+
+    it('approves with no team and goes back to the app', async () => {
+        api.getOAuthRequest.mockResolvedValue(appRequest());
+        api.approveOAuthRequest.mockResolvedValue({ redirect: 'sh.chaotic.android:/oauth2redirect?code=cac_x' });
+        const navigate = vi.fn();
+        await showConsent('req_0123456789abcdef', navigate);
+        document.getElementById('oauth-consent-form').dispatchEvent(new Event('submit', { cancelable: true }));
+        await flush();
+        expect(api.approveOAuthRequest).toHaveBeenCalledWith('req_0123456789abcdef', { policy: 'write' });
+        expect(navigate).toHaveBeenCalledWith('sh.chaotic.android:/oauth2redirect?code=cac_x');
+    });
+});

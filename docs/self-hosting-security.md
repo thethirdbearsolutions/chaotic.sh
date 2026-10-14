@@ -93,13 +93,39 @@ inactive. The credential itself is resolved by
 goes through the same resolver (`backend/app/ws_auth.py`, CHT-1603) and
 checks team membership before registering the socket for any broadcast.
 A refused handshake is accepted and closed at once, with nothing sent,
-so the client gets the close code (4001 sign in again, 4003 forbidden,
-4011 retry; CHT-1615). The access log shows such a handshake as
-accepted; each refusal is logged on `app.ws_auth` (WARNING: code,
-reason, client address, team, never the credential), which is the line to
-watch for token guessing. A client that never answers the close frame
-holds its connection for the server's close timeout (10 s), where the
-old 403 dropped it at once (CHT-1635). It takes the credential from an
+so the client gets the close code (4001 sign in again, 4003 forbidden;
+CHT-1615). A failed check (a database outage, say) is an HTTP 503 with
+`Retry-After` on the handshake instead (CHT-1637): a browser sees it as
+1006 and backs off, which is what an old web bundle needs. The access
+log shows a closed refusal as accepted; each refusal is logged on
+`app.ws_auth` (WARNING: code, reason, client address, team, how it was
+sent, never the credential), which is the line to watch for token
+guessing. That line is rate-limited: the first for each client, code,
+reason and outcome is written, then at most one a minute, which says how
+many were not and when they happened; and at most 100 such lines a
+minute in all, past which refusals are counted into one summary line a
+minute. Those counts are written with a later refusal, so the last ones
+of a flood that stops wait for the next (CHT-1641). A failed check's
+traceback is always logged the first time for each kind of failure (call
+site, exception type and message), then at most once a minute per kind.
+uvicorn's own access lines for each handshake (two INFO lines for a 429)
+are not limited, so a flood still grows the access log (CHT-1640). A
+client that never answers the close frame holds its connection for the
+server's close timeout (10 s), where a 403 drops it at once, so each
+server process (each uvicorn worker) caps the refusals in flight: past 8
+in 10 s from one client, or 256 in all, a refusal is an HTTP 429 with
+`Retry-After`, which drops the connection at once (CHT-1635). A client
+is an IPv4 address or an IPv6 /64, so the IPv4 clients behind a NAT64
+gateway share one cap, as do those behind one NAT. While the total cap
+is full, every refused client gets the 429, so a tab whose credential
+has expired keeps retrying instead of signing out until the flood ends;
+a good credential is never refused, so never throttled. Behind a reverse
+proxy the client address is taken from its forwarding headers only if
+`FORWARDED_ALLOW_IPS` trusts the proxy (loopback is trusted by default);
+an untrusted proxy makes every client share one cap. A trusted proxy
+that forwards something other than an IP address makes each such string
+a client of its own, still bounded by the total cap and the line budget.
+/ws takes the credential from an
 `Authorization: Bearer` header on the upgrade request, or from a
 `chaotic.bearer.<token>` entry in `Sec-WebSocket-Protocol` (the web app's
 way, offered beside `chaotic`), so it stays out of the URL. The old
@@ -374,6 +400,29 @@ With `OAUTH_ENABLED` on, MCP clients register in one of two ways
   Set `OAUTH_DCR_ENABLED=false` to turn registration off; clients that
   use metadata documents don't need it.
 
+One client is neither: the **Chaotic Android app** is built into the
+server (CHT-1602, `backend/app/oauth/builtin.py`). Its `client_id`,
+`builtin:sh.chaotic.android`, is not a URL, so nothing is fetched for it
+and no outbound access is needed; its redirect,
+`sh.chaotic.android:/oauth2redirect`, comes from the code, not from
+anything stored or published. The same metadata is published at
+`https://chaotic.sh/oauth/android-client.json` for reference only; the
+server never reads it.
+
+Residual risk: that redirect is a private-use URI scheme, which any
+Android app on the same phone can also register. A malicious app could
+start the sign-in itself and, if the person approves the page, receive a
+session acting as them. The consent page does not claim the request
+comes from the official app, and tells the person to continue only if
+they just started signing in from it. Moving to a verified https
+redirect (Android App Links) closes this and is planned before release.
+
+An admin can disable the app by setting `is_active` to false on its
+`oauth_clients` row. That blocks new sign-ins and refreshes at once, but
+access tokens already issued keep working until they expire (at most 10
+minutes). To end a sign-in immediately, revoke its session: each person
+can in Connected Apps (an admin-wide bulk revocation is CHT-1449).
+
 ## Behind a reverse proxy: `FORWARDED_ALLOW_IPS`
 
 A request that reaches the app through a reverse proxy arrives from the
@@ -458,6 +507,22 @@ window for concurrent refreshes, revokes the whole connection, since it
 means the token was copied. `POST /oauth/revoke` (RFC 7009) lets the app
 end its own connection.
 
+Every connection's tokens act as an agent and are accepted only at
+`/mcp` (design decision D2), with one exception: the built-in Android
+app's (above). Its tokens act as the person who signed in, account-wide
+(the session has no team: every request is gated per team by that
+person's membership at that moment, as for their web login), are issued
+for the whole server (`resource` is `APP_BASE_URL`), and are accepted on
+REST and `/ws` but never at `/mcp`. A member removed from a team, or a
+team deleted, does not end an app sign-in; deactivating or deleting the
+person does. Everything that would outlive the sign-in is refused to it
+(403 `app_session_refused`): API keys, agent keys and agent
+registration, team invitations and accepting them, creating a team,
+changing a member's role, turning on an agent's `can_register`,
+reactivating an agent, and changing or deleting the account. A client
+that is not the built-in app cannot get such a token: the code is
+refused when minted, when redeemed and when used.
+
 The token and revoke endpoints read their parameters from a form-encoded
 request body only, and refuse a request that has any query string. Codes,
 tokens and client secrets therefore never appear in a URL, and so never
@@ -493,6 +558,9 @@ else's connection is a 404. An agent cannot list or revoke any, and
 neither can any OAuth access token, whoever it acts as. This
 works with `OAUTH_ENABLED` off too, so turning OAuth off never stops
 anyone ending a connection. A disconnected app's next request fails.
+The Android app's sign-ins are listed one per device, with the name the
+app gave the device; signing one out also deletes that device's push
+registration (CHT-1625), and its open `/ws` sockets close.
 
 Connections also end on their own when what they depended on goes
 (CHT-1523), in the same transaction as the change:

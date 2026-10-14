@@ -27,7 +27,7 @@ from app.auth.credentials import (
     rest_resolver,
 )
 from app.oxyde_models.api_key import OxydeAPIKey
-from app.oxyde_models.oauth import OxydeAuthToken
+from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession
 from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
 from app.schemas.api_key import APIKeyCreate
 from app.services import token_service as ts
@@ -343,8 +343,14 @@ async def test_ws_refuses_agent_oauth_tokens(monkeypatch, agent, test_team, test
 
 @pytest.mark.asyncio
 async def test_principal_must_be_an_agent_of_the_sessions_team(agent, test_team, test_user):
-    # A human principal: refused until web-login sessions (CHT-1524).
-    human = await connector_token(test_user, test_team, test_user)
+    # A human principal on a connector session: refused (design D2; only a
+    # built-in app's session acts as a person, CHT-1602). Minting such a
+    # code is refused outright, so the backstop is checked on a session
+    # forged in the database.
+    with pytest.raises(ValueError, match="design D2"):
+        await connector_token(test_user, test_team, test_user)
+    human = await connector_token(agent, test_team, test_user)
+    await OxydeHolderSession.objects.filter(id=human.holder_session_id).update(principal_user_id=test_user.id)
     await _refused(mcp_resolver, human.access_token)
 
     # An agent of another team, under a session for this one.

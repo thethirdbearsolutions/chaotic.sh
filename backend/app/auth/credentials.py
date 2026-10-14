@@ -17,8 +17,10 @@ Kinds of credential, decided by the token's shape (``classify``):
   validated by it (CHT-1576). Only while ``OAUTH_ENABLED`` is on. The
   token must have been issued for the edge's resource (RFC 8707, design
   I16): a connector token (``<base>/mcp``) only at /mcp, a whole-server
-  token (``<base>``, claim grants) at REST and /mcp. The per-request
-  checks are those of an agent's ``ck_`` key (see ``_verify_oauth_access``).
+  token (``<base>``, claim grants) at REST and /mcp, and a built-in app's
+  token (``<base>``, CHT-1602) at REST and /ws only. The per-request
+  checks are those of an agent's ``ck_`` key, or for a built-in app's
+  session those of the person it acts as (see ``_verify_oauth_access``).
 * ``SESSION_JWT``: anything else. The web UI's login token.
 
 An edge says which kinds it accepts, and the resource it is (needed by
@@ -46,6 +48,8 @@ from datetime import datetime, timezone
 
 from app.auth.access import ALL, ALL_SCOPES  # noqa: F401  (defined with the rule that reads them)
 from app.config import get_settings
+from app.enums import HolderVia
+from app.oauth.builtin import is_builtin
 from app.oxyde_models.user import OxydeUser as User
 from app.services import token_service
 from app.services.api_key_service import APIKeyService
@@ -96,6 +100,14 @@ class Principal:
     # session JWT's `exp`, an API key's `expires_at` (None: never). None
     # for an OAuth token, whose holder session carries its own expiry.
     credential_expires_at: datetime | None = None
+    # How an OAuth access token's holder session holds its principal
+    # (``HolderVia``); None for every other kind.
+    holder_via: HolderVia | None = None
+
+    @property
+    def is_app_session(self) -> bool:
+        """A built-in first-party app signed in as a person (CHT-1602)."""
+        return self.kind is CredentialKind.OAUTH_ACCESS and self.holder_via == HolderVia.APP
 
     def __post_init__(self):
         # Scopes granted to a token are strings off the wire, and the
@@ -220,8 +232,10 @@ async def _verify_oauth_access(token: str, audience: str | None) -> Principal:
     for an agent's ``ck_`` key:
 
     * the principal exists, is an agent, and is active. Every session
-      today acts as an agent (design §3.1); a human principal (web login
-      sessions, CHT-1524) is refused until that ticket decides its rules;
+      acts as an agent (design §3.1, D2) except a built-in app's
+      (``_verify_app_session``, CHT-1602); any other human principal (web
+      login sessions, CHT-1524) is refused until that ticket decides its
+      rules;
     * the session's team is the agent's own team;
     * the human who answers for it (the consenting human, or the holder
       of the key that claimed it) is active and still in the agent's
@@ -253,6 +267,9 @@ async def _verify_oauth_access(token: str, audience: str | None) -> Principal:
     except TokenError as exc:
         raise invalid(f"Invalid token: {exc.description}") from None
 
+    if validated.via == HolderVia.APP:
+        return await _verify_app_session(validated, invalid)
+
     user = await UserService().get_by_id(validated.principal_user_id)
     if not user:
         raise invalid("User not found")
@@ -280,6 +297,53 @@ async def _verify_oauth_access(token: str, audience: str | None) -> Principal:
         kind=kind,
         scopes=frozenset(validated.scopes),
         holder_session_id=validated.holder_session_id,
+        holder_via=validated.via,
+    )
+
+
+async def _verify_app_session(validated, invalid: Callable[..., CredentialError]) -> Principal:
+    """A built-in first-party app's session (``HolderVia.APP``, CHT-1602):
+    it acts as the person who signed in, account-wide. ``validate_access``
+    has already refused it anywhere but its own resource (``<base>``: REST
+    and /ws), so never at /mcp. Re-checked on every request, as for a
+    login:
+
+    * the session is the built-in client's, and acts as the very human
+      who holds it (principal is holder): anything else is not an app
+      session, whatever its ``via`` says;
+    * it is account-wide: no team, no project scope, no key behind it;
+    * the person exists, is not an agent, and is active (inactive: 403).
+
+    It is not tied to any team, so leaving or deleting a team does not
+    end it; only signing out, revocation, refresh reuse, or the person
+    being deactivated or deleted do. The principal is the person, so
+    every route's own team check (``check_user_team_access``, the /ws
+    ``team_id`` check) gates each request by their membership at that
+    moment, exactly as for their web login: a team they have left is
+    out of reach on the very next request."""
+    kind = CredentialKind.OAUTH_ACCESS
+    if (
+        not is_builtin(validated.oauth_client_id)
+        or validated.principal_user_id != validated.holder_user_id
+        or validated.team_id is not None
+        or validated.scope_project_ids is not None
+        or validated.credential_id is not None
+    ):
+        raise invalid()
+    user = await UserService().get_by_id(validated.principal_user_id)
+    if not user:
+        raise invalid("User not found")
+    if user.is_agent:
+        raise invalid()
+    if not user.is_active:
+        raise CredentialError(CredentialFailure.INACTIVE, "User is inactive", kind=kind)
+    return Principal(
+        user=user,
+        holder_user_id=user.id,
+        kind=kind,
+        scopes=frozenset(validated.scopes),
+        holder_session_id=validated.holder_session_id,
+        holder_via=HolderVia.APP,
     )
 
 

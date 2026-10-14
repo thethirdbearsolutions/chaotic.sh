@@ -84,12 +84,16 @@ export function getReconnectDelay(failCount) {
 /**
  * How long a socket must stay open before the client counts it as up
  * (CHT-1615). The server refuses a handshake by accepting it and closing
- * it at once with the code (4001 / 4003 / 4011), since a refusal before
- * accept reaches a browser only as 1006. So onopen alone does not mean
- * the credential was good: the outage state (fail count, badge, the
+ * it at once with the code (4001 / 4003), since a refusal before accept
+ * reaches a browser only as 1006. So onopen alone does not mean the
+ * credential was good: the outage state (fail count, badge, the
  * "reconnected" toast and resync) is cleared only once the socket has
- * stayed open this long, or a message has arrived. Without it a 4011
- * refusal would reset the backoff on every attempt.
+ * stayed open this long, or a message has arrived. Without it a refusal
+ * would reset the backoff on every attempt. A failed check (503,
+ * CHT-1637) and a refusal past the server's caps (429, CHT-1635) are HTTP
+ * statuses before accept, so they reach this client as 1006 and never
+ * open; an open socket can still be closed with 4011, which backs off
+ * like any other close.
  */
 export const WS_OPEN_SETTLE_MS = 1000;
 

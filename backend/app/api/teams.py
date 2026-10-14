@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, check_user_team_access
+from app.api.deps import CurrentUser, NotAppSession, check_user_team_access
 from app.utils import ensure_utc
 from app.schemas.team import (
     TeamCreate,
@@ -30,7 +30,7 @@ router = APIRouter()
 
 @router.post("", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
 @writes
-async def create_team(team_in: TeamCreate, current_user: CurrentUser):
+async def create_team(team_in: TeamCreate, current_user: CurrentUser, _app_session: NotAppSession):
     """Create a new team."""
     if current_user.is_agent:
         raise HTTPException(
@@ -174,6 +174,7 @@ async def update_member_role(
     user_id: str,
     role_in: TeamRoleUpdate,
     current_user: CurrentUser,
+    _app_session: NotAppSession,
 ):
     """Update a member's role.
 
@@ -282,6 +283,7 @@ async def create_invitation(
     team_id: str,
     invitation_in: TeamInvitationCreate,
     current_user: CurrentUser,
+    _app_session: NotAppSession,
 ):
     """Create a team invitation."""
     team_service = TeamService()
@@ -357,7 +359,7 @@ async def list_team_invitations(
 
 @router.post("/invitations/{token}/accept", response_model=TeamMemberResponse)
 @writes
-async def accept_invitation(token: str, current_user: CurrentUser):
+async def accept_invitation(token: str, current_user: CurrentUser, _app_session: NotAppSession):
     """Accept a team invitation."""
     team_service = TeamService()
     invitation = await team_service.get_invitation_by_token(token)

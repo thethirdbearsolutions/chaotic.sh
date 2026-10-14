@@ -4,15 +4,19 @@ The backend suite (tests/test_ws_auth.py) pins the rules with a fake
 socket; this checks what only a real handshake shows: the header and
 subprotocol paths reach the app, the server selects ``chaotic`` and
 never echoes the bearer entry, a refused handshake is accepted and
-closed with its code (4001 / 4003 / 4011, CHT-1615) rather than failed
-with HTTP 403, a revoked key's open socket is closed with 4001 at once
+closed with its code (4001 / 4003, CHT-1615) rather than failed with
+HTTP 403, a failed check is an HTTP 503 (CHT-1637), refusals past the
+per-address cap are a 429 that drops the connection (CHT-1635), a revoked key's open socket is closed with 4001 at once
 (CHT-1616), and the periodic re-check still catches a revocation no
 hook saw.
 """
+import base64
+import os
+import socket
 import time
 
 import pytest
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, InvalidStatus
 from websockets.sync.client import connect
 
 from app.config import get_settings
@@ -114,18 +118,51 @@ class TestHandshake:
                 ws.recv(timeout=5)
         assert exc.value.rcvd.code == 4003
 
-    def test_a_failed_check_reaches_the_client_as_4011(self, monkeypatch, auth_token, test_team):
-        """4011 (retry) is told apart from 4003 (stop) too."""
+    def test_a_failed_check_is_an_http_503(self, monkeypatch, auth_token, test_team):
+        """CHT-1637: 4011 (retry) on the handshake is a 503 with Retry-After,
+        sent before accept, so a tab on a bundle from before CHT-1615 sees
+        1006 and backs off instead of counting the open as up and
+        resyncing. Still told apart from 4003 (stop): a status, not a
+        close code."""
         async def broken(token, team_id):
             raise RuntimeError("database is locked")
 
         # The e2e server runs in this process.
         monkeypatch.setattr("app.ws_auth.authenticate", broken)
-        with connect(_url(test_team["id"]), additional_headers={"Authorization": f"Bearer {auth_token}"},
-                     open_timeout=5) as ws:
-            with pytest.raises(ConnectionClosed) as exc:
-                ws.recv(timeout=5)
-        assert exc.value.rcvd.code == 4011
+        with pytest.raises(InvalidStatus) as exc:
+            connect(_url(test_team["id"]), additional_headers={"Authorization": f"Bearer {auth_token}"},
+                    open_timeout=5)
+        assert exc.value.response.status_code == 503
+        assert exc.value.response.headers["Retry-After"] == "5"
+
+    def test_refusals_past_the_per_address_cap_are_429_and_dropped_at_once(self, monkeypatch, test_team):
+        """CHT-1635: a refusal that is accepted and closed holds the
+        connection until the client answers the close frame (up to 10 s
+        if it never does). Past the per-address cap a refusal is a 429 on
+        the handshake, and the server drops the connection after it."""
+        monkeypatch.setattr("app.ws_auth.MAX_HELD_REFUSALS_PER_CLIENT", 2)
+        for _ in range(2):
+            with connect(_url(test_team["id"]), open_timeout=5) as ws:
+                with pytest.raises(ConnectionClosed) as exc:
+                    ws.recv(timeout=5)
+            assert exc.value.rcvd.code == 4001
+
+        # A raw upgrade that would never answer a close frame.
+        with socket.create_connection(("127.0.0.1", TEST_PORT), timeout=5) as raw:
+            raw.sendall((
+                f"GET /ws?team_id={test_team['id']} HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{TEST_PORT}\r\n"
+                "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {base64.b64encode(os.urandom(16)).decode()}\r\n"
+                "Sec-WebSocket-Version: 13\r\n\r\n"
+            ).encode())
+            received = b""
+            started = time.monotonic()
+            while chunk := raw.recv(4096):
+                received += chunk
+            assert time.monotonic() - started < 3  # closed by the server, not by a timeout
+        assert received.startswith(b"HTTP/1.1 429"), received[:200]
+        assert b"retry-after:" in received.lower()
 
 
 class TestMidConnection:

@@ -201,6 +201,24 @@ def canonical_resource(value: str, issuer: str) -> str | None:
     return None
 
 
+def canonical_resource_for(value: str | None, issuer: str, *, builtin: bool) -> str | None:
+    """The resource a client's request names, or None if it names none
+    this client may have. Absent means the client's default.
+
+    A built-in first-party app (``app.oauth.builtin``, CHT-1602) signs in
+    for the whole server: ``<issuer>`` (with or without one trailing
+    slash) or nothing, and never ``<issuer>/mcp``. Every other client is
+    a connector: ``canonical_resource``, always ``<issuer>/mcp``."""
+    if builtin:
+        if value is None:
+            return issuer
+        trimmed = value[:-1] if value.endswith("/") else value
+        return issuer if trimmed == issuer else None
+    if value is None:
+        return issuer + "/mcp"
+    return canonical_resource(value, issuer)
+
+
 # --- known clients -------------------------------------------------------
 
 

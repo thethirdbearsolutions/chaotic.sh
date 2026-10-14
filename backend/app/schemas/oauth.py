@@ -38,10 +38,11 @@ class ConsentClient(BaseModel):
 
     client_id: str
     name: str
+    # "builtin" (a first-party app built into this server, CHT-1602),
     # "recognized" (a known client's metadata document), "cimd" (a
     # metadata document served from `host`), "unverified" (registered
     # dynamically: nothing about it is proven).
-    trust: Literal["recognized", "cimd", "unverified"]
+    trust: Literal["builtin", "recognized", "cimd", "unverified"]
     host: str | None = None
     registration: str
 
@@ -103,12 +104,19 @@ class AuthorizationRequestView(BaseModel):
     # pre-select on a reconnect; None the first time.
     suggested_team_id: str | None = None
     suggested_agent_id: str | None = None
+    # Who the connection will act as (CHT-1602): "agent" for every app
+    # but a built-in first-party one, which signs in as the viewer
+    # ("person"), account-wide: the page then offers no choice, and
+    # `teams` is empty.
+    acts_as: Literal["agent", "person"] = "agent"
 
 
 class AuthorizationApproval(BaseModel):
     """POST /api/oauth/requests/{id}/approve."""
 
-    team_id: str
+    # Required for a connector; must be absent for a built-in app, which
+    # signs in account-wide (CHT-1602).
+    team_id: str | None = None
     # An existing agent the viewer manages; None creates a new one.
     agent_id: str | None = None
     agent_name: str | None = Field(default=None, min_length=1, max_length=255)
@@ -122,6 +130,8 @@ class AuthorizationDecision(BaseModel):
     `code` or `error`, plus `state` and `iss` (RFC 9207)."""
 
     redirect: str
+    # The agent the connection acts as; None on deny and for a built-in
+    # app, which acts as the person who approved.
     agent_id: str | None = None
 
 
@@ -136,13 +146,28 @@ class TokenAgent(BaseModel):
     kind: AgentKind | None = None
 
 
+class TokenPerson(BaseModel):
+    """The person a built-in app's session acts as (CHT-1602)."""
+
+    id: str
+    name: str
+    email: str
+
+
 class TokenConnection(BaseModel):
     """Who and where a connection's tokens act (design §2.4): not part of
     OAuth, so under its own key. ``project_ids`` None means the whole
-    team."""
+    team. ``acts_as`` says which of ``agent`` (every connector) and
+    ``person`` (a built-in first-party app, CHT-1602: its tokens act as
+    the person who signed in, on REST and /ws) is set. A person's
+    session is account-wide: ``team_id`` is None, and each request
+    reaches a team only while the person is a member of it, as their web
+    login does."""
 
-    agent: TokenAgent
-    team_id: str
+    acts_as: Literal["agent", "person"] = "agent"
+    agent: TokenAgent | None = None
+    person: TokenPerson | None = None
+    team_id: str | None
     project_ids: list[str] | None = None
     holder_session_id: str
 
@@ -174,6 +199,11 @@ class ConnectionResponse(BaseModel):
     # and host from OAuthClientService.identity(), never the bare
     # self-asserted client_name (CHT-1523 review).
     client: ConsentClient | None = None
+    # "agent": a connector acting as `agent`. "person": a built-in app
+    # signed in as the caller on one device (CHT-1602); `agent` is None
+    # and `device_name` is what the app called the device, if anything.
+    acts_as: Literal["agent", "person"] = "agent"
+    device_name: str | None = None
     agent: TokenAgent | None = None
     team_id: str | None = None
     team_name: str | None = None
