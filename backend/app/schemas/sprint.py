@@ -38,7 +38,10 @@ class SprintResponse(BaseModel):
     budget: int | None
     # True once the budget was set by hand (CHT-1495). A planned sprint
     # with False follows the project's default_sprint_budget.
-    budget_explicit: bool
+    # Has a default so the OpenAPI schema leaves it optional: a client
+    # generated from this schema can still read a server that predates
+    # the field.
+    budget_explicit: bool = False
     points_spent: int
     limbo: bool
     created_at: DateTimeUTC

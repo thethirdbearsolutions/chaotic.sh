@@ -72,11 +72,20 @@ class ProjectService:
     async def update(self, project: OxydeProject, project_in: ProjectUpdate) -> OxydeProject:
         """Update a project."""
         update_data = project_in.model_dump(exclude_unset=True)
+        # Clients resend settings that did not change (the web Rules save
+        # always sends default_sprint_budget), so only a real change of
+        # default re-reads it into planned sprints. Under a null default a
+        # planned sprint can hold a carried budget, and a resent null must
+        # not wipe it (PR #384 re-review R3).
+        default_changed = (
+            "default_sprint_budget" in update_data
+            and update_data["default_sprint_budget"] != project.default_sprint_budget
+        )
         for field, value in update_data.items():
             setattr(project, field, value)
         project.updated_at = datetime.now(timezone.utc)
         await project.save(update_fields=set(update_data.keys()) | {"updated_at"})
-        if "default_sprint_budget" in update_data:
+        if default_changed:
             # Planned sprints follow the default until budgeted by hand
             # (CHT-1495).
             await SprintService().adopt_default_budget(project.id)

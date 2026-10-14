@@ -324,3 +324,62 @@ async def test_default_change_during_limbo(client, auth_headers, test_project):
     assert active.id == planned.id
     assert active.budget == 32
     assert new_planned.budget == 32
+
+
+async def _carried_under_null_default(client, auth_headers, project_id):
+    """Rotate once under a null default so the planned sprint holds a
+    carried (not hand-set) budget of 15."""
+    current, planned = await SprintService().ensure_sprints_exist(project_id)
+    resp = await client.patch(f"/api/sprints/{planned.id}", headers=auth_headers, json={"budget": 15})
+    assert resp.status_code == 200
+    await _close(client, auth_headers, current.id)
+    _, carried = await _sprints(project_id)
+    assert carried.budget == 15 and carried.budget_explicit is False
+    return carried
+
+
+@pytest.mark.asyncio
+async def test_rules_save_resending_null_default_keeps_carried_budget(client, auth_headers, test_project):
+    """The web Rules save sends every setting, default_sprint_budget
+    included, even when unchanged. A resent null is not a change of
+    default and must not wipe a carried budget (re-review R3)."""
+    carried = await _carried_under_null_default(client, auth_headers, test_project.id)
+
+    resp = await client.patch(
+        f"/api/projects/{test_project.id}",
+        headers=auth_headers,
+        json={
+            "require_estimate_on_claim": True,
+            "unestimated_handling": "default_one_point",
+            "default_sprint_budget": None,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    await carried.refresh()
+    assert carried.budget == 15
+
+
+@pytest.mark.asyncio
+async def test_modal_default_option_with_empty_budget_keeps_carried_budget(client, auth_headers, test_project):
+    """The Edit Sprint modal's "Also set as project default" with an empty
+    budget sends only default_sprint_budget: null. With the default already
+    null that changes nothing (re-review R3)."""
+    carried = await _carried_under_null_default(client, auth_headers, test_project.id)
+
+    await _set_default(client, auth_headers, test_project.id, None)
+    await carried.refresh()
+    assert carried.budget == 15
+
+
+@pytest.mark.asyncio
+async def test_resending_same_default_does_not_reset_planned(client, auth_headers, test_project):
+    """The same holds for a non-null default resent unchanged."""
+    await _set_default(client, auth_headers, test_project.id, 24)
+    _, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    await planned.refresh()
+    planned.budget = 7  # e.g. a stale value from a path that did not propagate
+    await planned.save(update_fields={"budget"})
+
+    await _set_default(client, auth_headers, test_project.id, 24)
+    await planned.refresh()
+    assert planned.budget == 7

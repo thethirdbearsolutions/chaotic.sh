@@ -14107,7 +14107,8 @@
           },
           "budget_explicit": {
             "type": "boolean",
-            "title": "Budget Explicit"
+            "title": "Budget Explicit",
+            "default": false
           },
           "points_spent": {
             "type": "integer",
@@ -14138,7 +14139,6 @@
           "activated_at",
           "closed_at",
           "budget",
-          "budget_explicit",
           "points_spent",
           "limbo",
           "created_at",
