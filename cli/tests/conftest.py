@@ -32,9 +32,9 @@ def _no_session_identity(monkeypatch):
 def _no_process_team(monkeypatch):
     """The in-memory default teams (CHT-1687) never carry over from one
     test to the next."""
-    from cli import config, session_identity
+    from cli import config
     monkeypatch.setattr(config, "_process_teams", {})
-    monkeypatch.setattr(session_identity, "_registrar_teams", {})
+    monkeypatch.setattr(config, "_only_teams", {})
 
 
 @pytest.fixture

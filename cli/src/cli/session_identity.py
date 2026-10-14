@@ -182,6 +182,23 @@ def cache_path(ref: str, api_url: str, registrar_fp: str, team_id: str | None) -
     return sessions_dir() / f"{hashlib.sha256(slot.encode()).hexdigest()[:16]}.json"
 
 
+def team_hint_path(ref: str, api_url: str, registrar_fp: str) -> Path:
+    """Where this session remembers the team a person registrar with no
+    current team registered in (CHT-1691), so a later process finds the
+    session key without asking /auth/me and /teams again."""
+    slot = cache_path(ref, api_url, registrar_fp, None)
+    return slot.with_name(f"{slot.stem}.team.json")
+
+
+def _hinted_team(ref: str, api_url: str, registrar_fp: str) -> str | None:
+    record = read_cache(team_hint_path(ref, api_url, registrar_fp))
+    if not record or (record.get("external_ref"), record.get("api_url"), record.get("registrar")) != (
+            ref, api_url, registrar_fp):
+        return None
+    team_id = record.get("team_id")
+    return team_id if isinstance(team_id, str) and team_id else None
+
+
 def registrar_settings() -> tuple[str | None, str]:
     """The registrar credential and server URL: from the environment or
     the profile, never from a repository's `.chaotic`. A `.chaotic` that
@@ -407,23 +424,15 @@ def _whoami(credential: str, api_url: str) -> dict:
     return _registrar_call("GET", f"{api_url}/auth/me", credential)
 
 
-# A person registrar's only team, per (server, registrar), for a session
-# with no current team (CHT-1687). A lookup memo for session_key only;
-# it does not become the CLI's current team.
-_registrar_teams: dict[tuple[str, str], str] = {}
-
-
 def _registrar_team(credential: str, api_url: str) -> str:
     """The person registrar's only team, asked with its own key (the
-    session key is what is being registered). Several or none is an
-    error that says what to run."""
-    memo = (api_url, fingerprint(credential))
-    if memo in _registrar_teams:
-        return _registrar_teams[memo]
-    teams = _registrar_call("GET", f"{api_url}/teams", credential)
-    teams = teams if isinstance(teams, list) else []
+    session key is what is being registered), through the per-process
+    lookup the stdio MCP server shares (CHT-1691). Several or none is an
+    error that says what to run. It does not become the CLI's current
+    team."""
+    teams = _config.accessible_teams(
+        api_url, credential, lambda: _registrar_call("GET", f"{api_url}/teams", credential))
     if len(teams) == 1:
-        _registrar_teams[memo] = teams[0]["id"]
         return teams[0]["id"]
     if teams:
         options = ", ".join(f"{t.get('name')} ({t.get('key')})" for t in teams)
@@ -500,9 +509,24 @@ def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: s
             "(`chaotic auth set-key`, or CHAOTIC_API_KEY)."
         )
     fp = fingerprint(credential)
-    # No current team: a person registrar's only team, once it is known
-    # (an agent registrar's slot has no team anyway).
-    team_id = _config.get_current_team() or _registrar_teams.get((api_url, fp))
+    hint_path = team_hint_path(ref, api_url, fp)
+    # No current team: a person registrar's only team (an agent
+    # registrar's slot has no team anyway), from this process's lookup
+    # memo, else, only to FIND a cached key, the team this session
+    # remembered (CHT-1691). Neither is trusted after a refused key, which
+    # may be a team the person has left: the memo is forgotten and the
+    # teams are listed again.
+    configured_team = _config.get_current_team()
+    if (configured_team and configured_team == _config.process_team(api_url, credential)
+            and _config.configured_team() != configured_team):
+        # The stdio MCP server's default: the key's only team, a lookup
+        # result like the memo. A team chosen with `team use` is never
+        # one, even when it is the same team (re-review L1).
+        configured_team = None
+    if failed_key and not configured_team:
+        _config.forget_only_team(api_url, credential)
+    memo_team = None if configured_team or failed_key else _config.known_only_team(api_url, credential)
+    team_id = configured_team or memo_team or (None if failed_key else _hinted_team(ref, api_url, fp))
     agent_slot = cache_path(ref, api_url, fp, None)
 
     def person_slot():
@@ -531,16 +555,40 @@ def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: s
             key = cached(trusted)
             if key:
                 return key
+            # No usable key: the remembered team was only a pointer to one.
+            # Register in the configured team, or the one the teams list
+            # says now (review M1: a stale hint must not pick the team).
+            team_id = configured_team or memo_team
             me = _whoami(credential, api_url)
-            if not me.get("is_agent") and not team_id:
-                # A person registers in a team; with none selected, its
-                # only one (CHT-1687). Its key may already be cached there.
-                team_id = _registrar_team(credential, api_url)
+            if not me.get("is_agent") and not configured_team:
+                if not team_id:
+                    # A person registers in a team; with none selected, its
+                    # only one (CHT-1687). Its key may already be cached there.
+                    team_id = _registrar_team(credential, api_url)
+                # Remember it for this session's later processes, whether
+                # it came from the lookup or the memo (review L1). Written
+                # before the key lookup and the registration on purpose:
+                # the team is right whether or not they succeed, and a
+                # refused registration removes it again below.
+                write_cache(hint_path, {
+                    "external_ref": ref, "api_url": api_url, "registrar": fp, "team_id": team_id,
+                })
                 key = cached(trusted)
                 if key:
                     return key
             slot_team = None if me.get("is_agent") else team_id
-            new_record = _register(ref, credential, api_url, slot_team, me)
+            try:
+                new_record = _register(ref, credential, api_url, slot_team, me)
+            except SessionIdentityError as exc:
+                definitive = exc.status_code is not None and 400 <= exc.status_code < 500 and exc.status_code != 429
+                if definitive and slot_team and not configured_team:
+                    # Refused (a 4xx; not a 5xx, a 429 or a network error,
+                    # which say nothing about the team) in a team that was
+                    # not chosen by hand: neither the session nor this
+                    # process should go back to it.
+                    hint_path.unlink(missing_ok=True)
+                    _config.forget_only_team(api_url, credential)
+                raise
             write_cache(cache_path(ref, api_url, fp, slot_team), new_record)
             return new_record["api_key"]
     except OSError as exc:

@@ -80,9 +80,15 @@ class RestBackend:
         team_id = _main().get_current_team()
         if team_id:
             return team_id
-        teams = await self._call(self._client().get_teams, as_configured=True) or []
+        from . import config
+        # One lookup per (server, key) shared with session identity, which
+        # may already have listed them for a person registrar (CHT-1691).
+        # Keyed like the process team (config._process_team_slot).
+        teams = await self._call(
+            config.accessible_teams, config.get_api_url(), config.get_api_key() or config.get_token() or "",
+            functools.partial(self._client().get_teams, as_configured=True),
+        ) or []
         if len(teams) == 1:
-            from . import config
             config.set_process_team(teams[0]["id"])
             return teams[0]["id"]
         if not teams:
