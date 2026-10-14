@@ -37,11 +37,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import sh.chaotic.android.R
 import sh.chaotic.android.ui.common.RefusalList
+import sh.chaotic.android.ui.common.StalledList
 import sh.chaotic.android.ui.common.SyncProblemBanner
 import sh.chaotic.android.ui.common.rememberNow
 import sh.chaotic.android.ui.inbox.InboxList
 import sh.chaotic.android.ui.inbox.InboxRowActions
 import sh.chaotic.android.ui.inbox.RejectPanel
+import sh.chaotic.android.ui.inbox.TooLateSnackbar
 import sh.chaotic.android.ui.inbox.UndoSnackbar
 import sh.chaotic.android.ui.sprint.SprintList
 import sh.chaotic.android.ui.theme.ChaoticTheme
@@ -77,6 +79,9 @@ fun HomeScreen(onOpenIssue: (issueId: String, teamId: String) -> Unit, viewModel
             onUndo = viewModel::undo,
             onUndoGone = viewModel::undoGone,
             onDismissRefusal = viewModel::dismissRefusal,
+            onRetry = viewModel::retry,
+            onDiscard = viewModel::discard,
+            onTooLateShown = viewModel::tooLateShown,
         ),
     )
 }
@@ -90,6 +95,9 @@ class HomeWrites(
     val onUndo: (String) -> Unit = {},
     val onUndoGone: (String) -> Unit = {},
     val onDismissRefusal: (String) -> Unit = {},
+    val onRetry: (String) -> Unit = {},
+    val onDiscard: (String) -> Unit = {},
+    val onTooLateShown: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -108,6 +116,7 @@ fun HomeContent(
     val snackbar = remember { SnackbarHostState() }
     var rejecting by remember { mutableStateOf<InboxEntry?>(null) }
     UndoSnackbar(state.undo, snackbar, writes)
+    TooLateSnackbar(state.tooLate, snackbar, writes.onTooLateShown)
     Scaffold(
         modifier = modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbar) },
@@ -140,6 +149,7 @@ fun HomeContent(
             }
             SyncProblemBanner(state.problem)
             RefusalList(state.refusals, writes.onDismissRefusal)
+            StalledList(state.stalled, writes.onRetry, writes.onDiscard)
             rejecting?.let { entry ->
                 RejectPanel(
                     entry = entry,

@@ -63,7 +63,7 @@ class WriteQueueTest {
         assertEquals(FlushOutcome.Done(null), queue.flush())
 
         assertEquals(
-            listOf(SentWrite("POST", "/api/rituals/r1/complete-issue/i1", JsonObject(emptyMap()), key)),
+            listOf(SentWrite("POST", "/api/rituals/r1/complete-issue/i1", JsonObject(emptyMap()), key, OWNER)),
             remote.writesSent,
         )
         // Taken: out of the queue and out of the inbox at once, before the sync's tombstone.
@@ -115,6 +115,7 @@ class WriteQueueTest {
                 "/api/rituals/r1/reject-issue/i1",
                 JsonObject(mapOf("note" to JsonPrimitive("Needs tests"))),
                 key,
+                OWNER,
             ),
             remote.writesSent.single(),
         )
@@ -211,7 +212,7 @@ class WriteQueueTest {
     }
 
     @Test
-    fun aTransientFailureKeepsTheWriteAndEverythingAfterItInOrder() = runTest {
+    fun aTransientFailureKeepsTheWriteAndLaterOnesAboutTheSameIssueInOrder() = runTest {
         val answers = ArrayDeque<Remote<Any?>>(
             listOf(Remote.Unreachable(IOException("offline")), Remote.HttpError(503), Remote.Ok(null), Remote.Ok(null)),
         )
@@ -219,28 +220,125 @@ class WriteQueueTest {
         val first = assertNotNull(queue.comment(issue(), "first"))
         val second = assertNotNull(queue.comment(issue(), "second"))
 
+        // Offline: nothing answered, so the flush stops and nothing counts against the write.
         assertIs<FlushOutcome.Retry>(queue.flush())
-        assertIs<FlushOutcome.Retry>(queue.flush())
+        assertEquals(0, store.pendingWrites().first().attempts)
+        // A 503: the first waits, and the second, about the same issue, waits behind it.
+        assertEquals(FlushOutcome.Done(WriteQueue.FIRST_RETRY_MILLIS), queue.flush())
         assertEquals(listOf(first, second), store.pendingWrites().map { it.key })
+        assertEquals(1, store.pendingWrites().first().attempts)
 
+        now += WriteQueue.FIRST_RETRY_MILLIS
         assertEquals(FlushOutcome.Done(null), queue.flush())
         // The first was tried three times, with the same key each time, before the second went at all.
         assertEquals(listOf(first, first, first, second), remote.writesSent.map { it.idempotencyKey })
     }
 
     @Test
-    fun retriesBackOffAndHonourRetryAfter() = runTest {
+    fun aFailingWriteHoldsBackNothingAboutAnythingElse() = runTest {
+        remote.answerWrite = { sent ->
+            if (sent.path.startsWith("/api/issues/")) Remote.HttpError(500) else Remote.Ok(null)
+        }
+        queue.comment(issue(), "this one breaks the server")
+        queue.markRead(mention)
+
+        assertEquals(FlushOutcome.Done(WriteQueue.FIRST_RETRY_MILLIS), queue.flush())
+
+        assertEquals(listOf("/api/issues/i1/comments", "/api/inbox/m1/read"), remote.writesSent.map { it.path })
+        assertTrue(store.inbox().single { it.id == "m1" }.read)
+    }
+
+    @Test
+    fun aWriteTheServerKeepsFailingStallsUntilRetriedOrDiscarded() = runTest {
+        remote.answerWrite = { sent ->
+            if (sent.body["content"] == JsonPrimitive("poison")) Remote.HttpError(500) else Remote.Ok(null)
+        }
+        val poison = assertNotNull(queue.comment(issue(), "poison"))
+
+        repeat(WriteQueue.MAX_ATTEMPTS - 1) { attempt ->
+            val wait = WriteQueue.retryDelay(attempt + 1, 0)
+            assertEquals(FlushOutcome.Done(wait), queue.flush())
+            now += wait
+        }
+        // The last failure stalls it: not sent again, not waited for.
+        assertEquals(FlushOutcome.Done(null), queue.flush())
+        val stalled = store.pendingWrites().single()
+        assertTrue(stalled.stalled)
+        assertEquals(WriteQueue.MAX_ATTEMPTS, remote.writesSent.size)
+        now += WriteQueue.MAX_RETRY_MILLIS
+        assertEquals(FlushOutcome.Done(null), queue.flush())
+        assertEquals(WriteQueue.MAX_ATTEMPTS, remote.writesSent.size)
+        // Nor shown as done.
+        val detail = assertNotNull(store.issue("i1"))
+        assertEquals(emptyList(), PendingOverlay.issue(detail, store.pendingWrites(), me = null).comments)
+
+        // A later write about the same issue is not held behind it.
+        queue.comment(issue(), "fine")
+        queue.flush()
+        assertEquals("fine", (remote.writesSent.last().body["content"] as JsonPrimitive).content)
+
+        // Retried, it goes again from scratch; discarded, it is gone.
+        assertTrue(queue.retry(poison))
+        assertEquals(0, store.pendingWrites().single().attempts)
+        queue.flush()
+        assertEquals(WriteQueue.MAX_ATTEMPTS + 2, remote.writesSent.size)
+        assertTrue(queue.undo(poison))
+        assertEquals(emptyList(), store.pendingWrites())
+    }
+
+    @Test
+    fun aStalledDecisionDoesNotStopANewOne() = runTest {
+        remote.answerWrite = { Remote.HttpError(502) }
+        val first = assertNotNull(queue.approve(gate, undoMillis = 0))
+        store.rescheduleWrite(first, WriteQueue.MAX_ATTEMPTS, now)
+
+        assertNotNull(queue.approve(gate, undoMillis = 0))
+    }
+
+    @Test
+    fun retriesBackOffPerWriteAndHonourRetryAfter() = runTest {
         remote.answerWrite = { Remote.HttpError(429, retryAfterMillis = 60_000) }
         queue.comment(issue(), "hello")
 
-        assertEquals(FlushOutcome.Retry(60_000), queue.flush())
+        assertEquals(FlushOutcome.Done(60_000), queue.flush())
 
+        remote.answerWrite = { Remote.HttpError(503) }
+        now += 60_000
+        assertEquals(FlushOutcome.Done(WriteQueue.FIRST_RETRY_MILLIS * 2), queue.flush())
+        now += WriteQueue.FIRST_RETRY_MILLIS * 2
+        assertEquals(FlushOutcome.Done(WriteQueue.FIRST_RETRY_MILLIS * 4), queue.flush())
+        assertEquals(WriteQueue.MAX_RETRY_MILLIS, WriteQueue.retryDelay(WriteQueue.MAX_ATTEMPTS, 0))
+    }
+
+    @Test
+    fun offlineRetriesBackOff() = runTest {
         remote.answerWrite = { Remote.Unreachable(IOException("offline")) }
+        queue.comment(issue(), "hello")
+
         val delays = List(3) { (queue.flush() as FlushOutcome.Retry).afterMillis }
-        assertEquals(
-            listOf(2, 4, 8).map { WriteQueue.FIRST_RETRY_MILLIS * it },
-            delays,
-        )
+
+        assertEquals(listOf(1, 2, 4).map { WriteQueue.FIRST_RETRY_MILLIS * it }, delays)
+        assertEquals(0, store.pendingWrites().single().attempts)
+    }
+
+    @Test
+    fun aWriteGoesOutPinnedToWhoQueuedIt() = runTest {
+        queue.comment(issue(), "hello")
+
+        queue.flush()
+
+        assertEquals(OWNER, remote.writesSent.single().owner)
+    }
+
+    @Test
+    fun aRefusedCommentKeepsItsText() = runTest {
+        remote.answerWrite = { Remote.HttpError(403, message = "You no longer have access.") }
+        queue.comment(issue(), "  a long thought  ")
+        queue.update(issue(), IssueFields.STATUS, "done")
+
+        queue.flush()
+
+        assertEquals(listOf("a long thought", null), store.refusals().map { it.value })
     }
 
     @Test
@@ -267,7 +365,13 @@ class WriteQueueTest {
         queue.flush()
 
         assertEquals(
-            SentWrite("PATCH", "/api/issues/i1", JsonObject(mapOf("status" to JsonPrimitive("in_progress"))), key),
+            SentWrite(
+                "PATCH",
+                "/api/issues/i1",
+                JsonObject(mapOf("status" to JsonPrimitive("in_progress"))),
+                key,
+                OWNER,
+            ),
             remote.writesSent.single(),
         )
         val saved = assertNotNull(store.issue("i1")).issue

@@ -40,6 +40,9 @@ class RoomCacheStore(private val dao: CacheDao) : CacheStore {
 
     override suspend fun removeWrite(key: String): Boolean = dao.removeWrite(key)
 
+    override suspend fun rescheduleWrite(key: String, attempts: Int, notBeforeMillis: Long): Boolean =
+        dao.rescheduleWrite(key, attempts, notBeforeMillis) > 0
+
     override suspend fun completeWrite(key: String, effect: WriteEffect?) = dao.completeWrite(key, effect)
 
     override suspend fun refuseWrite(refusal: WriteRefusal) = dao.refuseWrite(refusal)

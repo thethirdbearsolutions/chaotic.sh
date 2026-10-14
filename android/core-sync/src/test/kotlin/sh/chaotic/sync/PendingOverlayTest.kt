@@ -29,6 +29,21 @@ class PendingOverlayTest {
     )
 
     @Test
+    fun aStalledWriteIsNotShownAsDone() {
+        val stalled = write("1", WriteKind.APPROVE, entryId = "a").copy(attempts = WriteQueue.MAX_ATTEMPTS)
+        val comment = write(
+            "2",
+            WriteKind.COMMENT,
+            issueId = "i1",
+            value = "stuck",
+        ).copy(attempts = WriteQueue.MAX_ATTEMPTS)
+
+        assertEquals(listOf("a"), PendingOverlay.inbox(listOf(entry("a")), listOf(stalled)).map { it.id })
+        val detail = IssueDetail(issue(), emptyList(), emptyList())
+        assertEquals(detail, PendingOverlay.issue(detail, listOf(comment), me = null))
+    }
+
+    @Test
     fun decidedAndArchivedEntriesLeaveAndMarkReadReads() {
         val entries = listOf(entry("a"), entry("b"), entry("c"), entry("d"), entry("e"))
         val writes = listOf(

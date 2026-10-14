@@ -85,6 +85,13 @@ class InMemoryCacheStore : CacheStore {
 
     override suspend fun removeWrite(key: String): Boolean = mutex.withLock { writes.remove(key) != null }
 
+    override suspend fun rescheduleWrite(key: String, attempts: Int, notBeforeMillis: Long): Boolean = mutex.withLock {
+        val write = writes[key] ?: return@withLock false
+        // Replacing a present key keeps a LinkedHashMap's order.
+        writes[key] = write.copy(attempts = attempts, notBeforeMillis = notBeforeMillis)
+        true
+    }
+
     override suspend fun completeWrite(key: String, effect: WriteEffect?) = mutex.withLock {
         writes.remove(key)
         if (effect != null) applyLocked(effect)

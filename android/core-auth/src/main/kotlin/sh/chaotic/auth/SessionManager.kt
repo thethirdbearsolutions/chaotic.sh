@@ -7,6 +7,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+/**
+ * An access token and whose it is: [owner] is [SessionManager.ownerKey] of
+ * the person and server it was issued for. [toString] never prints the
+ * token.
+ */
+class Grant(val token: String, val baseUrl: String, val owner: String) {
+    override fun toString() = "Grant(owner=$owner)"
+}
+
 /** What the UI shows: the first screen, or the signed-in app. */
 sealed interface AuthState {
     /** The stored session has not been read yet. */
@@ -42,6 +51,7 @@ enum class SessionEnded {
  * failure or a 5xx leaves it as it is, and the request that needed the
  * token fails with that error.
  */
+@Suppress("TooManyFunctions") // the session's one owner: load, sign in and out, tokens, refresh
 class SessionManager(
     private val store: TokenStore,
     private val tokens: SessionTokens,
@@ -99,28 +109,37 @@ class SessionManager(
      * just ended the session). Throws [java.io.IOException] when a refresh
      * was needed and could not reach the server.
      */
-    suspend fun accessToken(): String? = mutex.withLock {
+    suspend fun accessToken(): String? = grant()?.token
+
+    /** [accessToken] together with whose it is, read under one lock so the two always agree. */
+    suspend fun grant(): Grant? = mutex.withLock {
         val current = ensureLoaded() ?: return@withLock null
-        if (clock() < current.accessTokenExpiresAtMillis - expiryMarginMillis(current)) {
-            current.accessToken
-        } else {
-            refreshLocked(current)?.accessToken
-        }
+        val fresh =
+            if (clock() < current.accessTokenExpiresAtMillis - expiryMarginMillis(current)) {
+                current
+            } else {
+                refreshLocked(current)
+            }
+        fresh?.toGrant()
     }
 
     /**
      * The server answered 401 to a request made with [rejected]. Returns a
      * token to retry with, or null if there is none. If another caller has
-     * already replaced [rejected], that token is returned without
+     * already replaced [rejected]'s token, that one is returned without
      * refreshing again.
+     *
+     * Only ever a token of the same person on the same server: if someone
+     * else signed in meanwhile, the request was made as [rejected]'s owner
+     * and must not go again as anyone else. An approval or a comment would
+     * be recorded under the wrong name, and another server's token would
+     * be sent to this one.
      */
-    suspend fun refreshAfterRejection(rejected: String): String? = mutex.withLock {
+    suspend fun refreshAfterRejection(rejected: Grant): Grant? = mutex.withLock {
         val current = ensureLoaded() ?: return@withLock null
-        if (current.accessToken != rejected) {
-            current.accessToken
-        } else {
-            refreshLocked(current)?.accessToken
-        }
+        if (current.ownerKey() != rejected.owner) return@withLock null
+        val fresh = if (current.accessToken != rejected.token) current else refreshLocked(current)
+        fresh?.toGrant()?.takeIf { it.owner == rejected.owner }
     }
 
     /**
@@ -205,7 +224,14 @@ class SessionManager(
         }
     }
 
+    private fun Session.ownerKey() = ownerKey(server.baseUrl, person.id)
+
+    private fun Session.toGrant() = Grant(accessToken, server.baseUrl, ownerKey())
+
     companion object {
+        /** Who a session speaks for: [personId] on the server at [baseUrl] (an id is unique only on its own server). */
+        fun ownerKey(baseUrl: String, personId: String) = "$personId@$baseUrl"
+
         /** Refresh at most this long before the access token expires, so a request never races its expiry. */
         const val EXPIRY_MARGIN_MILLIS = 60_000L
 

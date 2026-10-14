@@ -260,6 +260,10 @@ abstract class CacheDao {
     /** Whether [key] was queued; it no longer is. */
     open suspend fun removeWrite(key: String): Boolean = deleteWrite(key) > 0
 
+    /** How many rows were [key]'s (0 or 1); it keeps its place in the queue, which is its [PendingWriteEntity.seq]. */
+    @Query("UPDATE pending_write SET attempts = :attempts, notBeforeMillis = :notBeforeMillis WHERE `key` = :key")
+    abstract suspend fun rescheduleWrite(key: String, attempts: Int, notBeforeMillis: Long): Int
+
     @Transaction
     open suspend fun completeWrite(key: String, effect: WriteEffect?) {
         deleteWrite(key)

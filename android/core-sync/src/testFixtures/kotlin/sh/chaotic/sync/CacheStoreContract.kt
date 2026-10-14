@@ -321,6 +321,7 @@ abstract class CacheStoreContract {
         label = "CHT-1",
         createdAtMillis = at,
         notBeforeMillis = at + 4_000,
+        attempts = 2,
     )
 
     private fun refusal(key: String, at: Long = 1) = WriteRefusal(
@@ -333,6 +334,7 @@ abstract class CacheStoreContract {
         entryId = "e1",
         issueId = "i1",
         atMillis = at,
+        value = "what was written",
     )
 
     @Test
@@ -352,6 +354,20 @@ abstract class CacheStoreContract {
 
         assertEquals(listOf(write("w2", at = 5), write("w1", WriteKind.REJECT, at = 3), bare), store.pendingWrites())
         assertEquals(store.pendingWrites(), store.snapshot().writes)
+    }
+
+    @Test
+    fun rescheduleWriteKeepsItsPlaceInTheQueue() = runTest {
+        val store = createStore()
+        listOf("w1", "w2", "w3").forEach { store.queueWrite(write(it)) }
+
+        assertTrue(store.rescheduleWrite("w2", attempts = 7, notBeforeMillis = 99))
+        assertEquals(false, store.rescheduleWrite("nope", attempts = 1, notBeforeMillis = 1))
+
+        assertEquals(
+            listOf(write("w1"), write("w2").copy(attempts = 7, notBeforeMillis = 99), write("w3")),
+            store.pendingWrites(),
+        )
     }
 
     @Test

@@ -86,10 +86,10 @@ class SessionManagerTest {
         // Undispatched: each runs until it suspends, so the first is inside
         // the refresh (waiting on the gate) while the other four queue.
         val retries =
-            (1..5).map { async(start = CoroutineStart.UNDISPATCHED) { manager.refreshAfterRejection("at_1") } }
+            (1..5).map { async(start = CoroutineStart.UNDISPATCHED) { manager.refreshAfterRejection(ada("at_1")) } }
         tokens.gate!!.complete(Unit)
 
-        assertEquals(List(5) { "at_2" }, retries.awaitAll())
+        assertEquals(List(5) { "at_2" }, retries.awaitAll().map { it?.token })
         assertEquals(1, tokens.refreshes.get())
     }
 
@@ -97,9 +97,44 @@ class SessionManagerTest {
     fun aRejectionOfAnAlreadyReplacedTokenDoesNotRefreshAgain() = runTest {
         val (manager, _) = manager(session(accessToken = "at_2"))
 
-        assertEquals("at_2", manager.refreshAfterRejection("at_1"))
+        assertEquals("at_2", manager.refreshAfterRejection(ada("at_1"))?.token)
         assertEquals(0, tokens.refreshes.get())
     }
+
+    @Test
+    fun aGrantSaysWhoseTokenItIs() = runTest {
+        val (manager, _) = manager(session())
+
+        val grant = manager.grant()!!
+
+        assertEquals("at_1", grant.token)
+        assertEquals("https://chaotic.example", grant.baseUrl)
+        assertEquals("u1@https://chaotic.example", grant.owner)
+        assertFalse("at_1" in grant.toString())
+    }
+
+    @Test
+    fun aRejectionIsNeverRetriedAsSomeoneElse() = runTest {
+        // Ada's request was rejected, but Bob has signed in since: his token
+        // must not carry her request (CHT-1613).
+        val (manager, _) = manager(
+            session(accessToken = "at_bob").copy(person = Person("u2", "Bob", "bob@example.com")),
+        )
+
+        assertNull(manager.refreshAfterRejection(ada("at_1")))
+        assertEquals(0, tokens.refreshes.get())
+    }
+
+    @Test
+    fun aRejectionIsNeverRetriedOnAnotherServer() = runTest {
+        val (manager, _) = manager(session(baseUrl = "https://elsewhere.example", accessToken = "at_9"))
+
+        assertNull(manager.refreshAfterRejection(ada("at_1")))
+    }
+
+    /** Ada's grant on the default server, as a request made with [token] held it. */
+    private fun ada(token: String) =
+        Grant(token, "https://chaotic.example", SessionManager.ownerKey("https://chaotic.example", "u1"))
 
     @Test
     fun aRefusedRefreshSignsOut() = runTest {

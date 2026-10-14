@@ -78,6 +78,12 @@ interface CacheStore {
     /** Drop [key] from the queue (an undo); false when it is not there. */
     suspend fun removeWrite(key: String): Boolean
 
+    /**
+     * Keep [key] where it is in the queue, with [attempts] failed sends
+     * and not sent before [notBeforeMillis]; false when it is not there.
+     */
+    suspend fun rescheduleWrite(key: String, attempts: Int, notBeforeMillis: Long): Boolean
+
     /** The server took [key]: drop it from the queue and apply [effect], if any. */
     suspend fun completeWrite(key: String, effect: WriteEffect?)
 

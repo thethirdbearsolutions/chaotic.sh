@@ -308,6 +308,11 @@ data class PendingWriteEntity(
     val label: String,
     val createdAtMillis: Long,
     val notBeforeMillis: Long,
+    /**
+     * Sends the server answered with a passing failure;
+     * [sh.chaotic.sync.WriteQueue.MAX_ATTEMPTS] of them stall the write.
+     */
+    val attempts: Int = 0,
 ) {
     /** Null for a kind this build does not know, which only a downgrade could have written. */
     fun toWrite(): PendingWrite? = writeKind(kind)?.let {
@@ -324,6 +329,7 @@ data class PendingWriteEntity(
             label = label,
             createdAtMillis = createdAtMillis,
             notBeforeMillis = notBeforeMillis,
+            attempts = attempts,
         )
     }
 
@@ -341,6 +347,7 @@ data class PendingWriteEntity(
             label = write.label,
             createdAtMillis = write.createdAtMillis,
             notBeforeMillis = write.notBeforeMillis,
+            attempts = write.attempts,
         )
     }
 }
@@ -358,6 +365,8 @@ data class WriteRefusalEntity(
     val entryId: String?,
     val issueId: String?,
     val atMillis: Long,
+    /** A refused comment's text, so what the person wrote is not lost with it. */
+    val value: String? = null,
 ) {
     fun toRefusal(): WriteRefusal? = writeKind(kind)?.let {
         WriteRefusal(
@@ -370,6 +379,7 @@ data class WriteRefusalEntity(
             entryId = entryId,
             issueId = issueId,
             atMillis = atMillis,
+            value = value,
         )
     }
 
@@ -384,6 +394,7 @@ data class WriteRefusalEntity(
             entryId = refusal.entryId,
             issueId = refusal.issueId,
             atMillis = refusal.atMillis,
+            value = refusal.value,
         )
     }
 }

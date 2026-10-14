@@ -30,6 +30,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import sh.chaotic.android.R
 import sh.chaotic.android.ui.common.RefusalList
+import sh.chaotic.android.ui.common.StalledList
 import sh.chaotic.android.ui.common.humanize
 import sh.chaotic.android.ui.common.rememberNow
 import sh.chaotic.android.ui.common.whoLabel
@@ -57,6 +58,8 @@ fun IssueScreen(onBack: () -> Unit, viewModel: IssueViewModel = hiltViewModel())
             onAssign = viewModel::assign,
             onPickAssignee = viewModel::loadMembers,
             onDismissRefusal = viewModel::dismissRefusal,
+            onRetry = viewModel::retry,
+            onDiscard = viewModel::discard,
         ),
     )
 }
@@ -71,6 +74,8 @@ class IssueWrites(
     /** The assignee picker opened. */
     val onPickAssignee: () -> Unit = {},
     val onDismissRefusal: (String) -> Unit = {},
+    val onRetry: (String) -> Unit = {},
+    val onDiscard: (String) -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -111,6 +116,9 @@ fun IssueContent(
             ) {
                 if (state.refusals.isNotEmpty()) {
                     item { RefusalList(state.refusals, writes.onDismissRefusal) }
+                }
+                if (state.stalled.isNotEmpty()) {
+                    item { StalledList(state.stalled, writes.onRetry, writes.onDiscard) }
                 }
                 notice(state)?.let { message -> item { Text(message.text(), color = message.color()) } }
                 val detail = state.detail ?: return@LazyColumn

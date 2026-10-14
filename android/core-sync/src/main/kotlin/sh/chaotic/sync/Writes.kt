@@ -52,13 +52,25 @@ data class PendingWrite(
     val label: String,
     val createdAtMillis: Long,
     val notBeforeMillis: Long,
-)
+    /** Sends the server answered with a passing failure (a 5xx, a 429, an unreadable answer). */
+    val attempts: Int = 0,
+) {
+    /**
+     * Failed [WriteQueue.MAX_ATTEMPTS] times in a row: no longer sent on
+     * its own, nor shown as done, until the person retries or discards it.
+     * It holds back nothing behind it.
+     */
+    val stalled: Boolean get() = attempts >= WriteQueue.MAX_ATTEMPTS
+
+    /** What it is about, for keeping writes to the same thing in order. */
+    val targets: List<String> get() = listOfNotNull(entryId?.let { "entry:$it" }, issueId?.let { "issue:$it" })
+}
 
 /**
  * A write the server refused, kept until the person has seen it: the
  * write itself is gone from the queue and will not be retried (a sprint
  * in arrears or limbo, a gate someone else already decided, a field the
- * server would not take).
+ * server would not take). A refused comment keeps its text in [value].
  */
 data class WriteRefusal(
     val key: String,
@@ -71,6 +83,7 @@ data class WriteRefusal(
     val entryId: String? = null,
     val issueId: String? = null,
     val atMillis: Long,
+    val value: String? = null,
 )
 
 /** What a write the server took changes in the cache, in the transaction that drops it from the queue. */
@@ -117,13 +130,15 @@ object WritePaths {
  * The cache as the person should see it while writes wait: what they did
  * shows at once, and goes away again if the write is undone or refused.
  * The cache itself only ever holds what the server said, so a refused
- * write needs no undoing there.
+ * write needs no undoing there. A stalled write is not laid over: it is
+ * not on its way, and the person is shown it to retry or discard.
  */
 object PendingOverlay {
     private val DECIDED = setOf(WriteKind.APPROVE, WriteKind.REJECT, WriteKind.ARCHIVE)
 
     /** [entries] without those decided or archived, and read where a mark-read waits. */
-    fun inbox(entries: List<InboxEntry>, writes: List<PendingWrite>): List<InboxEntry> {
+    fun inbox(entries: List<InboxEntry>, queued: List<PendingWrite>): List<InboxEntry> {
+        val writes = queued.filterNot { it.stalled }
         if (writes.isEmpty()) return entries
         val gone = writes.filter { it.kind in DECIDED }.mapNotNullTo(HashSet()) { it.entryId }
         val read = writes.filter { it.kind == WriteKind.MARK_READ }.mapNotNullTo(HashSet()) { it.entryId }
@@ -135,7 +150,7 @@ object PendingOverlay {
      * waiting comments after the stored ones, by [me] and marked pending.
      */
     fun issue(detail: IssueDetail, writes: List<PendingWrite>, me: Principal?): IssueDetail {
-        val mine = writes.filter { it.issueId == detail.issue.id }
+        val mine = writes.filter { it.issueId == detail.issue.id && !it.stalled }
         if (mine.isEmpty()) return detail
         var issue = detail.issue
         mine.filter { it.kind == WriteKind.UPDATE_ISSUE }.forEach { issue = issue.with(it) }

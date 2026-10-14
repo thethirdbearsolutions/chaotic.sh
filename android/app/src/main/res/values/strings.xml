@@ -70,6 +70,10 @@
     <string name="refusal_update">Could not change %1$s</string>
     <string name="refusal_no_reason">The server refused it (%1$d).</string>
     <string name="refusal_dismiss">Dismiss</string>
+    <string name="stalled_reason">The server kept failing it, so it is not being sent.</string>
+    <string name="stalled_retry">Retry</string>
+    <string name="stalled_discard">Discard</string>
+    <string name="undo_too_late">Too late to undo: %1$s was already sent.</string>
     <string name="issue_comment_hint">Add a comment</string>
     <string name="issue_comment_send">Send</string>
     <string name="issue_comment_pending">Waiting to send</string>

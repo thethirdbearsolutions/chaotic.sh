@@ -22,6 +22,7 @@ import sh.chaotic.sync.Issue
 import sh.chaotic.sync.IssueDetail
 import sh.chaotic.sync.IssueFields
 import sh.chaotic.sync.PendingOverlay
+import sh.chaotic.sync.PendingWrite
 import sh.chaotic.sync.Principal
 import sh.chaotic.sync.RefreshOutcome
 import sh.chaotic.sync.Remote
@@ -34,6 +35,8 @@ data class IssueState(
     val fetch: Fetch = Fetch.LOADING,
     /** This issue's refused writes, until dismissed (CHT-1613). */
     val refusals: List<WriteRefusal> = emptyList(),
+    /** This issue's writes the server kept failing, to retry or discard. */
+    val stalled: List<PendingWrite> = emptyList(),
     /** Who the issue can be assigned to, fetched when the picker opens. */
     val members: Members = Members.NotLoaded,
     /** The person signed in, offered first in the assignee picker. */
@@ -109,6 +112,7 @@ constructor(
             cached.copy(
                 detail = cached.detail?.let { PendingOverlay.issue(it, pending, me) },
                 refusals = refused.mapNotNull { it.toRefusal() }.filter { it.issueId == route.issueId },
+                stalled = pending.filter { it.stalled && it.issueId == route.issueId },
                 members = members,
                 me = me,
             )
@@ -161,6 +165,14 @@ constructor(
 
     fun dismissRefusal(key: String) {
         viewModelScope.launch { writes.dismissRefusal(key) }
+    }
+
+    fun retry(key: String) {
+        viewModelScope.launch { writes.retry(key) }
+    }
+
+    fun discard(key: String) {
+        viewModelScope.launch { writes.undo(key) }
     }
 
     private fun write(queue: suspend (Issue) -> String?) {

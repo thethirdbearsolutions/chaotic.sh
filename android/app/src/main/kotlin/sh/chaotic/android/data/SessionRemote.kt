@@ -1,5 +1,6 @@
 package sh.chaotic.android.data
 
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -17,6 +18,7 @@ import sh.chaotic.sync.Project
 import sh.chaotic.sync.Remote
 import sh.chaotic.sync.SyncPage
 import sh.chaotic.sync.Team
+import sh.chaotic.sync.WriteOrigin
 
 /**
  * [ChaoticRemote] for whichever server the device is signed in to: an
@@ -29,11 +31,14 @@ class SessionRemote(private val sessions: SessionManager, private val engine: Ht
     private val mutex = Mutex()
     private var current: Pair<String, ApiRemote>? = null
 
+    /** One write client for every server: it holds no server, and is never closed (the process's own). */
+    private val writes = HttpClient(engine)
+
     private suspend fun remote(): ApiRemote? {
         val baseUrl = sessions.server()?.baseUrl ?: return null
         return mutex.withLock {
             current?.takeIf { it.first == baseUrl }?.second
-                ?: ApiRemote(baseUrl, engine).also { current = baseUrl to it }
+                ?: ApiRemote(baseUrl, engine, writeClient = writes).also { current = baseUrl to it }
         }
     }
 
@@ -58,18 +63,18 @@ class SessionRemote(private val sessions: SessionManager, private val engine: Ht
 
     override suspend fun members(teamId: String): Remote<List<Principal>> = call { members(teamId) }
 
-    override suspend fun act(path: String, body: JsonObject, idempotencyKey: String): Remote<Unit> =
-        call { act(path, body, idempotencyKey) }
+    override suspend fun act(path: String, body: JsonObject, origin: WriteOrigin): Remote<Unit> =
+        call { act(path, body, origin) }
 
     override suspend fun updateIssue(
         issueId: String,
         teamId: String,
         fields: JsonObject,
-        idempotencyKey: String,
-    ): Remote<Issue?> = call { updateIssue(issueId, teamId, fields, idempotencyKey) }
+        origin: WriteOrigin,
+    ): Remote<Issue?> = call { updateIssue(issueId, teamId, fields, origin) }
 
-    override suspend fun addComment(issueId: String, content: String, idempotencyKey: String): Remote<Comment?> =
-        call { addComment(issueId, content, idempotencyKey) }
+    override suspend fun addComment(issueId: String, content: String, origin: WriteOrigin): Remote<Comment?> =
+        call { addComment(issueId, content, origin) }
 
     private companion object {
         const val HTTP_UNAUTHORIZED = 401

@@ -2,6 +2,7 @@ package sh.chaotic.sync
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import sh.chaotic.auth.SessionManager
 
 /**
  * Whose cache this is, and the one gate every write to it goes through.
@@ -55,6 +56,15 @@ class CacheSession(val store: CacheStore, private val currentOwner: () -> String
         if (ticket != generation || current == null || currentOwner() != current) null else store.block()
     }
 
+    /**
+     * Who [ticket] was handed out to, while it is still good: the owner key
+     * a request made under it may go out as. Null once the session changed.
+     */
+    suspend fun ownerOf(ticket: Long): String? = lock.withLock {
+        val current = owner
+        if (ticket != generation || current == null || currentOwner() != current) null else current
+    }
+
     /** Sign-out: empty the cache and refuse every write begun before it. */
     suspend fun end() = lock.withLock {
         generation++
@@ -64,6 +74,6 @@ class CacheSession(val store: CacheStore, private val currentOwner: () -> String
 
     companion object {
         /** The owner key of [personId] on the server at [baseUrl]: an id is unique only on its own server. */
-        fun ownerKey(baseUrl: String, personId: String) = "$personId@$baseUrl"
+        fun ownerKey(baseUrl: String, personId: String) = SessionManager.ownerKey(baseUrl, personId)
     }
 }

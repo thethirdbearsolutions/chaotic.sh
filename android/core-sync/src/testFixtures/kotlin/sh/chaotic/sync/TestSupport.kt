@@ -142,19 +142,21 @@ class FakeRemote : ChaoticRemote {
 
     override suspend fun members(teamId: String) = members[teamId] ?: Remote.HttpError(403)
 
-    override suspend fun act(path: String, body: JsonObject, idempotencyKey: String): Remote<Unit> =
-        sent(SentWrite("POST", path, body, idempotencyKey)).map { }
+    override suspend fun act(path: String, body: JsonObject, origin: WriteOrigin): Remote<Unit> =
+        sent(SentWrite("POST", path, body, origin.idempotencyKey, origin.owner)).map { }
 
     override suspend fun updateIssue(
         issueId: String,
         teamId: String,
         fields: JsonObject,
-        idempotencyKey: String,
-    ): Remote<Issue?> = sent(SentWrite("PATCH", WritePaths.issue(issueId), fields, idempotencyKey)).map { it as? Issue }
+        origin: WriteOrigin,
+    ): Remote<Issue?> = sent(SentWrite("PATCH", WritePaths.issue(issueId), fields, origin.idempotencyKey, origin.owner))
+        .map { it as? Issue }
 
-    override suspend fun addComment(issueId: String, content: String, idempotencyKey: String): Remote<Comment?> {
+    override suspend fun addComment(issueId: String, content: String, origin: WriteOrigin): Remote<Comment?> {
         val body = JsonObject(mapOf("content" to JsonPrimitive(content)))
-        return sent(SentWrite("POST", WritePaths.comments(issueId), body, idempotencyKey)).map { it as? Comment }
+        return sent(SentWrite("POST", WritePaths.comments(issueId), body, origin.idempotencyKey, origin.owner))
+            .map { it as? Comment }
     }
 
     private suspend fun sent(write: SentWrite): Remote<Any?> {
@@ -163,5 +165,11 @@ class FakeRemote : ChaoticRemote {
     }
 }
 
-/** One write as [FakeRemote] received it. */
-data class SentWrite(val method: String, val path: String, val body: JsonObject, val idempotencyKey: String)
+/** One write as [FakeRemote] received it; [owner] is who it may go out as. */
+data class SentWrite(
+    val method: String,
+    val path: String,
+    val body: JsonObject,
+    val idempotencyKey: String,
+    val owner: String = "",
+)

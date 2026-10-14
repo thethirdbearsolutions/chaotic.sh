@@ -15,6 +15,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import sh.chaotic.auth.AuthInterceptor
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -247,17 +248,21 @@ class ApiRemoteTest {
         )
     }
 
+    private fun origin(key: String) = WriteOrigin(key, OWNER)
+
     @Test
     fun anActionIsPostedToItsPathWithItsKey() = runTest {
         val api = remote { json("""{"id": "x"}""") }
         val body = JsonObject(mapOf("note" to JsonPrimitive("Needs tests")))
 
-        assertEquals(Remote.Ok(Unit), api.act("/api/rituals/r1/reject-issue/i1", body, "key-1"))
+        assertEquals(Remote.Ok(Unit), api.act("/api/rituals/r1/reject-issue/i1", body, origin("key-1")))
 
         val request = requests.single()
         assertEquals(HttpMethod.Post, request.method)
         assertEquals("https://chaotic.example/api/rituals/r1/reject-issue/i1", request.url.toString())
         assertEquals("key-1", request.headers["Idempotency-Key"])
+        // For AuthInterceptor, which sends it only as this person and strips it (WriteWireTest).
+        assertEquals(OWNER, request.headers[AuthInterceptor.EXPECT_OWNER_HEADER])
         assertEquals(ContentType.Application.Json, request.body.contentType?.withoutParameters())
         assertEquals("""{"note":"Needs tests"}""", (request.body as TextContent).text)
     }
@@ -266,7 +271,7 @@ class ApiRemoteTest {
     fun aPathOffThisServersApiIsNeverSent() = runTest {
         val api = remote { json("{}") }
 
-        val answer = api.act("https://elsewhere.example/steal", JsonObject(emptyMap()), "k")
+        val answer = api.act("https://elsewhere.example/steal", JsonObject(emptyMap()), origin("k"))
 
         assertEquals(400, assertIs<Remote.HttpError>(answer).status)
         assertTrue(requests.isEmpty())
@@ -284,7 +289,7 @@ class ApiRemoteTest {
             )
         }
 
-        val issue = api.updateIssue("i1", "t1", JsonObject(mapOf("assignee_id" to JsonNull)), "k2")
+        val issue = api.updateIssue("i1", "t1", JsonObject(mapOf("assignee_id" to JsonNull)), origin("k2"))
 
         assertEquals("done", assertIs<Remote.Ok<Issue?>>(issue).value?.status)
         assertEquals("t1", issue.value?.teamId)
@@ -299,7 +304,7 @@ class ApiRemoteTest {
     fun aTakenWriteWhoseAnswerCannotBeReadIsStillTaken() = runTest {
         val api = remote { json("""{"not": "a comment"}""", HttpStatusCode.Created) }
 
-        assertEquals(Remote.Ok(null), api.addComment("i1", "hello", "k3"))
+        assertEquals(Remote.Ok(null), api.addComment("i1", "hello", origin("k3")))
         assertEquals("/api/issues/i1/comments", requests.single().url.encodedPath)
         assertEquals("""{"content":"hello"}""", (requests.single().body as TextContent).text)
     }
@@ -317,7 +322,7 @@ class ApiRemoteTest {
         val statuses = ArrayDeque(listOf(409, 403, 422, 409))
         val api = remote { json(bodies.removeFirst(), HttpStatusCode.fromValue(statuses.removeFirst())) }
 
-        val answers = List(4) { api.act("/api/inbox/e1/archive", JsonObject(emptyMap()), "k$it") }
+        val answers = List(4) { api.act("/api/inbox/e1/archive", JsonObject(emptyMap()), origin("k$it")) }
 
         assertEquals(
             listOf(

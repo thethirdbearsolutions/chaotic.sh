@@ -27,7 +27,9 @@ import sh.chaotic.api.client.ChaoticApi
 import sh.chaotic.api.infrastructure.HttpResponse
 import sh.chaotic.api.models.IssueCommentResponse
 import sh.chaotic.api.models.IssueResponse
+import sh.chaotic.auth.AuthInterceptor
 import sh.chaotic.auth.ws.WsReconnectPolicy
+import java.io.Closeable
 import java.io.IOException
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -42,7 +44,10 @@ class ApiRemote(
     private val baseUrl: String,
     engine: HttpClientEngine,
     private val nowMillis: () -> Long = System::currentTimeMillis,
-) : ChaoticRemote {
+    /** The client the writes go out on; one shared across servers holds no server, so it need not be rebuilt. */
+    writeClient: HttpClient? = null,
+) : ChaoticRemote,
+    Closeable {
     private val inboxApi = InboxApi(baseUrl, engine, ChaoticApi.clientConfig)
     private val teamsApi = TeamsApi(baseUrl, engine, ChaoticApi.clientConfig)
     private val nestedApi = NestedAliasesApi(baseUrl, engine, ChaoticApi.clientConfig)
@@ -51,7 +56,8 @@ class ApiRemote(
     private val issuesApi = IssuesApi(baseUrl, engine, ChaoticApi.clientConfig)
 
     /** The writes go out by path (an inbox action's, or the issue routes), with an Idempotency-Key header. */
-    private val http = HttpClient(engine)
+    private val ownsHttp = writeClient == null
+    private val http = writeClient ?: HttpClient(engine)
 
     override suspend fun syncInbox(since: String?, limit: Int): Remote<SyncPage> =
         call({ inboxApi.syncInboxApiInboxSyncGet(since = since, limit = limit) }) { it.toSyncPage() }
@@ -98,23 +104,28 @@ class ApiRemote(
             members.map { Principal(id = it.userId, name = it.userName ?: it.userEmail ?: it.userId) }
         }
 
-    override suspend fun act(path: String, body: JsonObject, idempotencyKey: String): Remote<Unit> =
-        write(HttpMethod.Post, path, body, idempotencyKey).map { }
+    override suspend fun act(path: String, body: JsonObject, origin: WriteOrigin): Remote<Unit> =
+        write(HttpMethod.Post, path, body, origin).map { }
 
     override suspend fun updateIssue(
         issueId: String,
         teamId: String,
         fields: JsonObject,
-        idempotencyKey: String,
-    ): Remote<Issue?> = write(HttpMethod.Patch, WritePaths.issue(issueId), fields, idempotencyKey).map { text ->
+        origin: WriteOrigin,
+    ): Remote<Issue?> = write(HttpMethod.Patch, WritePaths.issue(issueId), fields, origin).map { text ->
         decodeOrNull(IssueResponse.serializer(), text)?.toIssue(teamId)
     }
 
-    override suspend fun addComment(issueId: String, content: String, idempotencyKey: String): Remote<Comment?> {
+    override suspend fun addComment(issueId: String, content: String, origin: WriteOrigin): Remote<Comment?> {
         val body = buildJsonObject { put("content", content) }
-        return write(HttpMethod.Post, WritePaths.comments(issueId), body, idempotencyKey).map { text ->
+        return write(HttpMethod.Post, WritePaths.comments(issueId), body, origin).map { text ->
             decodeOrNull(IssueCommentResponse.serializer(), text)?.toComment()
         }
+    }
+
+    /** The write client, when it is this remote's own; the engine is the caller's, and stays open. */
+    override fun close() {
+        if (ownsHttp) http.close()
     }
 
     private suspend fun <T, R> call(request: suspend () -> HttpResponse<T>, map: (T) -> R): Remote<R> =
@@ -130,13 +141,15 @@ class ApiRemote(
         method: HttpMethod,
         path: String,
         body: JsonObject,
-        idempotencyKey: String,
+        origin: WriteOrigin,
     ): Remote<String> {
         if (!WritePaths.isApiPath(path)) return Remote.HttpError(HTTP_BAD_REQUEST, message = "Not an API path")
         return try {
             val response = http.request(baseUrl.trimEnd('/') + path) {
                 this.method = method
-                header(IDEMPOTENCY_KEY, idempotencyKey)
+                header(IDEMPOTENCY_KEY, origin.idempotencyKey)
+                // AuthInterceptor sends it only as this person, and strips this.
+                header(AuthInterceptor.EXPECT_OWNER_HEADER, origin.owner)
                 setBody(TextContent(body.toString(), ContentType.Application.Json))
             }
             val text = response.bodyAsText()

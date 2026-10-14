@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 2,
-    "identityHash": "5e79836c4cf2f9235d26460f7279572f",
+    "identityHash": "89c30b60fa6e826a37e06d125e57ca4d",
     "entities": [
       {
         "tableName": "inbox_entry",
@@ -519,7 +519,7 @@
       },
       {
         "tableName": "pending_write",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`seq` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `key` TEXT NOT NULL, `kind` TEXT NOT NULL, `path` TEXT, `entryId` TEXT, `issueId` TEXT, `teamId` TEXT, `field` TEXT, `value` TEXT, `valueLabel` TEXT, `label` TEXT NOT NULL, `createdAtMillis` INTEGER NOT NULL, `notBeforeMillis` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`seq` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `key` TEXT NOT NULL, `kind` TEXT NOT NULL, `path` TEXT, `entryId` TEXT, `issueId` TEXT, `teamId` TEXT, `field` TEXT, `value` TEXT, `valueLabel` TEXT, `label` TEXT NOT NULL, `createdAtMillis` INTEGER NOT NULL, `notBeforeMillis` INTEGER NOT NULL, `attempts` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "seq",
@@ -591,6 +591,12 @@
             "columnName": "notBeforeMillis",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -613,7 +619,7 @@
       },
       {
         "tableName": "write_refusal",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`seq` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `key` TEXT NOT NULL, `kind` TEXT NOT NULL, `label` TEXT NOT NULL, `status` INTEGER NOT NULL, `errorCode` TEXT, `message` TEXT, `entryId` TEXT, `issueId` TEXT, `atMillis` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`seq` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `key` TEXT NOT NULL, `kind` TEXT NOT NULL, `label` TEXT NOT NULL, `status` INTEGER NOT NULL, `errorCode` TEXT, `message` TEXT, `entryId` TEXT, `issueId` TEXT, `atMillis` INTEGER NOT NULL, `value` TEXT)",
         "fields": [
           {
             "fieldPath": "seq",
@@ -670,6 +676,11 @@
             "columnName": "atMillis",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "value",
+            "columnName": "value",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -693,7 +704,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5e79836c4cf2f9235d26460f7279572f')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '89c30b60fa6e826a37e06d125e57ca4d')"
     ]
   }
 }

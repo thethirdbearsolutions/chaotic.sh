@@ -95,25 +95,28 @@ interface ChaoticRemote {
     /** The people [teamId]'s issues can be assigned to. */
     suspend fun members(teamId: String): Remote<List<Principal>>
 
-    // Writes (CHT-1613). Each carries the queue's client key as its
-    // Idempotency-Key header, so a resend of a write the server already
-    // took is answered from the first time (CHT-1621).
+    // Writes (CHT-1613), each sent as its [WriteOrigin] says.
 
     /** POST one of an inbox entry's actions ([InboxAction.path]) with [body]. */
-    suspend fun act(path: String, body: JsonObject, idempotencyKey: String): Remote<Unit>
+    suspend fun act(path: String, body: JsonObject, origin: WriteOrigin): Remote<Unit>
 
     /**
      * PATCH [issueId] with [fields]; the answer is the issue as the server
      * now has it, known in [teamId] (null when a 2xx answer could not be
      * read: the write was taken all the same).
      */
-    suspend fun updateIssue(
-        issueId: String,
-        teamId: String,
-        fields: JsonObject,
-        idempotencyKey: String,
-    ): Remote<Issue?>
+    suspend fun updateIssue(issueId: String, teamId: String, fields: JsonObject, origin: WriteOrigin): Remote<Issue?>
 
     /** Comment on [issueId]; the answer is the comment as stored (null as for [updateIssue]). */
-    suspend fun addComment(issueId: String, content: String, idempotencyKey: String): Remote<Comment?>
+    suspend fun addComment(issueId: String, content: String, origin: WriteOrigin): Remote<Comment?>
 }
+
+/**
+ * Where a queued write comes from. [idempotencyKey] is the queue's client
+ * key, sent as the Idempotency-Key header so a resend of a write the
+ * server already took is answered from the first time (CHT-1621).
+ * [owner] is who queued it ([CacheSession.ownerKey]): the write goes out
+ * as that person or not at all, never as whoever is signed in by the time
+ * it is sent.
+ */
+data class WriteOrigin(val idempotencyKey: String, val owner: String)

@@ -21,6 +21,7 @@ import sh.chaotic.sync.InboxEntry
 import sh.chaotic.sync.InboxSections
 import sh.chaotic.sync.InboxSyncer
 import sh.chaotic.sync.PendingOverlay
+import sh.chaotic.sync.PendingWrite
 import sh.chaotic.sync.PollSchedule
 import sh.chaotic.sync.SprintCard
 import sh.chaotic.sync.SyncLoop
@@ -46,6 +47,18 @@ data class HomeState(
     val refusals: List<WriteRefusal> = emptyList(),
     /** The swipe that can still be taken back, for the undo snackbar. */
     val undo: UndoOffer? = null,
+    /** Writes the server kept failing, which wait for the person to retry or discard them. */
+    val stalled: List<PendingWrite> = emptyList(),
+    /** What an Undo came too late for (the write had gone), to say so once. */
+    val tooLate: String? = null,
+)
+
+/** The write queue's part of [HomeState]. */
+private data class WriteNotices(
+    val refusals: List<WriteRefusal>,
+    val stalled: List<PendingWrite>,
+    val undo: UndoOffer?,
+    val tooLate: String?,
 )
 
 /** A queued swipe still inside its undo window: [key] is the write's, [label] what it was done to. */
@@ -81,15 +94,20 @@ constructor(
     private val refreshing = MutableStateFlow(false)
     private val problem = MutableStateFlow<SyncProblem?>(null)
     private val undoOffer = MutableStateFlow<UndoOffer?>(null)
+    private val tooLate = MutableStateFlow<String?>(null)
     private val schedule = PollSchedule()
 
     private val teams = dao.observeTeams().map { rows -> rows.map { it.toTeam() } }
+    private val queued = dao.observeWrites().map { rows -> rows.mapNotNull { it.toWrite() } }
 
     // The cache with the queued writes laid over it: a swiped entry leaves at once.
-    private val entries = combine(dao.observeInbox(), dao.observeWrites()) { rows, queued ->
-        PendingOverlay.inbox(rows.map { it.toEntry() }, queued.mapNotNull { it.toWrite() })
+    private val entries = combine(dao.observeInbox(), queued) { rows, queued ->
+        PendingOverlay.inbox(rows.map { it.toEntry() }, queued)
     }
     private val refusals = dao.observeRefusals().map { rows -> rows.mapNotNull { it.toRefusal() } }
+    private val notices = combine(refusals, queued, undoOffer, tooLate) { refusals, queued, undo, tooLate ->
+        WriteNotices(refusals, queued.filter { it.stalled }, undo, tooLate)
+    }
     private val cards = dao.observeAllSprintCards().map { rows -> rows.map { it.toCard() } }
 
     private val data = combine(teams, entries, cards, selectedTeam, tab) { teams, entries, cards, selected, tab ->
@@ -105,8 +123,15 @@ constructor(
     }
 
     val state: StateFlow<HomeState> =
-        combine(data, refreshing, problem, refusals, undoOffer) { data, refreshing, problem, refusals, undo ->
-            data.copy(refreshing = refreshing, problem = problem, refusals = refusals, undo = undo)
+        combine(data, refreshing, problem, notices) { data, refreshing, problem, notices ->
+            data.copy(
+                refreshing = refreshing,
+                problem = problem,
+                refusals = notices.refusals,
+                undo = notices.undo,
+                stalled = notices.stalled,
+                tooLate = notices.tooLate,
+            )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HomeState())
 
     /** The foreground poll: teams unless fresh, then the inbox loop until cancelled (the screen left) or signed out. */
@@ -153,10 +178,13 @@ constructor(
 
     fun archive(entry: InboxEntry) = offerUndo(entry, WriteKind.ARCHIVE) { writes.archive(entry) }
 
-    /** The snackbar's Undo. */
+    /** The snackbar's Undo; if the write had already gone, the person is told so. */
     fun undo(key: String) {
+        val label = undoOffer.value?.takeIf { it.key == key }?.label
         undoGone(key)
-        viewModelScope.launch { writes.undo(key) }
+        viewModelScope.launch {
+            if (!writes.undo(key) && label != null) tooLate.value = label
+        }
     }
 
     /** The snackbar went away without an undo. */
@@ -164,8 +192,23 @@ constructor(
         undoOffer.update { if (it?.key == key) null else it }
     }
 
+    /** The "already sent" notice was shown. */
+    fun tooLateShown() {
+        tooLate.value = null
+    }
+
     fun dismissRefusal(key: String) {
         viewModelScope.launch { writes.dismissRefusal(key) }
+    }
+
+    /** Send a stalled write again. */
+    fun retry(key: String) {
+        viewModelScope.launch { writes.retry(key) }
+    }
+
+    /** Drop a stalled write. */
+    fun discard(key: String) {
+        viewModelScope.launch { writes.undo(key) }
     }
 
     private fun offerUndo(entry: InboxEntry, kind: WriteKind, queue: suspend () -> String?) {

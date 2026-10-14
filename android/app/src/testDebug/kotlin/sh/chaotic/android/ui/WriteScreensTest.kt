@@ -33,6 +33,7 @@ import sh.chaotic.sync.InboxEntry
 import sh.chaotic.sync.InboxSections
 import sh.chaotic.sync.Issue
 import sh.chaotic.sync.IssueDetail
+import sh.chaotic.sync.PendingWrite
 import sh.chaotic.sync.Principal
 import sh.chaotic.sync.WriteKind
 import sh.chaotic.sync.WriteQueue
@@ -80,6 +81,8 @@ class WriteScreensTest {
         onUndo = { calls += "undo:$it" },
         onUndoGone = { calls += "gone:$it" },
         onDismissRefusal = { calls += "dismiss:$it" },
+        onRetry = { calls += "retry:$it" },
+        onDiscard = { calls += "discard:$it" },
     )
 
     private fun home(state: HomeState) = compose.setContent {
@@ -212,6 +215,51 @@ class WriteScreensTest {
         compose.onNodeWithText("Dismiss").performClick()
 
         assertEquals(listOf("dismiss:k1"), calls)
+    }
+
+    @Test
+    fun aRefusedCommentShowsWhatWasWritten() {
+        val refusal = WriteRefusal(
+            key = "k1",
+            kind = WriteKind.COMMENT,
+            label = "CHT-7",
+            status = 403,
+            atMillis = now,
+            value = "A long thought worth keeping",
+        )
+        home(HomeState(refusals = listOf(refusal)))
+
+        compose.onNodeWithText("Could not comment on CHT-7").assertIsDisplayed()
+        compose.onNodeWithText("A long thought worth keeping").assertIsDisplayed()
+    }
+
+    @Test
+    fun aStalledWriteCanBeRetriedOrDiscarded() {
+        val stalled = PendingWrite(
+            key = "k1",
+            kind = WriteKind.COMMENT,
+            issueId = "i1",
+            value = "Stuck words",
+            label = "CHT-1611",
+            createdAtMillis = now,
+            notBeforeMillis = now,
+            attempts = WriteQueue.MAX_ATTEMPTS,
+        )
+        home(HomeState(stalled = listOf(stalled)))
+
+        compose.onNodeWithText("Could not comment on CHT-1611").assertIsDisplayed()
+        compose.onNodeWithText("Stuck words").assertIsDisplayed()
+        compose.onNodeWithText("Retry").performClick()
+        compose.onNodeWithText("Discard").performClick()
+
+        assertEquals(listOf("retry:k1", "discard:k1"), calls)
+    }
+
+    @Test
+    fun anUndoThatCameTooLateIsSaid() {
+        home(HomeState(tooLate = "CHT-1611"))
+
+        compose.onNodeWithText("Too late to undo: CHT-1611 was already sent.").assertIsDisplayed()
     }
 
     private val issue = Issue(

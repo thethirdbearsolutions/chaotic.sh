@@ -2,6 +2,7 @@ package sh.chaotic.android.writes
 
 import android.content.Context
 import android.util.Log
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -14,19 +15,20 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import sh.chaotic.android.di.cacheOwner
 import sh.chaotic.android.push.ApplicationScope
+import sh.chaotic.auth.AuthState
 import sh.chaotic.auth.SessionManager
 import sh.chaotic.sync.FlushOutcome
 import sh.chaotic.sync.InboxEntry
 import sh.chaotic.sync.Issue
+import sh.chaotic.sync.WriteLoop
 import sh.chaotic.sync.WriteQueue
-import sh.chaotic.sync.push.guarded
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -53,7 +55,11 @@ class WriteActions(private val queue: WriteQueue, private val onQueued: () -> Un
     suspend fun update(issue: Issue, field: String, value: String?, valueLabel: String? = null): String? =
         queued(queue.update(issue, field, value, valueLabel))
 
+    /** Take a write back, or discard a stalled one; false when it was already sent. */
     suspend fun undo(key: String): Boolean = queue.undo(key)
+
+    /** Send a stalled write again. */
+    suspend fun retry(key: String): Boolean = queue.retry(key).also { if (it) onQueued() }
 
     suspend fun dismissRefusal(key: String) = queue.dismissRefusal(key)
 
@@ -64,10 +70,11 @@ class WriteActions(private val queue: WriteQueue, private val onQueued: () -> Un
 }
 
 /**
- * Sends the write queue while the process lives: at start (whatever a
- * previous process left), whenever something is queued, when an undo
- * window closes, and after a failure's backoff. [WriteWork] covers the
- * rest: it runs when there is a network, even if this process is gone.
+ * Sends the write queue while the process lives ([WriteLoop]): once the
+ * stored session is read, whenever someone signs in, whenever something
+ * is queued, when an undo window closes, and after a failure's backoff.
+ * [WriteWork] covers the rest: it runs when there is a network, even if
+ * this process is gone.
  */
 @Singleton
 class WriteRunner
@@ -75,32 +82,27 @@ class WriteRunner
 constructor(
     @param:ApplicationContext private val context: Context,
     private val queue: WriteQueue,
+    private val sessions: SessionManager,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
-    private val requests = Channel<Unit>(Channel.CONFLATED)
+    private val loop = WriteLoop(flush = { queue.flush() }, onError = ::failed)
 
     fun start() {
         scope.launch {
-            // Null: nothing is waiting, so wait for a request.
-            var wait: Long? = 0
-            while (true) {
-                val due = wait
-                if (due == null) requests.receive() else withTimeoutOrNull(due) { requests.receive() }
-                wait = guarded(::failed) { next(queue.flush()) }
+            // Before the first flush: until the stored session is read,
+            // nobody is signed in and the flush would find nothing to send.
+            sessions.load()
+            launch {
+                sessions.state.collect { if (it is AuthState.SignedIn) loop.request() }
             }
+            loop.run()
         }
     }
 
     /** Something was queued: send it when it is due, here and, failing that, from WorkManager. */
     fun kick() {
-        requests.trySend(Unit)
+        loop.request()
         WriteWork.schedule(context)
-    }
-
-    private fun next(outcome: FlushOutcome): Long? = when (outcome) {
-        is FlushOutcome.Done -> outcome.nextDueInMillis
-        is FlushOutcome.Retry -> outcome.afterMillis
-        FlushOutcome.Unauthorized -> null
     }
 
     private fun failed(e: Exception) {
@@ -126,6 +128,9 @@ interface WriteEntryPoint {
 object WriteWork {
     private const val NAME = "write-queue"
 
+    /** A retry comes this much later each time (linearly): never hours away, as exponential backoff gets. */
+    private const val BACKOFF_SECONDS = 30L
+
     private val online = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
     /** One already waiting covers this request too: it sends the whole queue. */
@@ -133,7 +138,10 @@ object WriteWork {
         WorkManager.getInstance(context).enqueueUniqueWork(
             NAME,
             ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<WriteWorker>().setConstraints(online).build(),
+            OneTimeWorkRequestBuilder<WriteWorker>()
+                .setConstraints(online)
+                .setBackoffCriteria(BackoffPolicy.LINEAR, BACKOFF_SECONDS, TimeUnit.SECONDS)
+                .build(),
         )
     }
 
@@ -143,8 +151,18 @@ object WriteWork {
 }
 
 class WriteWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    @Suppress("TooGenericExceptionCaught") // a failed flush is retried later, never dropped
+    override suspend fun doWork(): Result = try {
+        send()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(TAG, "Write queue failed: ${e.javaClass.name}")
+        Result.retry()
+    }
+
     @Suppress("ReturnCount") // signed out, done, a retry and a refused session each end the work
-    override suspend fun doWork(): Result {
+    private suspend fun send(): Result {
         val deps = EntryPointAccessors.fromApplication(applicationContext, WriteEntryPoint::class.java)
         // A worker can be the first thing to run in a fresh process.
         deps.sessions().load()
@@ -153,7 +171,9 @@ class WriteWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             when (val outcome = deps.queue().flush()) {
                 is FlushOutcome.Done -> {
                     val due = outcome.nextDueInMillis ?: return Result.success()
-                    // An undo window still open: a few seconds at most.
+                    // An undo window still open is a few seconds; a write
+                    // waiting out a server's failures is retried later.
+                    if (due > MAX_WAIT_MILLIS) return Result.retry()
                     delay(due)
                 }
 
@@ -166,7 +186,12 @@ class WriteWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     }
 
     private companion object {
+        const val TAG = "ChaoticWrites"
+
         /** Enough for writes queued while this one ran; a worker should not run for long. */
         const val MAX_ROUNDS = 10
+
+        /** Longest a worker waits in place for a write to fall due: an undo window, with room. */
+        const val MAX_WAIT_MILLIS = 2 * WriteQueue.UNDO_MILLIS
     }
 }

@@ -19,9 +19,9 @@ sealed interface FlushOutcome {
     data class Done(val nextDueInMillis: Long?) : FlushOutcome
 
     /**
-     * A write could not be sent (offline, a server error, an answer that
-     * could not be read): it and everything after it stay queued, in
-     * order. Try again in [afterMillis].
+     * The server could not be reached (offline, most likely): every write
+     * stays queued, in order, and none is counted as a failed attempt. Try
+     * again in [afterMillis].
      */
     data class Retry(val afterMillis: Long) : FlushOutcome
 
@@ -43,10 +43,19 @@ sealed interface FlushOutcome {
  * - 2xx: taken. Dropped from the queue, and the answer applied to the
  *   cache in the same transaction (an approved entry leaves the inbox; an
  *   updated issue is saved as the server now has it).
- * - 401: the session ended; nothing more is sent.
- * - 408, 425, 429 or 5xx, no answer, or an unreadable one: not taken, as
- *   far as the app can tell. It stays first in line, and the flush stops
- *   so later writes to the same thing cannot overtake it.
+ * - 401: the session ended (or someone else is signed in now); nothing
+ *   more is sent.
+ * - No answer at all: most likely offline. The flush stops, every write
+ *   stays where it is, and nothing counts against them.
+ * - 408, 425, 429 or 5xx, or an answer that cannot be read: not taken,
+ *   as far as the app can tell. That write waits (doubling from
+ *   [FIRST_RETRY_MILLIS], never sooner than Retry-After), later writes
+ *   about the same entry or issue wait behind it so they cannot overtake
+ *   it, and the flush goes on with everything else. After
+ *   [MAX_ATTEMPTS] such failures in a row the write is
+ *   [PendingWrite.stalled]: no longer sent or shown as done, and it holds
+ *   nothing back, until the person retries ([retry]) or discards ([undo])
+ *   it. One write the server always fails can never block the rest.
  * - Any other 4xx: refused (arrears, limbo, someone else already decided
  *   the gate, a value the server will not take). Dropped and kept as a
  *   [WriteRefusal] with the server's reason, never retried. A mark-read or
@@ -99,7 +108,7 @@ class WriteQueue(
         val action = entry.action(InboxAction.MARK_READ) ?: return null
         return queue(
             entry.pendingWrite(WriteKind.MARK_READ, action, value = null, undoMillis),
-        ) { queued -> queued.none { it.entryId == entry.id && it.kind == WriteKind.MARK_READ } }
+        ) { queued -> queued.none { it.entryId == entry.id && it.kind == WriteKind.MARK_READ && !it.stalled } }
     }
 
     @Suppress("ReturnCount") // each reason not to queue is an early null
@@ -151,11 +160,20 @@ class WriteQueue(
         )
     }
 
-    /** Take back [key] before it is sent; false when it is being sent, or already was. */
+    /**
+     * Take back [key] before it is sent, or discard a stalled write; false
+     * when it is being sent, or already was.
+     */
     suspend fun undo(key: String): Boolean = picking.withLock {
         if (sending == key) return@withLock false
         val ticket = session.begin() ?: return@withLock false
         session.write(ticket) { removeWrite(key) } ?: false
+    }
+
+    /** Send [key] again from scratch (a stalled write the person still wants); false when it is gone. */
+    suspend fun retry(key: String): Boolean {
+        val ticket = session.begin() ?: return false
+        return session.write(ticket) { rescheduleWrite(key, attempts = 0, notBeforeMillis = nowMillis()) } ?: false
     }
 
     suspend fun dismissRefusal(key: String) {
@@ -166,26 +184,48 @@ class WriteQueue(
     /** Send every write that is due, in order. See the class comment for what each answer does. */
     suspend fun flush(): FlushOutcome = flushing.withLock {
         val ticket = session.begin() ?: return@withLock FlushOutcome.Unauthorized
+        val owner = session.ownerOf(ticket) ?: return@withLock FlushOutcome.Unauthorized
+        val tried = HashSet<String>()
         var outcome: FlushOutcome? = null
-        while (outcome == null) outcome = flushOne(ticket)
+        while (outcome == null) outcome = flushOne(ticket, owner, tried)
         outcome
     }
 
-    /** Send the first due write; null to go on, else how the flush ends. */
+    /** Send the next write that may go; null to go on, else how the flush ends. */
     @Suppress("ReturnCount") // signed out, nothing due, and an undo each end this step early
-    private suspend fun flushOne(ticket: Long): FlushOutcome? {
+    private suspend fun flushOne(ticket: Long, owner: String, tried: MutableSet<String>): FlushOutcome? {
         val now = nowMillis()
         val queued = session.write(ticket) { pendingWrites() } ?: return FlushOutcome.Unauthorized
-        val next = queued.firstOrNull { it.notBeforeMillis <= now }
-            ?: return FlushOutcome.Done(queued.minOfOrNull { it.notBeforeMillis - now })
+        val next = nextToSend(queued, now, tried) ?: return FlushOutcome.Done(nextDueInMillis(queued, now))
+        tried += next.key
         val picked = pick(ticket, next.key) ?: return FlushOutcome.Unauthorized
         if (!picked) return null // undone between the read and the pick
         return try {
-            send(ticket, next)
+            send(ticket, next, WriteOrigin(next.key, owner))
         } finally {
             picking.withLock { sending = null }
         }
     }
+
+    /**
+     * The first write that is due and has nothing earlier about the same
+     * entry or issue still waiting: those keep their order. A stalled
+     * write is skipped and holds nothing back.
+     */
+    private fun nextToSend(queued: List<PendingWrite>, now: Long, tried: Set<String>): PendingWrite? {
+        val held = HashSet<String>()
+        for (write in queued) {
+            if (write.stalled) continue
+            val free = write.key !in tried && write.notBeforeMillis <= now && write.targets.none { it in held }
+            if (free) return write
+            held += write.targets
+        }
+        return null
+    }
+
+    /** How long until a waiting write is due: null when none is (empty, or only stalled ones). */
+    private fun nextDueInMillis(queued: List<PendingWrite>, now: Long): Long? =
+        queued.filter { !it.stalled && it.notBeforeMillis > now }.minOfOrNull { it.notBeforeMillis - now }
 
     /** Mark [key] as being sent, if it is still queued: true when it is, null when signed out. */
     private suspend fun pick(ticket: Long, key: String): Boolean? = picking.withLock {
@@ -195,40 +235,52 @@ class WriteQueue(
     }
 
     /** Send one write and record its answer; null to go on with the next, else how the flush ends. */
-    private suspend fun send(ticket: Long, write: PendingWrite): FlushOutcome? {
-        val result = request(write)
-        if (result is Remote.Ok) {
-            failures = 0
-            val written = session.write(ticket) { completeWrite(write.key, effect(write, result.value)) }
-            return if (written == null) FlushOutcome.Unauthorized else null
-        }
-        val error = result as Remote.Failure
-        return when {
-            error is Remote.HttpError && error.status == HTTP_UNAUTHORIZED -> FlushOutcome.Unauthorized
+    private suspend fun send(ticket: Long, write: PendingWrite, origin: WriteOrigin): FlushOutcome? {
+        val result = request(write, origin)
+        val stop = stopsTheFlush(result)
+        if (stop != null) return stop
+        failures = 0
+        val written = session.write(ticket) { record(write, result) }
+        return if (written == null) FlushOutcome.Unauthorized else null
+    }
 
-            error is Remote.HttpError && !error.isTransient() -> {
-                failures = 0
-                val written = session.write(ticket) {
-                    if (error.isQuietDrop(write)) {
-                        completeWrite(write.key, effect = null)
-                    } else {
-                        refuseWrite(refusal(write, error))
-                    }
+    /** An answer that ends the flush before anything is recorded: signed out, or offline. */
+    private fun stopsTheFlush(result: Remote<Any?>): FlushOutcome? = when {
+        result is Remote.HttpError && result.status == HTTP_UNAUTHORIZED -> FlushOutcome.Unauthorized
+
+        // Nothing answered: offline, most likely, so it says nothing about this write.
+        result is Remote.Unreachable -> FlushOutcome.Retry(offlineBackoff())
+
+        else -> null
+    }
+
+    /** Record the server's answer to [write]: done, refused, or to be tried again later. */
+    private suspend fun CacheStore.record(write: PendingWrite, result: Remote<Any?>) {
+        when {
+            result is Remote.Ok -> completeWrite(write.key, effect(write, result.value))
+
+            result is Remote.HttpError && !result.isTransient() ->
+                if (result.isQuietDrop(write)) {
+                    completeWrite(write.key, effect = null)
+                } else {
+                    refuseWrite(refusal(write, result))
                 }
-                if (written == null) FlushOutcome.Unauthorized else null
-            }
 
-            else -> FlushOutcome.Retry(backoff((error as? Remote.HttpError)?.retryAfterMillis ?: 0))
+            else -> {
+                val attempts = write.attempts + 1
+                val wait = retryDelay(attempts, (result as? Remote.HttpError)?.retryAfterMillis ?: 0)
+                rescheduleWrite(write.key, attempts, nowMillis() + wait)
+            }
         }
     }
 
-    private suspend fun request(write: PendingWrite): Remote<Any?> = when (write.kind) {
+    private suspend fun request(write: PendingWrite, origin: WriteOrigin): Remote<Any?> = when (write.kind) {
         WriteKind.APPROVE, WriteKind.ARCHIVE, WriteKind.MARK_READ ->
-            remote.act(write.path.orEmpty(), JsonObject(emptyMap()), write.key)
+            remote.act(write.path.orEmpty(), JsonObject(emptyMap()), origin)
 
-        WriteKind.REJECT -> remote.act(write.path.orEmpty(), buildJsonObject { put("note", write.value) }, write.key)
+        WriteKind.REJECT -> remote.act(write.path.orEmpty(), buildJsonObject { put("note", write.value) }, origin)
 
-        WriteKind.COMMENT -> remote.addComment(write.issueId.orEmpty(), write.value.orEmpty(), write.key)
+        WriteKind.COMMENT -> remote.addComment(write.issueId.orEmpty(), write.value.orEmpty(), origin)
 
         WriteKind.UPDATE_ISSUE -> {
             val value = write.value?.let(::JsonPrimitive) ?: JsonNull
@@ -236,7 +288,7 @@ class WriteQueue(
                 write.issueId.orEmpty(),
                 write.teamId.orEmpty(),
                 JsonObject(mapOf(write.field.orEmpty() to value)),
-                write.key,
+                origin,
             )
         }
     }
@@ -258,13 +310,15 @@ class WriteQueue(
         entryId = write.entryId,
         issueId = write.issueId,
         atMillis = nowMillis(),
+        // What the person wrote is not lost with the comment.
+        value = write.value.takeIf { write.kind == WriteKind.COMMENT },
     )
 
-    /** Doubling from [FIRST_RETRY_MILLIS] to [MAX_RETRY_MILLIS], and never sooner than the server asked. */
-    private fun backoff(retryAfterMillis: Long): Long {
+    /** Offline: doubling from [FIRST_RETRY_MILLIS] to [MAX_RETRY_MILLIS] while nothing answers. */
+    private fun offlineBackoff(): Long {
         val doubled = FIRST_RETRY_MILLIS shl failures.coerceAtMost(MAX_DOUBLINGS)
         failures++
-        return maxOf(doubled.coerceAtMost(MAX_RETRY_MILLIS), retryAfterMillis.coerceAtMost(MAX_RETRY_MILLIS))
+        return doubled.coerceAtMost(MAX_RETRY_MILLIS)
     }
 
     private suspend fun decide(
@@ -275,7 +329,8 @@ class WriteQueue(
         undoMillis: Long,
     ): String? = queue(entry.pendingWrite(kind, action, value, undoMillis)) { queued ->
         // One decision per entry: a second swipe while the first waits is not a second request.
-        queued.none { it.entryId == entry.id && it.kind in DECISIONS }
+        // A stalled one is not on its way, so it does not stand in for a new one.
+        queued.none { it.entryId == entry.id && it.kind in DECISIONS && !it.stalled }
     }
 
     private fun InboxEntry.pendingWrite(
@@ -322,7 +377,24 @@ class WriteQueue(
 
         const val FIRST_RETRY_MILLIS = 5_000L
         const val MAX_RETRY_MILLIS = 15 * 60_000L
+
+        /**
+         * Failed sends in a row (each answered, but not taken) before a
+         * write stalls: with the doubling waits, about half an hour of a
+         * server that keeps failing it.
+         */
+        const val MAX_ATTEMPTS = 10
         private const val MAX_DOUBLINGS = 10
+
+        /**
+         * How long a write waits after its [attempts]th failure: doubling
+         * from [FIRST_RETRY_MILLIS] to [MAX_RETRY_MILLIS], and never sooner
+         * than the server asked.
+         */
+        fun retryDelay(attempts: Int, retryAfterMillis: Long): Long {
+            val doubled = FIRST_RETRY_MILLIS shl (attempts - 1).coerceIn(0, MAX_DOUBLINGS)
+            return maxOf(doubled.coerceAtMost(MAX_RETRY_MILLIS), retryAfterMillis.coerceAtMost(MAX_RETRY_MILLIS))
+        }
         private const val HTTP_UNAUTHORIZED = 401
         private const val HTTP_NOT_FOUND = 404
         private const val HTTP_TIMEOUT = 408

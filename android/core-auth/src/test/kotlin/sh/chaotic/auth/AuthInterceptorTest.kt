@@ -1,5 +1,6 @@
 package sh.chaotic.auth
 
+import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockWebServer
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -137,6 +138,65 @@ class AuthInterceptorTest {
 
         assertNull(server.takeRequest().headers["X-Chaotic-Interactive"])
     }
+
+    @Test
+    fun a401IsNotRetriedAsSomeoneWhoSignedInMeanwhile() {
+        server.enqueue(status(401))
+        server.enqueue(status(200))
+        val sessions = SessionManager(InMemoryTokenStore(session(baseUrl = server.baseUrl())), tokens)
+        val bob = session(baseUrl = server.baseUrl(), accessToken = "at_bob")
+            .copy(person = Person("u2", "Bob", "bob@example.com"))
+        var switched = false
+        val client = OkHttpClient.Builder()
+            .addInterceptor(AuthInterceptor(sessions, interactive = true))
+            .addNetworkInterceptor { chain ->
+                // Ada's request is on the wire when she signs out and Bob signs in.
+                if (!switched) {
+                    switched = true
+                    runBlocking { sessions.signedIn(bob) }
+                }
+                chain.proceed(chain.request())
+            }
+            .build()
+
+        assertEquals(401, client.post(server.url("/api/issues/i1/comments").toString()))
+
+        assertEquals("Bearer at_1", server.takeRequest().headers["Authorization"])
+        assertEquals(1, server.requestCount)
+        assertEquals(0, refreshes)
+    }
+
+    @Test
+    fun aRequestPinnedToTheSignedInPersonGoesOutWithoutThePin() {
+        server.enqueue(status(200))
+        val owner = SessionManager.ownerKey(server.baseUrl(), "u1")
+
+        assertEquals(200, client().pinnedPost(server.url("/api/issues").toString(), owner))
+
+        val sent = server.takeRequest()
+        assertEquals("Bearer at_1", sent.headers["Authorization"])
+        assertNull(sent.headers[AuthInterceptor.EXPECT_OWNER_HEADER])
+    }
+
+    @Test
+    fun aRequestPinnedToSomeoneElseIsNeverSent() {
+        val owner = SessionManager.ownerKey(server.baseUrl(), "u2")
+
+        assertEquals(401, client().pinnedPost(server.url("/api/issues").toString(), owner))
+        assertEquals(401, client(stored = null).pinnedPost(server.url("/api/issues").toString(), owner))
+        assertEquals(401, client().pinnedPost(other.url("/api/issues").toString(), owner))
+
+        assertEquals(0, server.requestCount)
+        assertEquals(0, other.requestCount)
+    }
+
+    private fun OkHttpClient.pinnedPost(url: String, owner: String) = newCall(
+        Request.Builder()
+            .url(url)
+            .header(AuthInterceptor.EXPECT_OWNER_HEADER, owner)
+            .post("{}".toRequestBody("application/json".toMediaType()))
+            .build(),
+    ).execute().use { it.code }
 
     @Test
     fun anExplicitAuthorizationIsLeftAlone() {

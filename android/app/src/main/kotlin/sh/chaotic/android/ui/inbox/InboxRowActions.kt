@@ -64,6 +64,17 @@ fun UndoSnackbar(offer: UndoOffer?, host: SnackbarHostState, writes: HomeWrites)
     }
 }
 
+/** Says once that an Undo came too late: the write [label] names had already gone to the server. */
+@Composable
+fun TooLateSnackbar(label: String?, host: SnackbarHostState, onShown: () -> Unit) {
+    val message = label?.let { stringResource(R.string.undo_too_late, it) }
+    LaunchedEffect(label) {
+        if (message == null) return@LaunchedEffect
+        host.showSnackbar(message, duration = SnackbarDuration.Short)
+        onShown()
+    }
+}
+
 @Composable
 private fun undoMessage(offer: UndoOffer): String = when (offer.kind) {
     WriteKind.APPROVE -> stringResource(R.string.undo_approved, offer.label)
