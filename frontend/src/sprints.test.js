@@ -821,6 +821,99 @@ describe('handleUpdateBudget', () => {
         expect(api.updateSprint).toHaveBeenCalledWith('s1', { budget: null, name: 'Sprint 1' });
     });
 
+    // CHT-1495: sending `budget` marks it set by hand, which stops a
+    // planned sprint from following the project default.
+    it('rename-only save does not send budget', async () => {
+        api.updateSprint.mockResolvedValue({});
+        api.getCurrentSprint.mockResolvedValue({});
+        api.getSprints.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        document.getElementById('sprint-name').value = 'Renamed';
+        setState('currentProject', 'p1');
+
+        await handleUpdateBudget({ preventDefault: vi.fn() }, 's1', 'p1');
+
+        expect(api.updateSprint).toHaveBeenCalledTimes(1);
+        expect(api.updateSprint).toHaveBeenCalledWith('s1', { name: 'Renamed' });
+    });
+
+    it('unchanged unlimited budget is not sent', async () => {
+        showEditBudgetModal('s1', 'Sprint 1', null, 'p1');
+        api.updateSprint.mockResolvedValue({});
+        api.getCurrentSprint.mockResolvedValue({});
+        api.getSprints.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        await handleUpdateBudget({ preventDefault: vi.fn() }, 's1', 'p1');
+
+        expect(api.updateSprint).toHaveBeenCalledWith('s1', { name: 'Sprint 1' });
+    });
+
+    it('project default option does not patch planned sprints', async () => {
+        setSprints([
+            { id: 's1', status: 'active', name: 'Sprint 1' },
+            { id: 's2', status: 'planned', name: 'Sprint 2' },
+            { id: 's3', status: 'planned', name: 'Sprint 3' },
+        ]);
+        api.updateSprint.mockResolvedValue({});
+        api.updateProject.mockResolvedValue({});
+        api.getCurrentSprint.mockResolvedValue({});
+        api.getSprints.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        document.getElementById('sprint-budget').value = '32';
+        document.querySelector('input[name="budget-scope"][value="default"]').checked = true;
+        setState('currentProject', 'p1');
+
+        await handleUpdateBudget({ preventDefault: vi.fn() }, 's1', 'p1');
+
+        // The active sprint's own budget changed, so it is sent; the
+        // planned sprints are left to follow the new default.
+        expect(api.updateSprint).toHaveBeenCalledTimes(1);
+        expect(api.updateSprint).toHaveBeenCalledWith('s1', { budget: 32, name: 'Sprint 1' });
+        expect(api.updateProject).toHaveBeenCalledWith('p1', { default_sprint_budget: 32 });
+    });
+
+    it('project default option on a planned sprint does not pin it', async () => {
+        showEditBudgetModal('s2', 'Sprint 2', 20, 'p1');
+        setSprints([{ id: 's2', status: 'planned', name: 'Sprint 2' }]);
+        api.updateSprint.mockResolvedValue({});
+        api.updateProject.mockResolvedValue({});
+        api.getCurrentSprint.mockResolvedValue({});
+        api.getSprints.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        document.getElementById('sprint-budget').value = '32';
+        document.querySelector('input[name="budget-scope"][value="default"]').checked = true;
+        setState('currentProject', 'p1');
+
+        await handleUpdateBudget({ preventDefault: vi.fn() }, 's2', 'p1');
+
+        expect(api.updateSprint).toHaveBeenCalledWith('s2', { name: 'Sprint 2' });
+        expect(api.updateProject).toHaveBeenCalledWith('p1', { default_sprint_budget: 32 });
+    });
+
+    it('planned option sets other planned sprints by hand', async () => {
+        setSprints([
+            { id: 's1', status: 'active', name: 'Sprint 1' },
+            { id: 's2', status: 'planned', name: 'Sprint 2' },
+        ]);
+        api.updateSprint.mockResolvedValue({});
+        api.getCurrentSprint.mockResolvedValue({});
+        api.getSprints.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        document.getElementById('sprint-budget').value = '30';
+        document.querySelector('input[name="budget-scope"][value="planned"]').checked = true;
+
+        await handleUpdateBudget({ preventDefault: vi.fn() }, 's1', 'p1');
+
+        expect(api.updateSprint).toHaveBeenCalledWith('s1', { budget: 30, name: 'Sprint 1' });
+        expect(api.updateSprint).toHaveBeenCalledWith('s2', { budget: 30 });
+        expect(api.updateProject).not.toHaveBeenCalled();
+    });
+
     it('shows error toast on failure', async () => {
         api.updateSprint.mockRejectedValue(new Error('forbidden'));
 

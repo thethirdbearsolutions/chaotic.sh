@@ -189,3 +189,113 @@ async def test_template_apply_default_reaches_planned(db, test_team, test_projec
 
     await planned.refresh()
     assert planned.budget == 40
+
+
+@pytest.mark.asyncio
+async def test_rename_only_patch_does_not_pin_budget(client, auth_headers, test_project):
+    """Only a PATCH that carries `budget` marks it set by hand."""
+    await _set_default(client, auth_headers, test_project.id, 24)
+    _, planned = await SprintService().ensure_sprints_exist(test_project.id)
+
+    resp = await client.patch(f"/api/sprints/{planned.id}", headers=auth_headers, json={"name": "Renamed"})
+    assert resp.status_code == 200
+    await planned.refresh()
+    assert planned.budget_explicit is False
+
+    await _set_default(client, auth_headers, test_project.id, 32)
+    await planned.refresh()
+    assert planned.budget == 32
+
+
+@pytest.mark.asyncio
+async def test_null_default_carries_hand_set_budget_forward(client, auth_headers, test_project):
+    """With no project default, a budget set by hand on the sprint being
+    activated carries to the new planned sprint, so rotation cannot
+    silently switch arrears off (PR #384 review M1)."""
+    current, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    assert planned.budget is None
+
+    resp = await client.patch(f"/api/sprints/{planned.id}", headers=auth_headers, json={"budget": 15})
+    assert resp.status_code == 200
+    await _close(client, auth_headers, current.id)
+
+    active, new_planned = await _sprints(test_project.id)
+    assert active.id == planned.id and active.budget == 15
+    assert new_planned.budget == 15
+    assert new_planned.budget_explicit is True
+
+    # It keeps carrying on later rotations while the default stays null.
+    await _close(client, auth_headers, active.id)
+    _, after = await _sprints(test_project.id)
+    assert after.budget == 15
+
+    # Once a default exists, the default wins for sprints not set by hand;
+    # the carried budget was set by hand, so it is kept.
+    await _set_default(client, auth_headers, test_project.id, 40)
+    await after.refresh()
+    assert after.budget == 15
+
+
+@pytest.mark.asyncio
+async def test_null_default_without_hand_set_budget_stays_unlimited(test_project):
+    """The carry-forward applies to hand-set budgets only."""
+    current, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    await SprintService().close_sprint(current)
+    _, new_planned = await _sprints(test_project.id)
+    assert new_planned.budget is None
+    assert new_planned.budget_explicit is False
+
+
+@pytest.mark.asyncio
+async def test_activation_does_not_overwrite_budget_set_after_read(test_project):
+    """The activation write is conditional on the row: a budget set by
+    hand after the caller read the planned sprint survives (review M3)."""
+    test_project.default_sprint_budget = 24
+    await test_project.save(update_fields={"default_sprint_budget"})
+    _, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    stale = await OxydeSprint.objects.get(id=planned.id)
+    assert stale.budget_explicit is False
+
+    # A PATCH lands between the read and the activation.
+    from app.schemas.sprint import SprintUpdate
+    await SprintService().update(planned, SprintUpdate(budget=50))
+
+    await SprintService()._activate_next_sprint(stale)
+
+    fresh = await OxydeSprint.objects.get(id=planned.id)
+    assert fresh.status == SprintStatus.ACTIVE
+    assert fresh.budget == 50
+    assert fresh.budget_explicit is True
+
+
+@pytest.mark.asyncio
+async def test_default_change_during_limbo(client, auth_headers, test_project):
+    """Close into limbo, change the default, complete limbo: the limbo
+    sprint keeps its budget and Next opens at the new default (review L4)."""
+    from app.enums import RitualTrigger
+    from app.oxyde_models.ritual import OxydeRitual
+
+    await _set_default(client, auth_headers, test_project.id, 24)
+    current, planned = await SprintService().ensure_sprints_exist(test_project.id)
+    await OxydeRitual.objects.create(
+        project_id=test_project.id,
+        name="Sprint Ritual",
+        prompt="Attest something",
+        trigger=RitualTrigger.EVERY_SPRINT,
+    )
+
+    closed = await SprintService().close_sprint(current)
+    assert closed.limbo is True
+
+    await _set_default(client, auth_headers, test_project.id, 32)
+    await current.refresh()
+    assert current.budget == 24, "a sprint in limbo is still active; its budget is not touched"
+
+    await SprintService().complete_limbo(current)
+
+    await current.refresh()
+    assert current.status == SprintStatus.COMPLETED and current.budget == 24
+    active, new_planned = await _sprints(test_project.id)
+    assert active.id == planned.id
+    assert active.budget == 32
+    assert new_planned.budget == 32
