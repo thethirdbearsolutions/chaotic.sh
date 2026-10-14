@@ -31,7 +31,10 @@ from .config import (  # noqa: F401 - re-exported for late-binding command modul
 from .client import client, APIError
 from .system import system
 from .markup import esc
-from .commands.shared import (  # noqa: F401 – re-exported for backward compat
+# Re-exported for callers that reach these through cli.main. Not a stable
+# API: CHT-1702 renamed get_status_color and format_ritual_line to their
+# *_markup names here without aliases.
+from .commands.shared import (  # noqa: F401
     console, status_color_markup, suggest_key,
     resolve_sprint_id, resolve_document_id, resolve_label_id,
     resolve_team_id, print_sprint_panel,
