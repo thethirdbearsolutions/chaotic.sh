@@ -184,6 +184,9 @@ export function renderSprints() {
                 <div class="sprint-card-budget">${budgetDisplay}</div>
                 <div class="sprint-card-actions" data-action="stop-propagation">
                     <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${escapeAttr(next.id)}" data-sprint-name="${escapeAttr(next.name)}" data-budget="${next.budget || ''}" data-project-id="${escapeAttr(next.project_id)}">Edit Sprint</button>
+                    ${next.budget_explicit === true ? `
+                        <button class="btn btn-secondary btn-small" data-action="follow-default-budget" data-sprint-id="${escapeAttr(next.id)}" title="Drop the hand-set budget: this sprint takes the project default and follows later changes to it">Follow project default</button>
+                    ` : ''}
                 </div>
             </div>
         `;
@@ -672,6 +675,35 @@ export async function handleUpdateBudget(event, sprintId, projectId) {
     return false;
 }
 
+// Shown when following the default leaves the sprint with no budget; the
+// same warning `chaotic sprint budget --default` prints (PR #391 review L1).
+export const UNLIMITED_DEFAULT_WARNING = 'The project has no default sprint budget, so this sprint '
+    + '(and later sprints that follow the default) will have no budget and arrears will not apply. '
+    + 'Set a default in the project settings.';
+
+/**
+ * Make a planned sprint whose budget was set by hand follow the project
+ * default budget again (CHT-1708), via the API's budget_follows_default.
+ */
+export async function followDefaultBudget(sprintId, button = null) {
+    if (button) button.disabled = true;
+    try {
+        const result = await api.updateSprint(sprintId, { budget_follows_default: true });
+        await loadSprints();
+        const budget = result?.budget;
+        const name = result?.name || sprints.find(s => s.id === sprintId)?.name || 'Sprint';
+        const amount = budget === null || budget === undefined ? 'unlimited' : `${budget} points`;
+        showToast(`'${name}' follows the project default budget again (${amount}).`, 'success');
+        if (budget === null || budget === undefined) {
+            showToast(UNLIMITED_DEFAULT_WARNING, 'warning');
+        }
+    } catch (e) {
+        showApiError('reset budget to project default', e);
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
 export async function showCloseSprintConfirmation(sprintId) {
     const sprint = sprints.find(s => s.id === sprintId);
     if (!sprint) return;
@@ -1021,6 +1053,9 @@ registerActions({
     'show-edit-budget-modal': (_event, data) => {
         const budget = data.budget ? parseFloat(data.budget) : null;
         showEditBudgetModal(data.sprintId, data.sprintName, budget, data.projectId);
+    },
+    'follow-default-budget': (_event, data, target) => {
+        followDefaultBudget(data.sprintId, target);
     },
     'show-limbo-details-modal': () => {
         showLimboDetailsModal();
