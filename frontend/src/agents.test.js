@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { setCurrentTeam } from './state.js';
+import { setCurrentTeam, setCurrentUser } from './state.js';
 import {
   getAgents,
   renderAgentAvatar,
@@ -52,8 +52,10 @@ vi.mock('./assignees.js', () => ({
   buildAssignees: (...args) => mockBuildAssignees(...args),
 }));
 
+const mockIsCurrentUserAdmin = vi.fn(() => false);
 vi.mock('./teams.js', () => ({
   getMembers: vi.fn(() => []),
+  isCurrentUserAdmin: (...args) => mockIsCurrentUserAdmin(...args),
 }));
 
 describe('getAgents', () => {
@@ -546,10 +548,11 @@ describe('registrars (CHT-1600)', () => {
 
   it('shows the kind and a toggle, but no toggle for a session identity', async () => {
     document.body.innerHTML = '<div id="agents-list"></div>';
+    setCurrentUser({ id: 'me' });
     api.getTeamAgents.mockResolvedValue([
-      { id: 'reg-1', name: 'Claude Code', can_register: true, kind: 'service', created_at: '2024-01-01' },
-      { id: 'bot-1', name: 'bot', can_register: false, kind: 'assistant', created_at: '2024-01-01' },
-      { id: 'ses-1', name: 'Claude Code · main', kind: 'session', created_at: '2024-01-01' },
+      { id: 'reg-1', name: 'Claude Code', can_register: true, kind: 'service', parent_user_id: 'me', created_at: '2024-01-01' },
+      { id: 'bot-1', name: 'bot', can_register: false, kind: 'assistant', parent_user_id: 'me', created_at: '2024-01-01' },
+      { id: 'ses-1', name: 'Claude Code · main', kind: 'session', parent_user_id: 'me', created_at: '2024-01-01' },
     ]);
     await loadAgents();
     const list = document.getElementById('agents-list');
@@ -560,6 +563,28 @@ describe('registrars (CHT-1600)', () => {
     ]);
     expect(list.innerHTML).toContain('Registrar');
     expect(list.innerHTML).toContain('Session');
+    setCurrentUser(null);
+  });
+
+  it('shows the toggle only to the creator or a team admin, and not on deactivated agents', async () => {
+    document.body.innerHTML = '<div id="agents-list"></div>';
+    setCurrentUser({ id: 'me' });
+    api.getTeamAgents.mockResolvedValue([
+      { id: 'mine', name: 'mine', kind: 'assistant', parent_user_id: 'me', created_at: '2024-01-01' },
+      { id: 'theirs', name: 'theirs', kind: 'assistant', parent_user_id: 'other', created_at: '2024-01-01' },
+      { id: 'off', name: 'off', kind: 'assistant', parent_user_id: 'me', is_active: false, created_at: '2024-01-01' },
+    ]);
+    const toggled = () =>
+      Array.from(document.querySelectorAll('[data-action="toggle-agent-registrar"]')).map((b) => b.dataset.agentId);
+
+    await loadAgents();
+    expect(toggled()).toEqual(['mine']);
+
+    mockIsCurrentUserAdmin.mockReturnValue(true);
+    await loadAgents();
+    expect(toggled()).toEqual(['mine', 'theirs']);
+    mockIsCurrentUserAdmin.mockReturnValue(false);
+    setCurrentUser(null);
   });
 
   it('turns the capability on and reloads', async () => {

@@ -57,11 +57,9 @@ class Client:
     def _session_error(exc: session_identity.SessionIdentityError) -> "APIError":
         return APIError(str(exc), status_code=exc.status_code, detail=exc.detail)
 
-    def _session_key(self, ref: str, api_url: str, failed_key: str | None = None) -> str:
+    def _session_key(self, ref: str, credential: str | None, api_url: str, failed_key: str | None = None) -> str:
         try:
-            return session_identity.session_key(
-                ref, self._configured_credential(), api_url, failed_key=failed_key,
-            )
+            return session_identity.session_key(ref, credential, api_url, failed_key=failed_key)
         except session_identity.SessionIdentityError as exc:
             raise self._session_error(exc) from exc
 
@@ -90,15 +88,18 @@ class Client:
         configured credential itself (`agent register`, which is the
         registrar's own call).
         """
-        api_url = get_api_url()
-        url = f"{api_url}{path}"
-        ref = None
+        ref = credential = None
         if not as_configured:
             try:
                 ref = session_identity.active_ref()
+                if ref:
+                    credential, api_url = session_identity.registrar_settings()
             except session_identity.SessionIdentityError as exc:
                 raise self._session_error(exc) from exc
-        key = self._session_key(ref, api_url) if ref else None
+        if not ref:
+            api_url = get_api_url()
+        url = f"{api_url}{path}"
+        key = self._session_key(ref, credential, api_url) if ref else None
         with httpx.Client() as client:
             send = getattr(client, method.lower())
 
@@ -111,7 +112,7 @@ class Client:
             response = _send(key)
             if ref and response.status_code == 401:
                 # Expired or revoked: register again, once.
-                key = self._session_key(ref, api_url, failed_key=key)
+                key = self._session_key(ref, credential, api_url, failed_key=key)
                 response = _send(key)
 
             if response.status_code == 204:

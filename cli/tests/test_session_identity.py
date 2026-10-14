@@ -42,34 +42,42 @@ class FakeServer:
         self.expires_in = timedelta(days=7)
         self._n = count(1)
         self.lock = threading.Lock()
+        self.registrar_keys = {REGISTRAR_KEY}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
         path = request.url.path.removeprefix("/api")
         with self.lock:
             self.requests.append((request.method, path, bearer))
-        if path == "/auth/me" and bearer == REGISTRAR_KEY:
+        if path == "/auth/me" and bearer in self.registrar_keys:
             return httpx.Response(200, json=self.me)
         if path == "/agents/register":
-            assert bearer == REGISTRAR_KEY
+            assert bearer in self.registrar_keys
             body = json.loads(request.content)
+            # Each registrar has its own identity for the ref (another
+            # team, in the real server).
+            identity = (
+                "sess-1" if (bearer, request.url.host) == (REGISTRAR_KEY, "chaotic.test")
+                else f"sess-{bearer}" if request.url.host == "chaotic.test"
+                else f"sess-{request.url.host}"
+            )
             with self.lock:
                 self.registrations.append(body)
                 if self.register_status >= 400:
                     return httpx.Response(self.register_status, json={"detail": self.register_detail})
                 # One live key per identity: registering revokes the others.
-                self.live_keys = {k: a for k, a in self.live_keys.items() if a != "sess-1"}
+                self.live_keys = {k: a for k, a in self.live_keys.items() if a != identity}
                 key = f"ck_session_{next(self._n)}"
-                self.live_keys[key] = "sess-1"
+                self.live_keys[key] = identity
             return httpx.Response(201, json={
-                "agent": {"id": "sess-1", "name": body.get("name") or "Claude Code · 00000001",
+                "agent": {"id": identity, "name": body.get("name") or "Claude Code · 00000001",
                           "kind": "session", "external_ref": body["external_ref"]},
                 "created": len(self.registrations) == 1,
                 "api_key": key,
                 "api_key_id": f"kid-{key}",
                 "expires_at": (datetime.now(timezone.utc) + self.expires_in).isoformat(),
             })
-        if bearer == REGISTRAR_KEY:
+        if bearer in self.registrar_keys:
             if request.method == "GET":
                 return httpx.Response(200, json={"as": "registrar"})
             return httpx.Response(403, json={"detail": {"error_code": "registrar_cannot_write",
@@ -90,6 +98,8 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(cli_config, "GLOBAL_CONFIG_DIR", tmp_path)
     monkeypatch.setattr(cli_config, "_current_profile", None)
     monkeypatch.delenv("CHAOTIC_PROFILE", raising=False)
+    # No repository .chaotic unless a test writes one.
+    monkeypatch.setattr(cli_config, "load_local_config", lambda: {})
     return tmp_path
 
 
@@ -107,17 +117,27 @@ def auto(monkeypatch, home):
     monkeypatch.setenv(si.SESSION_ENV, SESSION_ID)
 
 
+def _set_profile(monkeypatch, key=REGISTRAR_KEY, url=API, team="team-1"):
+    """The profile as both readers see it: the plain CLI path
+    (cli.client getters) and session identity (environment, profile)."""
+    for env in ("CHAOTIC_API_KEY", "CHAOTIC_TOKEN"):
+        monkeypatch.delenv(env, raising=False)
+    if key:
+        monkeypatch.setenv("CHAOTIC_API_KEY", key)
+    monkeypatch.setenv("CHAOTIC_API_URL", url)
+    monkeypatch.setattr("cli.client.get_api_url", lambda: url)
+    monkeypatch.setattr("cli.client.get_api_key", lambda: key)
+    monkeypatch.setattr("cli.client.get_token", lambda: None)
+    monkeypatch.setattr("cli.config.get_current_team", lambda: team)
+
+
 @pytest.fixture
-def configured():
-    with patch("cli.client.get_api_url", return_value=API), \
-         patch("cli.client.get_api_key", return_value=REGISTRAR_KEY), \
-         patch("cli.client.get_token", return_value=None), \
-         patch("cli.config.get_current_team", return_value="team-1"):
-        yield
+def configured(monkeypatch):
+    _set_profile(monkeypatch)
 
 
-def _cache():
-    return si.cache_path(REF)
+def _cache(url=API, key=REGISTRAR_KEY, team="team-1"):
+    return si.cache_path(REF, url, si.fingerprint(key), team)
 
 
 class TestOffByDefault:
@@ -175,7 +195,8 @@ class TestAutoMode:
         assert REGISTRAR_KEY not in _cache().read_text()
         assert stat.S_IMODE(_cache().stat().st_mode) == 0o600
         assert stat.S_IMODE((home / "sessions").stat().st_mode) == 0o700
-        assert _cache().name == f"{__import__('hashlib').sha256(REF.encode()).hexdigest()[:16]}.json"
+        slot = "\n".join((REF, API, si.fingerprint(REGISTRAR_KEY), "team-1"))
+        assert _cache().name == f"{__import__('hashlib').sha256(slot.encode()).hexdigest()[:16]}.json"
 
     def test_later_requests_and_processes_reuse_the_cache(self, auto, server, configured):
         first = Client()._request("GET", "/issues")["key"]
@@ -242,14 +263,22 @@ class TestAutoMode:
         Client()._request("GET", "/issues")
         assert server.registrations[0]["team_id"] == "team-1"
 
-    def test_a_person_without_a_team_fails_loudly(self, auto, server):
+    def test_a_person_without_a_team_fails_loudly(self, auto, server, monkeypatch):
         server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
-        with patch("cli.client.get_api_url", return_value=API), \
-             patch("cli.client.get_api_key", return_value=REGISTRAR_KEY), \
-             patch("cli.config.get_current_team", return_value=None), \
-             pytest.raises(APIError, match="no team is selected"):
+        _set_profile(monkeypatch, team=None)
+        with pytest.raises(APIError, match="no team is selected"):
             Client()._request("GET", "/issues")
         assert server.registrations == []
+
+    def test_a_person_switching_teams_gets_each_teams_identity(self, auto, server, monkeypatch):
+        server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        _set_profile(monkeypatch, team="team-A")
+        a = Client()._request("GET", "/issues")["key"]
+        _set_profile(monkeypatch, team="team-B")
+        Client()._request("GET", "/issues")
+        assert [r["team_id"] for r in server.registrations] == ["team-A", "team-B"]
+        assert json.loads(_cache(team="team-A").read_text())["api_key"] == a
+        assert json.loads(_cache(team="team-B").read_text())["team_id"] == "team-B"
 
 
 class TestFailsLoudly:
@@ -281,20 +310,24 @@ class TestFailsLoudly:
             Client()._request("GET", "/issues")
         assert server.registrations == []
 
-    def test_a_rejected_registrar_key(self, auto, server):
-        with patch("cli.client.get_api_url", return_value=API), \
-             patch("cli.client.get_api_key", return_value="ck_wrong"), \
-             patch("cli.client.get_token", return_value=None), \
-             pytest.raises(APIError, match="configured key was rejected") as refused:
+    def test_a_rejected_registrar_key(self, auto, server, monkeypatch):
+        _set_profile(monkeypatch, key="ck_wrong")
+        with pytest.raises(APIError, match="configured key was rejected") as refused:
             Client()._request("GET", "/issues")
         assert refused.value.status_code == 401
 
-    def test_no_registrar_key(self, auto, server):
-        with patch("cli.client.get_api_url", return_value=API), \
-             patch("cli.client.get_api_key", return_value=None), \
-             patch("cli.client.get_token", return_value=None), \
-             pytest.raises(APIError, match="no registrar key"):
+    def test_no_registrar_key(self, auto, server, monkeypatch):
+        _set_profile(monkeypatch, key=None)
+        with pytest.raises(APIError, match="no registrar key"):
             Client()._request("GET", "/issues")
+
+    def test_the_not_a_registrar_hint_names_who_runs_it_and_how(self, auto, server, configured):
+        server.me = {"id": "a-1", "name": "claude-bot", "is_agent": True, "can_register": False}
+        with pytest.raises(APIError) as refused:
+            Client()._request("GET", "/issues")
+        message = str(refused.value)
+        assert "creator or a team admin" in message
+        assert "CHAOTIC_SESSION_IDENTITY=off chaotic agent update 'claude-bot' --registrar" in message
 
     @pytest.mark.parametrize("session_id", ["has space", "x" * 200, " "])
     def test_an_unusable_session_id(self, auto, server, configured, monkeypatch, session_id):
@@ -365,11 +398,101 @@ class TestTheCacheFile:
         with pytest.raises(APIError, match="must be a directory"):
             Client()._request("GET", "/issues")
 
-    def test_cached_record_hides_the_key(self, auto, server, configured):
+    def test_a_fifo_in_the_slot_does_not_hang(self, auto, server, configured, home):
+        (home / "sessions").mkdir(mode=0o700)
+        os.mkfifo(_cache(), 0o600)
+        assert si.read_cache(_cache()) is None  # returns at once, with no writer
+        assert Client()._request("GET", "/issues")["as"] == "sess-1"
+        assert stat.S_ISREG(_cache().stat().st_mode)  # replaced by a real cache file
+
+    def test_a_non_regular_file_is_not_read(self, auto, server, configured, home):
+        (home / "sessions").mkdir(mode=0o700)
+        _cache().mkdir(mode=0o700)
+        assert si.read_cache(_cache()) is None
+
+    def test_a_hit_in_an_untrusted_directory_is_not_used(self, auto, server, configured, home):
         self._seed(server)
-        shown = si.cached_record(REF)
-        assert shown["agent_id"] == "sess-1" and "api_key" not in shown
-        assert si.cached_record("claude-code:session:none") is None
+        os.chmod(home / "sessions", 0o777)
+        assert si.read_cache(_cache()) is None
+        Client()._request("GET", "/issues")  # tightens the directory, registers again
+        assert len(server.registrations) == 2
+        assert stat.S_IMODE((home / "sessions").stat().st_mode) == 0o700
+
+    def test_a_hit_through_a_symlinked_directory_is_not_used(self, auto, server, configured, home, tmp_path_factory):
+        self._seed(server)
+        elsewhere = tmp_path_factory.mktemp("moved")
+        (home / "sessions").rename(elsewhere / "sessions")
+        (home / "sessions").symlink_to(elsewhere / "sessions")
+        assert si.read_cache(_cache()) is None
+        with pytest.raises(APIError, match="must be a directory"):
+            Client()._request("GET", "/issues")
+
+
+class TestSlots:
+    """One slot per (session, server, registrar, team): switching between
+    them in one session must not re-register (which revokes the other's
+    key and spends the registrar's hourly cap)."""
+
+    def test_two_registrars_in_one_session_keep_their_own_keys(self, auto, server, monkeypatch):
+        _set_profile(monkeypatch, key=REGISTRAR_KEY)
+        Client()._request("GET", "/issues")
+        server.registrar_keys.add("ck_registrar_two")
+        _set_profile(monkeypatch, key="ck_registrar_two")
+        assert Client()._request("GET", "/issues")["as"] == "sess-ck_registrar_two"
+        first_body, second_body = server.registrations
+        # A different registrar's first registration in this slot is named,
+        # not treated as a renewal of the other registrar's identity.
+        assert "name" in second_body
+
+        _set_profile(monkeypatch, key=REGISTRAR_KEY)
+        Client()._request("GET", "/issues")
+        _set_profile(monkeypatch, key="ck_registrar_two")
+        Client()._request("GET", "/issues")
+        assert len(server.registrations) == 2
+        assert _cache(key=REGISTRAR_KEY) != _cache(key="ck_registrar_two")
+
+    def test_two_servers_in_one_session_keep_their_own_keys(self, auto, server, monkeypatch):
+        _set_profile(monkeypatch, url=API)
+        Client()._request("GET", "/issues")
+        _set_profile(monkeypatch, url="http://other.test/api")
+        Client()._request("GET", "/issues")
+        _set_profile(monkeypatch, url=API)
+        Client()._request("GET", "/issues")
+        assert len(server.registrations) == 2
+        assert json.loads(_cache().read_text())["api_url"] == API
+        assert json.loads(_cache(url="http://other.test/api").read_text())["api_url"] == "http://other.test/api"
+
+
+class TestRepositoryConfig:
+    """The registrar key and server come from the profile or the
+    environment, never a repository's .chaotic."""
+
+    def test_a_repo_key_is_refused_not_used(self, auto, server, configured, monkeypatch):
+        monkeypatch.delenv("CHAOTIC_API_KEY")
+        monkeypatch.setattr(cli_config, "load_global_config", lambda: {"api_key": REGISTRAR_KEY})
+        monkeypatch.setattr(cli_config, "load_local_config", lambda: {"api_key": "ck_from_repo"})
+        with pytest.raises(APIError, match=r"\.chaotic sets its own api_key"):
+            Client()._request("GET", "/issues")
+        assert server.requests == []
+
+    def test_a_repo_url_is_refused(self, auto, server, configured, monkeypatch):
+        monkeypatch.delenv("CHAOTIC_API_URL")
+        monkeypatch.setattr(cli_config, "load_local_config", lambda: {"api_url": "http://evil.test/api"})
+        with pytest.raises(APIError, match="sets its own api_url"):
+            Client()._request("GET", "/issues")
+        assert server.requests == []
+
+    def test_the_environment_wins_over_a_repo_value(self, auto, server, configured, monkeypatch):
+        monkeypatch.setattr(cli_config, "load_local_config", lambda: {"api_key": "ck_from_repo"})
+        assert Client()._request("GET", "/issues")["as"] == "sess-1"
+
+    def test_a_repo_value_equal_to_the_profile_is_fine(self, auto, server, configured, monkeypatch):
+        monkeypatch.delenv("CHAOTIC_API_KEY")
+        monkeypatch.delenv("CHAOTIC_API_URL")
+        profile = {"api_key": REGISTRAR_KEY, "api_url": API}
+        monkeypatch.setattr(cli_config, "load_global_config", lambda: dict(profile))
+        monkeypatch.setattr(cli_config, "load_local_config", lambda: {**profile, "current_team": "team-1"})
+        assert Client()._request("GET", "/issues")["as"] == "sess-1"
 
 
 class TestConcurrentRegistration:
@@ -421,11 +544,13 @@ def _process_worker(home, log, start, results):
     cli_config.GLOBAL_CONFIG_DIR = home
     counter = iter(range(1000))
 
-    def slow_register(ref, credential, api_url, *, renew):
+    cli_config.get_current_team = lambda: "team-1"
+
+    def slow_register(ref, credential, api_url, team_id, *, renew):
         with open(log, "a") as f:
             f.write(f"{os.getpid()}\n")
         time.sleep(0.3)
-        return {"external_ref": ref, "api_url": api_url, "registrar": si.fingerprint(credential),
+        return {"external_ref": ref, "api_url": api_url, "registrar": si.fingerprint(credential), "team_id": team_id,
                 "api_key": f"ck_{os.getpid()}_{next(counter)}", "expires_at": None}
 
     si._register = slow_register
@@ -466,7 +591,7 @@ class TestMcpStartupNotice:
 class TestCacheErrors:
     def test_an_unwritable_cache_is_a_clean_error(self, auto, server, configured, home):
         (home / "sessions").mkdir(mode=0o700)
-        lock = si.cache_path(REF).with_suffix(".lock")
+        lock = _cache().with_suffix(".lock")
         lock.symlink_to(home / "elsewhere")
         with pytest.raises(APIError, match="cannot use the key cache"):
             Client()._request("GET", "/issues")

@@ -6,12 +6,12 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, formatDate } from './utils.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
-import { getCurrentTeam } from './state.js';
+import { getCurrentTeam, getCurrentUser } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { getProjects } from './projects.js';
 import { buildAssignees, updateAssigneeFilter } from './assignees.js';
-import { getMembers } from './teams.js';
+import { getMembers, isCurrentUserAdmin } from './teams.js';
 
 // Module state
 let agents = [];
@@ -132,8 +132,14 @@ export function renderAgents() {
         : isSession
           ? '<span class="agent-scope" title="Registered by a registrar for one session">Session</span>'
           : '';
-      // A registered session identity can never be a registrar (one level).
-      const registrarToggle = isSession
+      // The toggle is for whoever the server lets change it: the agent's
+      // creator or a team admin (can_manage_agent), on an active agent
+      // that is not a registered session identity (one level deep).
+      const canToggle =
+        !isSession &&
+        agent.is_active !== false &&
+        (agent.parent_user_id === getCurrentUser()?.id || isCurrentUserAdmin());
+      const registrarToggle = !canToggle
         ? ''
         : `<button class="btn btn-secondary" data-action="toggle-agent-registrar" data-agent-id="${escapeAttr(agent.id)}" data-agent-name="${escapeAttr(agent.name || 'Agent')}" data-can-register="${agent.can_register ? 'true' : 'false'}">${agent.can_register ? 'Stop being a registrar' : 'Make registrar'}</button>`;
       return `

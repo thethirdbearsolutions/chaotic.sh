@@ -309,7 +309,8 @@ chaotic agent update claude-bot --no-registrar          # and back
 ```
 
 In the web app: **Agents → Create Agent → Registrar**, or **Make
-registrar** / **Stop being a registrar** on an agent's row. Over the API,
+registrar** / **Stop being a registrar** on an agent's row (shown to
+the agent's creator and team admins, on active agents). Over the API,
 `can_register: true` on `POST /api/teams/{id}/agents` or
 `POST /api/projects/{id}/agents`, or `PATCH /api/agents/{id}`.
 
@@ -344,7 +345,8 @@ claude mcp add chaotic -- chaotic mcp
 From then on, inside a Claude Code session (which sets
 `CLAUDE_CODE_SESSION_ID`), the CLI and `chaotic mcp` both:
 
-1. read this session's key from `~/.chaotic/sessions/<hash>.json`;
+1. read this session's key from `~/.chaotic/sessions/<hash>.json`, one
+   file per session, server, registrar key and team;
 2. otherwise register `claude-code:session:<CLAUDE_CODE_SESSION_ID>` with
    the registrar's key and save the new key there (mode 0600, in a 0700
    directory);
@@ -367,15 +369,34 @@ Notes:
   `CLAUDE_CODE_SESSION_ID`), nothing changes: the configured key is used
   as before. `CHAOTIC_SESSION_IDENTITY=auto|off` in the environment
   overrides the profile, which suits a cloud environment's setup script.
-  Only the profile (`~/.chaotic/<profile>.json`) is read for this, never
-  a repository's `.chaotic` file.
+- **What a repository's `.chaotic` can change.** With the setting on, the
+  setting itself, the registrar key and the server URL come only from
+  the environment (`CHAOTIC_SESSION_IDENTITY`, `CHAOTIC_API_KEY`,
+  `CHAOTIC_TOKEN`, `CHAOTIC_API_URL`) or the profile
+  (`~/.chaotic/<profile>.json`). A `.chaotic` that sets its own
+  `api_key`, `token` or `api_url` (different from the profile's) is an
+  error inside Claude Code, naming the field: remove it, or set
+  `CHAOTIC_SESSION_IDENTITY=off` in that directory. The current team and
+  project still come from `.chaotic` as usual.
+- Switching profile, registrar key, server or (for a person acting as
+  registrar) team within one session uses a separate cache file for
+  each, so switching back does not register again.
+- Two registrars in the **same team** cannot both register one session:
+  registration is idempotent per (team, ref), so the second gets 409.
+  Use one registrar per team.
 - Processes of one session that start together (the CLI, `chaotic mcp`,
   subagents) register once: they take a lock next to the cache file and
   the second one uses what the first saved. This matters because each
   registration revokes the identity's previous key.
-- The cache is ignored, and replaced, when it is a symlink, is readable
-  by anyone but you, or was made for another server or another registrar
-  key.
+- The cache is ignored, and replaced, when it is a symlink or not a
+  regular file, is readable by anyone but you, or sits in a
+  `~/.chaotic/sessions` that is not yours alone (a looser directory is
+  tightened to 0700 and everything already in it is distrusted; a
+  symlinked one is an error).
+- If the configured agent is not a registrar, the error says so: its
+  creator or a team admin, signed in as themselves, runs
+  `CHAOTIC_SESSION_IDENTITY=off chaotic agent update <agent>
+  --registrar` (or uses Make registrar in the web app).
 - `chaotic mcp` prints a warning on stderr at startup when the setting
   is auto but its process has no `CLAUDE_CODE_SESSION_ID`: it then acts
   with the configured key itself, and a registrar's key can only read.
