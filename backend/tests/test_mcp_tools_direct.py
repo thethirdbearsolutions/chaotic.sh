@@ -1554,7 +1554,8 @@ class TestOutputMatchesResponseSchema:
         "ritual_list": ("rituals", "RitualResponse", set()),
         "label_list": ("labels", "LabelResponse", set()),
         "sprint_list": ("sprints", "SprintResponse",
-                        {"in_arrears", "arrears_by", "points_remaining"}),
+                        {"in_arrears", "arrears_by", "points_remaining",
+                         "budget_follows_default"}),
         "issue_relations": ("relations", "IssueRelationResponse", set()),
     }
 

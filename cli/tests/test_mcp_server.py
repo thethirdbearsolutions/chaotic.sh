@@ -1342,6 +1342,19 @@ class TestSprintTools:
         result = await mcp_mod.sprint_list()
         assert result["sprints"][0]["points_remaining"] == 4
 
+    async def test_sprint_list_says_whether_planned_budget_follows_default(self, mcp_mod):
+        """CHT-1701: planned sprints say whether their budget follows the
+        project default; the others, and an old server, report null."""
+        from cli.main import client
+        client.get_sprints = MagicMock(return_value=[
+            {"id": "a", "status": "planned", "budget": 5, "points_spent": 0, "budget_explicit": False},
+            {"id": "b", "status": "planned", "budget": 7, "points_spent": 0, "budget_explicit": True},
+            {"id": "c", "status": "active", "budget": 5, "points_spent": 0, "budget_explicit": False},
+            {"id": "d", "status": "planned", "budget": 5, "points_spent": 0},
+        ])
+        result = await mcp_mod.sprint_list()
+        assert [s["budget_follows_default"] for s in result["sprints"]] == [True, False, None, None]
+
     async def test_sprint_close_reports_rotation(self, mcp_mod, monkeypatch):
         from cli.main import client
         monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")

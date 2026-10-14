@@ -165,9 +165,15 @@ export function renderSprints() {
 
     // Next Sprint
     if (next) {
-        const budgetDisplay = next.budget
+        // Whether the planned budget follows the project default or was
+        // set by hand (CHT-1701); unknown on a server without the flag.
+        const budgetSource = next.budget_explicit === true ? 'set by hand'
+            : next.budget_explicit === false ? 'follows project default'
+            : '';
+        const budgetDisplay = (next.budget
             ? `${next.budget} point budget`
-            : 'No budget set';
+            : 'No budget set')
+            + (budgetSource ? ` <span class="text-muted">· ${budgetSource}</span>` : '');
 
         html += `
             <div class="sprint-card sprint-next" data-action="view-sprint" data-sprint-id="${escapeAttr(next.id)}" data-sprint-url="/sprint/${escapeAttr(next.id)}" style="cursor: pointer;">

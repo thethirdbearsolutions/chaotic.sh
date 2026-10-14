@@ -1656,7 +1656,7 @@
       }
     },
     "sprint_list": {
-      "description": "List a project's sprints, with each one's budget state.",
+      "description": "List a project's sprints, with each one's budget state.\n\nA planned sprint's `budget_follows_default` says whether its budget\nfollows the project's default_sprint_budget (true) or was set by\nhand (false); it is null for active and completed sprints, whose\nbudget never follows the default.",
       "inputSchema": {
         "properties": {
           "project": {

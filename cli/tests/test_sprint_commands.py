@@ -167,6 +167,30 @@ class TestSprintShow:
 class TestSprintList:
     """Tests for sprint list command."""
 
+    def test_sprint_list_shows_budget_and_its_source(self, cli_runner):
+        """sprint list shows each budget and, for planned sprints, whether
+        it follows the project default or was set by hand (CHT-1701)."""
+        from cli.main import cli, client
+
+        client.get_sprints = MagicMock(return_value=[
+            {"id": "s-1", "name": "Sprint 30", "status": "active", "budget": 20,
+             "budget_explicit": True, "activated_at": None, "closed_at": None},
+            {"id": "s-2", "name": "Sprint 31", "status": "planned", "budget": 24,
+             "budget_explicit": False, "activated_at": None, "closed_at": None},
+            {"id": "s-3", "name": "Sprint 32", "status": "planned", "budget": None,
+             "budget_explicit": True, "activated_at": None, "closed_at": None},
+        ])
+        from rich.console import Console
+        from cli.commands import shared
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch.object(shared.console, "_stdout_console", Console(width=200)):
+            result = cli_runner.invoke(cli, ['sprint', 'list'])
+
+        assert result.exit_code == 0, result.output
+        assert '24 (follows project default)' in result.output
+        assert 'unlimited (set by hand)' in result.output
+        assert '20 (' not in result.output
+
     def test_sprint_list_shows_sprints(self, cli_runner):
         """sprint list displays sprints in a table."""
         from cli.main import cli, client
@@ -325,6 +349,106 @@ class TestSprintBudget:
         assert result.exit_code == 0, result.output
         mock_resolve.assert_called_once_with('5', 'test-project-123')
         client.update_sprint.assert_called_once_with('sprint-uuid-5', budget=25)
+
+    def test_sprint_budget_default_resets_next_sprint(self, cli_runner):
+        """sprint budget --default (CHT-1701) makes the next planned sprint
+        follow the project default again."""
+        from cli.main import cli, client
+
+        client.update_sprint = MagicMock(return_value={
+            "name": "Sprint 31", "status": "planned", "budget": 24, "budget_explicit": False,
+        })
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-31') as mock_resolve:
+            result = cli_runner.invoke(cli, ['sprint', 'budget', '--default'])
+
+        assert result.exit_code == 0, result.output
+        mock_resolve.assert_called_once_with('next', 'test-project-123')
+        client.update_sprint.assert_called_once_with('sprint-uuid-31', budget_follows_default=True)
+        assert 'follows the project default budget again' in result.output
+        assert '24 points' in result.output
+        assert 'Warning' not in result.output
+
+    def test_sprint_budget_default_by_sprint_id(self, cli_runner):
+        """A lone arg with --default is a SPRINT_ID, even a numeric one."""
+        from cli.main import cli, client
+
+        client.update_sprint = MagicMock(return_value={
+            "name": "Sprint 31", "status": "planned", "budget": None, "budget_explicit": False,
+        })
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-31') as mock_resolve:
+            result = cli_runner.invoke(cli, ['sprint', 'budget', '31', '--default'])
+
+        assert result.exit_code == 0, result.output
+        mock_resolve.assert_called_once_with('31', 'test-project-123')
+        client.update_sprint.assert_called_once_with('sprint-uuid-31', budget_follows_default=True)
+        assert 'unlimited' in result.output
+        flat = " ".join(result.output.split())
+        assert 'Warning: the project has no default sprint budget' in flat
+        assert 'arrears will not apply' in flat
+
+    def test_sprint_budget_default_with_amount_is_rejected(self, cli_runner):
+        from cli.main import cli, client
+
+        client.update_sprint = MagicMock()
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-31'):
+            result = cli_runner.invoke(cli, ['sprint', 'budget', 'Sprint 31', '25', '--default'])
+
+        assert result.exit_code != 0
+        assert '--default takes no AMOUNT' in result.output
+        client.update_sprint.assert_not_called()
+
+    def test_sprint_budget_default_json(self, cli_runner):
+        from cli.main import cli, client
+
+        payload = {"name": "Sprint 31", "status": "planned", "budget": 24, "budget_explicit": False}
+        client.update_sprint = MagicMock(return_value=payload)
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-31'):
+            result = cli_runner.invoke(cli, ['sprint', 'budget', '--default', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == payload
+
+    def test_sprint_budget_set_on_planned_sprint_says_how_to_undo(self, cli_runner):
+        from cli.main import cli, client
+
+        client.update_sprint = MagicMock(return_value={
+            "name": "Sprint 31", "status": "planned", "budget": 25, "budget_explicit": True,
+        })
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-31'):
+            result = cli_runner.invoke(cli, ['sprint', 'budget', 'Sprint 31', '25'])
+
+        assert result.exit_code == 0, result.output
+        assert 'no longer follows the project default' in result.output
+        assert 'sprint budget sprint-uuid-31 --default' in " ".join(result.output.split())
+
+    def test_sprint_budget_panel_shows_source_for_planned_sprint(self, cli_runner, mock_sprint):
+        from cli.main import cli, client
+
+        planned = {**mock_sprint, "status": "planned", "points_spent": 0, "budget_explicit": False}
+        client.get_sprint = MagicMock(return_value=planned)
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
+            result = cli_runner.invoke(cli, ['sprint', 'budget', 'next'])
+
+        assert result.exit_code == 0, result.output
+        assert 'Budget source: follows project default' in result.output
+
+    def test_sprint_budget_panel_hides_source_for_active_sprint(self, cli_runner, mock_sprint):
+        from cli.main import cli, client
+
+        client.get_current_sprint = MagicMock(return_value={**mock_sprint, "budget_explicit": True})
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
+            result = cli_runner.invoke(cli, ['sprint', 'budget'])
+
+        assert result.exit_code == 0, result.output
+        assert 'Budget source' not in result.output
 
     def test_sprint_budget_read_by_sprint_id(self, cli_runner, mock_sprint):
         """A lone non-numeric arg is a SPRINT_ID and reads that sprint's

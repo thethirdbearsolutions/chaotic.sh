@@ -16,6 +16,10 @@ from app.schemas.sprint import SprintUpdate
 Sprint = OxydeSprint
 
 
+class SprintNotPlannedError(ValueError):
+    """budget_follows_default was asked of a sprint that is not PLANNED."""
+
+
 class SprintService:
     """Service for sprint operations."""
 
@@ -57,13 +61,45 @@ class SprintService:
         and COMPLETED sprints are never touched. Activation re-reads the
         default as well, so a path that changes the default without
         calling this still opens the sprint at the right budget.
+
+        Each sprint whose budget changes gets a new ``updated_at`` and a
+        sprint "updated" broadcast, so an open page shows the new budget
+        without a reload (CHT-1701). The broadcast waits for the commit
+        when this runs inside a transaction.
         """
-        default_budget = await self._get_project_default_budget(project_id)
-        await OxydeSprint.objects.filter(
+        project = await OxydeProject.objects.get_or_none(id=project_id)
+        if project is None:
+            return
+        default_budget = project.default_sprint_budget
+        planned = await OxydeSprint.objects.filter(
             project_id=project_id,
             status=SprintStatus.PLANNED,
             budget_explicit=False,
-        ).update(budget=default_budget)
+        ).all()
+        for sprint in planned:
+            if sprint.budget == default_budget:
+                continue
+            # Conditional on the row, not on this copy: a PATCH that set
+            # the budget by hand or activated the sprint since it was
+            # read keeps what it wrote.
+            await OxydeSprint.objects.filter(
+                id=sprint.id,
+                status=SprintStatus.PLANNED,
+                budget_explicit=False,
+            ).update(budget=default_budget, updated_at=datetime.now(timezone.utc))
+            await sprint.refresh()
+            if sprint.budget != default_budget:
+                continue
+            await self._broadcast_updated(project.team_id, sprint)
+
+    @staticmethod
+    async def _broadcast_updated(team_id: str, sprint: OxydeSprint) -> None:
+        """Send the sprint "updated" event the PATCH route sends."""
+        from app.schemas.sprint import SprintResponse
+        from app.websocket import broadcast_sprint_event
+
+        response = SprintResponse.model_validate(sprint, from_attributes=True)
+        await broadcast_sprint_event(team_id, "updated", response.model_dump(mode="json"))
 
     async def ensure_sprints_exist(self, project_id: str) -> tuple[OxydeSprint, OxydeSprint]:
         """Ensure Current and Next sprints exist for a project. Returns (current, next)."""
@@ -355,6 +391,26 @@ class SprintService:
         # (CHT-1495).
         if "budget" in update_data:
             update_data["budget_explicit"] = True
+        # The way back (CHT-1701): the sprint follows the default again
+        # and takes it now, as adopt_default_budget would have given it.
+        # The schema refuses this together with `budget`. The write is
+        # conditional on the row still being PLANNED, not on this copy of
+        # it: a sprint activated since it was read keeps its budget, as
+        # the activation write in _activate_next_sprint does (PR #391
+        # review L3).
+        if update_data.pop("budget_follows_default", None):
+            default_budget = await self._get_project_default_budget(sprint.project_id)
+            matched = await execute_raw(
+                "UPDATE sprints SET budget = ?, budget_explicit = 0, updated_at = ? "
+                "WHERE id = ? AND status = ? RETURNING id",
+                [default_budget, datetime.now(timezone.utc), sprint.id, SprintStatus.PLANNED.name],
+            )
+            if not matched:
+                raise SprintNotPlannedError(
+                    "Only a planned sprint can follow the project default budget; "
+                    "set this sprint's budget instead"
+                )
+            await sprint.refresh()
         new_status = update_data.get("status")
         if new_status is not None and new_status != sprint.status:
             now = datetime.now(timezone.utc)
@@ -362,6 +418,10 @@ class SprintService:
                 update_data["activated_at"] = now
             if new_status == SprintStatus.COMPLETED and sprint.closed_at is None:
                 update_data["closed_at"] = now
+        if update_data:
+            # A sprint's updated_at was never bumped on any path; a client
+            # that compares it would miss every change (CHT-1701).
+            update_data["updated_at"] = datetime.now(timezone.utc)
         for field, value in update_data.items():
             setattr(sprint, field, value)
         await sprint.save(update_fields=set(update_data.keys()))

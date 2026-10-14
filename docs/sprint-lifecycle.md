@@ -96,8 +96,10 @@ rituals for this sprint (`RitualService.get_pending_rituals`):
 - **No pending rituals** → full rotation: the closing sprint's status
   becomes `COMPLETED`, `limbo` stays `False`, and
   `_activate_next_sprint()` flips the `PLANNED` sprint to `ACTIVE` and
-  creates a fresh `PLANNED` sprint behind it (inheriting the previous
-  `PLANNED` sprint's budget, or the project default if none was set).
+  creates a fresh `PLANNED` sprint behind it at the project's current
+  default budget (or, while the default is unlimited, the budget of the
+  sprint being activated). See CLAUDE.md for how a planned sprint's
+  budget follows the default until it is set by hand.
 - **Pending rituals exist** → the closing sprint **stays `ACTIVE`** but
   `limbo` flips to `True`. Work is blocked (see CLAUDE.md's arrears
   section) until rituals clear. The issue-spillover to `PLANNED`
@@ -200,6 +202,7 @@ starts at 0 points spent.
 | Check budget/arrears status | `chaotic sprint budget` (root shortcut: `chaotic budget`) |
 | Advance to the next sprint | `chaotic sprint close [SPRINT_ID] [--project KEY]` |
 | Rename / rebudget a sprint | `chaotic sprint update [SPRINT_ID] --name ... --budget ...` |
+| Make a planned sprint follow the project default budget again | `chaotic sprint budget [SPRINT_ID] --default` |
 | Add/remove issues from the current sprint | `chaotic sprint add IDENTIFIERS...` / `chaotic sprint remove IDENTIFIERS...` |
 | List issues in the current sprint | `chaotic sprint issues` |
 | Audit trail of budget charges | `chaotic sprint transactions [SPRINT_ID]` |

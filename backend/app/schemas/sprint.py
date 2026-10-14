@@ -1,5 +1,5 @@
 """Sprint schemas."""
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.enums import SprintStatus
 from app.utils import DateTimeUTC
 
@@ -20,6 +20,34 @@ class SprintUpdate(BaseModel):
     description: str | None = None
     status: SprintStatus | None = None
     budget: int | None = Field(default=None, ge=1)
+    # True makes a planned sprint follow the project's default_sprint_budget
+    # again: it clears budget_explicit and takes the current default
+    # (CHT-1701). null means "not set", for clients that send every field;
+    # false is refused: to set a budget by hand, send `budget` instead,
+    # which cannot be sent with true.
+    budget_follows_default: bool | None = Field(
+        default=None,
+        description=(
+            "true: make a planned sprint follow the project default budget "
+            "again. Cannot be combined with budget."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _follows_default_excludes_budget(self):
+        if self.budget_follows_default is None:
+            return self
+        if self.budget_follows_default is not True:
+            raise ValueError(
+                "budget_follows_default only accepts true; to set a budget "
+                "by hand, send budget instead"
+            )
+        if "budget" in self.model_fields_set:
+            raise ValueError(
+                "send either budget (set it by hand) or "
+                "budget_follows_default (follow the project default), not both"
+            )
+        return self
 
 
 class SprintResponse(BaseModel):

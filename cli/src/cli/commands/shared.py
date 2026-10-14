@@ -286,6 +286,20 @@ def suggest_key(name: str) -> str:
     return "".join(w[0] for w in words[:4])
 
 
+def budget_source(sprint: dict) -> str | None:
+    """Where a planned sprint's budget comes from (CHT-1701).
+
+    "follows project default" until someone sets it by hand, then "set by
+    hand". None for an active or completed sprint, whose budget never
+    follows the default, and for a server too old to report
+    ``budget_explicit``.
+    """
+    explicit = sprint.get("budget_explicit")
+    if str(sprint.get("status", "")).lower() != "planned" or explicit is None:
+        return None
+    return "set by hand" if explicit else "follows project default"
+
+
 def print_sprint_panel(result: dict, title: str = "Sprint"):
     """Print a sprint details panel."""
     from rich.panel import Panel
@@ -295,6 +309,9 @@ def print_sprint_panel(result: dict, title: str = "Sprint"):
         remaining = result["budget"] - result["points_spent"]
         status_markup = "[red]IN ARREARS[/red]" if remaining < 0 else f"{esc(remaining)} remaining"
         budget_info_markup = f"\nBudget: {esc(result['points_spent'])}/{esc(result['budget'])} ({status_markup})"
+    source = budget_source(result)
+    if source:
+        budget_info_markup += f"\nBudget source: {esc(source)}"
 
     limbo_info_markup = "\n[yellow]IN LIMBO - pending rituals[/yellow]" if result.get("limbo") else ""
 
@@ -331,7 +348,10 @@ def resolve_sprint_id(sprint_value: str, project_id: str) -> str:
         sprints = _client().get_sprints(project_id, status="planned")
         if not sprints:
             raise click.ClickException("No planned (next) sprint found. Use 'chaotic sprint list' to see available sprints.")
-        return sprints[0]["id"]
+        # The server lists newest first; "next" is the planned sprint the
+        # server activates next, which is the oldest (SprintService.
+        # get_next_sprint orders by created_at). PR #391 review L4.
+        return min(sprints, key=lambda s: s.get("created_at") or "")["id"]
 
     # Fetch all sprints for resolution
     sprints = _client().get_sprints(project_id)

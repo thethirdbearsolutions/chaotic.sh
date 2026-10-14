@@ -1603,13 +1603,13 @@ Please report this to https://github.com/markedjs/marked.`,e){const i="<p>An err
                     `}
                 </div>
             </div>
-        `,s+=Dg(t)}if(n){const a=n.budget?`${n.budget} point budget`:"No budget set";s+=`
+        `,s+=Dg(t)}if(n){const a=n.budget_explicit===!0?"set by hand":n.budget_explicit===!1?"follows project default":"",o=(n.budget?`${n.budget} point budget`:"No budget set")+(a?` <span class="text-muted">· ${a}</span>`:"");s+=`
             <div class="sprint-card sprint-next" data-action="view-sprint" data-sprint-id="${p(n.id)}" data-sprint-url="/sprint/${p(n.id)}" style="cursor: pointer;">
                 <div class="sprint-card-header">
                     <div class="sprint-card-label">NEXT</div>
                 </div>
                 <div class="sprint-card-title">${m(n.name)}</div>
-                <div class="sprint-card-budget">${a}</div>
+                <div class="sprint-card-budget">${o}</div>
                 <div class="sprint-card-actions" data-action="stop-propagation">
                     <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${p(n.id)}" data-sprint-name="${p(n.name)}" data-budget="${n.budget||""}" data-project-id="${p(n.project_id)}">Edit Sprint</button>
                 </div>

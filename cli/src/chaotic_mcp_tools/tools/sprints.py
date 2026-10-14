@@ -49,7 +49,13 @@ async def sprint_list(
     ] = None,
     team: Annotated[str | None, Field(description=TEAM_FIELD_DESC)] = None,
 ) -> dict:
-    """List a project's sprints, with each one's budget state."""
+    """List a project's sprints, with each one's budget state.
+
+    A planned sprint's `budget_follows_default` says whether its budget
+    follows the project's default_sprint_budget (true) or was set by
+    hand (false); it is null for active and completed sprints, whose
+    budget never follows the default.
+    """
     project_id, _ = await backend.resolve_project(project, team)
     sprints = await backend.list_sprints(project_id, status)
     return {"sprints": [with_budget_state(s) for s in (sprints or [])]}
