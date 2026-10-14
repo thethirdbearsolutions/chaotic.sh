@@ -112,3 +112,13 @@ class TestRitualArtifactBodies:
         assert _call(sent)[2] == {"note": "n", "document_id": "d1"}
         c.complete_gate_ritual_for_issue("r1", "i1", None, url="https://x/y")
         assert _call(sent)[2] == {"url": "https://x/y"}
+
+
+class TestTeamAgents:
+    def test_hide_idle_is_sent_only_for_agent_list(self, sent):
+        """Name and id resolution lists every agent; only `agent list`
+        asks the server to leave idle session identities out (CHT-1501)."""
+        Client().get_team_agents("t1")
+        assert _call(sent)[:2] == ("GET", "/teams/t1/agents")
+        Client().get_team_agents("t1", hide_idle=True)
+        assert _call(sent)[:2] == ("GET", "/teams/t1/agents?hide_idle=true")

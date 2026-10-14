@@ -4,6 +4,9 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 import logging
 import uuid
+
+from oxyde import execute_raw
+from datetime import datetime, timedelta, timezone
 from app.db.transactions import atomic
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.api_key import OxydeAPIKey
@@ -25,8 +28,23 @@ from app.services.revocation_service import (
     RevocationService,
 )
 from app.schemas.api_key import APIKeyCreate
+from app.utils.datetimes import ensure_utc
 
 logger = logging.getLogger(__name__)
+
+# A kind=session identity whose keys have gone unused this long is idle:
+# left out of `agent list` and the pickers by default, still resolvable by
+# id or name (CHT-1501). It equals the default session key TTL, so an
+# identity is idle about when its last key would have expired unrenewed.
+IDLE_SESSION_AFTER = timedelta(days=7)
+
+
+def is_idle(last_used: datetime | None, now: datetime | None = None) -> bool:
+    """`last_used` from ``AgentService.session_last_used``; None (not a
+    session identity) is never idle."""
+    if last_used is None:
+        return False
+    return (now or datetime.now(timezone.utc)) - last_used >= IDLE_SESSION_AFTER
 
 
 def _count_phrase(n: int, kind: str) -> str:
@@ -217,6 +235,33 @@ class AgentService:
         return await OxydeUser.objects.join("parent_user").filter(
             is_agent=True, agent_team_id=team_id
         ).order_by("-created_at").all()
+
+    @staticmethod
+    async def session_last_used(agents: list[OxydeUser]) -> dict[str, datetime]:
+        """When each kind=session identity among `agents` last used a key
+        (CHT-1501): the newest of its keys' `last_used_at`, a never-used
+        key counting from its `created_at` (registration mints one, so a
+        fresh or renewed identity is in use), any key, rotated out or not.
+        An identity with no key at all counts from its own `created_at`.
+        `last_used_at` is written at most every LAST_USED_WRITE_INTERVAL,
+        far finer than IDLE_SESSION_AFTER.
+
+        One grouped query per 500 identities (the bound-parameter limit),
+        however many keys renewals have left behind (CHT-1689)."""
+        last = {a.id: ensure_utc(a.created_at) for a in agents if a.kind == AgentKind.SESSION}
+        ids = list(last)
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            rows = await execute_raw(
+                # Stored datetimes are naive UTC text (0006), so MAX orders them.
+                "SELECT principal_user_id AS id, MAX(COALESCE(last_used_at, created_at)) AS used "
+                f"FROM api_keys WHERE principal_user_id IN ({', '.join('?' * len(chunk))}) "
+                "GROUP BY principal_user_id",
+                chunk,
+            )
+            for row in rows:
+                last[row["id"]] = ensure_utc(row["used"])
+        return last
 
     async def list_by_project(self, project_id: str) -> list[OxydeUser]:
         """List agents scoped to a specific project."""

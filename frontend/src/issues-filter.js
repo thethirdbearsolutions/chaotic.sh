@@ -9,6 +9,7 @@ import { api } from './api.js';
 import { formatStatus, formatPriority, escapeHtml, sanitizeColor } from './utils.js';
 import { getCurrentTeam, getCurrentProject, setCurrentProject } from './state.js';
 import { getIssueFilters, setIssueFilters } from './storage.js';
+import { selectAssigneeFilter } from './assignees.js';
 
 // ========================================
 // Filter Getter Functions
@@ -186,8 +187,7 @@ export function loadFiltersFromUrl(setSuppressProjectSubscriber) {
     // Apply assignee filter
     const assignee = params.get('assignee');
     if (assignee) {
-        const assigneeFilter = document.getElementById('assignee-filter');
-        if (assigneeFilter) assigneeFilter.value = assignee;
+        selectAssigneeFilter(assignee);
     }
 
     // Apply project filter — suppress subscriber to prevent sprint clearing

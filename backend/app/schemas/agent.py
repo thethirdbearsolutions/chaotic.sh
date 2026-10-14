@@ -49,6 +49,12 @@ class AgentResponse(BaseModel):
     # Set only on a deactivate response: how many identities this agent
     # had registered that the deactivation also retired (CHT-1498).
     deactivated_identities: int | None = None
+    # For kind=session only, on every response (CHT-1501): when its keys
+    # were last used, and whether that is longer ago than
+    # IDLE_SESSION_AFTER (other kinds: null and false). `agent list` and the web pickers hide
+    # an idle identity by default; it still resolves by id or name.
+    last_used_at: DateTimeUTC | None = None
+    idle: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

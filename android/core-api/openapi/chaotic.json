@@ -5483,7 +5483,7 @@
           "agents"
         ],
         "summary": "List Team Agents",
-        "description": "List all agents for a team (includes project-scoped agents).",
+        "description": "List a team's agents (includes project-scoped agents). Each session\nidentity carries `last_used_at` and `idle` (CHT-1501); `hide_idle`\nleaves the idle ones out, which is what `agent list` and the web\npickers show by default. The default stays the full list because\nclients resolve an assignee or agent *name* against it, and an idle\nidentity must still resolve.",
         "operationId": "list_team_agents_api_teams__team_id__agents_get",
         "security": [
           {
@@ -5499,6 +5499,18 @@
               "type": "string",
               "title": "Team Id"
             }
+          },
+          {
+            "name": "hide_idle",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Leave out idle session identities (keys unused for 7 days).",
+              "default": false,
+              "title": "Hide Idle"
+            },
+            "description": "Leave out idle session identities (keys unused for 7 days)."
           }
         ],
         "responses": {
@@ -8823,6 +8835,23 @@
               }
             ],
             "title": "Deactivated Identities"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "idle": {
+            "type": "boolean",
+            "title": "Idle",
+            "default": false
           }
         },
         "type": "object",

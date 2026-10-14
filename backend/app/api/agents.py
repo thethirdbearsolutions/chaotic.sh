@@ -1,7 +1,7 @@
 """Agent routes."""
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from app.auth.access import reads, registers, writes
 from app.api.deps import (
     CurrentPrincipal, CurrentUser, NotAppSession, can_manage_agent, check_not_app_session,
@@ -17,7 +17,7 @@ from app.services.registration_service import (
 )
 from app.schemas.api_key import AgentKeyResponse, APIKeyCreated
 from app.services.agent_service import (
-    AgentHasAuthoredContentError, AgentInactiveError, AgentManageDeniedError, AgentService,
+    AgentHasAuthoredContentError, AgentInactiveError, AgentManageDeniedError, AgentService, is_idle,
 )
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
@@ -52,10 +52,13 @@ async def _refuse_member_name(team_id: str, name: str) -> None:
         raise HTTPException(status_code=422, detail=name_matches_member_detail(name))
 
 
-def agent_response(agent, *, show_ref: bool = True) -> AgentResponse:
+def agent_response(agent, *, show_ref: bool = True, last_used_at=None) -> AgentResponse:
     """The wire form of an agent row (with `parent_user` joined).
-    `show_ref`: see ``sees_external_ref``."""
+    `show_ref`: see ``sees_external_ref``. `last_used_at`: from
+    ``AgentService.session_last_used``, for a session identity."""
     return AgentResponse(
+        last_used_at=last_used_at,
+        idle=is_idle(last_used_at),
         id=agent.id,
         name=agent.name,
         avatar_url=agent.avatar_url,
@@ -71,6 +74,12 @@ def agent_response(agent, *, show_ref: bool = True) -> AgentResponse:
         registered_by_id=agent.registered_by_id,
         can_register=agent.can_register,
     )
+
+
+async def _last_used(agent):
+    """`last_used_at` for ``agent_response`` (None unless a session
+    identity), so every response states `idle` truly (CHT-1501)."""
+    return (await AgentService.session_last_used([agent])).get(agent.id)
 
 
 @router.post(
@@ -199,8 +208,17 @@ async def create_project_agent(
 async def list_team_agents(
     team_id: str,
     current_user: CurrentUser,
-):
-    """List all agents for a team (includes project-scoped agents)."""
+    hide_idle: Annotated[bool, Query(
+        description="Leave out idle session identities (keys unused for 7 days).",
+    )] = False,
+) -> list[AgentResponse]:
+    """List a team's agents (includes project-scoped agents). Each session
+    identity carries `last_used_at` and `idle` (CHT-1501); `hide_idle`
+    leaves the idle ones out, which is what `agent list` and the web
+    pickers show by default. The default stays the full list because
+    clients resolve an assignee or agent *name* against it, and an idle
+    identity must still resolve.
+    """
     # Verify user has access to the team
     team_service = TeamService()
     team = await team_service.get_by_id(team_id)
@@ -220,12 +238,17 @@ async def list_team_agents(
 
     agent_service = AgentService()
     agents = await agent_service.list_by_team(team_id)
+    last_used = await agent_service.session_last_used(agents)
 
     admin = await _is_team_admin(current_user, team_id)
-    return [
-        agent_response(agent, show_ref=await sees_external_ref(current_user, agent, admin=admin))
+    responses = [
+        agent_response(
+            agent, show_ref=await sees_external_ref(current_user, agent, admin=admin),
+            last_used_at=last_used.get(agent.id),
+        )
         for agent in agents
     ]
+    return [r for r in responses if not r.idle] if hide_idle else responses
 
 
 @router.get("/agents/{agent_id}", response_model=AgentResponse)
@@ -252,7 +275,9 @@ async def get_agent(
             detail="Not authorized to view this agent",
         )
 
-    return agent_response(agent, show_ref=await sees_external_ref(current_user, agent))
+    return agent_response(
+        agent, show_ref=await sees_external_ref(current_user, agent), last_used_at=await _last_used(agent),
+    )
 
 
 @router.patch("/agents/{agent_id}", response_model=AgentResponse)
@@ -301,7 +326,9 @@ async def update_agent(
 
     agent = await agent_service.update(agent, agent_in)
 
-    return agent_response(agent, show_ref=await sees_external_ref(current_user, agent))
+    return agent_response(
+        agent, show_ref=await sees_external_ref(current_user, agent), last_used_at=await _last_used(agent),
+    )
 
 
 @router.post(
@@ -462,7 +489,9 @@ async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> Age
             detail="Agent not found",
         )
 
-    response = agent_response(agent, show_ref=await sees_external_ref(current_user, agent))
+    response = agent_response(
+        agent, show_ref=await sees_external_ref(current_user, agent), last_used_at=await _last_used(agent),
+    )
     response.deactivated_identities = retired
     return response
 
@@ -527,7 +556,7 @@ async def register_agent(
     if not reg.created:
         response.status_code = status.HTTP_200_OK
     return AgentRegistered(
-        agent=agent_response(reg.agent),
+        agent=agent_response(reg.agent, last_used_at=await _last_used(reg.agent)),
         created=reg.created,
         api_key=reg.full_key,
         api_key_id=reg.api_key.id,

@@ -134,7 +134,11 @@ export async function showInlineDropdown(event, type, issueId, anchorEl) {
             `).join('')}
         `;
     } else if (type === 'assignee') {
-        const assigneeOptions = getAssigneeOptionList();
+        // Keep the current assignee listed even when idle (CHT-1501).
+        const detail = getCurrentDetailIssue();
+        const issue = getIssues().find(i => i.id === issueId) || getMyIssues().find(i => i.id === issueId)
+            || (detail?.id === issueId ? detail : null);
+        const assigneeOptions = getAssigneeOptionList({ keepId: issue?.assignee_id || null });
         dropdown.innerHTML = `
             <div class="dropdown-header">Assign to...</div>
             <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="assignee_id" data-value="__null__">

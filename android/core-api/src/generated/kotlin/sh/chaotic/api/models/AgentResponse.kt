@@ -52,6 +52,8 @@ import kotlinx.serialization.encoding.Encoder
  * @param registeredById 
  * @param canRegister 
  * @param deactivatedIdentities 
+ * @param lastUsedAt 
+ * @param idle 
  */
 @Serializable
 
@@ -100,7 +102,13 @@ data class AgentResponse (
     val canRegister: kotlin.Boolean? = false,
 
     @SerialName(value = "deactivated_identities")
-    val deactivatedIdentities: kotlin.Int? = null
+    val deactivatedIdentities: kotlin.Int? = null,
+
+    @SerialName(value = "last_used_at")
+    val lastUsedAt: kotlin.String? = null,
+
+    @SerialName(value = "idle")
+    val idle: kotlin.Boolean? = false
 
 ) {
 

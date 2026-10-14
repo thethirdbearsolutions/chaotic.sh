@@ -41,6 +41,25 @@ def _resolve_agent(agents: list, ref: str) -> dict:
     return found
 
 
+def _grouped_by_registrar(agents: list) -> list[tuple[dict, bool]]:
+    """(agent, nested) rows for `agent list`: each agent in the server's
+    order, followed by the session identities it registered (nested); a
+    session identity whose registrar is not listed stays a top-level row
+    in its own place (CHT-1501)."""
+    ids = {a["id"] for a in agents}
+    children: dict[str, list] = {}
+    for a in agents:
+        if a.get("registered_by_id") in ids:
+            children.setdefault(a["registered_by_id"], []).append(a)
+    rows = []
+    for a in agents:
+        if a.get("registered_by_id") in ids:
+            continue
+        rows.append((a, False))
+        rows.extend((child, True) for child in children.get(a["id"], []))
+    return rows
+
+
 def register(cli):
     """Register agent commands on the CLI group."""
 
@@ -214,14 +233,20 @@ def register(cli):
         console.print(f"[cyan]{result['api_key']}[/cyan]")
 
     @agent.command("list")
+    @click.option("--all", "show_all", is_flag=True,
+                  help="Include idle session identities (keys unused for 7 days)")
     @_main().json_option
     @_main().require_team
     @_main().handle_error
-    def agent_list():
-        """List agents in current team."""
+    def agent_list(show_all):
+        """List agents in current team.
+
+        Session identities are listed under the registrar that registered
+        them, and idle ones (keys unused for 7 days) are left out unless
+        --all. They still resolve by id or name everywhere else."""
         m = _main()
         team_id = m.get_current_team()
-        agents = _client().get_team_agents(team_id)
+        agents = _client().get_team_agents(team_id, hide_idle=not show_all)
         if m.is_json_output():
             m.output_json(agents or [])
             return
@@ -239,9 +264,9 @@ def register(cli):
         table.add_column("Created By")
         table.add_column("Created At")
 
-        for a in agents:
+        for a, nested in _grouped_by_registrar(agents):
             agent_id = a["id"][:8] + "..."
-            name = a["name"]
+            name = escape(a["name"])
             if a.get("can_register"):
                 kind = "registrar"
             elif a.get("kind") == "session":
@@ -254,6 +279,10 @@ def register(cli):
                 scope = "Team-wide"
             if a.get("is_active") is False:
                 name = f"{name} [dim](deactivated)[/dim]"
+            if a.get("idle"):
+                name = f"{name} [dim](idle)[/dim]"
+            if nested:
+                name = f"  └ {name}"
             created_by = a.get("parent_user_name", "Unknown")
             created_at = a["created_at"][:10]
             table.add_row(agent_id, name, scope, kind, created_by, created_at)

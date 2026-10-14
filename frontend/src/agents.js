@@ -130,7 +130,7 @@ export function renderAgents() {
       const kindBadge = agent.can_register
         ? '<span class="agent-scope" title="Registers one identity per session; cannot write as itself">Registrar</span>'
         : isSession
-          ? '<span class="agent-scope" title="Registered by a registrar for one session">Session</span>'
+          ? `<span class="agent-scope" title="Registered by a registrar for one session">Session${agent.idle ? ' · idle' : ''}</span>`
           : '';
       // The toggle is for whoever the server lets change it: the agent's
       // creator or a team admin (can_manage_agent), on an active agent

@@ -289,12 +289,13 @@ import io.ktor.http.ParametersBuilder
         /**
         * GET /api/teams/{team_id}/agents
         * List Team Agents
-        * List all agents for a team (includes project-scoped agents).
+        * List a team&#39;s agents (includes project-scoped agents). Each session identity carries &#x60;last_used_at&#x60; and &#x60;idle&#x60; (CHT-1501); &#x60;hide_idle&#x60; leaves the idle ones out, which is what &#x60;agent list&#x60; and the web pickers show by default. The default stays the full list because clients resolve an assignee or agent *name* against it, and an idle identity must still resolve.
          * @param teamId  
+         * @param hideIdle Leave out idle session identities (keys unused for 7 days). (optional, default to false)
          * @return kotlin.collections.List<AgentResponse>
         */
             @Suppress("UNCHECKED_CAST")
-        open suspend fun listTeamAgentsApiTeamsTeamIdAgentsGet(teamId: kotlin.String): HttpResponse<kotlin.collections.List<AgentResponse>> {
+        open suspend fun listTeamAgentsApiTeamsTeamIdAgentsGet(teamId: kotlin.String, hideIdle: kotlin.Boolean? = false): HttpResponse<kotlin.collections.List<AgentResponse>> {
 
             val localVariableAuthNames = listOf<String>("HTTPBearer")
 
@@ -302,6 +303,7 @@ import io.ktor.http.ParametersBuilder
                     io.ktor.client.utils.EmptyContent
 
             val localVariableQuery = mutableMapOf<String, List<String>>()
+            hideIdle?.apply { localVariableQuery["hide_idle"] = listOf("$hideIdle") }
 
             val localVariableHeaders = mutableMapOf<String, String>()
 

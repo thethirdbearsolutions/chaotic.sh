@@ -9,6 +9,7 @@ import {
     formatAssigneeOptionLabel,
     getAssigneeOptionList,
     updateAssigneeFilter,
+    selectAssigneeFilter,
     resetAssignees,
 } from './assignees.js';
 
@@ -78,6 +79,11 @@ describe('assignees', () => {
             expect(label).toContain('Alice');
         });
 
+        it('indents a session identity a level deeper', () => {
+            const label = formatAssigneeOptionLabel({ name: 'S', is_agent: true, parent_user_name: 'Alice' }, 2);
+            expect(label).toBe('&nbsp;&nbsp;&nbsp;&nbsp;- S (Alice)');
+        });
+
         it('indents agent when requested', () => {
             const label = formatAssigneeOptionLabel({ name: 'Bot', is_agent: true, parent_user_name: 'Alice' }, true);
             expect(label).toContain('&nbsp;&nbsp;-');
@@ -99,6 +105,72 @@ describe('assignees', () => {
             expect(options[2].indent).toBe(false);
             expect(options[3].assignee.name).toBe('Orphan Bot');
             expect(options[3].indent).toBe(false);
+        });
+
+        // CHT-1501: session identities sit under their registrar, idle
+        // ones are hidden from pickers but still resolve for display.
+        const sessionAgents = [
+            { id: 'r1', name: 'Registrar', parent_user_id: 'u1', kind: 'service' },
+            { id: 's2', name: 'Session B', parent_user_id: 'u1', kind: 'session', registered_by_id: 'r1' },
+            { id: 's1', name: 'Session A', parent_user_id: 'u1', kind: 'session', registered_by_id: 'r1' },
+            { id: 's3', name: 'Idle Session', parent_user_id: 'u1', kind: 'session', registered_by_id: 'r1', idle: true },
+            { id: 's4', name: 'Stray Session', parent_user_id: 'u1', kind: 'session', registered_by_id: 'gone' },
+        ];
+        const names = options => options.map(o => `${o.assignee.name}:${o.indent}`);
+
+        it('nests session identities under their registrar and hides idle ones', () => {
+            buildAssignees(() => mockMembers.slice(0, 1), () => sessionAgents);
+            expect(names(getAssigneeOptionList())).toEqual([
+                'Alice:false', 'Registrar:true', 'Session A:2', 'Session B:2', 'Stray Session:true',
+            ]);
+            expect(getAssigneeById('s3').name).toBe('Idle Session');
+        });
+
+        it('shows an idle identity when asked, or when it is the selection', () => {
+            buildAssignees(() => mockMembers.slice(0, 1), () => sessionAgents);
+            expect(names(getAssigneeOptionList({ includeIdle: true }))).toContain('Idle Session:2');
+            expect(names(getAssigneeOptionList({ keepId: 's3' }))).toContain('Idle Session:2');
+        });
+
+        it('nests under a registrar that has no member holder', () => {
+            buildAssignees(() => [], () => [
+                { id: 'r1', name: 'Registrar', parent_user_id: 'u9' },
+                { id: 's1', name: 'Session', parent_user_id: 'u9', kind: 'session', registered_by_id: 'r1' },
+            ]);
+            expect(names(getAssigneeOptionList())).toEqual(['Registrar:false', 'Session:2']);
+        });
+    });
+
+    describe('idle identities in the assignee filter (CHT-1501)', () => {
+        const agents = [
+            { id: 'a1', name: 'Bot One', parent_user_id: 'u1' },
+            { id: 'idle-1', name: 'Idle Session', parent_user_id: 'u1', kind: 'session', idle: true },
+        ];
+        const optionValues = () => Array.from(document.getElementById('assignee-filter').options).map(o => o.value);
+
+        beforeEach(() => {
+            document.body.innerHTML = '<select id="assignee-filter"></select>';
+            buildAssignees(() => mockMembers, () => agents);
+            updateAssigneeFilter();
+        });
+
+        it('leaves an idle identity out of the filter', () => {
+            expect(optionValues()).toContain('a1');
+            expect(optionValues()).not.toContain('idle-1');
+        });
+
+        it('a ?assignee= link to an idle identity keeps its filter', () => {
+            selectAssigneeFilter('idle-1');
+            const filter = document.getElementById('assignee-filter');
+            expect(filter.value).toBe('idle-1');
+            // A later rebuild (team reload) keeps it.
+            updateAssigneeFilter();
+            expect(filter.value).toBe('idle-1');
+        });
+
+        it('an unknown id is not invented', () => {
+            selectAssigneeFilter('nobody');
+            expect(optionValues()).not.toContain('nobody');
         });
     });
 

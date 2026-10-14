@@ -377,7 +377,7 @@ export async function toggleCreateIssueDropdown(type, event, anchorEl) {
         }
     } else if (type === 'assignee') {
         const currentAssignee = document.getElementById('create-issue-assignee').value;
-        const assigneeOptions = getAssigneeOptionList();
+        const assigneeOptions = getAssigneeOptionList({ keepId: currentAssignee });
         dropdown.innerHTML = `
             <div class="dropdown-header">Assignee</div>
             <button class="dropdown-option ${!currentAssignee ? 'selected' : ''}" data-action="set-create-field" data-field="assignee" data-value="" data-label="Assignee">
