@@ -335,6 +335,115 @@ class TestUpgradeFromStopped:
         assert "0021: deleting API key ck_dead0000... [x]" in result.output
 
 
+class TestFailedMigrationRollsBack:
+    """CHT-1477: a sync/migrate failure used to restart the NEW code against
+    a database the failed run may have left between schemas. It is now
+    undone like every other post-checkout failure, through _roll_back."""
+
+    def _with_backup(self, tmp_path, **overrides):
+        (tmp_path / "chaotic.db").write_bytes(b"")
+        backup = tmp_path / "chaotic.db.backup-20261014-000000"
+        backup.write_bytes(b"")
+        result, m = _upgrade(
+            args=(),
+            run_migrations=dict(return_value=(False, "Migration failed:\n0030 boom")),
+            create_backup=dict(return_value=backup),
+            cleanup_old_backups=dict(return_value=None),
+            DATABASE_PATH=dict(new=tmp_path / "chaotic.db"),
+            **{"is_port_in_use": dict(return_value=False), **overrides},
+        )
+        return result, m, backup
+
+    def test_rolls_back_checkout_restores_backup_and_restarts_old_code(self, tmp_path):
+        stopped = iter([True, False])  # was_running; down at the restore; then up again
+        result, m, backup = self._with_backup(
+            tmp_path,
+            is_service_running=dict(side_effect=lambda: next(stopped, True)),
+            wait_for_service_settled=dict(return_value="inactive"),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "0030 boom" in out
+        assert "Migrations did not complete. Rolling back" in out
+        assert "Restarting server on new code" not in out
+        assert "Rolled back to previous version" in out
+        # Previous checkout, then the backup, then the previous code started and checked.
+        assert m["checkout_version"].call_args_list[-1].args == (_COMMITS[0],)
+        m["restore_backup"].assert_called_once_with(backup, port=24267, host="127.0.0.1")
+        m["start_service"].assert_called_once()
+        assert "Server is RUNNING and answering /health" in out
+        assert "partially migrated" not in out
+        assert "Upgraded to" not in out
+        m["rebuild_frontend"].assert_not_called()
+
+    def test_backup_is_not_restored_under_a_process_still_on_the_port(self, tmp_path):
+        """_roll_back's guard applies here too (CHT-1363)."""
+        result, m, backup = self._with_backup(
+            tmp_path,
+            is_service_running=dict(side_effect=iter([True] + [False] * 20).__next__),
+            wait_for_service_settled=dict(return_value="inactive"),
+            is_port_in_use=dict(return_value=True),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "NOT restoring the database backup" in out
+        assert f"--restore {backup.name}" in out
+        m["restore_backup"].assert_not_called()
+        assert m["checkout_version"].call_args_list[-1].args == (_COMMITS[0],)
+
+    def test_no_backup_says_the_database_may_be_partially_migrated(self, tmp_path):
+        (tmp_path / "chaotic.db").write_bytes(b"")
+        result, m = _upgrade(
+            run_migrations=dict(return_value=(False, "Migration failed:\n0030 boom")),
+            DATABASE_PATH=dict(new=tmp_path / "chaotic.db"),
+        )
+
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "Rolling back" in out
+        assert "No database backup was taken (--no-backup), so the database was NOT restored" in out
+        assert "may be partially migrated" in out
+        assert "chaotic system backup --restore <timestamp>" in out
+        assert "oxyde showmigrations" in out
+        m["restore_backup"].assert_not_called()
+        assert m["checkout_version"].call_args_list[-1].args == (_COMMITS[0],)
+        m["start_service"].assert_called_once()
+
+    def test_no_database_at_all_has_nothing_to_warn_about(self, tmp_path):
+        result, _ = _upgrade(
+            run_migrations=dict(return_value=(False, "boom")),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+        )
+
+        assert result.exit_code == 1
+        assert "partially migrated" not in _flat(result.output)
+
+    def test_a_cli_reinstall_that_did_not_take_rolls_back_before_migrating(self, tmp_path):
+        """CHT-1675's verification fails inside run_migrations, before
+        `oxyde migrate`: same rollback, database untouched."""
+        ran = []
+
+        def run(cmd, **kwargs):
+            ran.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with patch.object(system, "run_command", side_effect=run), \
+                patch.object(system, "verify_installed_cli", return_value=(False, "CLI reinstall did not take: cli/system.py")):
+            ok, message = system.run_migrations()
+        assert ok is False and "did not take" in message
+        assert not [c for c in ran if "oxyde" in c], "migrated after a CLI reinstall that did not take"
+
+        result, m = _upgrade(
+            run_migrations=dict(return_value=(ok, message)),
+            DATABASE_PATH=dict(new=tmp_path / "missing.db"),
+        )
+        assert result.exit_code == 1
+        assert "CLI reinstall did not take" in _flat(result.output)
+        assert m["checkout_version"].call_args_list[-1].args == (_COMMITS[0],)
+
+
 class TestRunMigrationsReportsOxydesOutput:
     """`oxyde migrate` prints its errors on stdout. Reporting only stderr
     left "Migration failed: " and nothing else, hiding a migration's

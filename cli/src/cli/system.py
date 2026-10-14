@@ -1357,20 +1357,95 @@ def checkout_version(version: str, force: bool = False) -> tuple[bool, str]:
         return False, (e.stderr or e.stdout or "Unknown error").strip()
 
 
+CLI_TOOL_NAME = "chaotic-cli"
+# The importable packages the CLI wheel ships (cli/pyproject.toml's
+# [tool.hatch.build.targets.wheel] packages), each under cli/src/.
+CLI_PACKAGES = ("cli", "chaotic_mcp_tools")
+
+
 def reinstall_cli() -> tuple[bool, str]:
-    """Reinstall the CLI binary from the server repo so it picks up new code."""
+    """Reinstall the CLI binary from the server repo so it picks up new code,
+    then check that it did.
+
+    `--reinstall-package` forces uv to rebuild the CLI from the checkout
+    (it implies `--refresh-package`). Without it uv may reuse a wheel it
+    cached for the same name and version, built from an earlier commit:
+    prod deploys main by sha between CLI releases, so the version string
+    usually does not change, and prod once got a CLI with no
+    `system config` after an upgrade that included it (CHT-1675).
+    Dependencies are left alone; only the CLI itself is rebuilt.
+    """
     cli_dir = PROJECT_DIR / "cli"
     try:
         run_command(
-            ["uv", "tool", "install", "--force", str(cli_dir)],
+            ["uv", "tool", "install", "--force", "--reinstall-package", CLI_TOOL_NAME, str(cli_dir)],
             cwd=PROJECT_DIR,
             timeout=120,
         )
-        return True, "CLI reinstalled"
     except subprocess.CalledProcessError as e:
-        return False, f"CLI reinstall failed: {e.stderr}"
+        return False, f"CLI reinstall failed:\n{_command_output(e)}"
     except subprocess.TimeoutExpired:
         return False, "CLI reinstall timed out"
+    return verify_installed_cli(cli_dir)
+
+
+def _installed_cli_dirs() -> dict[str, Path] | None:
+    """Where the installed `chaotic` tool imports each CLI package from,
+    asked of the tool's own interpreter (-I: not from the cwd or
+    PYTHONPATH). None if that cannot be determined."""
+    try:
+        tool_dir = run_command(["uv", "tool", "dir"], timeout=30).stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+    python = Path(tool_dir) / CLI_TOOL_NAME / "bin" / "python"
+    script = (
+        "import importlib, pathlib\n"
+        f"for name in {CLI_PACKAGES!r}:\n"
+        "    print(name, pathlib.Path(importlib.import_module(name).__file__).parent)\n"
+    )
+    try:
+        result = run_command([str(python), "-I", "-c", script], timeout=30)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+    dirs = {}
+    for line in (result.stdout or "").splitlines():
+        name, _, path = line.partition(" ")
+        if name in CLI_PACKAGES and path:
+            dirs[name] = Path(path)
+    return dirs if set(dirs) == set(CLI_PACKAGES) else None
+
+
+def verify_installed_cli(cli_dir: Path) -> tuple[bool, str]:
+    """Check that the installed CLI is the checkout's code (CHT-1675):
+    every .py file of each package under cli/src must be in the installed
+    package with the same bytes. Returns (ok, message); a mismatch names
+    the files and the command that fixes it."""
+    fix = f"Reinstall it by hand: uv tool install --force --reinstall {cli_dir}"
+    installed = _installed_cli_dirs()
+    if installed is None:
+        return False, (
+            f"CLI reinstall could not be verified: could not find where the installed "
+            f"{CLI_TOOL_NAME} tool imports its code from. {fix}"
+        )
+    differing = []
+    for name in CLI_PACKAGES:
+        source_root = cli_dir / "src" / name
+        for source in sorted(source_root.rglob("*.py")):
+            rel = source.relative_to(source_root)
+            target = installed[name] / rel
+            try:
+                same = target.read_bytes() == source.read_bytes()
+            except OSError:
+                same = False
+            if not same:
+                differing.append(f"{name}/{rel.as_posix()}")
+    if differing:
+        shown = ", ".join(differing[:5]) + (f" and {len(differing) - 5} more" if len(differing) > 5 else "")
+        return False, (
+            f"CLI reinstall did not take: the installed CLI differs from the checkout in "
+            f"{shown}. {fix}"
+        )
+    return True, "CLI reinstalled (verified against the checkout)"
 
 
 def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
@@ -2237,7 +2312,9 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
        diff); rollback restores that backup
     6. Starts the server (even if it was stopped beforehand) and verifies
        /health
-    7. Rolls back automatically if the health check fails or the process
+    7. Rolls back automatically (previous checkout, database backup,
+       previous code restarted) if syncing, reinstalling the CLI or
+       migrating fails, if the health check fails, or if the process
        answering the port is not running the new commit
 
     Refuses to move the server to an older or diverged commit unless
@@ -2424,13 +2501,28 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     if not success:
         # escape(): the message carries the command's own output.
         console.print(f"[red]{escape(message)}[/red]")
-        console.print("[yellow]Code has been updated but migrations did not complete.[/yellow]")
-        console.print("[yellow]Fix the issue above, then run 'chaotic system upgrade --yes' again.[/yellow]")
-        if was_running:
-            console.print("Restarting server on new code...")
-            if not start_service():
-                console.print("[red]Failed to restart server. Run 'chaotic system start' manually.[/red]")
-        _print_service_state(port, host)
+        # CHT-1477: a migration run that failed partway can leave the
+        # database between schemas (each migration is transactional, a run
+        # of several is not), and neither the new code nor the old one
+        # serves that. Undo it like any other post-checkout failure: the
+        # previous checkout, the backup (under _roll_back's guards), the
+        # previous code restarted and checked.
+        console.print("Migrations did not complete. Rolling back...")
+        _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running)
+        if backup_path is None and DATABASE_PATH.exists():
+            console.print(
+                "[red]No database backup was taken (--no-backup), so the database was NOT restored "
+                "and may be partially migrated. The previous code refuses to start against "
+                "migrations it does not know, and the new code against missing ones.[/red]"
+            )
+            console.print(
+                "To recover, either restore a backup you trust "
+                "('chaotic system backup --list', then 'chaotic system backup --restore <timestamp>'), "
+                "or fix the cause above and run the upgrade again to finish migrating forward. "
+                f"'uv run --frozen oxyde showmigrations' in {PROJECT_DIR / 'backend'} "
+                f"(with DATABASE_URL=sqlite+aiosqlite:///{DATABASE_PATH}) shows what was applied."
+            )
+        console.print("Fix the issue above, then run 'chaotic system upgrade --yes' again.")
         raise SystemExit(1)
     console.print(f"  [dim]{escape(message)}[/dim]")
 
