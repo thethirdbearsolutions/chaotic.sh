@@ -419,11 +419,11 @@ class RitualService:
             ritual.updated_at = datetime.now(timezone.utc)
             changed_fields = set(update_data.keys()) | {"updated_at"}
             await ritual.save(update_fields=changed_fields)
+            if mode_changed and ritual.is_active:
+                await self._carry_decisions_to_mode(ritual)
 
         if deactivating:
             await self._resolve_inbox_for_ritual(ritual.id)
-        elif mode_changed and ritual.is_active:
-            await self._carry_decisions_to_mode(ritual)
 
         # Reload to get fresh data
         return await self.get_by_id(ritual.id, include_inactive=True)
@@ -451,46 +451,63 @@ class RitualService:
         GATE_REJECTED entries stay: the rejection still stands and the
         requester still has to answer it. Considered: the issues with an
         open entry of the ritual, and those with an open intent it
-        blocks. Best-effort, after commit, like the deactivate path."""
+        blocks.
+
+        Runs inside the mode change's transaction, so no approval can
+        land between the change and the carry (PR #358 re-review, N3);
+        a failure here fails the change. A fixed number of queries
+        whatever the number of issues, plus the writes."""
         from app.services.inbox_service import InboxService
 
-        try:
-            inbox = InboxService()
-            issue_ids = set(await inbox.open_decision_issue_ids(ritual.id))
-            blockers = await OxydeTicketLimboBlocker.objects.filter(
-                ritual_id=ritual.id, resolved_at=None,
+        inbox = InboxService()
+        issue_ids = set(await inbox.open_decision_issue_ids(ritual.id))
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            ritual_id=ritual.id, resolved_at=None,
+        ).all()
+        if blockers:
+            limbos = await OxydeTicketLimbo.objects.filter(
+                id__in=sorted({b.limbo_id for b in blockers}), cleared_at=None,
             ).all()
-            if blockers:
-                limbos = await OxydeTicketLimbo.objects.filter(
-                    id__in=sorted({b.limbo_id for b in blockers}), cleared_at=None,
-                ).all()
-                issue_ids |= {limbo.issue_id for limbo in limbos}
-            waiting: dict[str, InboxEntryKind] = {}
-            for issue_id in sorted(issue_ids):
-                attestation = await self.get_issue_attestation(ritual.id, issue_id)
-                unapproved = attestation is not None and attestation.approved_at is None
-                if ritual.approval_mode == ApprovalMode.GATE and (attestation is None or unapproved):
-                    waiting[issue_id] = InboxEntryKind.GATE_PENDING
-                elif ritual.approval_mode == ApprovalMode.REVIEW and unapproved:
-                    waiting[issue_id] = InboxEntryKind.REVIEW_REQUESTED
-            await inbox.settle_decisions_except(ritual.id, waiting)
-            for issue_id, kind in waiting.items():
-                issue = await OxydeIssue.objects.get_or_none(id=issue_id)
-                project = await OxydeProject.objects.get_or_none(id=issue.project_id) if issue else None
-                if project is None:
-                    continue
-                if kind is InboxEntryKind.GATE_PENDING:
-                    # No email: nobody asked again; the request moved.
-                    await inbox.notify_gate_pending(
-                        ritual=ritual, issue=issue, project=project,
-                        requested_by_name="Someone", email=False,
-                    )
-                else:
-                    await inbox.notify_review_requested(
-                        ritual=ritual, issue=issue, project=project, attested_by_name="Someone",
-                    )
-        except Exception:
-            logger.exception("Failed to move inbox entries of ritual=%s to its new mode", ritual.id)
+            issue_ids |= {limbo.issue_id for limbo in limbos}
+        if not issue_ids:
+            return
+        ordered = sorted(issue_ids)
+        attestations = {
+            a.issue_id: a for a in await OxydeRitualAttestation.objects.filter(
+                ritual_id=ritual.id, issue_id__in=ordered,
+            ).all()
+        }
+        waiting: dict[str, InboxEntryKind] = {}
+        for issue_id in ordered:
+            attestation = attestations.get(issue_id)
+            unapproved = attestation is not None and attestation.approved_at is None
+            if ritual.approval_mode == ApprovalMode.GATE and (attestation is None or unapproved):
+                waiting[issue_id] = InboxEntryKind.GATE_PENDING
+            elif ritual.approval_mode == ApprovalMode.REVIEW and unapproved:
+                waiting[issue_id] = InboxEntryKind.REVIEW_REQUESTED
+        await inbox.settle_decisions_except(ritual.id, waiting)
+        if not waiting:
+            return
+        project = await OxydeProject.objects.get_or_none(id=ritual.project_id)
+        if project is None:
+            return
+        issues = {i.id: i for i in await OxydeIssue.objects.filter(id__in=sorted(waiting)).all()}
+        for issue_id, kind in waiting.items():
+            issue = issues.get(issue_id)
+            if issue is None:
+                continue
+            if kind is InboxEntryKind.GATE_PENDING:
+                # No email: nobody asked again; the request moved.
+                await inbox.notify_gate_pending(
+                    ritual=ritual, issue=issue, project=project,
+                    requested_by_name="Someone", email=False,
+                )
+            else:
+                # Not pushed to the attester, as at attest time (N2).
+                await inbox.notify_review_requested(
+                    ritual=ritual, issue=issue, project=project, attested_by_name="Someone",
+                    attested_by_id=attestations[issue_id].attested_by,
+                )
 
     async def delete(self, ritual: OxydeRitual, deleted_by_id: str | None = None) -> None:
         """Soft-delete a ritual by marking it inactive.
@@ -1383,22 +1400,33 @@ class RitualService:
         existing = await self.get_issue_attestation(ritual_id, issue_id)
         if existing and existing.approved_at is not None:
             return existing
+        now = datetime.now(timezone.utc)
         if existing:
             # Attested while the ritual was in REVIEW mode and never
-            # approved; it is a GATE now, so completing the gate approves
-            # it. Returning it as it was left the issue blocked with
-            # nothing able to approve it (CHT-1626 review, finding 1).
-            try:
-                await self._approve_atomic(existing, user_id)
-            except ValueError:  # a concurrent approver won
+            # approved; it is a GATE now (CHT-1626 review, finding 1).
+            # Returning it as it was left the issue blocked with nothing
+            # able to approve it. The completion replaces it, as a fresh
+            # one would read: the completer's note and artifact, by them,
+            # now. The attester's evidence is never approved in the
+            # completer's name (PR #358 re-review, N1). Compare-and-set on
+            # approved_at, like _approve_atomic: a concurrent approver wins.
+            completion = dict(
+                attested_by=user_id, attested_at=now, approved_by=user_id, approved_at=now,
+                note=note, artifact_ref=artifact_ref,
+            )
+            updated = await OxydeRitualAttestation.objects.filter(
+                id=existing.id, approved_at=None,
+            ).update(**completion)
+            if not updated:
                 return await self.get_issue_attestation(ritual_id, issue_id)
+            for field, value in completion.items():
+                setattr(existing, field, value)
             await OxydeIssueActivity.objects.create(
                 issue_id=issue_id, user_id=user_id,
-                activity_type=ActivityType.RITUAL_APPROVED, new_value=ritual_name,
+                activity_type=ActivityType.RITUAL_ATTESTED, field_name=ritual_name, new_value=note,
             )
             return await self._after_gate_completed(ritual, issue_id, user_id, existing)
 
-        now = datetime.now(timezone.utc)
         try:
             attestation = await OxydeRitualAttestation.objects.create(
                 ritual_id=ritual_id,
@@ -1690,7 +1718,9 @@ class RitualService:
             artifact are copied onto the rejection first.
           * GATE: the open request's blocker stays unresolved. The
             requester sees the reason and asks again, which re-notifies
-            the approvers (IssueService._open_intent_with_limbo).
+            the approvers (IssueService._open_intent_with_limbo). An
+            unapproved attestation left from REVIEW mode is deleted, as
+            for REVIEW, and what it said is copied onto the rejection.
 
         A "bounce" variant (the ticket also returns to todo) would add a
         step after the record is written, in `_after_reject`; nothing
@@ -1773,6 +1803,28 @@ class RitualService:
                         attested_by_id=intent.requested_by_id,
                         attested_at=intent.requested_at,
                     )
+                    if attestation is not None:
+                        # Evidence attested in REVIEW mode before the ritual
+                        # became a GATE: rejected, it goes, as a REVIEW
+                        # reject's does, so no completion can approve it
+                        # (PR #358 re-review, N1). Copied onto the
+                        # rejection first.
+                        deleted = await OxydeRitualAttestation.objects.filter(
+                            id=attestation.id, approved_at=None,
+                        ).delete()
+                        if not deleted:
+                            fresh = await self.get_issue_attestation(ritual.id, issue_id)
+                            raise RitualAlreadyResolvedError(
+                                "approved",
+                                fresh.approved_by if fresh else None,
+                                fresh.approved_at if fresh else None,
+                            )
+                        record = dict(
+                            attested_by_id=attestation.attested_by,
+                            attested_at=attestation.attested_at,
+                            attestation_note=attestation.note,
+                            artifact_ref=attestation.artifact_ref,
+                        )
 
                 # attested_by on an attestation has no foreign key (0017),
                 # so a legacy row can name a user that is gone; this table's

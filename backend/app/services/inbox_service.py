@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from oxyde import execute_raw
 
+from app.db.transactions import on_commit
 from app.enums import ActivityType, ApprovalMode, InboxEntryKind, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
@@ -95,18 +96,30 @@ class InboxService:
         return existing is not None
 
     async def _broadcast(self, team_id: str, event_type: str, entry) -> None:
+        """Tell the team's sockets, once the entry is committed: a client
+        that refetches on the event must find it (a writer can run inside
+        a transaction, as the ritual mode change's carry does)."""
+        payload = {
+            "id": entry.id,
+            "recipient_user_id": entry.recipient_user_id,
+            "kind": entry.kind.name if hasattr(entry.kind, "name") else entry.kind,
+            "issue_id": entry.issue_id,
+            "document_id": entry.document_id,
+            "ritual_id": entry.ritual_id,
+        }
+
+        async def send() -> None:
+            try:
+                from app.websocket import broadcast_inbox_event
+                await broadcast_inbox_event(team_id, event_type, payload)
+            except Exception:
+                logger.exception("Failed to broadcast inbox event %s for entry=%s", event_type, entry.id)
+
         try:
-            from app.websocket import broadcast_inbox_event
-            await broadcast_inbox_event(team_id, event_type, {
-                "id": entry.id,
-                "recipient_user_id": entry.recipient_user_id,
-                "kind": entry.kind.name if hasattr(entry.kind, "name") else entry.kind,
-                "issue_id": entry.issue_id,
-                "document_id": entry.document_id,
-                "ritual_id": entry.ritual_id,
-            })
-        except Exception:
-            logger.exception("Failed to broadcast inbox event %s for entry=%s", event_type, entry.id)
+            await on_commit(send)
+        except RuntimeError:  # inside oxyde.atomic(): nothing would call it later
+            logger.exception("Inbox event %s for entry=%s broadcast before commit", event_type, entry.id)
+            await send()
 
     async def _push(self, entries: list, actor_id: str | None = None) -> None:
         """Push the new entries to their recipients' devices (CHT-1605),
@@ -539,11 +552,19 @@ class InboxService:
         """Settle this ritual's open GATE_PENDING and REVIEW_REQUESTED
         entries, except, for each issue in ``keep``, those of the kind
         given for it: a mode change (CHT-1626). GATE_REJECTED entries
-        are left alone; the rejection still stands."""
-        unread = 0
+        are left alone; the rejection still stands. One resolve per
+        group of issues, not per issue."""
+        groups: dict[tuple[str, ...], list[str]] = {}
         for issue_id in await self.open_decision_issue_ids(ritual_id):
-            kinds = [k.name for k in self._ASK_KINDS if keep.get(issue_id) is not k]
-            unread += await self._resolve({"ritual_id": ritual_id, "issue_id": issue_id, "kind__in": kinds})
+            kinds = tuple(k.name for k in self._ASK_KINDS if keep.get(issue_id) is not k)
+            groups.setdefault(kinds, []).append(issue_id)
+        unread = 0
+        for kinds, ids in groups.items():
+            for start in range(0, len(ids), self._RESOLVE_CHUNK):
+                unread += await self._resolve({
+                    "ritual_id": ritual_id, "issue_id__in": ids[start:start + self._RESOLVE_CHUNK],
+                    "kind__in": list(kinds),
+                })
         return unread
 
     async def resolve_for_document(self, document_id: str) -> int:

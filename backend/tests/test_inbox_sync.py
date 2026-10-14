@@ -655,6 +655,97 @@ class TestReferentsGoAway:
         assert (await OxydeIssue.objects.get(id=test_issue.id)).status == IssueStatus.DONE
         assert (await OxydeInboxEntry.objects.get(id=gate_id)).resolved_at is not None
 
+    async def _review_turned_gate(self, test_issue, test_user, ritual):
+        from app.enums import ApprovalMode
+
+        await _close_review(test_issue, test_user.id, ritual)
+        await self._switch(ritual, ApprovalMode.GATE)
+        return await RitualService().get_by_id(ritual.id)
+
+    async def test_completing_a_carried_gate_records_the_completers_note(
+        self, client, db, test_issue, test_user, auth_headers, review_close_ritual,
+    ):
+        """Re-review N1: the completion is the completer's, not the
+        attestation left from REVIEW mode approved in their name."""
+        from app.oxyde_models.ritual import OxydeRitualAttestation
+
+        ritual = await self._review_turned_gate(test_issue, test_user, review_close_ritual)
+        resp = await client.post(
+            f"/api/rituals/{ritual.id}/complete-issue/{test_issue.id}",
+            json={"note": "I checked it myself"}, headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        [attestation] = await OxydeRitualAttestation.objects.filter(
+            ritual_id=ritual.id, issue_id=test_issue.id,
+        ).all()
+        assert attestation.note == "I checked it myself"
+        assert attestation.attested_by == attestation.approved_by == test_user.id
+        assert attestation.attested_at == attestation.approved_at
+
+    async def test_a_rejected_carried_attestation_is_never_approved(
+        self, client, db, test_issue, test_user, auth_headers, review_close_ritual,
+    ):
+        """Re-review N1: REVIEW->GATE, reject, complete. The reject deletes
+        the attestation (copied onto the rejection, as a REVIEW reject
+        does), and the completion is the admin's own."""
+        from app.oxyde_models.ritual import OxydeRitualAttestation, OxydeRitualRejection
+
+        ritual = await self._review_turned_gate(test_issue, test_user, review_close_ritual)
+        await RitualService().reject_for_issue(ritual, test_issue.id, test_user.id, "evidence is wrong")
+        assert await OxydeRitualAttestation.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).count() == 0
+        [rejection] = await OxydeRitualRejection.objects.filter(ritual_id=ritual.id, issue_id=test_issue.id).all()
+        assert (rejection.attestation_note, rejection.attested_by_id) == ("done", test_user.id)
+
+        await RitualService().complete_gate_ritual_for_issue(ritual, test_issue.id, test_user.id, note="I checked")
+        [attestation] = await OxydeRitualAttestation.objects.filter(
+            ritual_id=ritual.id, issue_id=test_issue.id,
+        ).all()
+        assert attestation.note == "I checked" and attestation.approved_at is not None
+
+    async def test_a_plain_gate_completion_keeps_the_note(
+        self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
+    ):
+        from app.oxyde_models.ritual import OxydeRitualAttestation
+
+        await _claim_gate(test_issue, test_user.id)
+        await RitualService().complete_gate_ritual_for_issue(
+            gate_claim_ritual, test_issue.id, test_user.id, note="looked at it",
+        )
+        attestation = await OxydeRitualAttestation.objects.get(ritual_id=gate_claim_ritual.id, issue_id=test_issue.id)
+        assert (attestation.note, attestation.approved_by) == ("looked at it", test_user.id)
+
+    async def test_a_carried_review_request_is_not_pushed_to_the_attester(
+        self, db, test_issue, test_user, review_close_ritual, monkeypatch,
+    ):
+        """Re-review N2: as at attest time, the attester causes it."""
+        from app.enums import ApprovalMode
+
+        ritual = await self._review_turned_gate(test_issue, test_user, review_close_ritual)
+        pushed = []
+
+        async def capture(self, entries, actor_id=None):
+            pushed.append(([e.kind for e in entries], actor_id))
+        monkeypatch.setattr(InboxService, "_push", capture)
+        await self._switch(ritual, ApprovalMode.REVIEW)
+        assert pushed == [([InboxEntryKind.REVIEW_REQUESTED], test_user.id)]
+
+    async def test_the_carry_commits_with_the_mode_change(
+        self, db, test_issue, test_user, gate_claim_ritual, monkeypatch,
+    ):
+        """Re-review N3: inside the change's transaction, so a failed
+        carry leaves the mode as it was."""
+        from app.enums import ApprovalMode
+        from app.oxyde_models.ritual import OxydeRitual
+
+        await _claim_gate(test_issue, test_user.id)
+
+        async def broken(self, ritual_id, keep):
+            raise RuntimeError("inbox down")
+        monkeypatch.setattr(InboxService, "settle_decisions_except", broken)
+        with pytest.raises(RuntimeError, match="inbox down"):
+            await self._switch(gate_claim_ritual, ApprovalMode.AUTO)
+        assert (await OxydeRitual.objects.get(id=gate_claim_ritual.id)).approval_mode == ApprovalMode.GATE
+
     async def test_gate_turning_review_waits_for_the_attestation(
         self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
     ):
