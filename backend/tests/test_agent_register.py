@@ -262,10 +262,28 @@ class TestCaller:
         assert response.status_code == 403 and _code(response) == "registrar_key_required"
 
     async def test_a_registrar_whose_holder_is_deactivated_is_refused(self, client, registrar, test_user):
+        """Since CHT-1552 the key no longer signs in at all (the revoked-key
+        401); register's own in-transaction re-check stays for a holder
+        deactivated mid-request."""
         _, key = registrar
         await OxydeUser.objects.filter(id=test_user.id).update(is_active=False)
         response = await _register(client, key)
-        assert response.status_code == 403 and _code(response) == "registrar_holder_not_member"
+        assert response.status_code == 401 and response.json()["detail"] == "Invalid API key"
+
+    async def test_a_holder_deactivated_after_sign_in_is_refused_by_register(self, registrar, test_user):
+        """The in-transaction re-check: a holder deactivated between sign-in
+        and the register transaction is still refused (CHT-1498, CHT-1552)."""
+        from app.schemas.agent import AgentRegister
+        from app.services.api_key_service import APIKeyService
+        from app.services.registration_service import RegistrationRefused, RegistrationService
+
+        agent_id, key = registrar
+        calling_key = await APIKeyService().validate_key(key)
+        caller = await OxydeUser.objects.get(id=agent_id)
+        await OxydeUser.objects.filter(id=test_user.id).update(is_active=False)
+        with pytest.raises(RegistrationRefused) as refused:
+            await RegistrationService().register(caller, calling_key, AgentRegister(external_ref=REF))
+        assert (refused.value.status_code, refused.value.error_code) == (403, "registrar_holder_not_member")
 
     async def test_a_person_naming_a_project_outside_the_team_is_refused(self, client, auth_headers, test_project):
         response = await client.post(

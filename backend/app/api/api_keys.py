@@ -8,6 +8,7 @@ from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated
 from app.services.agent_service import AgentService
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
+from app.services.user_service import UserService
 
 router = APIRouter()
 
@@ -58,8 +59,12 @@ async def create_api_key(
             )
         holder_id = calling_key.holder_user_id
         async with atomic():
-            if not holder_id or await TeamService().get_member(
-                current_user.agent_team_id, holder_id,
+            # Re-checked in the transaction that mints, as sign-in checks
+            # it: a holder who left the team or was deactivated
+            # (CHT-1552) mints nothing.
+            holder = await UserService().get_by_id(holder_id) if holder_id else None
+            if holder is None or not holder.is_active or await TeamService().get_member(
+                current_user.agent_team_id, holder.id,
             ) is None:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,

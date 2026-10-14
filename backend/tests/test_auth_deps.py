@@ -7,6 +7,7 @@ Covers uncovered lines in app/api/deps.py:
 - Agent not found via API key (same 401 as a missing user since CHT-1537)
 - User not found via API key (L105)
 - Inactive user via API key (L113)
+- Agent key whose holder is deactivated (same 401 as a revoked key, CHT-1552)
 - get_auth_method function (L176-181)
 """
 import pytest
@@ -189,3 +190,83 @@ async def test_no_credentials(client):
     response = await client.get("/api/auth/me")
     assert response.status_code == 401
     assert "Not authenticated" in response.json()["detail"]
+
+
+async def _agent_key_held_by(test_team, holder):
+    """An agent in test_team created by ``holder``, and the key it was
+    shown (held by ``holder``)."""
+    from app.enums import TeamRole
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.schemas.agent import AgentCreate
+    from app.services.agent_service import AgentService
+
+    await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=holder.id, role=TeamRole.MEMBER)
+    agent, key, _ = await AgentService().create(AgentCreate(name=f"{holder.name} Bot"), holder, test_team.id)
+    return agent, key
+
+
+@pytest.mark.asyncio
+async def test_agent_key_of_deactivated_holder_is_refused_like_a_revoked_key(client, db, test_team):
+    """CHT-1552: a deactivated human still in the agent's team cannot
+    sign in, so no agent key they hold does either: 401 "Invalid API
+    key", exactly what a revoked key gets, not the 403 an inactive
+    principal gets."""
+    holder = await OxydeUser.objects.create(
+        email="holder-1552@example.com", hashed_password=get_password_hash("password123"), name="Holder",
+    )
+    _, key = await _agent_key_held_by(test_team, holder)
+    headers = {"Authorization": f"Bearer {key}"}
+    assert (await client.get("/api/auth/me", headers=headers)).status_code == 200
+
+    holder.is_active = False
+    await holder.save(update_fields={"is_active"})
+
+    response = await client.get("/api/auth/me", headers=headers)
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid API key"
+    assert response.headers["www-authenticate"] == "Bearer"
+
+    holder.is_active = True
+    await holder.save(update_fields={"is_active"})
+    assert (await client.get("/api/auth/me", headers=headers)).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_agent_key_minted_by_another_holder_follows_that_holder(client, db, test_user, test_team, auth_headers):
+    """The check is on the key's holder, not the agent's creator: a key
+    the (active) team owner minted for a deactivated member's agent still
+    signs in, and the member's own key for it does not."""
+    from app.oxyde_models.api_key import OxydeAPIKey
+
+    member = await OxydeUser.objects.create(
+        email="member-1552@example.com", hashed_password=get_password_hash("password123"), name="Member",
+    )
+    agent, member_key = await _agent_key_held_by(test_team, member)
+    minted = await client.post(f"/api/agents/{agent.id}/keys", headers=auth_headers)
+    assert minted.status_code == 201, minted.text
+    owner_key = minted.json()["key"]
+    owner_row = await OxydeAPIKey.objects.get(id=minted.json()["id"])
+    assert owner_row.holder_user_id == test_user.id
+
+    member.is_active = False
+    await member.save(update_fields={"is_active"})
+
+    assert (await client.get("/api/auth/me", headers={"Authorization": f"Bearer {member_key}"})).status_code == 401
+    assert (await client.get("/api/auth/me", headers={"Authorization": f"Bearer {owner_key}"})).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_agent_key_of_deactivated_holder_cannot_mint(client, db, test_team):
+    """The self-mint route (POST /api-keys with an agent's key) is refused
+    for a deactivated holder too (CHT-1552)."""
+    holder = await OxydeUser.objects.create(
+        email="minter-1552@example.com", hashed_password=get_password_hash("password123"), name="Minter",
+    )
+    _, key = await _agent_key_held_by(test_team, holder)
+    holder.is_active = False
+    await holder.save(update_fields={"is_active"})
+
+    response = await client.post(
+        "/api/api-keys", json={"name": "self"}, headers={"Authorization": f"Bearer {key}"},
+    )
+    assert response.status_code == 401

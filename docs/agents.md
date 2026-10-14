@@ -875,6 +875,11 @@ there's no local profile to fall back on the way the stdio server has:
   The sign-in check is separate from revocation, though: a key that was
   never revoked, such as one whose holder left before this release, signs
   in again once that holder is back in the team.
+- **A deactivated holder (CHT-1552).** A person whose account is
+  deactivated (`is_active` false) cannot sign in, and neither can any
+  agent key they hold, even while they are still a team member: the same
+  401 as a revoked key, over REST and MCP alike. Deactivation revokes
+  nothing, so those keys sign in again if the account is reactivated.
 
 `issue_view`/`issue_update`/`issue_comment`/`issue_start` don't take a
 `team`/`project` parameter at all in either transport -- issue
