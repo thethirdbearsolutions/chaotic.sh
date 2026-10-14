@@ -105,24 +105,24 @@ def register(cli):
             m.output_json(user)
             return
         if user.get("is_agent"):
-            identity = "[cyan]AGENT[/cyan]"
+            identity_markup = "[cyan]AGENT[/cyan]"
             parent_name = user.get("parent_user_name")
             if parent_name:
-                identity += f" (parent: {escape(parent_name)})"
+                identity_markup += f" (parent: {escape(parent_name)})"
         else:
-            identity = "human"
-        lines = [f"[bold]{escape(user['name'])}[/bold]", escape(user["email"]), identity]
+            identity_markup = "human"
+        lines_markup = [f"[bold]{escape(user['name'])}[/bold]", escape(user["email"]), identity_markup]
         # Agent identity (CHT-1499): what kind, and for a registered
         # session, its address and the registrar that registered it.
         if user.get("is_agent"):
             kind = "registrar" if user.get("can_register") else (user.get("kind") or "agent")
-            lines.append(f"[dim]Kind:[/dim] {escape(str(kind))}")
+            lines_markup.append(f"[dim]Kind:[/dim] {escape(str(kind))}")
             if user.get("external_ref"):
-                lines.append(f"[dim]Session:[/dim] {escape(user['external_ref'])}")
+                lines_markup.append(f"[dim]Session:[/dim] {escape(user['external_ref'])}")
             if user.get("registered_by_id"):
                 registrar = user.get("registered_by_name") or user["registered_by_id"]
-                lines.append(f"[dim]Registered by:[/dim] {escape(registrar)}")
-        console.print(Panel("\n".join(lines), title="Current User"))
+                lines_markup.append(f"[dim]Registered by:[/dim] {escape(registrar)}")
+        console.print(Panel("\n".join(lines_markup), title="Current User"))
 
     @auth.group("keys")
     def auth_keys():

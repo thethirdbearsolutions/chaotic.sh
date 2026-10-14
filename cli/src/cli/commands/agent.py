@@ -266,7 +266,7 @@ def register(cli):
 
         for a, nested in _grouped_by_registrar(agents):
             agent_id = a["id"][:8] + "..."
-            name = escape(a["name"])
+            name_markup = escape(a["name"])
             if a.get("can_register"):
                 kind = "registrar"
             elif a.get("kind") == "session":
@@ -278,14 +278,14 @@ def register(cli):
             else:
                 scope = "Team-wide"
             if a.get("is_active") is False:
-                name = f"{name} [dim](deactivated)[/dim]"
+                name_markup = f"{name_markup} [dim](deactivated)[/dim]"
             if a.get("idle"):
-                name = f"{name} [dim](idle)[/dim]"
+                name_markup = f"{name_markup} [dim](idle)[/dim]"
             if nested:
-                name = f"  └ {name}"
+                name_markup = f"  └ {name_markup}"
             created_by = a.get("parent_user_name", "Unknown")
             created_at = a["created_at"][:10]
-            table.add_row(agent_id, markup(name), scope, kind, created_by, created_at)
+            table.add_row(agent_id, markup(name_markup), scope, kind, created_by, created_at)
 
         console.print(table)
 

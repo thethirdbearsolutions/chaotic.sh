@@ -110,9 +110,9 @@ def _resolve_template(name: str) -> dict:
 
 def _print_apply_report(report: dict):
     """Human-readable rendering of a TemplateApplyReport."""
-    prefix = "[dim](dry run)[/dim] " if report.get("dry_run") else ""
+    prefix_markup = "[dim](dry run)[/dim] " if report.get("dry_run") else ""
     console.print(
-        f"{prefix}Applied template [bold]{esc(report['template'])}[/bold] "
+        f"{prefix_markup}Applied template [bold]{esc(report['template'])}[/bold] "
         f"to project {esc(report['project_key'])}:"
     )
     for change in report["rituals"]:

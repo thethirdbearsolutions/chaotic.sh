@@ -7,7 +7,7 @@ from rich.panel import Panel
 from ..markup import Table, esc, markup
 
 from ..principals import principal_markup
-from .shared import _client, console, get_status_color, resolve_content_value
+from .shared import _client, console, status_color_markup, resolve_content_value
 
 
 def _main():
@@ -144,23 +144,23 @@ def register(cli):
             return
         content = d.get('content') or 'No content'
         # Build subtitle with author and scope
-        subtitle_parts = []
+        subtitle_parts_markup = []
         if d.get('author_name'):
-            subtitle_parts.append(f"By {principal_markup(d.get('author'), d['author_name'])}")
+            subtitle_parts_markup.append(f"By {principal_markup(d.get('author'), d['author_name'])}")
         if d.get("sprint_id"):
             scope = "Sprint-scoped"
         elif d.get("project_id"):
             scope = "Project-scoped"
         else:
             scope = "Global"
-        subtitle_parts.append(scope)
-        subtitle = " | ".join(subtitle_parts)
+        subtitle_parts_markup.append(esc(scope))
+        subtitle_markup = " | ".join(subtitle_parts_markup)
         # Render content as markdown
         md_content = Markdown(content)
         console.print(Panel(
             md_content,
             title=f"{esc(d.get('icon') or '')} {esc(d['title'])}".strip(),
-            subtitle=subtitle
+            subtitle=subtitle_markup
         ))
 
         # Show linked issues
@@ -168,8 +168,8 @@ def register(cli):
         if linked_issues:
             console.print("\n[bold]Linked Issues:[/bold]")
             for issue in linked_issues:
-                status_color = get_status_color(issue.get('status', 'backlog'))
-                console.print(f"  \u2022 [{status_color}]{esc(issue['identifier'])}[/{status_color}] {esc(issue['title'])}")
+                color_markup = status_color_markup(issue.get('status', 'backlog'))
+                console.print(f"  \u2022 [{color_markup}]{esc(issue['identifier'])}[/{color_markup}] {esc(issue['title'])}")
 
         # Show comments if requested
         if comments:
@@ -238,12 +238,12 @@ def register(cli):
                 m.output_json(rev)
                 return
             body = rev.get("content") or "(empty)"
-            author = principal_markup(rev.get("author"), rev.get("author_name") or "Unknown")
+            author_markup = principal_markup(rev.get("author"), rev.get("author_name") or "Unknown")
             date = (rev.get("created_at") or "")[:19].replace("T", " ")
             console.print(Panel(
                 Markdown(body),
                 title=f"{esc(rev['title'])} — v{esc(rev['version'])}",
-                subtitle=f"{author} · {esc(date)}",
+                subtitle=f"{author_markup} · {esc(date)}",
             ))
             return
 

@@ -200,17 +200,17 @@ def apply_ritual_attestations(issue, attest_specs):
 
 # ── Display helpers ──────────────────────────────────────────────────────────
 
-def format_ritual_line(r):
+def ritual_line_markup(r):
     """Format a ritual display line with mode, group, and note info."""
-    mode = f"[dim]({esc(r['approval_mode'])})[/dim]"
+    mode_markup = f"[dim]({esc(r['approval_mode'])})[/dim]"
     # A backslash makes the bracket literal: a bare `[deleted]` is a style
     # tag to Rich, so these labels used to vanish (CHT-1526).
-    note_tag = "" if r.get("note_required", True) else " [dim]\\[no note req][/dim]"
-    group_tag = ""
+    note_tag_markup = "" if r.get("note_required", True) else " [dim]\\[no note req][/dim]"
+    group_tag_markup = ""
     if r.get("group_name"):
-        group_tag = f" [dim]\\[group: {esc(r['group_name'])}][/dim]"
-    deleted_tag = " [red]\\[deleted][/red]" if not r.get("is_active", True) else ""
-    return f"  \u2022 {esc(r['name'])} {mode}{note_tag}{group_tag}{deleted_tag}"
+        group_tag_markup = f" [dim]\\[group: {esc(r['group_name'])}][/dim]"
+    deleted_tag_markup = " [red]\\[deleted][/red]" if not r.get("is_active", True) else ""
+    return f"  \u2022 {esc(r['name'])} {mode_markup}{note_tag_markup}{group_tag_markup}{deleted_tag_markup}"
 
 
 def print_ritual_prompt(prompt):
@@ -264,8 +264,8 @@ def resolve_content_value(ctx, param, value):
     return value
 
 
-def get_status_color(status: str) -> str:
-    """Get Rich color for issue status."""
+def status_color_markup(status: str) -> str:
+    """The Rich style for an issue status: one of a fixed set, never server text."""
     return {
         'done': 'green',
         'in_progress': 'yellow',
@@ -290,20 +290,20 @@ def print_sprint_panel(result: dict, title: str = "Sprint"):
     """Print a sprint details panel."""
     from rich.panel import Panel
 
-    budget_info = ""
+    budget_info_markup = ""
     if result.get("budget") is not None:
         remaining = result["budget"] - result["points_spent"]
-        status_str = "[red]IN ARREARS[/red]" if remaining < 0 else f"{remaining} remaining"
-        budget_info = f"\nBudget: {result['points_spent']}/{result['budget']} ({status_str})"
+        status_markup = "[red]IN ARREARS[/red]" if remaining < 0 else f"{esc(remaining)} remaining"
+        budget_info_markup = f"\nBudget: {esc(result['points_spent'])}/{esc(result['budget'])} ({status_markup})"
 
-    limbo_info = "\n[yellow]IN LIMBO - pending rituals[/yellow]" if result.get("limbo") else ""
+    limbo_info_markup = "\n[yellow]IN LIMBO - pending rituals[/yellow]" if result.get("limbo") else ""
 
     console.print(Panel(
         f"[bold]{esc(result['name'])}[/bold]\n"
         f"Status: {esc(result['status'].title())}"
-        f"{budget_info}"
-        f"{limbo_info}",
-        title=title
+        f"{budget_info_markup}"
+        f"{limbo_info_markup}",
+        title=esc(title)
     ))
 
 
