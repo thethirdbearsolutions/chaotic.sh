@@ -1,7 +1,7 @@
 """User API routes."""
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser
+from app.api.deps import CurrentUser, NotAppSession
 from app.schemas.user import UserUpdate, UserResponse
 from app.services.user_service import UserDeletionRefusedError, UserService
 from app.services.team_service import TeamService
@@ -43,7 +43,7 @@ async def get_user(user_id: str, current_user: CurrentUser) -> UserResponse:
 
 @router.patch("/me", response_model=UserResponse)
 @writes
-async def update_me(user_in: UserUpdate, current_user: CurrentUser):
+async def update_me(user_in: UserUpdate, current_user: CurrentUser, _app_session: NotAppSession):
     """Update current user."""
     user_service = UserService()
     user = await user_service.update(current_user, user_in)
@@ -52,7 +52,7 @@ async def update_me(user_in: UserUpdate, current_user: CurrentUser):
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 @writes
-async def delete_me(current_user: CurrentUser):
+async def delete_me(current_user: CurrentUser, _app_session: NotAppSession):
     """Delete the current user and their agents. Refused (409) when the
     user or any of their agents authored anything, or a non-agent row
     names the user as its parent (CHT-1467)."""

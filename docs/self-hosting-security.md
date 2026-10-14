@@ -400,6 +400,29 @@ With `OAUTH_ENABLED` on, MCP clients register in one of two ways
   Set `OAUTH_DCR_ENABLED=false` to turn registration off; clients that
   use metadata documents don't need it.
 
+One client is neither: the **Chaotic Android app** is built into the
+server (CHT-1602, `backend/app/oauth/builtin.py`). Its `client_id`,
+`builtin:sh.chaotic.android`, is not a URL, so nothing is fetched for it
+and no outbound access is needed; its redirect,
+`sh.chaotic.android:/oauth2redirect`, comes from the code, not from
+anything stored or published. The same metadata is published at
+`https://chaotic.sh/oauth/android-client.json` for reference only; the
+server never reads it.
+
+Residual risk: that redirect is a private-use URI scheme, which any
+Android app on the same phone can also register. A malicious app could
+start the sign-in itself and, if the person approves the page, receive a
+session acting as them. The consent page does not claim the request
+comes from the official app, and tells the person to continue only if
+they just started signing in from it. Moving to a verified https
+redirect (Android App Links) closes this and is planned before release.
+
+An admin can disable the app by setting `is_active` to false on its
+`oauth_clients` row. That blocks new sign-ins and refreshes at once, but
+access tokens already issued keep working until they expire (at most 10
+minutes). To end a sign-in immediately, revoke its session: each person
+can in Connected Apps (an admin-wide bulk revocation is CHT-1449).
+
 ## Behind a reverse proxy: `FORWARDED_ALLOW_IPS`
 
 A request that reaches the app through a reverse proxy arrives from the
@@ -484,6 +507,22 @@ window for concurrent refreshes, revokes the whole connection, since it
 means the token was copied. `POST /oauth/revoke` (RFC 7009) lets the app
 end its own connection.
 
+Every connection's tokens act as an agent and are accepted only at
+`/mcp` (design decision D2), with one exception: the built-in Android
+app's (above). Its tokens act as the person who signed in, account-wide
+(the session has no team: every request is gated per team by that
+person's membership at that moment, as for their web login), are issued
+for the whole server (`resource` is `APP_BASE_URL`), and are accepted on
+REST and `/ws` but never at `/mcp`. A member removed from a team, or a
+team deleted, does not end an app sign-in; deactivating or deleting the
+person does. Everything that would outlive the sign-in is refused to it
+(403 `app_session_refused`): API keys, agent keys and agent
+registration, team invitations and accepting them, creating a team,
+changing a member's role, turning on an agent's `can_register`,
+reactivating an agent, and changing or deleting the account. A client
+that is not the built-in app cannot get such a token: the code is
+refused when minted, when redeemed and when used.
+
 The token and revoke endpoints read their parameters from a form-encoded
 request body only, and refuse a request that has any query string. Codes,
 tokens and client secrets therefore never appear in a URL, and so never
@@ -519,6 +558,9 @@ else's connection is a 404. An agent cannot list or revoke any, and
 neither can any OAuth access token, whoever it acts as. This
 works with `OAUTH_ENABLED` off too, so turning OAuth off never stops
 anyone ending a connection. A disconnected app's next request fails.
+The Android app's sign-ins are listed one per device, with the name the
+app gave the device; signing one out also deletes that device's push
+registration (CHT-1625), and its open `/ws` sockets close.
 
 Connections also end on their own when what they depended on goes
 (CHT-1523), in the same transaction as the change:

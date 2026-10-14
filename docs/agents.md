@@ -515,6 +515,56 @@ returns JSON whose `issuer` is exactly your `APP_BASE_URL`, and an
 unauthenticated `POST /mcp` answers 401 with a `WWW-Authenticate`
 header that names `resource_metadata`.
 
+#### The Chaotic Android app signs in as you
+
+The native app (application id `sh.chaotic.android`, CHT-1602) uses the
+same OAuth server, but it is not a connector and does not act as an
+agent. It is built into the server as the OAuth client
+`builtin:sh.chaotic.android`, resolved from code: the server fetches
+nothing to recognise it (an air-gapped server works), and no stored or
+published document can change the redirects it accepts. Its redirect is
+fixed, `sh.chaotic.android:/oauth2redirect`, with PKCE S256,
+`offline_access` and rotating refresh tokens like every connection.
+
+That redirect is an Android private-use scheme, and Android does not
+reserve one for a single app: another app installed on the same phone
+can claim it, start a sign-in itself, and get a session as you if you
+approve it. So approve the sign-in page only when you have just tapped
+"Sign in" in the Chaotic app yourself. A verified https redirect
+(Android App Links), which closes this, is planned before the app
+ships.
+
+Signing in shows "Sign in to Chaotic for Android as you?" with nothing
+to choose: no team, agent or projects. The sign-in is account-wide. The
+app then acts as you on REST and the `/ws` live feed, in every team you
+belong to and only while you belong to it, exactly as your web login
+does: it can approve gates, comment and change status as you, and a
+team you leave is out of its reach on its next request. Like the web
+app it sends `X-Chaotic-Interactive: 1`, so it gets the interactive
+human's ritual and estimate exemptions. Its tokens are for the whole
+server (`resource=https://your-chaotic-host`) and are refused at `/mcp`;
+it cannot create anything that would outlive its sign-in: API keys,
+agent keys or registered agents, team invitations (or accepting one),
+new teams, member roles, an agent's registrar capability or its
+reactivation; nor change or delete your account.
+
+A device stays signed in until you sign it out (in the app or in
+Connected Apps), its refresh token is reused (a sign of a copied token),
+it goes unused past the refresh window, or your account is deactivated
+or deleted. Leaving or deleting a team does not sign it out.
+
+Every other OAuth client, whatever it calls itself or wherever it
+redirects, still acts only as an agent and only at `/mcp`.
+
+Each phone is listed in Connected Apps as its own row ("Pixel 8 ·
+Chaotic for Android"). *Sign out* there ends that device's session and
+deletes its push registration.
+
+The server needs only `OAUTH_ENABLED=true` and `APP_BASE_URL` (below)
+for the app. The app reads `/.well-known/oauth-authorization-server`
+first; a 404 there means OAuth is off, and the app tells you that the
+server's admin must set those two.
+
 ### API keys (CLI, scripts, headless sessions)
 
 A `ck_...` API key in an `Authorization: Bearer` header works on `/mcp`

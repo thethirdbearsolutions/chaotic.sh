@@ -4,7 +4,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.auth.access import reads, registers, writes
 from app.api.deps import (
-    CurrentUser, can_manage_agent, check_user_team_access, get_api_key_record,
+    CurrentPrincipal, CurrentUser, NotAppSession, can_manage_agent, check_not_app_session,
+    check_user_team_access, get_api_key_record,
 )
 from app.enums import AgentKind
 from app.schemas.agent import (
@@ -82,6 +83,7 @@ async def create_team_agent(
     team_id: str,
     agent_in: AgentCreate,
     current_user: CurrentUser,
+    _app_session: NotAppSession,
 ):
     """Create a team-scoped agent. The API key is only shown once."""
     # Verify user has permission to create agents in this team
@@ -139,6 +141,7 @@ async def create_project_agent(
     project_id: str,
     agent_in: AgentCreate,
     current_user: CurrentUser,
+    _app_session: NotAppSession,
 ):
     """Create a project-scoped agent. The API key is only shown once."""
     # Verify project exists and user has access
@@ -254,10 +257,15 @@ async def update_agent(
     agent_id: str,
     agent_in: AgentUpdate,
     current_user: CurrentUser,
+    principal: CurrentPrincipal,
 ):
     """Update an agent's name or avatar, or make it a registrar
     (`can_register`, CHT-1498). Allowed to its creator while in the
-    agent's team and to that team's admins."""
+    agent's team and to that team's admins. A built-in app's session may
+    rename, but not change `can_register` (CHT-1602): a registrar mints
+    keys, a capability that would outlive the session."""
+    if agent_in.can_register is not None:
+        check_not_app_session(principal)
     agent_service = AgentService()
     agent = await agent_service.get_by_id(agent_id)
 
@@ -301,6 +309,7 @@ async def update_agent(
 async def create_agent_key(
     agent_id: str,
     current_user: CurrentUser,
+    _app_session: NotAppSession,
 ):
     """Mint a new API key for an existing agent. The key is only shown once."""
     agent_service = AgentService()
@@ -412,6 +421,7 @@ async def deactivate_agent(
 async def reactivate_agent(
     agent_id: str,
     current_user: CurrentUser,
+    _app_session: NotAppSession,
 ) -> AgentResponse:
     """Undo a deactivation (CHT-1494). Its revoked keys stay revoked:
     mint a new one with POST /agents/{agent_id}/keys. Same authorization
@@ -492,6 +502,7 @@ async def delete_agent(
 async def register_agent(
     req: AgentRegister,
     current_user: CurrentUser,
+    _app_session: NotAppSession,
     calling_key: Annotated[object | None, Depends(get_api_key_record)],
     response: Response,
 ) -> AgentRegistered:

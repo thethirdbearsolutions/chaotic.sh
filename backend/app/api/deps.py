@@ -184,3 +184,31 @@ async def require_human_session(
 
 
 HumanUser = Annotated[User, Depends(require_human_session)]
+
+
+APP_SESSION_REFUSED = {
+    "error_code": "app_session_refused",
+    "message": "A signed-in app can't do this; use the Chaotic web app or the command-line tool.",
+}
+
+
+def check_not_app_session(principal: Principal) -> None:
+    """Raise 403 ``app_session_refused`` for a built-in app's session
+    (CHT-1602). For a route that refuses it only for some bodies."""
+    if principal.is_app_session:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(APP_SESSION_REFUSED))
+
+
+async def refuse_app_session(principal: CurrentPrincipal) -> None:
+    """Refuse a built-in app's session (CHT-1602) on every route that
+    creates something that outlives the session or takes over the
+    account: a credential (API keys, agent keys, registration), access
+    for someone (invitations, accepting one, team creation, member
+    roles), an agent capability (``can_register``, reactivation), or a
+    change to the account itself. The app acts as the person, but a
+    phone's revocable sign-in must leave nothing behind that its
+    revocation does not end. Other credentials pass."""
+    check_not_app_session(principal)
+
+
+NotAppSession = Annotated[None, Depends(refuse_app_session)]

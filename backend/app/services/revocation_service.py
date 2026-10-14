@@ -41,6 +41,12 @@ event's team is the one team every revoked session was in, or NULL when
 they span teams (or there were none). A rollback of the outer
 transaction rolls all of it back with the change.
 
+A built-in app's sign-in (``HolderVia.APP``, CHT-1602) acts as a person
+and has no team, so only the principal cascades reach it (the person
+deactivated or deleted); a member removal or team deletion leaves it
+alone, and the routes' per-team membership checks keep it out of a team
+the person has left.
+
 Not here yet (CHT-1449): the admin view, bulk revocation with dry-run,
 and revoking an OAuth client or a grant.
 """
@@ -65,6 +71,10 @@ REASON_PRINCIPAL_DELETED = "principal_deleted"
 REASON_MEMBER_REMOVED = "member_removed"
 REASON_TEAM_DELETED = "team_deleted"
 REASON_USER_REVOKED = "user_revoked"
+
+# The holder sessions Connected apps lists: OAuth connectors, and a
+# built-in app's per-device sign-ins (CHT-1602).
+CONNECTION_VIAS = frozenset({HolderVia.OAUTH, HolderVia.APP})
 
 # Single-use tokens that would start a new holder session if redeemed.
 _STARTERS = (TokenKind.AUTH_CODE, TokenKind.CLAIM_TICKET)
@@ -257,12 +267,13 @@ class RevocationService:
     # --- a human's own connections (Connected apps) --------------------------
 
     async def list_connections(self, user_id: str) -> list[OxydeHolderSession]:
-        """The live OAuth connections `user_id` consented to, newest first.
-        Only their own: the filter is on the consenting human, never on
-        anything the caller names."""
+        """The live OAuth connections `user_id` consented to, newest first:
+        connectors acting as an agent, and built-in app sign-ins, one per
+        device, acting as them (CHT-1602). Only their own: the filter is
+        on the consenting human, never on anything the caller names."""
         now = _now()
         rows = await OxydeHolderSession.objects.filter(
-            holder_user_id=user_id, via=HolderVia.OAUTH, revoked_at__isnull=True,
+            holder_user_id=user_id, via__in=list(CONNECTION_VIAS), revoked_at__isnull=True,
             absolute_expires_at__gt=now,
         ).order_by("-created_at").all()
         # A session past its idle expiry cannot refresh, but an access
@@ -272,11 +283,13 @@ class RevocationService:
         return [row for row in rows if row.idle_expires_at + grace > now]
 
     async def revoke_connection(self, user_id: str, holder_session_id: str) -> bool | None:
-        """Revoke one of `user_id`'s own OAuth connections. None when it is
-        not theirs (or not an OAuth connection, or does not exist): the
-        caller answers 404 and says nothing about which. False when it was
-        already revoked, True when this revoked it."""
+        """Revoke one of `user_id`'s own OAuth connections or app sign-ins.
+        None when it is not theirs (or not one of those, or does not
+        exist): the caller answers 404 and says nothing about which. False
+        when it was already revoked, True when this revoked it. Through
+        ``revoke_session``, so the device's push registration and open
+        sockets end with it once it commits (CHT-1625)."""
         session = await OxydeHolderSession.objects.get_or_none(id=holder_session_id)
-        if session is None or session.holder_user_id != user_id or session.via != HolderVia.OAUTH:
+        if session is None or session.holder_user_id != user_id or session.via not in CONNECTION_VIAS:
             return None
         return await self.tokens.revoke_session(session.id, actor_id=user_id, reason=REASON_USER_REVOKED)
