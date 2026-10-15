@@ -1091,6 +1091,81 @@ describe('issues-view', () => {
             expect(setSelectedIssueIndex).toHaveBeenCalledWith(-1);
         });
 
+        // CHT-1755 review M1: under the Open default a search must say how
+        // many closed matches it hides, not just come back empty
+        describe('closed matches hidden by the Open default', () => {
+            const OPEN = ['backlog', 'todo', 'in_progress', 'in_review'];
+            let hint;
+            beforeEach(() => {
+                hint = document.createElement('div');
+                hint.id = 'issues-hidden-closed-hint';
+                hint.className = 'hidden';
+                document.body.appendChild(hint);
+                api.getIssues.mockImplementation(async (p) =>
+                    (Array.isArray(p.status) && p.status.includes('done'))
+                        ? [{ id: 'c-1', status: 'done' }, { id: 'c-2', status: 'canceled' }]
+                        : []);
+            });
+
+            it('counts closed matches with a second, closed-only request and offers to show them', async () => {
+                checkStatuses(OPEN);
+                document.getElementById('issue-search').value = 'sign-in';
+                await loadIssues();
+
+                expect(api.getIssues).toHaveBeenCalledWith(expect.objectContaining({
+                    search: 'sign-in', status: ['done', 'canceled'], project_id: 'p-1',
+                }));
+                // the list itself still honours the Open filter
+                expect(api.getIssues).toHaveBeenCalledWith(expect.objectContaining({ search: 'sign-in', status: OPEN }));
+                expect(hint.classList.contains('hidden')).toBe(false);
+                expect(hint.textContent).toContain('2 closed matches hidden');
+                expect(hint.querySelector('[data-action="show-all-statuses"]').textContent).toBe('Show all statuses');
+            });
+
+            it('"Show all statuses" drops the status filter', () => {
+                checkStatuses(OPEN);
+                issuesViewActions['show-all-statuses']();
+                expect(checkedStatuses()).toEqual([]);
+            });
+
+            it('makes no extra request and shows no hint without a search', async () => {
+                checkStatuses(OPEN);
+                await loadIssues();
+                expect(api.getIssues).toHaveBeenCalledTimes(1);
+                expect(hint.classList.contains('hidden')).toBe(true);
+            });
+
+            it('makes no extra request when the status filter is not the Open preset', async () => {
+                checkStatuses([]);
+                document.getElementById('issue-search').value = 'sign-in';
+                await loadIssues();
+                expect(api.getIssues).toHaveBeenCalledTimes(1);
+                expect(hint.classList.contains('hidden')).toBe(true);
+            });
+
+            it('shows no hint when nothing closed matches', async () => {
+                api.getIssues.mockResolvedValue([]);
+                checkStatuses(OPEN);
+                document.getElementById('issue-search').value = 'sign-in';
+                await loadIssues();
+                expect(hint.classList.contains('hidden')).toBe(true);
+            });
+
+            it('still renders the list when the count request fails', async () => {
+                const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+                api.getIssues.mockImplementation(async (p) => {
+                    if (Array.isArray(p.status) && p.status.includes('done')) throw new Error('boom');
+                    return [{ id: 'o-1', status: 'todo' }];
+                });
+                checkStatuses(OPEN);
+                document.getElementById('issue-search').value = 'sign-in';
+                await loadIssues();
+                expect(renderIssues).toHaveBeenCalled();
+                expect(hint.classList.contains('hidden')).toBe(true);
+                errSpy.mockRestore();
+            });
+        });
+
         it('calls api.getIssues with project ID', async () => {
             api.getIssues.mockResolvedValue([]);
             await loadIssues();

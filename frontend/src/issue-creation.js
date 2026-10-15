@@ -134,11 +134,11 @@ export function showCreateIssueModal(preselectedProjectId = null) {
                 </div>
             </div>
             <div class="create-issue-more">
-                <button type="button" class="more-options-toggle" id="more-options-toggle" data-action="toggle-create-options">
+                <button type="button" class="more-options-toggle" id="more-options-toggle" data-action="toggle-create-options" aria-expanded="false" aria-controls="create-issue-options-panel">
                     <svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                     Template and due date
                 </button>
-                <div class="create-issue-options collapsed" id="create-issue-options-panel">
+                <div class="create-issue-options collapsed" id="create-issue-options-panel" inert>
                     <div class="create-issue-options-content">
                         <div class="create-issue-template">
                             <label for="create-issue-template">Template</label>
@@ -189,8 +189,11 @@ export function toggleCreateIssueOptions() {
     const panel = document.getElementById('create-issue-options-panel');
     const toggle = document.getElementById('more-options-toggle');
     if (panel && toggle) {
-        panel.classList.toggle('collapsed');
+        const collapsed = panel.classList.toggle('collapsed');
         toggle.classList.toggle('expanded');
+        // A collapsed panel's fields are out of the Tab order (CHT-1770 review L3)
+        panel.toggleAttribute('inert', collapsed);
+        toggle.setAttribute('aria-expanded', String(!collapsed));
     }
 }
 
@@ -462,12 +465,14 @@ export function setCreateIssueField(field, value, label) {
     markModalDirty();
 
     const safeLabel = escapeHtml(label);
+    // Find the chip by what it edits, inside the create modal, not by its
+    // position among every .toolbar-btn on the page (CHT-1770 review N5)
+    const chip = document.querySelector(
+        `.create-issue-modal .toolbar-btn[data-action="toggle-create-dropdown"][data-dropdown-type="${field}"]`);
     if (field === 'status') {
-        const btn = document.querySelector('.toolbar-btn:first-child');
-        btn.innerHTML = `${getStatusIcon(value)}<span id="create-issue-status-label">${safeLabel}</span>`;
+        if (chip) chip.innerHTML = `${getStatusIcon(value)}<span id="create-issue-status-label">${safeLabel}</span>`;
     } else if (field === 'priority') {
-        const btn = document.querySelectorAll('.toolbar-btn')[1];
-        btn.innerHTML = `${getPriorityIcon(value)}<span id="create-issue-priority-label">${safeLabel}</span>`;
+        if (chip) chip.innerHTML = `${getPriorityIcon(value)}<span id="create-issue-priority-label">${safeLabel}</span>`;
     } else if (field === 'type') {
         const btn = document.getElementById('create-issue-type-btn');
         if (btn) {
@@ -479,7 +484,7 @@ export function setCreateIssueField(field, value, label) {
     // The chosen option had focus and is gone with the dropdown; put focus
     // back on the toolbar button that opened it rather than on <body>
     // (CHT-1231).
-    document.querySelector(`.toolbar-btn[data-action="toggle-create-dropdown"][data-dropdown-type="${field}"]`)?.focus();
+    chip?.focus();
 }
 
 async function submitCreateIssue({ keepOpen = false } = {}) {

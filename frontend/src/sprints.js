@@ -445,7 +445,7 @@ function renderSprintDetail() {
                 <div class="stat-label">Completed</div>
             </div>
             <button type="button" class="stat-card stat-card-link" data-action="scroll-to-budget-ledger"
-                title="Show the budget ledger: one transaction per issue closed while this sprint was active">
+                title="Show the budget ledger: one transaction each time an issue moved to done while this sprint was active">
                 <div class="stat-value">${budgetDisplay}</div>
                 <div class="stat-label">Budget spent</div>
                 <div class="stat-note">See ledger \u2193</div>

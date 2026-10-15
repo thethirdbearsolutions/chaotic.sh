@@ -5314,14 +5314,18 @@ input[type="checkbox"] {
 /* Collapsible options panel */
 .create-issue-options {
     overflow: hidden;
-    transition: max-height 0.25s ease, opacity 0.2s ease;
+    transition: max-height 0.25s ease, opacity 0.2s ease, visibility 0.25s;
     max-height: 500px;
     opacity: 1;
+    visibility: visible;
 }
 
+/* visibility: hidden also takes the collapsed fields out of the Tab order
+   (CHT-1770 review L3) */
 .create-issue-options.collapsed {
     max-height: 0;
     opacity: 0;
+    visibility: hidden;
 }
 
 .create-issue-options-content {
@@ -8704,6 +8708,39 @@ button.stat-card-link:hover .stat-note {
     border-radius: var(--radius-sm);
     border-left: 3px solid var(--error-color);
     line-height: 1.5;
+}
+
+/* CHT-1755 review M1: a search under the Open default says how many closed
+   matches it hides, with a one-click way to show them */
+.search-hidden-closed {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
+.search-hidden-closed.hidden {
+    display: none;
+}
+
+.search-hidden-closed .btn-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent-color);
+    cursor: pointer;
+}
+
+.search-hidden-closed .btn-link:hover {
+    text-decoration: underline;
 }
 
 /* CHT-1771: at phone width the floating create button (.mobile-fab: 56px
