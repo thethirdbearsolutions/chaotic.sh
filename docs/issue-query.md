@@ -179,3 +179,30 @@ prints the issue list.
 `issue_list(where="...")` takes the same text. The tool's other filters
 are ANDed with it. With `where`, the result also carries `total` and
 `where` (the query as the server read it).
+
+## In the web app
+
+The Query page (`/query`, CHT-1810) runs the same endpoint and keeps the
+query in its URL:
+
+| Param | Meaning |
+|---|---|
+| `project` | the project to query (its id) |
+| `scope=team` | query every project of the team instead ("All projects") |
+| `where` | the where text. Absent means open issues (`status!=done,canceled`); present but empty means every issue. |
+| `order` | the order text; absent means most recently updated first |
+| `cols` | the table's columns, in order (identifier and title are always shown; unknown ids are ignored) |
+| `group`, `view` | kept in the URL for grouping and saved views (CHT-1746) |
+| `page` | the page of 100 results, from 1 |
+
+After each run the page rewrites `where` and `order` with the server's
+canonical text, so a copied link carries the text the CLI and MCP take.
+Running a new where text, paging, or changing scope adds a history entry;
+loading a URL and changing columns replace the current one. A query the
+server rejects shows its 400 message under the where box and does not
+change the URL. "Copy as CLI" gives the matching `chaotic issue list
+--all-projects --where '...' --limit 100` command. `issue list` has no
+`--project` option, so a project's query is copied as
+`project=KEY (<where>)`, which selects the same issues whatever the CLI's
+current project is. The CLI sorts by one field, so an order of several
+terms is copied as its first term only (CHT-1817).

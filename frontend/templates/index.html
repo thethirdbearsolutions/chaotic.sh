@@ -118,6 +118,12 @@
                         </svg>
                         Issues
                     </a>
+                    <a href="/query" class="nav-item" data-view="query">
+                        <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+                        </svg>
+                        Query
+                    </a>
                     <a href="/approvals" class="nav-item" data-view="approvals">
                         <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
@@ -571,6 +577,32 @@
                     <div id="team-agents-list" class="list"></div>
                     <div class="section-header"><h3>Pending Invitations</h3></div>
                     <div id="team-invitations-list" class="list"></div>
+                </div>
+
+                <div id="query-view" class="view hidden">
+                    <div class="view-header">
+                        <h2>Query</h2>
+                        <div class="view-actions">
+                            <select id="query-project-filter" aria-label="Scope">
+                                <option value="">All projects</option>
+                            </select>
+                            <div id="query-columns-picker" class="query-columns-picker">
+                                <button type="button" id="query-columns-btn" class="btn btn-secondary btn-small" aria-haspopup="true" aria-expanded="false">Columns</button>
+                                <div id="query-columns-menu" class="query-columns-menu hidden"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="query-where-bar">
+                        <label for="query-where" class="query-where-label">Where</label>
+                        <input type="text" id="query-where" class="query-where-input" spellcheck="false" autocomplete="off" maxlength="4000" placeholder="status!=done,canceled assignee=me" aria-describedby="query-error">
+                        <button type="button" id="query-run-btn" class="btn btn-primary btn-small">Run</button>
+                        <button type="button" id="query-copy-cli-btn" class="btn btn-secondary btn-small" title="Copy as a chaotic issue list command">Copy as CLI</button>
+                    </div>
+                    <code id="query-cli-preview" class="query-cli-preview hidden"></code>
+                    <div id="query-notice" class="query-notice hidden" role="status"></div>
+                    <div id="query-error" class="query-error hidden" role="alert"></div>
+                    <div id="query-results" class="query-results"></div>
+                    <div id="query-pager" class="query-pager"></div>
                 </div>
 
                 <div id="rituals-view" class="view hidden">
