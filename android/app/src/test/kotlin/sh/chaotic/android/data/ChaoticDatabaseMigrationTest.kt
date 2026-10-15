@@ -24,7 +24,8 @@ import kotlin.test.assertTrue
  *
  * The old databases are built from the schema files directly, as Room's
  * MigrationTestHelper would. The helper reads the schemas from the test
- * APK's assets, which a Robolectric unit test does not have.
+ * APK's assets, which a Robolectric unit test does not have. A downgrade
+ * (a newer build's file) starts over empty, as does version 1.
  */
 @RunWith(RobolectricTestRunner::class)
 class ChaoticDatabaseMigrationTest {
@@ -39,19 +40,7 @@ class ChaoticDatabaseMigrationTest {
     @Test
     fun theQueueSurvivesAnUpdateFromEveryVersionThatHeldIt() = runBlocking {
         for (version in FIRST_QUEUE_VERSION..ChaoticDatabase.VERSION) {
-            val name = createAt(version) { db ->
-                db.execSQL(
-                    "INSERT INTO pending_write (key, kind, path, entryId, issueId, teamId, field, value, " +
-                        "valueLabel, label, createdAtMillis, notBeforeMillis, attempts) VALUES " +
-                        "('w1', 'COMMENT', '/api/issues/i1/comments', NULL, 'i1', 't1', NULL, 'Looks good', " +
-                        "NULL, 'Comment on CHT-1', 1000, 0, 2)",
-                )
-                db.execSQL(
-                    "INSERT INTO write_refusal (key, kind, label, status, errorCode, message, entryId, issueId, " +
-                        "atMillis, value) VALUES ('w0', 'APPROVE', 'Approve CHT-2', 409, 'conflict', 'Already done', " +
-                        "'e1', 'i2', 900, NULL)",
-                )
-            }
+            val name = createAt(version) { db -> queueRows(version, db).forEach(db::execSQL) }
 
             val database = ChaoticDatabase.builder(context, name).allowMainThreadQueries().build()
             try {
@@ -83,6 +72,45 @@ class ChaoticDatabaseMigrationTest {
             database.close()
         }
     }
+
+    @Test
+    fun aDowngradeStartsOverEmpty() = runBlocking {
+        // A newer build's file, as far as Room can tell: a later version
+        // number. The destructive path drops and recreates every table.
+        val name = createAt(ChaoticDatabase.VERSION) { db ->
+            queueRows(ChaoticDatabase.VERSION, db).forEach(db::execSQL)
+            db.version = ChaoticDatabase.VERSION + 1
+        }
+
+        val database = ChaoticDatabase.builder(context, name).allowMainThreadQueries().build()
+        try {
+            assertEquals(emptyList(), database.cache().allWrites())
+            assertEquals(emptyList(), database.cache().allRefusals())
+            assertEquals(ChaoticDatabase.VERSION, database.openHelper.readableDatabase.version)
+        } finally {
+            database.close()
+        }
+    }
+
+    /**
+     * A queued write and a refusal, in the shape [version]'s tables have.
+     * A version that changes pending_write or write_refusal gets its own
+     * rows here, and the migration test then covers the new shape too.
+     */
+    private fun queueRows(version: Int, db: SQLiteDatabase): List<String> {
+        val shape = columns(db, "pending_write") to columns(db, "write_refusal")
+        assertEquals(
+            V2_QUEUE_SHAPE,
+            shape,
+            "version $version changed the queue tables: add rows for its shape to queueRows",
+        )
+        return V2_QUEUE_ROWS
+    }
+
+    private fun columns(db: SQLiteDatabase, table: String): List<String> =
+        db.rawQuery("PRAGMA table_info(`$table`)", null).use { cursor ->
+            buildList { while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name"))) }
+        }
 
     /**
      * A database file exactly as Room left it at [version]: the committed
@@ -122,8 +150,26 @@ class ChaoticDatabaseMigrationTest {
         /** The first version with pending_write and write_refusal (CHT-1613). */
         const val FIRST_QUEUE_VERSION = 2
 
-        /** Gradle runs unit tests in the module's directory. */
-        val SCHEMAS = File("schemas")
+        /** app/schemas: set by the Gradle test task, else the module directory Gradle runs tests in. */
+        val SCHEMAS = File(System.getProperty("chaotic.roomSchemas") ?: "schemas")
+
+        val V2_QUEUE_SHAPE = listOf(
+            "seq", "key", "kind", "path", "entryId", "issueId", "teamId", "field", "value",
+            "valueLabel", "label", "createdAtMillis", "notBeforeMillis", "attempts",
+        ) to listOf(
+            "seq", "key", "kind", "label", "status", "errorCode", "message", "entryId", "issueId",
+            "atMillis", "value",
+        )
+
+        val V2_QUEUE_ROWS = listOf(
+            "INSERT INTO pending_write (key, kind, path, entryId, issueId, teamId, field, value, " +
+                "valueLabel, label, createdAtMillis, notBeforeMillis, attempts) VALUES " +
+                "('w1', 'COMMENT', '/api/issues/i1/comments', NULL, 'i1', 't1', NULL, 'Looks good', " +
+                "NULL, 'Comment on CHT-1', 1000, 0, 2)",
+            "INSERT INTO write_refusal (key, kind, label, status, errorCode, message, entryId, issueId, " +
+                "atMillis, value) VALUES ('w0', 'APPROVE', 'Approve CHT-2', 409, 'conflict', 'Already done', " +
+                "'e1', 'i2', 900, NULL)",
+        )
 
         const val TABLE_NAME = "\${TABLE_NAME}"
     }

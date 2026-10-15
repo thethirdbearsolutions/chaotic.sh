@@ -92,6 +92,13 @@ room {
     schemaDirectory("$projectDir/schemas")
 }
 
+// ChaoticDatabaseMigrationTest builds each committed version from these
+// schemas (CHT-1666), whatever directory the test runs in.
+val roomSchemas = "$projectDir/schemas"
+tasks.withType<Test>().configureEach {
+    systemProperty("chaotic.roomSchemas", roomSchemas)
+}
+
 dependencies {
     implementation(project(":core-api"))
     implementation(project(":core-auth"))

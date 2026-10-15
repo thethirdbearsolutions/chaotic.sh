@@ -56,15 +56,29 @@ abstract class ChaoticDatabase : RoomDatabase() {
         private val CACHE_ONLY_VERSIONS = intArrayOf(1)
 
         /** One per version step from 2 on; each must keep the queued writes (CHT-1666). */
-        val MIGRATIONS: Array<Migration> = arrayOf()
+        val MIGRATIONS: List<Migration> = listOf()
 
-        /** The database as the app opens it; tests open it the same way. */
+        /**
+         * The database as the app opens it; tests open it the same way.
+         *
+         * From version 2 on there is no destructive fallback, so an upgrade
+         * with no path in [MIGRATIONS] throws instead of wiping: if shipped,
+         * the database fails to open on every upgraded device (every DAO
+         * call, in the UI and in the workers) until a fix ships or the
+         * person clears the app's data, which also signs them out. That is
+         * the chosen trade-off over silently dropping the queue, and
+         * ChaoticDatabaseMigrationTest makes it a CI failure rather than a
+         * release one: it opens every committed version from 2 on through
+         * this builder, so a bump without its migration cannot pass.
+         */
         fun builder(context: Context, name: String = NAME): Builder<ChaoticDatabase> =
             Room.databaseBuilder(context, ChaoticDatabase::class.java, name)
-                .addMigrations(*MIGRATIONS)
+                .addMigrations(*MIGRATIONS.toTypedArray())
                 .fallbackToDestructiveMigrationFrom(true, *CACHE_ONLY_VERSIONS)
-                // Only a debug build can be downgraded in place (adb install -d);
-                // an older build cannot read a newer queue anyway.
+                // A downgrade drops everything, the queued writes included:
+                // that is a policy choice, as an older build cannot read a
+                // newer queue. It is rare in practice: Play never downgrades,
+                // and adb install -d needs a debuggable app or device.
                 .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
     }
 }
