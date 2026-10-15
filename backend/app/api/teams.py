@@ -14,6 +14,7 @@ from app.schemas.team import (
     TeamMemberResponse,
     TeamActivityResponse,
     TeamRoleUpdate,
+    TeamOwnershipTransfer,
     TeamInvitationCreate,
     TeamInvitationResponse,
     TeamInvitationCreatedResponse,
@@ -28,7 +29,9 @@ from app.oxyde_models.user import OxydeUser
 from app.services.agent_service import AgentService
 from app.services.credential_events import revoking
 from app.services.mention_handles import MentionDirectory
-from app.services.team_service import TeamService
+from app.services.team_service import (
+    LastOwnerError, MembershipChanged, NotAnOwnerCandidate, OwnerInvitationRefused, TeamService,
+)
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
 from app.services.email_verification_service import (
@@ -194,13 +197,29 @@ async def update_member_role(
             detail="Member not found",
         )
 
-    if member.role == TeamRole.OWNER:
+    # Owners are made and unmade only by owners (CHT-1848): an admin who
+    # could grant OWNER could make themselves one and remove the others.
+    if TeamRole.OWNER in (member.role, resolved_role) and not await _is_team_owner(team_id, current_user):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot change owner's role",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owners can change an owner's role or make a member an owner",
         )
+    if resolved_role == TeamRole.OWNER and member.role != TeamRole.OWNER:
+        await _require_owner_candidate(member.user_id)
 
-    member = await team_service.update_member_role(member, resolved_role, actor_id=current_user.id)
+    try:
+        member = await team_service.update_member_role(member, resolved_role, actor_id=current_user.id)
+    except LastOwnerError:
+        raise _last_owner() from None
+    except MembershipChanged:
+        raise _membership_changed() from None
+    except NotAnOwnerCandidate:
+        raise _not_an_owner_candidate() from None
+    if member is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found",
+        )
     return TeamMemberResponse(
         id=member.id,
         user_id=member.user_id,
@@ -233,10 +252,15 @@ async def remove_member(
             detail="Member not found",
         )
 
-    if member.role == TeamRole.OWNER:
+    # An owner leaves on their own, or is removed by another owner, and
+    # only while another owner remains (checked in the delete) (CHT-1848).
+    # The delete re-checks the role, so a member made an owner after this
+    # read is not removed by a caller who may not remove owners.
+    may_remove_owner = user_id == current_user.id or await _is_team_owner(team_id, current_user)
+    if member.role == TeamRole.OWNER and not may_remove_owner:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot remove owner",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owners can remove an owner",
         )
 
     # Leaving the team ends the agent keys the member holds for it, in the
@@ -245,7 +269,15 @@ async def remove_member(
     # their own, to the team's longest-standing owner.
     agent_service = AgentService()
     async with revoking():
-        if not await team_service.remove_member(member, actor_id=current_user.id):
+        try:
+            removed_now = await team_service.remove_member(
+                member, actor_id=current_user.id, may_remove_owner=may_remove_owner,
+            )
+        except LastOwnerError:
+            raise _last_owner() from None
+        except MembershipChanged:
+            raise _membership_changed() from None
+        if not removed_now:
             # Removed meanwhile (another admin, a retried request).
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -254,10 +286,11 @@ async def remove_member(
         if user_id != current_user.id:
             new_owner_id = current_user.id
         else:
-            owners = await OxydeTeamMember.objects.filter(
-                team_id=team_id, role=TeamRole.OWNER,
-            ).order_by("joined_at").all()
-            new_owner_id = owners[0].user_id if owners else None
+            # The longest-standing owner who can act as one: a person with
+            # an active account, as the last-owner check counts them, never
+            # an agent's OWNER row or a deactivated account (PR #455 review 3).
+            owners = await team_service.acting_owner_ids(team_id, excluding=user_id)
+            new_owner_id = owners[0] if owners else None
         released = await agent_service.release_member_agents(
             team_id, user_id, new_owner_id, actor_id=current_user.id,
         )
@@ -268,6 +301,125 @@ async def remove_member(
         await agent_service.notify_member_agents_released(
             team_id=team_id, released=released, removed=removed, actor=current_user, new_owner=new_owner,
         )
+
+
+async def _is_team_owner(team_id: str, user) -> bool:
+    """Does ``user`` act as an owner of the team: a person holding the
+    OWNER role. An agent never does, whatever its row says (CHT-1848)."""
+    if user.is_agent:
+        return False
+    member = await TeamService().get_member(team_id, user.id)
+    return member is not None and member.role == TeamRole.OWNER
+
+
+def _last_owner() -> HTTPException:
+    # 400, as the old blanket "Cannot remove owner" was.
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="A team must keep an owner: make another member an owner first "
+               "(chaotic team transfer-ownership USER)",
+    )
+
+
+def _membership_changed() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="The team's memberships changed meanwhile; check them and try again",
+    )
+
+
+def _not_an_owner_candidate() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Only a person with an active account can own a team",
+    )
+
+
+async def _require_owner_candidate(user_id: str) -> None:
+    """An owner is a person with an active account (CHT-1848): an agent
+    acts for a person, and a deactivated account cannot act at all. The
+    write checks it again (team_service._ROW_IS_A_PERSON); this answers
+    the common case with a more specific text."""
+    user = await UserService().get_by_id(user_id)
+    if user is None or user.is_agent:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only a person can own a team, not an agent",
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A deactivated account cannot own a team",
+        )
+
+
+@router.post("/{team_id}/transfer-ownership", response_model=TeamMemberResponse)
+@writes
+async def transfer_ownership(
+    team_id: str,
+    transfer_in: TeamOwnershipTransfer,
+    current_user: CurrentUser,
+    _app_session: NotAppSession,
+) -> TeamMemberResponse:
+    """Hand the team on to another member (CHT-1848).
+
+    The member named becomes an owner and the caller, who must be an
+    owner, becomes an admin, in one transaction, so the team is never
+    without an owner. The new owner must be a current member of the team
+    and a person with an active account, not an agent. A team with
+    several owners keeps them all; to add an owner without stepping
+    down, change the member's role to owner instead.
+
+    Anyone outside the team's directory gets ``team_hidden()``; a member
+    of it who is not an owner (an agent never is, here), 403. Answers
+    the new owner's membership.
+    """
+    team_service = TeamService()
+    if not await is_in_team_directory(current_user, team_id):
+        raise team_hidden()
+    if not await _is_team_owner(team_id, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owners can transfer team ownership",
+        )
+    if transfer_in.user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Name the member who should own the team, not yourself",
+        )
+    # An agent of this team has no membership row; say why it is refused
+    # rather than "not found". Any other non-member is not found.
+    candidate = await UserService().get_by_id(transfer_in.user_id)
+    if candidate is not None and candidate.is_agent and candidate.agent_team_id == team_id:
+        await _require_owner_candidate(candidate.id)
+    target = await team_service.get_member(team_id, transfer_in.user_id)
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found",
+        )
+    if target.role == TeamRole.OWNER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That member is already an owner; to step down, change your own role",
+        )
+    await _require_owner_candidate(target.user_id)
+
+    try:
+        target = await team_service.transfer_ownership(target, actor_id=current_user.id)
+    except MembershipChanged:
+        # Also a target deactivated meanwhile: the promotion requires an
+        # active person in the write itself.
+        raise _membership_changed() from None
+    return TeamMemberResponse(
+        id=target.id,
+        user_id=target.user_id,
+        team_id=target.team_id,
+        role=target.role,
+        joined_at=target.joined_at,
+        user_name=candidate and candidate.name,
+        user_email=candidate and candidate.email,
+    )
 
 
 @router.get("/{team_id}/activity", response_model=list[TeamActivityResponse])
@@ -349,6 +501,14 @@ async def create_invitation(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admins can invite members",
+        )
+    # Only owners make owners, invitations included (PR #455 review 1):
+    # otherwise an admin invites an address they control as owner and,
+    # once it is accepted, removes the real owners.
+    if invitation_in.role == TeamRole.OWNER and not await _is_team_owner(team_id, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owners can invite an owner",
         )
 
     team = await team_service.get_by_id(team_id)
@@ -610,7 +770,12 @@ async def accept_invitation(
             headers=INVITATION_HEADERS,
         )
 
-    member = await team_service.accept_invitation(invitation, current_user)
+    try:
+        member = await team_service.accept_invitation(invitation, current_user)
+    except OwnerInvitationRefused as refused:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=refused.message, headers=INVITATION_HEADERS,
+        ) from None
     if member is None:
         # Accepted, declined or revoked by someone else meanwhile.
         raise _invitation_gone()

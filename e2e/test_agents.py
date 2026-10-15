@@ -60,11 +60,33 @@ def _as_agent(key):
         yield Client()
 
 
+@pytest.fixture
+def co_owner(test_team, test_user2):
+    """A second owner of test_team: deleting a team's only owner is
+    refused (CHT-1865), and these tests are about authorship."""
+    from conftest import _run_async
+    from app.enums import TeamRole
+    from app.oxyde_models.team import OxydeTeamMember
+
+    _run_async(OxydeTeamMember.objects.create(team_id=test_team["id"], user_id=test_user2.id, role=TeamRole.OWNER))
+    return test_user2
+
+
 class TestDeletingTheOwner:
     """DELETE /users/me follows the agent-delete rule for the account and
     every agent it owns (CHT-1467)."""
 
-    def test_an_agent_with_authored_work_blocks_its_owners_deletion(self, api_client, test_project, test_team):
+    def test_the_only_owner_of_a_team_is_refused(self, api_client, test_team):
+        """CHT-1865: the team would be left with no owner."""
+        with pytest.raises(APIError) as refused:
+            api_client.delete_me()
+        assert refused.value.status_code == 409
+        assert "Transfer ownership" in str(refused.value)
+        assert api_client.get_me()["id"]
+
+    def test_an_agent_with_authored_work_blocks_its_owners_deletion(
+        self, api_client, test_project, test_team, co_owner,
+    ):
         agent = api_client.create_team_agent(test_team["id"], "Worker")
         with _as_agent(agent["api_key"]) as agent_client:
             issue = agent_client.create_issue(test_project["id"], "written by the agent")
@@ -77,7 +99,7 @@ class TestDeletingTheOwner:
         assert api_client.get_agent(agent["id"])["id"] == agent["id"]
         assert api_client.get_issue(issue["id"])["creator_id"] == agent["id"]
 
-    def test_an_idle_agent_is_deleted_with_its_owner(self, api_client, test_team):
+    def test_an_idle_agent_is_deleted_with_its_owner(self, api_client, test_team, co_owner):
         agent = api_client.create_team_agent(test_team["id"], "Idle")
 
         api_client.delete_me()

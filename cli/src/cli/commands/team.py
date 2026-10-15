@@ -20,6 +20,7 @@ from .shared import _client, console, resolve_content_value
 TEAM_ACTIVITY_ACTIONS = [
     "member_added", "member_removed", "role_changed", "invitation_created",
     "invitation_cancelled", "invitation_accepted", "verification_code_issued",
+    "ownership_transferred",
 ]
 
 
@@ -461,15 +462,62 @@ def register(cli):
         _client().remove_member(team_id, user_id)
         console.print(f"[green]Member removed from team.[/green]")
 
+    @team.command("leave")
+    @_main().require_team
+    @_main().handle_error
+    def team_leave():
+        """Leave the current team.
+
+        An owner can leave only while the team has another owner; hand it
+        on first with `chaotic team transfer-ownership USER` (CHT-1848).
+        """
+        m = _main()
+        team_id = m.get_current_team()
+        me = _client().get_me()
+        if not m.confirm_action("Leave this team?"):
+            raise SystemExit(0)
+        _client().remove_member(team_id, me["id"])
+        console.print("[green]You left the team.[/green] Pick another with `chaotic team use`.")
+
+    @team.command("transfer-ownership")
+    @click.argument("user")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def team_transfer_ownership(user):
+        """Hand the current team on to another member (owners only).
+
+        USER (a user ID, name, or email) becomes an owner and you become
+        an admin, in one step, so the team always has an owner. USER must
+        be a person who is a member of the team, not an agent. To add an
+        owner without stepping down: `chaotic team role USER owner`.
+        Afterwards you can step down further (`chaotic team role me
+        member`) or leave (`chaotic team leave`) (CHT-1848).
+        """
+        m = _main()
+        team_id = m.get_current_team()
+        user_id = m.resolve_assignee_id(user)
+        if not m.confirm_action("Make this member an owner and step down to admin?"):
+            raise SystemExit(0)
+        member = _client().transfer_ownership(team_id, user_id)
+        if m.is_json_output():
+            m.output_json(member)
+            return
+        who = member.get("user_name") or member.get("user_email") or user_id
+        console.print(f"[green]{esc(who)} now owns the team; you are an admin.[/green]")
+
     @team.command("role")
     @click.argument("user")
-    @click.argument("role", type=click.Choice(["member", "admin"], case_sensitive=False))
+    @click.argument("role", type=click.Choice(["member", "admin", "owner"], case_sensitive=False))
     @_main().require_team
     @_main().handle_error
     def team_role(user, role):
         """Change a team member's role.
 
-        USER can be a user ID, name, or email.
+        USER can be a user ID, name, email, or "me". Only an owner can
+        make a member an owner or change an owner's role, and a team
+        always keeps an owner: an owner steps down (`chaotic team role me
+        admin`) only while another owner remains (CHT-1848).
         """
         m = _main()
         team_id = m.get_current_team()

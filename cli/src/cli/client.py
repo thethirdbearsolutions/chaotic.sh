@@ -420,6 +420,10 @@ class Client:
     def update_member_role(self, team_id: str, user_id: str, role: str) -> dict:
         return self._request("PATCH", f"/teams/{team_id}/members/{user_id}", {"role": role})
 
+    def transfer_ownership(self, team_id: str, user_id: str) -> dict:
+        """Make ``user_id`` an owner and the caller an admin (CHT-1848)."""
+        return self._request("POST", f"/teams/{team_id}/transfer-ownership", {"user_id": user_id})
+
     def get_team_activity(
         self, team_id: str, skip: int | None = None, limit: int | None = None, action: str | None = None,
     ) -> list:

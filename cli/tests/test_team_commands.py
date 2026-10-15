@@ -945,3 +945,60 @@ class TestInviteTokenFromArg:
     def test_foreign_invite_host(self, link_host, web_url, expected):
         from cli.commands.team import foreign_invite_host
         assert foreign_invite_host(link_host, web_url) == expected
+
+
+class TestTeamOwnership:
+    """transfer-ownership, leave, and `role ... owner` (CHT-1848)."""
+
+    def test_transfer_ownership_names_the_new_owner(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_members = MagicMock(return_value=[
+            {"user_id": "u-bob", "user_name": "Bob", "user_email": "bob@test.com", "role": "member"},
+        ])
+        client.transfer_ownership = MagicMock(return_value={
+            "id": "m1", "user_id": "u-bob", "team_id": "test-team-123", "role": "owner",
+            "user_name": "Bob", "user_email": "bob@test.com",
+        })
+        result = cli_runner.invoke(cli, ['--yes', 'team', 'transfer-ownership', 'bob@test.com'])
+        assert result.exit_code == 0, result.output
+        client.transfer_ownership.assert_called_once_with("test-team-123", "u-bob")
+        assert "Bob now owns the team" in result.output
+
+    def test_transfer_ownership_json(self, cli_runner):
+        from cli.main import cli, client
+
+        member = {"id": "m1", "user_id": "u-bob", "team_id": "test-team-123", "role": "owner"}
+        client.get_team_members = MagicMock(return_value=[{"user_id": "u-bob", "user_name": "Bob", "role": "member"}])
+        client.transfer_ownership = MagicMock(return_value=member)
+        result = cli_runner.invoke(cli, ['--yes', 'team', 'transfer-ownership', 'u-bob', '--json'])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == member
+
+    def test_transfer_ownership_asks_first(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_members = MagicMock(return_value=[{"user_id": "u-bob", "user_name": "Bob", "role": "member"}])
+        client.transfer_ownership = MagicMock()
+        result = cli_runner.invoke(cli, ['team', 'transfer-ownership', 'u-bob'], input="n\n")
+        assert result.exit_code == 0
+        client.transfer_ownership.assert_not_called()
+
+    def test_leave_removes_your_own_membership(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_me = MagicMock(return_value={"id": "u-me"})
+        client.remove_member = MagicMock(return_value=None)
+        result = cli_runner.invoke(cli, ['--yes', 'team', 'leave'])
+        assert result.exit_code == 0, result.output
+        client.remove_member.assert_called_once_with("test-team-123", "u-me")
+        assert "You left the team" in result.output
+
+    def test_role_accepts_owner(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_me = MagicMock(return_value={"id": "u-me"})
+        client.update_member_role = MagicMock(return_value={})
+        result = cli_runner.invoke(cli, ['team', 'role', 'me', 'owner'])
+        assert result.exit_code == 0, result.output
+        client.update_member_role.assert_called_once_with("test-team-123", "u-me", "owner")

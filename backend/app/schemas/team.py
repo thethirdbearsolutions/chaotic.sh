@@ -43,6 +43,14 @@ class TeamRoleUpdate(BaseModel):
     role: TeamRole
 
 
+class TeamOwnershipTransfer(BaseModel):
+    """Body of POST /teams/{team_id}/transfer-ownership (CHT-1848): the
+    member who becomes an owner. The caller, an owner, becomes an admin
+    in the same transaction."""
+
+    user_id: str = Field(min_length=1)
+
+
 class TeamResponse(BaseModel):
     """Schema for team response."""
 
@@ -194,8 +202,10 @@ class TeamActivityResponse(BaseModel):
     ``actor_*`` did it, ``target_user_*`` it concerns (the same user when
     a member left on their own). ``email`` is the invited address on
     invitation rows. ``role`` is the role granted (the new one on
-    role_changed, the one held on member_removed); ``old_role`` only on
-    role_changed. Names are null for a user since deleted."""
+    role_changed, the one held on member_removed, owner on
+    ownership_transferred); ``old_role`` only on role_changed and
+    ownership_transferred (the new owner's role before it). Names are
+    null for a user since deleted."""
 
     id: str
     team_id: str

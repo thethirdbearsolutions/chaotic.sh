@@ -3677,39 +3677,85 @@ def _ordering(joined: datetime | None, at: datetime | None, until: datetime | No
     return "removed_after_joined" if at > joined else "unknown"
 
 
-def _remedy(finding: dict, db_path: Path, logged: bool = False) -> list[str]:
-    """What ends a leftover membership, as steps for the operator. With
-    `logged` (the database has team_activities), the hand-run delete also
-    writes the MEMBER_REMOVED row the server would, in one transaction,
-    so the team's log keeps every removal (PR #451 review 5)."""
+def _remedy(finding: dict, db_path: Path, logged: bool = False, other_owner: bool = False,
+            successor: dict | None = None) -> list[str]:
+    """What ends a leftover membership, as steps for the operator.
+
+    A member's, or an owner's while the team has another owner (a person
+    with an active account, not itself a leftover; `other_owner`), the
+    API ends: since CHT-1848 an owner removes another owner. The team's
+    only owner it never removes, and a team left with no owner cannot get
+    one back through the API, so the hand-run recipe makes `successor`
+    (a member row: the longest-standing admin who is a person with an
+    active account, else such a member) the owner in the same
+    transaction, and deletes the leftover only if that promotion took.
+    With no successor there is no recipe: ending it would leave the team
+    with no owner (PR #455 review 4). With `logged` (the database has
+    team_activities), the recipe also writes the rows the server would:
+    ROLE_CHANGED for the successor and MEMBER_REMOVED for the leftover,
+    each only if its statement changed a row (PR #451 review 5)."""
     team, user = finding["team_id"], finding["user_id"]
     if finding["role"] != "OWNER":
         return [
             f"as an admin of team {team}: chaotic team use {team}",
             f"chaotic team remove-member {user}",
         ]
-    # The API refuses both to remove an owner and to change an owner's
-    # role (teams.remove_member, teams.update_member_role), so an owner
-    # leftover can only be ended in the database.
+    if other_owner:
+        return [
+            f"as another owner of team {team}: chaotic team use {team}",
+            f"chaotic team remove-member {user}",
+        ]
+    ask = (
+        f"if they can be asked, they hand the team on first, signed in: chaotic team use {team}, "
+        "then chaotic team transfer-ownership NEW_OWNER; the new owner then runs: "
+        f"chaotic team remove-member {user}"
+    )
+    head = f"user {user} is the team's only owner, and the API never removes a team's last owner."
+    if successor is None:
+        return [
+            head,
+            ask,
+            "otherwise leave it: the team has no other member who could own it (a person with an "
+            "active account), and ending this membership would leave it with no owner, which "
+            "nothing but the database can repair. Deleting the team (as its owner) also ends it.",
+        ]
+
     def lit(value) -> str:
         return "'" + str(value).replace("'", "''") + "'"
 
-    sql = f"DELETE FROM team_members WHERE id = {lit(finding['member_id'])}"
-    if logged:
-        # The row the server writes on a removal (OxydeTeamActivity), with
-        # no actor: the operator did it by hand. Stored forms: enum names,
-        # naive UTC text.
-        sql = (
-            f"BEGIN; {sql}; "
-            "INSERT INTO team_activities (id, team_id, action, actor_id, target_user_id, role, created_at) "
-            f"VALUES ({lit(uuid.uuid4())}, {lit(team)}, 'MEMBER_REMOVED', NULL, {lit(user)}, 'OWNER', "
-            "strftime('%Y-%m-%d %H:%M:%f', 'now')); COMMIT;"
+    def logged_row(action: str, target: str, role: str, old_role: str | None) -> str:
+        # The row the server writes (OxydeTeamActivity), with no actor:
+        # the operator did it by hand. Stored forms: enum names, naive UTC
+        # text. Only when the statement before it changed a row.
+        return (
+            "INSERT INTO team_activities (id, team_id, action, actor_id, target_user_id, role, old_role, created_at) "
+            f"SELECT {lit(uuid.uuid4())}, {lit(team)}, {lit(action)}, NULL, {lit(target)}, {lit(role)}, "
+            f"{lit(old_role) if old_role else 'NULL'}, strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE changes() = 1; "
         )
+
+    promote = (
+        f"UPDATE team_members SET role = 'OWNER' WHERE id = {lit(successor['member_id'])} "
+        f"AND role = {lit(successor['role'])}; "
+    )
+    delete = (
+        f"DELETE FROM team_members WHERE id = {lit(finding['member_id'])} AND EXISTS ("
+        f"SELECT 1 FROM team_members WHERE id = {lit(successor['member_id'])} AND role = 'OWNER'); "
+    )
+    sql = "BEGIN; " + promote
+    if logged:
+        sql += logged_row("ROLE_CHANGED", successor["user_id"], "OWNER", successor["role"])
+    sql += delete
+    if logged:
+        sql += logged_row("MEMBER_REMOVED", user, "OWNER", None)
+    sql += "COMMIT;"
     return [
-        "the API cannot end an owner membership (it removes no owner and changes no owner's role); by hand:",
+        head,
+        ask,
+        f"otherwise, by hand, making user {successor['user_id']} (now {successor['role'].lower()}) "
+        "the owner in the same transaction (the delete happens only if that took):",
         "chaotic system backup",
         f"sqlite3 {shlex.quote(str(db_path))} {shlex.quote(sql)}",
-        f"then, as an admin of team {team}, revoke the keys user {user} holds for its agents "
+        f"then, as an owner of team {team}, revoke the keys user {user} holds for its agents "
         "(chaotic agent keys list AGENT / chaotic agent keys revoke AGENT KEY)",
     ]
 
@@ -3787,6 +3833,23 @@ def audit_removed_members(db_path: Path, logged_removals=None) -> dict:
         members = conn.execute(
             "SELECT id AS member_id, team_id, user_id, role, joined_at FROM team_members "
             "WHERE user_id IS NOT NULL ORDER BY team_id, user_id"
+        ).fetchall()
+        # Owners who can act as one, for the owner remedy (CHT-1848): the
+        # server counts a person with an active account, never an agent.
+        owner_rows = conn.execute(
+            "SELECT tm.id, tm.team_id FROM team_members tm JOIN users u ON u.id = tm.user_id "
+            "WHERE tm.role = 'OWNER' AND u.is_agent = 0 AND u.is_active = 1"
+            if "users" in tables else
+            "SELECT id, team_id FROM team_members WHERE role = 'OWNER'"
+        ).fetchall()
+        # Who could succeed a team's only owner, best first: admins, then
+        # members, longest-standing first, people with active accounts.
+        successor_rows = conn.execute(
+            "SELECT tm.id AS member_id, tm.team_id, tm.user_id, tm.role FROM team_members tm "
+            + ("JOIN users u ON u.id = tm.user_id AND u.is_agent = 0 AND u.is_active = 1 "
+               if "users" in tables else "")
+            + "WHERE tm.role IN ('ADMIN', 'MEMBER') AND tm.user_id IS NOT NULL "
+            "ORDER BY tm.team_id, tm.role = 'ADMIN' DESC, tm.joined_at, tm.id"
         ).fetchall()
     except sqlite3.Error as e:
         raise AuditError(f"cannot read {db_path}: {e}") from e
@@ -3869,8 +3932,18 @@ def audit_removed_members(db_path: Path, logged_removals=None) -> dict:
                     "ordering": ordering,
                 })
     result = sorted(findings.values(), key=lambda f: (f["team_id"], f["user_id"], f["member_id"]))
+    # A leftover owner is no owner to count on: the remedy may end it too.
+    leftover_ids = {f["member_id"] for f in result}
+    owner_teams = {row[1] for row in owner_rows if row[0] not in leftover_ids}
+    successors: dict[str, dict] = {}
+    for row in successor_rows:
+        if row["member_id"] not in leftover_ids:
+            successors.setdefault(row["team_id"], dict(row))
     for finding in result:
-        finding["remedy"] = _remedy(finding, db_path, logged=has_activity)
+        finding["remedy"] = _remedy(
+            finding, db_path, logged=has_activity, other_owner=finding["team_id"] in owner_teams,
+            successor=successors.get(finding["team_id"]),
+        )
 
     # Every membership created after the activity log began can only have
     # been removed since, and every such removal is in it.

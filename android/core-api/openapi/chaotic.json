@@ -292,7 +292,7 @@
           "users"
         ],
         "summary": "Delete Me",
-        "description": "Delete the current user and their agents. Refused (409) when the\nuser or any of their agents authored anything, or a non-agent row\nnames the user as its parent (CHT-1467).",
+        "description": "Delete the current user and their agents. Refused (409) when the\nuser or any of their agents authored anything, or a non-agent row\nnames the user as its parent (CHT-1467), or the user is a team's only\nowner (CHT-1865): transfer ownership or delete the team first.",
         "operationId": "delete_me_api_users_me_delete",
         "responses": {
           "204": {
@@ -743,6 +743,64 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/teams/{team_id}/transfer-ownership": {
+      "post": {
+        "tags": [
+          "teams"
+        ],
+        "summary": "Transfer Ownership",
+        "description": "Hand the team on to another member (CHT-1848).\n\nThe member named becomes an owner and the caller, who must be an\nowner, becomes an admin, in one transaction, so the team is never\nwithout an owner. The new owner must be a current member of the team\nand a person with an active account, not an agent. A team with\nseveral owners keeps them all; to add an owner without stepping\ndown, change the member's role to owner instead.\n\nAnyone outside the team's directory gets ``team_hidden()``; a member\nof it who is not an owner (an agent never is, here), 403. Answers\nthe new owner's membership.",
+        "operationId": "transfer_ownership_api_teams__team_id__transfer_ownership_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamOwnershipTransfer"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamMemberResponse"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -15680,10 +15738,11 @@
           "invitation_created",
           "invitation_cancelled",
           "invitation_accepted",
-          "verification_code_issued"
+          "verification_code_issued",
+          "ownership_transferred"
         ],
         "title": "TeamActivityAction",
-        "description": "What a team_activities row records (CHT-1843, CHT-1845).\n\nWho did it is ``actor_id``; whom it concerns, ``target_user_id``. A\nmember leaving on their own is MEMBER_REMOVED with actor and target\nthe same user."
+        "description": "What a team_activities row records (CHT-1843, CHT-1845).\n\nWho did it is ``actor_id``; whom it concerns, ``target_user_id``. A\nmember leaving on their own is MEMBER_REMOVED with actor and target\nthe same user. OWNERSHIP_TRANSFERRED (CHT-1848) is the transfer as a\nwhole, actor the owner who handed it on, target the new owner; the\ntwo role changes it makes are logged as ROLE_CHANGED rows beside it,\nso that ``action=role_changed`` lists every change of role."
       },
       "TeamActivityResponse": {
         "properties": {
@@ -15798,7 +15857,7 @@
           "created_at"
         ],
         "title": "TeamActivityResponse",
-        "description": "One row of a team's administrative log (CHT-1843, CHT-1845).\n\n``actor_*`` did it, ``target_user_*`` it concerns (the same user when\na member left on their own). ``email`` is the invited address on\ninvitation rows. ``role`` is the role granted (the new one on\nrole_changed, the one held on member_removed); ``old_role`` only on\nrole_changed. Names are null for a user since deleted."
+        "description": "One row of a team's administrative log (CHT-1843, CHT-1845).\n\n``actor_*`` did it, ``target_user_*`` it concerns (the same user when\na member left on their own). ``email`` is the invited address on\ninvitation rows. ``role`` is the role granted (the new one on\nrole_changed, the one held on member_removed, owner on\nownership_transferred); ``old_role`` only on role_changed and\nownership_transferred (the new owner's role before it). Names are\nnull for a user since deleted."
       },
       "TeamCommentResponse": {
         "properties": {
@@ -16163,6 +16222,21 @@
         ],
         "title": "TeamMemberResponse",
         "description": "Schema for team member response."
+      },
+      "TeamOwnershipTransfer": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "User Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id"
+        ],
+        "title": "TeamOwnershipTransfer",
+        "description": "Body of POST /teams/{team_id}/transfer-ownership (CHT-1848): the\nmember who becomes an owner. The caller, an owner, becomes an admin\nin the same transaction."
       },
       "TeamResponse": {
         "properties": {

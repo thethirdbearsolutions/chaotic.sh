@@ -19,6 +19,19 @@ from app.services.agent_service import AgentService
 from app.services.user_service import UserDeletionRefusedError, UserService
 
 
+@pytest.fixture
+async def co_owner(test_team):
+    """test_user owns test_team alone, and deleting a team's only owner is
+    refused (CHT-1865, tested in test_team_ownership). The tests here are
+    about authorship, so those that delete test_user give the team a
+    second owner."""
+    from app.enums import TeamRole
+
+    other = await OxydeUser.objects.create(email="co-owner@example.com", hashed_password="x", name="Co-owner")
+    await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=other.id, role=TeamRole.OWNER)
+    return other
+
+
 async def _issue(project, number, creator_id):
     return await OxydeIssue.objects.create(
         project_id=project.id, identifier=f"{project.key}-{number}", number=number, title="t",
@@ -27,7 +40,7 @@ async def _issue(project, number, creator_id):
 
 
 @pytest.mark.asyncio
-async def test_a_human_who_authored_anything_is_not_deleted(client, auth_headers, test_user, test_project):
+async def test_a_human_who_authored_anything_is_not_deleted(co_owner, client, auth_headers, test_user, test_project):
     issue = await _issue(test_project, 501, test_user.id)
 
     response = await client.delete("/api/users/me", headers=auth_headers)
@@ -42,7 +55,7 @@ async def test_a_human_who_authored_anything_is_not_deleted(client, auth_headers
 
 @pytest.mark.asyncio
 async def test_an_agent_with_authored_work_blocks_its_owners_deletion(
-    client, auth_headers, test_user, test_team, test_project,
+    co_owner, client, auth_headers, test_user, test_team, test_project,
 ):
     """The bypass: deleting the owner must not delete an agent the agent
     route would refuse to delete."""
@@ -73,7 +86,7 @@ async def test_an_agent_with_authored_work_blocks_its_owners_deletion(
 
 
 @pytest.mark.asyncio
-async def test_refusal_reports_the_users_and_each_agents_counts(test_user, test_team, test_project):
+async def test_refusal_reports_the_users_and_each_agents_counts(co_owner, test_user, test_team, test_project):
     service = AgentService()
     agent, _, _ = await service.create(AgentCreate(name="Writer"), test_user, test_team.id)
     await _issue(test_project, 503, test_user.id)
@@ -91,7 +104,7 @@ async def test_refusal_reports_the_users_and_each_agents_counts(test_user, test_
 
 
 @pytest.mark.asyncio
-async def test_agents_with_the_same_name_are_reported_separately(test_user, test_team, test_project):
+async def test_agents_with_the_same_name_are_reported_separately(co_owner, test_user, test_team, test_project):
     """Agent names are not unique; the refusal must not fold two into one."""
     service = AgentService()
     first, _, _ = await service.create(AgentCreate(name="Worker"), test_user, test_team.id)
@@ -112,7 +125,7 @@ async def test_agents_with_the_same_name_are_reported_separately(test_user, test
 
 @pytest.mark.asyncio
 async def test_gate_clearances_and_blocker_resolutions_count_as_authored(
-    test_user, test_project, test_issue, make_ritual,
+    co_owner, test_user, test_project, test_issue, make_ritual,
 ):
     """A human who only approved gates is still the record of who did."""
     from app.oxyde_models.issue import OxydeTicketLimboBlocker
@@ -154,7 +167,7 @@ async def test_a_non_agent_row_naming_the_user_as_parent_refuses_the_delete(clie
 
 @pytest.mark.asyncio
 async def test_a_human_whose_agents_authored_nothing_is_deleted_with_them(
-    client, auth_headers, test_user, test_team,
+    co_owner, client, auth_headers, test_user, test_team,
 ):
     service = AgentService()
     agents = [
@@ -173,7 +186,7 @@ async def test_a_human_whose_agents_authored_nothing_is_deleted_with_them(
 
 
 @pytest.mark.asyncio
-async def test_another_humans_agents_are_untouched(client, auth_headers, test_user, test_user2, test_team):
+async def test_another_humans_agents_are_untouched(co_owner, client, auth_headers, test_user, test_user2, test_team):
     other, _, _ = await AgentService().create(AgentCreate(name="Theirs"), test_user2, test_team.id)
 
     response = await client.delete("/api/users/me", headers=auth_headers)
