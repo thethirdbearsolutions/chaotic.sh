@@ -1,9 +1,10 @@
 # Known gitleaks findings that are not secrets (CHT-1733). Every one is a
 # test fixture: RFC 8291 Web Push test vectors, placeholder ck_ keys,
 # made-up UUIDs and literal "s3cr3t"/"nope" strings. Fingerprint format:
-# <commit>:<file>:<rule>:<line>. A new finding fails the secret-scan job;
-# if it is a fixture, add its fingerprint here or mark the line
-# with a trailing `gitleaks:allow` comment.
+# <commit>:<file>:<rule>:<line>. A new finding fails the secret-scan job.
+# If it is a fixture, mark the line with a trailing `gitleaks:allow`
+# comment. Add a fingerprint here only for a commit already on main: a
+# PR commit's SHA changes if the PR is squashed or rebased on merge.
 0afae4fda07da845152b368bd8aefbfc97e7a34e:backend/tests/test_mcp_legacy_notice.py:generic-api-key:128
 0afae4fda07da845152b368bd8aefbfc97e7a34e:backend/tests/test_mcp_legacy_notice.py:generic-api-key:139
 40b994db334a40ef8d46f2f9d8ab9009d3d4e85f:backend/tests/test_api_keys.py:generic-api-key:63
