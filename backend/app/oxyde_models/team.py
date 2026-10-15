@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 from app.utils.datetimes import DateTimeUTC
-from oxyde import Model, Field
+from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.enums import TeamRole, InvitationStatus
 from app.oxyde_models.enums import DbEnum
@@ -36,6 +36,12 @@ class OxydeTeamMember(Model):
     class Meta:
         is_table = True
         table_name = "team_members"
+        indexes = [
+            # One membership per user per team (CHT-1791, migration 0033).
+            # TeamService.add_member / accept_invitation treat a lost
+            # insert race (IntegrityError) as the existing membership.
+            Index(("team_id", "user_id"), unique=True, name="ux_team_members_team_user"),
+        ]
 
 
 class OxydeTeamInvitation(Model):

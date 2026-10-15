@@ -12,7 +12,7 @@ from oxyde.queries import Query, QueryManager
 import uuid
 from datetime import datetime, timezone
 from app.utils.datetimes import DateTimeUTC
-from oxyde import Model, Field
+from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser
 from app.enums import TeamRole, InvitationStatus
 from app.oxyde_models.enums import DbEnum

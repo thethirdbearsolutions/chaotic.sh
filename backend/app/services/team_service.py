@@ -8,7 +8,7 @@ from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.team import OxydeTeam, OxydeTeamMember, OxydeTeamInvitation
 from app.enums import TeamRole, InvitationStatus
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInvitationCreate
-from oxyde import execute_raw
+from oxyde import IntegrityError, execute_raw
 from app.db.transactions import atomic
 from app.utils import ensure_utc
 from app.services.credential_events import revoking
@@ -114,12 +114,22 @@ class TeamService:
     async def add_member(
         self, team: OxydeTeam, user: OxydeUser, role: TeamRole = TeamRole.MEMBER
     ) -> OxydeTeamMember:
-        """Add a member to a team."""
-        member = await OxydeTeamMember.objects.create(
-            team_id=team.id,
-            user_id=user.id,
-            role=role,
-        )
+        """Add a member to a team.
+
+        UNIQUE(team_id, user_id) (migration 0033, CHT-1791) allows one
+        membership per user per team. A user who is already a member keeps
+        the membership they have, role included, and it is returned.
+        """
+        try:
+            member = await OxydeTeamMember.objects.create(
+                team_id=team.id,
+                user_id=user.id,
+                role=role,
+            )
+        except IntegrityError:
+            member = await self.get_member(team.id, user.id)
+            if member is None:
+                raise
         await member.refresh()
         return member
 
@@ -214,11 +224,18 @@ class TeamService:
                 return None
             member = await self.get_member(invitation.team_id, user.id)
             if member is None:
-                member = await OxydeTeamMember.objects.create(
-                    team_id=invitation.team_id,
-                    user_id=user.id,
-                    role=invitation.role,
-                )
+                try:
+                    member = await OxydeTeamMember.objects.create(
+                        team_id=invitation.team_id,
+                        user_id=user.id,
+                        role=invitation.role,
+                    )
+                except IntegrityError:
+                    # A membership written since the check above (the
+                    # unique index of CHT-1791): keep it, as above.
+                    member = await self.get_member(invitation.team_id, user.id)
+                    if member is None:
+                        raise
         await member.refresh()
         return member
 
