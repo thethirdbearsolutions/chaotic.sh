@@ -81,6 +81,17 @@ exactly one wins — the loser gets the same clean error, not a silent
 overwrite. On that error: pick something else from `issue ready`, or
 `await` the ticket if you specifically need it.
 
+**Any other assignee change is compare-and-set too.** An `issue assign`,
+an `issue_update` with `assignee`, or an `issue_comment` with
+`assign_to` that sets or clears the assignee only lands if the
+assignee is still what the server read when the request started.
+If someone else changed it in between, the whole
+update is refused with `assignee_changed` (HTTP 409), carrying
+`issue_id` and the `assignee_id` the issue has now, and nothing is
+written (CHT-1832). On that error, re-read the issue and decide again:
+do not just resend the same request, because it would now succeed and
+overwrite the newer assignment.
+
 **If your task runs long, keep re-claiming.** Re-running `issue start`
 (or `issue claim`) on a ticket you already hold extends the lease --
 that's the heartbeat. There's no separate "renew" command; claiming is
@@ -243,7 +254,8 @@ Every tool returns a JSON object. Failures come back as
 MCP protocol-level error (ADR-0006): `message` is always a sentence you
 can show or reason over, `error_code` is present whenever the failure has
 a stable name (`sprint_in_arrears`, `claim_rituals_pending`,
-`tool_input`, `validation_error`, `unexpected`, ...), and governance
+`already_claimed`, `assignee_changed`, `tool_input`, `validation_error`,
+`unexpected`, ...), and governance
 errors keep their structure (`pending_rituals`, `arrears_by`, `override`
 hints) so you can act on them without parsing prose. A claim/close refused
 for pending ticket rituals lists each ritual with its `approval_mode` and
