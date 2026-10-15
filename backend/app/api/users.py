@@ -2,31 +2,34 @@
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, NotAppSession
-from app.schemas.user import UserUpdate, UserResponse
+from app.enums import AgentKind
+from app.schemas.user import UserLookupResponse, UserUpdate, UserResponse
 from app.services.user_service import UserDeletionRefusedError, UserService
 from app.api.visibility import visible_user
 
 router = APIRouter()
 
 
-@router.get("/{user_id}", response_model=UserResponse)
+@router.get("/{user_id}", response_model=UserLookupResponse)
 @reads
-async def get_user(user_id: str, current_user: CurrentUser) -> UserResponse:
+async def get_user(user_id: str, current_user: CurrentUser) -> UserLookupResponse:
     """Get user by ID."""
     # Yourself, or someone a team directory you are in lists (CHT-1841);
     # anyone else answers like a missing user (CHT-1785).
     user = await visible_user(current_user, user_id)
 
-    response = UserResponse.model_validate(user)
+    response = UserLookupResponse.model_validate(user)
+    response.parent_user_name, response.registered_by_name = await UserService().related_names(user)
     if user.is_agent:
         from app.api.agents import sees_external_ref
 
         if not await sees_external_ref(current_user, user):
             response.external_ref = None
             # A session identity's address is made from its external_ref
-            # (RegistrationService), so it hides with it; /agents/{id}
-            # shows no address at all (CHT-1841).
-            response.email = None
+            # (RegistrationService), so it hides with it. Any other
+            # agent's address (agent-<uuid>@agent.local) carries nothing.
+            if user.kind == AgentKind.SESSION:
+                response.email = None
     return response
 
 

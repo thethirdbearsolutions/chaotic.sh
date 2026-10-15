@@ -63,7 +63,7 @@ data class UserResponse (
     val id: kotlin.String,
 
     @SerialName(value = "email")
-    val email: kotlin.String?,
+    val email: kotlin.String,
 
     @SerialName(value = "name")
     val name: kotlin.String,

@@ -268,7 +268,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
+                  "$ref": "#/components/schemas/UserLookupResponse"
                 }
               }
             }
@@ -16685,7 +16685,7 @@
         "title": "UserLogin",
         "description": "Schema for user login."
       },
-      "UserResponse": {
+      "UserLookupResponse": {
         "properties": {
           "id": {
             "type": "string",
@@ -16700,6 +16700,157 @@
                 "type": "null"
               }
             ],
+            "title": "Email"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "is_agent": {
+            "type": "boolean",
+            "title": "Is Agent",
+            "default": false
+          },
+          "parent_user_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent User Name"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "email_verified_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Verified At"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "external_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Ref"
+          },
+          "registered_by_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered By Id"
+          },
+          "registered_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered By Name"
+          },
+          "can_register": {
+            "type": "boolean",
+            "title": "Can Register",
+            "default": false
+          },
+          "agent_team_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Team Id"
+          },
+          "agent_project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Project Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "name",
+          "avatar_url",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "UserLookupResponse",
+        "description": "``GET /users/{id}``: anyone in the caller's team directory, or the\ncaller itself (CHT-1841). The routes that return the caller's own\naccount keep ``UserResponse``, whose ``email`` is never null."
+      },
+      "UserResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
             "title": "Email"
           },
           "name": {

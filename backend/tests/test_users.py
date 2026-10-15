@@ -2,6 +2,7 @@
 import pytest
 from app.services.user_service import UserService
 from app.schemas.user import UserCreate, UserUpdate
+from app.utils.security import create_access_token
 
 
 @pytest.mark.asyncio
@@ -222,15 +223,34 @@ async def test_get_user_shows_exactly_whom_the_team_directory_shows(
     # An agent retired with its team (CHT-1844): no directory lists it.
     orphan, _, _ = await agents.create(AgentCreate(name="Orphan Bot"), test_user, test_team.id)
     await OxydeUser.objects.filter(id=orphan.id).update(agent_team_id=None)
+    # A deactivated agent that keeps its team: the directory lists it.
+    idle_bot, _, _ = await agents.create(AgentCreate(name="Idle Bot"), test_user, test_team.id)
+    await OxydeUser.objects.filter(id=idle_bot.id).update(is_active=False)
+    # An agent shaped like one made at OAuth consent (oauth_consent_service:
+    # an assistant carrying an oauth: ref), here given a key to call with.
+    oauth_agent, oauth_key, _ = await agents.create(
+        AgentCreate(name="OAuth App"), test_user2, team_b.id, external_ref=f"oauth:app.example:{test_user2.id}",
+    )
+    # A person in no team at all.
+    loner = await OxydeUser.objects.create(email="loner@example.com", hashed_password="x", name="Loner")
 
-    everyone = [test_user, test_user2, bridge, retired, team_agent, proj_agent, sib_agent, b_agent, orphan]
+    def bearer_for(user):
+        return {"Authorization": f"Bearer {create_access_token(data={'sub': user.id})}"}
+
+    everyone = [
+        test_user, test_user2, bridge, retired, loner,
+        team_agent, proj_agent, sib_agent, b_agent, orphan, idle_bot, oauth_agent,
+    ]
     viewers = {
         test_user.id: auth_headers,
         test_user2.id: auth_headers2,
+        bridge.id: bearer_for(bridge),
+        loner.id: bearer_for(loner),
         team_agent.id: {"Authorization": f"Bearer {team_key}"},
         proj_agent.id: {"Authorization": f"Bearer {proj_key}"},
         sib_agent.id: {"Authorization": f"Bearer {sib_key}"},
         b_agent.id: {"Authorization": f"Bearer {b_key}"},
+        oauth_agent.id: {"Authorization": f"Bearer {oauth_key}"},
     }
     missing = await client.get("/api/users/00000000-0000-0000-0000-000000000000", headers=auth_headers)
     assert missing.status_code == 404
@@ -258,6 +278,55 @@ async def test_get_user_shows_exactly_whom_the_team_directory_shows(
     assert (await client.get(f"/api/users/{b_agent.id}", headers=proj_headers)).status_code == 404
     assert (await client.get(f"/api/users/{bridge.id}", headers=viewers[b_agent.id])).status_code == 200
     assert (await client.get(f"/api/users/{orphan.id}", headers=auth_headers)).status_code == 404
+    assert (await client.get(f"/api/users/{idle_bot.id}", headers=proj_headers)).status_code == 200
+    assert (await client.get(f"/api/users/{bridge.id}", headers=viewers[oauth_agent.id])).status_code == 200
+    assert (await client.get(f"/api/users/{test_user.id}", headers=viewers[oauth_agent.id])).status_code == 404
+    assert (await client.get(f"/api/users/{test_user.id}", headers=viewers[loner.id])).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_user_names_an_agents_owner_and_registrar_and_hides_a_session_address(
+    client, auth_headers, test_user, test_team,
+):
+    """An agent seen at /users/{id} names its owner and registrar, as
+    /agents/{id} and /auth/me do. A session identity's address is made
+    from its external_ref, so it hides from whoever the ref hides from;
+    any other agent's address does not (CHT-1841)."""
+    from app.enums import AgentKind, TeamRole
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.oxyde_models.user import OxydeUser
+    from app.schemas.agent import AgentCreate
+    from app.services.agent_service import AgentService
+
+    teammate = await OxydeUser.objects.create(email="mate@example.com", hashed_password="x", name="Mate")
+    await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=teammate.id, role=TeamRole.MEMBER)
+    mate_headers = {"Authorization": f"Bearer {create_access_token(data={'sub': teammate.id})}"}
+
+    agents = AgentService()
+    registrar, _, _ = await agents.create(AgentCreate(name="Harness", can_register=True), test_user, test_team.id)
+    ref = "claude-code:session:2b1f0000-aaaa-bbbb-cccc-000000000001"
+    session, _, _ = await agents.create(AgentCreate(name="Session"), test_user, test_team.id, external_ref=ref)
+    session_email = "session-bbbb-cccc-000000000001-abc@agent.local"
+    await OxydeUser.objects.filter(id=session.id).update(
+        kind=AgentKind.SESSION, email=session_email, registered_by_id=registrar.id,
+    )
+    oauth_agent, _, _ = await agents.create(
+        AgentCreate(name="OAuth App"), test_user, test_team.id, external_ref=f"oauth:app.example:{test_user.id}",
+    )
+
+    as_mate = (await client.get(f"/api/users/{session.id}", headers=mate_headers)).json()
+    assert (as_mate["parent_user_name"], as_mate["registered_by_name"]) == (test_user.name, "Harness")
+    assert as_mate["external_ref"] is None and as_mate["email"] is None
+    as_owner = (await client.get(f"/api/users/{session.id}", headers=auth_headers)).json()
+    assert (as_owner["external_ref"], as_owner["email"]) == (ref, session_email)
+
+    oauth_as_mate = (await client.get(f"/api/users/{oauth_agent.id}", headers=mate_headers)).json()
+    assert oauth_as_mate["external_ref"] is None
+    assert oauth_as_mate["email"] == oauth_agent.email
+    assert oauth_as_mate["parent_user_name"] == test_user.name
+    assert oauth_as_mate["registered_by_name"] is None
+    agent_view = (await client.get(f"/api/agents/{oauth_agent.id}", headers=mate_headers)).json()
+    assert agent_view["parent_user_name"] == oauth_as_mate["parent_user_name"]
 
 
 # === Service layer tests ===

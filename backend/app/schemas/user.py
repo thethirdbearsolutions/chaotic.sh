@@ -29,10 +29,7 @@ class UserResponse(BaseModel):
     """Schema for user response."""
 
     id: str
-    # None only for an agent seen by someone who may not see its
-    # external_ref, which a session identity's address is made from
-    # (GET /users/{id}, CHT-1841). A person's address is always shown.
-    email: str | None
+    email: str
     name: str
     avatar_url: str | None
     is_active: bool
@@ -60,6 +57,18 @@ class UserResponse(BaseModel):
     agent_project_id: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserLookupResponse(UserResponse):
+    """``GET /users/{id}``: anyone in the caller's team directory, or the
+    caller itself (CHT-1841). The routes that return the caller's own
+    account keep ``UserResponse``, whose ``email`` is never null."""
+
+    # None only for a session identity seen by someone who may not see
+    # its external_ref: that address is made from the ref
+    # (RegistrationService). A person's address, and any other agent's,
+    # is always shown.
+    email: str | None
 
 
 class EmailVerificationSent(BaseModel):
