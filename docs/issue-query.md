@@ -136,9 +136,13 @@ GET /api/teams/{team_id}/issues/query
     chore, docs, tech_debt, refactor, epic), the order the vocabulary
     gives them in.
   - `assignee`: by the assignee's name, ignoring case.
-  - `sprint`: sprints that have been activated, oldest activation
-    first, then sprints never activated (planned), oldest created first.
-  - `project`: by project key.
+  - `sprint`: sprints that have run (active or completed) in the order
+    they were activated, then planned sprints, oldest created first. A
+    sprint that ran before its activation time was recorded (migration
+    0016) counts from its creation time. Across projects (team scope)
+    sprints of different projects interleave by time; order by
+    `project,sprint` to keep each project's sprints together.
+  - `project`: by project key, ignoring case.
 
   Two different assignees, sprints or projects never interleave, even
   when they share a name, so grouping by any of these fields after

@@ -618,6 +618,65 @@ async def test_ordering_by_type_assignee_sprint_project(
 
 
 @pytest.mark.asyncio
+async def test_sprint_order_by_status_and_relation_order_pages(
+    client, auth_headers, test_project, test_user,
+):
+    """A sprint that ran before migration 0016 has a null activated_at;
+    it is still history, not planned, and counts from its creation. And
+    paging through a relation order gives the unpaged order (CHT-1815)."""
+    from app.oxyde_models.sprint import OxydeSprint
+    from app.oxyde_models.user import OxydeUser
+
+    now = datetime.now(timezone.utc)
+    legacy = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Legacy", status=SprintStatus.COMPLETED,
+        activated_at=None, created_at=now - timedelta(days=100),
+    )
+    cur = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Cur", status=SprintStatus.ACTIVE,
+        activated_at=now - timedelta(days=1), created_at=now - timedelta(days=2),
+    )
+    planned = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Next", status=SprintStatus.PLANNED,
+        created_at=now - timedelta(days=200),
+    )
+    await _issue(test_project, test_user, title="planned", sprint_id=planned.id)
+    await _issue(test_project, test_user, title="cur", sprint_id=cur.id)
+    await _issue(test_project, test_user, title="legacy", sprint_id=legacy.id)
+
+    async def page(o, **params):
+        r = await _query(client, auth_headers, f"projects/{test_project.id}", order=o, **params)
+        assert r.status_code == 200, r.text
+        return [i["title"] for i in r.json()["issues"]], r.json()["total"]
+
+    assert (await page("sprint"))[0] == ["legacy", "cur", "planned"]
+    assert (await page("-sprint"))[0] == ["planned", "cur", "legacy"]
+
+    # paging: many issues spread over a few same-named assignees and the
+    # sprints; pages of 4 concatenate to the unpaged order
+    users = [
+        await OxydeUser.objects.create(email=f"p{n}@example.com", hashed_password="x", name=name)
+        for n, name in enumerate(["Bo", "bo", "Al"])
+    ]
+    sprints = [legacy, cur, planned, None]
+    for n in range(17):
+        user = users[n % 4] if n % 4 < 3 else None
+        sprint = sprints[n % 3 + (n % 2)]
+        await _issue(test_project, test_user, title=f"p{n}",
+                     assignee_id=user.id if user else None,
+                     sprint_id=sprint.id if sprint else None,
+                     issue_type=list(IssueType)[n % len(IssueType)])
+    for o in ("assignee", "-assignee", "sprint,-assignee", "-type,assignee", "project,sprint"):
+        full, total = await page(o, limit=1000)
+        paged = []
+        for skip in range(0, total, 4):
+            chunk, t = await page(o, skip=skip, limit=4)
+            assert t == total
+            paged += chunk
+        assert paged == full, o
+
+
+@pytest.mark.asyncio
 async def test_team_scope_and_project_field(client, auth_headers, test_team, test_project, test_user):
     from app.oxyde_models.project import OxydeProject
     from app.oxyde_models.team import OxydeTeam

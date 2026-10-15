@@ -964,17 +964,18 @@ async def _relation_keys(field_name: str, ids: set[str]) -> dict[str, tuple]:
         rows = await OxydeUser.objects.filter(id__in=ids).values("id", "name").all()
         return {r["id"]: ((r["name"] or "").lower(), r["id"]) for r in rows}
     if field_name == "sprint":
-        rows = await OxydeSprint.objects.filter(id__in=ids).values(
-            "id", "activated_at", "created_at",
-        ).all()
-        # Activated sprints in the order they ran; sprints never
-        # activated (planned) after them, in the order they were made.
+        sprints = await OxydeSprint.objects.filter(id__in=ids).all()
+        # Sprints that have run (active or completed) in the order they
+        # ran; planned ones after them, in the order they were made.
+        # "Planned" comes from the status, not a null activated_at:
+        # migration 0016 nulled activated_at on every sprint that ran
+        # before it, and those fall back to their creation time.
         return {
-            r["id"]: (r["activated_at"] is None, r["activated_at"] or r["created_at"], r["created_at"], r["id"])
-            for r in rows
+            s.id: (s.status == SprintStatus.PLANNED, s.activated_at or s.created_at, s.created_at, s.id)
+            for s in sprints
         }
     rows = await OxydeProject.objects.filter(id__in=ids).values("id", "key").all()
-    return {r["id"]: (r["key"], r["id"]) for r in rows}
+    return {r["id"]: (r["key"].lower(), r["id"]) for r in rows}
 
 
 _RELATION_ORDER = {"assignee", "sprint", "project"}
