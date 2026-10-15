@@ -270,6 +270,7 @@ ROUTES = [
     ("PATCH", "/api/teams/{team}/members/{user}", {"role": "member"}, "team"),
     ("DELETE", "/api/teams/{team}/members/{user}", None, "team"),
     ("GET", "/api/teams/{team}/invitations", None, "team"),
+    ("POST", "/api/teams/{team}/invitations", {"email": "new@example.com"}, "team"),
     ("DELETE", "/api/teams/{team}/invitations/{invitation}", None, "team"),
     ("GET", "/api/teams/{team}/projects", None, "team"),
     ("POST", "/api/teams/{team}/projects", {"name": "x", "key": "ZZZ"}, "team"),
@@ -321,6 +322,7 @@ TEAM_GATE_403 = {
     ("PATCH", "/api/teams/{team}/members/{user}"): "Only admins can update member roles",
     ("DELETE", "/api/teams/{team}/members/{user}"): "Only admins can remove other members",
     ("GET", "/api/teams/{team}/invitations"): "Only admins can view invitations",
+    ("POST", "/api/teams/{team}/invitations"): "Only admins can invite members",
     ("DELETE", "/api/teams/{team}/invitations/{invitation}"): "Only admins can delete invitations",
     ("GET", "/api/teams/{team}/projects"): "Not a member of this team",
     ("POST", "/api/teams/{team}/projects"): "Not a member of this team",
@@ -451,12 +453,7 @@ MOUNTS = {
 # fails once a listed route stops leaking, so an entry cannot outlive it.
 # Key: the app's (method, path). Value: a ROUTES-style probe of it, then
 # the ticket and why it leaks.
-KNOWN_ORACLES = {
-    ("POST", "/api/teams/{team_id}/invitations"): (
-        "/api/teams/{team}/invitations", {"email": "new@example.com"}, "team",
-        "CHT-1803: loads the team (404 if missing) before the admin check (403)",
-    ),
-}
+KNOWN_ORACLES: dict = {}
 
 
 def _served_routes():
@@ -542,22 +539,29 @@ async def test_every_id_keyed_route_is_probed_or_explained():
         )
 
 
-@pytest.mark.parametrize("route", sorted(KNOWN_ORACLES), ids=[f"{m} {p}" for m, p in sorted(KNOWN_ORACLES)])
-async def test_known_oracles_still_leak(client, world, principal_headers, route):
+async def test_known_oracles_still_leak(client, world, principal_headers):
     """Each KNOWN_ORACLES entry still leaks to at least one principal. When
-    this fails, it leaks to none: the route has been fixed, so move it to
-    ROUTES (where the full comparison runs for every principal)."""
-    method = route[0]
-    path, body, placeholder, _reason = KNOWN_ORACLES[route]
-    answers = {}
-    for principal in PRINCIPALS:
-        headers = principal_headers(principal)
-        values = world[principal][1]
-        gone = _missing(values, placeholder)
-        missing = await _call(client, method, _fill(path, gone), _fill(body, gone), headers)
-        existing = await _call(client, method, _fill(path, values), _fill(body, values), headers)
-        answers[principal] = (existing.status_code, missing.status_code)
-    assert any(existing != missing for existing, missing in answers.values()), answers
+    this fails for an entry, it leaks to none: the route has been fixed, so
+    move it to ROUTES (where the full comparison runs for every principal).
+
+    A loop rather than a parametrize: the list is empty whenever no oracle
+    is known (it is since CHT-1803), and an empty parameter set would turn
+    this into a skip."""
+    fixed = {}
+    for route in sorted(KNOWN_ORACLES):
+        method = route[0]
+        path, body, placeholder, _reason = KNOWN_ORACLES[route]
+        answers = {}
+        for principal in PRINCIPALS:
+            headers = principal_headers(principal)
+            values = world[principal][1]
+            gone = _missing(values, placeholder)
+            missing = await _call(client, method, _fill(path, gone), _fill(body, gone), headers)
+            existing = await _call(client, method, _fill(path, values), _fill(body, values), headers)
+            answers[principal] = (existing.status_code, missing.status_code)
+        if all(existing == missing for existing, missing in answers.values()):
+            fixed[route] = answers
+    assert fixed == {}, "these KNOWN_ORACLES no longer leak: move them to ROUTES"
 
 
 class TestMcpTools:

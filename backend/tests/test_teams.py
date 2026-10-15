@@ -513,14 +513,19 @@ async def test_remove_self_as_member(client, auth_headers2, test_team, db, test_
 
 
 @pytest.mark.asyncio
-async def test_create_invitation_team_not_found(client, auth_headers):
-    """Test creating invitation for team that doesn't exist."""
-    response = await client.post(
+async def test_create_invitation_team_not_found(client, auth_headers2, test_team):
+    """A missing team and an existing one the caller is not in get the
+    same answer (CHT-1803): the admin check runs from the team id alone,
+    before the team is loaded, so a non-member cannot probe team ids."""
+    body = {"email": "test@example.com", "role": "member"}
+    missing = await client.post(
         "/api/teams/00000000-0000-0000-0000-000000000000/invitations",
-        headers=auth_headers,
-        json={"email": "test@example.com", "role": "member"},
+        headers=auth_headers2,
+        json=body,
     )
-    assert response.status_code == 404
+    existing = await client.post(f"/api/teams/{test_team.id}/invitations", headers=auth_headers2, json=body)
+    assert missing.status_code == existing.status_code == 403
+    assert missing.json() == existing.json() == {"detail": "Only admins can invite members"}
 
 
 @pytest.mark.asyncio

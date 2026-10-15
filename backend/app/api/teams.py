@@ -269,18 +269,22 @@ async def create_invitation(
 ):
     """Create a team invitation."""
     team_service = TeamService()
-    team = await team_service.get_by_id(team_id)
 
-    if not team:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Team not found",
-        )
-
+    # Admin check first, from the team id alone, like the other invitation
+    # routes (CHT-1803): it is a membership query, which a missing team
+    # fails the same way, so a non-admin gets the same 403 for an existing
+    # team and a missing one, and cannot probe team ids (CHT-1785).
     if not await team_service.is_team_admin(team_id, current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admins can invite members",
+        )
+
+    team = await team_service.get_by_id(team_id)
+    if not team:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Team not found",
         )
 
     # Check if user already a member
