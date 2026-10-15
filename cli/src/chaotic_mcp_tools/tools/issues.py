@@ -204,7 +204,8 @@ async def issue_list(
         project_id, team_id = await backend.resolve_project(project, team)
 
     assignee_id = (
-        await backend.resolve_assignee(assignee, team_id, project_id=project_id) if assignee else None
+        await backend.resolve_assignee(assignee, team_id, project_id=project_id, purpose="filter")
+        if assignee else None
     )
 
     parent_id = None
@@ -523,10 +524,7 @@ async def issue_update(
         if assignee.strip().lower() == "unassigned":
             fields["assignee_id"] = None
         else:
-            team_id = await backend.team_for_project(iss.get("project_id"))
-            fields["assignee_id"] = await backend.resolve_assignee(
-                assignee, team_id, project_id=iss.get("project_id"),
-            )
+            fields["assignee_id"] = await _resolve_new_assignee(backend, iss, assignee)
     if parent_id is not None:
         fields["parent_id"] = parent_id
     if no_parent:
@@ -540,6 +538,19 @@ async def issue_update(
 
     updated = await backend.update_issue(iss["id"], **fields)
     return await _with_estimate_warning(backend, updated, iss.get("project_id"), estimate)
+
+
+async def _resolve_new_assignee(backend: Backend, iss: dict, value: str) -> str | None:
+    """The id to assign ``iss`` to. The issue's current assignee, given by
+    id, is passed through unresolved: re-sending the value a row already
+    holds is not a new choice, and the API accepts it even for someone
+    no longer eligible (``is_eligible_project_member``), so an agent that
+    reads a ticket and writes its fields back is not refused (CHT-1839)."""
+    current = iss.get("assignee_id")
+    if current and value.strip() == current:
+        return current
+    team_id = await backend.team_for_project(iss.get("project_id"))
+    return await backend.resolve_assignee(value, team_id, project_id=iss.get("project_id"))
 
 
 async def issue_comment(
@@ -563,8 +574,7 @@ async def issue_comment(
     # (CHT-1839).
     assignee_id = None
     if assign_to:
-        team_id = await backend.team_for_project(iss.get("project_id"))
-        assignee_id = await backend.resolve_assignee(assign_to, team_id, project_id=iss.get("project_id"))
+        assignee_id = await _resolve_new_assignee(backend, iss, assign_to)
     comment = await backend.create_comment(iss["id"], content)
     if "warnings" in comment and not comment["warnings"]:
         comment = {k: v for k, v in comment.items() if k != "warnings"}

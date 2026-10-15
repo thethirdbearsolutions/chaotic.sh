@@ -296,7 +296,6 @@ async def team_principals(team_id: str, *, members=None) -> tuple[list, frozense
     the principals before building a directory of its own
     (``mcp_server.scope.resolve_assignee``, CHT-1839)."""
     from app.oxyde_models.user import OxydeUser
-    from app.services.agent_service import AgentService, is_idle
     from app.services.team_service import TeamService
 
     if members is None:
@@ -304,6 +303,14 @@ async def team_principals(team_id: str, *, members=None) -> tuple[list, frozense
     agents = await OxydeUser.objects.filter(
         is_agent=True, agent_team_id=team_id, is_active=True,
     ).order_by("created_at").all()
+    return [m.user for m in members if m.user] + list(agents), await idle_session_ids(agents)
+
+
+async def idle_session_ids(users) -> frozenset[str]:
+    """The ids of the idle session identities among ``users`` (CHT-1501),
+    which a ``MentionDirectory`` lets claim no weak word."""
+    from app.services.agent_service import AgentService, is_idle
+
+    agents = [u for u in users if u.is_agent]
     last_used = await AgentService.session_last_used(agents)
-    idle = frozenset(i for i, used in last_used.items() if is_idle(used))
-    return [m.user for m in members if m.user] + list(agents), idle
+    return frozenset(i for i, used in last_used.items() if is_idle(used))

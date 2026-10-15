@@ -33,13 +33,16 @@ profile; this is new, backend-only plumbing, not duplicated logic.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from chaotic_mcp_tools import ToolInputError
 
 from app.oxyde_models.user import OxydeUser as User
 from app.utils.email_address import same_email
-from app.services.mention_handles import HANDLE_RE, MentionDirectory, team_principals
+from app.services.issue_query import filter_principals
+from app.services.mention_handles import HANDLE_RE, MentionDirectory, idle_session_ids, team_principals
 from app.services.project_service import ProjectService
-from app.services.team_service import TeamService
+from app.services.team_service import TeamService, eligible_on_project_work
 
 
 class ToolContextError(ToolInputError):
@@ -226,30 +229,46 @@ async def resolve_sprint(project_id: str, sprint: str) -> str:
     )
 
 
+AssigneePurpose = Literal["assign", "filter"]
+
+
 async def resolve_assignee(
     user: User, team_id: str, assignee: str, project_id: str | None = None,
+    purpose: AssigneePurpose = "assign",
 ) -> str | None:
     """Resolve an assignee reference: 'me', 'unassigned' (-> None), or one
-    of the principals who may be named on work here, by id, email,
-    display name or @handle (CHT-1839).
+    of the team's principals by id, email, display name or handle
+    (``@claude-mcp``, or the same without the ``@``) (CHT-1839).
 
-    Who may be named is ``is_eligible_project_member``'s rule, the one
-    the API applies to the id it is sent (CHT-1830): the team's active
-    people and team-scoped agents, and a project-scoped agent only in
-    its own project. With no ``project_id`` (a team-wide list filter), a
-    project-scoped agent counts in its own project. The candidates are
-    the team's ``MentionDirectory`` principals filtered by that rule, and
-    every form of reference is looked up among those alone. So a
-    deactivated account, someone on another team, an agent of a sibling
-    project and no account at all all get the one not-found error below,
-    which names nobody: the lookup cannot tell a caller which ids,
-    addresses or names exist on this server (CHT-1802, CHT-1804).
+    Who can be named depends on ``purpose``:
 
-    Agents are named like people (CHT-1831): "Claude MCP" or
-    ``@claude-mcp`` reaches the agent. A display name or handle that
+    * ``"assign"`` (the default): who may be *given* work here, by the
+      rule the API applies to the id it is sent
+      (``is_eligible_project_member``, CHT-1830): the team's active
+      people and team-scoped agents, and a project-scoped agent only in
+      its own project. With no ``project_id``, a project-scoped agent
+      counts in its own project.
+    * ``"filter"``: who a list may be *filtered* by. The same set as the
+      ``where`` language's (``issue_query.filter_principals``), so the
+      two agree: every member and agent of the team, deactivated ones
+      included, so their history stays searchable, minus agents of a
+      sibling project for a caller confined to one project. The team
+      directory (``GET /teams/{id}/members``) already lists all of them
+      to the same callers, so naming them discloses nothing.
+
+    Every form of reference is looked up among those candidates alone.
+    So anyone else (someone on another team, an agent of a project the
+    caller cannot see, for assignment a deactivated account) and no
+    account at all get the one not-found error below, which names
+    nobody: the lookup cannot tell a caller which ids, addresses or names
+    exist on this server (CHT-1802, CHT-1804). The candidates are loaded
+    before the value is read, so no query depends on it.
+
+    Agents are named like people (CHT-1831): "Claude MCP", ``@claude-mcp``
+    and ``claude-mcp`` reach the agent. A display name or handle that
     names more than one candidate (a person and an agent both called
-    "Ethan") is refused with the handles that tell them apart; it never
-    picks one.
+    "Ethan", or a first word two people share) is refused with the
+    handles that tell them apart; it never picks one.
     """
     lowered = assignee.strip().lower()
     if lowered == "me":
@@ -257,42 +276,50 @@ async def resolve_assignee(
     if lowered == "unassigned":
         return None
 
-    from app.api.deps import is_eligible_project_member
-
-    users, idle = await team_principals(team_id)
-    eligible = [
-        u for u in users
-        if await is_eligible_project_member(
-            u, team_id, project_id if project_id is not None else u.agent_project_id,
-        )
-    ]
-    directory = MentionDirectory(eligible, idle)
+    if purpose == "filter":
+        confined_to = user.agent_project_id if user.is_agent and user.agent_project_id else None
+        candidates = await filter_principals(team_id, confined_to)
+        idle = await idle_session_ids(candidates)
+    else:
+        # The members come from team_members, so a person among them is a
+        # member; the rule is applied to the rows already loaded.
+        users, idle = await team_principals(team_id)
+        candidates = [
+            u for u in users
+            if eligible_on_project_work(
+                u, team_id, project_id if project_id is not None else u.agent_project_id,
+                is_member=not u.is_agent,
+            )
+        ]
+    directory = MentionDirectory(candidates, idle)
     value = assignee.strip()
 
     def one(matches, kind):
         ids = list(dict.fromkeys(u.id for u in matches))
         if len(ids) > 1:
-            handles = ", ".join(f"@{directory.handle_for(i)}" for i in ids)
+            names = ", ".join(
+                f"@{handle}" if (handle := directory.handle_for(i)) else i for i in ids
+            )
             raise ToolContextError(
-                f"Assignee {kind} '{assignee}' names more than one person on this team "
-                f"({handles}); pass one of those handles, or an id or email."
+                f"Assignee {kind} '{assignee}' matches more than one teammate "
+                f"({names}); pass one of those handles, or an id or email."
             )
         return ids[0] if ids else None
 
-    if (hit := one([u for u in eligible if u.id == value], "id")):
+    if (hit := one([u for u in candidates if u.id == value], "id")):
         return hit
     if "@" in value and not value.startswith("@"):
         # Any case (CHT-1804); an exact spelling wins over a folded one.
-        matches = [u for u in eligible if same_email(u.email or "", value)]
+        matches = [u for u in candidates if same_email(u.email or "", value)]
         exact = [u for u in matches if u.email == value]
         if (hit := one(exact or matches, "email")):
             return hit
-    if (hit := one([u for u in eligible if (u.name or "").strip().lower() == lowered], "name")):
+    if (hit := one([u for u in candidates if (u.name or "").strip().lower() == lowered], "name")):
         return hit
     token = value.removeprefix("@")
     if token and HANDLE_RE.fullmatch(token):
         claimants = directory.claimants(token)
-        if (hit := one([u for u in eligible if u.id in claimants], "handle")):
+        if (hit := one([u for u in candidates if u.id in claimants], "handle")):
             return hit
 
     raise ToolContextError(f"Could not resolve assignee '{assignee}' to a user on this team.")

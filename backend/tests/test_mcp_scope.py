@@ -361,3 +361,84 @@ class TestResolveAssigneeEligibility:
         await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=gone.id, role=TeamRole.MEMBER)
         assert await resolve_assignee(test_user, test_team.id, "Sam") == sam.id
         assert await resolve_assignee(test_user, test_team.id, "@sam") == sam.id
+
+    async def test_a_bare_first_word_names_its_one_owner(self, test_user, test_team):
+        """A handle needs no `@`, so a first word reaches the one teammate
+        whose word it is, and is refused once two share it (CHT-1839)."""
+        assert await resolve_assignee(test_user, test_team.id, "test") == test_user.id
+        other = await OxydeUser.objects.create(
+            email="tess@example.com", hashed_password=get_password_hash("x" * 12), name="Test Person",
+        )
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=other.id, role=TeamRole.MEMBER)
+        with pytest.raises(ToolContextError, match="matches more than one teammate"):
+            await resolve_assignee(test_user, test_team.id, "test")
+        with pytest.raises(ToolContextError, match="matches more than one teammate"):
+            await resolve_assignee(test_user, test_team.id, "@test")
+
+
+async def _retired_pair(owner, team):
+    """A deactivated member and a deactivated team agent of ``team``."""
+    person = await OxydeUser.objects.create(
+        email="retired@example.com", hashed_password=get_password_hash("x" * 12),
+        name="Retired Person", is_active=False,
+    )
+    await OxydeTeamMember.objects.create(team_id=team.id, user_id=person.id, role=TeamRole.MEMBER)
+    agent = await _bot(owner, team, name="Retired Bot", active=False)
+    return person, agent
+
+
+class TestResolveAssigneeForAFilter:
+    """A filter names whoever the `where` language can, deactivated
+    members included; an assignment does not (CHT-1839)."""
+
+    async def test_a_deactivated_member_resolves_only_as_a_filter(self, test_user, test_team, test_project):
+        person, agent = await _retired_pair(test_user, test_team)
+        expected = await _not_found(test_user, test_team.id, "no-such-user", test_project.id)
+        for who, values in [
+            (person, (person.id, person.email, person.name, "@retired-person")),
+            (agent, (agent.id, agent.email, agent.name)),
+        ]:
+            for value in values:
+                got = await resolve_assignee(test_user, test_team.id, value, test_project.id, "filter")
+                assert got == who.id, value
+                assert await _not_found(test_user, test_team.id, value, test_project.id) == expected, value
+
+    async def test_out_of_scope_is_still_not_found(self, test_user, test_team, test_project, test_user2):
+        """Another team's people and agents, and for a caller confined to
+        one project a sibling project's agent, stay out of a filter."""
+        other_team = await OxydeTeam.objects.create(name="Other", key="OTH")
+        await OxydeTeamMember.objects.create(team_id=other_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+        far = await _bot(test_user2, other_team, name="Far Bot")
+        sibling = await OxydeProject.objects.create(team_id=test_team.id, name="Sibling", key="SIB")
+        sib_bot = await _bot(test_user, test_team, name="Sib Bot", project=sibling)
+        proj_bot = await _bot(test_user, test_team, name="Proj Bot", project=test_project)
+        expected = "Could not resolve assignee '<value>' to a user on this team."
+        for caller, outsiders in [(test_user, [test_user2, far]), (proj_bot, [test_user2, far, sib_bot])]:
+            for outsider in outsiders:
+                for value in (outsider.id, outsider.email, outsider.name):
+                    with pytest.raises(ToolContextError) as caught:
+                        await resolve_assignee(caller, test_team.id, value, test_project.id, "filter")
+                    assert str(caught.value).replace(value, "<value>") == expected, (caller.name, value)
+
+    async def test_the_plain_filter_and_where_agree(self, test_user, test_team, test_project):
+        """issue_list's `assignee` and `where assignee=` name the same
+        people: one set, ``issue_query.filter_principals``."""
+        from app.mcp_server import tools
+        from app.oxyde_models.issue import OxydeIssue
+
+        from .mcp_principal import acting_as
+
+        person, agent = await _retired_pair(test_user, test_team)
+        for number, who in enumerate((person, agent), start=1):
+            await OxydeIssue.objects.create(
+                project_id=test_project.id, identifier=f"PROJ-{number}", number=number,
+                title="held", creator_id=test_user.id, assignee_id=who.id,
+            )
+        with acting_as(test_user):
+            for who in (person, agent):
+                for value in (who.id, who.email, who.name):
+                    plain = await tools.issue_list(project="PROJ", assignee=value)
+                    where = await tools.issue_list(project="PROJ", where=f'assignee="{value}"')
+                    assert "error" not in plain and "error" not in where, (plain, where)
+                    assert [i["identifier"] for i in plain["issues"]] == [i["identifier"] for i in where["issues"]]
+                    assert plain["count"] == 1, value

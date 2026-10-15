@@ -676,6 +676,25 @@ def _date_bound(value: str, now: datetime, upper: bool) -> tuple[datetime, bool]
         raise QueryError(f"'{value}' is outside the range of dates a query can use") from None
 
 
+async def filter_principals(team_id: str, confined_to: str | None) -> list[OxydeUser]:
+    """Who an issue filter may name in a team: every member, deactivated
+    ones included (their history stays searchable), and every agent of
+    the team, except that for a caller confined to one project
+    (``confined_to``) an agent scoped to a sibling project is not part of
+    its world (as for @mentions, ``can_reach``). The ``where`` language
+    and the MCP ``issue_list`` assignee filter both resolve here, so they
+    agree (CHT-1839)."""
+    member_ids = [m.user_id for m in await OxydeTeamMember.objects.filter(team_id=team_id).all()]
+    users = await OxydeUser.objects.filter(id__in=member_ids).all() if member_ids else []
+    agents = await OxydeUser.objects.filter(agent_team_id=team_id).all()
+    if confined_to:
+        agents = [a for a in agents if a.agent_project_id in (None, confined_to)]
+    seen = {}
+    for u in [*users, *agents]:
+        seen[u.id] = u
+    return list(seen.values())
+
+
 @dataclass
 class QueryScope:
     """Where a query runs, already access-checked by the API layer."""
@@ -784,19 +803,7 @@ class _Compiler:
         if lowered == ME:
             return self.scope.user.id
         if self._principals is None:
-            member_ids = [
-                m.user_id for m in await OxydeTeamMember.objects.filter(team_id=self.scope.team_id).all()
-            ]
-            users = await OxydeUser.objects.filter(id__in=member_ids).all() if member_ids else []
-            agents = await OxydeUser.objects.filter(agent_team_id=self.scope.team_id).all()
-            if self._confined_to:
-                # Agents scoped to a sibling project are not part of this
-                # caller's world (as for @mentions, ``can_reach``).
-                agents = [a for a in agents if a.agent_project_id in (None, self._confined_to)]
-            seen = {}
-            for u in [*users, *agents]:
-                seen[u.id] = u
-            self._principals = list(seen.values())
+            self._principals = await filter_principals(self.scope.team_id, self._confined_to)
         for u in self._principals:
             if u.id == value:
                 return u.id

@@ -213,8 +213,10 @@ new route gets wrong:
   file for each argument that names a row (by id, key, name, email or
   handle), or an `MCP_NOT_ROW_KEYED` listing. The tools resolve names
   themselves (`mcp_server/scope.py`), so each resolver is a place to
-  leak; an assignee resolves only among `is_eligible_project_member`
-  principals (CHT-1839).
+  leak. An assignee *being assigned* resolves only among
+  `is_eligible_project_member` principals; a list *filter* resolves
+  among the `where` language's set (`issue_query.filter_principals`),
+  deactivated members included (CHT-1839).
 
 ## Running the backend tests
 

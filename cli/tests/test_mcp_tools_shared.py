@@ -113,8 +113,8 @@ class FakeBackend:
         self._rec("team_for_project", project_id)
         return "team-1"
 
-    async def resolve_assignee(self, value, team_id, project_id=None):
-        self._rec("resolve_assignee", value, team_id, project_id=project_id)
+    async def resolve_assignee(self, value, team_id, project_id=None, purpose="assign"):
+        self._rec("resolve_assignee", value, team_id, project_id=project_id, purpose=purpose)
         return "user-me" if value == "me" else f"user-{value}"
 
     async def resolve_sprint(self, value, project_id):
@@ -607,6 +607,15 @@ class TestIssueListBody:
         assert result["issues"] == [fake.issues["CHT-1"]]
 
 
+class TestIssueListAssignee:
+    async def test_resolved_as_a_filter(self, fake):
+        """A list filter may name whoever the `where` language can,
+        deactivated members included (CHT-1839)."""
+        await _tools(fake)["issue_list"](assignee="Gone Person")
+        assert fake.calls_to("resolve_assignee") == [
+            (("Gone Person", "team-1"), {"project_id": "proj-1", "purpose": "filter"})]
+
+
 class TestIssueListWhere:
     """`where` (CHT-1718) runs the query endpoint instead of the list."""
 
@@ -674,7 +683,7 @@ class TestIssueCommentBody:
     async def test_an_unresolvable_assignee_posts_nothing(self, fake):
         """The assignee is resolved before the comment is posted, so a
         refused one fails the whole call (CHT-1839)."""
-        async def refuse(value, team_id, project_id=None):
+        async def refuse(value, team_id, project_id=None, purpose="assign"):
             raise chaotic_mcp_tools.ToolInputError(f"Could not resolve assignee '{value}'.")
 
         fake.resolve_assignee = refuse
@@ -683,13 +692,38 @@ class TestIssueCommentBody:
         assert fake.calls_to("create_comment") == []
         assert fake.calls_to("update_issue") == []
 
+    async def test_the_current_assignee_is_not_resolved_again(self, fake):
+        """Re-sending who holds it is not a new choice (CHT-1839)."""
+        fake.issues["CHT-1"]["assignee_id"] = "user-gone"
+        await _tools(fake)["issue_comment"]("CHT-1", "hi", assign_to="user-gone")
+        assert fake.calls_to("resolve_assignee") == []
+        (_, kwargs), = fake.calls_to("update_issue")
+        assert kwargs == {"assignee_id": "user-gone"}
+
     async def test_assignee_resolved_in_the_issues_project(self, fake):
         await _tools(fake)["issue_comment"]("CHT-1", "hi", assign_to="me")
-        assert fake.calls_to("resolve_assignee") == [(("me", "team-1"), {"project_id": "proj-1"})]
+        assert fake.calls_to("resolve_assignee") == [(("me", "team-1"), {"project_id": "proj-1", "purpose": "assign"})]
         assert len(fake.calls_to("create_comment")) == 1
 
 
 class TestIssueUpdateBody:
+    async def test_the_current_assignee_is_not_resolved_again(self, fake):
+        """An agent that reads a ticket and writes its fields back is not
+        refused for an assignee who has since been deactivated: the API
+        accepts the value the row already holds, so this does too
+        (CHT-1839)."""
+        fake.issues["CHT-1"]["assignee_id"] = "user-gone"
+        await _tools(fake)["issue_update"]("CHT-1", assignee="user-gone", title="x")
+        assert fake.calls_to("resolve_assignee") == []
+        (_, kwargs), = fake.calls_to("update_issue")
+        assert kwargs == {"assignee_id": "user-gone", "title": "x"}
+
+    async def test_another_value_is_resolved(self, fake):
+        fake.issues["CHT-1"]["assignee_id"] = "user-gone"
+        await _tools(fake)["issue_update"]("CHT-1", assignee="Gone Person")
+        assert fake.calls_to("resolve_assignee") == [
+            (("Gone Person", "team-1"), {"project_id": "proj-1", "purpose": "assign"})]
+
     async def test_no_fields_is_an_input_error(self, fake):
         result = await _tools(fake)["issue_update"]("CHT-1")
         assert result["error"]["error_code"] == "tool_input"
@@ -708,7 +742,7 @@ class TestIssueUpdateBody:
     async def test_assignee_resolved_in_the_issues_team(self, fake):
         await _tools(fake)["issue_update"]("CHT-1", assignee="me")
         assert fake.calls_to("team_for_project") == [(("proj-1",), {})]
-        assert fake.calls_to("resolve_assignee") == [(("me", "team-1"), {"project_id": "proj-1"})]
+        assert fake.calls_to("resolve_assignee") == [(("me", "team-1"), {"project_id": "proj-1", "purpose": "assign"})]
 
     async def test_attest_only_refetches(self, fake):
         fake.pending_issue_rituals = {"pending_rituals": [

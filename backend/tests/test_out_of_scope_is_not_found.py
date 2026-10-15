@@ -45,6 +45,7 @@ from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.team import OxydeTeam, OxydeTeamInvitation, OxydeTeamMember
 from app.oxyde_models.template import OxydeTemplate
+from app.oxyde_models.user import OxydeUser
 from app.schemas.agent import AgentCreate
 from app.services.agent_service import AgentService
 
@@ -161,6 +162,20 @@ async def world(db, test_user, test_user2, test_team, test_project):
         AgentCreate(name="Sib Bot"), test_user, test_team.id, project_id=sibling.id,
     )
     a_sib.update(sib_agent=sib_agent.id, sib_agent_name=sib_agent.name)
+    # Team A's deactivated member and agent: never an assignee, for the
+    # project agent in their own team included. A filter still names them
+    # (the `where` language's set), so only assignment probes them.
+    retired = await OxydeUser.objects.create(
+        email="retired@example.com", hashed_password="x", name="Retired Person", is_active=False,
+    )
+    await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=retired.id, role=TeamRole.MEMBER)
+    retired_agent, _, _ = await AgentService().create(AgentCreate(name="Retired Bot"), test_user, test_team.id)
+    retired_agent.is_active = False
+    await retired_agent.save(update_fields={"is_active"})
+    a_sib.update(
+        retired=retired.id, retired_email=retired.email, retired_name=retired.name,
+        retired_agent=retired_agent.id, retired_agent_name=retired_agent.name,
+    )
 
     def own(rows, team, team_rows, artifact_rituals):
         return {"own_project": rows["project"], "own_issue": rows["issue"], "own_doc": rows["document"],
@@ -917,6 +932,8 @@ async def test_known_oracles_still_leak(client, world, principal_headers):
     assert fixed == {}, "these KNOWN_ORACLES no longer leak: move them to ROUTES"
 
 
+_RETIRED = ("retired", "retired_email", "retired_name", "retired_agent", "retired_agent_name")
+
 MCP_PROBES = [
     # (tool, arguments, the placeholder replaced by a missing row). Every
     # other argument names the caller's own rows or is a plain value, so
@@ -964,17 +981,20 @@ MCP_PROBES = [
     ("doc_unlink", {"document_id": "{own_doc}", "identifier": "{identifier}"}, "identifier"),
     ("doc_create", {"title": "x", "project": "{project}"}, "project"),
     ("doc_create", {"title": "x", "team": "{team}", "is_global": True}, "team"),
-    # The assignee forms (CHT-1839): id, email, display name and handle,
-    # of a person, an agent, and the sibling project's agent.
+    # The assignee forms (CHT-1839): id, email and display name of a
+    # person, an agent, and the sibling project's agent; and for an
+    # assignment, team A's deactivated member and agent, which a filter
+    # may name (scope.resolve_assignee).
     *[
         (tool, {**args, field: "{" + placeholder + "}"}, placeholder)
-        for tool, args, field in [
-            ("issue_update", {"identifier": "{own_identifier}"}, "assignee"),
-            ("issue_comment", {"identifier": "{own_identifier}", "content": "x"}, "assign_to"),
-            ("issue_list", {}, "assignee"),
+        for tool, args, field, extra in [
+            ("issue_update", {"identifier": "{own_identifier}"}, "assignee", _RETIRED),
+            ("issue_comment", {"identifier": "{own_identifier}", "content": "x"}, "assign_to", _RETIRED),
+            ("issue_list", {}, "assignee", ()),
         ]
         for placeholder in (
             "user", "user_email", "user_name", "agent", "agent_email", "agent_name", "sib_agent", "sib_agent_name",
+            *extra,
         )
     ],
     ("issue_list", {"label": "{label_name}"}, "label_name"),
@@ -1113,6 +1133,19 @@ def _tool_args(template, values):
     return _fill(template, values)
 
 
+def _swapped(answer, gone, existing):
+    """``answer`` with ``gone`` replaced by ``existing`` in every string
+    and key, so an answer quoting the missing value compares with one
+    quoting the existing value."""
+    if isinstance(answer, dict):
+        return {_swapped(k, gone, existing): _swapped(v, gone, existing) for k, v in answer.items()}
+    if isinstance(answer, list):
+        return [_swapped(item, gone, existing) for item in answer]
+    if isinstance(answer, str):
+        return answer.replace(gone, existing)
+    return answer
+
+
 def _argument_of(args, placeholder):
     """The tool argument whose value (or a key or item in it) carries
     ``{placeholder}``."""
@@ -1126,8 +1159,6 @@ def _argument_of(args, placeholder):
 @pytest_asyncio.fixture
 async def mcp_users(world, test_user2):
     """Each principal as a user, for binding to the MCP context."""
-    from app.oxyde_models.user import OxydeUser
-
     return {
         "project_agent": await OxydeUser.objects.get(agent_project_id=world["project_agent"][1]["own_project"]),
         "team_b_agent": await OxydeUser.objects.get(is_agent=True, name="B Bot"),
@@ -1153,7 +1184,7 @@ async def test_mcp_out_of_scope_answers_like_missing(world, mcp_users, principal
         missing = await tool(**_tool_args(args, gone))
         existing = await tool(**_tool_args(args, values))
     # An answer may quote back the value it was sent.
-    echoed = json.loads(json.dumps(missing).replace(str(gone[placeholder]), str(values[placeholder])))
+    echoed = _swapped(missing, str(gone[placeholder]), str(values[placeholder]))
     if principal in MCP_SUCCEED_ALIKE.get((tool_name, placeholder, _argument_of(args, placeholder)), ()):
         assert not _refused(existing), existing
     else:
