@@ -423,6 +423,8 @@ class TestRitualArtifact:
 
     def test_create_declares_the_artifact(self, cli_runner):
         from cli.main import cli, client
+        # Set here, not inherited from an earlier test's mock (CHT-1825).
+        client.get_limbo_status = MagicMock(return_value={"in_limbo": False})
         client.create_ritual = MagicMock(return_value={"name": "retro", "id": "r1"})
         result = cli_runner.invoke(cli, ["ritual", "create", "retro", "Write it", "--artifact", "document"])
         assert result.exit_code == 0, result.output

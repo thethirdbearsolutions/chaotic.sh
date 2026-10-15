@@ -632,6 +632,25 @@ class TestTeamAcceptInviteLink:
         assert json.loads(result.stdout) == {"team_id": "t-1"}
         assert "Warning" in result.stderr
 
+    @pytest.mark.parametrize("server,link", [
+        ("https://xn--bcher-kva.de", "https://bücher.de/invite/{t}"),
+        ("https://bücher.de", "https://xn--bcher-kva.de/invite/{t}"),
+        ("https://BÜCHER.de.", "https://XN--BCHER-KVA.DE/invite/{t}"),
+    ])
+    def test_an_idn_host_and_its_punycode_form_do_not_warn(self, cli_runner, web_url, server, link):
+        """CHT-1826: the same host, written in Unicode or in punycode."""
+        web_url(server)
+        result, accept = self._accept(cli_runner, link.format(t=self.TOKEN))
+        assert result.exit_code == 0, result.output
+        accept.assert_called_once_with(self.TOKEN)
+        assert "Warning" not in result.output
+
+    def test_another_idn_host_still_warns(self, cli_runner, web_url):
+        web_url("https://xn--bcher-kva.de")
+        result, _ = self._accept(cli_runner, f"https://bucher.de/invite/{self.TOKEN}")
+        assert result.exit_code == 0, result.output
+        assert "Warning" in result.stderr
+
     def test_local_link_on_a_local_server_does_not_warn(self, cli_runner, web_url):
         web_url("http://127.0.0.1:24267")
         result, accept = self._accept(cli_runner, f"http://localhost:24267/invite/{self.TOKEN}")
@@ -728,6 +747,32 @@ class TestInviteTokenFromArg:
         ("localhost", "https://a.example", "a.example"),
         ("a.example", "", None),
         ("a.example", "https://[bad", None),
+        # CHT-1826: IDN and punycode forms of one host, both ways round.
+        ("bücher.de", "https://xn--bcher-kva.de", None),
+        ("xn--bcher-kva.de", "https://bücher.de", None),
+        ("XN--BCHER-KVA.de.", "https://Bücher.DE", None),
+        ("bücher.de", "https://xn--bcher-kva.de", None),  # NFC
+        ("bucher.de", "https://xn--bcher-kva.de", "xn--bcher-kva.de"),
+        # No IDNA 2003 nameprep: faß and fass are different hosts.
+        ("faß.de", "https://fass.de", "fass.de"),
+        ("xn--fa-hia.de", "https://faß.de", None),
+        # Invalid or non-canonical punycode compares as written, no crash.
+        ("xn--zzzzzzzzzzzzzzz.de", "https://xn--zzzzzzzzzzzzzzz.de", None),
+        ("xn--zzzzzzzzzzzzzzz.de", "https://a.example", "a.example"),
+        ("xn--.de", "https://a.example", "a.example"),
+        ("xn--abc-.de", "https://abc.de", "abc.de"),
+        # ACE labels that only match another host after normalising are
+        # different DNS names and must warn (PR #441 review).
+        ("xn--anban-r74b.example.com", "https://kanban.example.com", "kanban.example.com"),
+        ("xn--bucher-xyd.de", "https://xn--bcher-kva.de", "xn--bcher-kva.de"),
+        ("xn--wca.de", "https://xn--tda.de", "xn--tda.de"),
+        ("xn--72g.de", "https://xn--5ca.de", "xn--5ca.de"),
+        # Over DNS's 63 octets: not decoded, compared as written.
+        ("xn--" + "a" * 60 + "-kva.de", "https://a.example", "a.example"),
+        # IPv6 literals: same host (any port) is fine, another one warns.
+        ("::1", "http://[::1]:8000", None),
+        ("2001:db8::1", "https://[2001:DB8::1]", None),
+        ("2001:db8::1", "https://[2001:db8::2]", "2001:db8::2"),
     ])
     def test_foreign_invite_host(self, link_host, web_url, expected):
         from cli.commands.team import foreign_invite_host
