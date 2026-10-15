@@ -54,6 +54,8 @@ def invite_token_from_arg(value: str) -> tuple[str, str | None]:
     has no host. Raises click.UsageError for a link with no token. The
     message never repeats the argument: it is a credential."""
     text = value.strip()
+    if not text:
+        raise click.UsageError("Pass the invitation link or its token.")
     if "/" not in text:
         return text, None
     bad = click.UsageError(
@@ -251,10 +253,22 @@ def register(cli):
         token, link_host = invite_token_from_arg(invitation)
         here = foreign_invite_host(link_host, m.get_web_url())
         if here:
+            # Hosts come from a pasted link: drop control characters so
+            # they cannot drive the terminal.
+            shown_link, shown_here = (
+                "".join(c for c in h if c.isprintable()) for h in (link_host, here)
+            )
+            if is_local_host(link_host):
+                # CHT-1822: a server with APP_BASE_URL unset hands out
+                # localhost links; the token is most likely for this server.
+                advice = ("The link names a local-only host, so it probably came from "
+                          "this server with APP_BASE_URL unset.")
+            else:
+                advice = ("If that fails, rerun with --profile set to a profile for "
+                          "the link's server.")
             click.echo(click.style(
-                f"Warning: this invitation link is for {link_host}, but the CLI is "
-                f"configured for {here}. Accepting it on {here}; if that fails, rerun "
-                "with --profile set to a profile for the link's server.",
+                f"Warning: this invitation link is for {shown_link}, but the CLI is "
+                f"configured for {shown_here}. Accepting it on {shown_here}. {advice}",
                 fg="yellow"), err=True)
         try:
             member = _client().accept_invitation(token)

@@ -537,7 +537,23 @@ class TestTeamAcceptInviteLink:
         result, _ = self._accept(cli_runner, f"http://localhost:24267/invite/{self.TOKEN}")
         assert result.exit_code == 0, result.output
         assert "Warning" in result.stderr
+        assert "APP_BASE_URL" in result.stderr
+        assert "--profile" not in result.stderr
         assert self.TOKEN not in result.stderr
+
+    def test_warning_drops_control_characters_from_the_host(self, cli_runner, web_url):
+        result, accept = self._accept(cli_runner, f"https://ev\x1bil.example/invite/{self.TOKEN}")
+        assert result.exit_code == 0, result.output
+        accept.assert_called_once_with(self.TOKEN)
+        assert "evil.example" in result.stderr
+        assert "\x1b" not in result.stderr.replace("\x1b[33m", "").replace("\x1b[0m", "")
+
+    @pytest.mark.parametrize("arg", ["", "   "])
+    def test_an_empty_argument_is_a_usage_error(self, cli_runner, web_url, arg):
+        result, accept = self._accept(cli_runner, arg)
+        assert result.exit_code == 2
+        accept.assert_not_called()
+        assert "invitation link or its token" in result.output
 
     @pytest.mark.parametrize("arg", [
         "https://chaotic.example.com/invite/",
