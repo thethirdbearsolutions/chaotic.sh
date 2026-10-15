@@ -524,7 +524,7 @@ class TestApprove:
         assert (await OxydeAuthToken.objects.get(kind=TokenKind.AUTH_CODE)).scope_project_ids == f'["{test_project.id}"]'
 
     async def test_agents_the_viewer_may_not_use(
-        self, client, pending, auth_headers, auth_headers2, test_team, test_user2, agent_user,
+        self, client, pending, auth_headers, auth_headers2, test_team, test_user2,
     ):
         from app.enums import TeamRole
         other = await OxydeTeam.objects.create(name="Other", key="OTH")
@@ -536,7 +536,7 @@ class TestApprove:
         made = (await client.post(f"/api/teams/{test_team.id}/agents", json={"name": "Made"},
                                   headers=auth_headers)).json()
         await client.post(f"/api/agents/{made['id']}/deactivate", headers=auth_headers)
-        for agent_id in (theirs["id"], registrar["id"], made["id"], agent_user.id, "missing"):
+        for agent_id in (theirs["id"], registrar["id"], made["id"], "missing"):
             response = await self._approve(client, pending, auth_headers, team_id=test_team.id, agent_id=agent_id)
             assert response.status_code == 403, agent_id
             assert response.json()["detail"]["error_code"] == "agent_not_allowed"

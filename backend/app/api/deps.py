@@ -114,19 +114,6 @@ async def check_user_team_access(user: User, team_id: str) -> bool:
     return member is not None
 
 
-async def agent_home_team_id(user: User) -> str | None:
-    """The team an agent belongs to: ``agent_team_id``, or for a
-    project-scoped agent created without one, its project's team."""
-    if user.agent_team_id:
-        return user.agent_team_id
-    if user.agent_project_id:
-        from app.services.project_service import ProjectService
-
-        project = await ProjectService().get_by_id(user.agent_project_id)
-        return project.team_id if project else None
-    return None
-
-
 async def can_access_document(user: User, document) -> bool:
     """The read rule for one document: project access for a project's
     document, team access for a team-level one. ``GET /documents/{id}``
@@ -164,7 +151,7 @@ async def check_user_in_team(user: User, team_id: str) -> bool:
     if not team_id:
         return False
     if user.is_agent:
-        return await agent_home_team_id(user) == team_id
+        return user.agent_team_id == team_id
     return await check_user_team_access(user, team_id)
 
 
@@ -174,8 +161,8 @@ async def is_eligible_project_member(user: User | None, team_id: str, project_id
 
     * an active human member of the team;
     * an active team-scoped agent of the team;
-    * an active project-scoped agent of *this* project (``project_id``),
-      whether or not it was created with a team id. A project-scoped
+    * an active project-scoped agent of *this* project (``project_id``)
+      that carries this team (every agent has one, CHT-1837). A project-scoped
       agent cannot open any other project, so it is never eligible for
       one, nor for a project that does not exist yet (``project_id`` None).
 
@@ -189,7 +176,7 @@ async def is_eligible_project_member(user: User | None, team_id: str, project_id
         return False
     if user.is_agent:
         if user.agent_project_id:
-            return user.agent_project_id == project_id and await agent_home_team_id(user) == team_id
+            return user.agent_project_id == project_id and user.agent_team_id == team_id
         return user.agent_team_id == team_id
     return await TeamService().get_member(team_id, user.id) is not None
 

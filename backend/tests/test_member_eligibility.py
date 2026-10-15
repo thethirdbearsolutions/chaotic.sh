@@ -49,9 +49,6 @@ async def cast(db, test_user, test_team, test_project, sibling):
         "project agent": await _agent(
             test_user, team_id=test_team.id, project_id=test_project.id, name="Project Bot",
         ),
-        "project agent without a team id": await _agent(
-            test_user, project_id=test_project.id, name="Teamless Bot",
-        ),
     }
     refused = {
         "deactivated member": await _person(test_team, active=False, name="Retired"),
@@ -59,13 +56,11 @@ async def cast(db, test_user, test_team, test_project, sibling):
             test_user, team_id=test_team.id, active=False, name="Retired Bot",
         ),
         "deactivated project agent": await _agent(
-            test_user, project_id=test_project.id, active=False, name="Retired Project Bot",
+            test_user, team_id=test_team.id, project_id=test_project.id, active=False,
+            name="Retired Project Bot",
         ),
         "sibling project's agent": await _agent(
             test_user, team_id=test_team.id, project_id=sibling.id, name="Sibling Bot",
-        ),
-        "sibling project's agent without a team id": await _agent(
-            test_user, project_id=sibling.id, name="Teamless Sibling Bot",
         ),
     }
     return eligible, refused
@@ -83,7 +78,6 @@ async def test_the_helper(cast, test_team, test_project):
     assert await is_eligible_project_member(eligible["member"], test_team.id, None)
     assert await is_eligible_project_member(eligible["team agent"], test_team.id, None)
     assert not await is_eligible_project_member(eligible["project agent"], test_team.id, None)
-    assert not await is_eligible_project_member(eligible["project agent without a team id"], test_team.id, None)
 
 
 @pytest.mark.asyncio
@@ -122,7 +116,7 @@ async def test_a_new_project_cannot_be_led_by_a_project_scoped_agent(client, aut
             json={"name": label, "key": key, "lead_id": eligible[label].id},
         )
         assert created.status_code == 201, (label, created.text)
-    for label in ("project agent", "project agent without a team id"):
+    for label in ("project agent",):
         refused_create = await client.post(
             f"/api/teams/{test_team.id}/projects", headers=auth_headers,
             json={"name": label, "key": "NWC", "lead_id": eligible[label].id},
@@ -161,17 +155,17 @@ async def test_a_current_holder_resent_unchanged_is_kept(client, auth_headers, t
 
 
 @pytest.mark.asyncio
-async def test_mcp_finds_a_project_agent_without_a_team_id_by_email(test_user, test_team, test_project, sibling):
+async def test_mcp_finds_a_project_agent_by_email(test_user, test_team, test_project, sibling):
     """The MCP resolver looks across the team; it must find every agent
-    the API would accept, including one created without a team id."""
-    teamless = await _agent(test_user, project_id=test_project.id, name="Teamless Bot")
-    assert await resolve_assignee(test_user, test_team.id, "TEAMLESS-BOT@agent.local") == teamless.id
-    # Another team's teamless agent is not this team's.
+    the API would accept, a project-scoped one included."""
+    scoped = await _agent(test_user, team_id=test_team.id, project_id=test_project.id, name="Scoped Bot")
+    assert await resolve_assignee(test_user, test_team.id, "SCOPED-BOT@agent.local") == scoped.id
+    # Another team's project agent is not this team's.
     from app.oxyde_models.team import OxydeTeam
 
     elsewhere = await OxydeTeam.objects.create(name="Elsewhere", key="ELS")
     far = await OxydeProject.objects.create(team_id=elsewhere.id, name="Far", key="FAR")
-    await _agent(test_user, project_id=far.id, name="Far Bot")
+    await _agent(test_user, team_id=elsewhere.id, project_id=far.id, name="Far Bot")
     from app.mcp_server.scope import ToolContextError
 
     with pytest.raises(ToolContextError):

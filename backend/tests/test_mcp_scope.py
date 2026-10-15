@@ -46,6 +46,7 @@ async def project_scoped_agent(db, test_project):
         name="Project Agent",
         is_agent=True,
         agent_project_id=test_project.id,
+        agent_team_id=test_project.team_id,
     )
 
 
