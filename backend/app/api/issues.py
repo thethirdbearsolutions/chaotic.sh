@@ -87,9 +87,11 @@ router = APIRouter(route_class=IdempotentRoute)
 
 
 async def _validate_assignee(
-    assignee_id: str | None, project, current_assignee_id: str | None = None,
+    assignee_id: str | None, team_id: str, project_id: str, current_assignee_id: str | None = None,
 ) -> None:
-    """The assignee must be eligible for work in ``project``: an active
+    """The assignee must be eligible for work in the project
+    (``team_id``, ``project_id``; the same arguments as
+    ``projects._validate_lead``): an active
     member of its team, or an active agent of that team or of this
     project (``is_eligible_project_member``, CHT-1830; the same rule as a
     project's lead). CHT-293 checked the team, CHT-1494 refused retired
@@ -107,7 +109,7 @@ async def _validate_assignee(
     if assignee_id is None or (current_assignee_id is not None and assignee_id == current_assignee_id):
         return
     user = await OxydeUser.objects.get_or_none(id=assignee_id)
-    if not await is_eligible_project_member(user, project.team_id, project.id):
+    if not await is_eligible_project_member(user, team_id, project_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Assignee not found",
@@ -447,7 +449,7 @@ async def create_issue(
     project = await visible_project(current_user, project_id)
 
     # Validate assignee, sprint, labels, and parent (CHT-293, CHT-294, CHT-296, CHT-295)
-    await _validate_assignee(issue_in.assignee_id, project)
+    await _validate_assignee(issue_in.assignee_id, project.team_id, project.id)
     await _validate_sprint(current_user, issue_in.sprint_id, project_id)
     await _validate_labels(current_user, issue_in.label_ids, project.team_id)
     await _validate_parent(current_user, issue_in.parent_id, project_id)
@@ -1164,7 +1166,7 @@ async def update_issue(
 
     # Validate assignee, sprint, labels, parent if provided (CHT-293, CHT-294, CHT-296, CHT-295)
     if issue_in.assignee_id is not None:
-        await _validate_assignee(issue_in.assignee_id, project, issue.assignee_id)
+        await _validate_assignee(issue_in.assignee_id, project.team_id, project.id, issue.assignee_id)
     if issue_in.sprint_id is not None:
         await _validate_sprint(current_user, issue_in.sprint_id, issue.project_id)
     if issue_in.label_ids is not None:

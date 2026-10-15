@@ -34,9 +34,9 @@ profile; this is new, backend-only plumbing, not duplicated logic.
 from __future__ import annotations
 
 from chaotic_mcp_tools import ToolInputError
+from oxyde import execute_raw
 
 from app.api.deps import agent_home_team_id
-from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.user import OxydeUser as User
 from app.utils.email_address import same_email
 from app.services.project_service import ProjectService
@@ -228,14 +228,17 @@ async def _team_agents(team_id: str) -> list[User]:
     """The team's agents at either scope: those carrying its id, and the
     project-scoped agents of its projects created without one. Who of
     them may hold an issue is ``is_eligible_project_member``'s call when
-    the API sees the id (CHT-1830); this lookup only has to find them."""
+    the API sees the id (CHT-1830); this lookup only has to find them.
+    A fixed number of queries however many projects the team has."""
     agents = await User.objects.filter(is_agent=True, agent_team_id=team_id).all()
-    project_ids = [p.id for p in await OxydeProject.objects.filter(team_id=team_id).all()]
-    # Chunked under SQLite's bound-parameter limit.
-    for i in range(0, len(project_ids), 500):
-        agents += await User.objects.filter(
-            is_agent=True, agent_team_id__isnull=True, agent_project_id__in=project_ids[i:i + 500],
-        ).all()
+    rows = await execute_raw(
+        "SELECT u.id AS id FROM users AS u JOIN projects AS p ON p.id = u.agent_project_id "
+        "WHERE p.team_id = ? AND u.is_agent AND u.agent_team_id IS NULL",
+        [team_id],
+    )
+    teamless = [row["id"] for row in rows]
+    if teamless:
+        agents += await User.objects.filter(id__in=teamless).all()
     return agents
 
 

@@ -937,6 +937,20 @@ class IssueService:
             sprint_name=current_sprint.name,
         )
 
+    @staticmethod
+    async def _can_hold(user_id: str, project_id: str) -> bool:
+        """May ``user_id`` be assigned work in ``project_id`` now? The
+        API's assignee rule (``is_eligible_project_member``, CHT-1830)."""
+        from app.api.deps import is_eligible_project_member
+        from app.oxyde_models.project import OxydeProject
+        from app.oxyde_models.user import OxydeUser
+
+        project = await OxydeProject.objects.get_or_none(id=project_id)
+        if project is None:
+            return False
+        user = await OxydeUser.objects.get_or_none(id=user_id)
+        return await is_eligible_project_member(user, project.team_id, project.id)
+
     async def apply_intent_transition(
         self, issue_id: str, limbo_type: "LimboType", user_id: str,
         intent_id: str | None = None,
@@ -977,13 +991,18 @@ class IssueService:
         # own issue_start would have. Otherwise the ticket would sit in
         # in_progress unowned, with no lease to expire, out of the ready
         # queue. A ticket already assigned to someone else keeps its
-        # assignee, and the transition stays the clearer's.
+        # assignee, and the transition stays the clearer's. So does a
+        # ticket whose requester could no longer be assigned it (CHT-1830):
+        # deactivated, or out of the team or project while the intent
+        # waited. The cleared gate still moves the ticket, and its
+        # assignee stays whatever it was, as an API caller would find it.
         update = IssueUpdate(status=new_status)
         actor_id = user_id
         if limbo_type == LimboType.CLAIM and intent_id:
             intent = await OxydeTicketLimbo.objects.get_or_none(id=intent_id)
             requester = intent.requested_by_id if intent else None
-            if requester and issue.assignee_id in (None, requester):
+            if requester and issue.assignee_id in (None, requester) \
+                    and await self._can_hold(requester, issue.project_id):
                 update = IssueUpdate(status=new_status, assignee_id=requester)
                 actor_id = requester
 

@@ -15,7 +15,7 @@ router = APIRouter()
 
 
 async def _validate_lead(
-    lead_id: str | None, team_id: str, project_id: str | None = None, current_lead_id: str | None = None,
+    lead_id: str | None, team_id: str, project_id: str | None, current_lead_id: str | None = None,
 ) -> None:
     """A project's lead must be eligible for work in it, by the same rule
     as an issue's assignee (``is_eligible_project_member``, CHT-1830): an
@@ -25,10 +25,12 @@ async def _validate_lead(
     unchecked: a user of another team was accepted, and a missing id (or
     an empty string) failed the users foreign key with a 500. Every
     refusal, a deactivated account's included, is now the same 400 that
-    names nobody (CHT-1785). Null clears the lead. Re-sending a project's
-    current lead unchanged is not a new choice and passes even if that
-    person has since left the team or been deactivated, as for an issue's
-    assignee: it names someone the caller can already read off the project."""
+    names nobody (CHT-1785). Null clears the lead. On an update,
+    re-sending the project's current lead unchanged is not a new choice
+    and passes even if that person has since left the team or been
+    deactivated, as for an issue's assignee: it names someone the caller
+    can already read off the project. A create has no current lead, so
+    every lead it names is checked."""
     if lead_id is None or (current_lead_id is not None and lead_id == current_lead_id):
         return
     from app.oxyde_models.user import OxydeUser
@@ -66,7 +68,7 @@ async def create_project(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Project key already exists in this team",
         )
-    await _validate_lead(project_in.lead_id, team_id)
+    await _validate_lead(project_in.lead_id, team_id, None)
 
     project = await project_service.create(project_in, team_id)
     response = ProjectResponse.model_validate(project, from_attributes=True)

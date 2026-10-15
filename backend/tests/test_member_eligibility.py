@@ -176,3 +176,58 @@ async def test_mcp_finds_a_project_agent_without_a_team_id_by_email(test_user, t
 
     with pytest.raises(ToolContextError):
         await resolve_assignee(test_user, test_team.id, "far-bot@agent.local")
+
+
+@pytest.mark.asyncio
+async def test_a_holder_who_left_the_team_resent_unchanged_is_kept(
+    client, auth_headers, test_team, test_project, test_issue,
+):
+    """The exemption's change in this ticket: a holder removed from the
+    team used to be refused on re-send, because the team check ran first.
+    Re-sent unchanged it is kept, on the issue and on the project; named
+    fresh it is the same not-found as anyone else outside the team."""
+    member = await _person(test_team)
+    issue_url = f"/api/issues/{test_issue.id}"
+    project_url = f"/api/projects/{test_project.id}"
+    assert (await client.patch(issue_url, headers=auth_headers, json={"assignee_id": member.id})).status_code == 200
+    assert (await client.patch(project_url, headers=auth_headers, json={"lead_id": member.id})).status_code == 200
+    await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=member.id).delete()
+
+    kept = await client.patch(issue_url, headers=auth_headers, json={"title": "renamed", "assignee_id": member.id})
+    assert kept.status_code == 200 and kept.json()["assignee_id"] == member.id, kept.text
+    kept = await client.patch(project_url, headers=auth_headers, json={"name": "Renamed", "lead_id": member.id})
+    assert kept.status_code == 200 and kept.json()["lead_id"] == member.id, kept.text
+
+    fresh = await client.post(
+        f"/api/projects/{test_project.id}/issues", headers=auth_headers,
+        json={"title": "x", "assignee_id": member.id},
+    )
+    assert (fresh.status_code, fresh.json()) == (400, {"detail": "Assignee not found"})
+    assert (await client.patch(project_url, headers=auth_headers, json={"lead_id": None})).status_code == 200
+    fresh = await client.patch(project_url, headers=auth_headers, json={"lead_id": member.id})
+    assert (fresh.status_code, fresh.json()) == (400, {"detail": "Lead not found"})
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_project_agent_resent_unchanged_is_kept(
+    client, auth_headers, test_user, test_team, test_project, test_issue, sibling,
+):
+    """An agent that holds the issue and the lead and is then moved to a
+    sibling project: kept on re-send, refused when named fresh."""
+    agent = await _agent(test_user, team_id=test_team.id, project_id=test_project.id, name="Moved Bot")
+    issue_url = f"/api/issues/{test_issue.id}"
+    project_url = f"/api/projects/{test_project.id}"
+    assert (await client.patch(issue_url, headers=auth_headers, json={"assignee_id": agent.id})).status_code == 200
+    assert (await client.patch(project_url, headers=auth_headers, json={"lead_id": agent.id})).status_code == 200
+    await OxydeUser.objects.filter(id=agent.id).update(agent_project_id=sibling.id)
+
+    kept = await client.patch(issue_url, headers=auth_headers, json={"title": "renamed", "assignee_id": agent.id})
+    assert kept.status_code == 200 and kept.json()["assignee_id"] == agent.id, kept.text
+    kept = await client.patch(project_url, headers=auth_headers, json={"name": "Renamed", "lead_id": agent.id})
+    assert kept.status_code == 200 and kept.json()["lead_id"] == agent.id, kept.text
+
+    fresh = await client.post(
+        f"/api/projects/{test_project.id}/issues", headers=auth_headers,
+        json={"title": "x", "assignee_id": agent.id},
+    )
+    assert (fresh.status_code, fresh.json()) == (400, {"detail": "Assignee not found"})
