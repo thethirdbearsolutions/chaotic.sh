@@ -110,6 +110,19 @@ class TeamInvitationResponse(BaseModel):
         return _coerce_enum(InvitationStatus, v)
 
 
+class TeamInvitationCreatedResponse(TeamInvitationResponse):
+    """The create answer: the invitation, plus its accept link when this
+    server cannot email it (CHT-1794).
+
+    ``accept_url`` holds the invitation token, a bearer credential
+    (CHT-1790), so it is shown once, to the admin who created the
+    invitation, and only when SMTP is not configured; otherwise it is
+    null and the link goes by email only. It is never in the list
+    (``TeamInvitationResponse``) or a log line."""
+
+    accept_url: str | None = None
+
+
 class InvitationPreviewResponse(BaseModel):
     """What the public /invite/<token> page shows before anyone signs in
     (CHT-1265). Only what the page needs: no ids, no token, no status

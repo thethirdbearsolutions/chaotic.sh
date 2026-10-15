@@ -441,14 +441,59 @@ export async function handleInvite(event) {
   const role = document.getElementById('invite-role').value;
 
   try {
-    await api.createInvitation(getCurrentTeam().id, email, role);
+    const invitation = await api.createInvitation(getCurrentTeam().id, email, role);
     await loadTeamInvitations();
+    if (invitation && invitation.accept_url) {
+      showInviteLink(email, invitation.accept_url);
+      return false;
+    }
     closeModal();
     showToast('Invitation sent!', 'success');
   } catch (e) {
     showApiError('send invitation', e);
   }
   return false;
+}
+
+/**
+ * The invitation link, on a server that cannot email it (CHT-1794). The
+ * create answer is the only place it is ever shown, so say so.
+ * @param {string} email - Invited address
+ * @param {string} acceptUrl - The /invite/<token> link
+ */
+export function showInviteLink(email, acceptUrl) {
+  document.getElementById('modal-title').textContent = 'Invitation Created';
+  document.getElementById('modal-content').innerHTML = `
+        <div class="api-key-created">
+            <p class="warning-text">This server does not send email: send this link to ${escapeHtml(email)} yourself. You won't be able to see it again.</p>
+            <div class="api-key-display">
+                <code id="invite-link">${escapeHtml(acceptUrl)}</code>
+                <button type="button" class="btn btn-secondary" data-action="copy-invite-link">Copy link</button>
+            </div>
+            <button type="button" class="btn btn-secondary" data-action="dismiss-invite-link">Done</button>
+        </div>
+    `;
+  showModal();
+}
+
+/**
+ * Copy the invitation link. Without a clipboard (insecure context,
+ * denied), select it so it can be copied by hand.
+ */
+export async function copyInviteLink() {
+  const el = document.getElementById('invite-link');
+  if (!el) return;
+  try {
+    await navigator.clipboard.writeText(el.textContent);
+    showToast('Invitation link copied', 'success');
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    showToast('Could not copy: the link is selected, copy it by hand', 'error');
+  }
 }
 
 /**
@@ -651,6 +696,12 @@ registerActions({
   },
   'invite-member': (event) => {
     handleInvite(event);
+  },
+  'copy-invite-link': () => {
+    copyInviteLink();
+  },
+  'dismiss-invite-link': () => {
+    closeModal();
   },
   'create-team': (event) => {
     handleCreateTeam(event);

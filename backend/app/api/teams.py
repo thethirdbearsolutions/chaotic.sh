@@ -12,6 +12,7 @@ from app.schemas.team import (
     TeamRoleUpdate,
     TeamInvitationCreate,
     TeamInvitationResponse,
+    TeamInvitationCreatedResponse,
     InvitationPreviewResponse,
 )
 from app.config import get_settings
@@ -257,7 +258,7 @@ async def remove_member(
 # Invitations
 @router.post(
     "/{team_id}/invitations",
-    response_model=TeamInvitationResponse,
+    response_model=TeamInvitationCreatedResponse,
     status_code=status.HTTP_201_CREATED,
 )
 @writes
@@ -265,9 +266,13 @@ async def create_invitation(
     team_id: str,
     invitation_in: TeamInvitationCreate,
     current_user: CurrentUser,
+    response: Response,
     _app_session: NotAppSession,
-):
-    """Create a team invitation."""
+) -> TeamInvitationCreatedResponse:
+    """Create a team invitation.
+
+    Without SMTP the answer carries the accept link, once, for the admin
+    to hand over themselves (CHT-1794); with SMTP it goes by email only."""
     team_service = TeamService()
 
     # Admin check first, from the team id alone, like the other invitation
@@ -316,9 +321,10 @@ async def create_invitation(
     # operation) -- this try/except is the fail-soft backstop for that
     # dispatch call itself, so the invitation create can never 500 on
     # email trouble.
+    accept_url = f"{get_settings().app_base_url.rstrip('/')}/invite/{invitation.token}"
+    email_service = EmailService()
     try:
-        accept_url = f"{get_settings().app_base_url.rstrip('/')}/invite/{invitation.token}"
-        EmailService().send_invitation_email(
+        email_service.send_invitation_email(
             invitation_in.email,
             team_name=team.name,
             role=invitation_in.role.value,
@@ -328,7 +334,14 @@ async def create_invitation(
     except Exception:
         logger.exception("Failed to dispatch invitation email for team=%s", team.id)
 
-    return invitation
+    # CHT-1794: with no SMTP the email above goes nowhere, so the link is
+    # handed to the inviting admin, here and only here: never in the list,
+    # never logged. A bearer credential in a body: not to be cached.
+    created = TeamInvitationCreatedResponse.model_validate(invitation)
+    if not email_service.is_configured():
+        created.accept_url = accept_url
+        response.headers.update(INVITATION_HEADERS)
+    return created
 
 
 @router.get("/{team_id}/invitations", response_model=list[TeamInvitationResponse])
