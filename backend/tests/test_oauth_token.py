@@ -742,6 +742,9 @@ async def _uvicorn_access_log():
     from app import log_redaction
     from app.main import app
 
+    # install() is idempotent and app.main has usually run it already;
+    # whatever this call adds is taken off again below (PR #414 review).
+    filters_before = {name: list(logging.getLogger(name).filters) for name in log_redaction.LOGGERS}
     log_redaction.install()
     lines: list[str] = []
 
@@ -771,6 +774,10 @@ async def _uvicorn_access_log():
         await asyncio.wait_for(task, 10)
         access.removeHandler(handler)
         access.setLevel(saved_level)
+        for name, before in filters_before.items():
+            logger = logging.getLogger(name)
+            for added in [f for f in logger.filters if f not in before]:
+                logger.removeFilter(added)
 
 
 class TestAccessLog:
@@ -801,6 +808,11 @@ class TestAccessLog:
                 current = refreshed.json()
                 _assert_error(await post("/oauth/revoke", {"client_id": public_client},
                                          {"token": current["access_token"]}), 400, "invalid_request")
+                # Refused, not read: the access token in that URL still
+                # authenticates (the check MCP's bearer auth makes).
+                validated = await TokenService().validate_access(current["access_token"], resource=MCP)
+                session = await OxydeHolderSession.objects.get(id=validated.holder_session_id)
+                assert session.revoked_at is None
                 revoked = await post("/oauth/revoke", {"token": current["refresh_token"], "client_id": public_client})
                 assert revoked.status_code == 200, revoked.text
 
