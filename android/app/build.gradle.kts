@@ -54,6 +54,9 @@ android {
     }
 
     buildTypes {
+        // CI builds this unsigned to check R8 (CHT-1661). Signing must never
+        // be picked up quietly from an environment variable or property:
+        // add it in a separate job that is given its secrets explicitly.
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
