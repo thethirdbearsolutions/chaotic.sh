@@ -557,7 +557,9 @@ class TestResolved:
         phone = Phone()
         await _device(test_user, phone)
         await InboxService().notify_mentions(
-            content="hey @" + (test_user.name.split(" ")[0].lower()), team_id=test_team.id,
+            # "@test" is also Test User 2's first word, so it reaches nobody
+            # (CHT-1731); the whole-name handle is test_user's alone.
+            content="hey @test-user", team_id=test_team.id,
             author=test_user2, document=test_document,
         )
         await push_sender.drain()

@@ -1159,6 +1159,13 @@ textarea {
     font-size: var(--font-sm);
 }
 
+/* An agent among the suggestions (CHT-1731). */
+.mention-kind {
+    color: var(--text-muted);
+    font-size: var(--font-xs);
+    margin-left: 4px;
+}
+
 /* ============================================================================
    10. DOCUMENTS
    ============================================================================ */

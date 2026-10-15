@@ -808,7 +808,8 @@ describe('viewDocument (CHT-1213 polish)', () => {
       api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
       api.getDocumentComments.mockResolvedValue([]);
       await viewDocument('doc-1');
-      expect(mockSetupMentionAutocomplete).toHaveBeenCalledWith('new-doc-comment', 'doc-mention-suggestions');
+      // A team-wide document: no project-scoped agent is offered (CHT-1731).
+      expect(mockSetupMentionAutocomplete).toHaveBeenCalledWith('new-doc-comment', 'doc-mention-suggestions', { projectId: null });
     });
   });
 

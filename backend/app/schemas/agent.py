@@ -55,6 +55,9 @@ class AgentResponse(BaseModel):
     # an idle identity by default; it still resolves by id or name.
     last_used_at: DateTimeUTC | None = None
     idle: bool = False
+    # The @handle that mentions exactly this agent in its team (CHT-1731);
+    # null where not computed, or for a deactivated agent (not mentionable).
+    mention_handle: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

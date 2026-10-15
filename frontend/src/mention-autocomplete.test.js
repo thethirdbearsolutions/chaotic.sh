@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getMemberHandle, isInsideCodeSpan } from './mention-autocomplete.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { getMemberHandle, getMentionables, isInsideCodeSpan } from './mention-autocomplete.js';
 
 describe('getMemberHandle', () => {
     it('returns first name lowercased', () => {
@@ -16,6 +16,68 @@ describe('getMemberHandle', () => {
 
     it('returns email prefix when name is empty string', () => {
         expect(getMemberHandle({ name: '', email: 'test@example.com' })).toBe('test');
+    });
+
+    // CHT-1731: team-member rows carry user_name/user_email, not name/email.
+    it('reads a team-member row', () => {
+        expect(getMemberHandle({ user_name: 'Ada Lovelace', user_email: 'ada@example.com' })).toBe('ada');
+    });
+
+    it('prefers the server-given mention_handle', () => {
+        expect(getMemberHandle({ user_name: 'Ada Lovelace', mention_handle: 'ada-lovelace' })).toBe('ada-lovelace');
+    });
+});
+
+describe('getMentionables (CHT-1731)', () => {
+    const members = [
+        { user_id: 'u1', user_name: 'Ada Lovelace', user_email: 'ada@example.com', mention_handle: 'ada' },
+    ];
+    const agents = [
+        { id: 'a1', name: 'Claude MCP', mention_handle: 'claude-mcp', is_active: true },
+        { id: 'a2', name: 'Claude Code (cloud) · 3f9a1c2b', kind: 'session', mention_handle: 'claude-3f9a1c2b' },
+        { id: 'a3', name: 'Claude Code (cloud) · 00000001', kind: 'session', mention_handle: 'claude-00000001', idle: true },
+        { id: 'a4', name: 'Old Bot', mention_handle: null, is_active: false },
+        { id: 'a5', name: 'From an older server' },
+    ];
+
+    it('offers members, then active non-idle agents with their server handles', () => {
+        const rows = getMentionables(members, agents);
+        expect(rows.map(r => [r.id, r.handle, r.isAgent])).toEqual([
+            ['u1', 'ada', false],
+            ['a1', 'claude-mcp', true],
+            ['a2', 'claude-3f9a1c2b', true],
+        ]);
+        expect(rows[0].name).toBe('Ada Lovelace');
+    });
+
+    it('never offers two rows with the same handle for the session collision case', () => {
+        const handles = getMentionables(members, agents).map(r => r.handle);
+        expect(new Set(handles).size).toBe(handles.length);
+        expect(handles).not.toContain('claude');
+    });
+
+    it('lists an agent that also has a team-member row once', () => {
+        const rows = getMentionables(
+            [{ user_id: 'a1', user_name: 'Claude MCP', mention_handle: 'claude-mcp' }],
+            [agents[0]],
+        );
+        expect(rows).toHaveLength(1);
+    });
+
+    it('offers a project-scoped agent only in its own project', () => {
+        const scoped = [
+            { id: 'p1', name: 'Builder', mention_handle: 'builder', agent_project_id: 'proj-1' },
+            { id: 't1', name: 'Team Bot', mention_handle: 'team-bot', agent_project_id: null },
+        ];
+        const ids = (ctx) => getMentionables([], scoped, ctx).map(r => r.id);
+        expect(ids({ projectId: 'proj-1' })).toEqual(['p1', 't1']);
+        expect(ids({ projectId: 'proj-2' })).toEqual(['t1']);
+        expect(ids({ projectId: null })).toEqual(['t1']);   // a team-wide document
+        expect(ids()).toEqual(['p1', 't1']);                // no context given
+    });
+
+    it('copes with no agents loaded', () => {
+        expect(getMentionables(members)).toHaveLength(1);
     });
 });
 
@@ -73,6 +135,55 @@ describe('isInsideCodeSpan (CHT-1272)', () => {
         const text = 'a ``line1\n@bob line2`` b';
         const pos = text.indexOf('@bob') + 2;
         expect(isInsideCodeSpan(text, pos)).toBe(true);
+    });
+});
+
+// CHT-1731: the bound textarea offers agents, scoped to the context it
+// was (last) set up with.
+describe('setupMentionAutocomplete offers agents in context (CHT-1731)', () => {
+    let setupMentionAutocomplete;
+
+    beforeEach(async () => {
+        vi.resetModules();
+        vi.doMock('./teams.js', () => ({
+            getMembers: vi.fn(() => [{ user_id: 'u1', user_name: 'Ada Lovelace', mention_handle: 'ada' }]),
+        }));
+        vi.doMock('./agents.js', () => ({
+            getAgents: vi.fn(() => [
+                { id: 'a1', name: 'Claude MCP', mention_handle: 'claude-mcp' },
+                { id: 'a2', name: 'Builder', mention_handle: 'builder', agent_project_id: 'proj-1' },
+            ]),
+        }));
+        ({ setupMentionAutocomplete } = await import('./mention-autocomplete.js'));
+        document.body.innerHTML = `
+            <textarea id="new-comment"></textarea>
+            <div id="mention-suggestions" class="hidden"></div>
+        `;
+    });
+
+    // vi.doMock outlives vi.resetModules: later suites expect no agents.
+    afterEach(() => {
+        vi.doUnmock('./agents.js');
+    });
+
+    const offered = () => {
+        const textarea = document.getElementById('new-comment');
+        textarea.value = '@';
+        textarea.selectionStart = textarea.selectionEnd = 1;
+        textarea.dispatchEvent(new Event('input'));
+        return [...document.querySelectorAll('.mention-suggestion')].map(b => b.dataset.handle);
+    };
+
+    it('offers the project agent in its project', () => {
+        setupMentionAutocomplete('new-comment', 'mention-suggestions', { projectId: 'proj-1' });
+        expect(offered()).toEqual(['ada', 'claude-mcp', 'builder']);
+    });
+
+    it('leaves it out elsewhere, and follows a re-bind for another issue', () => {
+        setupMentionAutocomplete('new-comment', 'mention-suggestions', { projectId: 'proj-2' });
+        expect(offered()).toEqual(['ada', 'claude-mcp']);
+        setupMentionAutocomplete('new-comment', 'mention-suggestions', { projectId: 'proj-1' });
+        expect(offered()).toContain('builder');
     });
 });
 
