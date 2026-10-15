@@ -1002,6 +1002,9 @@ def register(cli):
         iss = _client().get_issue_by_identifier(identifier)
         comment = _client().create_comment(iss["id"], body)
         console.print(f"[green]Comment added to {esc(identifier)}.[/green]")
+        # @handles that reached nobody (CHT-1735); also in the --json output.
+        for warning in comment.get("warnings") or []:
+            console.print(f"[yellow]Warning: {esc(warning)}[/yellow]")
         if assign_to:
             assignee_id = m.resolve_assignee_id(assign_to)
             _client().update_issue(iss["id"], assignee_id=assignee_id)

@@ -2309,7 +2309,7 @@
           "issues"
         ],
         "summary": "Create Comment",
-        "description": "Create a comment on an issue.",
+        "description": "Create a comment on an issue. `warnings` names each @handle that\nreached nobody (CHT-1735).",
         "operationId": "create_comment_api_issues__issue_id__comments_post",
         "security": [
           {
@@ -2343,7 +2343,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueCommentResponse"
+                  "$ref": "#/components/schemas/IssueCommentCreated"
                 }
               }
             }
@@ -4892,7 +4892,7 @@
           "documents"
         ],
         "summary": "Create Comment",
-        "description": "Create a comment on a document.",
+        "description": "Create a comment on a document. `warnings` names each @handle that\nreached nobody (CHT-1735).",
         "operationId": "create_comment_api_documents__document_id__comments_post",
         "security": [
           {
@@ -4926,7 +4926,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentCommentResponse"
+                  "$ref": "#/components/schemas/DocumentCommentCreated"
                 }
               }
             }
@@ -9621,6 +9621,82 @@
         "title": "DocumentCommentCreate",
         "description": "Schema for creating a document comment."
       },
+      "DocumentCommentCreated": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "author_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Id"
+          },
+          "author_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "document_id",
+          "author_id",
+          "content",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DocumentCommentCreated",
+        "description": "A new document comment, as its author sees it: with `warnings`\nabout @handles that reached nobody (CHT-1735, see IssueCommentCreated)."
+      },
       "DocumentCommentResponse": {
         "properties": {
           "id": {
@@ -10862,6 +10938,82 @@
         ],
         "title": "IssueCommentCreate",
         "description": "Schema for creating a comment."
+      },
+      "IssueCommentCreated": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "issue_id": {
+            "type": "string",
+            "title": "Issue Id"
+          },
+          "author_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Id"
+          },
+          "author_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "issue_id",
+          "author_id",
+          "content",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "IssueCommentCreated",
+        "description": "A new comment, as its author sees it: with `warnings` about\n@handles that reached nobody (CHT-1735). Only the author gets them;\nthe comment broadcast to the team carries none."
       },
       "IssueCommentResponse": {
         "properties": {

@@ -28,7 +28,7 @@ from app.db.transactions import on_commit
 from app.enums import ActivityType, ApprovalMode, InboxEntryKind, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
-from app.services.mention_handles import MentionDirectory, legacy_first_word_handle
+from app.services.mention_handles import MentionDirectory, legacy_first_word_handle, normalize_token
 from app.services.team_service import TeamService
 from app.utils.markdown import strip_code_spans
 
@@ -65,6 +65,21 @@ _member_handle = legacy_first_word_handle
 # At most this many principals are notified by one comment; later
 # handles are ignored (and logged).
 MAX_MENTION_RECIPIENTS = 25
+# At most this many @handles get a warning of their own (CHT-1735), and
+# an ambiguous one lists at most this many of its candidates.
+MAX_MENTION_WARNINGS = 10
+MAX_MENTION_CANDIDATES = 10
+
+
+def _unknown_mention_warning(token: str) -> str:
+    return f"@{token} matches nobody who can be mentioned here; nobody was notified."
+
+
+def _ambiguous_mention_warning(token: str, handles: list[str]) -> str:
+    shown = ", ".join(f"@{h}" for h in handles[:MAX_MENTION_CANDIDATES])
+    if len(handles) > MAX_MENTION_CANDIDATES:
+        shown += f" (and {len(handles) - MAX_MENTION_CANDIDATES} more)"
+    return f"@{token} is ambiguous; nobody was notified. Use one of: {shown}."
 
 
 class InboxService:
@@ -431,7 +446,7 @@ class InboxService:
 
     async def notify_mentions(
         self, *, content: str, team_id: str, author, issue=None, document=None,
-    ) -> None:
+    ) -> list[str]:
         """Parse @handles out of `content`; write a MENTION entry for each
         principal they resolve to (excluding the author). Exactly one of
         issue/document should be given.
@@ -443,25 +458,46 @@ class InboxService:
 
         @handles inside fenced ``` blocks or inline `code` spans are not
         real mentions (CHT-1272) -- see _strip_code_spans.
+
+        Returns warnings for the author (CHT-1735): one per @handle that
+        reached nobody, unknown or ambiguous, an ambiguous one listing the
+        unique handles of its candidates the author could reach from
+        here (never a principal they could not mention), and one when the
+        recipient cap cut the list. A word with an '@' inside it (an
+        email) is no mention, so it never warns.
         """
-        # In order of appearance, so the cap below keeps the first ones.
-        handles = list(dict.fromkeys(
-            m.lower() for m in _MENTION_RE.findall(_strip_code_spans(content or ""))
+        # In order of appearance, so the cap below keeps the first ones;
+        # "@ada" and "@Ada." are one token.
+        tokens = list(dict.fromkeys(
+            normalize_token(m) for m in _MENTION_RE.findall(_strip_code_spans(content or ""))
         ))
-        if not handles:
-            return
+        tokens = [t for t in tokens if t]
+        if not tokens:
+            return []
 
         directory = await MentionDirectory.for_team(team_id)
         project_id = issue.project_id if issue is not None else document.project_id
         matched: dict[str, None] = {}
-        for handle in handles:
-            user_id = directory.resolve(handle)
-            if user_id is None:
-                if directory.ambiguous(handle):
-                    logger.info("@%s is ambiguous in team %s; nobody was notified", handle, team_id)
+        unreached: list[str] = []
+        for token in tokens:
+            ids = directory.claimants(token)
+            reachable = [i for i in ids if directory.can_reach(i, project_id)]
+            if len(ids) == 1 and reachable:
+                if reachable[0] != author.id:
+                    matched[reachable[0]] = None
                 continue
-            if user_id != author.id and directory.can_reach(user_id, project_id):
-                matched[user_id] = None
+            if len(ids) > 1:
+                logger.info("@%s is ambiguous in team %s; nobody was notified", token, team_id)
+            if len(ids) > 1 and reachable:
+                handles = sorted(directory.handle_for(i) for i in reachable)
+                unreached.append(_ambiguous_mention_warning(token, handles))
+            else:
+                # Unknown, or only principals the author cannot mention
+                # from here: the same words, so neither is revealed.
+                unreached.append(_unknown_mention_warning(token))
+        warnings = unreached[:MAX_MENTION_WARNINGS]
+        if len(unreached) > MAX_MENTION_WARNINGS:
+            warnings.append(f"{len(unreached) - MAX_MENTION_WARNINGS} more @handles reached nobody.")
         if len(matched) > MAX_MENTION_RECIPIENTS:
             # One comment pasting a long `agent list` must not write
             # hundreds of entries, broadcasts and pushes (CHT-1731 review).
@@ -469,9 +505,13 @@ class InboxService:
                 "Comment by %s mentions %d principals; notifying the first %d",
                 author.id, len(matched), MAX_MENTION_RECIPIENTS,
             )
+            warnings.append(
+                f"This comment mentions {len(matched)} members; only the first "
+                f"{MAX_MENTION_RECIPIENTS} were notified."
+            )
         matched_user_ids = list(matched)[:MAX_MENTION_RECIPIENTS]
         if not matched_user_ids:
-            return
+            return warnings
 
         if issue is not None:
             title = f"{author.name} mentioned you in {issue.identifier}"
@@ -499,6 +539,7 @@ class InboxService:
             created.append(entry)
             await self._broadcast(team_id, "created", entry)
         await self._push(created, author.id)
+        return warnings
 
     async def resolve_gate_or_review(
         self, *, ritual_id: str, issue_id: str, recipient_user_id: str | None = None,

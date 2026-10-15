@@ -893,6 +893,41 @@ class TestReviewFollowUps:
         created = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": name}, headers=auth_headers)
         assert created.status_code == 422 and _code(created) == "name_matches_member"
 
+    async def test_a_session_tail_handle_that_is_a_persons_is_refused(
+        self, client, auth_headers, registrar, test_team,
+    ):
+        """CHT-1741: "Ethan Bot · smith" would claim the session tail
+        handle `ethan-smith`, a person's, though its whole name is not
+        one. Refused on register, create and rename; a tail that is
+        nobody's handle, and the weak first word, stay allowed."""
+        ethan = await OxydeUser.objects.create(
+            email="ethan@example.com", hashed_password=get_password_hash("pw-12345678"), name="Ethan Smith",
+        )
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=ethan.id, role=TeamRole.MEMBER)
+        _, key = registrar
+        name = "Ethan Bot · smith"
+
+        response = await _register(client, key, name=name)
+        assert response.status_code == 422 and _code(response) == "name_matches_member"
+        created = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": name}, headers=auth_headers)
+        assert created.status_code == 422 and _code(created) == "name_matches_member"
+
+        allowed = await client.post(
+            f"/api/teams/{test_team.id}/agents", json={"name": "Ethan Bot · jones"}, headers=auth_headers,
+        )
+        assert allowed.status_code == 201, allowed.text
+        renamed = await client.patch(
+            f"/api/agents/{allowed.json()['id']}", json={"name": name}, headers=auth_headers,
+        )
+        assert renamed.status_code == 422 and _code(renamed) == "name_matches_member"
+        identity = await _register(client, key, name="Ethan Bot · jones")
+        assert identity.status_code == 201, identity.text
+
+        from app.services.mention_handles import MentionDirectory
+
+        d = await MentionDirectory.for_team(test_team.id)
+        assert d.resolve("ethan-smith") == ethan.id
+
     async def test_a_name_that_only_starts_like_a_person_is_allowed(self, client, auth_headers, test_team):
         for name in ("Test Bot", "Tester", "🤖"):
             created = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": name}, headers=auth_headers)

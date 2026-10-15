@@ -103,19 +103,21 @@ def normalize_name(name: str) -> str:
 
 async def member_named(team_id: str, name: str) -> bool:
     """Is `name` a human member's name in `team_id`: equal when normalized,
-    or, as an @handle, one of theirs (CHT-1731), e.g. "Ethan" or
-    "Ethan · smith" beside a person "Ethan Smith"? An agent may not take
-    either."""
-    from app.services.mention_handles import handle_words, slugify
+    or does an @handle an agent of that name would claim equal one of
+    theirs (CHT-1731), e.g. "Ethan" or "Ethan · smith" beside a person
+    "Ethan Smith"? That includes a session's tail handle: "Ethan Bot ·
+    smith" would claim ``ethan-smith`` (CHT-1741). An agent may take
+    none of them."""
+    from app.services.mention_handles import agent_name_handles, handle_words
 
     member_ids = [m.user_id for m in await OxydeTeamMember.objects.filter(team_id=team_id).all()]
     if not member_ids:  # pragma: no cover - an agent's team always has its creator or an admin
         return False
     people = await OxydeUser.objects.filter(id__in=member_ids, is_agent=False).all()
     wanted = normalize_name(name)
-    slug = slugify(name)
+    claims = agent_name_handles(name)
     return any(
-        normalize_name(p.name) == wanted or (slug and slug in handle_words(p))
+        normalize_name(p.name) == wanted or not claims.isdisjoint(handle_words(p))
         for p in people
     )
 

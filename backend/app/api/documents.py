@@ -9,6 +9,7 @@ from app.schemas.document import (
     DocumentResponse,
     DocumentCommentCreate,
     DocumentCommentUpdate,
+    DocumentCommentCreated,
     DocumentCommentResponse,
     DocumentLinkedResponse,
     DocumentRevisionListItem,
@@ -712,14 +713,15 @@ def build_comment_response(comment, author_name: str | None = None) -> DocumentC
     )
 
 
-@router.post("/{document_id}/comments", response_model=DocumentCommentResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/{document_id}/comments", response_model=DocumentCommentCreated, status_code=status.HTTP_201_CREATED)
 @writes
 async def create_comment(
     document_id: str,
     comment_in: DocumentCommentCreate,
     current_user: CurrentUser,
-):
-    """Create a comment on a document."""
+) -> DocumentCommentCreated:
+    """Create a comment on a document. `warnings` names each @handle that
+    reached nobody (CHT-1735)."""
     document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)
@@ -743,11 +745,16 @@ async def create_comment(
                 detail="Not authorized for this document",
             )
 
-    comment = await document_service.create_comment(document_id, comment_in, current_user.id)
-    response = await fill_principals(build_comment_response(comment, author_name=current_user.name))
+    warnings: list[str] = []
+    comment = await document_service.create_comment(document_id, comment_in, current_user.id, warnings=warnings)
+    response = await fill_principals(DocumentCommentCreated(
+        **build_comment_response(comment, author_name=current_user.name).model_dump(), warnings=warnings,
+    ))
 
-    # Broadcast real-time update
-    await broadcast_comment_event(document.team_id, "created", response.model_dump(mode="json"))
+    # Broadcast real-time update (the warnings are the author's alone)
+    await broadcast_comment_event(
+        document.team_id, "created", response.model_dump(mode="json", exclude={"warnings"}),
+    )
 
     return response
 

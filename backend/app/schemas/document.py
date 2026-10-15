@@ -88,6 +88,13 @@ class DocumentCommentResponse(HasPrincipals, BaseModel):
         return name_deleted_author(self, "author_id", "author_name")
 
 
+class DocumentCommentCreated(DocumentCommentResponse):
+    """A new document comment, as its author sees it: with `warnings`
+    about @handles that reached nobody (CHT-1735, see IssueCommentCreated)."""
+
+    warnings: list[str] = Field(default_factory=list)
+
+
 class DocumentLinkedResponse(BaseModel):
     """Schema for link_document_to_issue's response (CHT-1223).
 

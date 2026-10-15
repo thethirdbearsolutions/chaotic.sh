@@ -181,7 +181,9 @@ class TestMentionFlow:
         mentioned = _make_member(test_team["id"], "Zara")
         issue = api_client.create_issue(test_project["id"], "E2E Mention Issue")
 
-        api_client.create_comment(issue["id"], "cc @zara take a look please")
+        comment = api_client.create_comment(issue["id"], "cc @zara take a look please, and @nobody")
+        # CHT-1735: the author learns which @handle reached nobody.
+        assert comment["warnings"] == ["@nobody matches nobody who can be mentioned here; nobody was notified."]
 
         with _as_user(mentioned) as client2:
             entries = client2.get_inbox(test_team["id"])

@@ -1222,6 +1222,24 @@ class TestIssueCommentJsonOutput:
         assert data['id'] == 'comment-1'
         assert 'added' in result.stderr.lower()
 
+    def test_comment_prints_mention_warnings(self, cli_runner, mock_issue):
+        """CHT-1735: an @handle that reached nobody is reported, in text
+        and in --json."""
+        from cli.main import cli, client
+
+        warning = "@claude is ambiguous; nobody was notified. Use one of: @claude-mcp, @claude-3f9a1c."
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.create_comment = MagicMock(return_value={"id": "comment-1", "content": "@claude", "warnings": [warning]})
+
+        result = cli_runner.invoke(cli, ['issue', 'comment', 'CHT-100', '@claude'])
+        assert result.exit_code == 0, result.output
+        assert "Warning: @claude is ambiguous" in result.output
+        assert "@claude-3f9a1c" in result.output
+
+        result = cli_runner.invoke(cli, ['issue', 'comment', 'CHT-100', '@claude', '--json'])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["warnings"] == [warning]
+
     def test_comment_edit_json(self, cli_runner, mock_issue):
         from cli.main import cli, client
 

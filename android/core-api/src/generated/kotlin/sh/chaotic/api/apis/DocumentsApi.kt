@@ -24,6 +24,7 @@
 package sh.chaotic.api.apis
 
 import sh.chaotic.api.models.DocumentCommentCreate
+import sh.chaotic.api.models.DocumentCommentCreated
 import sh.chaotic.api.models.DocumentCommentResponse
 import sh.chaotic.api.models.DocumentCommentUpdate
 import sh.chaotic.api.models.DocumentLinkedResponse
@@ -90,13 +91,13 @@ import io.ktor.http.ParametersBuilder
         /**
         * POST /api/documents/{document_id}/comments
         * Create Comment
-        * Create a comment on a document.
+        * Create a comment on a document. &#x60;warnings&#x60; names each @handle that reached nobody (CHT-1735).
          * @param documentId  
          * @param documentCommentCreate  
-         * @return DocumentCommentResponse
+         * @return DocumentCommentCreated
         */
             @Suppress("UNCHECKED_CAST")
-        open suspend fun createCommentApiDocumentsDocumentIdCommentsPost(documentId: kotlin.String, documentCommentCreate: DocumentCommentCreate): HttpResponse<DocumentCommentResponse> {
+        open suspend fun createCommentApiDocumentsDocumentIdCommentsPost(documentId: kotlin.String, documentCommentCreate: DocumentCommentCreate): HttpResponse<DocumentCommentCreated> {
 
             val localVariableAuthNames = listOf<String>("HTTPBearer")
 

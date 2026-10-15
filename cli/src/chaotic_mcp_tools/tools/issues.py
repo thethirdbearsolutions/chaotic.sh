@@ -517,9 +517,16 @@ async def issue_comment(
         Field(description="Also assign the issue: 'me', a user/agent id, or a name/email.")
     ] = None,
 ) -> dict:
-    """Add a comment to an issue, optionally assigning it in the same call."""
+    """Add a comment to an issue, optionally assigning it in the same call.
+
+    An @handle that reached nobody (unknown, or ambiguous: it names
+    several principals) is reported back in `warnings`, an ambiguous one
+    with the unique handles to use instead (absent otherwise).
+    """
     iss = await backend.get_issue(identifier)
     comment = await backend.create_comment(iss["id"], content)
+    if "warnings" in comment and not comment["warnings"]:
+        comment = {k: v for k, v in comment.items() if k != "warnings"}
     if assign_to:
         team_id = await backend.team_for_project(iss.get("project_id"))
         assignee_id = await backend.resolve_assignee(assign_to, team_id)
