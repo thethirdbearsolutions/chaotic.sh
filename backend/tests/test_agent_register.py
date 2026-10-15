@@ -357,13 +357,17 @@ class TestScope:
         assert response.status_code == 201
         assert response.json()["agent"]["agent_project_id"] == test_project.id
 
-    async def test_a_project_in_another_team_is_refused(self, client, registrar):
+    async def test_a_project_in_another_team_answers_like_a_missing_one(self, client, registrar):
+        """It used to be a 403 naming the project's team: an existence
+        oracle for any registrar (CHT-1819)."""
         _, key = registrar
         other_team = await OxydeTeam.objects.create(name="Other", key="OTH")
         project = await OxydeProject.objects.create(team_id=other_team.id, name="P", key="OP")
         response = await _register(client, key, project_id=project.id)
-        assert response.status_code == 403 and _code(response) == "scope_exceeds_registrar"
-        assert other_team.id in response.json()["detail"]["message"] or "another team" in response.json()["detail"]["message"]
+        missing = await _register(client, key, project_id="nope")
+        assert response.status_code == missing.status_code == 404
+        assert response.json() == missing.json()
+        assert _code(response) == "project_not_found"
 
     async def test_another_team_id_is_refused(self, client, registrar):
         _, key = registrar
@@ -376,9 +380,9 @@ class TestScope:
         assert inherited.json()["agent"]["agent_project_id"] == test_project.id
 
         sibling = await OxydeProject.objects.create(team_id=test_team.id, name="Sibling", key="SIB")
+        # A sibling project is out of its scope: the missing project's 404.
         widened = await _register(client, key, ref="claude-code:session:other", project_id=sibling.id)
-        assert widened.status_code == 403 and _code(widened) == "scope_exceeds_registrar"
-        assert test_project.id in widened.json()["detail"]["message"]
+        assert widened.status_code == 404 and _code(widened) == "project_not_found"
 
     async def test_an_unknown_project_is_404(self, client, registrar):
         _, key = registrar

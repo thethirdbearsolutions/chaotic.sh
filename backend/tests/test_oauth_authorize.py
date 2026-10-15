@@ -551,6 +551,32 @@ class TestApprove:
         assert response.status_code == 422
         assert response.json()["detail"]["error_code"] == "project_not_in_team"
 
+    async def test_an_out_of_scope_choice_answers_like_a_missing_one(
+        self, client, pending, auth_headers, auth_headers2, test_team, test_user2,
+    ):
+        """Each id an approval names (team, agent, projects) gets the same
+        answer for a row of a team the viewer is not in as for one that
+        does not exist (CHT-1819; the out-of-scope guard in
+        test_out_of_scope_is_not_found.py points here, since the consent
+        request this needs is set up in this file)."""
+        from app.enums import TeamRole
+        other = await OxydeTeam.objects.create(name="Other", key="OTH")
+        await OxydeTeamMember.objects.create(team_id=other.id, user_id=test_user2.id, role=TeamRole.OWNER)
+        theirs = (await client.post(f"/api/teams/{other.id}/agents", json={"name": "Theirs"},
+                                    headers=auth_headers2)).json()
+        elsewhere = await OxydeProject.objects.create(team_id=other.id, name="X", key="XX", color="#000000")
+        for field, existing, choice in [
+            ("team_id", other.id, lambda value: {"team_id": value}),
+            ("agent_id", theirs["id"], lambda value: {"team_id": test_team.id, "agent_id": value}),
+            ("project_ids", elsewhere.id, lambda value: {"team_id": test_team.id, "project_ids": [value]}),
+        ]:
+            seen = await self._approve(client, pending, auth_headers, **choice(existing))
+            missing = await self._approve(client, pending, auth_headers, **choice("missing-id"))
+            assert seen.status_code in (403, 422), (field, seen.text)
+            assert (seen.status_code, seen.json()) == (missing.status_code, missing.json()), field
+        # Refusals leave the request usable.
+        assert (await self._approve(client, pending, auth_headers, team_id=test_team.id)).status_code == 200
+
     async def test_agent_may_not_take_a_members_name(self, client, pending, auth_headers, test_team):
         response = await self._approve(client, pending, auth_headers, team_id=test_team.id, agent_name="test user")
         assert response.status_code == 422

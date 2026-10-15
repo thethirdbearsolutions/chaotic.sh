@@ -465,8 +465,11 @@ is shown only here.
   a new identity only and leaves an existing one's name alone (what the
   CLI sends). An agent may not take the name of a person in its team.
 - `project_id` narrows a team-scoped registrar's identity to one of its
-  projects. Nothing can be wider than the registrar. A person calling
-  for themself passes `team_id` (or a `project_id`).
+  projects. Nothing can be wider than the registrar: a `team_id` other
+  than its own is a 403, and a `project_id` outside its scope (or, for a
+  person, in a team they are not in) answers 404 `project_not_found`,
+  exactly like one that does not exist. A person calling for themself
+  passes `team_id` (or a `project_id`).
 - **Caps** (429; the hourly one with `Retry-After`): at most 200 active identities per
   registrar (`REGISTRAR_MAX_ACTIVE_IDENTITIES`) and 60 registrations per
   rolling hour, renewals included (`REGISTRAR_MAX_REGISTRATIONS_PER_HOUR`).

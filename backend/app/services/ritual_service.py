@@ -166,7 +166,10 @@ class RitualService:
                 )
             document = await OxydeDocument.objects.get_or_none(id=document_id)
             project = await OxydeProject.objects.get_or_none(id=ritual.project_id)
-            if document is None or project is None or document.team_id != project.team_id:
+            if (
+                document is None or project is None or document.team_id != project.team_id
+                or not await self._attester_sees(user_id, document)
+            ):
                 raise ValueError(
                     f"Document '{document_id}' not found; ritual '{ritual.name}' "
                     "requires the document you wrote for it."
@@ -192,6 +195,18 @@ class RitualService:
                 )
             return url.strip()
         raise ValueError(f"Ritual '{ritual.name}' has an unknown artifact kind")
+
+    @staticmethod
+    async def _attester_sees(user_id: str, document: "OxydeDocument") -> bool:
+        """May the attester read ``document``? One it may not is "not
+        found" like a missing one (CHT-1819): the same team is not enough,
+        since a project-scoped agent sees neither a sibling project's
+        documents nor the team-level ones (CHT-1780), and the replies
+        below name the document's title."""
+        from app.api.deps import can_access_document
+
+        user = await OxydeUser.objects.get_or_none(id=user_id)
+        return user is not None and await can_access_document(user, document)
 
     async def _require_unused_artifact(
         self, document: "OxydeDocument", ritual: "OxydeRitual", scope: tuple[str, str],
@@ -315,13 +330,14 @@ class RitualService:
         if existing:
             raise ValueError(f"A ritual named '{ritual_in.name}' already exists in this project")
 
-        # Validate group membership
-        if ritual_in.group_id:
-            group = await self.get_group_by_id(ritual_in.group_id)
-            if not group:
-                raise ValueError(f"Ritual group '{ritual_in.group_id}' not found")
-            if group.project_id != project_id:
-                raise ValueError("Ritual group belongs to a different project")
+        # Validate group membership. An empty id is a missing group too
+        # (it used to fail the groups foreign key with a 500).
+        if ritual_in.group_id is not None:
+            group = await self.get_group_by_id(ritual_in.group_id) if ritual_in.group_id else None
+            # Another project's group answers like a missing one: that
+            # project may be one the caller cannot see (CHT-1819).
+            if not group or group.project_id != project_id:
+                raise ValueError(f"Ritual group '{ritual_in.group_id}' not found in this project")
 
             if group.selection_mode == SelectionMode.PERCENTAGE:
                 if ritual_in.percentage is None or ritual_in.percentage <= 0:
@@ -397,10 +413,9 @@ class RitualService:
         new_group_id = update_data.get("group_id", ritual.group_id)
         if new_group_id:
             group = await self.get_group_by_id(new_group_id)
-            if not group:
-                raise ValueError(f"Ritual group '{new_group_id}' not found")
-            if group.project_id != ritual.project_id:
-                raise ValueError("Ritual group belongs to a different project")
+            # As in create: another project's group is not found (CHT-1819).
+            if not group or group.project_id != ritual.project_id:
+                raise ValueError(f"Ritual group '{new_group_id}' not found in this project")
 
             new_weight = update_data.get("weight", ritual.weight)
             new_percentage = update_data.get("percentage", ritual.percentage)

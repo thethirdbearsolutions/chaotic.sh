@@ -14,6 +14,24 @@ from app.websocket import broadcast_project_event
 router = APIRouter()
 
 
+async def _validate_lead(lead_id: str | None, team_id: str, current_lead_id: str | None = None) -> None:
+    """A project's lead must be part of its team. Until CHT-1819 the id
+    was stored unchecked: a user of another team was accepted, and a
+    missing id (or an empty string) failed the users foreign key with a
+    500. All now get the same 400, so the answer never says whether a
+    user exists elsewhere (CHT-1785). Null clears the lead. Re-sending a
+    project's current lead unchanged is not a new choice and passes even
+    if that person has since left the team, as for an issue's assignee:
+    it names someone the caller can already read off the project."""
+    if lead_id is None or (current_lead_id is not None and lead_id == current_lead_id):
+        return
+    from app.oxyde_models.user import OxydeUser
+
+    lead = await OxydeUser.objects.get_or_none(id=lead_id)
+    if lead is None or not await check_user_in_team(lead, team_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lead not found")
+
+
 @writes
 async def create_project(
     team_id: str,
@@ -42,6 +60,7 @@ async def create_project(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Project key already exists in this team",
         )
+    await _validate_lead(project_in.lead_id, team_id)
 
     project = await project_service.create(project_in, team_id)
     response = ProjectResponse.model_validate(project, from_attributes=True)
@@ -109,6 +128,7 @@ async def update_project(
 
     # A project the caller cannot see answers like a missing one (CHT-1785).
     project = await visible_project(current_user, project_id)
+    await _validate_lead(project_in.lead_id, project.team_id, project.lead_id)
 
     project = await project_service.update(project, project_in)
     response = ProjectResponse.model_validate(project, from_attributes=True)
