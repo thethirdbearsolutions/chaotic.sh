@@ -6,6 +6,9 @@
  *
  * CHT-1038: Exponential backoff with jitter, JSON.parse safety
  * CHT-1039: Pub/sub event registry replacing monolithic handler
+ *
+ * How a refused /ws handshake ends, and what a client must do about each
+ * outcome, is the client contract in docs/ws-client-contract.md (CHT-1646).
  */
 
 import { api } from './api.js';

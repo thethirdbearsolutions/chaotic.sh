@@ -70,6 +70,10 @@ a refused handshake opens before it closes, a client should not take
 ``onopen`` as "the credential was good": the web app counts a socket as
 up (clearing its backoff) only once it has stayed open a moment or a
 message has arrived (``WS_OPEN_SETTLE_MS``, ``frontend/src/ws.js``).
+
+The outcomes above are a client contract, written down for client
+authors in ``docs/ws-client-contract.md`` (CHT-1646): change what a
+refusal looks like on the wire only together with that page.
 """
 from __future__ import annotations
 

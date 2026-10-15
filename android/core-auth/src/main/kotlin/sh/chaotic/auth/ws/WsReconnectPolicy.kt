@@ -50,7 +50,8 @@ sealed interface WsDecision {
 
 /**
  * The /ws reconnect rules (CHT-1610, from CHT-1615 / CHT-1635 / CHT-1637;
- * the server side is `backend/app/ws_auth.py`):
+ * the server side is `backend/app/ws_auth.py`; the contract they follow
+ * is `docs/ws-client-contract.md`, CHT-1646):
  *
  * - A refused handshake is accepted and then closed at once with its
  *   code, so `onOpen` does not mean the credential was accepted. A
