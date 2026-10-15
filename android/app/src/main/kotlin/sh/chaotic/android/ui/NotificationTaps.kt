@@ -85,7 +85,7 @@ constructor(
 
     private fun forget() {
         pending?.cancel()
-        while (events.tryReceive().isSuccess) Unit
+        while (events.tryReceive().isSuccess) continue
     }
 
     private suspend fun find(tap: NotificationTap): InboxEntry? {

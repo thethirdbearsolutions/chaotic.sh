@@ -260,3 +260,23 @@ jobs:
 
       - name: Assemble both debug flavors
         run: ./gradlew assembleFossDebug assemblePlayDebug
+
+      # The release build type minifies and shrinks with R8 (CHT-1661), so a
+      # missing keep or -dontwarn rule only shows up in a release build.
+      # Built unsigned: no signing config, so no secrets in CI. --continue
+      # lets the other flavor's R8 run too, so one round reports both.
+      # Each assemble also runs lintVital for its release variant. That is
+      # mostly what the debug lint above already checks, and is kept on
+      # purpose: it is the only lint that would see a release-only source
+      # set or manifest, should one be added.
+      - name: Assemble both release flavors (R8)
+        id: release
+        run: ./gradlew --continue assembleFossRelease assemblePlayRelease
+
+      - name: Rules R8 asked for, if the release build failed
+        if: failure() && steps.release.outcome == 'failure'
+        run: |
+          for f in app/build/outputs/mapping/*/missing_rules.txt; do
+            [ -f "$f" ] && { echo "--- $f"; cat "$f"; }
+          done
+          true
