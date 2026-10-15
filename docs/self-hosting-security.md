@@ -220,6 +220,60 @@ only logged. At startup the server logs whether this gate is active
 existed before this change start unverified; existing team members are
 not affected, only accepting a new invitation is.
 
+**When SMTP is configured but failing**, the verification email fails
+as well, and an invitee holding a link they were given by hand still
+cannot accept it (CHT-1828). A team admin can then get a code for that
+one invitation: `POST /api/teams/{team_id}/invitations/{id}/verification-code`
+(`chaotic team invitation-code <id>`, or "Code for invitee" under
+Pending Invitations). The invitee passes it when accepting
+(`POST /api/teams/invitations/{token}/accept` with `{"code": ...}`,
+`chaotic team accept-invite <link> --code <code>`, or the invitation
+page).
+
+The code lets that account accept that invitation and nothing else. It
+does **not** verify the address: `email_verified_at` stays unset, and
+every other invitation still needs the mailed code. Anyone can be the
+admin of a team of their own, so a server-wide verification issued by an
+admin would let anyone verify an address they don't own, and then
+accept another team's leaked link (PR #446 review). What the admin
+vouches for is entry to their own team, which they could grant anyway.
+
+Rules:
+- Only an admin of the inviting team, and only for a pending, unexpired
+  invitation.
+- Only when the account at the invited address is active, a person's,
+  unverified, and asked for a mailed code itself after this invitation
+  was created and within the last 24 hours, which a stuck invitee has. Anyone can make a team and invite any
+  address, so without this rule the answer would describe any account.
+  A missing, passive or verified account gets the same 409
+  `no_verification_requested`, after the same lookups.
+- Codes are stored as HMACs bound to the user and the invitation, and
+  carry the invitation's and team's ids (`invitation_id`, `team_id`,
+  migration 0037), which
+  every address-keyed query excludes. So they don't
+  disarm the invitee's mailed codes, and their wrong tries don't count
+  against the address's daily failure cap. A code lasts 15 minutes and
+  allows five tries. A new one replaces the invitation's earlier one.
+  A team can issue at most three a day for one address (429 with
+  `Retry-After`), counted by team and address (`team_id`, kept on the
+  row), so cancelling and inviting again does not reset it, and another
+  team's codes don't use it up.
+- A code typed at accept after the invitation's admin code has expired,
+  been used up or been replaced gets 400 `invitation_code_expired` ("ask
+  the admin for a new one"). It is not tried as a mailed code, so it
+  never spends a mailed code's attempt.
+- The answer shows the account's name, signup time (with when the
+  invitation was created) and whether it is in any team. A signup
+  shortly after the link went out fits both the invitee and someone who
+  saw the link: confirm with the invitee directly. An account that
+  predates the invitation was not made from the link.
+
+The real protection is where the code goes. Send it only through a
+channel you already trust for the invitee, never to whoever asked for
+it: someone who signed up from a leaked link can ask too, and chooses
+the name shown. Each issue is logged with ids only, never the code.
+There is no team-level activity table yet (CHT-1845).
+
 **Without SMTP**, nothing can verify an address (the request answers 409
 `email_verification_unavailable`) and accepting works as before: the
 admin hands the invitation link over by hand, and the link is the

@@ -95,6 +95,15 @@ class TestInvitations:
         invites = api_client.get_invitations(test_team["id"])
         assert not any(i["id"] == invite["id"] for i in invites)
 
+    def test_invitation_verification_code_without_smtp_is_not_needed(self, api_client, test_team):
+        """CHT-1828: the route is wired, and without SMTP (the e2e server
+        has none) no invitation needs a verified address, so it refuses."""
+        invite = api_client.invite_member(test_team["id"], "code@example.com")
+        with pytest.raises(APIError) as caught:
+            api_client.issue_invitation_verification_code(test_team["id"], invite["id"])
+        assert caught.value.status_code == 409
+        assert "no SMTP configured" in str(caught.value)
+
     def test_invite_response_structure(self, api_client, test_team):
         invite = api_client.invite_member(test_team["id"], "structure@example.com")
         assert "id" in invite

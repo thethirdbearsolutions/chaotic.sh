@@ -141,3 +141,16 @@ def test_accept_invitation_escapes_the_token(sent):
     Client().accept_invitation("../a/b?c#d")
     method, path, _ = _call(sent)
     assert (method, path) == ("POST", "/teams/invitations/..%2Fa%2Fb%3Fc%23d/accept")
+
+
+def test_issue_invitation_verification_code(sent):
+    """CHT-1828: the invitation id is one path segment."""
+    Client().issue_invitation_verification_code("team-1", "inv/1")
+    method, path, _ = _call(sent)
+    assert (method, path) == ("POST", "/teams/team-1/invitations/inv%2F1/verification-code")
+
+
+def test_accept_invitation_with_a_code(sent):
+    """CHT-1828: the code travels in the body."""
+    Client().accept_invitation("tok", "123456")
+    assert _call(sent) == ("POST", "/teams/invitations/tok/accept", {"code": "123456"})

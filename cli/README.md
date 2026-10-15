@@ -168,7 +168,19 @@ chaotic team create            # Create a new team
 chaotic team members           # List team members
 chaotic team invite            # Invite a member
 chaotic team accept-invite <link-or-token>  # Accept an invitation (needs a verified email when the server has SMTP)
+chaotic team invitation-code <invitation-id>  # Admin: a code for an invitee whose verification email never arrives
 ```
+
+`invitation-code` is for a server whose mail is failing, so the invitee
+can't receive the verification code. A team admin gets a code for that one
+invitation instead. It shows the account that signed up with the invited
+address: its name, its signup time relative to the invitation, and whether
+it is already in a team. Send the code only through a channel you already
+trust for the invitee, never to whoever asked for it. A signup shortly after
+you sent the link fits both the invitee and someone who saw the link, so
+confirm with the invitee. A team can issue three codes a day per address. The invitee passes it
+with `chaotic team accept-invite <link> --code <code>`. It lets that account
+accept that invitation only; it doesn't verify the address.
 
 `accept-invite` takes the link you were sent (`https://<host>/invite/<token>`)
 or just its token. It accepts on the server your profile is configured for,

@@ -27,6 +27,15 @@ for:
 * ``used_at``: when it was confirmed. ``attempts`` minus one such
   success is the failed confirmations the daily cap counts.
 
+A team admin's code for one invitation (CHT-1828) is a row here too,
+with ``invitation_id`` and ``team_id`` set (NULL on every mailed code)
+and ``code_hash``
+bound to the user and the invitation. Every address-keyed query (the
+mailing limits, the failure cap, the newest-code lookup, "has this
+account asked") filters on ``invitation_id`` being NULL, so it never
+sees one, and its own limit counts by the invitation. Redeeming it lets
+that user accept that invitation; it never verifies the address.
+
 Only a user's newest armed code can be confirmed, so sending a new code
 retires every older one. Rows older than a day are pruned on each
 request.
@@ -53,6 +62,17 @@ class OxydeEmailVerificationCode(Model):
     email_hash: str = Field()
     # Not a foreign key, on purpose (see the module docstring).
     user_id: str = Field()
+    # Set only on a team admin's code for one invitation (CHT-1828,
+    # migration 0037); NULL on every mailed code. Not a foreign key:
+    # Oxyde cannot add one to an existing SQLite table (CLAUDE.md,
+    # Database), and none is needed: the rows are pruned after a day, and
+    # a code is only ever redeemed through a live invitation, so one left
+    # behind by a revoked invitation can never be used.
+    invitation_id: str | None = Field(default=None)
+    # The inviting team, on the same rows only: the issue limit counts
+    # per team and address, and a cancelled invitation's row is gone.
+    # Plain for the same reason as invitation_id.
+    team_id: str | None = Field(default=None)
     code_hash: str = Field()
     armed: bool = Field(default=False)
     expires_at: DateTimeUTC = Field()
@@ -69,4 +89,10 @@ class OxydeEmailVerificationCode(Model):
             Index(("email_hash", "created_at"), name="ix_email_verification_codes_email_created"),
             # The prune of rows older than a day.
             Index(("created_at",), name="ix_email_verification_codes_created_at"),
+            # An invitation's admin-issued codes, newest first: redeeming
+            # one and the per-invitation daily limit (CHT-1828).
+            Index(("invitation_id", "created_at"), name="ix_email_verification_codes_invitation_created"),
+            # A team's admin-issued codes for an address: the daily issue
+            # limit (CHT-1828).
+            Index(("team_id", "email_hash", "created_at"), name="ix_email_verification_codes_team_email_created"),
         ]

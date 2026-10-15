@@ -24,7 +24,9 @@
 package sh.chaotic.api.apis
 
 import sh.chaotic.api.models.HTTPValidationError
+import sh.chaotic.api.models.InvitationAccept
 import sh.chaotic.api.models.InvitationPreviewResponse
+import sh.chaotic.api.models.InvitationVerificationCodeResponse
 import sh.chaotic.api.models.TeamCreate
 import sh.chaotic.api.models.TeamInvitationCreate
 import sh.chaotic.api.models.TeamInvitationCreatedResponse
@@ -53,17 +55,17 @@ import io.ktor.http.ParametersBuilder
         /**
         * POST /api/teams/invitations/{token}/accept
         * Accept Invitation
-        * Accept a team invitation.  An unknown, expired, accepted, declined or revoked invitation gets the preview&#39;s one 404, checked before the email match, so whatever account asks, the answer does not tell those states apart (CHT-1265 review F10). Before CHT-1788 a used token could be accepted again and added a second membership row.
+        * Accept a team invitation.  An account whose address is not verified (with SMTP configured) may send &#x60;&#x60;{\&quot;code\&quot;: ...}&#x60;&#x60;: the code a team admin issued for this invitation (CHT-1828), which lets it past the gate for this invitation only and leaves the address unverified, or else a mailed verification code, which verifies the address as &#x60;&#x60;/auth/email-verification/confirm&#x60;&#x60; does. A wrong one gets 400 &#x60;&#x60;invalid_verification_code&#x60;&#x60;.  An unknown, expired, accepted, declined or revoked invitation gets the preview&#39;s one 404, checked before the email match, so whatever account asks, the answer does not tell those states apart (CHT-1265 review F10). Before CHT-1788 a used token could be accepted again and added a second membership row.
          * @param token  
+         * @param invitationAccept  (optional)
          * @return TeamMemberResponse
         */
             @Suppress("UNCHECKED_CAST")
-        open suspend fun acceptInvitationApiTeamsInvitationsTokenAcceptPost(token: kotlin.String): HttpResponse<TeamMemberResponse> {
+        open suspend fun acceptInvitationApiTeamsInvitationsTokenAcceptPost(token: kotlin.String, invitationAccept: InvitationAccept? = null): HttpResponse<TeamMemberResponse> {
 
             val localVariableAuthNames = listOf<String>("HTTPBearer")
 
-            val localVariableBody = 
-                    io.ktor.client.utils.EmptyContent
+            val localVariableBody = invitationAccept
 
             val localVariableQuery = mutableMapOf<String, List<String>>()
 
@@ -77,7 +79,7 @@ import io.ktor.http.ParametersBuilder
             requiresAuthentication = true,
             )
 
-            return request(
+            return jsonRequest(
             localVariableConfig,
             localVariableBody,
             localVariableAuthNames
@@ -240,6 +242,41 @@ import io.ktor.http.ParametersBuilder
             val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.GET,
             "/api/teams/{team_id}".replace("{" + "team_id" + "}", "$teamId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * POST /api/teams/{team_id}/invitations/{invitation_id}/verification-code
+        * Issue Invitation Verification Code
+        * Give a team admin a code that lets the invitee accept this one invitation without a verified address (CHT-1828).  With SMTP configured, accepting an invitation needs a verified address (CHT-1790). When the relay fails, the mailed code fails too, and the invitee is stuck. The admin hands this code over instead, and the invitee passes it when accepting (&#x60;&#x60;POST /api/teams/invitations/{token}/accept&#x60;&#x60; with &#x60;&#x60;{\&quot;code\&quot;: ...}&#x60;&#x60;).  It vouches for (this invitation, this account) and nothing more: it never sets &#x60;&#x60;email_verified_at&#x60;&#x60; (PR #446 review 1). Anyone can be the admin of a team of their own, so a server-wide verification issued by an admin would let anyone verify an address they don&#39;t own and then accept another team&#39;s leaked link. Entry to the admin&#39;s own team they could grant anyway. Details: &#x60;&#x60;EmailVerificationService.issue_for_invitation&#x60;&#x60;.  Refusals, in order, so the action tells nobody more than the invitation already does: 403 for a non-admin (from the team id alone, like every invitation route); the delete route&#39;s 404 for an invitation that is not this team&#39;s, pending and unexpired; 409 &#x60;&#x60;email_verification_unavailable&#x60;&#x60; without SMTP, before any lookup of the address; then one 409 &#x60;&#x60;no_verification_requested&#x60;&#x60; for every address with no account that is active, a person&#39;s, unverified and asked for a mailed code itself in the last day (the stuck invitee has). A missing account, a passive one and a verified one get that same answer, after the same queries, so neither existence nor verification is told (review 5, 6). Then 409 &#x60;&#x60;ambiguous_account&#x60;&#x60; on an old database with two accounts differing in case, and 429 past &#x60;&#x60;INVITATION_ISSUE_LIMIT&#x60;&#x60; codes a day for this team and address (cancelling and inviting again does not reset it).  The answer names the account (name, email, signup time, whether it is in any team) and when the invitation was created, so the admin can judge whether it is the invitee&#39;s. The issue is logged with ids only, never the code.
+         * @param teamId  
+         * @param invitationId  
+         * @return InvitationVerificationCodeResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun issueInvitationVerificationCodeApiTeamsTeamIdInvitationsInvitationIdVerificationCodePost(teamId: kotlin.String, invitationId: kotlin.String): HttpResponse<InvitationVerificationCodeResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.POST,
+            "/api/teams/{team_id}/invitations/{invitation_id}/verification-code".replace("{" + "team_id" + "}", "$teamId").replace("{" + "invitation_id" + "}", "$invitationId"),
             query = localVariableQuery,
             headers = localVariableHeaders,
             requiresAuthentication = true,

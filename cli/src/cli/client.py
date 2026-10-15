@@ -424,11 +424,19 @@ class Client:
     def get_invitations(self, team_id: str, skip: int | None = None, limit: int | None = None) -> list:
         return self._request("GET", self._with_query(f"/teams/{team_id}/invitations", skip=skip, limit=limit))
 
-    def accept_invitation(self, token: str) -> dict:
-        return self._request("POST", f"/teams/invitations/{quote(token, safe='')}/accept")
+    def accept_invitation(self, token: str, code: str | None = None) -> dict:
+        path = f"/teams/invitations/{quote(token, safe='')}/accept"
+        if code is None:
+            return self._request("POST", path)
+        return self._request("POST", path, {"code": code})
 
     def delete_invitation(self, team_id: str, invitation_id: str):
         return self._request("DELETE", f"/teams/{team_id}/invitations/{invitation_id}")
+
+    def issue_invitation_verification_code(self, team_id: str, invitation_id: str) -> dict:
+        return self._request(
+            "POST", f"/teams/{team_id}/invitations/{quote(invitation_id, safe='')}/verification-code",
+        )
 
     # Projects
     def create_project(self, team_id: str, name: str, key: str, **kwargs) -> dict:

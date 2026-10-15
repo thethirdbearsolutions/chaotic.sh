@@ -197,12 +197,25 @@ export class ApiClient {
         return this.request('GET', `/teams/invitations/${encodeURIComponent(token)}`);
     }
 
-    async acceptInvitation(token) {
-        return this.request('POST', `/teams/invitations/${encodeURIComponent(token)}/accept`);
+    // code (CHT-1828): one a team admin issued for this invitation, for
+    // an account whose verification email never arrives.
+    async acceptInvitation(token, code) {
+        const path = `/teams/invitations/${encodeURIComponent(token)}/accept`;
+        if (code === undefined) return this.request('POST', path);
+        return this.request('POST', path, { code });
     }
 
     async deleteInvitation(teamId, invitationId) {
         return this.request('DELETE', `/teams/${teamId}/invitations/${invitationId}`);
+    }
+
+    // CHT-1828: a verification code for the invited address's account,
+    // for an admin to hand over when the server's mail is failing.
+    async issueInvitationVerificationCode(teamId, invitationId) {
+        return this.request(
+            'POST',
+            `/teams/${teamId}/invitations/${encodeURIComponent(invitationId)}/verification-code`,
+        );
     }
 
     // Projects

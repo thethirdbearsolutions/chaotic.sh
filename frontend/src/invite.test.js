@@ -644,6 +644,48 @@ describe('email verification on the invite page (CHT-1790)', () => {
         await flush();
         expect(q('#invite-verify-status').textContent).toBe('We sent a code to roadrunner@example.com.');
     });
+
+    async function submitAdminCode(value) {
+        q('#invite-admin-code').value = value;
+        q('#invite-admin-code-form').dispatchEvent(new Event('submit', { cancelable: true }));
+        await flush();
+    }
+
+    it('an admin code accepts with it and enters the team (CHT-1828)', async () => {
+        const d = await openUnverified();
+        expect(visible('#invite-admin-code-form')).toBe(true);
+        api.acceptInvitation.mockResolvedValueOnce(MEMBER);
+        await submitAdminCode(' 654321 ');
+        await flush();
+        expect(api.acceptInvitation).toHaveBeenLastCalledWith(TOKEN, '654321');
+        expect(api.confirmEmailVerification).not.toHaveBeenCalled();
+        expect(d.enterTeam).toHaveBeenCalledWith('team-1', 'Acme <Rockets>');
+    });
+
+    it('a wrong admin code says so and keeps the invitation (CHT-1828)', async () => {
+        await openUnverified();
+        api.acceptInvitation.mockRejectedValueOnce(
+            refusal(400, 'invalid_verification_code', 'That code is wrong, has expired or has been used up.'));
+        await submitAdminCode('000000');
+        expect(q('#invite-error').textContent).toContain('That code is wrong');
+        expect(screenEl().textContent).not.toContain('no longer valid');
+        expect(visible('#invite-admin-code-form')).toBe(true);
+    });
+
+    it('an expired admin code says to ask for a new one (CHT-1828)', async () => {
+        await openUnverified();
+        api.acceptInvitation.mockRejectedValueOnce(refusal(400, 'invitation_code_expired',
+            'The code a team admin gave you for this invitation has expired, been used up or been replaced. Ask the admin for a new one.'));
+        await submitAdminCode('123456');
+        expect(q('#invite-error').textContent).toContain('Ask the admin for a new one');
+        expect(screenEl().textContent).not.toContain('no longer valid');
+    });
+
+    it('an empty admin code is not sent (CHT-1828)', async () => {
+        await openUnverified();
+        await submitAdminCode('  ');
+        expect(api.acceptInvitation).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('hideInvite', () => {
