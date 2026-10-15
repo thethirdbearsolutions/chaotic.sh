@@ -220,6 +220,11 @@ describe('renderPager', () => {
         expect(div.querySelector('.query-total').textContent).toBe('1–1 of 1 issue');
         expect(div.querySelector('[data-query-page="1"]').disabled).toBe(true);
         expect(renderPager(0, 0, 0)).toContain('0 issues');
+        // A page past the end: no bogus range, and Previous still works.
+        div.innerHTML = renderPager(7, 9800, 0);
+        expect(div.querySelector('.query-total').textContent).toBe('7 issues');
+        expect(div.querySelector('[data-query-page="-1"]').disabled).toBe(false);
+        expect(div.querySelector('[data-query-page="1"]').disabled).toBe(true);
     });
 });
 

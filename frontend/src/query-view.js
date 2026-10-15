@@ -213,11 +213,11 @@ export function renderResultsTable(issues, cols) {
 export function renderPager(total, skip, count) {
     const noun = total === 1 ? 'issue' : 'issues';
     if (total === 0) return `<span class="query-total">0 issues</span>`;
-    const first = count === 0 ? skip : skip + 1;
-    const last = skip + count;
     const hasPrev = skip > 0;
     const hasNext = skip + count < total;
-    return `<span class="query-total">${first}–${last} of ${total} ${noun}</span>
+    // A page past the end (e.g. a stale page= in the URL) has no range.
+    const range = count === 0 ? `${total} ${noun}` : `${skip + 1}–${skip + count} of ${total} ${noun}`;
+    return `<span class="query-total">${range}</span>
         <button type="button" class="btn btn-secondary btn-small" data-query-page="-1"${hasPrev ? '' : ' disabled'}>Previous</button>
         <button type="button" class="btn btn-secondary btn-small" data-query-page="1"${hasNext ? '' : ' disabled'}>Next</button>`;
 }
