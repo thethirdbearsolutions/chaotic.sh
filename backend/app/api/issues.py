@@ -6,13 +6,12 @@ from fastapi import APIRouter, HTTPException, status, Query, Header
 from app.auth.access import reads, writes
 from app.api.idempotency import IdempotentRoute, idempotent
 from app.api.deps import (
-    CurrentUser, can_access_document, check_user_team_access,
+    CurrentUser, can_access_document, can_read_team_data,
     confined_project_id, is_eligible_project_member,
-    is_project_scoped_agent,
 )
 from app.api.visibility import (
-    can_see_label, can_see_project, not_found, visible_issue, visible_issue_by_identifier,
-    visible_project, visible_project_in_team, visible_sprint,
+    can_see_label, can_see_project, not_found, project_filter_in_team, team_hidden, visible_issue,
+    visible_issue_by_identifier, visible_project, visible_sprint,
 )
 from app.utils import ensure_utc
 
@@ -52,6 +51,7 @@ from app.services.issue_service import (
     IntentInFlightError,
     EstimateRequiredError,
     IssueAlreadyClaimedError,
+    AssigneeChangedError,
 )
 from app.services.principals import fill_principals, load_principals
 from app.services.project_service import ProjectService
@@ -104,7 +104,11 @@ async def _validate_assignee(
     500). Re-sending an issue's existing assignee
     (``current_assignee_id``) is not a new assignment, so an update that
     touches other fields of an issue held by someone since retired or
-    moved still goes through.
+    moved still goes through. Both this check and that exemption judge
+    the assignee read at the start of the request, so the service's
+    assignee write is conditional on that value (CHT-1832): if another
+    request has changed it since, the update is refused with a 409
+    ``assignee_changed`` rather than writing the stale value back.
     """
     if assignee_id is None or (current_assignee_id is not None and assignee_id == current_assignee_id):
         return
@@ -564,8 +568,8 @@ async def list_ready_issues(
     if project_id:
         await visible_project(current_user, project_id)
     elif team_id:
-        if not await check_user_team_access(current_user, team_id):
-            raise HTTPException(status_code=403, detail="Not authorized to access this team")
+        if not await can_read_team_data(current_user, team_id):
+            raise team_hidden()
     else:
         raise HTTPException(status_code=400, detail="Must provide project_id or team_id")
 
@@ -592,8 +596,8 @@ async def _check_list_scope(
     if project_id:
         return (await visible_project(current_user, project_id)).team_id
     if team_id:
-        if not await check_user_team_access(current_user, team_id):
-            raise HTTPException(status_code=403, detail="Not authorized to access this team")
+        if not await can_read_team_data(current_user, team_id):
+            raise team_hidden()
         return team_id
     raise HTTPException(status_code=400, detail="Must provide project_id or team_id")
 
@@ -774,7 +778,7 @@ async def list_issues(
     elif assignee_id:
         # Assignee-only query: scope to user's accessible teams, and a
         # project-scoped agent to its own project (CHT-1780).
-        confine_to = current_user.agent_project_id if is_project_scoped_agent(current_user) else None
+        confine_to = confined_project_id(current_user)
         if current_user.is_agent:
             # Every agent carries its team, a project-scoped one its
             # project's (CHT-1837).
@@ -820,16 +824,6 @@ async def get_issue_query_fields(current_user: CurrentUser) -> IssueQueryFieldsR
     return issue_query.vocabulary()
 
 
-def _team_refused() -> HTTPException:
-    """The 403 of the team feeds below, for a team, or a project filter,
-    the caller may not read. A project filter that is missing answers the
-    same (CHT-1785)."""
-    return HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Not authorized to access this team",
-    )
-
-
 @router.get("/search", response_model=list[IssueResponse])
 @reads
 async def search_issues(
@@ -852,13 +846,11 @@ async def search_issues(
     # covers (a project-scoped agent's own, CHT-1780), pinned to the URL's
     # team (CHT-1807); without one it is team-wide.
     if project_id:
-        await visible_project_in_team(
-            current_user, project_id, team_id,
-            hidden=_team_refused(),
-            elsewhere=not_found("Project not found in this team"),
+        await project_filter_in_team(
+            current_user, project_id, team_id, elsewhere_detail="Project not found in this team",
         )
-    elif not await check_user_team_access(current_user, team_id):
-        raise _team_refused()
+    elif not await can_read_team_data(current_user, team_id):
+        raise team_hidden()
 
     issues = await issue_service.search(team_id, q, skip, limit, project_id=project_id, status=issue_status.name if issue_status else None)
     return await issues_to_responses(issues)
@@ -959,12 +951,11 @@ async def list_team_activities(
     # project-scoped agent's `chaotic await` polls), team access for the
     # team's (CHT-1780).
     if project_id:
-        await visible_project_in_team(
-            current_user, project_id, team_id,
-            hidden=_team_refused(), elsewhere=not_found("Project not found"),
+        await project_filter_in_team(
+            current_user, project_id, team_id, elsewhere_detail="Project not found",
         )
-    elif not await check_user_team_access(current_user, team_id):
-        raise _team_refused()
+    elif not await can_read_team_data(current_user, team_id):
+        raise team_hidden()
 
     # Bounded lazy lease sweep (CHT-1246, PR #217 review finding 2).
     # This is the read every waiter funnels through: `chaotic await`
@@ -1060,12 +1051,8 @@ async def list_team_comments(
     issue_service = IssueService()
     document_service = DocumentService()
 
-    has_access = await check_user_team_access(current_user, team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this team",
-        )
+    if not await can_read_team_data(current_user, team_id):
+        raise team_hidden()
 
     # Fetch skip + limit from each source to handle worst case where
     # all top results come from one source
@@ -1230,6 +1217,19 @@ async def update_issue(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "error_code": "already_claimed",
+                "message": str(e),
+                "issue_id": e.issue_id,
+                "assignee_id": e.assignee_id,
+            },
+        )
+    except AssigneeChangedError as e:
+        # Another request changed the assignee between our read and our
+        # write (CHT-1832); same body as already_claimed, naming the
+        # assignee the issue has now.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "assignee_changed",
                 "message": str(e),
                 "issue_id": e.issue_id,
                 "assignee_id": e.assignee_id,

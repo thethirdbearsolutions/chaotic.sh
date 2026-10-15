@@ -7,7 +7,7 @@ a team-wide agent; a deleted team left its agents active with no team.
 """
 import pytest
 
-from app.api.deps import check_user_project_access, check_user_team_access
+from app.api.deps import check_user_project_access, can_read_team_data
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.oxyde_models.oauth import OxydeHolderSession, OxydeRevocationEvent
 from app.oxyde_models.project import OxydeProject
@@ -77,7 +77,7 @@ class TestProjectDelete:
         assert agent.is_active is False
         assert agent.agent_team_id is None  # cleared: never reactivatable as team-wide
         assert agent.agent_project_id is None  # the foreign key's SET NULL
-        assert not await check_user_team_access(agent, test_team.id)
+        assert not await can_read_team_data(agent, test_team.id)
         assert not await OxydeAPIKey.objects.filter(principal_user_id=agent.id, is_active=True).exists()
         session = await OxydeHolderSession.objects.get(id=issued.holder_session_id)
         assert session.revoked_at is not None
@@ -189,8 +189,8 @@ class TestTeamlessAgentFailsClosed:
             parent_user_id=test_user.id, agent_team_id=test_team.id,
         )
         agent.agent_team_id = None
-        assert not await check_user_team_access(agent, None)
-        assert not await check_user_team_access(agent, test_team.id)
+        assert not await can_read_team_data(agent, None)
+        assert not await can_read_team_data(agent, test_team.id)
         assert not await check_user_project_access(agent, test_project)
         test_project.team_id = None  # a malformed row must not match either
         assert not await check_user_project_access(agent, test_project)

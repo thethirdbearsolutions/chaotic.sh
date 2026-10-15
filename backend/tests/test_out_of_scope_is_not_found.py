@@ -34,6 +34,7 @@ from fastapi.routing import APIWebSocketRoute, iter_route_contexts
 from pydantic import BaseModel
 from starlette.routing import Mount, WebSocketRoute, compile_path
 
+from app.api.visibility import TEAM_HIDDEN_DETAIL
 from app.enums import ApprovalMode, RitualArtifact, RitualTrigger, TeamRole
 from app.mcp_server import tools
 from app.oxyde_models.document import OxydeDocument, OxydeDocumentComment
@@ -442,9 +443,9 @@ REFUSED_ALIKE = {
     # A project-scoped agent gets no team-wide data (CHT-1780), refused
     # from the team id alone.
     ("GET", "/api/teams/{own_team}/documents?sprint_id={sprint}", "sprint"): _alike(
-        {"project_agent"}, "Not a member of this team"),
-    ("POST", "/api/teams/{own_team}/documents", "sprint"): _alike({"project_agent"}, "Not a member of this team"),
-    ("POST", "/api/teams/{own_team}/projects", "user"): _alike({"project_agent"}, "Not a member of this team"),
+        {"project_agent"}, "Not authorized to access this team"),
+    ("POST", "/api/teams/{own_team}/documents", "sprint"): _alike({"project_agent"}, "Not authorized to access this team"),
+    ("POST", "/api/teams/{own_team}/projects", "user"): _alike({"project_agent"}, "Not authorized to access this team"),
     # Team routes that refuse anyone outside the team (or below admin)
     # from the team id alone, before loading the team or any row under
     # it: the check is a membership query, which a missing team fails the
@@ -452,7 +453,7 @@ REFUSED_ALIKE = {
     **{
         (method, path, "team"): _alike(PRINCIPALS, detail)
         for method, path, detail in [
-            ("GET", "/api/teams/{team}/members", "Not a member of this team"),
+            ("GET", "/api/teams/{team}/members", "Not authorized to access this team"),
             ("PATCH", "/api/teams/{team}/members/{user}", "Only admins can update member roles"),
             ("DELETE", "/api/teams/{team}/members/{user}", "Only admins can remove other members"),
             ("GET", "/api/teams/{team}/invitations", "Only admins can view invitations"),
@@ -460,16 +461,16 @@ REFUSED_ALIKE = {
             ("DELETE", "/api/teams/{team}/invitations/{invitation}", "Only admins can delete invitations"),
             ("POST", "/api/teams/{team}/invitations/{invitation}/verification-code",
              "Only admins can issue verification codes"),
-            ("GET", "/api/teams/{team}/projects", "Not a member of this team"),
-            ("POST", "/api/teams/{team}/projects", "Not a member of this team"),
+            ("GET", "/api/teams/{team}/projects", "Not authorized to access this team"),
+            ("POST", "/api/teams/{team}/projects", "Not authorized to access this team"),
             ("GET", "/api/teams/{team}/labels", "Not authorized to access this team"),
             ("POST", "/api/teams/{team}/labels", "Not authorized to access this team"),
-            ("GET", "/api/teams/{team}/documents", "Not a member of this team"),
+            ("GET", "/api/teams/{team}/documents", "Not authorized to access this team"),
             ("GET", "/api/teams/{team}/issues/ready", "Not authorized to access this team"),
             ("GET", "/api/teams/{team}/issues/query", "Not authorized to access this team"),
-            ("GET", "/api/teams/{team}/templates", "Not a member of this team"),
+            ("GET", "/api/teams/{team}/templates", "Not authorized to access this team"),
             ("POST", "/api/teams/{team}/templates", "Only admins can manage templates"),
-            ("POST", "/api/teams/{team}/documents", "Not a member of this team"),
+            ("POST", "/api/teams/{team}/documents", "Not authorized to access this team"),
             ("POST", "/api/teams/{team}/templates/from-project", "Only admins can manage templates"),
             ("GET", "/api/issues?team_id={team}", "Not authorized to access this team"),
             ("GET", "/api/issues/search?q=x&team_id={team}", "Not authorized to access this team"),
@@ -484,7 +485,7 @@ REFUSED_ALIKE = {
         for path, detail in [
             ("/api/issues/search?q=x&team_id={own_team}&project_id={project}", "Not authorized to access this team"),
             ("/api/issues/activities?team_id={own_team}&project_id={project}", "Not authorized to access this team"),
-            ("/api/teams/{own_team}/documents?project_id={project}", "Not authorized for this project"),
+            ("/api/teams/{own_team}/documents?project_id={project}", "Not authorized to access this team"),
         ]
     },
 }
@@ -813,7 +814,8 @@ async def test_every_id_keyed_route_is_probed_or_explained():
     assert unexplained == [], (
         "route parameters with no out-of-scope probe: add a ROUTES entry whose placeholder is "
         "the parameter, or list it in NOT_ROW_KEYED with the reason it is not a row the caller "
-        "may be out of scope for"
+        "may be out of scope for. Load the row with an app.api.visibility loader rather than "
+        "hand-rolling the same 404 (CHT-1842)"
     )
 
     # The allowlists name live parameters, and nothing in them is also probed.
@@ -870,6 +872,9 @@ async def test_websocket_team_answers_like_a_missing_one(world, principal_header
             answers.append((refused.value.code, refused.value.reason))
         assert answers[0] == answers[1], principal
         assert answers[0][0] == ws_auth.CLOSE_FORBIDDEN, principal
+        if principal not in AGENT_PRINCIPALS:
+            # One team refusal text everywhere, the socket included (CHT-1842).
+            assert answers[0][1] == TEAM_HIDDEN_DETAIL, principal
 
 
 async def test_known_oracles_still_leak(client, world, principal_headers):

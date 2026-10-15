@@ -261,7 +261,12 @@ still hold the ticket extends (heartbeats) the lease instead of
 erroring. Claiming a ticket someone else already holds under a valid
 lease fails with an "already claimed by X" error (`already_claimed` on
 the wire, exit 1) -- concurrent claims are serialized server-side, so
-of two racing `issue start`s exactly one wins. If the lease expires
+of two racing `issue start`s exactly one wins. Any other assignee
+change (`issue assign`, `issue comment --assign-to`) is conditional
+the same way: if someone else changed the assignee while the request
+was in flight, it fails with `assignee_changed` (HTTP 409, nothing
+written); re-read the issue and decide again rather than resending the
+same request. If the lease expires
 while the issue is still `in_progress`, the next read or list of that
 issue lazily releases it back to `todo`/unassigned and logs a
 `lease_expired` activity -- no cron, no silent wedge. See

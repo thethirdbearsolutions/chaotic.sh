@@ -242,6 +242,29 @@ class IssueAlreadyClaimedError(Exception):
         )
 
 
+class AssigneeChangedError(Exception):
+    """Raised when an update that writes ``assignee_id`` loses a race
+    (CHT-1832): another request changed the assignee between this one's
+    read of the issue and its write, so the conditional assignee UPDATE
+    matched zero rows.
+
+    Without it, the assignee validation and the "existing assignee
+    re-sent unchanged" exemption in the API both judged a value that was
+    no longer current, and an unconditional write could put back an
+    assignee another request had just changed or removed (a stale client
+    re-sending the whole row). The caller re-reads and retries.
+    """
+
+    def __init__(self, issue_id: str, identifier: str, assignee_id: str | None):
+        self.issue_id = issue_id
+        self.identifier = identifier
+        self.assignee_id = assignee_id
+        super().__init__(
+            f"The assignee of {identifier} changed while this update was "
+            "being applied; reload the issue and try again."
+        )
+
+
 # Semantic ordering maps for Python-side sorting
 # Keys include both enum names (DB storage) and values (API/Pydantic) for robustness
 _PRIORITY_ORDER = {
@@ -1429,6 +1452,22 @@ class IssueService:
                 if not claimed:
                     current = await OxydeIssue.objects.get_or_none(id=issue.id)
                     raise IssueAlreadyClaimedError(
+                        issue.id, issue.identifier,
+                        current.assignee_id if current else None,
+                    )
+            elif assignee_touched:
+                # Every other assignee write is conditional on the value
+                # read too (CHT-1832). The API validated the new assignee,
+                # or exempted it as "the current assignee re-sent", against
+                # that read; if another request has changed the assignee
+                # since, this write would undo it unchecked. Losing rolls
+                # the whole update back before any activity is written.
+                written = await OxydeIssue.objects.filter(
+                    id=issue.id, assignee_id=old_assignee_id,
+                ).update(assignee_id=update_data["assignee_id"])
+                if not written:
+                    current = await OxydeIssue.objects.get_or_none(id=issue.id)
+                    raise AssigneeChangedError(
                         issue.id, issue.identifier,
                         current.assignee_id if current else None,
                     )

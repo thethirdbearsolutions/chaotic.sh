@@ -326,7 +326,7 @@ async def _verify_app_session(validated, invalid: Callable[..., CredentialError]
     It is not tied to any team, so leaving or deleting a team does not
     end it; only signing out, revocation, refresh reuse, or the person
     being deactivated or deleted do. The principal is the person, so
-    every route's own team check (``check_user_team_access``, the /ws
+    every route's own team check (``can_read_team_data``, the /ws
     ``team_id`` check) gates each request by their membership at that
     moment, exactly as for their web login: a team they have left is
     out of reach on the very next request."""

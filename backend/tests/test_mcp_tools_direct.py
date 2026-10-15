@@ -214,6 +214,27 @@ class TestIssueUpdateBranches:
         result = await tools.issue_update(test_issue.identifier, assignee="unassigned")
         assert result["assignee_id"] is None
 
+    async def test_lost_assignee_race_keeps_its_error_code(self, test_issue, test_user2, monkeypatch):
+        """A 409 assignee_changed (CHT-1832) reaches an MCP caller with its
+        error_code and fields intact, so an agent can tell it from other
+        refusals and re-read instead of resending."""
+        from app.api import issues as issues_api
+        from app.oxyde_models.issue import OxydeIssue
+
+        real_validate = issues_api._validate_assignee
+
+        async def validate_then_race(*args, **kwargs):
+            await real_validate(*args, **kwargs)
+            await OxydeIssue.objects.filter(id=test_issue.id).update(assignee_id=test_user2.id)
+
+        monkeypatch.setattr(issues_api, "_validate_assignee", validate_then_race)
+
+        result = await tools.issue_update(test_issue.identifier, assignee="me")
+        error = result["error"]
+        assert error["error_code"] == "assignee_changed"
+        assert error["issue_id"] == test_issue.id
+        assert error["assignee_id"] == test_user2.id
+
     async def test_update_no_fields_is_error(self, test_issue):
         result = await tools.issue_update(test_issue.identifier)
         assert "error" in result
@@ -1869,7 +1890,7 @@ class TestResolveDocumentIdAgentBranches:
             agent_team_id=test_project.team_id,
         )
         # Created directly via the service, not the doc_create tool:
-        # app.api.documents.create_document gates on check_user_team_access,
+        # app.api.documents.create_document gates on can_read_team_data,
         # which a purely project-scoped agent (no agent_team_id) never
         # passes -- a separate, pre-existing REST access-check gap outside
         # CHT-1266's scope (filed as a follow-up). This test is only about
