@@ -22,9 +22,15 @@
  * The token is a bearer credential: while the invited address has no
  * account, whoever holds it can sign up as that address and join
  * (CHT-1790). So on load it moves from the path into sessionStorage and
- * the address bar becomes /invite (no history entry, no later Referer);
- * the page is served with Referrer-Policy: no-referrer; and the token goes
+ * the address bar becomes /invite: this tab's back button and any later
+ * Referer no longer carry it, though the browser's own history list
+ * still records the /invite/<token> address it opened (CHT-1792). The
+ * page is served with Referrer-Policy: no-referrer, and the token goes
  * only to this server's own API, never in a query string.
+ *
+ * On /invite with no token to read back (storage was blocked and the
+ * page reloaded, or the address was typed), the page says to open the
+ * emailed link again (CHT-1792).
  */
 
 import { api } from './api.js';
@@ -57,10 +63,12 @@ export function inviteToken(pathname) {
  * The invitation token this page is about, moving it out of the URL.
  *
  * On /invite/<token> the token is stored in sessionStorage and the
- * address bar is rewritten to /invite, so it leaves no history entry
- * and no later Referer (CHT-1265 review F2). On /invite it is read back
- * from there: a reload, or the return after signing in, still works.
- * Anywhere else, null.
+ * address bar is rewritten to /invite with replaceState (CHT-1265 review
+ * F2). That keeps it out of this tab's back/forward entries and out of
+ * any later Referer; it does not erase the visit from the browser's
+ * global history, which still lists /invite/<token> (CHT-1792). On
+ * /invite it is read back from storage: a reload, or the return after
+ * signing in, still works. Anywhere else, null.
  * @returns {string|null}
  */
 export function takeInviteToken() {
@@ -76,7 +84,7 @@ export function takeInviteToken() {
         history.replaceState(null, '', INVITE_PATH);
         return fromPath;
     }
-    if (pathname !== INVITE_PATH && pathname !== `${INVITE_PATH}/`) return null;
+    if (!isInvitePath(pathname)) return null;
     let stored = null;
     try {
         stored = sessionStorage.getItem(STORAGE_KEY);
@@ -85,6 +93,16 @@ export function takeInviteToken() {
     }
     const token = stored || heldToken;
     return token && /^[A-Za-z0-9_-]{16,128}$/.test(token) ? token : null;
+}
+
+/**
+ * Whether ``pathname`` is the bare invitation page, /invite, where the
+ * token is read back from storage rather than the path.
+ * @param {string} pathname
+ * @returns {boolean}
+ */
+export function isInvitePath(pathname) {
+    return pathname === INVITE_PATH || pathname === `${INVITE_PATH}/`;
 }
 
 /** Forget the stored token (accepted, or no longer valid). */
@@ -176,6 +194,36 @@ export function renderGone(el, message = GONE_MESSAGE) {
                 <a class="btn btn-secondary" href="/">Go to Chaotic</a>
             </div>
         </div>`;
+}
+
+/**
+ * The page for /invite with no token to read back: storage was blocked
+ * and the page reloaded, or the address was typed (CHT-1792). It cannot
+ * know which invitation this was, so it says how to get back to it.
+ * @param {HTMLElement} el
+ */
+export function renderMissingToken(el) {
+    el.innerHTML = `
+        <div class="invite-page">
+            <h1>Open your invitation link again</h1>
+            <p>This page no longer has the invitation it was showing. Open the link in your
+                invitation email again to see it.</p>
+            <p class="invite-muted">If this happens each time you reload, your browser may be blocking
+                site storage for Chaotic; open the link and accept without reloading.</p>
+            <div class="invite-actions">
+                <a class="btn btn-secondary" href="/">Go to Chaotic</a>
+            </div>
+        </div>`;
+}
+
+/**
+ * Take over the page with the missing-token hint (CHT-1792).
+ */
+export function showMissingToken() {
+    const el = screen();
+    clearAuthNotice();
+    showOnly(el);
+    renderMissingToken(el);
 }
 
 /**
@@ -286,8 +334,6 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
         if (e && e.status === 404) {
             forgetInviteToken();
             renderGone(el);
-        } else if (e && e.status === 429) {
-            renderGone(el, 'Too many attempts. Wait a minute and reload this page.');
         } else {
             renderGone(el, (e && e.message) || 'Something went wrong. Reload the page to try again.');
         }
