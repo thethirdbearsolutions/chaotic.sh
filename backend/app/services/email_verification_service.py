@@ -327,6 +327,17 @@ class EmailVerificationService:
         await codes.filter(id=row.id).update(armed=True)
         return row
 
+    @staticmethod
+    async def asked_recently(user_id: str) -> bool:
+        """Whether this account asked for a code itself in the last
+        ``FAILURE_WINDOW``, sent or not (CHT-1828). The admin-issued code
+        is for an invitee stuck waiting on one: an account that never
+        asked is not stuck, and is not described to anyone who invites
+        its address."""
+        return await OxydeEmailVerificationCode.objects.filter(
+            user_id=user_id, created_at__gt=_now() - FAILURE_WINDOW,
+        ).first() is not None
+
     async def issue_for_admin(self, user: OxydeUser) -> tuple[str, OxydeEmailVerificationCode]:
         """Make a code for ``user`` and return it, with its row, instead of
         mailing it (CHT-1828). A team admin hands it over when SMTP is

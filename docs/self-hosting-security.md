@@ -224,8 +224,11 @@ not affected, only accepting a new invitation is.
 as well, and an invitee holding a link they were given by hand still
 cannot accept it (CHT-1828). A team admin can then get the code
 instead: `POST /api/teams/{team_id}/invitations/{id}/verification-code`
-(`chaotic team invitation-code <id>`), for a pending invitation of
-their own team. It makes the same kind of code the email carries (same
+(`chaotic team invitation-code <id>`, or the "Verification code"
+button under Pending Invitations), for a pending invitation of their
+own team, once the invitee's account has asked for a code itself in
+the last day. Without that, anyone who made a team could invite any
+address and read the account's details. It makes the same kind of code the email carries (same
 HMAC storage, 15 minutes, five tries, the address's daily failure cap)
 for the one account signed up with the invited address, returns it to
 the admin once instead of mailing it, and disarms that account's
@@ -240,7 +243,8 @@ and whether it is already in a team, and the admin must confirm with
 the invitee that it is theirs before handing the code over. Refusals: 403 for
 a non-admin, 404 for an invitation that is not pending, then 409
 `email_verification_unavailable` (no SMTP, answered before the address
-is looked up), `no_account`, `ambiguous_account` or
+is looked up), `no_verification_requested` (no account, or one that
+never asked: the same answer), `ambiguous_account` or
 `email_already_verified`. Each issue is logged with ids only, never
 the code. There is no team-level activity table yet.
 

@@ -588,11 +588,13 @@ async def issue_invitation_verification_code(
     alone, like every invitation route), the delete route's 404 for an
     invitation that is not this team's, pending and unexpired, 409
     ``email_verification_unavailable`` without SMTP, then 409
-    ``no_account`` / ``ambiguous_account`` / ``email_already_verified``
-    about the invited address's account. Account existence is already
-    public (signup says "Email already registered"); the name, signup
-    time and team membership are shown only to an admin of a team with
-    a pending invitation to that address.
+    ``no_verification_requested`` when no account at the invited address
+    asked for a code itself in the last day (the stuck invitee has; a
+    missing account and a passive one get this same answer, so neither
+    its existence nor its details are told), then ``ambiguous_account``
+    / ``email_already_verified``. The name, signup time and team
+    membership are shown only to an admin of a team with a pending
+    invitation to that address, and only for an account that asked.
 
     Every earlier unconfirmed code of the account stops working. The
     issue is logged with ids only, never the code.
@@ -621,17 +623,25 @@ async def issue_invitation_verification_code(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=CODE_NOT_NEEDED.detail())
 
     # People only: an agent account has no mailbox and cannot accept.
+    # And only an account that asked for a code itself, which is what a
+    # stuck invitee has done: anyone can make a team and invite any
+    # address, so without this the answer would describe any account
+    # (name, signup time, teams) and could disarm a stranger's codes at
+    # will (PR #446 review F1). No account and a passive one get the same
+    # answer, so existence is not told either.
     accounts = [
         u for u in await UserService().find_by_email_ignoring_case(invitation.email)
-        if not u.is_agent and u.is_active
+        if not u.is_agent and u.is_active and await verification.asked_recently(u.id)
     ]
     if not accounts:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "error_code": "no_account",
-                "message": "Nobody has signed up with the invited address yet. Ask the invitee "
-                           "to create their account first, then issue the code.",
+                "error_code": "no_verification_requested",
+                "message": "No account with the invited address has asked for a verification code "
+                           "in the last 24 hours. Ask the invitee to sign up and request one (on the "
+                           "invitation page, or with `chaotic auth verify-email`); if it doesn't "
+                           "arrive, issue the code then.",
             },
         )
     if len(accounts) > 1:

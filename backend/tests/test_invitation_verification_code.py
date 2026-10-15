@@ -38,12 +38,25 @@ def _headers(user_id: str) -> dict:
     return {"Authorization": f"Bearer {create_access_token(data={'sub': user_id})}"}
 
 
-async def _signup(client, email=INVITEE, name="The Invitee") -> tuple[str, dict]:
+async def _asked(user_id: str, email: str, ago: timedelta = timedelta(hours=2)) -> None:
+    """The account asked for a mailed code that never went out, ``ago``:
+    what a stuck invitee has done (PR #446 review F1). Two hours back by
+    default, clear of the one-a-minute and five-an-hour mailing limits."""
+    when = datetime.now(timezone.utc) - ago
+    await OxydeEmailVerificationCode.objects.create(
+        email_hash=evs.hash_email(email), user_id=user_id, code_hash="never-sent", armed=False,
+        expires_at=when + evs.CODE_TTL, attempts=0, created_at=when,
+    )
+
+
+async def _signup(client, email=INVITEE, name="The Invitee", *, asked=True) -> tuple[str, dict]:
     response = await client.post("/api/auth/signup", json={
         "email": email, "password": "password123", "name": name,
     })
     assert response.status_code == 201, response.text
     user_id = response.json()["id"]
+    if asked:
+        await _asked(user_id, email)
     return user_id, _headers(user_id)
 
 
@@ -118,7 +131,7 @@ class TestIssue:
         _, inv_id = pending
         user_id, _ = await _signup(client)
         code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
-        [row] = await _codes(user_id)
+        [row] = [r for r in await _codes(user_id) if r.armed]
         assert row.armed is True
         assert code not in row.code_hash
         assert row.code_hash == evs.hash_code(user_id, code)
@@ -146,7 +159,7 @@ class TestLeakedTokenAndCode:
         await _signup(client)
         code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
         # The attacker has the link and the code, but their own account.
-        _, attacker = await _signup(client, email="attacker@example.com", name="Attacker")
+        _, attacker = await _signup(client, email="attacker@example.com", name="Attacker", asked=False)
         confirm = await client.post(CONFIRM, headers=attacker, json={"code": code})
         assert confirm.status_code == 400
         assert confirm.json()["detail"]["error_code"] == "invalid_verification_code"
@@ -182,7 +195,7 @@ class TestCodeRules:
         mailed = outbox.last_code()
         admin = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
         rows = await _codes(user_id)
-        assert [r.armed for r in rows] == [False, True]
+        assert [r.armed for r in rows] == [False, False, True]
         if mailed != admin:  # one chance in a million they are the same
             assert (await client.post(CONFIRM, headers=invitee, json={"code": mailed})).status_code == 400
 
@@ -290,25 +303,47 @@ class TestRefusals:
         assert a.json() == b.json()
         assert a.json()["detail"]["error_code"] == "email_verification_unavailable"
 
-    async def test_no_account_yet(self, client, test_team, auth_headers, pending, outbox):
-        _, inv_id = pending
-        response = await _issue(client, test_team.id, inv_id, auth_headers)
-        assert response.status_code == 409
-        assert response.json()["detail"]["error_code"] == "no_account"
+    async def test_no_account_and_a_passive_account_get_the_same_answer(
+        self, client, test_team, test_user, auth_headers, outbox,
+    ):
+        """PR #446 review F1: anyone can make a team and invite any address,
+        so an account that never asked for a code is not described, and
+        not even told apart from no account."""
+        nobody = await _invite(test_team.id, test_user.id, "nobody@example.com")
+        passive_token = await _invite(test_team.id, test_user.id, INVITEE)
+        passive_id, _ = await _signup(client, asked=False)
+        a = await _issue(client, test_team.id, await _invitation_id(nobody), auth_headers)
+        b = await _issue(client, test_team.id, await _invitation_id(passive_token), auth_headers)
+        assert a.status_code == b.status_code == 409
+        assert a.json() == b.json()
+        assert a.json()["detail"]["error_code"] == "no_verification_requested"
+        assert "The Invitee" not in b.text
         assert await OxydeEmailVerificationCode.objects.count() == 0
+
+    async def test_asking_over_a_day_ago_does_not_count(
+        self, client, test_team, test_user, auth_headers, outbox,
+    ):
+        # Asking more than a day ago does not count: the account is not
+        # waiting on a code now.
+        token = await _invite(test_team.id, test_user.id, INVITEE)
+        user_id, _ = await _signup(client, asked=False)
+        await _asked(user_id, INVITEE, ago=evs.FAILURE_WINDOW + timedelta(minutes=1))
+        response = await _issue(client, test_team.id, await _invitation_id(token), auth_headers)
+        assert response.json()["detail"]["error_code"] == "no_verification_requested"
 
     async def test_a_deactivated_account_counts_as_none(self, client, test_team, auth_headers, pending, outbox):
         _, inv_id = pending
         user_id, _ = await _signup(client)
         await OxydeUser.objects.filter(id=user_id).update(is_active=False)
         response = await _issue(client, test_team.id, inv_id, auth_headers)
-        assert response.json()["detail"]["error_code"] == "no_account"
+        assert response.json()["detail"]["error_code"] == "no_verification_requested"
 
     async def test_two_accounts_differing_in_case_are_refused(self, client, test_team, auth_headers, pending, outbox):
         _, inv_id = pending
         await _signup(client)
-        await _make_legacy_variant(INVITEE.upper())
+        legacy = await _make_legacy_variant(INVITEE.upper())
+        await _asked(legacy.id, legacy.email)
         response = await _issue(client, test_team.id, inv_id, auth_headers)
         assert response.status_code == 409
         assert response.json()["detail"]["error_code"] == "ambiguous_account"
-        assert await OxydeEmailVerificationCode.objects.count() == 0
+        assert await OxydeEmailVerificationCode.objects.filter(armed=True).count() == 0

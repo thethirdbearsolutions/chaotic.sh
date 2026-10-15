@@ -1160,7 +1160,7 @@ describe('issueInvitationCode (CHT-1828)', () => {
   });
 
   it('reports a refusal and opens nothing', async () => {
-    const error = new Error('Nobody has signed up with the invited address yet.');
+    const error = new Error('No account with the invited address has asked for a verification code.');
     api.issueInvitationVerificationCode.mockRejectedValue(error);
     await issueInvitationCode('inv-1');
     expect(showApiError).toHaveBeenCalledWith('get a verification code', error);

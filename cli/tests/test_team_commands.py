@@ -475,14 +475,14 @@ class TestTeamInvitationCode:
     def test_a_refusal_is_reported(self, cli_runner):
         from cli.main import cli, client, APIError
 
-        msg = "Nobody has signed up with the invited address yet."
+        msg = "No account with the invited address has asked for a verification code."
         client.issue_invitation_verification_code = MagicMock(
-            side_effect=_api_error(APIError, msg, 409, {"error_code": "no_account", "message": msg}))
+            side_effect=_api_error(APIError, msg, 409, {"error_code": "no_verification_requested", "message": msg}))
 
         result = cli_runner.invoke(cli, ['team', 'invitation-code', 'inv-1'])
 
         assert result.exit_code == 1
-        assert 'Nobody has signed up' in " ".join(result.output.split())
+        assert "has asked for a verification code" in " ".join(result.output.split())
 
 
 class TestInviteLinkForDisplay:

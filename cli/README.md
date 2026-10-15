@@ -173,7 +173,7 @@ chaotic team invitation-code <invitation-id>  # Admin: a verification code for a
 
 `invitation-code` is for a server whose mail is failing: the invitee can't
 receive the verification code, so a team admin gets it instead and passes it
-on. It shows the account that signed up with the invited address (name,
+on, once the invitee has asked for a code themselves. It shows the account that signed up with the invited address (name,
 signup time, whether it is already in a team). Check with the invitee that
 the account is theirs before you hand the code over, because anyone who saw
 the link can sign up with that address. The code works only for that account
