@@ -6,11 +6,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
-import sh.chaotic.android.MainActivity
 import sh.chaotic.android.R
 import sh.chaotic.sync.push.NotificationAction
 import sh.chaotic.sync.push.NotificationPlanner
@@ -117,7 +115,7 @@ class AndroidNotifier(private val context: Context, private val owner: () -> Str
             .setPublicVersion(public)
             .setSilent(true)
             .setAutoCancel(true)
-            .setContentIntent(openApp(DECISION_TAG + entryId))
+            .setContentIntent(openApp(DECISION_TAG + entryId, entryId))
         if (notice.expires) builder.setTimeoutAfter(DECISION_TIMEOUT_MILLIS)
         manager.notify(DECISION_TAG + entryId, DECISION_ID, builder.build())
     }
@@ -152,7 +150,7 @@ class AndroidNotifier(private val context: Context, private val owner: () -> Str
             // The same entry again (a sync or a retried push) updates quietly.
             .setOnlyAlertOnce(true)
             .setAutoCancel(true)
-            .setContentIntent(openApp(entry.id))
+            .setContentIntent(openApp(ENTRY_TAG + entry.id, entry.id))
         decisions.forEach(builder::addAction)
         return builder.build()
     }
@@ -223,7 +221,7 @@ class AndroidNotifier(private val context: Context, private val owner: () -> Str
         .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
         .setOnlyAlertOnce(true)
         .setAutoCancel(true)
-        .setContentIntent(openApp(action.group))
+        .setContentIntent(openApp(SUMMARY_TAG + action.group, entryId = null))
         .build()
 
     /** What a lock screen that hides sensitive content shows instead: the app, and that something is waiting. */
@@ -234,10 +232,14 @@ class AndroidNotifier(private val context: Context, private val owner: () -> Str
         .setContentText(context.getString(R.string.push_public_text))
         .build()
 
-    private fun openApp(key: String): PendingIntent = PendingIntent.getActivity(
+    /**
+     * Opens the app; on [entryId]'s issue when there is one (CHT-1660). A
+     * summary opens the inbox: its entries can be on different issues.
+     */
+    private fun openApp(key: String, entryId: String?): PendingIntent = PendingIntent.getActivity(
         context,
-        key.hashCode(),
-        Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        0,
+        NotificationTap.intent(context, key, entryId),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 

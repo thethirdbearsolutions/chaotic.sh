@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,8 +39,12 @@ fun ChaoticApp(viewModel: AppViewModel = hiltViewModel()) {
 }
 
 @Composable
-private fun SignedInApp() {
+private fun SignedInApp(taps: NotificationTaps = hiltViewModel()) {
     val navController = rememberNavController()
+    // A tapped notification's issue (CHT-1660), over the inbox so Back returns there.
+    LaunchedEffect(taps, navController) {
+        taps.issues.collect { navController.navigate(it) { launchSingleTop = true } }
+    }
     NavHost(navController = navController, startDestination = Destination.Home) {
         composable<Destination.Home> {
             HomeScreen(onOpenIssue = { issueId, teamId -> navController.navigate(Destination.Issue(issueId, teamId)) })
