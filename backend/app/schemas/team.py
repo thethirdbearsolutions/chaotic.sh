@@ -108,3 +108,21 @@ class TeamInvitationResponse(BaseModel):
     @classmethod
     def coerce_status(cls, v):
         return _coerce_enum(InvitationStatus, v)
+
+
+class InvitationPreviewResponse(BaseModel):
+    """What the public /invite/<token> page shows before anyone signs in
+    (CHT-1265). Only what the page needs: no ids, no token, no status
+    (a preview exists only for a valid invitation), and the invited
+    address only masked, enough to say which account to sign in with."""
+
+    team_name: str
+    role: TeamRole
+    invited_by_name: str | None
+    email_hint: str
+    expires_at: DateTimeUTC
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def coerce_role(cls, v):
+        return _coerce_enum(TeamRole, v)

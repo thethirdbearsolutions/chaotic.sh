@@ -21,11 +21,19 @@ logged request target it redacts
   ``mint_secret`` makes them): ``ck_...19a0``, the same short form the
   ``/mcp/<key>`` path scrub uses (``app.mcp_server.auth``);
 * a query name or value that hides such a secret under percent-encoding,
-  up to ``_MAX_DECODE`` layers deep (``cb=http%3A%2F%2Fx%2F%3Fkey%3Dck_...``).
+  up to ``_MAX_DECODE`` layers deep (``cb=http%3A%2F%2Fx%2F%3Fkey%3Dck_...``);
+* the path segment after ``/invite/`` or ``/invitations/``: a team
+  invitation token is not a minted secret (``token_urlsafe``) and travels
+  there, in the web page's ``/invite/<token>`` and the API's
+  ``/api/teams/invitations/<token>[/accept]`` (CHT-1601, CHT-1265). It
+  cannot take a minted prefix instead: ``CapabilityPathRedaction``
+  rewrites any path segment with one before routing, and the API route
+  would never see the token.
 
 The work is capped: a path or query longer than ``MAX_SCANNED`` is logged
 as its size (``?[60000-byte query omitted]``) without being scanned, and a
-target with no ``?`` and no minted prefix is not scanned at all.
+target with no ``?``, no minted prefix and no invitation path is not
+scanned at all.
 
 The ``/mcp/<key>`` path is still rewritten in the scope by
 ``CapabilityPathRedaction``: that rewrite is functional (it is how the
@@ -115,11 +123,23 @@ def redact_query(query: str) -> str:
     return "".join(parts)
 
 
+INVITATION_PATH = re.compile(r"(/invit(?:e|ations)/)[^/?#]+", re.IGNORECASE)
+
+
+def redact_invitation_tokens(path: str) -> str:
+    """Replace the token segment of an invitation path with REDACTED."""
+    return INVITATION_PATH.sub(lambda m: m.group(1) + REDACTED, path)
+
+
 def _needs_scan(text: str) -> bool:
-    """Fast path: with no ``?`` and no minted prefix in it, a target has
-    no query to scrub and no secret in its path (the path is matched
-    as it is logged, never decoded)."""
-    return "?" in text or any(p in text for p in ALL_SECRET_PREFIXES)
+    """Fast path: with no ``?``, no minted prefix and no invitation path
+    in it, a target has no query to scrub and no secret in its path (the
+    path is matched as it is logged, never decoded)."""
+    return (
+        "?" in text
+        or any(p in text for p in ALL_SECRET_PREFIXES)
+        or "/invit" in text.lower()
+    )
 
 
 def redact_request_target(target: str) -> str:
@@ -131,7 +151,7 @@ def redact_request_target(target: str) -> str:
     if len(path) > MAX_SCANNED:
         path = f"[{len(path)}-byte path omitted]"
     else:
-        path = redact_secrets(path)
+        path = redact_invitation_tokens(redact_secrets(path))
     if not question:
         return path
     if len(query) > MAX_SCANNED:

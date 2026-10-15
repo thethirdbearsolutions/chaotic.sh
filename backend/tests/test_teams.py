@@ -626,8 +626,10 @@ async def test_accept_invitation_expired(client, auth_headers, test_team, db, te
         f"/api/teams/invitations/{token}/accept",
         headers=auth_headers,
     )
-    assert response.status_code == 400
-    assert "expired" in response.json()["detail"]
+    # CHT-1265 review F10: expired looks like every other invalid
+    # invitation (one 404), whoever asks.
+    assert response.status_code == 404
+    assert response.json()["detail"] == "This invitation is no longer valid"
 
 
 @pytest.mark.asyncio

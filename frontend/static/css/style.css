@@ -8692,6 +8692,38 @@ button.stat-card-link:hover .stat-note {
 .oauth-disabled { color: var(--text-muted); }
 .oauth-actions { display: flex; justify-content: flex-end; gap: var(--space-md); }
 
+/* Invitation landing page, /invite/<token> (CHT-1265) */
+#invite-screen {
+    min-height: 100vh;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+.invite-page {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 48px var(--space-xl);
+}
+.invite-page h1 { font-size: var(--font-xl); margin-bottom: var(--space-lg); }
+.invite-page .invite-team { font-size: 2rem; margin: var(--space-sm) 0; word-break: break-word; }
+.invite-lead { color: var(--text-secondary); }
+.invite-muted { color: var(--text-muted); font-size: var(--font-sm); }
+.invite-warning { color: var(--warning-color); }
+.invite-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-md);
+    margin-top: var(--space-xl);
+}
+.invite-actions a.btn { text-decoration: none; }
+.invite-auth-notice {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--space-md) var(--space-lg);
+    margin-bottom: var(--space-lg);
+    color: var(--text-secondary);
+}
+
 /* CHT-1606: a rejected gate/review and the reason it was sent back */
 .badge-inbox-gate_rejected {
     background: #5f1e1e;

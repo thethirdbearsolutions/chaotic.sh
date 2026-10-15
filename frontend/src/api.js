@@ -182,8 +182,13 @@ export class ApiClient {
         return this.request('GET', `/teams/${teamId}/invitations`);
     }
 
+    // Public preview for the /invite/<token> page (CHT-1265): works signed out.
+    async getInvitation(token) {
+        return this.request('GET', `/teams/invitations/${encodeURIComponent(token)}`);
+    }
+
     async acceptInvitation(token) {
-        return this.request('POST', `/teams/invitations/${token}/accept`);
+        return this.request('POST', `/teams/invitations/${encodeURIComponent(token)}/accept`);
     }
 
     async deleteInvitation(teamId, invitationId) {

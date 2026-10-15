@@ -764,13 +764,56 @@
         }
       }
     },
+    "/api/teams/invitations/{token}": {
+      "get": {
+        "tags": [
+          "teams"
+        ],
+        "summary": "Preview Invitation",
+        "description": "The public preview the /invite/<token> page shows (CHT-1265).\n\nUnauthenticated: the emailed link is opened before anyone signs in.\nIt tells the token's holder only what the page needs (team name,\nrole, inviter, a masked address, expiry), and answers an unknown,\nexpired, accepted, declined or revoked token with the same 404, so\na lookup cannot tell them apart.\n\nThreat model: the token is a bearer credential, not only a pointer\nto an inbox. Signup does not verify email ownership (CHT-1790), so\nwhile the invited address has no account, anyone holding the token\ncan sign up as that address and accept. Keep it out of every log,\nReferer and history entry: it is redacted from the request log\n(app.log_redaction), and the /invite/ page is served no-referrer and\nmoves it out of the address bar on load.\n\nNot rate limited here, on purpose (CHT-1369): rate limiting is the\nreverse proxy's job, and an in-process per-address counter behind a\nproxy would see one address for everyone, so one client could lock\nevery invitee out. The token's 256 random bits are what make\nguessing hopeless.",
+        "operationId": "preview_invitation_api_teams_invitations__token__get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationPreviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/teams/invitations/{token}/accept": {
       "post": {
         "tags": [
           "teams"
         ],
         "summary": "Accept Invitation",
-        "description": "Accept a team invitation.",
+        "description": "Accept a team invitation.\n\nAn unknown, expired, accepted, declined or revoked invitation gets\nthe preview's one 404, checked before the email match, so whatever\naccount asks, the answer does not tell those states apart (CHT-1265\nreview F10). Before CHT-1788 a used token could be accepted again\nand added a second membership row.",
         "operationId": "accept_invitation_api_teams_invitations__token__accept_post",
         "security": [
           {
@@ -10787,6 +10830,47 @@
         ],
         "title": "InboxSyncResponse",
         "description": "One page of GET /inbox/sync (CHT-1607). The client contract:\n\n* Store `next_cursor` and send it back as `since` next time. While\n  `has_more` is true, fetch again at once; otherwise wait for the next\n  poll or push.\n* Upsert every entry by `id`; drop it when `state` is `resolved` or\n  `archived`. The same entry can come more than once: the cursor stays\n  a few seconds behind the newest change, so recent changes are sent\n  again on the next sync.\n* When `retry_after` is set, the cursor is being held back behind\n  rows just sent: syncing again sooner than that many seconds returns\n  the same rows. Push or user action may still sync earlier.\n* When `reset` is true, the server restarted the sync (the caller's\n  teams changed since the cursor was issued): clear the cache before\n  applying this page, then page on as usual.\n* Drop any held entry whose team is not in `team_ids` (a left or\n  deleted team sends no tombstones).\n* Display fields (`issue_identifier`, `document_title`, `source_user`)\n  are resolved when sent. A document title or a person's name change\n  re-sends the open entries that show it; anything else that changes\n  them does not, so treat them as a snapshot."
+      },
+      "InvitationPreviewResponse": {
+        "properties": {
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/TeamRole"
+          },
+          "invited_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invited By Name"
+          },
+          "email_hint": {
+            "type": "string",
+            "title": "Email Hint"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_name",
+          "role",
+          "invited_by_name",
+          "email_hint",
+          "expires_at"
+        ],
+        "title": "InvitationPreviewResponse",
+        "description": "What the public /invite/<token> page shows before anyone signs in\n(CHT-1265). Only what the page needs: no ids, no token, no status\n(a preview exists only for a valid invitation), and the invited\naddress only masked, enough to say which account to sign in with."
       },
       "InvitationStatus": {
         "type": "string",

@@ -1,10 +1,8 @@
 """Team API routes."""
 import logging
-from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, NotAppSession, check_user_in_team
-from app.utils import ensure_utc
 from app.schemas.team import (
     TeamCreate,
     TeamUpdate,
@@ -13,6 +11,7 @@ from app.schemas.team import (
     TeamRoleUpdate,
     TeamInvitationCreate,
     TeamInvitationResponse,
+    InvitationPreviewResponse,
 )
 from app.config import get_settings
 from app.oxyde_models.team import OxydeTeamMember
@@ -317,6 +316,15 @@ async def create_invitation(
                 detail="User is already a team member",
             )
 
+    # One live invitation per (team, address) (CHT-1265 review F5): with
+    # two, accepting used up both and silently applied whichever role
+    # the first claim carried. Revoke the old one to send another.
+    if await team_service.get_live_invitation(team_id, invitation_in.email):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A pending invitation for this email already exists; revoke it to send a new one",
+        )
+
     invitation = await team_service.create_invitation(team, invitation_in, current_user)
 
     # CHT-1251: the invitation token is otherwise undeliverable without DB
@@ -362,32 +370,103 @@ async def list_team_invitations(
     return invitations[skip:skip + limit]
 
 
+def mask_email(email: str) -> str:
+    """``alice@example.com`` -> ``a***@example.com``: enough for the
+    invite page to say which account to use, without handing the full
+    address to whoever holds the link (CHT-1265). A one-character local
+    part would be shown whole, so it is masked entirely: ``***@x.com``."""
+    local, at, domain = (email or "").partition("@")
+    if not at or not local or not domain:
+        return "***"
+    if len(local) == 1:
+        return f"***@{domain}"
+    return f"{local[0]}***@{domain}"
+
+
+INVITATION_GONE = "This invitation is no longer valid"
+# Every answer about an invitation, error or not: never stored by a
+# cache, never sent on as a Referer.
+INVITATION_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+
+
+def _invitation_gone() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail=INVITATION_GONE, headers=INVITATION_HEADERS,
+    )
+
+
+@router.get("/invitations/{token}", response_model=InvitationPreviewResponse)
+@reads
+async def preview_invitation(token: str, response: Response) -> InvitationPreviewResponse:
+    """The public preview the /invite/<token> page shows (CHT-1265).
+
+    Unauthenticated: the emailed link is opened before anyone signs in.
+    It tells the token's holder only what the page needs (team name,
+    role, inviter, a masked address, expiry), and answers an unknown,
+    expired, accepted, declined or revoked token with the same 404, so
+    a lookup cannot tell them apart.
+
+    Threat model: the token is a bearer credential, not only a pointer
+    to an inbox. Signup does not verify email ownership (CHT-1790), so
+    while the invited address has no account, anyone holding the token
+    can sign up as that address and accept. Keep it out of every log,
+    Referer and history entry: it is redacted from the request log
+    (app.log_redaction), and the /invite/ page is served no-referrer and
+    moves it out of the address bar on load.
+
+    Not rate limited here, on purpose (CHT-1369): rate limiting is the
+    reverse proxy's job, and an in-process per-address counter behind a
+    proxy would see one address for everyone, so one client could lock
+    every invitee out. The token's 256 random bits are what make
+    guessing hopeless.
+    """
+    response.headers.update(INVITATION_HEADERS)
+    team_service = TeamService()
+    invitation = await team_service.get_valid_invitation_by_token(token)
+    team = await team_service.get_by_id(invitation.team_id) if invitation else None
+    if invitation is None or team is None:
+        raise _invitation_gone()
+    inviter = (
+        await UserService().get_by_id(invitation.invited_by_id)
+        if invitation.invited_by_id else None
+    )
+    return InvitationPreviewResponse(
+        team_name=team.name,
+        role=invitation.role,
+        invited_by_name=inviter.name if inviter else None,
+        email_hint=mask_email(invitation.email),
+        expires_at=invitation.expires_at,
+    )
+
+
 @router.post("/invitations/{token}/accept", response_model=TeamMemberResponse)
 @writes
 async def accept_invitation(token: str, current_user: CurrentUser, _app_session: NotAppSession):
-    """Accept a team invitation."""
-    team_service = TeamService()
-    invitation = await team_service.get_invitation_by_token(token)
+    """Accept a team invitation.
 
-    if not invitation:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Invitation not found",
-        )
+    An unknown, expired, accepted, declined or revoked invitation gets
+    the preview's one 404, checked before the email match, so whatever
+    account asks, the answer does not tell those states apart (CHT-1265
+    review F10). Before CHT-1788 a used token could be accepted again
+    and added a second membership row.
+    """
+    team_service = TeamService()
+    invitation = await team_service.get_valid_invitation_by_token(token)
+
+    if invitation is None:
+        raise _invitation_gone()
 
     if invitation.email != current_user.email:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invitation is for a different email",
-        )
-
-    if ensure_utc(invitation.expires_at) < datetime.now(timezone.utc):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invitation has expired",
+            headers=INVITATION_HEADERS,
         )
 
     member = await team_service.accept_invitation(invitation, current_user)
+    if member is None:
+        # Accepted, declined or revoked by someone else meanwhile.
+        raise _invitation_gone()
     return TeamMemberResponse(
         id=member.id,
         user_id=member.user_id,
