@@ -129,6 +129,8 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.tink)
     testImplementation(libs.androidx.test.core)
+    // MigrationTestHelper: each committed schema migrates to the current one (CHT-1666).
+    testImplementation(libs.androidx.room.testing)
     // CacheStoreContract, which the Room store must pass like the in-memory one.
     testImplementation(testFixtures(project(":core-sync")))
     testImplementation(platform(libs.compose.bom))

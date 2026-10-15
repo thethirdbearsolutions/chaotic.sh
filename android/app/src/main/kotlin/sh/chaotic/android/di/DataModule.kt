@@ -1,7 +1,6 @@
 package sh.chaotic.android.di
 
 import android.content.Context
-import androidx.room.Room
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -36,10 +35,7 @@ object DataModule {
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): ChaoticDatabase =
-        Room.databaseBuilder(context, ChaoticDatabase::class.java, ChaoticDatabase.NAME)
-            // A cache: on a schema change, start empty and sync again.
-            .fallbackToDestructiveMigration(dropAllTables = true)
-            .build()
+        ChaoticDatabase.builder(context).build()
 
     @Provides
     fun provideCacheDao(database: ChaoticDatabase): CacheDao = database.cache()
