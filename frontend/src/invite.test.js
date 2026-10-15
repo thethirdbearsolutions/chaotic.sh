@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
     inviteToken, maskEmail, showInvite, renderSignedIn, renderSignedOut, renderGone, hideInvite, GONE_MESSAGE,
-    takeInviteToken, forgetInviteToken,
+    takeInviteToken, forgetInviteToken, isInvitePath, isInviteAddress, renderMissingToken, showMissingToken,
+    RELOAD_HINT, NEW_INVITATION_HINT,
 } from './invite.js';
 import { api } from './api.js';
 
@@ -226,14 +227,36 @@ describe('showInvite', () => {
         expect(document.getElementById('main-screen').classList.contains('hidden')).toBe(true);
     });
 
-    it.each([
-        [404, GONE_MESSAGE],
-        [429, 'Too many attempts'],
-    ])('a %i shows only a plain message', async (status, text) => {
-        api.getInvitation.mockRejectedValue(Object.assign(new Error('This invitation is no longer valid'), { status }));
+    it('a 404 shows only a plain message and forgets the token', async () => {
+        history.replaceState(null, '', `/invite/${TOKEN}`);
+        takeInviteToken();
+        api.getInvitation.mockRejectedValue(Object.assign(new Error('Not found'), { status: 404 }));
         await showInvite(TOKEN, deps());
-        expect(screenEl().textContent).toContain(text);
+        expect(screenEl().textContent).toContain(GONE_MESSAGE);
+        expect(screenEl().textContent).toContain(NEW_INVITATION_HINT);
+        expect(screenEl().textContent).not.toContain(RELOAD_HINT);
         expect(screenEl().querySelector('button')).toBeNull();
+        expect(sessionStorage.getItem('chaotic.inviteToken')).toBeNull();
+    });
+
+    it('any other error status shows the server message, keeping the token (CHT-1792: no 429 case)', async () => {
+        history.replaceState(null, '', `/invite/${TOKEN}`);
+        takeInviteToken();
+        api.getInvitation.mockRejectedValue(Object.assign(new Error('Too many requests'), { status: 429 }));
+        await showInvite(TOKEN, deps());
+        expect(screenEl().textContent).toContain('Too many requests');
+        expect(screenEl().textContent).toContain(RELOAD_HINT); // review F2: a proxy's 429 may pass
+        expect(screenEl().textContent).not.toContain(NEW_INVITATION_HINT);
+        expect(screenEl().textContent).not.toContain('Too many attempts');
+        expect(screenEl().querySelector('button')).toBeNull();
+        expect(sessionStorage.getItem('chaotic.inviteToken')).toBe(TOKEN);
+    });
+
+    it('an error with no message falls back to a reload hint', async () => {
+        api.getInvitation.mockRejectedValue({ status: 500 });
+        await showInvite(TOKEN, deps());
+        expect(screenEl().textContent).toContain('Something went wrong.');
+        expect(screenEl().textContent).toContain(RELOAD_HINT);
     });
 
     it('a network error says so', async () => {
@@ -633,5 +656,88 @@ describe('hideInvite', () => {
 
         expect(screenEl().classList.contains('hidden')).toBe(true);
         expect(document.getElementById('invite-auth-notice')).toBeNull();
+    });
+});
+
+describe('the token-less /invite page (CHT-1792)', () => {
+    it('isInvitePath matches only the bare invitation page', () => {
+        expect(isInvitePath('/invite')).toBe(true);
+        expect(isInvitePath('/invite/')).toBe(true);
+        expect(isInvitePath(`/invite/${TOKEN}`)).toBe(false);
+        expect(isInvitePath('/invites')).toBe(false);
+        expect(isInvitePath('/invitations')).toBe(false);
+        expect(isInvitePath('/invitations/x')).toBe(false);
+        expect(isInvitePath('/invite//')).toBe(false);
+        expect(isInvitePath('/INVITE')).toBe(false);
+        expect(isInvitePath('/')).toBe(false);
+    });
+
+    it('isInviteAddress also matches /invite/<anything>, token or not (review F1)', () => {
+        expect(isInviteAddress('/invite')).toBe(true);
+        expect(isInviteAddress('/invite/')).toBe(true);
+        expect(isInviteAddress('/invite//')).toBe(true);
+        expect(isInviteAddress('/invite/short')).toBe(true);
+        expect(isInviteAddress(`/invite/${TOKEN.slice(0, 10)}`)).toBe(true);
+        expect(isInviteAddress(`/invite/${TOKEN}`)).toBe(true);
+        expect(isInviteAddress('/invites')).toBe(false);
+        expect(isInviteAddress('/invitations')).toBe(false);
+        expect(isInviteAddress('/invitations/x')).toBe(false);
+        expect(isInviteAddress('/team/invite')).toBe(false);
+        expect(isInviteAddress('/')).toBe(false);
+        expect(isInviteAddress(null)).toBe(false);
+    });
+
+    it('a truncated link has no token, so it gets the hint (review F1)', () => {
+        history.replaceState(null, '', `/invite/${TOKEN.slice(0, 10)}`);
+        expect(takeInviteToken()).toBeNull();
+        expect(isInviteAddress(window.location.pathname)).toBe(true);
+    });
+
+    it('showMissingToken moves a partial token out of the address bar', () => {
+        history.replaceState(null, '', `/invite/${TOKEN}.`);
+        showMissingToken();
+        expect(window.location.pathname).toBe('/invite');
+        expect(window.location.href).not.toContain(TOKEN);
+    });
+
+    it('says to open the emailed link again, and offers only the way home', () => {
+        const el = document.createElement('div');
+        renderMissingToken(el);
+        expect(el.textContent).toContain("doesn't have an invitation to show");
+        expect(el.textContent).not.toContain('was showing'); // review F4: neutral for a typed address
+        expect(el.textContent).toContain('Open the link in your');
+        expect(el.textContent).toContain('invitation email again');
+        expect(el.querySelector('button')).toBeNull();
+        expect(el.querySelector('a').getAttribute('href')).toBe('/');
+    });
+
+    it('showMissingToken takes over the page and drops any auth note', async () => {
+        api.getInvitation.mockResolvedValue(preview());
+        await showInvite(TOKEN, deps());
+        screenEl().querySelector('#invite-sign-in').click();
+        document.getElementById('auth-screen').classList.remove('hidden');
+
+        showMissingToken();
+
+        expect(screenEl().classList.contains('hidden')).toBe(false);
+        expect(screenEl().textContent).toContain('Open your invitation link again');
+        expect(document.getElementById('auth-screen').classList.contains('hidden')).toBe(true);
+        expect(document.getElementById('main-screen').classList.contains('hidden')).toBe(true);
+        expect(document.getElementById('invite-auth-notice')).toBeNull();
+    });
+
+    it('is what a reload with blocked storage leads to', () => {
+        const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
+        const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+        try {
+            history.replaceState(null, '', `/invite/${TOKEN}`);
+            expect(takeInviteToken()).toBe(TOKEN);
+            forgetInviteToken(); // a reload loses this page's in-memory copy
+            expect(takeInviteToken()).toBeNull();
+            expect(isInvitePath(window.location.pathname)).toBe(true);
+        } finally {
+            setItem.mockRestore();
+            getItem.mockRestore();
+        }
     });
 });

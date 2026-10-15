@@ -5,8 +5,10 @@ a six-digit code the server mailed there
 (``app.services.email_verification_service``). One row per code asked
 for:
 
-* ``email_hash``: HMAC of the normalised address (lowercased, stripped)
-  under a key derived from SECRET_KEY. The rate limits and the cap on
+* ``email_hash``: HMAC of the normalised address (stripped and
+  ASCII-folded by ``app.utils.email_address.fold_email``: ASCII letters
+  only, on purpose, to match SQLite's LIKE; not ``str.lower()``) under a
+  key derived from SECRET_KEY. The rate limits and the cap on
   failed confirmations count by it, so they hold per *address*, not per
   account: deleting the account and signing up again with the same
   address does not reset them.

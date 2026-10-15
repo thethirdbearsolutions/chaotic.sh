@@ -15,7 +15,7 @@ import { showAuthScreen, showLogin, showSignup, showMainScreen, updateUserInfo }
 import { getTeams, loadTeams, selectTeam } from './teams.js';
 import { showOnboarding, hasCompletedOnboarding } from './onboarding.js';
 import { consentRequestId, showConsent } from './oauth-consent.js';
-import { hideInvite, takeInviteToken, showInvite } from './invite.js';
+import { hideInvite, isInviteAddress, showInvite, showMissingToken, takeInviteToken } from './invite.js';
 import { initRouter } from './router.js';
 import { getCurrentUser, setCurrentUser, setCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
@@ -61,6 +61,11 @@ export async function showSignedOut() {
         await openInvite(token);
         return;
     }
+    if (isInviteAddress(window.location.pathname)) {
+        // An invitation address with no usable token (CHT-1792).
+        showMissingToken();
+        return;
+    }
     showAuthScreen();
 }
 
@@ -84,6 +89,13 @@ export async function initApp({ teamId } = {}) {
     const token = takeInviteToken();
     if (token) {
         await openInvite(token);
+        return;
+    }
+    if (isInviteAddress(window.location.pathname)) {
+        // An invitation address with no usable token: storage was blocked
+        // and the page reloaded, or the link was cut short (CHT-1792).
+        // Say to reopen the emailed link.
+        showMissingToken();
         return;
     }
     showMainScreen();

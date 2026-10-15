@@ -198,7 +198,9 @@ before its address is compared, so it gets the same answer whether its
 address matches or not and the refusal cannot be used to guess the
 invited address. Codes last 15 minutes, allow five tries, and only the
 newest one sent works. The limits count per address (an HMAC of it,
-lowercased), not per account, so deleting the account and signing up
+ASCII-folded: only A-Z are lowercased, by `fold_email` in
+`backend/app/utils/email_address.py`, to match SQLite's case-insensitive
+comparison), not per account, so deleting the account and signing up
 again resets nothing: one code a minute and five an hour (429 with
 `Retry-After` past that), and at most 15 failed confirmations a day,
 after which every code, the right one included, gets the same 400 as a
@@ -209,7 +211,7 @@ address, an address is one account whatever its case: signup refuses
 an address that differs from an existing one only in case (ASCII
 letters), login accepts any case, and an invitation matches its
 account ignoring case. The database does not enforce this (there is no
-unique index on the lowercased address), and accounts made before this
+unique index on the case-folded address), and accounts made before this
 check that differ only in case keep working, sharing one set of limits. Only HMACs of the codes and the
 addresses are stored, under a key derived from `SECRET_KEY`. A failed
 send is reported to the person (502 `email_send_failed`) rather than
