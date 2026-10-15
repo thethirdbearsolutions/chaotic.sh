@@ -27,6 +27,7 @@ import sh.chaotic.api.models.HTTPValidationError
 import sh.chaotic.api.models.InvitationPreviewResponse
 import sh.chaotic.api.models.TeamCreate
 import sh.chaotic.api.models.TeamInvitationCreate
+import sh.chaotic.api.models.TeamInvitationCreatedResponse
 import sh.chaotic.api.models.TeamInvitationResponse
 import sh.chaotic.api.models.TeamMemberResponse
 import sh.chaotic.api.models.TeamResponse
@@ -86,13 +87,13 @@ import io.ktor.http.ParametersBuilder
         /**
         * POST /api/teams/{team_id}/invitations
         * Create Invitation
-        * Create a team invitation.
+        * Create a team invitation.  Without SMTP the answer carries the accept link, once, for the admin to hand over themselves (CHT-1794); with SMTP it goes by email only.
          * @param teamId  
          * @param teamInvitationCreate  
-         * @return TeamInvitationResponse
+         * @return TeamInvitationCreatedResponse
         */
             @Suppress("UNCHECKED_CAST")
-        open suspend fun createInvitationApiTeamsTeamIdInvitationsPost(teamId: kotlin.String, teamInvitationCreate: TeamInvitationCreate): HttpResponse<TeamInvitationResponse> {
+        open suspend fun createInvitationApiTeamsTeamIdInvitationsPost(teamId: kotlin.String, teamInvitationCreate: TeamInvitationCreate): HttpResponse<TeamInvitationCreatedResponse> {
 
             val localVariableAuthNames = listOf<String>("HTTPBearer")
 

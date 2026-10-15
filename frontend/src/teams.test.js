@@ -15,6 +15,8 @@ import {
   loadLabels,
   showInviteModal,
   handleInvite,
+  showInviteLink,
+  copyInviteLink,
   removeMember,
   deleteInvitation,
   showCreateTeamModal,
@@ -23,7 +25,7 @@ import {
   handleUpdateTeam,
 } from './teams.js';
 import { api } from './api.js';
-import { showApiError } from './ui.js';
+import { showApiError, showModal, closeModal, showToast, isModalOpen } from './ui.js';
 import { registerActions } from './event-delegation.js';
 
 // Mock the api module
@@ -48,6 +50,7 @@ vi.mock('./ui.js', () => ({
   showModal: vi.fn(),
   closeModal: vi.fn(),
   showToast: vi.fn(),
+  isModalOpen: vi.fn(() => false),
 }));
 
 vi.mock('./event-delegation.js', () => ({
@@ -825,6 +828,112 @@ describe('handleInvite', () => {
     api.getTeamInvitations.mockResolvedValue([]);
     await handleInvite(event);
     expect(api.createInvitation).toHaveBeenCalledWith('team-1', 'new@example.com', 'member');
+  });
+
+  it('closes with "sent" when the server emailed the link (accept_url null)', async () => {
+    document.body.innerHTML += '<div id="modal-title"></div><div id="modal-content"></div>';
+    api.createInvitation.mockResolvedValue({ id: 'inv-1', accept_url: null });
+    api.getTeamInvitations.mockResolvedValue([]);
+    await handleInvite({ preventDefault: vi.fn() });
+    expect(closeModal).toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith('Invitation sent!', 'success');
+    expect(document.getElementById('modal-content').innerHTML).not.toContain('/invite/');
+  });
+
+  it('shows the link to hand over when the server cannot email it (CHT-1794)', async () => {
+    document.body.innerHTML += '<div id="modal-title"></div><div id="modal-content"></div>';
+    const url = 'https://chaotic.example.com/invite/tok_123';
+    api.createInvitation.mockResolvedValue({ id: 'inv-1', accept_url: url });
+    api.getTeamInvitations.mockResolvedValue([]);
+    await handleInvite({ preventDefault: vi.fn() });
+    expect(closeModal).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalledWith('Invitation sent!', 'success');
+    expect(document.getElementById('modal-title').textContent).toBe('Invitation Created');
+    expect(document.getElementById('invite-link').textContent).toBe(url);
+    expect(document.getElementById('modal-content').textContent).toContain('send this link to new@example.com yourself');
+    expect(document.querySelector('[data-action="copy-invite-link"]')).not.toBeNull();
+    expect(showModal).toHaveBeenCalled();
+  });
+});
+
+describe('showInviteLink / copyInviteLink (CHT-1794)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="modal-overlay"><div id="modal-title"></div><div id="modal-content"></div></div>';
+    vi.clearAllMocks();
+    isModalOpen.mockReturnValue(false);
+  });
+
+  it('replaces the open invite form in place, keeping its opener, and focuses Copy', () => {
+    isModalOpen.mockReturnValue(true);
+    showInviteLink('a@example.com', 'https://h/invite/tok');
+    expect(showModal).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.querySelector('[data-action="copy-invite-link"]'));
+  });
+
+  it('opens the modal when none is open', () => {
+    showInviteLink('a@example.com', 'https://h/invite/tok');
+    expect(showModal).toHaveBeenCalled();
+  });
+
+  it('takes the link out of the DOM when the modal closes, however it closes', async () => {
+    showInviteLink('a@example.com', 'https://h/invite/tok');
+    expect(document.getElementById('invite-link')).not.toBeNull();
+    document.getElementById('modal-overlay').classList.add('hidden');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.getElementById('invite-link')).toBeNull();
+    expect(document.getElementById('modal-content').textContent).not.toContain('/invite/');
+  });
+
+  it('leaves a later modal alone once the link is gone', async () => {
+    showInviteLink('a@example.com', 'https://h/invite/tok');
+    const overlay = document.getElementById('modal-overlay');
+    overlay.classList.add('hidden');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    document.getElementById('modal-content').innerHTML = '<p id="other">other modal</p>';
+    overlay.classList.remove('hidden');
+    overlay.classList.add('hidden');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.getElementById('other')).not.toBeNull();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('escapes the address and the link', () => {
+    showInviteLink('<b>x</b>@example.com', 'https://h/invite/a<i>b');
+    const content = document.getElementById('modal-content');
+    expect(content.querySelector('b')).toBeNull();
+    expect(content.querySelector('i')).toBeNull();
+    expect(document.getElementById('invite-link').textContent).toBe('https://h/invite/a<i>b');
+  });
+
+  it('copies the link to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue();
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    showInviteLink('a@example.com', 'https://h/invite/tok');
+    await copyInviteLink();
+    expect(writeText).toHaveBeenCalledWith('https://h/invite/tok');
+    expect(showToast).toHaveBeenCalledWith('Invitation link copied', 'success');
+  });
+
+  it('selects the link to copy by hand when the clipboard refuses', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    showInviteLink('a@example.com', 'https://h/invite/tok');
+    await copyInviteLink();
+    expect(window.getSelection().toString()).toBe('https://h/invite/tok');
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('copy it by hand'), 'error');
+  });
+
+  it('is wired to its actions', async () => {
+    const writeText = vi.fn().mockResolvedValue();
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    showInviteLink('a@example.com', 'https://h/invite/tok');
+    await teamsActions['copy-invite-link']();
+    expect(writeText).toHaveBeenCalledWith('https://h/invite/tok');
+    teamsActions['dismiss-invite-link']();
+    expect(closeModal).toHaveBeenCalled();
   });
 });
 

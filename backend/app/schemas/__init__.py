@@ -14,6 +14,7 @@ from app.schemas.team import (
     TeamMemberResponse,
     TeamInvitationCreate,
     TeamInvitationResponse,
+    TeamInvitationCreatedResponse,
 )
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.schemas.issue import (
@@ -45,6 +46,7 @@ __all__ = [
     "TeamMemberResponse",
     "TeamInvitationCreate",
     "TeamInvitationResponse",
+    "TeamInvitationCreatedResponse",
     "ProjectCreate",
     "ProjectUpdate",
     "ProjectResponse",

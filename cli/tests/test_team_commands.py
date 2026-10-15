@@ -253,6 +253,36 @@ class TestTeamInvite:
         assert call_args[2] == 'admin'
 
 
+    def test_team_invite_without_smtp_prints_link_once(self, cli_runner):
+        """CHT-1794: when the server cannot email the invitation, the create
+        answer carries the accept link, and invite prints it whole."""
+        from cli.main import cli, client
+
+        url = "https://chaotic.example.com/invite/" + "t" * 120
+        client.invite_member = MagicMock(return_value={"id": "inv-1", "email": "bob@test.com", "accept_url": url})
+
+        result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
+
+        assert result.exit_code == 0
+        assert 'Invitation created for bob@test.com' in result.output
+        assert 'Invitation sent' not in result.output
+        assert 'send this link to them yourself' in result.output
+        # One unbroken line, though longer than the console is wide.
+        assert url in result.output.splitlines()
+
+    def test_team_invite_with_smtp_prints_no_link(self, cli_runner):
+        """CHT-1794: with email configured, accept_url is null: nothing to print."""
+        from cli.main import cli, client
+
+        client.invite_member = MagicMock(return_value={"id": "inv-1", "email": "bob@test.com", "accept_url": None})
+
+        result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
+
+        assert result.exit_code == 0
+        assert 'Invitation sent to bob@test.com' in result.output
+        assert '/invite/' not in result.output
+
+
 class TestTeamAcceptInvite:
     """Tests for team accept-invite command."""
 

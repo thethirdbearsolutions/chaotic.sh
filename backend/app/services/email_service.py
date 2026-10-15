@@ -76,7 +76,9 @@ class EmailService:
         self.settings = get_settings()
 
     def is_configured(self) -> bool:
-        return bool(self.settings.smtp_host)
+        # A blank or whitespace SMTP_HOST is unset, not a host every send
+        # fails on (CHT-1794 review).
+        return bool(self.settings.smtp_host.strip())
 
     async def send(self, to: str, subject: str, body: str) -> bool:
         """Send a plain-text email. Returns True if actually sent, False

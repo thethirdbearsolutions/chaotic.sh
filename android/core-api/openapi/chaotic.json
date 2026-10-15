@@ -716,7 +716,7 @@
           "teams"
         ],
         "summary": "Create Invitation",
-        "description": "Create a team invitation.",
+        "description": "Create a team invitation.\n\nWithout SMTP the answer carries the accept link, once, for the admin\nto hand over themselves (CHT-1794); with SMTP it goes by email only.",
         "operationId": "create_invitation_api_teams__team_id__invitations_post",
         "security": [
           {
@@ -750,7 +750,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TeamInvitationResponse"
+                  "$ref": "#/components/schemas/TeamInvitationCreatedResponse"
                 }
               }
             }
@@ -15543,6 +15543,61 @@
         ],
         "title": "TeamInvitationCreate",
         "description": "Schema for creating a team invitation."
+      },
+      "TeamInvitationCreatedResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "team_id": {
+            "type": "string",
+            "title": "Team Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "role": {
+            "$ref": "#/components/schemas/TeamRole"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InvitationStatus"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "accept_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accept Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "team_id",
+          "email",
+          "role",
+          "status",
+          "created_at",
+          "expires_at"
+        ],
+        "title": "TeamInvitationCreatedResponse",
+        "description": "The create answer: the invitation, plus its accept link when this\nserver cannot email it (CHT-1794).\n\n``accept_url`` holds the invitation token, a bearer credential\n(CHT-1790), so it is shown once, to the admin who created the\ninvitation, and only when SMTP is not configured; otherwise it is\nnull and the link goes by email only. It is never in the list\n(``TeamInvitationResponse``) or a log line."
       },
       "TeamInvitationResponse": {
         "properties": {

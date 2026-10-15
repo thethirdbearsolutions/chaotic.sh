@@ -132,10 +132,23 @@ def register(cli):
     @_main().require_team
     @_main().handle_error
     def team_invite(email, role):
-        """Invite a member to the team."""
+        """Invite a member to the team.
+
+        On a server that cannot send email, prints the invitation link,
+        once, for you to send them yourself (CHT-1794)."""
         m = _main()
-        _client().invite_member(m.get_current_team(), email, role)
-        console.print(f"[green]Invitation sent to {esc(email)}[/green]")
+        invitation = _client().invite_member(m.get_current_team(), email, role)
+        accept_url = invitation.get("accept_url") if isinstance(invitation, dict) else None
+        if not accept_url:
+            console.print(f"[green]Invitation sent to {esc(email)}[/green]")
+            return
+        console.print(f"[green]Invitation created for {esc(email)}[/green]")
+        console.print(
+            "[yellow]This server does not send email: send this link to them yourself. "
+            "It is shown only now.[/yellow]"
+        )
+        # Unwrapped and unstyled, so it copies as one line.
+        console.print(esc(accept_url), soft_wrap=True, highlight=False)
 
     @team.command("accept-invite")
     @click.argument("token")

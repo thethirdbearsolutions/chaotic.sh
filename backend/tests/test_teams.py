@@ -185,6 +185,67 @@ async def test_create_invitation_sends_email_with_accept_link(client, auth_heade
 
 
 @pytest.mark.asyncio
+async def test_create_invitation_without_smtp_returns_accept_url_once(client, auth_headers, test_team, caplog):
+    """CHT-1794: with no SMTP the email goes nowhere, so the create answer
+    carries the accept link for the admin to hand over. It is the real,
+    working link; it is not cached, not in the list, and not logged."""
+    import logging
+    from unittest.mock import patch
+    from app.config import get_settings
+    from app.oxyde_models.team import OxydeTeamInvitation
+    from app.services.email_service import drain
+
+    caplog.set_level(logging.DEBUG)
+    with patch("app.api.teams.EmailService.is_configured", return_value=False):
+        response = await client.post(
+            f"/api/teams/{test_team.id}/invitations",
+            headers=auth_headers,
+            json={"email": "invited@example.com", "role": "member"},
+        )
+    assert response.status_code == 201, response.text
+    # The skipped email logs from a background task: let it run first,
+    # and check it did, so the no-token assertion cannot go vacuous.
+    await drain()
+    created_log = [r.getMessage() for r in caplog.records]
+    data = response.json()
+    row = await OxydeTeamInvitation.objects.get(id=data["id"])
+    assert any("SMTP not configured; skipping email" in line for line in created_log), created_log
+    # Nothing the create logged (the skipped email included) holds it.
+    assert not [line for line in created_log if row.token in line]
+    base = get_settings().app_base_url.rstrip("/")
+    assert data["accept_url"] == f"{base}/invite/{row.token}"
+    assert response.headers["cache-control"] == "no-store"
+    assert "token" not in data
+
+    # The link works: its token opens the public preview.
+    preview = await client.get(f"/api/teams/invitations/{row.token}")
+    assert preview.status_code == 200, preview.text
+
+    listed = await client.get(f"/api/teams/{test_team.id}/invitations", headers=auth_headers)
+    assert listed.status_code == 200
+    assert listed.json() and all("accept_url" not in i and "token" not in i for i in listed.json())
+    assert row.token not in listed.text
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_with_smtp_has_no_accept_url(client, auth_headers, test_team):
+    """CHT-1794: when the server can email the link, the answer does not
+    carry it: the invitee's inbox is the only place it goes."""
+    from unittest.mock import patch
+
+    with patch("app.api.teams.EmailService.is_configured", return_value=True), \
+            patch("app.api.teams.EmailService.send_invitation_email") as mock_send:
+        response = await client.post(
+            f"/api/teams/{test_team.id}/invitations",
+            headers=auth_headers,
+            json={"email": "invited@example.com", "role": "member"},
+        )
+    assert response.status_code == 201, response.text
+    assert response.json()["accept_url"] is None
+    mock_send.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_create_invitation_succeeds_even_if_email_send_raises(client, auth_headers, test_team):
     """CHT-1251 fail-soft/fail-loud doctrine: EmailService.send itself never
     raises (see test_email_service.py), but even if the dispatch call site
@@ -513,14 +574,19 @@ async def test_remove_self_as_member(client, auth_headers2, test_team, db, test_
 
 
 @pytest.mark.asyncio
-async def test_create_invitation_team_not_found(client, auth_headers):
-    """Test creating invitation for team that doesn't exist."""
-    response = await client.post(
+async def test_create_invitation_team_not_found(client, auth_headers2, test_team):
+    """A missing team and an existing one the caller is not in get the
+    same answer (CHT-1803): the admin check runs from the team id alone,
+    before the team is loaded, so a non-member cannot probe team ids."""
+    body = {"email": "test@example.com", "role": "member"}
+    missing = await client.post(
         "/api/teams/00000000-0000-0000-0000-000000000000/invitations",
-        headers=auth_headers,
-        json={"email": "test@example.com", "role": "member"},
+        headers=auth_headers2,
+        json=body,
     )
-    assert response.status_code == 404
+    existing = await client.post(f"/api/teams/{test_team.id}/invitations", headers=auth_headers2, json=body)
+    assert missing.status_code == existing.status_code == 403
+    assert missing.json() == existing.json() == {"detail": "Only admins can invite members"}
 
 
 @pytest.mark.asyncio
