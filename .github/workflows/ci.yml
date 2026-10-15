@@ -260,3 +260,17 @@ jobs:
 
       - name: Assemble both debug flavors
         run: ./gradlew assembleFossDebug assemblePlayDebug
+
+      # The release build type minifies and shrinks with R8 (CHT-1661), so a
+      # missing keep or -dontwarn rule only shows up in a release build.
+      # Built unsigned: no signing config, so no secrets in CI.
+      - name: Assemble both release flavors (R8)
+        run: ./gradlew assembleFossRelease assemblePlayRelease
+
+      - name: Rules R8 asked for, if the release build failed
+        if: failure()
+        run: |
+          for f in app/build/outputs/mapping/*/missing_rules.txt; do
+            [ -f "$f" ] && { echo "--- $f"; cat "$f"; }
+          done
+          true
