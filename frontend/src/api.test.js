@@ -640,6 +640,37 @@ describe('ApiClient', () => {
       });
     });
 
+    describe('queryIssues (CHT-1810)', () => {
+      it('runs a project query with where, order and paging', async () => {
+        await client.queryIssues({ projectId: 'p/1', where: 'assignee=me status!=done', order: '-updated', skip: 100, limit: 100 });
+        const [url, opts] = fetchMock.mock.calls[0];
+        expect(opts.method).toBe('GET');
+        expect(url.startsWith('/api/projects/p%2F1/issues/query?')).toBe(true);
+        const params = new URLSearchParams(url.split('?')[1]);
+        expect(params.get('where')).toBe('assignee=me status!=done');
+        expect(params.get('order')).toBe('-updated');
+        expect(params.get('skip')).toBe('100');
+        expect(params.get('limit')).toBe('100');
+        expect(params.has('filter')).toBe(false);
+      });
+
+      it('runs a team query and sends a filter structure as JSON', async () => {
+        const filter = { match: 'all', rows: [{ field: 'status', op: 'eq', values: ['todo'] }] };
+        await client.queryIssues({ teamId: 't1', filter });
+        const url = fetchMock.mock.calls[0][0];
+        expect(url.startsWith('/api/teams/t1/issues/query?')).toBe(true);
+        const params = new URLSearchParams(url.split('?')[1]);
+        expect(JSON.parse(params.get('filter'))).toEqual(filter);
+        expect(params.has('where')).toBe(false);
+        expect(params.has('order')).toBe(false);
+      });
+
+      it('needs a scope', async () => {
+        await expect(client.queryIssues({ where: 'x' })).rejects.toThrow(/projectId or a teamId/);
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+    });
+
     describe('getIssue', () => {
       it('sends GET request with issue ID', async () => {
         await client.getIssue(456);
