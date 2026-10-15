@@ -43,8 +43,10 @@ Without the denial-response extension a failed check (case 3) is not an
 HTTP 503: the server accepts the socket and closes it with **4011**
 instead. Treat 4011 exactly as 503: retry with backoff.
 
-Other HTTP 4xx answers to the upgrade (404 on a server with no `/ws`, a
-400 for a malformed upgrade) say there is no feed to connect to: stop.
+Other HTTP 4xx answers to the upgrade say there is no feed to connect
+to: stop. Chaotic itself sends none (an upgrade to a path it does not
+route gets the server's own 403, like case 5); they come from a proxy in
+front of it, or a 400 from the ASGI server for a malformed upgrade.
 Anything with no close frame and no HTTP answer (the network dropped, a
 timeout) is transient: retry with backoff.
 
