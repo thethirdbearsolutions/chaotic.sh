@@ -7799,6 +7799,250 @@
         }
       }
     },
+    "/api/projects/{project_id}/issues/query": {
+      "get": {
+        "tags": [
+          "nested-aliases"
+        ],
+        "summary": "Query Project Issues",
+        "description": "Run an issue query in one project (CHT-1718; docs/issue-query.md).",
+        "operationId": "query_project_issues_api_projects__project_id__issues_query_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "where",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 4000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Where"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueQueryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/teams/{team_id}/issues/query": {
+      "get": {
+        "tags": [
+          "nested-aliases"
+        ],
+        "summary": "Query Team Issues",
+        "description": "Run an issue query across every project of a team (CHT-1718).",
+        "operationId": "query_team_issues_api_teams__team_id__issues_query_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          },
+          {
+            "name": "where",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 4000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Where"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueQueryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{project_id}/sprints": {
       "post": {
         "tags": [
@@ -11351,6 +11595,78 @@
         "title": "IssuePriority",
         "description": "Issue priority."
       },
+      "IssueQuery": {
+        "properties": {
+          "filter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueryGroup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "order_by": {
+            "items": {
+              "$ref": "#/components/schemas/QueryOrder"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "title": "Order By"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "IssueQuery",
+        "description": "A whole query: the filter tree (None: everything in scope) and the\nordering. This is what a saved view stores."
+      },
+      "IssueQueryResponse": {
+        "properties": {
+          "query": {
+            "$ref": "#/components/schemas/IssueQuery"
+          },
+          "where": {
+            "type": "string",
+            "title": "Where"
+          },
+          "order": {
+            "type": "string",
+            "title": "Order"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "skip": {
+            "type": "integer",
+            "title": "Skip"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/IssueResponse"
+            },
+            "type": "array",
+            "title": "Issues"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "where",
+          "order",
+          "total",
+          "skip",
+          "limit",
+          "issues"
+        ],
+        "title": "IssueQueryResponse",
+        "description": "What the query endpoint returns.\n\n``query`` is the normalized structure that ran (the ``where`` text and\nthe ``filter`` JSON combined), and ``where``/``order`` are its\ncanonical text forms. Parsed again they select the same issues in\nthe same order, though not always the identical structure (nested\nsame-kind groups flatten, one-row groups and one-value ``label all``\nsimplify). A web page can keep ``where``/``order`` in its URL; a\nsaved view should store ``query``. ``total`` counts every match, so\n``total > skip + len(issues)`` means there is another page."
+      },
       "IssueRelationCreate": {
         "properties": {
           "related_issue_id": {
@@ -12096,6 +12412,22 @@
         ],
         "title": "MarkAllReadResponse",
         "description": "Response for POST /inbox/mark-all-read."
+      },
+      "OrderField": {
+        "type": "string",
+        "enum": [
+          "created",
+          "updated",
+          "priority",
+          "status",
+          "title",
+          "estimate",
+          "identifier",
+          "due",
+          "completed"
+        ],
+        "title": "OrderField",
+        "description": "A field a query can be ordered by."
       },
       "PendingApprovalIssueResponse": {
         "properties": {
@@ -13048,6 +13380,132 @@
         ],
         "title": "PushTransport",
         "description": "How the server delivers to a `push_devices` row (CHT-1604).\n\nWEB_PUSH: standard Web Push (RFC 8030) with VAPID (RFC 8292) and an\naes128gcm payload encrypted to the device's keys (RFC 8291), POSTed\nto the device's endpoint URL. UnifiedPush distributors such as ntfy\naccept it. The only transport today.\n\nA later transport (an FCM relay, CHT-1608) is a new member here and\nnothing else: the column stores the member's name as text, so adding\none needs no migration, and `p256dh`/`auth` are nullable in the table\nfor a transport that has no per-device keys."
+      },
+      "QueryField": {
+        "type": "string",
+        "enum": [
+          "status",
+          "priority",
+          "type",
+          "assignee",
+          "creator",
+          "project",
+          "sprint",
+          "label",
+          "estimate",
+          "parent",
+          "identifier",
+          "created",
+          "updated",
+          "completed",
+          "due",
+          "title",
+          "text"
+        ],
+        "title": "QueryField",
+        "description": "A field a filter row can test (``FIELDS`` says how)."
+      },
+      "QueryGroup": {
+        "properties": {
+          "match": {
+            "type": "string",
+            "enum": [
+              "all",
+              "any"
+            ],
+            "title": "Match",
+            "default": "all"
+          },
+          "rows": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/QueryRow"
+                },
+                {
+                  "$ref": "#/components/schemas/QueryGroup"
+                }
+              ]
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Rows"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "rows"
+        ],
+        "title": "QueryGroup",
+        "description": "Rows (or nested groups) combined with AND (``all``) or OR (``any``)."
+      },
+      "QueryOp": {
+        "type": "string",
+        "enum": [
+          "is",
+          "is_not",
+          "all",
+          "contains",
+          "not_contains",
+          "begins_with",
+          "gte",
+          "lte",
+          "after",
+          "before",
+          "between",
+          "empty",
+          "not_empty"
+        ],
+        "title": "QueryOp",
+        "description": "A filter row's operator."
+      },
+      "QueryOrder": {
+        "properties": {
+          "field": {
+            "$ref": "#/components/schemas/OrderField"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "title": "Direction",
+            "default": "desc"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "field"
+        ],
+        "title": "QueryOrder"
+      },
+      "QueryRow": {
+        "properties": {
+          "field": {
+            "$ref": "#/components/schemas/QueryField"
+          },
+          "op": {
+            "$ref": "#/components/schemas/QueryOp"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Values"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "field",
+          "op"
+        ],
+        "title": "QueryRow",
+        "description": "One filter row: ``field op values``."
       },
       "RitualArtifact": {
         "type": "string",

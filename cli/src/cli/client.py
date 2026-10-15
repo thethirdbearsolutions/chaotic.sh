@@ -542,6 +542,33 @@ class Client:
         query = urlencode(params)
         return self._request("GET", f"{path}?{query}" if query else path)
 
+    def query_issues(
+        self, project_id: str = None, team_id: str = None, where: str = None,
+        filter_json: str = None, order: str = None, skip: int = None, limit: int = None,
+    ) -> dict:
+        """Run an issue query (CHT-1718): ``where`` text and/or the
+        ``filter`` structure as JSON. Returns the response envelope
+        (``issues``, ``total``, normalized ``query``/``where``/``order``)."""
+        if project_id:
+            path = f"/projects/{project_id}/issues/query"
+        elif team_id:
+            path = f"/teams/{team_id}/issues/query"
+        else:
+            raise ValueError("Must provide project_id or team_id")
+        params = {}
+        if where:
+            params["where"] = where
+        if filter_json:
+            params["filter"] = filter_json
+        if order:
+            params["order"] = order
+        if skip:
+            params["skip"] = skip
+        if limit is not None:
+            params["limit"] = limit
+        query = urlencode(params)
+        return self._request("GET", f"{path}?{query}" if query else path)
+
     def get_issue_by_identifier(self, identifier: str) -> dict:
         return self._request("GET", f"/issues/identifier/{identifier}")
 

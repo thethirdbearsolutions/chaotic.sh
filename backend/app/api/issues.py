@@ -29,6 +29,8 @@ from app.schemas.issue import (
     LabelResponse,
 )
 from app.schemas.document import DocumentResponse
+from app.schemas.issue_query import IssueQueryResponse
+from app.services import issue_query
 from app.services.document_service import DocumentService
 from app.api.rituals import pending_ritual_responses
 from app.services.issue_service import (
@@ -592,6 +594,83 @@ async def list_ready_issues(
     return await issues_to_responses(issues)
 
 
+async def _check_list_scope(
+    current_user, *, project_id: str | None = None, team_id: str | None = None,
+) -> str:
+    """The issue list's access rule for a project or a team scope; returns
+    the scope's team id. ``list_issues`` and ``query_issues`` (CHT-1718)
+    both go through here, so a query sees exactly what a list would."""
+    if project_id:
+        project = await ProjectService().get_by_id(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if not await check_user_project_access(current_user, project_id, project.team_id):
+            raise HTTPException(status_code=403, detail="Not authorized to access this project")
+        return project.team_id
+    if team_id:
+        if not await check_user_team_access(current_user, team_id):
+            raise HTTPException(status_code=403, detail="Not authorized to access this team")
+        return team_id
+    raise HTTPException(status_code=400, detail="Must provide project_id or team_id")
+
+
+@reads
+async def query_issues(
+    current_user: CurrentUser,
+    project_id: str | None = None,
+    team_id: str | None = None,
+    where: str | None = None,
+    filter_json: str | None = None,
+    order: str | None = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> IssueQueryResponse:
+    """Run an issue query (CHT-1718). Not routed here: the routes are
+    ``GET /projects/{project_id}/issues/query`` and
+    ``GET /teams/{team_id}/issues/query`` in nested.py.
+
+    ``where`` is the text form and ``filter_json`` the structure as JSON
+    (``app.schemas.issue_query``); when both are given they are ANDed.
+    ``order`` is ``field,-field`` (``-`` for descending). Scope and access
+    are the issue list's (``_check_list_scope``). A query that does not
+    parse, fails validation, or names a user/label/sprint/project/issue
+    that is not there is a 400 whose detail says which.
+    """
+    if skip < 0 or not 1 <= limit <= 1000:
+        raise HTTPException(status_code=400, detail="skip must be >= 0 and limit 1..1000")
+    scope_team_id = await _check_list_scope(current_user, project_id=project_id, team_id=team_id)
+
+    try:
+        query = issue_query.build_query(where=where, filter_json=filter_json, order=order)
+    except issue_query.QueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    issue_service = IssueService()
+    # Lazy auto-release of expired claim leases (CHT-1246), as list_issues does.
+    if project_id:
+        await issue_service.release_expired_leases(project_id=project_id)
+        project_ids = [project_id]
+    else:
+        await issue_service.release_expired_leases(team_id=scope_team_id)
+        project_ids = [p.id for p in await OxydeProject.objects.filter(team_id=scope_team_id).all()]
+
+    scope = issue_query.QueryScope(user=current_user, team_id=scope_team_id, project_ids=project_ids)
+    try:
+        issues, total = await issue_query.run_query(query, scope, skip=skip, limit=limit)
+    except issue_query.QueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    return IssueQueryResponse(
+        query=query,
+        where=issue_query.render_where(query.filter),
+        order=issue_query.render_order(query.order_by),
+        total=total,
+        skip=skip,
+        limit=limit,
+        issues=await issues_to_responses(issues),
+    )
+
+
 @router.get("", response_model=list[IssueResponse])
 @reads
 async def list_issues(
@@ -642,12 +721,7 @@ async def list_issues(
 
     # Validate access and determine scope
     if project_id:
-        project = await project_service.get_by_id(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        has_access = await check_user_project_access(current_user, project_id, project.team_id)
-        if not has_access:
-            raise HTTPException(status_code=403, detail="Not authorized to access this project")
+        await _check_list_scope(current_user, project_id=project_id)
 
         # Lazy auto-release of expired claim leases (CHT-1246) before
         # listing, so a just-expired lease's issue shows up correctly
@@ -677,9 +751,7 @@ async def list_issues(
             exclude_issue_types=exclude_issue_types,
         )
     elif team_id:
-        has_access = await check_user_team_access(current_user, team_id)
-        if not has_access:
-            raise HTTPException(status_code=403, detail="Not authorized to access this team")
+        await _check_list_scope(current_user, team_id=team_id)
 
         # Lazy auto-release of expired claim leases (CHT-1246), team-wide.
         await issue_service.release_expired_leases(team_id=team_id)

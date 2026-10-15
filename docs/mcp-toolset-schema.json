@@ -703,7 +703,7 @@
       }
     },
     "issue_list": {
-      "description": "List issues in a project (or team-wide with all_projects=true), with filters.\n\nReturns compact rows plus `count` and `truncated`; truncated=true means\n`limit` cut the list -- narrow the filter rather than assume you saw\neverything. Pass detail=true for full rows.",
+      "description": "List issues in a project (or team-wide with all_projects=true), with filters.\n\nReturns compact rows plus `count` and `truncated`; truncated=true means\n`limit` cut the list -- narrow the filter rather than assume you saw\neverything. Pass detail=true for full rows. With `where`, the result\nalso carries `total` (every match) and `where` (the query as the\nserver read it).",
       "inputSchema": {
         "properties": {
           "all_projects": {
@@ -874,6 +874,19 @@
             "default": null,
             "description": "Filter by one or more statuses (OR'd together).",
             "title": "Status"
+          },
+          "where": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A query, ANDed with the other filters. Clauses are `field op values`, space-separated and ANDed; `or` binds looser; parentheses nest. Ops: = (any of, comma-separated), != (none of), ~= contains, !~= does not contain, ^= begins with; an empty value means empty (`sprint=`), `a..b`/`a..`/`..b` is a range for estimate and dates. Fields: status, priority, type, assignee, creator, project, sprint, label, estimate, parent, identifier, created, updated, completed, due, title, text. Dates take YYYY-MM-DD, today, or -7d/-2w/-12h. A name that matches nothing (label, person, sprint) is an error, not an empty list. Examples: `status=todo,in_progress priority!=low`, `assignee=me or assignee=`, `label=bug estimate=3..`, `created=-7d..`, `title~=\"login page\"`. sort_by/order still apply.",
+            "title": "Where"
           }
         },
         "title": "issue_listArguments",

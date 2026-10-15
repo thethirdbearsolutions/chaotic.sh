@@ -264,6 +264,15 @@ class RestBackend:
             kwargs["skip"] = skip
         return await self._call(self._client().get_issues, **kwargs)
 
+    async def query_issues(
+        self, *, project_id, team_id, where, filter_json, order, limit, skip=0,
+    ) -> dict:
+        return await self._call(
+            self._client().query_issues,
+            project_id=project_id, team_id=team_id, where=where,
+            filter_json=filter_json, order=order, skip=skip, limit=limit,
+        )
+
     async def list_ready_issues(self, *, project_id, team_id, mine, include_assigned, limit) -> list:
         return await self._call(
             self._client().get_ready_issues,

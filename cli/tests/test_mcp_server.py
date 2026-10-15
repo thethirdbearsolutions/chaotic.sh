@@ -137,7 +137,7 @@ class TestServerAssembly:
         tools = asyncio.run(server.list_tools())
         by_name = {t.name: t for t in tools}
         assert set(by_name["issue_list"].input_schema["properties"]) == {
-            "status", "priority", "assignee", "label", "search", "sprint",
+            "status", "priority", "assignee", "label", "search", "where", "sprint",
             "epic", "all_projects", "project", "limit", "sort_by", "order", "detail",
         }
         assert by_name["issue_view"].input_schema["properties"]["identifier"]["type"] == "string"
