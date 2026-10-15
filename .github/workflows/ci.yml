@@ -377,7 +377,7 @@ jobs:
         timeout-minutes: 10
         env:
           SMOKE_NO_RETRY_MARKER: ${{ github.workspace }}/smoke-no-retry
-          SMOKE_INSTALL_TIMEOUT: 1
+          SMOKE_INSTALL_TIMEOUT: 0.1
           SMOKE_STUCK_LOG: ${{ github.workspace }}/smoke-stuck.log
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
