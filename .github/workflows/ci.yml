@@ -326,11 +326,18 @@ jobs:
   # reached only by reflection that R8 stripped or renamed crashes at run
   # time instead. The script signs a copy of each unsigned APK with a key it
   # makes and throws away, installs it, and waits for the sign-in screen.
+  #
+  # The emulator sometimes stops answering mid-run (CHT-1836: twice an
+  # adb install or launch of the second APK never returned, and the job sat
+  # until its timeout). The script gives every adb call its own time limit
+  # and says which one ran out; a stuck device or an emulator that does not
+  # boot gets one retry on a fresh emulator. A failure of the app itself is
+  # not retried.
   android-release-smoke:
     needs: android
     if: needs.android.outputs.smoke == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       # Only the script is needed; the token stays out of .git/config while
@@ -358,12 +365,54 @@ jobs:
 
       # v2.38.0, pinned by commit: a third-party action that runs with the
       # job's token.
+      # The script creates SMOKE_NO_RETRY_MARKER on any failure that is not
+      # a stuck device, so a crash is not run twice. A boot that times out
+      # or a step that hits its timeout-minutes leaves no marker.
       - name: Launch each release APK on an emulator
+        id: smoke
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          SMOKE_NO_RETRY_MARKER: ${{ github.workspace }}/smoke-no-retry
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 34
           arch: x86_64
           target: default
           disable-animations: true
+          emulator-boot-timeout: 300
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: android/scripts/release-smoke-test.sh $(find release-apks -name '*-release-unsigned.apk' | sort)
+
+      - name: The app failed; not retrying
+        if: steps.smoke.outcome != 'success' && hashFiles('smoke-no-retry') != ''
+        run: |
+          echo "::error::The release smoke test failed on the app or an APK, not the emulator; see the step above."
+          exit 1
+
+      # The action starts the emulator in the background, so one whose step
+      # hit its timeout is still running. Stop it and restart adb before the
+      # retry; the retry also uses its own AVD and port, in case it lingers
+      # (the action points the script's adb at it through ANDROID_SERIAL).
+      - name: Stop the first emulator
+        if: steps.smoke.outcome != 'success'
+        run: |
+          adb="$ANDROID_HOME/platform-tools/adb"
+          timeout 20 "$adb" -s emulator-5554 emu kill || true
+          pkill -f 'qemu-system' || true
+          timeout 20 "$adb" kill-server || true
+
+      - name: Retry on a fresh emulator (the first one stopped answering)
+        if: steps.smoke.outcome != 'success'
+        timeout-minutes: 10
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 34
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-boot-timeout: 300
+          avd-name: retry
+          emulator-port: 5556
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: android/scripts/release-smoke-test.sh $(find release-apks -name '*-release-unsigned.apk' | sort)
