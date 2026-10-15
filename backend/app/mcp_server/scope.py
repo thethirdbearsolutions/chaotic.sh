@@ -37,6 +37,7 @@ from chaotic_mcp_tools import ToolInputError
 
 from app.api.deps import agent_home_team_id
 from app.oxyde_models.user import OxydeUser as User
+from app.utils.email_address import same_email
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.user_service import UserService
@@ -237,13 +238,21 @@ async def resolve_assignee(user: User, team_id: str, assignee: str) -> str | Non
     if candidate:
         return candidate.id
 
-    if "@" in assignee:
-        # Any case, like login (CHT-1804).
-        candidate = await UserService().get_by_email_ignoring_case(assignee)
-        if candidate:
-            return candidate.id
-
     members = await TeamService().get_members(team_id)
+    if "@" in assignee:
+        # Only the team's active members and agents, in any case (CHT-1804):
+        # an address on another team, a deactivated account and no account
+        # at all get the same not-found error below, so the lookup cannot
+        # tell a caller which addresses have accounts on this server.
+        agents = await User.objects.filter(agent_team_id=team_id).all()
+        people = [m.user for m in members if m.user] + agents
+        matches = [p for p in people if p.is_active and same_email(p.email or "", assignee)]
+        exact = [p for p in matches if p.email == assignee.strip()]
+        if len(exact) == 1:
+            return exact[0].id
+        if len({p.id for p in matches}) == 1:
+            return matches[0].id
+
     for member in members:
         if member.user and member.user.name.lower() == lowered:
             return member.user_id

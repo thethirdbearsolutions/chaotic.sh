@@ -37,6 +37,13 @@ USERS = {
     "u-solo": ("Solo@Example.COM", "2026-01-01T00:00:00+00:00"),
     # An agent: its synthetic address gets folded like any other.
     "u-agent": ("agent-1@agent.local", "2026-01-01T00:00:00+00:00"),
+    # Whitespace SQL's trim() would keep (a tab, a no-break space) is
+    # stripped as fold_email strips it, so the later variant collides.
+    "u-tab": ("Tab@example.com\t", "2026-01-01T00:00:00+00:00"),
+    "u-tab-variant": ("tab@example.com", "2026-02-01T00:00:00+00:00"),
+    "u-nbsp": ("\u00a0nb@example.com", "2026-01-01T00:00:00+00:00"),
+    # A quote in the address survives the literal.
+    "u-quote": ("O'Brien@example.com", "2026-01-01T00:00:00+00:00"),
 }
 FOLDED = {
     "u-bob-old": "bob@example.com",
@@ -45,8 +52,13 @@ FOLDED = {
     "u-umlaut-lower": "ärger@example.com",
     "u-solo": "solo@example.com",
     "u-agent": "agent-1@agent.local",
+    "u-tab": "tab@example.com",
+    "u-nbsp": "nb@example.com",
+    "u-quote": "o'brien@example.com",
 }
-EXCLUDED = {"u-bob-new": "u-bob-old", "u-carol-b": "u-carol-a", "u-carol-c": "u-carol-a"}
+EXCLUDED = {
+    "u-bob-new": "u-bob-old", "u-carol-b": "u-carol-a", "u-carol-c": "u-carol-a", "u-tab-variant": "u-tab",
+}
 
 
 def _migrate_capturing(path: str, target: str) -> str:
@@ -121,7 +133,7 @@ def test_case_variants_keep_their_accounts_and_only_the_oldest_holds_the_address
         assert f"[0034] account {user_id} shares its address (ignoring case) with older account {keeper_id};" in output
     for user_id in FOLDED:
         assert f"account {user_id} " not in output
-    assert "[0034] 3 account(s) left without email_folded" in output
+    assert "[0034] 4 account(s) left without email_folded" in output
     # Ids only: no address appears in the report.
     assert "@" not in output
 
@@ -177,3 +189,50 @@ def test_downgrade_drops_the_column_and_index_and_keeps_every_account(at_previou
         assert "email_folded" not in columns
     # users' foreign keys (parent_user_id's RESTRICT, 0020) survive both ways.
     assert _foreign_keys(at_previous) == foreign_keys
+
+
+def _migration_module():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(BACKEND) / "migrations" / f"{THIS}.py"
+    spec = importlib.util.spec_from_file_location("migration_0034", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("email", [
+    "Bob@Example.com", " bob@example.com ", "Tab@example.com\t", "\u00a0nb@x.com\u2003",
+    "\u00c4rger@Example.COM", "\n\rA@B.C\x0b\x0c", "\x1cfs@x.com", "", "O'Brien@x.com",
+])
+def test_the_migration_folds_exactly_as_the_app_does(email):
+    from app.utils.email_address import fold_email
+    assert _migration_module().fold_email(email) == fold_email(email)
+
+
+def test_literals_quote_and_refuse_nul():
+    module = _migration_module()
+    assert module.sql_literal("o'brien") == "'o''brien'"
+    with pytest.raises(ValueError):
+        module.sql_literal("a\x00b")
+
+
+class _NoConnection:
+    _mode = "execute"
+    dialect = "sqlite"
+    _db_conn = None
+
+    def __init__(self):
+        self.executed = []
+
+    def execute(self, sql):
+        self.executed.append(sql)
+
+
+def test_without_a_connection_it_falls_back_to_sql_and_says_so():
+    module = _migration_module()
+    ctx, lines = _NoConnection(), []
+    assert module.backfill(ctx, echo=lines.append) is None
+    assert ctx.executed == [module.FALLBACK_BACKFILL_SQL]
+    assert len(lines) == 1 and "trims spaces only" in lines[0]

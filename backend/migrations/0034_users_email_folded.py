@@ -14,24 +14,36 @@ under the same name (CHT-1410). The backfill between them is data, not
 schema, so it goes through ctx.execute and the replay ignores it.
 
 The backfill never changes or deletes an account, and never touches
-`email`: it only fills the new column. Each account gets its address
-folded the way `app.utils.email_address.fold_email` folds it (ASCII
-letters lowercased, surrounding spaces trimmed: SQLite's built-in
-lower() folds ASCII only, like fold_email). Where several accounts fold
-to the same address, only the oldest (lowest created_at, then id) gets
-it; the others keep NULL, which the unique index allows (NULLs are
-distinct). Those accounts keep working: they log in by their exact
-address as before. They are reported, not silent: before anything is
-written the migration reads them through its own Oxyde connection
-(never Python's sqlite3, CHT-1491) and prints one line per account,
-by id only (no address), and a total, visible in `oxyde migrate` /
-`chaotic system upgrade` output. The server also logs a warning at
-every startup while any account has a NULL email_folded. Migration
-execution is transactional, so if it fails after printing nothing was
-written. To check before upgrading (read-only):
+`email`: it only fills the new column. Each account's folded address is
+computed in Python by `fold_email` below, a copy of
+`app.utils.email_address.fold_email` (copied so a later edit there
+cannot change this migration; a test pins the two together): whitespace
+of every kind stripped from both ends, ASCII letters lowercased. SQL's
+trim() strips spaces only, so it is not used (review of PR #437). The
+accounts are read through the migration's own Oxyde connection (never
+Python's sqlite3, CHT-1491) before anything is written, and one UPDATE
+per account is queued, the value as a quoted literal (ctx.execute
+takes no parameters).
+
+Where several accounts fold to the same address, only the oldest
+(lowest created_at, then id) gets it; the others keep NULL, which the
+unique index allows (NULLs are distinct). Those accounts keep working:
+they log in by their exact address as before. They are reported, not
+silent: one line per account, by id only (no address), and a total,
+visible in `oxyde migrate` / `chaotic system upgrade` output. The
+server also logs a warning at every startup while any account has a
+NULL email_folded. Migration execution is transactional, so if it fails
+after printing nothing was written. Stop the server before migrating
+(as `chaotic system upgrade` does): an account created between the read
+and the write would be left NULL, and the startup warning would count
+it. To check for case variants before upgrading (read-only; this query
+trims spaces only):
 
     SELECT lower(trim(email)), count(*) FROM users
     GROUP BY lower(trim(email)) HAVING count(*) > 1;
+
+On a context with no SQLite connection to read through, the backfill
+falls back to lower(trim(email)) in SQL, and says so.
 
 The downgrade drops the index and the column. No address is lost
 either way.
@@ -41,31 +53,50 @@ Created: 2026-10-15 12:55:15
 
 depends_on = "0033_team_members_unique"
 
-# fold_email in SQL. Shared by the report and the backfill.
-FOLD_SQL = "lower(trim(email))"
+_ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
-# Each account with its rank among the accounts at its folded address:
-# 1 for the oldest, which is the one that gets email_folded.
-_RANKED_SQL = (
-    f"SELECT id, {FOLD_SQL} AS folded, ROW_NUMBER() OVER ("
-    f"PARTITION BY {FOLD_SQL} ORDER BY created_at, id"
-    ") AS fold_rank FROM users"
+
+def fold_email(email: str) -> str:
+    """app.utils.email_address.fold_email as of this migration."""
+    return (email or "").strip().translate(_ASCII_FOLD)
+
+
+# Every account, oldest first.
+ACCOUNTS_SQL = "SELECT id, email FROM users ORDER BY created_at, id"
+
+# The fallback with no connection to read through: SQL's fold, which
+# strips spaces only. Only the oldest account per address gets it.
+FALLBACK_FOLD_SQL = "lower(trim(email))"
+FALLBACK_BACKFILL_SQL = (
+    f"UPDATE users SET email_folded = {FALLBACK_FOLD_SQL} WHERE id IN ("
+    f"SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY {FALLBACK_FOLD_SQL} "
+    "ORDER BY created_at, id) AS fold_rank FROM users) WHERE fold_rank = 1)"
 )
 
-# The accounts left NULL, each with the id of the account that holds the
-# address. Read before anything is written.
-EXCLUDED_SQL = (
-    "SELECT ranked.id AS id, keeper.id AS keeper_id "
-    f"FROM ({_RANKED_SQL}) AS ranked "
-    f"JOIN ({_RANKED_SQL}) AS keeper "
-    "ON keeper.folded = ranked.folded AND keeper.fold_rank = 1 "
-    "WHERE ranked.fold_rank > 1 ORDER BY ranked.folded, ranked.fold_rank"
-)
 
-BACKFILL_SQL = (
-    f"UPDATE users SET email_folded = {FOLD_SQL} "
-    f"WHERE id IN (SELECT id FROM ({_RANKED_SQL}) WHERE fold_rank = 1)"
-)
+def sql_literal(value: str) -> str:
+    """``value`` as an SQLite string literal."""
+    if "\x00" in value:
+        raise ValueError("an address or id contains a NUL character; refusing to migrate")
+    return "'" + value.replace("'", "''") + "'"
+
+
+def plan_backfill(accounts: list[dict]) -> tuple[dict[str, str], dict[str, str]]:
+    """From ``accounts`` (dicts with id and email, oldest first): the
+    folded address each holder gets ({id: folded}), and the accounts left
+    NULL, each with the id of the account that holds its address
+    ({id: holder id})."""
+    holders: dict[str, str] = {}
+    folded_by_id: dict[str, str] = {}
+    excluded: dict[str, str] = {}
+    for row in accounts:
+        folded = fold_email(row["email"])
+        if folded in holders:
+            excluded[row["id"]] = holders[folded]
+        else:
+            holders[folded] = row["id"]
+            folded_by_id[row["id"]] = folded
+    return folded_by_id, excluded
 
 
 def _read_through_oxyde(database, sql: str, params: list) -> list[dict]:
@@ -106,10 +137,12 @@ def _recording(ctx) -> bool:
     return getattr(ctx, "_mode", "execute") == "collect"
 
 
-def report_excluded(ctx, echo=print) -> int | None:
-    """Print one line per account the backfill leaves NULL (ids only), and
-    a total. Returns how many, or None when there was no connection to
-    read through. Silent in the replay, which has nothing to scan.
+def backfill(ctx, echo=print) -> int | None:
+    """Queue the UPDATEs that fill email_folded, and print one line per
+    account left NULL (ids only) and a total. Returns how many were left
+    NULL, or None when there was no connection to read through (the SQL
+    fallback is queued instead). Nothing in the replay, which has no
+    rows (CHT-1402).
     """
     if _recording(ctx):
         return None
@@ -120,16 +153,23 @@ def report_excluded(ctx, echo=print) -> int | None:
         or not callable(getattr(database, "execute", None))
     ):
         echo(
-            "[0034] cannot pre-scan users for addresses that differ only in case (no SQLite "
-            "connection to read through); any such accounts will still be kept, with only the "
-            "oldest of each holding the address. The server warns at startup if there are any."
+            "[0034] cannot read users to fold their addresses (no SQLite connection to read "
+            "through); folding in SQL with lower(trim(email)) instead, which trims spaces only. "
+            "Accounts sharing an address are kept, with only the oldest of each holding it; "
+            "the server warns at startup if any are left without one."
         )
+        ctx.execute(FALLBACK_BACKFILL_SQL)
         return None
-    excluded = _read_through_oxyde(database, EXCLUDED_SQL, [])
-    for row in excluded:
+    accounts = _read_through_oxyde(database, ACCOUNTS_SQL, [])
+    folded_by_id, excluded = plan_backfill(accounts)
+    for user_id, folded in folded_by_id.items():
+        ctx.execute(
+            f"UPDATE users SET email_folded = {sql_literal(folded)} WHERE id = {sql_literal(user_id)}"
+        )
+    for user_id, holder_id in excluded.items():
         echo(
-            f"[0034] account {row['id']} shares its address (ignoring case) with older account "
-            f"{row['keeper_id']}; email_folded left NULL, account unchanged"
+            f"[0034] account {user_id} shares its address (ignoring case) with older account "
+            f"{holder_id}; email_folded left NULL, account unchanged"
         )
     if excluded:
         echo(
@@ -141,7 +181,6 @@ def report_excluded(ctx, echo=print) -> int | None:
 
 def upgrade(ctx):
     """Apply migration."""
-    report_excluded(ctx)
     ctx.add_column("users", {
     'name': 'email_folded',
     'python_type': 'str',
@@ -155,7 +194,7 @@ def upgrade(ctx):
     'max_digits': None,
     'decimal_places': None
 })
-    ctx.execute(BACKFILL_SQL)
+    backfill(ctx)
     ctx.create_index("users", {
     'name': 'ux_users_email_folded',
     'fields': [

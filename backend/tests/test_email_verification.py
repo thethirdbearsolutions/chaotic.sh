@@ -962,6 +962,31 @@ class TestOneAccountPerAddress:
         assert response.json()["detail"] == "Email already registered"
         assert await OxydeUser.objects.count() == 1
 
+    async def test_only_an_address_collision_means_taken(self, test_user):
+        """Any other constraint failure on the INSERT is a real fault and
+        stays one, not a misleading 'Email already registered'."""
+        from oxyde import IntegrityError
+        from app.schemas.user import UserCreate
+        from app.services.user_service import EmailTakenError, UserService
+
+        user_in = UserCreate(email="other@example.com", password="password123", name="Other")
+
+        async def fails(message):
+            async def create(*args, **kwargs):
+                raise IntegrityError(message)
+            return create
+
+        for message, expected in (
+            ("Query failed: UNIQUE constraint failed: users.email_folded", EmailTakenError),
+            ("Query failed: UNIQUE constraint failed: users.email", EmailTakenError),
+            ("Query failed: NOT NULL constraint failed: users.name", IntegrityError),
+            ("Query failed: UNIQUE constraint failed: users.agent_team_id, users.external_ref", IntegrityError),
+        ):
+            with patch.object(type(OxydeUser.objects), "create", await fails(message)):
+                with pytest.raises(expected) as caught:
+                    await UserService().create(user_in)
+            assert (type(caught.value) is EmailTakenError) == (expected is EmailTakenError), message
+
     async def test_a_local_address_is_refused_at_signup(self, client, db):
         response = await client.post("/api/auth/signup", json={
             "email": "bob@host.local", "password": "password123", "name": "Local",

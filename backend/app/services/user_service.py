@@ -34,8 +34,8 @@ async def warn_if_accounts_share_an_address() -> int:
         logger.warning(
             "%d account(s) share an email address, ignoring case, with an older account "
             "(users.email_folded is NULL; migration 0034 listed them by id). They keep "
-            "working, but share the older account's email-verification limits; an operator "
-            "should merge or remove them, or change their address.",
+            "working, but share the older account's email-verification limits. There is "
+            "no command to resolve them yet (CHT-1827).",
             count,
         )
     return count
@@ -88,6 +88,16 @@ class UserDeletionRefusedError(Exception):
         super().__init__(f"User {_label(user)} cannot be deleted: {detail}.{tail}")
 
 
+def _is_address_collision(error: Exception) -> bool:
+    """Is ``error`` SQLite's UNIQUE failure on users.email or
+    users.email_folded? (Its message names the columns:
+    ``UNIQUE constraint failed: users.email_folded``.)"""
+    message = str(error)
+    return "UNIQUE constraint failed" in message and any(
+        column in message for column in ("users.email_folded", "users.email")
+    )
+
+
 class EmailTakenError(Exception):
     """The address already belongs to an account, ignoring (ASCII) case
     (CHT-1790). Raised by UserService.create when the database's unique
@@ -125,9 +135,11 @@ class UserService:
                 updated_at=now,
             )
         except IntegrityError as error:
-            # The only unique columns a new row can collide on are email
-            # and email_folded (the id is a fresh uuid; an account with
-            # no external_ref never collides on users_team_external_ref_uq).
+            # Only a collision on the address itself means "taken":
+            # users.email or users.email_folded (ux_users_email_folded).
+            # Anything else is a real fault and stays one.
+            if not _is_address_collision(error):
+                raise
             raise EmailTakenError(user_in.email) from error
         await user.refresh()
         return user

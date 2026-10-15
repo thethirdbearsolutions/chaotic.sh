@@ -5,14 +5,14 @@ email-verification limits count per address (an HMAC of its folded
 form), so ``Alice@corp.com`` and ``alice@corp.com`` as two accounts
 would share one bucket, and either could exhaust the other's.
 
-``fold_email`` lowercases ASCII letters only and strips whitespace, as
-SQLite's built-in ``lower(trim(...))`` does for every address the app
-stores: two addresses that differ in the case of a non-ASCII letter are
-two addresses, and get two buckets. ``users.email_folded`` holds it,
-under a unique index (migration 0034, CHT-1804), and lookups go through
-that column rather than Oxyde's ``iexact``, which lowercases its
-argument with Python's Unicode ``lower()`` and so never matches an
-address with a non-ASCII capital on SQLite.
+``fold_email`` lowercases ASCII letters only and strips whitespace: two
+addresses that differ in the case of a non-ASCII letter are two
+addresses, and get two buckets. ``users.email_folded`` holds it, under a
+unique index (migration 0034, CHT-1804, which carries a copy of this
+function for its backfill), and lookups go through that column rather
+than Oxyde's ``iexact``, which lowercases its argument with Python's
+Unicode ``lower()`` and so never matches an address with a non-ASCII
+capital on SQLite.
 """
 
 _ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")

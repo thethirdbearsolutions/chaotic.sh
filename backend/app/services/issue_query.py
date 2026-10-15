@@ -74,6 +74,7 @@ from app.schemas.issue_query import (
     QueryRow,
 )
 from app.services.issue_service import _PRIORITY_ORDER, _STATUS_ORDER, _get_order
+from app.utils.email_address import same_email
 
 MAX_WHERE_LENGTH = 4000
 MAX_ORDER_LENGTH = 200
@@ -799,7 +800,8 @@ class _Compiler:
         for u in self._principals:
             if u.id == value:
                 return u.id
-        matches = [u for u in self._principals if (u.email or "").lower() == lowered]
+        # ASCII case only, like every other address comparison (CHT-1804).
+        matches = [u for u in self._principals if same_email(u.email or "", value)]
         if not matches:
             matches = [u for u in self._principals if (u.name or "").lower() == lowered]
         if len(matches) == 1:
