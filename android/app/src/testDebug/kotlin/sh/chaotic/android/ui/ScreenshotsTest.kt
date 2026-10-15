@@ -6,6 +6,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTextInput
@@ -48,9 +49,10 @@ import kotlin.test.assertTrue
  * Screenshots of the main screens with sample data (CHT-1730), so the app
  * can be seen without a device: Robolectric's native graphics draw each
  * screen at a phone's size (411x891dp at xxhdpi, about 1080x2340 pixels)
- * and the PNGs go to app/build/screenshots, which CI uploads as an
- * artifact. Nothing compares them against a stored copy; each test only
- * checks that something was drawn. Every team, project, person and
+ * and the PNGs go to app/build/screenshots/<test task>, a declared output
+ * of that task (app/build.gradle.kts), which CI uploads as an artifact.
+ * Nothing compares them against a stored copy; each test only checks that
+ * the screen shows what it should and is not blank. Every team, project, person and
  * address here is made up: never put real data from a server in these.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -143,7 +145,7 @@ class ScreenshotsTest {
                 id = "c1",
                 issueId = "i1",
                 author = marcus,
-                content = "Tried it on the test stand. Can the confirm step time out after ten seconds?",
+                content = COMMENT,
                 createdAtMillis = now - 2 * hour,
             ),
             Comment(
@@ -160,15 +162,31 @@ class ScreenshotsTest {
         ),
     )
 
-    /** Draws [content], runs [then] (a gesture, typing), and saves what is on screen as [name].png. */
-    private fun shoot(name: String, dark: Boolean = false, then: () -> Unit = {}, content: @Composable () -> Unit) {
+    /**
+     * Draws [content], runs [then] (a gesture, typing), checks that [expect]
+     * is on screen (so an empty, loading or error state fails rather than
+     * being saved), and saves what is on screen as [name].png.
+     */
+    private fun shoot(
+        name: String,
+        expect: String,
+        dark: Boolean = false,
+        then: () -> Unit = {},
+        content: @Composable () -> Unit,
+    ) {
         compose.setContent { ChaoticTheme(darkTheme = dark, dynamicColor = false) { content() } }
         then()
         compose.waitForIdle()
+        assertTrue(
+            compose.onAllNodesWithText(expect, substring = true).fetchSemanticsNodes().isNotEmpty(),
+            "$name does not show \"$expect\"",
+        )
         val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
         val pixels = IntArray(bitmap.width * bitmap.height)
         bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        assertTrue(pixels.distinct().size > 2, "$name drew a blank screen")
+        val colours = mutableSetOf<Int>()
+        for (pixel in pixels) if (colours.add(pixel) && colours.size > 2) break
+        assertTrue(colours.size > 2, "$name drew a blank screen")
         val dir = File(System.getProperty("chaotic.screenshotDir") ?: "build/screenshots").apply { mkdirs() }
         File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
@@ -185,7 +203,7 @@ class ScreenshotsTest {
     )
 
     @Test
-    fun signIn() = shoot("01-sign-in") {
+    fun signIn() = shoot("01-sign-in", expect = "chaotic.example.com") {
         SignInContent(
             ui = SignInUiState(serverInput = "chaotic.example.com"),
             ended = null,
@@ -195,11 +213,14 @@ class ScreenshotsTest {
     }
 
     @Test
-    fun inbox() = shoot("02-inbox") { Home(HomeState(teams = teams, inbox = InboxSections.of(inbox))) }
+    fun inbox() = shoot("02-inbox", expect = GATE_ROW) {
+        Home(HomeState(teams = teams, inbox = InboxSections.of(inbox)))
+    }
 
     @Test
     fun inboxApproveSwipe() = shoot(
         "03-inbox-swipe-to-approve",
+        expect = "Approve",
         then = {
             // Held part way, so the row shows what letting go would do.
             compose.onNodeWithText(GATE_ROW).performTouchInput {
@@ -213,6 +234,7 @@ class ScreenshotsTest {
     @Test
     fun inboxReject() = shoot(
         "04-inbox-reject-with-reason",
+        expect = "Reject LP-482?",
         then = {
             compose.onNodeWithText(GATE_ROW).performTouchInput { swipeLeft() }
             compose.onNodeWithText("Why (required: the requester reads this)")
@@ -221,12 +243,12 @@ class ScreenshotsTest {
     ) { Home(HomeState(teams = teams, inbox = InboxSections.of(inbox))) }
 
     @Test
-    fun issueDetail() = shoot("05-issue-detail") {
+    fun issueDetail() = shoot("05-issue-detail", expect = COMMENT) {
         IssueContent(IssueState(detail, Fetch.DONE), nowMillis = now, onBack = {}, onRefresh = {})
     }
 
     @Test
-    fun sprints() = shoot("06-sprints-and-budgets") {
+    fun sprints() = shoot("06-sprints-and-budgets", expect = "Sprint 42") {
         Home(HomeState(teams = teams, inbox = InboxSections.of(inbox), sprintCards = sprintCards, tab = SPRINT))
     }
 
@@ -236,13 +258,13 @@ class ScreenshotsTest {
             key = "k1",
             kind = WriteKind.COMMENT,
             issueId = "i2",
-            value = "Looks right to me; flying it on the next test.",
+            value = STALLED,
             label = "LP-475",
             createdAtMillis = now - hour,
             notBeforeMillis = now,
             attempts = WriteQueue.MAX_ATTEMPTS,
         )
-        shoot("07-offline-queued-writes") {
+        shoot("07-offline-queued-writes", expect = STALLED) {
             Home(
                 HomeState(
                     teams = teams,
@@ -256,7 +278,7 @@ class ScreenshotsTest {
     }
 
     @Test
-    fun issueWithACommentWaitingToSend() = shoot("08-issue-comment-waiting") {
+    fun issueWithACommentWaitingToSend() = shoot("08-issue-comment-waiting", expect = "Waiting to send") {
         val waiting = Comment("pending:k3", "i1", priya, "Approving once CI is green.", now, pending = true)
         IssueContent(
             IssueState(detail.copy(comments = detail.comments + waiting), Fetch.DONE),
@@ -267,21 +289,23 @@ class ScreenshotsTest {
     }
 
     @Test
-    fun inboxDark() = shoot("09-inbox-dark", dark = true) {
+    fun inboxDark() = shoot("09-inbox-dark", expect = GATE_ROW, dark = true) {
         Home(HomeState(teams = teams, inbox = InboxSections.of(inbox)))
     }
 
     @Test
-    fun issueDetailDark() = shoot("10-issue-detail-dark", dark = true) {
+    fun issueDetailDark() = shoot("10-issue-detail-dark", expect = COMMENT, dark = true) {
         IssueContent(IssueState(detail, Fetch.DONE), nowMillis = now, onBack = {}, onRefresh = {})
     }
 
     @Test
-    fun sprintsDark() = shoot("11-sprints-and-budgets-dark", dark = true) {
+    fun sprintsDark() = shoot("11-sprints-and-budgets-dark", expect = "Sprint 42", dark = true) {
         Home(HomeState(teams = teams, sprintCards = sprintCards, tab = SPRINT))
     }
 
     private companion object {
         const val GATE_ROW = "LP-482  Gate: human review before close"
+        const val STALLED = "Looks right to me; flying it on the next test."
+        const val COMMENT = "Tried it on the test stand. Can the confirm step time out after ten seconds?"
     }
 }

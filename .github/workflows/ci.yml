@@ -204,17 +204,20 @@ jobs:
         run: ./gradlew :app:lintFossDebug :app:lintPlayDebug
 
       - name: Unit tests
+        id: unit-tests
         run: ./gradlew test
 
       # ScreenshotsTest (CHT-1730) draws the main screens with sample data
-      # during the unit tests above; this keeps the PNGs to look at.
+      # during the unit tests above; this keeps the foss flavor's PNGs to
+      # look at. They are the test task's declared output, so a run served
+      # from the build cache has them too, and none at all is an error.
       - name: Upload screenshots
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.unit-tests.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
           name: android-screenshots
-          path: android/app/build/screenshots/*.png
-          if-no-files-found: warn
+          path: android/app/build/screenshots/testFossDebugUnitTest/*.png
+          if-no-files-found: error
           retention-days: 14
 
       # The build above exported the cache's Room schema to app/schemas.
