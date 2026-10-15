@@ -10,13 +10,13 @@ every other authenticated endpoint:
 
 * Team-wide tools (``activity_recent`` without a project, and
   ``issue_list``/``doc_list`` with ``all_projects=true``) resolve through
-  ``resolve_team``, which mirrors ``check_user_team_access``: a human
+  ``resolve_team``, which mirrors ``can_read_team_data``: a human
   must be a team member; an agent must be team-scoped. A *project*-scoped
   agent carries its project's team in ``agent_team_id`` too, but that is
   not team-wide access, via REST or here (CHT-1780).
 * Team *directory* tools (``label_list``, ``project_list``, the inbox's
   team filter) resolve through ``resolve_member_team``, which mirrors
-  ``check_user_in_team``: a project-scoped agent gets its own team, and
+  ``is_in_team_directory``: a project-scoped agent gets its own team, and
   the API confines what it reads there (``project_list`` lists only its
   project).
 * Project-scoped tools mirror ``check_user_project_access``: a

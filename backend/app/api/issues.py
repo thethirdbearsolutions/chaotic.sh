@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, status, Query, Header
 from app.auth.access import reads, writes
 from app.api.idempotency import IdempotentRoute, idempotent
 from app.api.deps import (
-    CurrentUser, can_access_document, check_user_team_access,
+    CurrentUser, can_access_document, can_read_team_data,
     confined_project_id, is_eligible_project_member,
     is_project_scoped_agent,
 )
@@ -564,7 +564,7 @@ async def list_ready_issues(
     if project_id:
         await visible_project(current_user, project_id)
     elif team_id:
-        if not await check_user_team_access(current_user, team_id):
+        if not await can_read_team_data(current_user, team_id):
             raise HTTPException(status_code=403, detail="Not authorized to access this team")
     else:
         raise HTTPException(status_code=400, detail="Must provide project_id or team_id")
@@ -592,7 +592,7 @@ async def _check_list_scope(
     if project_id:
         return (await visible_project(current_user, project_id)).team_id
     if team_id:
-        if not await check_user_team_access(current_user, team_id):
+        if not await can_read_team_data(current_user, team_id):
             raise HTTPException(status_code=403, detail="Not authorized to access this team")
         return team_id
     raise HTTPException(status_code=400, detail="Must provide project_id or team_id")
@@ -857,7 +857,7 @@ async def search_issues(
             hidden=_team_refused(),
             elsewhere=not_found("Project not found in this team"),
         )
-    elif not await check_user_team_access(current_user, team_id):
+    elif not await can_read_team_data(current_user, team_id):
         raise _team_refused()
 
     issues = await issue_service.search(team_id, q, skip, limit, project_id=project_id, status=issue_status.name if issue_status else None)
@@ -963,7 +963,7 @@ async def list_team_activities(
             current_user, project_id, team_id,
             hidden=_team_refused(), elsewhere=not_found("Project not found"),
         )
-    elif not await check_user_team_access(current_user, team_id):
+    elif not await can_read_team_data(current_user, team_id):
         raise _team_refused()
 
     # Bounded lazy lease sweep (CHT-1246, PR #217 review finding 2).
@@ -1060,7 +1060,7 @@ async def list_team_comments(
     issue_service = IssueService()
     document_service = DocumentService()
 
-    has_access = await check_user_team_access(current_user, team_id)
+    has_access = await can_read_team_data(current_user, team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

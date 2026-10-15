@@ -225,20 +225,20 @@ class TestAgentAccessControl:
 
     async def test_team_scoped_agent_has_team_access(self, db, test_user, test_team):
         """Team-scoped agent should have access to the team."""
-        from app.api.deps import check_user_team_access
+        from app.api.deps import can_read_team_data
 
         service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Team Bot"), test_user, test_team.id
         )
 
-        has_access = await check_user_team_access(agent, test_team.id)
+        has_access = await can_read_team_data(agent, test_team.id)
 
         assert has_access is True
 
     async def test_team_scoped_agent_no_access_other_team(self, db, test_user, test_team, test_user2):
         """Team-scoped agent should not have access to other teams."""
-        from app.api.deps import check_user_team_access
+        from app.api.deps import can_read_team_data
         from app.oxyde_models.team import OxydeTeam
 
         service = AgentService()
@@ -249,7 +249,7 @@ class TestAgentAccessControl:
         # Create another team
         other_team = await OxydeTeam.objects.create(name="Other Team", key="OTHER")
 
-        has_access = await check_user_team_access(agent, other_team.id)
+        has_access = await can_read_team_data(agent, other_team.id)
 
         assert has_access is False
 

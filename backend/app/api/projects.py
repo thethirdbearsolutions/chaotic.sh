@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import (
-    CurrentUser, check_user_in_team, check_user_team_access,
+    CurrentUser, is_in_team_directory, can_read_team_data,
     is_eligible_project_member, is_project_scoped_agent,
 )
 from app.api.visibility import visible_project
@@ -56,7 +56,7 @@ async def create_project(
     """
     project_service = ProjectService()
 
-    if not await check_user_team_access(current_user, team_id):
+    if not await can_read_team_data(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",
@@ -94,7 +94,7 @@ async def list_projects(
         # A project-scoped agent sees its team's project list confined to
         # its own project, so a key or name resolves the way it does for
         # everyone else (CHT-1780).
-        if not await check_user_in_team(current_user, team_id):
+        if not await is_in_team_directory(current_user, team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not a member of this team",
@@ -103,7 +103,7 @@ async def list_projects(
         confined = [own] if own and own.team_id == team_id else []
         return [ProjectResponse.model_validate(project) for project in confined[skip:skip + limit]]
 
-    if not await check_user_team_access(current_user, team_id):
+    if not await can_read_team_data(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",

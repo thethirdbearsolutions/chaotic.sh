@@ -12,7 +12,7 @@ is admin-only everywhere else.
 from fastapi import APIRouter, HTTPException, status
 
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, check_user_team_access
+from app.api.deps import CurrentUser, can_read_team_data
 from app.api.visibility import can_see_project, not_found, visible_project_in_team, visible_template
 from app.schemas.template import (
     TemplateApplyReport,
@@ -110,7 +110,7 @@ async def create_template_from_project(
 @reads
 async def list_templates(team_id: str, current_user: CurrentUser):
     """List a team's templates."""
-    if not await check_user_team_access(current_user, team_id):
+    if not await can_read_team_data(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",

@@ -331,7 +331,7 @@ class TestMintRechecksInsideTheTransaction:
 
         # Both route checks are stale: seeing the agent (CHT-1785) and
         # managing it.
-        monkeypatch.setattr("app.api.visibility.check_user_in_team", stale_in_team)
+        monkeypatch.setattr("app.api.visibility.is_in_team_directory", stale_in_team)
         monkeypatch.setattr("app.api.agents.can_manage_agent", stale)
         before = await OxydeAPIKey.objects.filter(principal_user_id=w["agent_id"]).count()
 

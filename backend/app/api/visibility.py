@@ -24,9 +24,9 @@ What "see" means per row is the matching read rule in ``app.api.deps``:
   (CHT-1807).
 * document: ``can_access_document`` (project access for a project's
   document, team access for a team-level one).
-* label, team, agent: ``check_user_in_team`` (the team directory, which a
+* label, team, agent: ``is_in_team_directory`` (the team directory, which a
   project-scoped agent shares).
-* template: ``check_user_team_access`` (team-wide data).
+* template: ``can_read_team_data`` (team-wide data).
 """
 from __future__ import annotations
 
@@ -34,9 +34,9 @@ from fastapi import HTTPException, status
 
 from app.api.deps import (
     can_access_document,
-    check_user_in_team,
+    is_in_team_directory,
     check_user_project_access,
-    check_user_team_access,
+    can_read_team_data,
     is_project_scoped_agent,
 )
 
@@ -97,7 +97,7 @@ async def visible_project_in_team(
     if not await can_see_project(user, project):
         raise hidden
     if project.team_id != team_id:
-        if not (is_project_scoped_agent(user) or await check_user_in_team(user, team_id)):
+        if not (is_project_scoped_agent(user) or await is_in_team_directory(user, team_id)):
             raise hidden
         if elsewhere is None:
             return None
@@ -179,7 +179,7 @@ async def visible_document(user, document_id: str | None, detail: str = "Documen
 
 async def can_see_label(user, label) -> bool:
     """``label`` (a row or None) exists and is in a team ``user`` is in."""
-    return label is not None and await check_user_in_team(user, label.team_id)
+    return label is not None and await is_in_team_directory(user, label.team_id)
 
 
 async def visible_label(user, label_id: str, detail: str = "Label not found"):
@@ -194,32 +194,32 @@ async def visible_label(user, label_id: str, detail: str = "Label not found"):
 
 async def visible_team(user, team_id: str, detail: str = "Team not found"):
     """The team, or ``not_found(detail)``. Seeing a team is being in it
-    (``check_user_in_team``): a project-scoped agent sees its own."""
+    (``is_in_team_directory``): a project-scoped agent sees its own."""
     from app.services.team_service import TeamService
 
     team = await TeamService().get_by_id(team_id)
-    if team is None or not await check_user_in_team(user, team_id):
+    if team is None or not await is_in_team_directory(user, team_id):
         raise not_found(detail)
     return team
 
 
 async def visible_template(user, template_id: str):
     """The template, or the "Template not found" 404. Templates are
-    team-wide data (``check_user_team_access``)."""
+    team-wide data (``can_read_team_data``)."""
     from app.services.template_service import TemplateService
 
     template = await TemplateService().get_by_id(template_id)
-    if template is None or not await check_user_team_access(user, template.team_id):
+    if template is None or not await can_read_team_data(user, template.team_id):
         raise not_found("Template not found")
     return template
 
 
 async def visible_agent(user, agent_id: str):
     """The agent, or the "Agent not found" 404. An agent is in its team's
-    directory (``check_user_in_team``)."""
+    directory (``is_in_team_directory``)."""
     from app.services.agent_service import AgentService
 
     agent = await AgentService().get_by_id(agent_id)
-    if agent is None or not await check_user_in_team(user, agent.agent_team_id):
+    if agent is None or not await is_in_team_directory(user, agent.agent_team_id):
         raise not_found("Agent not found")
     return agent
