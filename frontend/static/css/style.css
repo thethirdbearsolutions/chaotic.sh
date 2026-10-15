@@ -8716,6 +8716,9 @@ button.stat-card-link:hover .stat-note {
     margin-top: var(--space-xl);
 }
 .invite-actions a.btn { text-decoration: none; }
+.invite-verify { margin-top: var(--space-lg); }
+.invite-code-form { margin-top: var(--space-md); }
+.invite-code-form input { letter-spacing: 0.3em; font-variant-numeric: tabular-nums; max-width: 12ch; }
 .invite-auth-notice {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);

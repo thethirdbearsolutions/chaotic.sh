@@ -197,10 +197,17 @@ from the accept, checked after the invitation is found to be valid and
 before its address is compared, so it gets the same answer whether its
 address matches or not and the refusal cannot be used to guess the
 invited address. Codes last 15 minutes, allow five tries, and only the
-newest one works; a person can request one a minute and five an hour
-(429 with `Retry-After` past that). Only an HMAC of each code, keyed
-with `SECRET_KEY`, is stored. A failed send is reported to the person
-(502 `email_send_failed`) rather than only logged. Accounts that
+newest one sent works. The limits count per address (an HMAC of it,
+lowercased), not per account, so deleting the account and signing up
+again resets nothing: one code a minute and five an hour (429 with
+`Retry-After` past that), and at most 15 failed confirmations a day,
+after which every code, the right one included, gets the same 400 as a
+wrong one until the day has passed. That history is kept for a day,
+also after the account is deleted. Only HMACs of the codes and the
+addresses are stored, under a key derived from `SECRET_KEY`. A failed
+send is reported to the person (502 `email_send_failed`) rather than
+only logged. At startup the server logs whether this gate is active
+("Invitation email-verification gate: ACTIVE" or "INACTIVE"). Accounts that
 existed before this change start unverified; existing team members are
 not affected, only accepting a new invitation is.
 

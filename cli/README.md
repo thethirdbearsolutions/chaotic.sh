@@ -40,9 +40,11 @@ chaotic auth verify-email --code 123456  # confirm a code you already received
 
 When the server has SMTP configured, accepting a team invitation requires a
 verified address (`chaotic team accept-invite` says so if yours is not). A code
-lasts 15 minutes and allows five tries; you can ask for one a minute, five an
+lasts 15 minutes and allows five tries; an address can get one a minute, five an
 hour. Without SMTP on the server there is nothing to verify, and invitations
-work as before.
+work as before. With `--json`, or when not run in a terminal, `verify-email`
+without `--code` only requests a code and prints `{email, expires_at}`; confirm
+it afterwards with `--code`.
 
 ### API Keys (for scripts/automation)
 ```bash

@@ -298,3 +298,31 @@ class TestTeamAcceptInvite:
         assert result.exit_code == 1
         assert 'Invitation is for a different email' in result.output
         assert 'verify-email' not in result.output
+
+    def test_accept_invite_unverified_email_json(self, cli_runner):
+        import json
+        from cli.main import cli, client
+        from cli.main import APIError
+
+        client.accept_invitation = MagicMock(side_effect=_api_error(
+            APIError, "Verify your email address", 403,
+            {"error_code": "email_unverified", "message": "Verify your email address"},
+        ))
+
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123', '--json'])
+
+        assert result.exit_code == 1
+        body = json.loads(result.stdout)
+        assert body["error_code"] == "email_unverified"
+        assert "chaotic auth verify-email" in body["hint"]
+
+    def test_accept_invite_json_prints_the_membership(self, cli_runner):
+        import json
+        from cli.main import cli, client
+
+        client.accept_invitation = MagicMock(return_value={"team_id": "t-1", "role": "member"})
+
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {"team_id": "t-1", "role": "member"}
