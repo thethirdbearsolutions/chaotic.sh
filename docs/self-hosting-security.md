@@ -95,7 +95,8 @@ checks team membership before registering the socket for any broadcast.
 A refused handshake is accepted and closed at once, with nothing sent,
 so the client gets the close code (4001 sign in again, 4003 forbidden;
 CHT-1615). What a client should do with each outcome is the client
-contract in [ws-client-contract.md](ws-client-contract.md) (CHT-1646). A failed check (a database outage, say) is an HTTP 503 with
+contract in [ws-client-contract.md](ws-client-contract.md) (CHT-1646).
+A failed check (a database outage, say) is an HTTP 503 with
 `Retry-After` on the handshake instead (CHT-1637): a browser sees it as
 1006 and backs off, which is what an old web bundle needs. The access
 log shows a closed refusal as accepted; each refusal is logged on
