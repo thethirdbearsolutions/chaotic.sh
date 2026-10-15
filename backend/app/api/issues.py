@@ -700,7 +700,6 @@ async def list_issues(
     All filter parameters work consistently whether querying by project_id or team_id.
     """
     issue_service = IssueService()
-    project_service = ProjectService()
     team_service = TeamService()
 
     # Validate access and determine scope
