@@ -711,7 +711,7 @@ describe('showMentionWarnings', () => {
     vi.useRealTimers();
   });
 
-  it('shows one warning toast per warning, in order', () => {
+  it('shows all warnings in one toast, a line each, in order', () => {
     const n = showMentionWarnings({
       warnings: [
         '@sam is ambiguous; nobody was notified. Use one of: @sam-lee, @sam-ortiz.',
@@ -719,10 +719,23 @@ describe('showMentionWarnings', () => {
       ],
     });
     expect(n).toBe(2);
-    const toasts = document.querySelectorAll('.toast.toast-warning');
-    expect(toasts).toHaveLength(2);
-    expect(toasts[0].querySelector('.toast-message').textContent).toContain('Use one of: @sam-lee, @sam-ortiz.');
-    expect(toasts[1].querySelector('.toast-message').textContent).toContain('@nobody matches nobody');
+    const toasts = document.querySelectorAll('.toast');
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].classList.contains('toast-warning')).toBe(true);
+    expect(toasts[0].classList.contains('toast-multiline')).toBe(true);
+    expect(toasts[0].querySelector('.toast-message').textContent).toBe(
+      '@sam is ambiguous; nobody was notified. Use one of: @sam-lee, @sam-ortiz.\n'
+      + '@nobody matches nobody who can be mentioned here; nobody was notified.',
+    );
+  });
+
+  it('keeps the server maximum (12 warnings) in a single toast', () => {
+    const warnings = Array.from({ length: 10 }, (_, i) => `@ghost${i} matches nobody who can be mentioned here; nobody was notified.`);
+    warnings.push('3 more @handles reached nobody.');
+    warnings.push('This comment mentions 60 members; only the first 50 were notified.');
+    expect(showMentionWarnings({ warnings })).toBe(12);
+    expect(document.querySelectorAll('.toast')).toHaveLength(1);
+    expect(document.querySelector('.toast-message').textContent.split('\n')).toEqual(warnings);
   });
 
   it('shows nothing for a response without warnings', () => {
@@ -737,6 +750,12 @@ describe('showMentionWarnings', () => {
   it('skips non-string and empty entries', () => {
     expect(showMentionWarnings({ warnings: ['', null, 42, { a: 1 }, '@x is ambiguous'] })).toBe(1);
     expect(document.querySelectorAll('.toast')).toHaveLength(1);
+    expect(document.querySelector('.toast-message').textContent).toBe('@x is ambiguous');
+  });
+
+  it('shows nothing when every entry is invalid', () => {
+    expect(showMentionWarnings({ warnings: ['', null, 7] })).toBe(0);
+    expect(document.querySelectorAll('.toast')).toHaveLength(0);
   });
 
   it('renders server text as text, never as HTML', () => {
@@ -745,5 +764,44 @@ describe('showMentionWarnings', () => {
     expect(msg.querySelector('img')).toBeNull();
     expect(msg.textContent).toBe('@<img src=x onerror="window.__pwned=1"> matches nobody');
     expect(window.__pwned).toBeUndefined();
+  });
+});
+
+// CHT-1743: toasts are announced to assistive technology.
+describe('toast accessibility', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    document.body.innerHTML = '<div id="toast-container" role="status" aria-live="polite"></div>';
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('marks error toasts as alerts', () => {
+    showToast('Boom', 'error');
+    expect(document.querySelector('.toast').getAttribute('role')).toBe('alert');
+  });
+
+  it('leaves other toasts to the polite live region', () => {
+    showToast('Saved', 'success');
+    showToast('Careful', 'warning');
+    for (const t of document.querySelectorAll('.toast')) {
+      expect(t.getAttribute('role')).toBeNull();
+    }
+  });
+
+  it('returns the toast element', () => {
+    const t = showToast('Hi');
+    expect(t).toBe(document.querySelector('.toast'));
+  });
+});
+
+describe('toast container markup (CHT-1743)', () => {
+  it.each(['templates/index.html', 'index.html'])('%s declares a polite live region', async (file) => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const html = readFileSync(resolve(__dirname, '..', file), 'utf8');
+    expect(html).toContain('<div id="toast-container" role="status" aria-live="polite"></div>');
   });
 });

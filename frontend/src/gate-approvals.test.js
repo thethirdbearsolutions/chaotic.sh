@@ -241,6 +241,40 @@ describe('handleReviewApproval', () => {
         expect(api.createComment).not.toHaveBeenCalled();
     });
 
+    it('approves without mention warnings when the comment is empty (CHT-1743)', async () => {
+        showMentionWarnings.mockClear();
+        api.approveTicketRitual.mockResolvedValue({});
+        const event = { preventDefault: vi.fn() };
+
+        showReviewApprovalModal('r1', 'i1', 'Review', 'prompt', 'CHT-1', 'Title', null, null, null);
+        document.getElementById('review-approval-comment').value = '   ';
+
+        await handleReviewApproval(event, 'r1', 'i1', 'Review');
+
+        expect(api.createComment).not.toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledWith('Review ritual "Review" approved!', 'success');
+        expect(showMentionWarnings).toHaveBeenCalledWith(null);
+    });
+
+    it('still approves, with no mention warnings, when the comment fails to post (CHT-1743)', async () => {
+        showMentionWarnings.mockClear();
+        api.approveTicketRitual.mockResolvedValue({});
+        api.createComment.mockRejectedValue(new Error('comment failed'));
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const event = { preventDefault: vi.fn() };
+
+        showReviewApprovalModal('r1', 'i1', 'Review', 'prompt', 'CHT-1', 'Title', null, null, null);
+        document.getElementById('review-approval-comment').value = 'cc @nobody';
+
+        await handleReviewApproval(event, 'r1', 'i1', 'Review');
+
+        expect(api.approveTicketRitual).toHaveBeenCalledWith('r1', 'i1');
+        expect(showToast).toHaveBeenCalledWith('Review ritual "Review" approved!', 'success');
+        expect(closeModal).toHaveBeenCalled();
+        expect(showMentionWarnings).toHaveBeenCalledWith(null);
+        expect(showApiError).not.toHaveBeenCalled();
+    });
+
     it('still succeeds if comment post fails', async () => {
         api.approveTicketRitual.mockResolvedValue({});
         api.createComment.mockRejectedValue(new Error('comment failed'));

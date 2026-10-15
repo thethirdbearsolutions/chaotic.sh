@@ -1171,10 +1171,12 @@ export async function handleAddComment(event, issueId) {
     commentSubmitting = true;
     try {
         const created = await api.createComment(issueId, content);
-        await viewIssue(issueId);
+        // Toasts before the refresh, as on documents, so a slow refresh
+        // does not hold back the @mention warnings (CHT-1743).
         showToast('Comment added!', 'success');
         // @handles that reached nobody (CHT-1743)
         showMentionWarnings(created);
+        await viewIssue(issueId);
     } catch (e) {
         // Restore draft on failure so user doesn't lose their comment
         setCommentDraft(issueId, content);

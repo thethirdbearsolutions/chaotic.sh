@@ -160,11 +160,15 @@ export function isModalOpen() {
  *   doesn't vanish out from under them.
  * @param {string} message - Message to display
  * @param {'success'|'error'|'warning'|'info'} type - Toast type
+ * @returns {HTMLElement} The toast element
  */
 export function showToast(message, type = 'success') {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
+  // #toast-container is a polite live region (role="status"); an error
+  // interrupts instead (CHT-1743).
+  if (type === 'error') toast.setAttribute('role', 'alert');
 
   const textEl = document.createElement('span');
   textEl.className = 'toast-message';
@@ -210,26 +214,28 @@ export function showToast(message, type = 'success') {
     startedAt = Date.now();
     timer = setTimeout(dismiss, Math.max(remaining, 500));
   });
+
+  return toast;
 }
 
 /**
- * Show the `warnings` a comment-create response carries (CHT-1743): one
- * warning toast per @handle that reached nobody, unknown or ambiguous (an
- * ambiguous one names the unique handles to use instead; CHT-1735). The
- * server caps the list, so this cannot flood the screen. Server text goes
- * through showToast, which sets textContent, so it is never parsed as HTML.
+ * Show the `warnings` a comment-create response carries (CHT-1743): every
+ * @handle that reached nobody, unknown or ambiguous (an ambiguous one names
+ * the unique handles to use instead; CHT-1735), plus any recipient-cap
+ * notice. All of one comment's warnings go in ONE warning toast, a line
+ * each, so a comment with many bad handles cannot stack toasts off-screen.
+ * Server text goes through showToast, which sets textContent, so it is
+ * never parsed as HTML.
  * @param {Object|null|undefined} created - The comment-create response
  * @returns {number} How many warnings were shown
  */
 export function showMentionWarnings(created) {
-  const warnings = Array.isArray(created?.warnings) ? created.warnings : [];
-  let shown = 0;
-  for (const warning of warnings) {
-    if (typeof warning !== 'string' || !warning) continue;
-    showToast(warning, 'warning');
-    shown += 1;
-  }
-  return shown;
+  const raw = Array.isArray(created?.warnings) ? created.warnings : [];
+  const warnings = raw.filter(w => typeof w === 'string' && w);
+  if (warnings.length === 0) return 0;
+  const toast = showToast(warnings.join('\n'), 'warning');
+  toast?.classList.add('toast-multiline');
+  return warnings.length;
 }
 
 /**
