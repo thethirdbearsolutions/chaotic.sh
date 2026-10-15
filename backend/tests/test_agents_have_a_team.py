@@ -37,7 +37,7 @@ async def _run_0036_backfill() -> list[str]:
     module = _migration()
     agents = await execute_raw(module.TEAMLESS_AGENTS_SQL, [])
     held = {(r["agent_team_id"], r["external_ref"]) for r in await execute_raw(module.HELD_REFS_SQL, [])}
-    placed, _left = module.plan_backfill(agents, held)
+    placed, _left, _idle = module.plan_backfill(agents, held)
     for agent_id, (team_id, _project_id) in placed.items():
         await execute_raw(
             f"UPDATE users SET agent_team_id = {module.sql_literal(team_id)} "
@@ -142,4 +142,22 @@ async def test_an_agent_without_a_team_cannot_be_created(db, test_user, fields):
     assert await OxydeUser.objects.filter(is_agent=True).count() == 0
     # A human needs no team.
     await OxydeUser.objects.create(email="human@example.com", hashed_password="", name="Human")
+
+
+@pytest.mark.asyncio
+async def test_the_migrations_audit_row_reads_back_as_an_api_key_revocation(db):
+    """0036 writes its revocation_events row in SQL; the app must read it
+    like its own, and it moves the revocation epoch."""
+    from app.enums import RevocationTarget
+    from app.oxyde_models.oauth import OxydeRevocationEvent
+    from app.services.token_service import revocation_epoch
+
+    before = await revocation_epoch()
+    await execute_raw(
+        _migration().audit_sql(["k-1", "k-2"], now="2026-10-15 00:00:00.000000", event_id="ev-0036"), [],
+    )
+    assert await revocation_epoch() == before + 1
+    event = await OxydeRevocationEvent.objects.get(id="ev-0036")
+    assert event.target_type == RevocationTarget.API_KEY
+    assert event.reason == "agent_team_backfilled" and event.actor_id is None
 

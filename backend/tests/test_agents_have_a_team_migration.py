@@ -17,6 +17,7 @@ Agents that already have a team, and humans, are not touched. Every
 line names rows by id only, and is printed only for a write that
 committed.
 """
+import json
 import sqlite3
 import subprocess
 import sys
@@ -63,6 +64,9 @@ KEYS = {
     "k-clash": ("a-clash", 1),
 }
 REVOKED = ["k-legacy-1", "k-legacy-2", "k-twin"]
+# Deactivated already: a-nothing as a team delete retires one (CHT-1844),
+# a-twin-1 by hand. Placed or left as any other, and said so.
+INACTIVE = {"a-nothing", "a-twin-1"}
 
 
 def _seed(path: str) -> None:
@@ -85,10 +89,10 @@ def _seed(path: str) -> None:
             c.execute(
                 "INSERT INTO users (id, email, email_folded, hashed_password, name, created_at, updated_at, "
                 "is_agent, is_active, is_superuser, can_register, parent_user_id, agent_team_id, "
-                "agent_project_id, external_ref) VALUES (?, ?, ?, 'x', ?, ?, ?, ?, 1, 0, 0, ?, ?, ?, ?)",
+                "agent_project_id, external_ref) VALUES (?, ?, ?, 'x', ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)",
                 (
                     user_id, f"{user_id}@example.com", f"{user_id}@example.com", user_id,
-                    f"2026-01-01T00:00:{n:02d}+00:00", NOW, is_agent,
+                    f"2026-01-01T00:00:{n:02d}+00:00", NOW, is_agent, 0 if user_id in INACTIVE else 1,
                     "u-human" if is_agent else None, team_id, project_id, ref,
                 ),
             )
@@ -136,9 +140,12 @@ def test_legacy_agents_get_their_projects_team_their_keys_are_revoked_and_the_re
             expected["is_active"] = 0
         assert keys_after[key_id] == expected, key_id
 
+    assert output.index("[0036] the following takes effect when 0036 commits; if the upgrade fails or is "
+                        "rolled back, nothing was changed\n") < output.index("[0036] agent")
     for user_id, (team_id, project_id) in PLACED.items():
+        note = " (already inactive)" if user_id in INACTIVE else ""
         assert (
-            f"[0036] agent {user_id}: agent_team_id set to {team_id}, the team of its project {project_id}\n"
+            f"[0036] agent {user_id}: agent_team_id set to {team_id}, the team of its project {project_id}{note}\n"
             in output
         )
     assert f"[0036] revoked 3 API key(s) of the agents given a team, " in output
@@ -146,18 +153,35 @@ def test_legacy_agents_get_their_projects_team_their_keys_are_revoked_and_the_re
     assert ": " + ", ".join(REVOKED) + "\n" in output
     assert "[0036] agent a-orphan: its project p-gone no longer exists; agent_team_id left NULL." in output
     assert "[0036] agent a-ghostteam: its project p-dead's team t-dead no longer exists; agent_team_id left NULL." in output
-    assert "[0036] agent a-nothing has neither a team nor a project; agent_team_id left NULL." in output
+    # Already inactive (as a delete retires one, CHT-1844): one line, no steps.
+    assert (
+        "[0036] agent a-nothing has neither a team nor a project; agent_team_id left NULL. (already inactive)\n"
+        in output
+    )
+    # The collision line says it once.
+    assert "Retire one of the two. Nothing in the product can reach it. To retire it, back up" in output
     assert "[0036] agent a-clash: team t-2 already has an identity with its external_ref;" in output
     assert "[0036] agent a-twin-2: team t-1 already has an identity with its external_ref;" in output
     # Each left agent's line carries the steps to retire it.
     for user_id in LEFT:
-        assert f"UPDATE users SET is_active = 0 WHERE id = '{user_id}';" in output
-        assert f"UPDATE api_keys SET is_active = 0 WHERE principal_user_id = '{user_id}';" in output
+        steps = f"UPDATE api_keys SET is_active = 0 WHERE principal_user_id = '{user_id}';"
+        assert (steps in output) == (user_id not in INACTIVE), user_id
     assert "chaotic system backup" in output
-    assert "[0036] 3 agent(s) given their project's team, 5 left without one" in output
-    # One line per agent, one for the keys, the total; nothing queued-only.
-    assert output.count("[0036]") == len(PLACED) + len(LEFT) + 2
-    assert "(queued)" not in output
+    assert "[0036] 3 agent(s) given their project's team, 4 left without one to retire, 1 already inactive" in output
+    # The header, one line per agent, one for the keys, the total.
+    assert output.count("[0036]") == len(PLACED) + len(LEFT) + 3
+    # One audit row for the revoked keys.
+    with closing(sqlite3.connect(at_previous)) as c:
+        events = c.execute(
+            "SELECT seq, team_id, actor_id, target_type, target_id, filter, cascade_counts, reason, created_at "
+            "FROM revocation_events"
+        ).fetchall()
+    assert len(events) == 1
+    seq, team_id, actor_id, target_type, target_id, filter_, counts, reason, created_at = events[0]
+    assert (seq, team_id, actor_id, target_type, target_id, reason) == (1, None, None, "API_KEY", None, "agent_team_backfilled")
+    assert json.loads(filter_) == {"migration": THIS, "key_ids": REVOKED}
+    assert json.loads(counts) == {"holder_sessions": 0, "tokens": 0}
+    assert len(created_at) == len("2026-10-15 00:00:00.000000") and created_at[10] == " "
     for user_id in ("u-human", "a-teamed", "a-teamed-scoped", "a-holder"):
         assert user_id not in output
     # Ids only.
@@ -210,7 +234,7 @@ def test_without_a_connection_it_backfills_in_sql_and_says_so():
     module = _module()
     ctx, lines = _Ctx(), []
     assert module.backfill(ctx, echo=lines.append) is None
-    assert ctx.sql == [module.FALLBACK_REVOKE_SQL, module.FALLBACK_BACKFILL_SQL]
+    assert ctx.sql == [module.FALLBACK_AUDIT_SQL, module.FALLBACK_REVOKE_SQL, module.FALLBACK_BACKFILL_SQL]
     assert len(lines) == 1 and lines[0].startswith("[0036] cannot read users")
 
 
@@ -227,8 +251,10 @@ def test_the_fallback_statements_place_only_what_cannot_fail(at_previous):
     users, keys = _table(at_previous, "users"), _table(at_previous, "api_keys")
     with closing(sqlite3.connect(at_previous)) as c:
         c.execute("PRAGMA foreign_keys = ON")
+        c.execute(module.FALLBACK_AUDIT_SQL)
         c.execute(module.FALLBACK_REVOKE_SQL)
         c.execute(module.FALLBACK_BACKFILL_SQL)
+        audit = c.execute("SELECT target_type, filter, reason FROM revocation_events").fetchall()
         c.commit()
     after, keys_after = _table(at_previous, "users"), _table(at_previous, "api_keys")
     changed = {k: after[k]["agent_team_id"] for k in after if after[k] != users[k]}
@@ -236,12 +262,12 @@ def test_the_fallback_statements_place_only_what_cannot_fail(at_previous):
     # index; a-ghostteam's dead team is never written.
     assert changed == {"a-legacy": "t-1"}
     assert {k for k in keys if keys_after[k] != keys[k]} == {"k-legacy-1", "k-legacy-2"}
+    assert len(audit) == 1 and audit[0][0] == "API_KEY" and audit[0][2] == "agent_team_backfilled"
+    assert sorted(json.loads(audit[0][1])["key_ids"]) == ["k-legacy-1", "k-legacy-2"]
 
 
-def test_report_lines_without_a_commit_hook_say_queued():
-    module = _module()
-    lines = module.report_lines({"a": ("t", "p")}, {"a": ["k"]}, {}, done=False)
-    assert lines[0].endswith("(queued)") and "(queued)" in lines[1]
+def test_no_rows_no_header():
+    assert _module().report_lines({}, {}, {}, {}) == []
 
 
 def test_literals_quote():

@@ -70,6 +70,7 @@ REASON_PRINCIPAL_DEACTIVATED = "principal_deactivated"
 REASON_PRINCIPAL_DELETED = "principal_deleted"
 REASON_MEMBER_REMOVED = "member_removed"
 REASON_TEAM_DELETED = "team_deleted"
+REASON_PROJECT_DELETED = "project_deleted"
 REASON_USER_REVOKED = "user_revoked"
 
 # The holder sessions Connected apps lists: OAuth connectors, and a

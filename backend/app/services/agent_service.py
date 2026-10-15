@@ -4,6 +4,7 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 import logging
 import uuid
+from collections.abc import Sequence
 
 from oxyde import execute_raw
 from datetime import datetime, timedelta, timezone
@@ -423,7 +424,9 @@ class AgentService:
             await self._notify_parent(current, actor, verb)
         return current, len(identities)
 
-    async def _retire_identities(self, registrar_id: str, *, actor_id: str | None = None) -> list[OxydeUser]:
+    async def _retire_identities(
+        self, registrar_id: str, *, actor_id: str | None = None, reason: str = REASON_PRINCIPAL_DEACTIVATED,
+    ) -> list[OxydeUser]:
         """Deactivate every active identity `registrar_id` registered and
         revoke their keys (CHT-1498), and end their holder sessions and
         what those keys opened or minted (CHT-1523). Call inside the
@@ -435,8 +438,55 @@ class AgentService:
         if ids:
             await OxydeAPIKey.objects.filter(principal_user_id__in=ids).update(is_active=False)
             await OxydeUser.objects.filter(id__in=ids).update(is_active=False)
-            await self.revoke_credentials_of(ids, actor_id=actor_id)
+            await self.revoke_credentials_of(ids, actor_id=actor_id, reason=reason)
         return identities
+
+    async def retire_for_deleted_scope(
+        self, *, team_id: str | None = None, project_ids: Sequence[str] = (), actor_id: str | None, reason: str,
+    ) -> list[str]:
+        """Retire every agent scoped to a team or project about to be
+        deleted (CHT-1844). Call inside the ``revoking()`` transaction
+        that deletes it, before the delete.
+
+        On a database built from the migration chain, ``agent_team_id``
+        and ``agent_project_id`` are ``ON DELETE SET NULL``: a deleted
+        project would turn its agents into team-wide agents, and a
+        deleted team would leave its agents active with no team. So each
+        agent scoped to the deleted row is deactivated, every key that
+        signs in as it revoked, its sessions and unredeemed codes and
+        tickets ended (and its sockets and push devices with them, after
+        the commit), and the identities it registered retired, as on
+        ``deactivate``. Its ``agent_team_id`` is cleared too, failing
+        closed: once ``agent_project_id`` is nulled, an agent left with
+        its team would be indistinguishable from a team-scoped one, and
+        its creator could reactivate it as one. With no team it can sign
+        in nowhere (an agent's credential needs its holder to be a member
+        of the agent's team) and no one can manage it. The rows stay: the
+        agents' authored work keeps its author. Returns their ids.
+        """
+        found: dict[str, OxydeUser] = {}
+        if team_id is not None:
+            for agent in await OxydeUser.objects.filter(is_agent=True, agent_team_id=team_id).all():
+                found[agent.id] = agent
+        project_ids = list(project_ids)
+        if project_ids:
+            for agent in await OxydeUser.objects.filter(is_agent=True, agent_project_id__in=project_ids).all():
+                found[agent.id] = agent
+        ids = list(found)
+        if not ids:
+            return []
+        await OxydeAPIKey.objects.filter(principal_user_id__in=ids).update(is_active=False)
+        await OxydeUser.objects.filter(id__in=ids).update(is_active=False, agent_team_id=None)
+        await self.revoke_credentials_of(ids, actor_id=actor_id, reason=reason)
+        for agent_id in ids:
+            identities = await self._retire_identities(agent_id, actor_id=actor_id, reason=reason)
+            self._log_retired(identities, agent_id, actor_id)
+        for agent in found.values():
+            logger.info(
+                "agent %s (%s) deactivated and detached from team %s (%s, project %s) by user %s",
+                agent.id, agent.name, agent.agent_team_id, reason, agent.agent_project_id, actor_id,
+            )
+        return ids
 
     @staticmethod
     async def revoke_credentials_of(

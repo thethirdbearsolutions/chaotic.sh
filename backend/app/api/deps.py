@@ -107,6 +107,11 @@ async def check_user_team_access(user: User, team_id: str) -> bool:
     if user.is_agent:
         if user.agent_project_id:
             return False
+        # Fail closed on a missing side (CHT-1844): an agent retired with
+        # its deleted project or team has no team, and None == None must
+        # never read as access.
+        if not user.agent_team_id or not team_id:
+            return False
         return user.agent_team_id == team_id
 
     team_service = TeamService()
@@ -219,8 +224,9 @@ async def check_user_project_access(user: User, project) -> bool:
         # Project-scoped agent: must match the specific project
         if user.agent_project_id:
             return user.agent_project_id == project.id
-        # Team-scoped agent: must match the project's team
-        return user.agent_team_id == project.team_id
+        # Team-scoped agent: must match the project's team (never on a
+        # missing team, CHT-1844)
+        return bool(user.agent_team_id) and user.agent_team_id == project.team_id
 
     # Human user: check membership of the project's team
     team_service = TeamService()

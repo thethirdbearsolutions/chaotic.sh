@@ -114,8 +114,10 @@ async def resolve_member_team(user: User, team: str | None) -> str:
     if user.is_agent and user.agent_project_id:
         team_id = user.agent_team_id
         if not team_id:
-            # Only an agent migration 0036 could not place: its project
-            # was deleted before every agent carried a team (CHT-1837).
+            # An agent with no team: one migration 0036 could not place
+            # (its project or that project's team was already gone,
+            # CHT-1837), or one retired when its project or team was
+            # deleted (CHT-1844). Its keys are dead anyway; fail closed.
             raise ToolContextError("This API key's scoped project no longer exists.")
         if team:
             this_team = await TeamService().get_by_id(team_id)
