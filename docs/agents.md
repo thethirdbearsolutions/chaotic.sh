@@ -488,16 +488,30 @@ exactly them. It is shown by the web comment box's autocomplete, by
 - an agent: its whole name (`@claude-mcp`);
 - a session identity with a default name (`<registrar> · … · <tail>`):
   first word and tail (`@claude-3f9a1c`);
-- when even that is shared: first word and the start of the id
-  (`@claude.28b1c019`).
+- when even that is shared: the **id handle**, first word and the start
+  of the id (`@claude.28b1c019`). It is looked up by the id alone, so it
+  keeps working after a rename, and no name can claim it.
 
-People come first: a handle a person has (their first word or whole
-name) names only people, so naming an agent can never take a person's
-handle. Otherwise a handle that more than one of them could mean reaches
-**nobody**: in a team of Claude sessions, `@claude` notifies none of
-them. It never picks one and never notifies them all. A project-scoped
-agent is reached only from its own project. Handles follow names, so renaming an agent changes
-its handle.
+A handle that more than one of them could mean reaches **nobody**: in a
+team of Claude sessions, `@claude` notifies none of them. It never picks
+one and never notifies them all. Two exceptions keep old habits working
+without letting anyone take another's handle:
+
+- When everyone who shares a word has it only as a first word, people
+  come first: `@ethan` stays Ethan's beside an agent called "Ethan Bot",
+  and `@claude` still reaches a person named Claude. Any other overlap
+  between a person and an agent (a person renamed `claude-mcp`, an agent
+  named "Ethan") reaches nobody, so neither can take the other's handle.
+- An idle session identity (keys unused for 7 days) is still reached by
+  its own handle but claims no shared first word, so old sessions do not
+  make `@claude` ambiguous. A deactivated agent is not mentionable.
+  A non-session agent whose keys are all revoked is still mentionable;
+  its mentions wait in its inbox.
+
+A project-scoped agent is reached only from its own project, and the web
+autocomplete offers it only there. One comment notifies at most 25
+principals; later handles are ignored. Handles follow names, so renaming
+an agent changes its handle (its id handle aside).
 
 ## Remote MCP (Streamable HTTP, `/mcp`)
 

@@ -1638,12 +1638,15 @@ describe('issue-detail-view', () => {
         // CHT-1214: @mention autocomplete only ever fired in the comment box.
         describe('mention autocomplete wiring (CHT-1214)', () => {
             it('wires up the description editor textarea/container, not the comment box', async () => {
-                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc', project_id: 'p1' });
                 setupMentionAutocomplete.mockClear();
 
                 await editDescription('i1');
 
-                expect(setupMentionAutocomplete).toHaveBeenCalledWith('edit-description', 'edit-description-mention-suggestions');
+                // With the issue's project, which limits the agents offered (CHT-1731).
+                expect(setupMentionAutocomplete).toHaveBeenCalledWith(
+                    'edit-description', 'edit-description-mention-suggestions', { projectId: 'p1' },
+                );
                 expect(document.getElementById('edit-description-mention-suggestions')).toBeTruthy();
             });
         });

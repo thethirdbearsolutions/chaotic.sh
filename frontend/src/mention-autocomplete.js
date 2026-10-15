@@ -35,9 +35,11 @@ export function getMemberHandle(member) {
  * Everyone the autocomplete offers: the team's members, then its agents
  * (CHT-1731). An agent is offered only with a server-given handle (an
  * older server could not deliver to it), and not when it is deactivated
- * or an idle session identity (one can still type its handle).
+ * or an idle session identity (one can still type its handle). With a
+ * `projectId` (null for a team-wide document), an agent scoped to another
+ * project is left out: the server would not deliver to it from here.
  */
-export function getMentionables(members = [], agents = []) {
+export function getMentionables(members = [], agents = [], { projectId } = {}) {
     const seen = new Set();
     const out = [];
     for (const m of members) {
@@ -54,6 +56,7 @@ export function getMentionables(members = [], agents = []) {
     }
     for (const a of agents) {
         if (!a.mention_handle || a.is_active === false || a.idle || seen.has(a.id)) continue;
+        if (projectId !== undefined && a.agent_project_id && a.agent_project_id !== projectId) continue;
         seen.add(a.id);
         out.push({ id: a.id, name: a.name || 'Agent', email: '', handle: a.mention_handle, isAgent: true });
     }
@@ -97,11 +100,15 @@ export function isInsideCodeSpan(text, pos) {
  * mechanical parameterization.
  * @param {string} [textareaId='new-comment']
  * @param {string} [containerId='mention-suggestions']
+ * @param {{projectId?: string|null}} [context] - the issue's or document's
+ *   project (null: a team-wide document); see getMentionables (CHT-1731)
  */
-export function setupMentionAutocomplete(textareaId = 'new-comment', containerId = 'mention-suggestions') {
+export function setupMentionAutocomplete(textareaId = 'new-comment', containerId = 'mention-suggestions', context = {}) {
     const textarea = document.getElementById(textareaId);
     const container = document.getElementById(containerId);
     if (!textarea || !container) return;
+    // Kept on the element, so a re-bind for another issue updates it.
+    textarea.mentionContext = context;
     if (textarea.dataset.mentionsBound === 'true') return;
     textarea.dataset.mentionsBound = 'true';
 
@@ -145,7 +152,7 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
             return;
         }
         const query = match[2].toLowerCase();
-        const suggestions = getMentionables(getMembers(), getAgents())
+        const suggestions = getMentionables(getMembers(), getAgents(), textarea.mentionContext || {})
             .filter(m => !query || m.handle.includes(query) || m.name.toLowerCase().includes(query) || m.email.toLowerCase().includes(query))
             .slice(0, 6);
 

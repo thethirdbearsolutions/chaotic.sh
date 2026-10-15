@@ -1025,7 +1025,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
 
         // Render ticket rituals (data already fetched in Promise.all above)
         renderTicketRituals(issue.id);
-        setupMentionAutocomplete();
+        setupMentionAutocomplete('new-comment', 'mention-suggestions', { projectId: issue.project_id });
         setupQuoteComment({ signal: detailSignal });
 
         // Cmd/Ctrl+Enter to submit comment + draft persistence (CHT-1041)
@@ -1236,7 +1236,7 @@ export async function editDescription(issueId) {
             draftWarning.classList.remove('hidden');
         }
     }
-    setupMentionAutocomplete('edit-description', 'edit-description-mention-suggestions');
+    setupMentionAutocomplete('edit-description', 'edit-description-mention-suggestions', { projectId: issue.project_id });
     textarea.addEventListener('input', () => {
         // Save description draft, snapshotted against the description as of
         // when this edit session opened (CHT-1214).

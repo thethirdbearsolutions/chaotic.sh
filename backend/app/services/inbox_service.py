@@ -62,6 +62,10 @@ _strip_code_spans = strip_code_spans
 # their candidates. See app.services.mention_handles for the full rule.
 _member_handle = legacy_first_word_handle
 
+# At most this many principals are notified by one comment; later
+# handles are ignored (and logged).
+MAX_MENTION_RECIPIENTS = 25
+
 
 class InboxService:
     """Writes and reads InboxEntry rows."""
@@ -440,22 +444,32 @@ class InboxService:
         @handles inside fenced ``` blocks or inline `code` spans are not
         real mentions (CHT-1272) -- see _strip_code_spans.
         """
-        handles = {m.lower() for m in _MENTION_RE.findall(_strip_code_spans(content or ""))}
+        # In order of appearance, so the cap below keeps the first ones.
+        handles = list(dict.fromkeys(
+            m.lower() for m in _MENTION_RE.findall(_strip_code_spans(content or ""))
+        ))
         if not handles:
             return
 
         directory = await MentionDirectory.for_team(team_id)
         project_id = issue.project_id if issue is not None else document.project_id
-        matched_user_ids = set()
+        matched: dict[str, None] = {}
         for handle in handles:
             user_id = directory.resolve(handle)
             if user_id is None:
                 if directory.ambiguous(handle):
                     logger.info("@%s is ambiguous in team %s; nobody was notified", handle, team_id)
                 continue
-            if directory.can_reach(user_id, project_id):
-                matched_user_ids.add(user_id)
-        matched_user_ids.discard(author.id)
+            if user_id != author.id and directory.can_reach(user_id, project_id):
+                matched[user_id] = None
+        if len(matched) > MAX_MENTION_RECIPIENTS:
+            # One comment pasting a long `agent list` must not write
+            # hundreds of entries, broadcasts and pushes (CHT-1731 review).
+            logger.warning(
+                "Comment by %s mentions %d principals; notifying the first %d",
+                author.id, len(matched), MAX_MENTION_RECIPIENTS,
+            )
+        matched_user_ids = list(matched)[:MAX_MENTION_RECIPIENTS]
         if not matched_user_ids:
             return
 

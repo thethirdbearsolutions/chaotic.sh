@@ -100,23 +100,105 @@ class TestDirectory:
         assert d.resolve("claude-3f9a1c2b") == people[2].id
         assert d.handle_for(people[0].id) == f"claude.{people[0].id.replace('-', '')[:8]}"
 
-    def test_a_person_keeps_a_word_an_agent_shares(self):
-        """People come first: an agent can never take a person's handle or
-        make it ambiguous, so '@claude' still reaches Claude Shannon, as it
-        did before agents could be mentioned."""
-        person, agent, mcp = _user("Claude Shannon"), _agent("Claude"), _agent("Claude MCP")
-        d = MentionDirectory([person, agent, mcp])
-        assert d.resolve("claude") == person.id
-        assert d.handle_for(person.id) == "claude"
-        assert d.handle_for(agent.id) == f"claude.{agent.id.replace('-', '')[:8]}"
+    def test_a_person_keeps_a_word_agents_only_share(self):
+        """When every claim on a word is a first word, people come first:
+        '@claude' still reaches Claude Shannon, as it did before agents
+        could be mentioned, and '@ethan' stays Ethan's beside "Ethan Bot"."""
+        person, mcp = _user("Claude Shannon"), _agent("Claude MCP")
+        session = _session("Claude Code (cloud) · 3f9a1c2b")
+        ethan, bot = _user("Ethan Smith"), _agent("Ethan Bot")
+        d = MentionDirectory([person, mcp, session, ethan, bot])
+        assert d.resolve("claude") == person.id and d.handle_for(person.id) == "claude"
+        assert d.resolve("ethan") == ethan.id and d.handle_for(ethan.id) == "ethan"
         assert d.handle_for(mcp.id) == "claude-mcp"
+        assert d.handle_for(bot.id) == "ethan-bot"
 
-    def test_an_agent_named_like_a_person_cannot_take_their_handle(self):
-        ethan, bot = _user("Ethan Smith"), _agent("Ethan-Smith")
-        d = MentionDirectory([ethan, bot])
-        assert d.resolve("ethan") == ethan.id
-        assert d.resolve("ethan-smith") == ethan.id
-        assert d.resolve(d.handle_for(bot.id)) == bot.id
+    def test_an_agent_named_like_a_person_takes_nothing(self):
+        """An agent whose whole name is a person's word or name makes that
+        token name both, so it reaches nobody; neither takes the other's."""
+        ethan, bot, solo = _user("Ethan Smith"), _agent("Ethan-Smith"), _agent("Ethan")
+        d = MentionDirectory([ethan, bot, solo])
+        assert d.resolve("ethan") is None
+        assert d.resolve("ethan-smith") is None
+        for x in (ethan, bot, solo):
+            assert d.resolve(d.handle_for(x.id)) == x.id
+
+    def test_a_person_renamed_to_an_agents_handle_does_not_take_it(self):
+        """CHT-1731 review finding 1: renaming yourself "claude-mcp" or
+        "claude-3f9a1c" must not move that agent's mentions to you."""
+        mcp, session = _agent("Claude MCP"), _session("Claude Code (cloud) · 3f9a1c")
+        before = MentionDirectory([mcp, session])
+        assert (before.handle_for(mcp.id), before.handle_for(session.id)) == ("claude-mcp", "claude-3f9a1c")
+        thief1, thief2 = _user("claude-mcp"), _user("Claude-3f9a1c")
+        d = MentionDirectory([mcp, session, thief1, thief2])
+        assert d.resolve("claude-mcp") is None
+        assert d.resolve("claude-3f9a1c") is None
+        for x in (mcp, session, thief1, thief2):
+            assert d.resolve(d.handle_for(x.id)) == x.id
+
+    def test_no_name_can_claim_an_id_handle(self):
+        """A person named "claude.28b1c019" cannot take the id handle of
+        the agent 28b1c019: an id handle is looked up by its hex alone."""
+        agent = _agent("Claude", id="28b1c019-5770-425e-bc02-8898f982de3c")
+        other = _session("Claude Code · zz")
+        thief = _user("claude.28b1c019")
+        d = MentionDirectory([thief, agent, other])
+        assert d.handle_for(agent.id) == "claude.28b1c019"
+        assert d.resolve("claude.28b1c019") == agent.id
+        assert d.resolve(d.handle_for(thief.id)) == thief.id
+        assert "claude.28b1c019" not in candidates(thief)[:-1]
+
+    def test_id_handle_survives_a_rename_and_takes_32_hex_on_a_clash(self):
+        a = _agent("Claude", id="28b1c019-0000-0000-0000-00000000000a")
+        b = _agent("Claude", id="28b1c019-0000-0000-0000-00000000000b")
+        d = MentionDirectory([a, b])
+        assert d.handle_for(a.id) == f"claude.{a.id.replace('-', '')}"
+        assert d.resolve("claude.28b1c019") is None  # names both: nobody
+        assert d.resolve(f"renamed.{b.id.replace('-', '')}") == b.id
+
+    def test_idle_sessions_keep_their_handle_but_claim_no_shared_word(self):
+        """CHT-1731 review finding 4: idle sessions stay reachable by their
+        own handle, but do not make '@claude' ambiguous."""
+        mcp = _agent("Claude MCP")
+        idle = [_session(f"Claude Code (cloud) · {i:08x}") for i in range(3)]
+        d = MentionDirectory([mcp, *idle], idle_ids={s.id for s in idle})
+        assert d.resolve("claude") == mcp.id
+        for s_ in idle:
+            assert d.resolve(d.handle_for(s_.id)) == s_.id
+        live = _session("Claude Code (cloud) · ffffffff")
+        d = MentionDirectory([mcp, live, *idle], idle_ids={s.id for s in idle})
+        assert d.resolve("claude") is None
+
+    def test_every_principal_resolves_by_its_own_handle(self):
+        """The invariant the autocomplete, `agent list` and `team members`
+        promise: resolve(handle_for(x)) == x for every principal, here in a
+        team built to collide every way we know of."""
+        mcp = _agent("Claude MCP", id="28b1c019-5770-425e-bc02-8898f982de3c")
+        sessions = [_session(f"Claude Code (cloud) · {t}") for t in ("3f9a1c2b", "77aa01bc", "77aa01bc")]
+        idle = [_session("Claude Code (cloud) · 0000aaaa"), _session("Claude Code (cloud) · 3f9a1c2b")]
+        people = [
+            _user("Ethan Smith"), _user("Ethan Jones"), _user("Claude Shannon"),
+            _user("claude-mcp"), _user("claude.28b1c019"), _user("Claude-3f9a1c2b"),
+            _user("José Núñez"), _user("O'Brien"), _user("", email="test.user@example.com"),
+            _user("🤖"), _user("Ethan"), _user("ada.deadbeef"),
+        ]
+        agents = [
+            mcp, _agent("Claude"), _agent("Claude"), _agent("Ethan"), _agent("Ethan-Smith"),
+            _agent("🤖"), _agent("Ada", id="deadbeef-0000-0000-0000-000000000001"),
+            _agent("Twin", id="0badc0de-0000-0000-0000-000000000001"),
+            _agent("Twin", id="0badc0de-0000-0000-0000-000000000002"),
+            _agent("Scoped", project="p1"),
+        ]
+        everyone = people + agents + sessions + idle
+        d = MentionDirectory(everyone, idle_ids={s.id for s in idle})
+        handles = {}
+        for x in everyone:
+            h = d.handle_for(x.id)
+            assert d.resolve(h) == x.id, (x.name, h)
+            assert d.resolve(h.upper()) == x.id
+            assert d.resolve(h + ".") == x.id, (x.name, h)
+            handles[x.id] = h
+        assert len(set(handles.values())) == len(everyone)
 
     def test_two_people_sharing_a_word_reach_nobody_by_it(self):
         a, b = _user("Ethan Smith"), _user("Ethan Jones")
@@ -214,6 +296,43 @@ class TestNotifyMentionsReachesAgents:
         )
         assert len(await _mentions_of(here.id)) == 1
         assert await _mentions_of(there.id) == []
+
+    async def test_one_comment_notifies_at_most_the_cap(
+        self, db, test_team, test_issue, test_user, monkeypatch, caplog,
+    ):
+        import app.services.inbox_service as inbox_module
+
+        monkeypatch.setattr(inbox_module, "MAX_MENTION_RECIPIENTS", 3)
+        bots = [await _team_agent(test_team.id, f"Bot {i}", parent=test_user) for i in range(5)]
+        content = " ".join(f"@bot-{i}" for i in range(5)) + " @bot-0"
+        with caplog.at_level("WARNING", logger="app.services.inbox_service"):
+            await InboxService().notify_mentions(
+                content=content, team_id=test_team.id, author=test_user, issue=test_issue,
+            )
+        recipients = {e.recipient_user_id for e in await OxydeInboxEntry.objects.all()}
+        assert recipients == {b.id for b in bots[:3]}
+        assert "notifying the first 3" in caplog.text
+
+    async def test_idle_sessions_do_not_make_a_shared_word_ambiguous(
+        self, db, test_team, test_issue, test_user,
+    ):
+        from datetime import datetime, timedelta, timezone
+
+        mcp = await _team_agent(test_team.id, "Claude MCP", parent=test_user)
+        old = await _team_agent(test_team.id, "Claude Code (cloud) · 0ld0ld00", kind=AgentKind.SESSION, parent=test_user)
+        old.created_at = datetime.now(timezone.utc) - timedelta(days=30)
+        await old.save(update_fields={"created_at"})  # no key: idle since created_at
+
+        await InboxService().notify_mentions(
+            content="@claude and @claude-0ld0ld00", team_id=test_team.id, author=test_user, issue=test_issue,
+        )
+        assert len(await _mentions_of(mcp.id)) == 1
+        assert len(await _mentions_of(old.id)) == 1
+
+    async def test_the_cap_is_25(self):
+        import app.services.inbox_service as inbox_module
+
+        assert inbox_module.MAX_MENTION_RECIPIENTS == 25
 
     async def test_deactivated_agent_is_not_mentioned(self, db, test_team, test_issue, test_user):
         mcp = await _team_agent(test_team.id, "Claude MCP", parent=test_user)
