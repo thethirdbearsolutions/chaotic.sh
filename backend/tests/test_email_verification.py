@@ -16,7 +16,7 @@ import pytest
 from app.config import get_settings
 from app.enums import InvitationStatus, TeamRole
 from app.oxyde_models.email_verification import OxydeEmailVerificationCode
-from app.oxyde_models.team import OxydeTeamInvitation, OxydeTeamMember
+from app.oxyde_models.team import OxydeTeam, OxydeTeamInvitation, OxydeTeamMember
 from app.oxyde_models.user import OxydeUser
 from app.services import email_verification_service as evs
 from app.services.email_service import EmailService
@@ -400,6 +400,57 @@ class TestAcceptGate:
         response = await _accept(client, other, auth_headers2)
         assert response.status_code == 403
         assert response.json()["detail"] == "Invitation is for a different email"
+
+
+class TestAccountDeleteKeepsInvitations:
+    """Signup never proves the address, so deleting the account must not
+    take the address's invitations with it (CHT-1796)."""
+
+    # Only the exact-case run fails on main: the removed filter matched
+    # case-sensitively, so the folded-case run passes there too and just
+    # pins the behaviour for every spelling.
+    @pytest.mark.parametrize(
+        "signup_email", ["victim@example.com", "Victim@Example.COM"],
+        ids=["exact-case (the CHT-1796 regression)", "folded-case (pin)"],
+    )
+    async def test_an_unverified_signup_deleting_itself_leaves_every_pending_invite(
+        self, client, test_team, test_user, outbox, signup_email,
+    ):
+        other_team = await OxydeTeam.objects.create(name="Other Team", key="OTHR")
+        await OxydeTeamMember.objects.create(team_id=other_team.id, user_id=test_user.id, role=TeamRole.OWNER)
+        tokens = [
+            await _invite(test_team.id, test_user.id, "victim@example.com"),
+            await _invite(other_team.id, test_user.id, "victim@example.com"),
+        ]
+        signup = await client.post("/api/auth/signup", json={
+            "email": signup_email, "password": "password123", "name": "Not the victim",
+        })
+        assert signup.status_code == 201, signup.text
+        assert signup.json()["email_verified_at"] is None
+        headers = {"Authorization": f"Bearer {create_access_token(data={'sub': signup.json()['id']})}"}
+
+        assert (await client.delete("/api/users/me", headers=headers)).status_code == 204
+
+        assert await OxydeUser.objects.filter(id=signup.json()["id"]).count() == 0
+        for token in tokens:
+            invitation = await OxydeTeamInvitation.objects.get(token=token)
+            assert invitation.status == InvitationStatus.PENDING
+        # And the real invitee can still open the link.
+        assert (await client.get(f"/api/teams/invitations/{tokens[1]}")).status_code == 200
+
+    async def test_an_inviter_deleting_itself_takes_its_sent_invitations_only(
+        self, client, test_team, test_user, test_user2, auth_headers2, outbox,
+    ):
+        """What the comment in UserService.delete relies on: invitations
+        the account *sent* go through invited_by's ON DELETE CASCADE,
+        while ones addressed to it stay."""
+        sent = await _invite(test_team.id, test_user2.id, "newhire@example.com")
+        to_them = await _invite(test_team.id, test_user.id, test_user2.email)
+
+        assert (await client.delete("/api/users/me", headers=auth_headers2)).status_code == 204
+
+        assert await OxydeTeamInvitation.objects.filter(token=sent).count() == 0
+        assert (await OxydeTeamInvitation.objects.get(token=to_them)).status == InvitationStatus.PENDING
 
 
 class TestUserResponse:
