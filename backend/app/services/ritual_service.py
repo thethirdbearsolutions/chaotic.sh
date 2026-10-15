@@ -330,9 +330,10 @@ class RitualService:
         if existing:
             raise ValueError(f"A ritual named '{ritual_in.name}' already exists in this project")
 
-        # Validate group membership
-        if ritual_in.group_id:
-            group = await self.get_group_by_id(ritual_in.group_id)
+        # Validate group membership. An empty id is a missing group too
+        # (it used to fail the groups foreign key with a 500).
+        if ritual_in.group_id is not None:
+            group = await self.get_group_by_id(ritual_in.group_id) if ritual_in.group_id else None
             # Another project's group answers like a missing one: that
             # project may be one the caller cannot see (CHT-1819).
             if not group or group.project_id != project_id:

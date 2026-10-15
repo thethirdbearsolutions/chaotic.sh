@@ -64,6 +64,17 @@ class TestAssigneeValidation:
         assert response.status_code == 400
         assert "Assignee not found" in response.json()["detail"]
 
+    async def test_an_empty_assignee_id_is_not_found(self, client, auth_headers, test_project, test_issue):
+        """An empty string names no one: the missing user's 400, not the
+        users foreign key's 500 (CHT-1829)."""
+        created = await client.post(
+            f"/api/projects/{test_project.id}/issues", headers=auth_headers,
+            json={"title": "Test issue", "assignee_id": ""},
+        )
+        updated = await client.patch(f"/api/issues/{test_issue.id}", headers=auth_headers, json={"assignee_id": ""})
+        for response in (created, updated):
+            assert (response.status_code, response.json()) == (400, {"detail": "Assignee not found"})
+
     async def test_create_issue_with_non_member_assignee(
         self, client, auth_headers, test_project, non_member_user
     ):

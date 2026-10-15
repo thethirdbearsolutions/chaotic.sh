@@ -100,9 +100,11 @@ async def _validate_assignee(
 
     A user outside the project's team answers exactly like a missing one
     (CHT-1785, CHT-1819), and is checked first: a name or a "deactivated"
-    reply would confirm that someone in another team exists.
+    reply would confirm that someone in another team exists. An empty
+    string names no one and is "not found" too (it used to reach the
+    users foreign key and fail with a 500).
     """
-    if not assignee_id:
+    if assignee_id is None:
         return
     user = await OxydeUser.objects.get_or_none(id=assignee_id)
     # Agents: the team they are scoped to; humans: team membership.

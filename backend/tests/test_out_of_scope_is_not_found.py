@@ -47,6 +47,7 @@ from app.oxyde_models.template import OxydeTemplate
 from app.schemas.agent import AgentCreate
 from app.services.agent_service import AgentService
 
+from . import test_oauth_authorize
 from .mcp_principal import acting_as
 
 pytestmark = pytest.mark.asyncio
@@ -586,10 +587,16 @@ _REVISION = (
     "a revision number of the row the other path parameter names, which ROUTES probes on this "
     "route; the number alone names nothing"
 )
+# Parameters probed by a test elsewhere, named by the test itself rather
+# than in prose: renaming or deleting the test breaks this module's import
+# (or, for one defined below, the guard), so the allowlist entry cannot
+# outlive its probe.
+_CONSENT_CHOICE_PROBE = test_oauth_authorize.TestApprove.test_an_out_of_scope_choice_answers_like_a_missing_one
 _CONSENT_CHOICE = (
     "needs a pending OAuth consent request and OAuth turned on, so it is probed in "
-    "test_oauth_authorize.py::TestApprove::test_an_out_of_scope_choice_answers_like_a_missing_one"
+    f"test_oauth_authorize.py::{_CONSENT_CHOICE_PROBE.__qualname__.replace('.', '::')}"
 )
+_WEBSOCKET_PROBE = "test_websocket_team_answers_like_a_missing_one"
 
 # (method, route path, parameter) triples that ROUTES does not probe, each
 # with the reason it needs no out-of-scope probe here (CHT-1808, per
@@ -620,7 +627,7 @@ NOT_ROW_KEYED = {
     ("GET", "/api/documents/{document_id}/revisions/{version}", "version"): _REVISION,
     ("WEBSOCKET", "/ws", "team_id"): (
         "a websocket handshake, which the HTTP client here cannot make: probed in "
-        "test_websocket_team_answers_like_a_missing_one below"
+        f"{_WEBSOCKET_PROBE} below"
     ),
 }
 
@@ -814,6 +821,7 @@ async def test_every_id_keyed_route_is_probed_or_explained():
             f"NOT_ROW_KEYED lists {entry}, but ROUTES entry {called[entry]} reaches it "
             "(a stale ROUTES entry falls through to the SPA catch-all)"
         )
+    assert callable(globals().get(_WEBSOCKET_PROBE)), f"NOT_ROW_KEYED names {_WEBSOCKET_PROBE}, which is gone"
     # And the per-entry expectations name entries ROUTES still has.
     entries = {(method, path, placeholder) for method, path, _body, placeholder in ROUTES}
     for entry in sorted(set(REFUSED_ALIKE) - entries):

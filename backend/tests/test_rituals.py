@@ -130,6 +130,19 @@ class TestRitualGroupServiceValidation:
         with pytest.raises(ValueError, match="not found"):
             await service.create(ritual_in, test_project.id)
 
+    async def test_create_ritual_with_an_empty_group_id(self, client, auth_headers, test_project):
+        """An empty group id is a missing group's 400, not the groups
+        foreign key's 500 (CHT-1829)."""
+        responses = [
+            await client.post(
+                f"/api/projects/{test_project.id}/rituals",
+                json={"name": f"r{i}", "prompt": "x", "group_id": group_id}, headers=auth_headers,
+            )
+            for i, group_id in enumerate(("", "missing-group"))
+        ]
+        assert [r.status_code for r in responses] == [400, 400], [r.text for r in responses]
+        assert responses[0].json() == {"detail": "Ritual group '' not found in this project"}
+
     async def test_create_ritual_in_other_project_group(self, db, test_project, test_team):
         """Test that creating a ritual in a group from another project fails."""
         from app.oxyde_models.project import OxydeProject
