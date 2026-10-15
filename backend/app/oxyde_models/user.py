@@ -41,9 +41,13 @@ class OxydeUser(Model):
     # Every agent has a team (CHT-1837): a team-scoped agent's own, a
     # project-scoped agent's project's team. `derive_on_create` refuses
     # to insert an agent without one, and migration 0036 backfilled the
-    # project agents made before that. NULL for a human, and for an agent
-    # 0036 could not place (its project was already deleted), which can
-    # reach nothing.
+    # project agents made before that. NULL for a human; for an agent
+    # 0036 could not place (its project or that project's team was
+    # already gone); and, since the guard covers INSERT only, for the
+    # agents of a deleted team: the column's `REFERENCES teams ON DELETE
+    # SET NULL` clears it (CHT-1844). An agent with NULL here can reach
+    # nothing: every check refuses a missing team, and its keys need
+    # their holder to be a member of it.
     agent_team_id: str | None = Field(default=None)
     agent_project_id: str | None = Field(default=None)
 
