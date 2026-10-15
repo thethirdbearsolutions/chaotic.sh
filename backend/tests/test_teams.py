@@ -754,3 +754,78 @@ async def test_team_service_decline_invitation(db, test_team, test_user):
 
     await service.decline_invitation(invitation)
     assert invitation.status == InvitationStatus.DECLINED
+
+
+@pytest.mark.asyncio
+async def test_add_member_twice_keeps_the_existing_membership(db, test_team, test_user2):
+    """One membership per user per team (CHT-1791): a second add_member
+    for the same user hits the unique index and returns the membership
+    they already have, role included, instead of raising."""
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.services.team_service import TeamService
+
+    service = TeamService()
+    first = await service.add_member(test_team, test_user2, TeamRole.ADMIN)
+    second = await service.add_member(test_team, test_user2, TeamRole.MEMBER)
+
+    assert second.id == first.id
+    assert second.role == TeamRole.ADMIN
+    rows = await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=test_user2.id).all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_database_rejects_a_second_membership(db, test_team, test_user):
+    """The unique index itself (migration 0033), below the service."""
+    from oxyde import IntegrityError
+    from app.oxyde_models.team import OxydeTeamMember
+
+    with pytest.raises(IntegrityError):
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user.id, role=TeamRole.MEMBER)
+
+
+@pytest.mark.asyncio
+async def test_accept_invitation_losing_an_insert_race_returns_the_winner(
+    db, test_team, test_user, test_user2, monkeypatch
+):
+    """A membership written between accept_invitation's check and its
+    insert (CHT-1791): the insert hits the unique index, and the accept
+    returns that membership rather than a 500."""
+    import secrets
+    from datetime import datetime, timedelta, timezone
+    from app.oxyde_models.team import OxydeTeamInvitation, OxydeTeamMember
+    from app.services.team_service import TeamService
+
+    invitation = await OxydeTeamInvitation.objects.create(
+        team_id=test_team.id,
+        email=test_user2.email,
+        role=TeamRole.ADMIN,
+        token=secrets.token_urlsafe(32),
+        invited_by_id=test_user.id,
+        status=InvitationStatus.PENDING,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+    winner = await OxydeTeamMember.objects.create(
+        team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER
+    )
+    service = TeamService()
+    real_get_member = service.get_member
+    calls = []
+
+    async def misses_once(team_id, user_id):
+        calls.append(user_id)
+        if len(calls) == 1:
+            return None  # the check ran before the other writer
+        return await real_get_member(team_id, user_id)
+
+    monkeypatch.setattr(service, "get_member", misses_once)
+
+    member = await service.accept_invitation(invitation, test_user2)
+
+    assert member.id == winner.id
+    assert member.role == TeamRole.MEMBER
+    assert len(calls) == 2
+    rows = await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=test_user2.id).all()
+    assert len(rows) == 1
+    await invitation.refresh()
+    assert invitation.status == InvitationStatus.ACCEPTED
