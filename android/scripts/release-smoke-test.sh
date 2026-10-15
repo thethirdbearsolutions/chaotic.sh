@@ -11,6 +11,12 @@
 # starting: Hilt builds the application graph, the write runner opens the
 # Room cache, and the navigation graph serializes its start route.
 #
+# What a green run does not prove: only an uncaught exception reaches the
+# crash buffer, so a stripped class behind code that catches its own errors
+# passes, and nothing reached only after sign-in (response serializers, the
+# list and issue screens, workers run later) is exercised. It shows that
+# the app starts and draws its first screen, not that R8 is fine everywhere.
+#
 # CI builds the release APKs unsigned (CHT-1661), and Android installs only
 # signed APKs, so this signs a copy of each with a throwaway key made here
 # and discarded on exit. Nothing is signed with a real key.
@@ -21,10 +27,17 @@ set -euo pipefail
 
 PACKAGE=sh.chaotic.android
 ACTIVITY=sh.chaotic.android/.MainActivity
-# The sign-in screen's title (app/src/main/res/values/strings.xml, sign_in_title).
-EXPECTED_TEXT="Sign in to Chaotic"
-# How long the app gets to show it after the activity is up.
+# The sign-in screen's title, read from the app's own strings so the two
+# cannot drift apart.
+STRINGS="$(dirname "$0")/../app/src/main/res/values/strings.xml"
+EXPECTED_TEXT=$(sed -n 's:.*<string name="sign_in_title">\(.*\)</string>.*:\1:p' "$STRINGS")
+if [ -z "$EXPECTED_TEXT" ]; then
+    echo "sign_in_title not found in $STRINGS" >&2
+    exit 1
+fi
+# How long, in wall-clock seconds, the app gets to show it after launching.
 WAIT_SECONDS=${SMOKE_WAIT_SECONDS:-60}
+DUMP=/sdcard/smoke-window.xml
 
 if [ "$#" -eq 0 ]; then
     echo "usage: $0 APK [APK ...]" >&2
@@ -51,14 +64,26 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 # A throwaway key, the same shape as Android's debug key.
-keytool -genkeypair -noprompt -keystore "$WORK/smoke.jks" -storepass smoketest \
+if ! keytool -genkeypair -noprompt -keystore "$WORK/smoke.jks" -storepass smoketest \
     -keypass smoketest -alias smoke -keyalg RSA -keysize 2048 -validity 1 \
-    -dname "CN=Chaotic CI smoke test" > /dev/null 2>&1
+    -dname "CN=Chaotic CI smoke test" > "$WORK/keytool.log" 2>&1; then
+    cat "$WORK/keytool.log" >&2
+    echo "keytool could not make the throwaway key" >&2
+    exit 1
+fi
 
-# The UI as uiautomator sees it (Compose exposes text through accessibility).
+# The UI as uiautomator sees it now (Compose exposes text through
+# accessibility), or nothing. The old dump is removed first: uiautomator
+# can exit 0 without writing one ("could not get idle state"), and a file
+# left from the previous APK would otherwise pass for this one's screen.
 screen_xml() {
-    adb shell uiautomator dump /sdcard/smoke-window.xml > /dev/null 2>&1 || return 0
-    adb shell cat /sdcard/smoke-window.xml 2> /dev/null || true
+    adb shell rm -f "$DUMP" > /dev/null 2>&1 || true
+    adb shell uiautomator dump "$DUMP" > /dev/null 2>&1 || return 0
+    local xml
+    xml=$(adb shell cat "$DUMP" 2> /dev/null || true)
+    # Only a complete dump counts.
+    [[ "$xml" == *"</hierarchy>"* ]] && printf '%s\n' "$xml"
+    return 0
 }
 
 # The crash buffer, which holds every uncaught exception's stack trace.
@@ -103,18 +128,26 @@ for apk in "$@"; do
     esac
 
     seen=""
-    for _ in $(seq 1 "$WAIT_SECONDS"); do
+    captured=""
+    deadline=$((SECONDS + WAIT_SECONDS))
+    while [ "$SECONDS" -lt "$deadline" ]; do
         # Captured first: with pipefail, grep -q exiting early would fail
         # the pipe on the writer's SIGPIPE and read as "not found".
         crashes=$(crash_log)
         case "$crashes" in *"$PACKAGE"*) fail "$name" "the app crashed" ;; esac
         screen=$(screen_xml)
-        if [[ "$screen" == *"$EXPECTED_TEXT"* ]]; then
+        [ -n "$screen" ] && captured=yes
+        # The text, in a node that belongs to this app (the quoted parts
+        # of the pattern match literally).
+        if [[ "$screen" =~ "text=\"$EXPECTED_TEXT\""[^\>]*"package=\"$PACKAGE\"" ]]; then
             seen=yes
             break
         fi
         sleep 1
     done
+    if [ -z "$seen" ] && [ -z "$captured" ]; then
+        fail "$name" "uiautomator produced no screen dump in ${WAIT_SECONDS}s"
+    fi
     [ -n "$seen" ] || fail "$name" "\"$EXPECTED_TEXT\" did not appear within ${WAIT_SECONDS}s" with-screen
 
     # And it is still up a few seconds later: a crash in work started after

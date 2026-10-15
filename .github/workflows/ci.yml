@@ -190,9 +190,10 @@ jobs:
 
       # Whether android-release-smoke should run: always on main and on a
       # manual run, and on a pull request only when it changes the app or
-      # this workflow. Compared with the base branch's tip, so a change
-      # that landed on main since the branch point can also count (it only
-      # ever runs the smoke test more often, never less).
+      # this workflow. HEAD is the merge ref, compared with the base
+      # branch's current tip, so a commit that reached main after GitHub
+      # built the merge ref can also count (it only ever runs the smoke
+      # test more often, never less).
       - name: Does this change the Android app?
         id: changes
         working-directory: .
@@ -302,7 +303,8 @@ jobs:
           name: release-apks
           path: android/app/build/outputs/apk/*/release/*.apk
           if-no-files-found: error
-          retention-days: 1
+          # Long enough to re-run only the smoke job over a weekend.
+          retention-days: 3
           # A re-run of this job uploads again under the same name.
           overwrite: true
 
@@ -326,7 +328,11 @@ jobs:
     timeout-minutes: 20
 
     steps:
+      # Only the script is needed; the token stays out of .git/config while
+      # the third-party emulator action runs.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Java
         uses: actions/setup-java@v5
