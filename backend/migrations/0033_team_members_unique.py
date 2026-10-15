@@ -10,14 +10,16 @@ its insert), which hold only because SQLite serialises writers.
 
 Existing duplicates are removed first, through ctx.execute (data, not
 schema, so the replay ignores it). For each (team_id, user_id) with
-more than one row, exactly one row is kept:
-
-  1. the most privileged role: OWNER, then ADMIN, then MEMBER (the order
-     of TeamRole). The role column stores the enum name (0007); the
-     value and the `TeamRole.X` spelling written before CHT-998 rank the
-     same, and anything else ranks below MEMBER;
-  2. then the earliest joined_at;
-  3. then the lowest id.
+more than one row, exactly one row is kept: the first one inserted
+(the lowest rowid). That is the row the application has been treating
+as the membership: TeamService.get_member reads
+filter(team_id, user_id).first(), with no ORDER BY and no index on the
+pair, so SQLite scans team_members and returns the lowest-rowid row,
+and update_member_role writes back to that same row. Every role check
+and every role change has gone through it, so keeping it keeps each
+user's effective role exactly as it was. Keeping the most privileged
+row instead would undo a demotion made after a duplicate appeared
+(review of PR #431).
 
 The others are deleted. A row is all a membership is: no table has a
 foreign key to team_members.id, and nothing stores a membership's id
@@ -26,12 +28,21 @@ user_id), so there is nothing to repoint. Rows with a NULL user_id are
 left alone: SQLite's unique index treats NULLs as distinct, so they do
 not conflict, and they are not memberships of any one user.
 
+What the dedupe cannot fix: if a user with duplicate rows was removed
+from a team, remove_member deleted only the row get_member returned, and
+the leftover has kept them a member since. That leftover is now the
+group's only row, so the dedupe never sees it. Compare the report below
+with recent removals (CHT-1820).
+
 The removal is reported, not silent: before anything is written the
 migration reads the rows it will delete through its own Oxyde
 connection (never Python's sqlite3, CHT-1491) and prints one line per
 row (id, team, user, role, joined_at) and a total, visible in
 `oxyde migrate` / `chaotic system upgrade` output. Migration execution
 is transactional, so if it fails after printing nothing was deleted.
+The report and the DELETE are separate reads, so stop the server before
+migrating (as `chaotic system upgrade` does): a duplicate written in
+between would be removed without being printed.
 On a context with no connection to read through, it prints a one-line
 notice instead; the dedupe happens either way. To check before
 upgrading (read-only):
@@ -46,23 +57,13 @@ Created: 2026-10-15 10:45:43
 
 depends_on = "0032_email_verification"
 
-# Lower is more privileged. Every spelling of a role ever stored.
-_ROLE_RANK = (
-    "CASE "
-    "WHEN role IN ('OWNER', 'owner', 'TeamRole.OWNER') THEN 0 "
-    "WHEN role IN ('ADMIN', 'admin', 'TeamRole.ADMIN') THEN 1 "
-    "WHEN role IN ('MEMBER', 'member', 'TeamRole.MEMBER') THEN 2 "
-    "ELSE 3 END"
-)
-
 # The rows the dedupe deletes: every row of a (team_id, user_id) group
-# but the one that sorts first. The report and the DELETE share it, so
-# what is printed is what is removed.
+# but the first inserted. The report and the DELETE share it.
 LOSERS_SQL = (
     "SELECT id, team_id, user_id, role, joined_at FROM ("
     "SELECT id, team_id, user_id, role, joined_at, ROW_NUMBER() OVER ("
     "PARTITION BY team_id, user_id "
-    f"ORDER BY {_ROLE_RANK}, joined_at IS NULL, joined_at, id"
+    "ORDER BY rowid"
     ") AS keep_rank FROM team_members WHERE user_id IS NOT NULL"
     ") WHERE keep_rank > 1"
 )
@@ -124,7 +125,7 @@ def report_duplicates(ctx, echo=print) -> int | None:
         echo(
             "[0033] cannot pre-scan team_members for duplicate memberships (no SQLite "
             "connection to read through); any duplicates will still be removed, keeping "
-            "the most privileged, earliest-joined row of each (team_id, user_id)."
+            "the first-inserted row of each (team_id, user_id)."
         )
         return None
     losers = _read_through_oxyde(database, LOSERS_SQL, [])

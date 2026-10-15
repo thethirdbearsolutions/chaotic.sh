@@ -231,8 +231,11 @@ class TeamService:
                         role=invitation.role,
                     )
                 except IntegrityError:
-                    # A membership written since the check above (the
-                    # unique index of CHT-1791): keep it, as above.
+                    # Defence in depth for the unique index (CHT-1791).
+                    # Unreachable on SQLite: the claim above already holds
+                    # the write lock, so no other writer can insert in
+                    # between. Any backend that doesn't serialise writers
+                    # gets the existing membership, as above.
                     member = await self.get_member(invitation.team_id, user.id)
                     if member is None:
                         raise
