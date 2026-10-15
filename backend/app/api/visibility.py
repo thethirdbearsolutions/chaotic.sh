@@ -312,3 +312,26 @@ async def visible_user(user, user_id: str):
         if await is_in_team_directory(user, team_id):
             return target
     raise not_found("User not found")
+
+
+async def shown_emails(viewer, users) -> dict[str, str | None]:
+    """Each of `users`' address as `viewer` may see it, by user id.
+
+    A session identity's address hides wherever its external_ref does
+    (``sees_external_ref``), as on GET /users/{id} (CHT-1841). Since
+    CHT-1864 the address carries no ref material (it is
+    ``session-<random>@agent.local``), so this is defence in depth, not
+    the only guard. Every other user's address is returned as is. Each
+    session identity is checked once, however many rows it has."""
+    from app.api.agents import sees_external_ref  # agents imports this module
+    from app.enums import AgentKind
+
+    shown: dict[str, str | None] = {}
+    for user in users:
+        if user is None or user.id in shown:
+            continue
+        email = user.email
+        if user.is_agent and user.kind == AgentKind.SESSION and not await sees_external_ref(viewer, user):
+            email = None
+        shown[user.id] = email
+    return shown

@@ -25,9 +25,10 @@ async def get_user(user_id: str, current_user: CurrentUser) -> UserLookupRespons
 
         if not await sees_external_ref(current_user, user):
             response.external_ref = None
-            # A session identity's address is made from its external_ref
-            # (RegistrationService), so it hides with it. Any other
-            # agent's address (agent-<uuid>@agent.local) carries nothing.
+            # A session identity's address was made from its external_ref
+            # until CHT-1864 (migration 0039 rewrote those), so it still
+            # hides with it, as in the activity feeds (shown_emails). Any
+            # other agent's address (agent-<uuid>@agent.local) carries nothing.
             if user.kind == AgentKind.SESSION:
                 response.email = None
     return response

@@ -289,9 +289,9 @@ async def test_get_user_names_an_agents_owner_and_registrar_and_hides_a_session_
     client, auth_headers, test_user, test_team,
 ):
     """An agent seen at /users/{id} names its owner and registrar, as
-    /agents/{id} and /auth/me do. A session identity's address is made
-    from its external_ref, so it hides from whoever the ref hides from;
-    any other agent's address does not (CHT-1841)."""
+    /agents/{id} and /auth/me do. A session identity's address was made
+    from its external_ref before CHT-1864, so it hides from whoever the
+    ref hides from; any other agent's address does not (CHT-1841)."""
     from app.enums import AgentKind, TeamRole
     from app.oxyde_models.team import OxydeTeamMember
     from app.oxyde_models.user import OxydeUser

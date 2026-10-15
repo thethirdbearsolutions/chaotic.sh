@@ -10,8 +10,8 @@ from app.api.deps import (
     confined_project_id, is_eligible_project_member,
 )
 from app.api.visibility import (
-    can_see_label, can_see_project, not_found, project_filter_in_team, team_hidden, visible_issue,
-    visible_issue_by_identifier, visible_project, visible_sprint,
+    can_see_label, can_see_project, not_found, project_filter_in_team, shown_emails, team_hidden,
+    visible_issue, visible_issue_by_identifier, visible_project, visible_sprint,
 )
 from app.utils import ensure_utc
 
@@ -996,6 +996,9 @@ async def list_team_activities(
             return sprint_names.get(activity.old_value)
         return None
 
+    # A session identity's address hides with its external_ref (CHT-1864).
+    emails = await shown_emails(current_user, [a.user for a in issue_activities + doc_activities])
+
     # Convert to response format
     issue_responses = [
         IssueActivityFeedResponse(
@@ -1005,7 +1008,7 @@ async def list_team_activities(
             issue_title=a.issue.title if a.issue else None,
             user_id=a.user_id,
             user_name=a.user.name if a.user else None,
-            user_email=a.user.email if a.user else None,
+            user_email=emails.get(a.user.id) if a.user else None,
             activity_type=_activity_type_value(a.activity_type, ActivityType),
             field_name=a.field_name,
             old_value=a.old_value,
@@ -1024,7 +1027,7 @@ async def list_team_activities(
             document_icon=a.document_icon or (a.document and a.document.icon),
             user_id=a.user_id,
             user_name=a.user and a.user.name,
-            user_email=a.user and a.user.email,
+            user_email=emails.get(a.user.id) if a.user else None,
             activity_type=_activity_type_value(a.activity_type, DocumentActivityType),
             created_at=ensure_utc(a.created_at),
         )
@@ -1368,13 +1371,16 @@ async def list_activities(
             return sprint_names.get(activity.old_value)
         return None
 
+    # A session identity's address hides with its external_ref (CHT-1864).
+    emails = await shown_emails(current_user, [a.user for a in activities])
+
     return await fill_principals([
         IssueActivityResponse(
             id=a.id,
             issue_id=a.issue_id,
             user_id=a.user_id,
             user_name=a.user.name if a.user else None,
-            user_email=a.user.email if a.user else None,
+            user_email=emails.get(a.user.id) if a.user else None,
             activity_type=_activity_type_value(a.activity_type, ActivityType),
             field_name=a.field_name,
             old_value=a.old_value,
