@@ -1241,7 +1241,9 @@ textarea {
     list-style: none;
 }
 
-.markdown-body li > input[type="checkbox"]:first-child {
+/* Same :has() guard, so a browser without it keeps bullet + box side by side
+   rather than pulling the box onto the bullet. */
+.markdown-body li:has(> input[type="checkbox"]:first-child) > input[type="checkbox"]:first-child {
     margin: 0 0.5em 0 -1.4em;
     vertical-align: middle;
 }
@@ -3252,7 +3254,10 @@ input[type="checkbox"] {
 
 .dropdown-option span {
     flex: 1;
+    min-width: 0;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* The shortcut hint is a span too: without this it took half the row as a
