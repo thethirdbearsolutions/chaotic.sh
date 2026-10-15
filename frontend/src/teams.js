@@ -447,10 +447,11 @@ export async function handleInvite(event) {
       showInviteLink(email, inviteLinkForDisplay(invitation.accept_url), invitation.email_queued === true);
       return false;
     }
-    // A server before CHT-1824 sends no link when it has SMTP; the email
-    // is only queued, so do not claim it was delivered.
+    // Only a server before CHT-1824 (with SMTP) sends no link. This page
+    // is served by the server it talks to, so that should not happen;
+    // if it does, do not claim the email was delivered.
     closeModal();
-    showToast("Invitation created. An email was queued; delivery isn't confirmed.", 'success');
+    showToast("Invitation created. An email was queued; delivery isn't confirmed.", 'info');
   } catch (e) {
     if (isPendingInvitationRefusal(e)) {
       showToast(`${e.message} Its Cancel button is under Pending Invitations.`, 'error');

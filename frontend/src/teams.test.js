@@ -840,7 +840,7 @@ describe('handleInvite', () => {
     api.getTeamInvitations.mockResolvedValue([]);
     await handleInvite({ preventDefault: vi.fn() });
     expect(closeModal).toHaveBeenCalled();
-    expect(showToast).toHaveBeenCalledWith("Invitation created. An email was queued; delivery isn't confirmed.", 'success');
+    expect(showToast).toHaveBeenCalledWith("Invitation created. An email was queued; delivery isn't confirmed.", 'info');
     expect(document.getElementById('modal-content').innerHTML).not.toContain('/invite/');
   });
 

@@ -302,7 +302,7 @@ class TestTeamInvite:
         assert result.exit_code == 0
         assert 'Invitation created for bob@test.com' in result.output
         assert 'Invitation sent' not in result.output
-        assert "isn't confirmed" in result.output
+        assert "isn't confirmed" in " ".join(result.output.split())
         assert '/invite/' not in result.output
 
     def test_team_invite_pending_409_names_the_cancel_command(self, cli_runner):
@@ -311,7 +311,7 @@ class TestTeamInvite:
 
         detail = {"error_code": "invitation_pending", "message": "A pending invitation exists.",
                   "invitation_id": "inv-9"}
-        client.invite_member = MagicMock(side_effect=APIError("A pending invitation exists.", 409, detail))
+        client.invite_member = MagicMock(side_effect=_api_error(APIError, "A pending invitation exists.", 409, detail))
 
         result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
 
@@ -319,11 +319,60 @@ class TestTeamInvite:
         assert 'A pending invitation exists.' in result.output
         assert 'chaotic team cancel-invite inv-9' in " ".join(result.output.split())
 
+    def test_team_invite_old_server_wording_does_not_claim_an_email(self, cli_runner):
+        """Review of #438: a server older than CHT-1794 without SMTP also
+        sends no link, so the message must not say an email was queued."""
+        from cli.main import cli, client
+
+        client.invite_member = MagicMock(return_value={"id": "inv-1", "email": "bob@test.com"})
+
+        result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
+
+        assert result.exit_code == 0
+        assert 'queued' not in result.output
+        assert 'If this server sends email' in " ".join(result.output.split())
+
+    def test_team_invite_pending_409_json_is_structured(self, cli_runner):
+        """CHT-1824: under --json the refusal keeps its code and the id."""
+        import json
+        from cli.main import cli, client, APIError
+
+        detail = {"error_code": "invitation_pending", "message": "A pending invitation exists.",
+                  "invitation_id": "inv-9"}
+        client.invite_member = MagicMock(side_effect=_api_error(APIError, "A pending invitation exists.", 409, detail))
+
+        result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com', '--json'])
+
+        assert result.exit_code == 1
+        out = json.loads(result.output)
+        assert out["error_code"] == "invitation_pending"
+        assert out["invitation_id"] == "inv-9"
+        assert "cancel-invite inv-9" in out["hint"]
+        assert out["error"] == "A pending invitation exists."
+
+    def test_team_invite_json_prints_the_invitation_with_the_display_link(self, cli_runner, monkeypatch):
+        import json
+        import cli.main as main_mod
+        from cli.main import cli, client
+
+        token = "t" * 64
+        client.invite_member = MagicMock(return_value={
+            "id": "inv-1", "email": "bob@test.com", "email_queued": True,
+            "accept_url": f"http://localhost:24267/invite/{token}"})
+        monkeypatch.setattr(main_mod, "get_web_url", lambda: "https://chaotic.example.com")
+
+        result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com', '--json'])
+
+        assert result.exit_code == 0
+        out = json.loads(result.output)
+        assert out["accept_url"] == f"https://chaotic.example.com/invite/{token}"
+        assert out["email_queued"] is True
+
     def test_team_invite_pending_409_from_an_old_server(self, cli_runner):
         from cli.main import cli, client, APIError
 
         msg = "A pending invitation for this email already exists; revoke it to send a new one"
-        client.invite_member = MagicMock(side_effect=APIError(msg, 409, msg))
+        client.invite_member = MagicMock(side_effect=_api_error(APIError, msg, 409, msg))
 
         result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
 
@@ -333,7 +382,7 @@ class TestTeamInvite:
     def test_team_invite_other_errors_are_unchanged(self, cli_runner):
         from cli.main import cli, client, APIError
 
-        client.invite_member = MagicMock(side_effect=APIError("User is already a team member", 400,
+        client.invite_member = MagicMock(side_effect=_api_error(APIError, "User is already a team member", 400,
                                                               "User is already a team member"))
 
         result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
