@@ -17,6 +17,7 @@ from app.schemas.issue import (
     AddLabelRequest,
     IssueCommentCreate,
     IssueCommentUpdate,
+    IssueCommentCreated,
     IssueCommentResponse,
     IssueActivityResponse,
     IssueActivityFeedResponse,
@@ -1539,7 +1540,7 @@ async def list_sub_issues(
 # Comments
 @router.post(
     "/{issue_id}/comments",
-    response_model=IssueCommentResponse,
+    response_model=IssueCommentCreated,
     status_code=status.HTTP_201_CREATED,
 )
 @writes
@@ -1548,8 +1549,9 @@ async def create_comment(
     issue_id: str,
     comment_in: IssueCommentCreate,
     current_user: CurrentUser,
-) -> IssueCommentResponse:
-    """Create a comment on an issue."""
+) -> IssueCommentCreated:
+    """Create a comment on an issue. `warnings` names each @handle that
+    reached nobody (CHT-1735)."""
     issue_service = IssueService()
     project_service = ProjectService()
 
@@ -1568,7 +1570,8 @@ async def create_comment(
             detail="Not authorized to access this project",
         )
 
-    comment = await issue_service.create_comment(issue_id, comment_in, current_user.id)
+    warnings: list[str] = []
+    comment = await issue_service.create_comment(issue_id, comment_in, current_user.id, warnings=warnings)
 
     # Auto-link cross-referenced issues (CHT-133)
     try:
@@ -1576,7 +1579,7 @@ async def create_comment(
     except Exception:
         logger.warning("Failed to create cross-references for issue %s", issue_id, exc_info=True)
 
-    response = IssueCommentResponse(
+    response = IssueCommentCreated(
         id=comment.id,
         issue_id=comment.issue_id,
         author_id=comment.author_id,
@@ -1584,9 +1587,13 @@ async def create_comment(
         content=comment.content,
         created_at=ensure_utc(comment.created_at),
         updated_at=ensure_utc(comment.updated_at),
+        warnings=warnings,
     )
     await fill_principals(response)
-    await broadcast_comment_event(project.team_id, "created", response.model_dump(mode="json"))
+    # The warnings are the author's alone.
+    await broadcast_comment_event(
+        project.team_id, "created", response.model_dump(mode="json", exclude={"warnings"}),
+    )
     await broadcast_activity_event(project.team_id, "created", {"issue_id": comment.issue_id})
     return response
 

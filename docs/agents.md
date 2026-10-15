@@ -510,15 +510,23 @@ without letting anyone take another's handle:
   its mentions wait in its inbox.
 
 An agent may not be named with a person's @handle ("Ethan" or
-"Ethan · smith" beside a person "Ethan Smith"), just as it may not take
-their name; creating, renaming or registering one is refused with
-`name_matches_member`. A trailing `.`, `-` or `_` after a handle is
+"Ethan · smith" beside a person "Ethan Smith"), nor with a name whose
+session tail handle is one ("Ethan Bot · smith" would claim
+`ethan-smith`), just as it may not take their name; creating, renaming
+or registering one is refused with `name_matches_member`. A trailing `.`, `-` or `_` after a handle is
 sentence punctuation and is ignored.
 
 A project-scoped agent is reached only from its own project, and the web
 autocomplete offers it only there. One comment notifies at most 25
 principals; later handles are ignored. Handles follow names, so renaming
 an agent changes its handle (its id handle aside).
+
+The author is told when an @handle reached nobody: the comment create
+response (`POST /api/issues/{id}/comments`, `/api/documents/{id}/comments`,
+MCP `issue_comment`, `chaotic issue comment`) carries `warnings`, one per
+unknown or ambiguous handle. An ambiguous one lists the handles to use
+instead, only for principals the author could mention from there. A word
+with an `@` inside it, such as an email address, is not a mention.
 
 ## Remote MCP (Streamable HTTP, `/mcp`)
 

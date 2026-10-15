@@ -2285,9 +2285,11 @@ class IssueService:
 
     # Comment operations
     async def create_comment(
-        self, issue_id: str, comment_in: IssueCommentCreate, author_id: str
+        self, issue_id: str, comment_in: IssueCommentCreate, author_id: str,
+        *, warnings: list[str] | None = None,
     ) -> OxydeIssueComment:
-        """Create a comment on an issue."""
+        """Create a comment on an issue. `warnings`, when given, receives
+        the author's @mention warnings (CHT-1735, see notify_mentions)."""
         async with atomic():
             comment = await OxydeIssueComment.objects.create(
                 issue_id=issue_id,
@@ -2304,30 +2306,34 @@ class IssueService:
         await comment.refresh()
 
         try:
-            await self._notify_comment_mentions(issue_id, comment_in.content, author_id)
+            mention_warnings = await self._notify_comment_mentions(issue_id, comment_in.content, author_id)
         except Exception:
             logger.exception(
                 "Failed to write mention inbox entries for issue=%s comment=%s",
                 issue_id, comment.id,
             )
+        else:
+            if warnings is not None:
+                warnings.extend(mention_warnings)
 
         return await self.get_comment_by_id(comment.id)
 
-    async def _notify_comment_mentions(self, issue_id: str, content: str, author_id: str) -> None:
-        """CHT-1250: @mention fan-out for an issue comment."""
+    async def _notify_comment_mentions(self, issue_id: str, content: str, author_id: str) -> list[str]:
+        """CHT-1250: @mention fan-out for an issue comment; returns the
+        author's warnings."""
         from app.services.inbox_service import InboxService
         from app.services.user_service import UserService
 
         issue = await self.get_by_id(issue_id)
         if issue is None:
-            return
+            return []
         project = await OxydeProject.objects.get_or_none(id=issue.project_id)
         if project is None:
-            return
+            return []
         author = await UserService().get_by_id(author_id)
         if author is None:
-            return
-        await InboxService().notify_mentions(
+            return []
+        return await InboxService().notify_mentions(
             content=content, team_id=project.team_id, author=author, issue=issue,
         )
 

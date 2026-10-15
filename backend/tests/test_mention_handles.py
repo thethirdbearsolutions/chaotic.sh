@@ -207,6 +207,9 @@ class TestDirectory:
             _agent("Twin", id="0badc0de-0000-0000-0000-000000000001"),
             _agent("Twin", id="0badc0de-0000-0000-0000-000000000002"),
             _agent("Scoped", project="p1"),
+            # Tail handles that are a person's or an agent's (CHT-1741;
+            # registration refuses the first, the directory must cope anyway).
+            _session("Ethan Bot · smith"), _session("Claude Bot · mcp"),
         ]
         everyone = people + agents + sessions + idle
         d = MentionDirectory(everyone, idle_ids={s.id for s in idle})
@@ -219,6 +222,12 @@ class TestDirectory:
             assert d.resolve(h + "..") == x.id, (x.name, h)
             handles[x.id] = h
         assert len(set(handles.values())) == len(everyone)
+        # What an ambiguous-mention warning suggests (CHT-1735): every
+        # candidate's handle reaches exactly that candidate.
+        for x in everyone:
+            for token in candidates(x):
+                for i in d.claimants(token):
+                    assert d.resolve(d.handle_for(i)) == i, (x.name, token)
 
     def test_two_people_sharing_a_word_reach_nobody_by_it(self):
         a, b = _user("Ethan Smith"), _user("Ethan Jones")
@@ -436,3 +445,127 @@ class TestSessionToSession:
         # Claude MCP, not the human.
         everyone = await OxydeInboxEntry.objects.filter(kind=InboxEntryKind.MENTION.name).all()
         assert [e.recipient_user_id for e in everyone] == [b["agent"]["id"]]
+
+
+# ---------------------------------------------------------------------------
+# Warnings for the author (CHT-1735)
+# ---------------------------------------------------------------------------
+
+async def _notify(team, author, issue, content):
+    return await InboxService().notify_mentions(content=content, team_id=team.id, author=author, issue=issue)
+
+
+@pytest.mark.asyncio
+class TestMentionWarnings:
+    async def test_unknown_and_ambiguous_handles_warn_and_resolved_ones_do_not(
+        self, db, test_team, test_project, test_issue, test_user,
+    ):
+        other = await OxydeProject.objects.create(team_id=test_team.id, name="Other", key="OTH")
+        await _team_agent(test_team.id, "Claude MCP", parent=test_user)
+        for tail in ("bbbb2222", "aaaa1111"):
+            await _team_agent(test_team.id, f"Claude Code (cloud) · {tail}", kind=AgentKind.SESSION, parent=test_user)
+        # Claims the word too, but the author cannot mention it from here.
+        await _team_agent(test_team.id, "Claude Scoped", project_id=other.id, parent=test_user)
+
+        warnings = await _notify(
+            test_team, test_user, test_issue,
+            "@claude-mcp, @claude and @nobody. Mail foo@bar.com, @Nobody again, "
+            "me @test, and `@ghost` in code.",
+        )
+        assert warnings == [
+            "@claude is ambiguous; nobody was notified. "
+            "Use one of: @claude-aaaa1111, @claude-bbbb2222, @claude-mcp.",
+            "@nobody matches nobody who can be mentioned here; nobody was notified.",
+        ]
+
+    async def test_nothing_to_warn_about(self, db, test_team, test_issue, test_user):
+        assert await _notify(test_team, test_user, test_issue, "no mentions, a@b.c") == []
+        assert await _notify(test_team, test_user, test_issue, "@test @. hi") == []
+
+    async def test_principals_the_author_cannot_mention_are_not_revealed(
+        self, db, test_team, test_issue, test_user,
+    ):
+        from app.oxyde_models.team import OxydeTeam
+
+        other = await OxydeProject.objects.create(team_id=test_team.id, name="Other", key="OTH")
+        await _team_agent(test_team.id, "There Bot", project_id=other.id, parent=test_user)
+        await _team_agent(test_team.id, "Twin Bot", project_id=other.id, parent=test_user)
+        await _team_agent(test_team.id, "Twin Bot", project_id=other.id, parent=test_user)
+        elsewhere = await OxydeTeam.objects.create(name="Elsewhere", key="ELS")
+        await _team_agent(elsewhere.id, "Far Bot", parent=test_user)
+
+        warnings = await _notify(test_team, test_user, test_issue, "@there-bot @twin-bot @far-bot")
+        assert warnings == [
+            f"@{h} matches nobody who can be mentioned here; nobody was notified."
+            for h in ("there-bot", "twin-bot", "far-bot")
+        ]
+
+    async def test_warnings_and_candidates_are_capped(
+        self, db, test_team, test_issue, test_user, monkeypatch,
+    ):
+        import app.services.inbox_service as inbox_module
+
+        monkeypatch.setattr(inbox_module, "MAX_MENTION_WARNINGS", 2)
+        monkeypatch.setattr(inbox_module, "MAX_MENTION_CANDIDATES", 2)
+        monkeypatch.setattr(inbox_module, "MAX_MENTION_RECIPIENTS", 1)
+        for i in range(3):
+            await _team_agent(test_team.id, f"Claude {i}", parent=test_user)
+        await _team_agent(test_team.id, "Bot A", parent=test_user)
+        await _team_agent(test_team.id, "Bot B", parent=test_user)
+
+        warnings = await _notify(test_team, test_user, test_issue, "@claude @x @y @z @bot-a @bot-b")
+        assert warnings == [
+            "@claude is ambiguous; nobody was notified. Use one of: @claude-0, @claude-1 (and 1 more).",
+            "@x matches nobody who can be mentioned here; nobody was notified.",
+            "2 more @handles reached nobody.",
+            "This comment mentions 2 members; only the first 1 were notified.",
+        ]
+
+    async def test_rest_comment_carries_warnings_and_the_broadcast_does_not(
+        self, client, auth_headers, test_team, test_issue, test_document, test_user, monkeypatch,
+    ):
+        import app.api.documents as documents_api
+        import app.api.issues as issues_api
+
+        broadcast = []
+
+        async def capture(team_id, action, payload):
+            broadcast.append(payload)
+
+        monkeypatch.setattr(issues_api, "broadcast_comment_event", capture)
+        monkeypatch.setattr(documents_api, "broadcast_comment_event", capture)
+        for _ in range(2):
+            await _team_agent(test_team.id, "Claude Bot", parent=test_user)
+
+        r = await client.post(
+            f"/api/issues/{test_issue.id}/comments", json={"content": "@nobody and @claude-bot"}, headers=auth_headers,
+        )
+        assert r.status_code == 201, r.text
+        warnings = r.json()["warnings"]
+        assert warnings[0].startswith("@nobody matches nobody")
+        assert warnings[1].startswith("@claude-bot is ambiguous") and "@claude." in warnings[1]
+
+        r = await client.post(
+            f"/api/documents/{test_document.id}/comments", json={"content": "cc @nobody"}, headers=auth_headers,
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["warnings"] == ["@nobody matches nobody who can be mentioned here; nobody was notified."]
+
+        r = await client.post(
+            f"/api/issues/{test_issue.id}/comments", json={"content": "plain"}, headers=auth_headers,
+        )
+        assert r.json()["warnings"] == []
+        assert len(broadcast) == 3 and all("warnings" not in p for p in broadcast)
+
+    async def test_a_failed_fan_out_still_saves_the_comment(
+        self, db, test_issue, test_user, monkeypatch,
+    ):
+        async def boom(self, **kw):
+            raise RuntimeError("inbox down")
+
+        monkeypatch.setattr(InboxService, "notify_mentions", boom)
+        warnings: list[str] = []
+        comment = await IssueService().create_comment(
+            test_issue.id, IssueCommentCreate(content="@nobody"), author_id=test_user.id, warnings=warnings,
+        )
+        assert comment.content == "@nobody" and warnings == []

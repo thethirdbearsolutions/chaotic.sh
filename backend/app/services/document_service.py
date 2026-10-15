@@ -416,9 +416,11 @@ class DocumentService:
 
     # Comment methods
     async def create_comment(
-        self, document_id: str, comment_in: DocumentCommentCreate, author_id: str
+        self, document_id: str, comment_in: DocumentCommentCreate, author_id: str,
+        *, warnings: list[str] | None = None,
     ) -> OxydeDocumentComment:
-        """Create a comment on a document."""
+        """Create a comment on a document. `warnings`, when given, receives
+        the author's @mention warnings (CHT-1735, see notify_mentions)."""
         # Get the document to access team_id for activity logging
         document = await self.get_by_id(document_id)
 
@@ -444,24 +446,28 @@ class DocumentService:
 
         if document:
             try:
-                await self._notify_comment_mentions(document, comment_in.content, author_id)
+                mention_warnings = await self._notify_comment_mentions(document, comment_in.content, author_id)
             except Exception:
                 logger.exception(
                     "Failed to write mention inbox entries for document=%s comment=%s",
                     document_id, comment.id,
                 )
+            else:
+                if warnings is not None:
+                    warnings.extend(mention_warnings)
 
         return await self.get_comment_by_id(comment.id)
 
-    async def _notify_comment_mentions(self, document, content: str, author_id: str) -> None:
-        """CHT-1250: @mention fan-out for a document comment."""
+    async def _notify_comment_mentions(self, document, content: str, author_id: str) -> list[str]:
+        """CHT-1250: @mention fan-out for a document comment; returns the
+        author's warnings."""
         from app.services.inbox_service import InboxService
         from app.services.user_service import UserService
 
         author = await UserService().get_by_id(author_id)
         if author is None:
-            return
-        await InboxService().notify_mentions(
+            return []
+        return await InboxService().notify_mentions(
             content=content, team_id=document.team_id, author=author, document=document,
         )
 

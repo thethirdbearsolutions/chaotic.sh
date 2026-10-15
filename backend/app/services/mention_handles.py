@@ -91,6 +91,12 @@ def _strip_trailing(token: str) -> str:
     return token.rstrip("._-")
 
 
+def normalize_token(token: str) -> str:
+    """A typed token the way it is looked up: lowercased, without
+    trailing sentence punctuation."""
+    return _strip_trailing(token.lower())
+
+
 def _hex(user_id: str) -> str:
     return user_id.replace("-", "").lower()
 
@@ -111,6 +117,19 @@ def handle_words(user) -> frozenset[str]:
     """The name-derived handles of a principal (not its id handle): what
     an agent's whole name may not equal (registration rule 8, by handle)."""
     return frozenset(h for h, _ in named_candidates(user))
+
+
+def agent_name_handles(name: str) -> frozenset[str]:
+    """The strong handles an agent called `name` would claim, whatever
+    its kind: its whole name and, for a ``<registrar> · … · <tail>`` name,
+    the session tail handle ``<first word>-<tail>``. An agent may not
+    take one that is a person's (registration rule 8, by handle). Its
+    first word is weak, so it may share a person's: ``@ethan`` stays
+    Ethan's beside an agent "Ethan Bot" (CHT-1741)."""
+    from types import SimpleNamespace
+
+    stub = SimpleNamespace(is_agent=True, kind=AgentKind.SESSION, name=name, email=None)
+    return frozenset(h for h, weak in named_candidates(stub) if not weak)
 
 
 def named_candidates(user) -> tuple[tuple[str, bool], ...]:
@@ -236,7 +255,12 @@ class MentionDirectory:
     def _token_claimants(self, token: str) -> set[str]:
         """`_claimants` of a typed token, lowercased and without trailing
         '.', '-' or '_' (no candidate keeps one, see named_candidates)."""
-        return self._claimants(_strip_trailing(token.lower()))
+        return self._claimants(normalize_token(token))
+
+    def claimants(self, token: str) -> frozenset[str]:
+        """Every principal `token` names: one when it resolves, several
+        when it is ambiguous, none when it is unknown."""
+        return frozenset(self._token_claimants(token))
 
     def handle_for(self, user_id: str) -> str | None:
         """The handle to show for `user_id`: its first candidate that names

@@ -280,6 +280,12 @@ class TestIssueCommentAssignTo:
         assert result["content"] == "hi"
         updated = await tools.issue_view(test_issue.identifier)
         assert updated["assignee_id"] == test_user.id
+        assert "warnings" not in result
+
+    async def test_comment_reports_an_unreached_mention(self, test_issue, test_user):
+        """CHT-1735: in process, as over HTTP."""
+        result = await tools.issue_comment(test_issue.identifier, content="@nobody look")
+        assert result["warnings"] == ["@nobody matches nobody who can be mentioned here; nobody was notified."]
 
 
 class TestIssueReady:

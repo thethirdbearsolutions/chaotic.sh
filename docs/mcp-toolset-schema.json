@@ -516,7 +516,7 @@
       }
     },
     "issue_comment": {
-      "description": "Add a comment to an issue, optionally assigning it in the same call.",
+      "description": "Add a comment to an issue, optionally assigning it in the same call.\n\nAn @handle that reached nobody (unknown, or ambiguous: it names\nseveral principals) is reported back in `warnings`, an ambiguous one\nwith the unique handles to use instead (absent otherwise).",
       "inputSchema": {
         "properties": {
           "assign_to": {
