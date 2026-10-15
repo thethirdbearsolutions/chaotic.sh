@@ -179,7 +179,7 @@ def register(cli):
     @agent.command("register")
     @click.option("--ref", "external_ref", required=True,
                   help="The session's address, e.g. claude-code:session:<id>")
-    @click.option("--name", default=None, help="Display name (a new identity only; default '<registrar> · <ref tail>')")
+    @click.option("--name", default=None, help="Display name (a new identity only; default '<registrar> · <random tail>')")
     @click.option("--project", "project_ref", default=None,
                   help="Narrow the identity to one project of the registrar's team (id or key)")
     @_main().json_option
