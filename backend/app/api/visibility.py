@@ -18,7 +18,10 @@ with a loader first and the permission second, never the other way round.
 What "see" means per row is the matching read rule in ``app.api.deps``:
 
 * issue, sprint, project, ritual, ritual group: ``check_user_project_access``
-  on the row's project.
+  on the row's project. It takes the project row and reads the team off
+  it; a ``project_id`` filter named beside a URL ``team_id`` goes through
+  ``visible_project_in_team``, which also pins the project to that team
+  (CHT-1807).
 * document: ``can_access_document`` (project access for a project's
   document, team access for a team-level one).
 * label, team, agent: ``check_user_in_team`` (the team directory, which a
@@ -47,7 +50,7 @@ def not_found(detail: str, status_code: int = status.HTTP_404_NOT_FOUND) -> HTTP
 
 async def can_see_project(user, project) -> bool:
     """``project`` (a row or None) exists and ``user`` may read it."""
-    return project is not None and await check_user_project_access(user, project.id, project.team_id)
+    return project is not None and await check_user_project_access(user, project)
 
 
 async def visible_project(user, project_id: str | None, detail: str = "Project not found"):
@@ -57,6 +60,39 @@ async def visible_project(user, project_id: str | None, detail: str = "Project n
     project = await ProjectService().get_by_id(project_id) if project_id else None
     if not await can_see_project(user, project):
         raise not_found(detail)
+    return project
+
+
+async def visible_project_in_team(
+    user,
+    project_id: str,
+    team_id: str,
+    *,
+    hidden: HTTPException,
+    elsewhere: HTTPException | None,
+):
+    """The project ``project_id`` named next to ``team_id`` (a query or
+    body filter beside a URL team), loaded, checked and pinned to that
+    team in one step (CHT-1807).
+
+    * Missing, or one ``user`` may not see (its team read off the row):
+      raises ``hidden``. The two are always answered alike (CHT-1785).
+    * One ``user`` can see, but of another team: raises ``elsewhere``,
+      or returns None when ``elsewhere`` is None, for a listing that
+      answers such a filter with nothing. Never the project itself: a
+      project-scoped agent sees its own project whichever team the URL
+      names, so without this pin it could read or write another team
+      through its own project's id (CHT-1273 review CRITICAL).
+    """
+    from app.services.project_service import ProjectService
+
+    project = await ProjectService().get_by_id(project_id) if project_id else None
+    if not await can_see_project(user, project):
+        raise hidden
+    if project.team_id != team_id:
+        if elsewhere is None:
+            return None
+        raise elsewhere
     return project
 
 

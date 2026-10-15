@@ -133,7 +133,10 @@ async def can_access_document(user: User, document) -> bool:
     applies it, and so must every route that returns documents some other
     way, such as the documents linked to an issue (CHT-1780)."""
     if document.project_id:
-        return await check_user_project_access(user, document.project_id, document.team_id)
+        from app.services.project_service import ProjectService
+
+        project = await ProjectService().get_by_id(document.project_id)
+        return project is not None and await check_user_project_access(user, project)
     return await check_user_team_access(user, document.team_id)
 
 
@@ -145,7 +148,7 @@ async def accessible_project_ids(user: User, project_ids) -> set[str]:
     allowed = set()
     for project_id in set(project_ids):
         project = await ProjectService().get_by_id(project_id)
-        if project and await check_user_project_access(user, project_id, project.team_id):
+        if project and await check_user_project_access(user, project):
             allowed.add(project_id)
     return allowed
 
@@ -174,24 +177,37 @@ async def can_manage_agent(user: User, agent: User) -> bool:
     return await AgentService().can_manage(user, agent)
 
 
-async def check_user_project_access(user: User, project_id: str, team_id: str) -> bool:
-    """Check if a user has access to a project.
+async def check_user_project_access(user: User, project) -> bool:
+    """May ``user`` read and write ``project`` (a project row)?
 
-    For humans: must be a member of the project's team
+    For humans: must be a member of the project's team.
     For agents:
       - If project-scoped: must be scoped to this specific project
       - If team-scoped: must be scoped to this project's team
+
+    The team is read off the row, never taken from the caller
+    (CHT-1807): the old ``(user, project_id, team_id)`` form trusted a
+    ``team_id`` that four routes took from the URL next to a query or
+    body ``project_id``, so each had to pin the project to the team by
+    hand. A route holding a ``project_id`` and a ``team_id`` loads the
+    project with ``app.api.visibility.visible_project_in_team``, which
+    checks and pins in one step. Passing an id here is refused.
     """
+    if project is None or isinstance(project, str):
+        raise TypeError(
+            "check_user_project_access takes a project row, not an id (CHT-1807); "
+            "load it with app.api.visibility.visible_project / visible_project_in_team"
+        )
     if user.is_agent:
         # Project-scoped agent: must match the specific project
         if user.agent_project_id:
-            return user.agent_project_id == project_id
-        # Team-scoped agent: must match the team
-        return user.agent_team_id == team_id
+            return user.agent_project_id == project.id
+        # Team-scoped agent: must match the project's team
+        return user.agent_team_id == project.team_id
 
-    # Human user: check team membership
+    # Human user: check membership of the project's team
     team_service = TeamService()
-    member = await team_service.get_member(team_id, user.id)
+    member = await team_service.get_member(project.team_id, user.id)
     return member is not None
 
 

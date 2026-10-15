@@ -2,11 +2,11 @@
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import (
-    CurrentUser, accessible_project_ids, check_user_project_access,
-    check_user_team_access,
+    CurrentUser, accessible_project_ids, check_user_team_access,
 )
 from app.api.visibility import (
-    can_see_label, can_see_project, not_found, visible_document, visible_issue, visible_sprint,
+    can_see_label, can_see_project, not_found, visible_document, visible_issue, visible_project_in_team,
+    visible_sprint,
 )
 from app.api.issues import ensure_utc, issues_to_responses
 from app.schemas.document import (
@@ -98,22 +98,16 @@ async def create_document(
     # project-scoped agent can create docs in its own project —
     # check_user_team_access always rejects such agents (CHT-1273, CHT-1780).
     #
-    # check_user_project_access's agent branch matches agent_project_id==project_id
-    # with NO relation to team_id, and project_id is a request-body field, so we
-    # MUST first pin the project to the URL-path team — otherwise a project-scoped
-    # agent could POST to any other team T2 with its own project_id and land a doc
-    # in T2 (CHT-1273 review CRITICAL). Mirror create_issue, which derives the
-    # team from the fetched project rather than trusting an independent path+body.
-    #
-    # A project the caller cannot see answers like a missing one
-    # (CHT-1785), so its project access is part of the same 400.
+    # The body's project is pinned to the URL-path team in the same step
+    # (CHT-1807): a project-scoped agent sees its own project whichever
+    # team the URL names, so without the pin it could land a doc in
+    # another team (CHT-1273 review CRITICAL). A project that is missing,
+    # out of sight (CHT-1785) or of another team is the same 400.
     if document_in.project_id:
-        project = await ProjectService().get_by_id(document_in.project_id)
-        if not project or project.team_id != team_id or not await can_see_project(current_user, project):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Project not found in this team",
-            )
+        missing = not_found("Project not found in this team", status.HTTP_400_BAD_REQUEST)
+        await visible_project_in_team(
+            current_user, document_in.project_id, team_id, hidden=missing, elsewhere=missing,
+        )
         authorized = True
     else:
         authorized = await check_user_team_access(current_user, team_id)
@@ -165,16 +159,22 @@ async def list_documents(
     document_service = DocumentService()
 
     # A project filter is the project-confined path: project access is
-    # enough (list_filtered also pins team_id, so a project of another
-    # team lists nothing). Without one the listing is team-wide, which a
+    # enough, and a project the caller sees in another team lists nothing
+    # (CHT-1807 pins it here rather than leaving it to list_filtered's
+    # team filter). Without one the listing is team-wide, which a
     # project-scoped agent may not read (CHT-1780). A sprint filter alone
     # does not confine: a team-level document may carry any sprint.
     if project_id:
-        if not await check_user_project_access(current_user, project_id, team_id):
-            raise HTTPException(
+        project = await visible_project_in_team(
+            current_user, project_id, team_id,
+            hidden=HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this project",
-            )
+            ),
+            elsewhere=None,
+        )
+        if project is None:
+            return []
     elif not await check_user_team_access(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

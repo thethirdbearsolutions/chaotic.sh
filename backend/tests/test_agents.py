@@ -263,7 +263,7 @@ class TestAgentAccessControl:
         )
 
         has_access = await check_user_project_access(
-            agent, test_project.id, test_team.id
+            agent, test_project
         )
 
         assert has_access is True
@@ -284,7 +284,7 @@ class TestAgentAccessControl:
         )
 
         has_access = await check_user_project_access(
-            agent, other_project.id, test_team.id
+            agent, other_project
         )
 
         assert has_access is False
@@ -306,10 +306,10 @@ class TestAgentAccessControl:
 
         # Should have access to both projects
         has_access1 = await check_user_project_access(
-            agent, test_project.id, test_team.id
+            agent, test_project
         )
         has_access2 = await check_user_project_access(
-            agent, other_project.id, test_team.id
+            agent, other_project
         )
 
         assert has_access1 is True
