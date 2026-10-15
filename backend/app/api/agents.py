@@ -20,6 +20,7 @@ from app.services.agent_service import (
     AgentHasAuthoredContentError, AgentInactiveError, AgentManageDeniedError, AgentService, is_idle,
 )
 from app.services.api_key_service import APIKeyService
+from app.services.mention_handles import MentionDirectory
 from app.services.team_service import TeamService
 from app.services.project_service import ProjectService
 from app.services.user_service import UserService
@@ -52,11 +53,15 @@ async def _refuse_member_name(team_id: str, name: str) -> None:
         raise HTTPException(status_code=422, detail=name_matches_member_detail(name))
 
 
-def agent_response(agent, *, show_ref: bool = True, last_used_at=None) -> AgentResponse:
+def agent_response(
+    agent, *, show_ref: bool = True, last_used_at=None, mention_handle: str | None = None,
+) -> AgentResponse:
     """The wire form of an agent row (with `parent_user` joined).
     `show_ref`: see ``sees_external_ref``. `last_used_at`: from
-    ``AgentService.session_last_used``, for a session identity."""
+    ``AgentService.session_last_used``, for a session identity.
+    `mention_handle`: from ``MentionDirectory.handle_for`` (CHT-1731)."""
     return AgentResponse(
+        mention_handle=mention_handle,
         last_used_at=last_used_at,
         idle=is_idle(last_used_at),
         id=agent.id,
@@ -74,6 +79,13 @@ def agent_response(agent, *, show_ref: bool = True, last_used_at=None) -> AgentR
         registered_by_id=agent.registered_by_id,
         can_register=agent.can_register,
     )
+
+
+async def _mention_handle(agent) -> str | None:
+    """The @handle that reaches `agent` in its team (CHT-1731)."""
+    if not agent.agent_team_id:
+        return None
+    return (await MentionDirectory.for_team(agent.agent_team_id)).handle_for(agent.id)
 
 
 async def _last_used(agent):
@@ -241,10 +253,11 @@ async def list_team_agents(
     last_used = await agent_service.session_last_used(agents)
 
     admin = await _is_team_admin(current_user, team_id)
+    directory = await MentionDirectory.for_team(team_id)
     responses = [
         agent_response(
             agent, show_ref=await sees_external_ref(current_user, agent, admin=admin),
-            last_used_at=last_used.get(agent.id),
+            last_used_at=last_used.get(agent.id), mention_handle=directory.handle_for(agent.id),
         )
         for agent in agents
     ]
@@ -277,6 +290,7 @@ async def get_agent(
 
     return agent_response(
         agent, show_ref=await sees_external_ref(current_user, agent), last_used_at=await _last_used(agent),
+        mention_handle=await _mention_handle(agent),
     )
 
 
@@ -556,7 +570,10 @@ async def register_agent(
     if not reg.created:
         response.status_code = status.HTTP_200_OK
     return AgentRegistered(
-        agent=agent_response(reg.agent, last_used_at=await _last_used(reg.agent)),
+        agent=agent_response(
+            reg.agent, last_used_at=await _last_used(reg.agent),
+            mention_handle=await _mention_handle(reg.agent),
+        ),
         created=reg.created,
         api_key=reg.full_key,
         api_key_id=reg.api_key.id,

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getMemberHandle, isInsideCodeSpan } from './mention-autocomplete.js';
+import { getMemberHandle, getMentionables, isInsideCodeSpan } from './mention-autocomplete.js';
 
 describe('getMemberHandle', () => {
     it('returns first name lowercased', () => {
@@ -16,6 +16,56 @@ describe('getMemberHandle', () => {
 
     it('returns email prefix when name is empty string', () => {
         expect(getMemberHandle({ name: '', email: 'test@example.com' })).toBe('test');
+    });
+
+    // CHT-1731: team-member rows carry user_name/user_email, not name/email.
+    it('reads a team-member row', () => {
+        expect(getMemberHandle({ user_name: 'Ada Lovelace', user_email: 'ada@example.com' })).toBe('ada');
+    });
+
+    it('prefers the server-given mention_handle', () => {
+        expect(getMemberHandle({ user_name: 'Ada Lovelace', mention_handle: 'ada-lovelace' })).toBe('ada-lovelace');
+    });
+});
+
+describe('getMentionables (CHT-1731)', () => {
+    const members = [
+        { user_id: 'u1', user_name: 'Ada Lovelace', user_email: 'ada@example.com', mention_handle: 'ada' },
+    ];
+    const agents = [
+        { id: 'a1', name: 'Claude MCP', mention_handle: 'claude-mcp', is_active: true },
+        { id: 'a2', name: 'Claude Code (cloud) · 3f9a1c2b', kind: 'session', mention_handle: 'claude-3f9a1c2b' },
+        { id: 'a3', name: 'Claude Code (cloud) · 00000001', kind: 'session', mention_handle: 'claude-00000001', idle: true },
+        { id: 'a4', name: 'Old Bot', mention_handle: null, is_active: false },
+        { id: 'a5', name: 'From an older server' },
+    ];
+
+    it('offers members, then active non-idle agents with their server handles', () => {
+        const rows = getMentionables(members, agents);
+        expect(rows.map(r => [r.id, r.handle, r.isAgent])).toEqual([
+            ['u1', 'ada', false],
+            ['a1', 'claude-mcp', true],
+            ['a2', 'claude-3f9a1c2b', true],
+        ]);
+        expect(rows[0].name).toBe('Ada Lovelace');
+    });
+
+    it('never offers two rows with the same handle for the session collision case', () => {
+        const handles = getMentionables(members, agents).map(r => r.handle);
+        expect(new Set(handles).size).toBe(handles.length);
+        expect(handles).not.toContain('claude');
+    });
+
+    it('lists an agent that also has a team-member row once', () => {
+        const rows = getMentionables(
+            [{ user_id: 'a1', user_name: 'Claude MCP', mention_handle: 'claude-mcp' }],
+            [agents[0]],
+        );
+        expect(rows).toHaveLength(1);
+    });
+
+    it('copes with no agents loaded', () => {
+        expect(getMentionables(members)).toHaveLength(1);
     });
 });
 

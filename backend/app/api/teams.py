@@ -18,6 +18,7 @@ from app.config import get_settings
 from app.oxyde_models.team import OxydeTeamMember
 from app.services.agent_service import AgentService
 from app.services.credential_events import revoking
+from app.services.mention_handles import MentionDirectory
 from app.services.team_service import TeamService
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
@@ -152,7 +153,10 @@ async def list_team_members(
             detail="Not a member of this team",
         )
 
-    members = (await team_service.get_members(team_id))[skip:skip + limit]
+    all_members = await team_service.get_members(team_id)
+    members = all_members[skip:skip + limit]
+    # Handles are unique across the whole team, agents included (CHT-1731).
+    directory = await MentionDirectory.for_team(team_id, members=all_members)
     return [
         TeamMemberResponse(
             id=m.id,
@@ -162,6 +166,7 @@ async def list_team_members(
             joined_at=m.joined_at,
             user_name=m.user and m.user.name,
             user_email=m.user and m.user.email,
+            mention_handle=directory.handle_for(m.user_id),
         )
         for m in members
     ]

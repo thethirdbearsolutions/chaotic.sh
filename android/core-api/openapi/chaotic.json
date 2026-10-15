@@ -8852,6 +8852,17 @@
             "type": "boolean",
             "title": "Idle",
             "default": false
+          },
+          "mention_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mention Handle"
           }
         },
         "type": "object",
@@ -14501,6 +14512,17 @@
               }
             ],
             "title": "User Email"
+          },
+          "mention_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mention Handle"
           }
         },
         "type": "object",

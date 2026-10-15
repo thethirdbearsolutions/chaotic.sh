@@ -67,6 +67,9 @@ class TeamMemberResponse(BaseModel):
     joined_at: DateTimeUTC
     user_name: str | None = None
     user_email: str | None = None
+    # The @handle that mentions exactly this member in the team (CHT-1731);
+    # null where not computed.
+    mention_handle: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

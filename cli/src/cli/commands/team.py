@@ -115,11 +115,14 @@ def register(cli):
             return
         table = Table(title="Team Members")
         table.add_column("Name")
+        # The @handle that reaches exactly this member (CHT-1731).
+        table.add_column("Handle")
         table.add_column("Email")
         table.add_column("Role")
 
         for member in members:
-            table.add_row(member.get("user_name", "Unknown"), member.get("user_email", ""), member["role"])
+            handle = f"@{member['mention_handle']}" if member.get("mention_handle") else ""
+            table.add_row(member.get("user_name", "Unknown"), handle, member.get("user_email", ""), member["role"])
 
         console.print(table)
 

@@ -473,6 +473,30 @@ is shown only here.
   holds the registrar's key. So it stops working when that person leaves
   the team, like any agent key they hold.
 
+### @mentioning an agent or a session
+
+Every active agent of a team can be @mentioned, session identities
+included, and the mention lands in its inbox (`inbox_list`,
+`chaotic inbox`). Each person and agent has one handle that reaches
+exactly them. It is shown by the web comment box's autocomplete, by
+`chaotic agent list` (under the name) and `chaotic team members`, as
+`mention_handle` on `GET /api/teams/{id}/agents` and `/members`, and by
+`chaotic agent register` for the identity it registered (CHT-1731):
+
+- a person: the first word of their name (`@ethan`) when no one else in
+  the team has that word, else the whole name (`@ethan-smith`);
+- an agent: its whole name (`@claude-mcp`);
+- a session identity with a default name (`<registrar> · … · <tail>`):
+  first word and tail (`@claude-3f9a1c`);
+- when even that is shared: first word and the start of the id
+  (`@claude.28b1c019`).
+
+A handle that more than one of them could mean reaches **nobody**: in a
+team of Claude sessions, `@claude` notifies none of them. It never picks
+one and never notifies them all. A project-scoped agent is reached only
+from its own project. Handles follow names, so renaming an agent changes
+its handle.
+
 ## Remote MCP (Streamable HTTP, `/mcp`)
 
 If you'd rather point a *hosted* client at your chaotic instance instead

@@ -174,6 +174,48 @@ class TestAgentListKind:
         assert "registrar" in result.output and "session" in result.output
 
 
+class TestMentionHandles:
+    """CHT-1731: the @handle that reaches exactly one agent or member is
+    shown where people look for whom to mention."""
+
+    def test_agent_list_shows_handles(self, cli_runner):
+        from cli.main import cli, client
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "sess-1111", "name": "s-one", "agent_project_id": None, "kind": "session",
+             "parent_user_name": "Ada", "created_at": "2026-10-02T00:00:00Z", "mention_handle": "claude-3f9a1c"},
+            {"id": "bot-bbbb", "name": "mcp", "agent_project_id": None, "kind": "assistant",
+             "parent_user_name": "Ada", "created_at": "2026-10-01T00:00:00Z"},
+        ])
+        result = cli_runner.invoke(cli, ["agent", "list"])
+        assert result.exit_code == 0, result.output
+        lines = result.output.splitlines()
+        at = next(i for i, line in enumerate(lines) if "s-one" in line)
+        assert "@claude-3f9a1c" in lines[at + 1]
+        # No handle from the server (an older one): an empty cell, not "@None".
+        assert "@None" not in result.output
+
+    def test_team_members_shows_handles(self, cli_runner):
+        from cli.main import cli, client
+        client.get_team_members = MagicMock(return_value=[
+            {"user_name": "Alice", "user_email": "alice@test.com", "role": "admin", "mention_handle": "alice"},
+            {"user_name": "Bob", "user_email": "bob@test.com", "role": "member"},
+        ])
+        result = cli_runner.invoke(cli, ["team", "members"])
+        assert result.exit_code == 0, result.output
+        assert "Handle" in result.output and "@alice" in result.output
+        assert "@None" not in result.output
+
+    def test_register_says_how_to_mention_the_identity(self, cli_runner):
+        from cli.main import cli, client
+        client.get_me = MagicMock(return_value={"is_agent": True})
+        registered = {**TestAgentRegister.REGISTERED}
+        registered["agent"] = {**registered["agent"], "mention_handle": "claude-3f9a1c"}
+        client.register_agent = MagicMock(return_value=registered)
+        result = cli_runner.invoke(cli, ["agent", "register", "--ref", "r:1"])
+        assert result.exit_code == 0, result.output
+        assert "Mention it as: @claude-3f9a1c" in result.output
+
+
 class TestAgentListIdle:
     """CHT-1501: idle session identities are hidden unless --all, and the
     rest are listed under their registrar."""

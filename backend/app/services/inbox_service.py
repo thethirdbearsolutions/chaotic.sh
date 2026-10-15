@@ -28,6 +28,7 @@ from app.db.transactions import on_commit
 from app.enums import ActivityType, ApprovalMode, InboxEntryKind, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
+from app.services.mention_handles import MentionDirectory, legacy_first_word_handle
 from app.services.team_service import TeamService
 from app.utils.markdown import strip_code_spans
 
@@ -57,15 +58,9 @@ _MENTION_RE = re.compile(r"(?:^|(?<=\s))@([a-zA-Z0-9._-]+)")
 _strip_code_spans = strip_code_spans
 
 
-def _member_handle(name: str | None, email: str | None) -> str:
-    """Mirror frontend/src/mention-autocomplete.js's getMemberHandle():
-    first name lowercased, or the email local-part, or 'user'.
-    """
-    if name:
-        return name.split(" ")[0].lower()
-    if email:
-        return email.split("@")[0].lower()
-    return "user"
+# A person's pre-CHT-1731 handle (first word of the name); still one of
+# their candidates. See app.services.mention_handles for the full rule.
+_member_handle = legacy_first_word_handle
 
 
 class InboxService:
@@ -434,8 +429,13 @@ class InboxService:
         self, *, content: str, team_id: str, author, issue=None, document=None,
     ) -> None:
         """Parse @handles out of `content`; write a MENTION entry for each
-        resolved team member (excluding the author). Exactly one of
+        principal they resolve to (excluding the author). Exactly one of
         issue/document should be given.
+
+        Humans and agents (session identities included) are resolved by
+        app.services.mention_handles (CHT-1731): a handle reaches the one
+        principal that claims it, and an ambiguous one reaches nobody. A
+        project-scoped agent is reached only from its own project.
 
         @handles inside fenced ``` blocks or inline `code` spans are not
         real mentions (CHT-1272) -- see _strip_code_spans.
@@ -444,27 +444,27 @@ class InboxService:
         if not handles:
             return
 
-        members = await TeamService().get_members(team_id)
-        by_handle: dict[str, str] = {}
-        for member in members:
-            if not member.user:
+        directory = await MentionDirectory.for_team(team_id)
+        project_id = issue.project_id if issue is not None else document.project_id
+        matched_user_ids = set()
+        for handle in handles:
+            user_id = directory.resolve(handle)
+            if user_id is None:
+                if directory.ambiguous(handle):
+                    logger.info("@%s is ambiguous in team %s; nobody was notified", handle, team_id)
                 continue
-            handle = _member_handle(member.user.name, member.user.email)
-            by_handle.setdefault(handle, member.user_id)
-
-        matched_user_ids = {by_handle[h] for h in handles if h in by_handle}
+            if directory.can_reach(user_id, project_id):
+                matched_user_ids.add(user_id)
         matched_user_ids.discard(author.id)
         if not matched_user_ids:
             return
 
         if issue is not None:
             title = f"{author.name} mentioned you in {issue.identifier}"
-            project_id = issue.project_id
             issue_id = issue.id
             document_id = None
         else:
             title = f"{author.name} mentioned you in {document.title}"
-            project_id = document.project_id
             issue_id = None
             document_id = document.id
 
