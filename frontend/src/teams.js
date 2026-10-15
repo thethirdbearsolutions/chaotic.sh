@@ -444,15 +444,35 @@ export async function handleInvite(event) {
     const invitation = await api.createInvitation(getCurrentTeam().id, email, role);
     await loadTeamInvitations();
     if (invitation && invitation.accept_url) {
-      showInviteLink(email, inviteLinkForDisplay(invitation.accept_url));
+      showInviteLink(email, inviteLinkForDisplay(invitation.accept_url), invitation.email_queued === true);
       return false;
     }
+    // Only a server before CHT-1824 (with SMTP) sends no link. This page
+    // is served by the server it talks to, so that should not happen;
+    // if it does, do not claim the email was delivered.
     closeModal();
-    showToast('Invitation sent!', 'success');
+    showToast("Invitation created. An email was queued; delivery isn't confirmed.", 'info');
   } catch (e) {
-    showApiError('send invitation', e);
+    if (isPendingInvitationRefusal(e)) {
+      showToast(`${e.message} Its Cancel button is under Pending Invitations.`, 'error');
+    } else {
+      showApiError('send invitation', e);
+    }
   }
   return false;
+}
+
+/**
+ * The 409 for an address that already has a live invitation (CHT-1824):
+ * the structured one, or the plain-text one from an older server.
+ * @param {Error} e - The error api.js threw
+ * @returns {boolean}
+ */
+export function isPendingInvitationRefusal(e) {
+  if (e?.status !== 409) return false;
+  const detail = e.detail;
+  if (detail && typeof detail === 'object') return detail.error_code === 'invitation_pending';
+  return typeof detail === 'string' && detail.includes('pending invitation');
 }
 
 /**
@@ -508,16 +528,22 @@ export function inviteLinkForDisplay(acceptUrl, origin = window.location.origin)
 }
 
 /**
- * The invitation link, on a server that cannot email it (CHT-1794). The
- * create answer is the only place it is ever shown, so say so.
+ * The invitation link (CHT-1794). The create answer is the only place it
+ * is ever shown, so say so. With SMTP the server only queued an email,
+ * so say delivery isn't confirmed and offer the link as well (CHT-1824).
  * @param {string} email - Invited address
  * @param {string} acceptUrl - The /invite/<token> link
+ * @param {boolean} [emailQueued] - Whether the server queued an email too
  */
-export function showInviteLink(email, acceptUrl) {
+export function showInviteLink(email, acceptUrl, emailQueued = false) {
+  const safeEmail = escapeHtml(email);
+  const note = emailQueued
+    ? `An email was queued to ${safeEmail}; delivery isn't confirmed, so you can also pass on this link. You won't be able to see it again.`
+    : `This server does not send email: send this link to ${safeEmail} yourself. You won't be able to see it again.`;
   document.getElementById('modal-title').textContent = 'Invitation Created';
   document.getElementById('modal-content').innerHTML = `
         <div class="api-key-created">
-            <p class="warning-text">This server does not send email: send this link to ${escapeHtml(email)} yourself. You won't be able to see it again.</p>
+            <p class="warning-text">${note}</p>
             <div class="api-key-display">
                 <code id="invite-link">${escapeHtml(acceptUrl)}</code>
                 <button type="button" class="btn btn-secondary" data-action="copy-invite-link">Copy link</button>

@@ -18,6 +18,7 @@ import {
   showInviteLink,
   copyInviteLink,
   inviteLinkForDisplay,
+  isPendingInvitationRefusal,
   isLocalHost,
   removeMember,
   deleteInvitation,
@@ -833,14 +834,53 @@ describe('handleInvite', () => {
     expect(api.createInvitation).toHaveBeenCalledWith('team-1', 'new@example.com', 'member');
   });
 
-  it('closes with "sent" when the server emailed the link (accept_url null)', async () => {
+  it('does not claim delivery when an older server sends no link (accept_url null)', async () => {
     document.body.innerHTML += '<div id="modal-title"></div><div id="modal-content"></div>';
     api.createInvitation.mockResolvedValue({ id: 'inv-1', accept_url: null });
     api.getTeamInvitations.mockResolvedValue([]);
     await handleInvite({ preventDefault: vi.fn() });
     expect(closeModal).toHaveBeenCalled();
-    expect(showToast).toHaveBeenCalledWith('Invitation sent!', 'success');
+    expect(showToast).toHaveBeenCalledWith("Invitation created. An email was queued; delivery isn't confirmed.", 'info');
     expect(document.getElementById('modal-content').innerHTML).not.toContain('/invite/');
+  });
+
+  it('shows the link and says the email was only queued when SMTP is configured (CHT-1824)', async () => {
+    document.body.innerHTML += '<div id="modal-title"></div><div id="modal-content"></div>';
+    const url = 'https://chaotic.example.com/invite/tok_123';
+    api.createInvitation.mockResolvedValue({ id: 'inv-1', accept_url: url, email_queued: true });
+    api.getTeamInvitations.mockResolvedValue([]);
+    await handleInvite({ preventDefault: vi.fn() });
+    expect(closeModal).not.toHaveBeenCalled();
+    expect(document.getElementById('invite-link').textContent).toBe(url);
+    const text = document.getElementById('modal-content').textContent;
+    expect(text).toContain("An email was queued to new@example.com; delivery isn't confirmed");
+    expect(text).not.toContain('does not send email');
+  });
+
+  it('tells the admin how to send a new link when one is pending (CHT-1824)', async () => {
+    const err = Object.assign(new Error('A pending invitation for this email already exists.'), {
+      status: 409,
+      detail: { error_code: 'invitation_pending', message: 'A pending invitation for this email already exists.', invitation_id: 'inv-9' },
+    });
+    api.createInvitation.mockRejectedValue(err);
+    await handleInvite({ preventDefault: vi.fn() });
+    expect(showToast).toHaveBeenCalledWith(
+      'A pending invitation for this email already exists. Its Cancel button is under Pending Invitations.', 'error');
+    expect(showApiError).not.toHaveBeenCalled();
+  });
+
+  it('recognises the pending-invitation refusal from an older server, and nothing else', () => {
+    expect(isPendingInvitationRefusal({ status: 409, detail: 'A pending invitation for this email already exists; revoke it to send a new one' })).toBe(true);
+    expect(isPendingInvitationRefusal({ status: 409, detail: { error_code: 'other' } })).toBe(false);
+    expect(isPendingInvitationRefusal({ status: 400, detail: { error_code: 'invitation_pending' } })).toBe(false);
+    expect(isPendingInvitationRefusal(null)).toBe(false);
+  });
+
+  it('shows other invite failures as before', async () => {
+    const err = Object.assign(new Error('User is already a team member'), { status: 400, detail: 'User is already a team member' });
+    api.createInvitation.mockRejectedValue(err);
+    await handleInvite({ preventDefault: vi.fn() });
+    expect(showApiError).toHaveBeenCalledWith('send invitation', err);
   });
 
   it('shows the link to hand over when the server cannot email it (CHT-1794)', async () => {

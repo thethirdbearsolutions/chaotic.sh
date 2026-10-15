@@ -16,6 +16,27 @@ def _main():
     return sys.modules['cli.main']
 
 
+def _pending_invitation(error):
+    """For the 409 refusing an address that already has a pending
+    invitation (CHT-1824): (invitation_id or None, hint). None for any
+    other error. A server older than CHT-1824 sends a plain string with
+    no id."""
+    if getattr(error, "status_code", None) != 409:
+        return None
+    detail = getattr(error, "detail", None)
+    if isinstance(detail, dict):
+        if detail.get("error_code") != "invitation_pending":
+            return None
+        inv_id = detail.get("invitation_id")
+        inv_id = inv_id if isinstance(inv_id, str) and inv_id else None
+    elif isinstance(detail, str) and "pending invitation" in detail:
+        inv_id = None
+    else:
+        return None
+    target = inv_id or "<id from `chaotic team invitations`>"
+    return inv_id, f"To send a new link: `chaotic team cancel-invite {target}`, then invite again."
+
+
 def invite_link_for_display(accept_url: str, web_url: str | None) -> str:
     """The accept link to print (CHT-1822).
 
@@ -224,25 +245,57 @@ def register(cli):
     @team.command("invite")
     @click.argument("email")
     @click.option("--role", default="member", type=click.Choice(["member", "admin"]))
+    @_main().json_option
     @_main().require_team
     @_main().handle_error
     def team_invite(email, role):
         """Invite a member to the team.
 
-        On a server that cannot send email, prints the invitation link,
-        once, for you to send them yourself (CHT-1794)."""
+        Prints the invitation link, once, for you to send them yourself
+        (CHT-1794). When the server emails it too, the email is only
+        queued: if it does not arrive, send them the link (CHT-1824)."""
         m = _main()
-        invitation = _client().invite_member(m.get_current_team(), email, role)
-        accept_url = invitation.get("accept_url") if isinstance(invitation, dict) else None
-        if not accept_url:
-            console.print(f"[green]Invitation sent to {esc(email)}[/green]")
+        try:
+            invitation = _client().invite_member(m.get_current_team(), email, role)
+        except m.APIError as e:
+            pending = _pending_invitation(e)
+            if pending is None:
+                raise
+            inv_id, hint = pending
+            if m.is_json_output():
+                m.output_json({"error": str(e), "error_code": "invitation_pending",
+                               "invitation_id": inv_id, "hint": hint})
+            else:
+                console.print(f"[red]Error: {esc(str(e))}[/red]")
+                console.print(f"[yellow]{esc(hint)}[/yellow]")
+            raise SystemExit(1)
+        invitation = invitation if isinstance(invitation, dict) else {}
+        accept_url = invitation.get("accept_url")
+        link = invite_link_for_display(accept_url, m.get_web_url()) if accept_url else None
+        if m.is_json_output():
+            m.output_json({**invitation, "accept_url": link} if link else invitation)
             return
         console.print(f"[green]Invitation created for {esc(email)}[/green]")
-        console.print(
-            "[yellow]This server does not send email: send this link to them yourself. "
-            "It is shown only now.[/yellow]"
-        )
-        link = invite_link_for_display(accept_url, m.get_web_url())
+        if not link:
+            # A server older than CHT-1824 sends no link when it has SMTP
+            # (and one older than CHT-1794 never does): say nothing about
+            # whether an email went out.
+            console.print(
+                "[yellow]If this server sends email, the link went to them by email; "
+                "delivery isn't confirmed. If it does not arrive, cancel this invitation "
+                "and invite again.[/yellow]"
+            )
+            return
+        if invitation.get("email_queued") is True:
+            console.print(
+                f"[yellow]An email was queued to {esc(email)}; delivery isn't confirmed, "
+                "so you can also pass on this link. It is shown only now.[/yellow]"
+            )
+        else:
+            console.print(
+                "[yellow]This server does not send email: send this link to them yourself. "
+                "It is shown only now.[/yellow]"
+            )
         # Unwrapped and unstyled, so it copies as one line.
         console.print(esc(link), soft_wrap=True, highlight=False)
 

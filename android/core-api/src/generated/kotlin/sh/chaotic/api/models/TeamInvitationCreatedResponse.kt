@@ -36,7 +36,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * The create answer: the invitation, plus its accept link when this server cannot email it (CHT-1794).  ``accept_url`` holds the invitation token, a bearer credential (CHT-1790), so it is shown once, to the admin who created the invitation, and only when SMTP is not configured; otherwise it is null and the link goes by email only. It is never in the list (``TeamInvitationResponse``) or a log line.
+ * The create answer: the invitation, plus its accept link (CHT-1794, CHT-1824).  ``accept_url`` holds the invitation token, a bearer credential (CHT-1790), so it is shown once, to the admin who created the invitation. It is never in the list (``TeamInvitationResponse``) or a log line. ``email_queued`` is true when the server queued an email with the link too. Queued is all it knows: the send runs after this answer, so delivery is never confirmed here, and the admin keeps the link in case it fails.
  *
  * @param id 
  * @param teamId 
@@ -46,6 +46,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param createdAt 
  * @param expiresAt 
  * @param acceptUrl 
+ * @param emailQueued 
  */
 @Serializable
 
@@ -73,7 +74,10 @@ data class TeamInvitationCreatedResponse (
     val expiresAt: kotlin.String,
 
     @SerialName(value = "accept_url")
-    val acceptUrl: kotlin.String? = null
+    val acceptUrl: kotlin.String? = null,
+
+    @SerialName(value = "email_queued")
+    val emailQueued: kotlin.Boolean? = false
 
 ) {
 

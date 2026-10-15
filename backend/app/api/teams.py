@@ -271,8 +271,10 @@ async def create_invitation(
 ) -> TeamInvitationCreatedResponse:
     """Create a team invitation.
 
-    Without SMTP the answer carries the accept link, once, for the admin
-    to hand over themselves (CHT-1794); with SMTP it goes by email only."""
+    The answer carries the accept link, once, for the admin to hand over
+    themselves (CHT-1794): without SMTP it is the only way it travels,
+    and with SMTP the email is only queued, so the admin has it in case
+    delivery fails (CHT-1824). ``email_queued`` says which."""
     team_service = TeamService()
 
     # Admin check first, from the team id alone, like the other invitation
@@ -306,11 +308,19 @@ async def create_invitation(
 
     # One live invitation per (team, address) (CHT-1265 review F5): with
     # two, accepting used up both and silently applied whichever role
-    # the first claim carried. Revoke the old one to send another.
-    if await team_service.get_live_invitation(team_id, invitation_in.email):
+    # the first claim carried. Cancel the old one to send another; the
+    # refusal says so, with the id to cancel, since the usual reason to
+    # invite again is that the first email never arrived (CHT-1824).
+    pending = await team_service.get_live_invitation(team_id, invitation_in.email)
+    if pending:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="A pending invitation for this email already exists; revoke it to send a new one",
+            detail={
+                "error_code": "invitation_pending",
+                "message": "A pending invitation for this email already exists. "
+                           "If it did not reach them, cancel it and invite again for a new link.",
+                "invitation_id": pending.id,
+            },
         )
 
     invitation = await team_service.create_invitation(team, invitation_in, current_user)
@@ -324,6 +334,7 @@ async def create_invitation(
     # email trouble.
     accept_url = f"{get_settings().app_base_url.rstrip('/')}/invite/{invitation.token}"
     email_service = EmailService()
+    dispatched = False
     try:
         email_service.send_invitation_email(
             invitation_in.email,
@@ -332,16 +343,23 @@ async def create_invitation(
             invited_by_name=current_user.name,
             accept_url=accept_url,
         )
+        dispatched = True
     except Exception:
         logger.exception("Failed to dispatch invitation email for team=%s", team.id)
+    # Without SMTP the send above only logs that it skipped.
+    email_queued = dispatched and email_service.is_configured()
 
-    # CHT-1794: with no SMTP the email above goes nowhere, so the link is
-    # handed to the inviting admin, here and only here: never in the list,
-    # never logged. A bearer credential in a body: not to be cached.
+    # The link goes to the inviting admin, here and only here: never in
+    # the list, never logged (CHT-1794). Always, not only without SMTP:
+    # the email is sent in the background after this answer, so nothing
+    # here knows it arrived, and an admin left with no link when it
+    # fails cannot get one (CHT-1824). It grants the admin nothing: they
+    # could invite an address of their own. A bearer credential in a
+    # body: not to be cached.
     created = TeamInvitationCreatedResponse.model_validate(invitation)
-    if not email_service.is_configured():
-        created.accept_url = accept_url
-        response.headers.update(INVITATION_HEADERS)
+    created.accept_url = accept_url
+    created.email_queued = email_queued
+    response.headers.update(INVITATION_HEADERS)
     return created
 
 

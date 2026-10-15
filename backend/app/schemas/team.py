@@ -114,16 +114,19 @@ class TeamInvitationResponse(BaseModel):
 
 
 class TeamInvitationCreatedResponse(TeamInvitationResponse):
-    """The create answer: the invitation, plus its accept link when this
-    server cannot email it (CHT-1794).
+    """The create answer: the invitation, plus its accept link
+    (CHT-1794, CHT-1824).
 
     ``accept_url`` holds the invitation token, a bearer credential
     (CHT-1790), so it is shown once, to the admin who created the
-    invitation, and only when SMTP is not configured; otherwise it is
-    null and the link goes by email only. It is never in the list
-    (``TeamInvitationResponse``) or a log line."""
+    invitation. It is never in the list (``TeamInvitationResponse``) or
+    a log line. ``email_queued`` is true when the server queued an email
+    with the link too. Queued is all it knows: the send runs after this
+    answer, so delivery is never confirmed here, and the admin keeps the
+    link in case it fails."""
 
     accept_url: str | None = None
+    email_queued: bool = False
 
 
 class InvitationPreviewResponse(BaseModel):

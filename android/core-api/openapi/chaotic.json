@@ -716,7 +716,7 @@
           "teams"
         ],
         "summary": "Create Invitation",
-        "description": "Create a team invitation.\n\nWithout SMTP the answer carries the accept link, once, for the admin\nto hand over themselves (CHT-1794); with SMTP it goes by email only.",
+        "description": "Create a team invitation.\n\nThe answer carries the accept link, once, for the admin to hand over\nthemselves (CHT-1794): without SMTP it is the only way it travels,\nand with SMTP the email is only queued, so the admin has it in case\ndelivery fails (CHT-1824). ``email_queued`` says which.",
         "operationId": "create_invitation_api_teams__team_id__invitations_post",
         "security": [
           {
@@ -15585,6 +15585,11 @@
               }
             ],
             "title": "Accept Url"
+          },
+          "email_queued": {
+            "type": "boolean",
+            "title": "Email Queued",
+            "default": false
           }
         },
         "type": "object",
@@ -15598,7 +15603,7 @@
           "expires_at"
         ],
         "title": "TeamInvitationCreatedResponse",
-        "description": "The create answer: the invitation, plus its accept link when this\nserver cannot email it (CHT-1794).\n\n``accept_url`` holds the invitation token, a bearer credential\n(CHT-1790), so it is shown once, to the admin who created the\ninvitation, and only when SMTP is not configured; otherwise it is\nnull and the link goes by email only. It is never in the list\n(``TeamInvitationResponse``) or a log line."
+        "description": "The create answer: the invitation, plus its accept link\n(CHT-1794, CHT-1824).\n\n``accept_url`` holds the invitation token, a bearer credential\n(CHT-1790), so it is shown once, to the admin who created the\ninvitation. It is never in the list (``TeamInvitationResponse``) or\na log line. ``email_queued`` is true when the server queued an email\nwith the link too. Queued is all it knows: the send runs after this\nanswer, so delivery is never confirmed here, and the admin keeps the\nlink in case it fails."
       },
       "TeamInvitationResponse": {
         "properties": {

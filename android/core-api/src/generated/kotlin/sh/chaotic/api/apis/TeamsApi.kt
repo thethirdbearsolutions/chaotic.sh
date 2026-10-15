@@ -87,7 +87,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * POST /api/teams/{team_id}/invitations
         * Create Invitation
-        * Create a team invitation.  Without SMTP the answer carries the accept link, once, for the admin to hand over themselves (CHT-1794); with SMTP it goes by email only.
+        * Create a team invitation.  The answer carries the accept link, once, for the admin to hand over themselves (CHT-1794): without SMTP it is the only way it travels, and with SMTP the email is only queued, so the admin has it in case delivery fails (CHT-1824). &#x60;&#x60;email_queued&#x60;&#x60; says which.
          * @param teamId  
          * @param teamInvitationCreate  
          * @return TeamInvitationCreatedResponse
