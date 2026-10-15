@@ -9,7 +9,9 @@ the next time it calls a tool. The keys are named by
 one of them:
 
 * the server's ``instructions`` carry the notice after the usual text,
-  so a client that initializes now sees it (``install_instructions_notice``);
+  so a client that initializes now sees it (``LegacyNoticeMiddleware``,
+  the SDK's public ``ServerMiddleware`` hook, which wraps ``initialize``
+  and ``server/discover`` like every other request);
 * every tool result, success or error envelope, carries it as a
   top-level ``notice`` string (``with_notice``), so a session that
   initialized long ago sees it on its next call.
@@ -21,17 +23,42 @@ the result, not declared in any signature, so the toolset fingerprint
 and docs/mcp-toolset-schema.json are unaffected.
 
 ``notice`` is a reserved top-level result key on this transport: no tool
-returns one of its own (``tests/test_mcp_legacy_notice.py`` checks).
+body and no response schema has one (``tests/test_mcp_legacy_notice.py``
+checks both), and ``with_notice`` logs if a result ever does.
 """
 from __future__ import annotations
 
 import functools
+import ipaddress
+import logging
+from datetime import date
+from urllib.parse import urlsplit
 
 from app.auth.credentials import CredentialKind
 from app.config import get_settings
 from app.mcp_server.context import current_mcp_principal
 
+logger = logging.getLogger(__name__)
+
 NOTICE_KEY = "notice"
+# The requests whose result carries the server's instructions.
+_INSTRUCTION_METHODS = frozenset({"initialize", "server/discover"})
+
+
+def _oauth_reachable(settings) -> bool:
+    """Can a chat client be told to add this server by URL and sign in
+    with OAuth? Only when OAuth is on and the issuer is an https origin
+    that is not this machine (a chat client runs elsewhere)."""
+    if not settings.oauth_enabled:
+        return False
+    parts = urlsplit(settings.oauth_issuer)
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or not host or host == "localhost" or host.endswith(".localhost"):
+        return False
+    try:
+        return not ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return True  # a host name
 
 
 def notice_for(principal) -> str | None:
@@ -43,17 +70,28 @@ def notice_for(principal) -> str | None:
         return None
     if principal.kind is not CredentialKind.API_KEY or principal.credential_id not in listed:
         return None
-    when = (f"on {settings.mcp_legacy_retire_date}" if settings.mcp_legacy_retire_date
-            else "soon (the date is not set yet)")
+    retire = settings.mcp_legacy_retire_date
+    if not retire:
+        when = "is being retired soon (the date is not set yet)"
+    elif date.fromisoformat(retire) < date.today():
+        when = f"was due to be retired on {retire} and may stop working at any time"
+    else:
+        when = f"is being retired on {retire}"
+    chat = (
+        f"in a chat client such as claude.ai, add the server again by URL ({settings.oauth_issuer}/mcp) "
+        "and sign in with OAuth"
+        if _oauth_reachable(settings)
+        else "in a chat client, ask your user to reconnect it with an identity of its own"
+    )
     return (
-        f'NOTICE: this connection uses the shared "{principal.user.name}" identity, which is being '
-        f"retired {when}. After that its key stops working. Switch to an identity of your own: "
-        "in Claude Code, use the stdio server (`claude mcp add chaotic -- chaotic mcp`) with a "
-        "registrar's key and `chaotic config set-session-identity auto`, which gives each session "
-        "its own identity; in a chat client such as claude.ai, add the server again by URL "
-        f"({settings.oauth_issuer}/mcp) and sign in with OAuth. Then, as the new identity, take over "
-        "the tickets you have in progress: `issue_update` each one with `assignee: \"me\"`, then "
-        "`issue_start` it, so none stay with the shared identity."
+        f'NOTICE: this connection uses the shared "{principal.user.name}" identity, which {when}; '
+        "after that its key stops working. Switch to an identity of your own: in Claude Code, use the "
+        "stdio server (`claude mcp add chaotic -- chaotic mcp`) with a registrar's key and "
+        "`chaotic config set-session-identity auto`, which gives each session its own identity; "
+        f"{chat}. Then, as the new identity, re-claim only the tickets you started in this "
+        "conversation (`issue_update` with `assignee: \"me\"`, then `issue_start`). Other sessions "
+        "share this identity, so if you cannot tell which tickets are yours, leave them all and tell "
+        "your user."
     )
 
 
@@ -77,45 +115,36 @@ def with_notice(tool):
     async def noticed(*args, **kwargs):
         result = await tool(*args, **kwargs)
         notice = current_notice()
-        if notice is not None and isinstance(result, dict):
-            result = {**result, NOTICE_KEY: notice}
-        return result
+        if notice is None:
+            return result
+        if not isinstance(result, dict):
+            logger.warning("%s returned %s, not an object: its legacy-key notice was dropped",
+                           tool.__name__, type(result).__name__)
+            return result
+        if NOTICE_KEY in result:
+            logger.error("%s returned its own %r field; the legacy-key notice replaces it",
+                         tool.__name__, NOTICE_KEY)
+        return {**result, NOTICE_KEY: notice}
 
     return noticed
 
 
-def _get_instructions(self):
-    base = self.__dict__.get("instructions")
-    notice = current_notice()
-    if notice is None:
-        return base
-    return f"{base}\n\n{notice}" if base else notice
+class LegacyNoticeMiddleware:
+    """``ServerMiddleware`` appending the notice to the instructions in
+    the ``initialize`` and ``server/discover`` results. Both run inside
+    the middleware chain and produce their wire dict there; the
+    contextvar is the request's, so the notice is per request."""
 
-
-def _set_instructions(self, value):
-    self.__dict__["instructions"] = value
-
-
-# Read per request: initialize and server/discover both read the
-# attribute at call time, so the notice appears only for a listed key.
-_INSTRUCTIONS = property(_get_instructions, _set_instructions)
-
-
-def install_instructions_notice(server) -> None:
-    """Make ``server`` (an ``MCPServer``) append the notice to its
-    instructions for a listed key. The SDK keeps instructions as a plain
-    attribute of its private low-level server, set once at construction;
-    this swaps that one instance's class for a direct subclass whose
-    ``instructions`` is a property over the same stored value (a direct
-    subclass with no slots keeps the instance layout, which a mixin base
-    would not). Tested end to end over HTTP, so an SDK change that moves
-    the attribute fails a test rather than silently dropping the notice."""
-    low = server._lowlevel_server
-    if getattr(type(low), "_chaotic_legacy_notice", False):
-        return
-    stored = low.__dict__.get("instructions")
-    low.__class__ = type(
-        f"{type(low).__name__}WithLegacyNotice", (type(low),),
-        {"instructions": _INSTRUCTIONS, "_chaotic_legacy_notice": True},
-    )
-    low.instructions = stored
+    async def __call__(self, ctx, call_next):
+        result = await call_next(ctx)
+        if ctx.method not in _INSTRUCTION_METHODS:
+            return result
+        notice = current_notice()
+        if notice is None:
+            return result
+        if not isinstance(result, dict):
+            logger.warning("%s result is %s, not an object: its legacy-key notice was dropped",
+                           ctx.method, type(result).__name__)
+            return result
+        base = result.get("instructions")
+        return {**result, "instructions": f"{base}\n\n{notice}" if base else notice}

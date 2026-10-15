@@ -46,7 +46,7 @@ from chaotic_mcp_tools import (  # noqa: F401 - re-exported for tests
     with_budget_state as _with_budget_state,
 )
 
-from app.mcp_server.legacy import install_instructions_notice, with_notice
+from app.mcp_server.legacy import LegacyNoticeMiddleware, with_notice
 from app.mcp_server.backend import (  # noqa: F401 - re-exported for tests
     InProcessBackend,
     _resolve_document_id,
@@ -146,7 +146,7 @@ def build_server() -> MCPServer:
                 '"error_code": "..."}} rather than a protocol error -- switch on '
                 'error_code, read message.'
             ),
+            middleware=[LegacyNoticeMiddleware()],
         )
-    install_instructions_notice(mcp)
     add_tools(mcp, ALL_TOOLS)
     return mcp

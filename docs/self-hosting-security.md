@@ -547,16 +547,28 @@ chaotic system config set MCP_LEGACY_RETIRE_DATE 2026-11-15
 
 Every /mcp request authenticated with a listed key (header or
 capability URL) then gets a retirement notice: after the server's MCP
-`instructions`, and as a `notice` string on every tool result, errors
-included. The notice gives the date, how to switch (`chaotic mcp` with
-`session_identity: auto` in Claude Code; adding the server by URL with
-OAuth in a chat client), and asks the session to take over its
-in-progress tickets under the new identity. Other keys see nothing
-different, and tool schemas do not change. Both settings are empty by
-default (no notice anywhere). An entry that is not a key id, or a date
-not written `YYYY-MM-DD`, is logged as an error at startup and ignored;
-it never stops the server. `config set` refuses both. When the date
-arrives, deactivate the key itself; these settings only announce it.
+`instructions` (added by an MCP server middleware on `initialize` and
+`server/discover`), and as a `notice` string on every tool result,
+errors included. The notice gives the date, and how to switch:
+`chaotic mcp` with `session_identity: auto` in Claude Code; in a chat
+client, adding the server by URL and signing in with OAuth, but only
+when `OAUTH_ENABLED` is on and `APP_BASE_URL` is an https origin other
+than this machine (otherwise it asks the session to have its user
+reconnect it). It asks each session to re-claim only the tickets it
+started in that conversation, and to leave the rest and tell its user if
+it cannot tell: the sessions share one identity, so none may take them
+all. Other keys see nothing different, and tool schemas do not change.
+
+Both settings are empty by default (no notice anywhere). An entry that
+is not a key id as `chaotic auth keys list` shows it (a dashed UUID), or
+a date not written `YYYY-MM-DD`, is logged as an error at startup and
+ignored; it never stops the server. A bad entry is named by its
+position, never its value, and one that looks like a pasted API key is
+reported as such, so the key does not land in the log or on the
+terminal. `config set` refuses the same values, and `config check` warns
+when the ids are set without OAuth, when a date is set without ids, and
+when the date has passed. When the date arrives, deactivate the key
+itself; these settings only announce it.
 
 ## OAuth tokens
 

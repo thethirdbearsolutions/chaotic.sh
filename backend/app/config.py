@@ -3,7 +3,6 @@ import logging
 import os
 import ipaddress
 import re
-import uuid
 from datetime import date
 from urllib.parse import urlsplit
 
@@ -17,6 +16,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_FORWARDED_ALLOW_IPS = "127.0.0.1,::1"
 
 _ISO_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+# An API key id as stored and listed: a dashed UUID (CHT-1720).
+_KEY_ID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 # Default DB lives next to the backend package so `just serve` from any cwd
 # resolves to the same file. Production installs override via DATABASE_URL.
@@ -231,20 +232,27 @@ class Settings(BaseSettings):
     @field_validator("mcp_legacy_shared_key_ids", mode="before")
     @classmethod
     def _check_legacy_key_ids(cls, value) -> str:
-        """Keep each entry that is an API key id (a UUID), in its
-        canonical lower-case form; log and drop anything else (CHT-1720).
-        Never raises: a typo here must not take the server down."""
+        """Keep each entry that is an API key id as `chaotic auth keys
+        list` shows it (a dashed UUID, any case), lower-cased; log and drop
+        anything else (CHT-1720). The same forms `chaotic system config`
+        accepts: no braces, ``urn:uuid:`` or undashed hex. A dropped entry
+        is named by its position, never its value: the likely mistake is
+        pasting the key itself, and that must not reach the log. Never
+        raises: a typo here must not take the server down."""
         if not isinstance(value, str):
             logger.error("MCP_LEGACY_SHARED_KEY_IDS is not text; ignored, no retirement notice is shown.")
             return ""
         kept = []
-        for entry in (e.strip() for e in value.split(",")):
+        for position, entry in enumerate((e.strip() for e in value.split(",")), start=1):
             if not entry:
                 continue
-            try:
-                kept.append(str(uuid.UUID(entry)))
-            except ValueError:
-                logger.error("MCP_LEGACY_SHARED_KEY_IDS: %r is not an API key id; ignored.", entry)
+            if _KEY_ID.match(entry):
+                kept.append(entry.lower())
+            elif "_" in entry:
+                logger.error("MCP_LEGACY_SHARED_KEY_IDS entry %d looks like an API key, not its id "
+                             "(see 'chaotic auth keys list'); ignored, and not logged.", position)
+            else:
+                logger.error("MCP_LEGACY_SHARED_KEY_IDS entry %d is not an API key id; ignored.", position)
         return ",".join(dict.fromkeys(kept))
 
     @field_validator("mcp_legacy_retire_date", mode="before")

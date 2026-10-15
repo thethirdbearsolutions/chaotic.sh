@@ -298,3 +298,18 @@ def test_legacy_retire_date_cli_and_server_agree(monkeypatch, raw):
         assert server == stored
     else:
         assert server == "" and raw.strip() != ""
+
+
+@pytest.mark.parametrize("entry", [
+    "{0b7e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d}", "urn:uuid:0b7e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d",
+    "0b7e2a3c1d4f4a5b8c6d7e8f9a0b1c2d", "ck_" + "a1" * 32, "0b7e2a3c",
+])
+def test_legacy_key_id_forms_refused_by_both(monkeypatch, entry):
+    """PR #405 review nit: the server keeps exactly the id forms the CLI
+    accepts; every other form is refused by the CLI and dropped by the
+    server."""
+    from app.config import Settings
+
+    assert cli_settings.normalize("MCP_LEGACY_SHARED_KEY_IDS", entry)[1] is not None
+    monkeypatch.setenv("MCP_LEGACY_SHARED_KEY_IDS", entry)
+    assert Settings().mcp_legacy_shared_key_ids == ""

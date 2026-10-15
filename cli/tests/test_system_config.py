@@ -1283,10 +1283,20 @@ class TestLegacySharedKeySettings:
         assert ss.normalize("MCP_LEGACY_SHARED_KEY_IDS", "") == ("", None)
         assert not ss.is_secret("MCP_LEGACY_SHARED_KEY_IDS")
 
-    @pytest.mark.parametrize("entry", ["ck_abc123", "0b7e2a3c", "*", "{" + ID + "}", ID.replace("-", "")])
-    def test_a_non_id_is_refused(self, entry):
+    @pytest.mark.parametrize("entry", ["0b7e2a3c", "*", "{" + ID + "}", ID.replace("-", ""), "urn:uuid:" + ID])
+    def test_a_non_id_is_refused_by_position(self, entry):
         _value, problem = ss.normalize("MCP_LEGACY_SHARED_KEY_IDS", f"{self.ID},{entry}")
-        assert problem and "not an API key id" in problem
+        assert problem and "entry 2 is not an API key id" in problem
+        assert entry not in problem
+
+    @pytest.mark.parametrize("pasted", ["ck_" + "a1" * 32, "cat_" + "b2" * 32])
+    def test_a_pasted_key_is_recognised_and_never_echoed(self, server, pasted):
+        _value, problem = ss.normalize("MCP_LEGACY_SHARED_KEY_IDS", pasted)
+        assert "entry 1 looks like an API key, not its id" in problem
+        assert pasted not in problem and pasted[:12] not in problem
+        result = server.invoke("set", "MCP_LEGACY_SHARED_KEY_IDS", pasted)
+        assert result.exit_code != 0
+        assert pasted not in result.output and pasted[:12] not in result.output
 
     def test_dates(self):
         assert ss.normalize("MCP_LEGACY_RETIRE_DATE", " 2026-11-15 ") == ("2026-11-15", None)
@@ -1297,8 +1307,20 @@ class TestLegacySharedKeySettings:
     def test_a_date_without_ids_is_a_warning(self):
         errors, warnings = ss.check({"settings": {"MCP_LEGACY_RETIRE_DATE": "2026-11-15"}})
         assert errors == [] and any("no retirement notice" in w for w in warnings)
-        assert ss.check({"settings": {"MCP_LEGACY_RETIRE_DATE": "2026-11-15",
+        assert ss.check({"settings": {**OAUTH, "MCP_CAPABILITY_URL_ENABLED": "false",
+                                      "MCP_LEGACY_RETIRE_DATE": "2099-11-15",
                                       "MCP_LEGACY_SHARED_KEY_IDS": self.ID}}) == ([], [])
+
+    def test_ids_without_oauth_are_a_warning(self):
+        """The notice can only offer chat clients OAuth when it is on."""
+        errors, warnings = ss.check({"settings": {"MCP_LEGACY_SHARED_KEY_IDS": self.ID}})
+        assert errors == [] and any("OAUTH_ENABLED is not" in w for w in warnings)
+
+    def test_a_past_date_is_a_warning(self):
+        errors, warnings = ss.check({"settings": {**OAUTH, "MCP_CAPABILITY_URL_ENABLED": "false",
+                                                  "MCP_LEGACY_SHARED_KEY_IDS": self.ID,
+                                                  "MCP_LEGACY_RETIRE_DATE": "2020-01-01"}})
+        assert errors == [] and len(warnings) == 1 and "2020-01-01 has passed" in warnings[0]
 
     def test_set_writes_them_to_the_unit(self, server):
         assert server.invoke("set", "MCP_LEGACY_SHARED_KEY_IDS", self.ID.upper()).exit_code == 0

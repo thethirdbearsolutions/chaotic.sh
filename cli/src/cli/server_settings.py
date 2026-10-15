@@ -343,12 +343,15 @@ def normalize(name: str, value: str) -> tuple[str, str | None]:
     elif kind == "keyids":
         # The server keeps only entries that are key ids (UUIDs) and logs
         # the rest (app.config); refuse them here instead.
+        # Entries are named by position, never echoed: the likely mistake
+        # is pasting the key itself, a secret.
         ids = []
-        for entry in (e.strip() for e in value.split(",")):
+        for position, entry in enumerate((e.strip() for e in value.split(",")), start=1):
             if not entry:
                 continue
             if not _UUID.match(entry):
-                return value, f"{name}: {entry!r} is not an API key id (see 'chaotic auth keys list')"
+                what = "looks like an API key, not its id" if "_" in entry else "is not an API key id"
+                return value, f"{name}: entry {position} {what} (see 'chaotic auth keys list')"
             if entry.lower() not in ids:
                 ids.append(entry.lower())
         value = ",".join(ids)
@@ -477,9 +480,17 @@ def check_combination(settings: dict[str, str], skip: frozenset[str] = frozenset
         if settings.get("MCP_CAPABILITY_URL_ENABLED", KNOWN["MCP_CAPABILITY_URL_ENABLED"].default) != "false":
             warnings.append("OAuth is on and the deprecated capability URL (/mcp/<api-key>) is still served; "
                             "set MCP_CAPABILITY_URL_ENABLED=false once no connector uses it")
-    if settings.get("MCP_LEGACY_RETIRE_DATE") and not settings.get("MCP_LEGACY_SHARED_KEY_IDS"):
+    retire = settings.get("MCP_LEGACY_RETIRE_DATE")
+    if retire and not settings.get("MCP_LEGACY_SHARED_KEY_IDS"):
         warnings.append("MCP_LEGACY_RETIRE_DATE is set but MCP_LEGACY_SHARED_KEY_IDS is not: "
                         "no retirement notice is shown")
+    if settings.get("MCP_LEGACY_SHARED_KEY_IDS"):
+        if settings.get("OAUTH_ENABLED") != "true":
+            warnings.append("MCP_LEGACY_SHARED_KEY_IDS is set but OAUTH_ENABLED is not: the retirement "
+                            "notice cannot offer chat clients a way to switch")
+        if retire and date.fromisoformat(retire) < date.today():
+            warnings.append(f"MCP_LEGACY_RETIRE_DATE {retire} has passed: the notice says the key may "
+                            "stop working at any time; deactivate it or set a new date")
     return errors, warnings
 
 
