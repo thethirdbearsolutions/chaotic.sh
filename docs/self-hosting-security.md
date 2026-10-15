@@ -202,8 +202,15 @@ lowercased), not per account, so deleting the account and signing up
 again resets nothing: one code a minute and five an hour (429 with
 `Retry-After` past that), and at most 15 failed confirmations a day,
 after which every code, the right one included, gets the same 400 as a
-wrong one until the day has passed. That history is kept for a day,
-also after the account is deleted. Only HMACs of the codes and the
+wrong one until the day has passed, and no new code is mailed (429
+with `Retry-After` for when the cap lapses). That history is kept for
+a day, also after the account is deleted. Because the limits are per
+address, an address is one account whatever its case: signup refuses
+an address that differs from an existing one only in case (ASCII
+letters), login accepts any case, and an invitation matches its
+account ignoring case. The database does not enforce this (there is no
+unique index on the lowercased address), and accounts made before this
+check that differ only in case keep working, sharing one set of limits. Only HMACs of the codes and the
 addresses are stored, under a key derived from `SECRET_KEY`. A failed
 send is reported to the person (502 `email_send_failed`) rather than
 only logged. At startup the server logs whether this gate is active

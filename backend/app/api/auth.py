@@ -23,8 +23,12 @@ async def signup(user_in: UserCreate):
     """Register a new user."""
     user_service = UserService()
 
-    existing_user = await user_service.get_by_email(user_in.email)
-    if existing_user:
+    # Ignoring case (CHT-1790): addresses differing only in case would
+    # share one email-verification limit, so one could lock the other out.
+    # Not enforced by the database: an index on lower(email) cannot be
+    # declared in the model, and older databases may already hold such
+    # pairs. Two signups racing each other could still both pass.
+    if await user_service.find_by_email_ignoring_case(user_in.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",

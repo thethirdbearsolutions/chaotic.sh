@@ -205,10 +205,10 @@ describe('rendering', () => {
         expect(warning).toContain('r***@example.com');
     });
 
-    it('treats a case difference as a different account, like the server', () => {
+    it('ignores a case difference, like the server (CHT-1789)', () => {
         const el = document.createElement('div');
         renderSignedIn(el, preview(), { ...ROADRUNNER, email: 'roadrunner@EXAMPLE.com' });
-        expect(el.querySelector('#invite-accept')).toBeNull();
+        expect(el.querySelector('#invite-accept')).not.toBeNull();
     });
 });
 
@@ -324,6 +324,12 @@ describe('showInvite', () => {
 
             expect(screenEl().querySelector('h1').textContent).toBe(GONE_MESSAGE);
             expect(d.enterTeam).not.toHaveBeenCalled();
+        });
+
+        it('an account whose address differs only in case may accept (CHT-1789)', async () => {
+            api.getInvitation.mockResolvedValue(preview({ email_hint: 'r***@example.com' }));
+            await showInvite(TOKEN, deps({ user: { ...ROADRUNNER, email: 'RoadRunner@Example.com' } }));
+            expect(screenEl().querySelector('#invite-accept')).not.toBeNull();
         });
 
         it('a 403 on accept says the address differs', async () => {

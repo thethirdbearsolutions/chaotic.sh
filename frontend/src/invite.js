@@ -22,7 +22,7 @@
  * With SMTP configured on the server, accepting also needs a verified
  * address (CHT-1790): the server refuses with `email_unverified`, and the
  * page then offers "Send code" and a box for the six-digit code it mails,
- * and accepts again by itself once the code is confirmed.
+ * and tries the accept again by itself once the code is confirmed.
  *
  * The token is a bearer credential: without SMTP, while the invited
  * address has no account, whoever holds it can sign up as that address
@@ -208,7 +208,8 @@ export function renderSignedOut(el, preview) {
  * @param {object} user - the signed-in user (GET /auth/me)
  */
 export function renderSignedIn(el, preview, user) {
-    const mismatch = maskEmail(user.email) !== preview.email_hint;
+    // Ignoring case, as the server compares (CHT-1789).
+    const mismatch = maskEmail(user.email).toLowerCase() !== String(preview.email_hint || '').toLowerCase();
     const you = `<p class="invite-muted">Signed in as <strong>${escapeHtml(user.email)}</strong></p>`;
     if (mismatch) {
         el.innerHTML = `
@@ -231,7 +232,7 @@ export function renderSignedIn(el, preview, user) {
             ${you}
             <p id="invite-error" class="invite-warning hidden" role="alert"></p>
             <div id="invite-verify" class="invite-verify hidden">
-                <p>Verify your email address to accept: we will email a six-digit code to
+                <p>Verify your email address to continue: we will email a six-digit code to
                     <strong>${escapeHtml(user.email)}</strong>.</p>
                 <form id="invite-code-form" class="invite-code-form hidden">
                     <div class="form-group">
@@ -239,7 +240,7 @@ export function renderSignedIn(el, preview, user) {
                         <input type="text" id="invite-code" inputmode="numeric" autocomplete="one-time-code"
                             pattern="[0-9]{6}" maxlength="6" required>
                     </div>
-                    <button type="submit" id="invite-confirm-code" class="btn btn-primary">Verify and accept</button>
+                    <button type="submit" id="invite-confirm-code" class="btn btn-primary">Verify</button>
                 </form>
                 <p id="invite-verify-status" class="invite-muted hidden" role="status"></p>
                 <div class="invite-actions">
@@ -438,7 +439,7 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
             } else if (e && e.status === 403 && e.detail && e.detail.error_code === 'email_unverified') {
                 // CHT-1790: with SMTP on, the account must verify its
                 // address first. Not a mismatch: offer the code instead.
-                showError(el, 'Verify your email address to accept this invitation.');
+                showError(el, 'Verify your email address to continue.');
                 el.querySelector('#invite-accept-actions').classList.add('hidden');
                 el.querySelector('#invite-verify').classList.remove('hidden');
             } else if (e && e.status === 403) {

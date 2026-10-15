@@ -466,22 +466,29 @@ class TestPerAddressLimits:
         again = await _signup(client, "other@example.com")
         assert (await client.post(REQUEST, headers=again)).status_code == 429
 
-    async def _burn_a_code(self, client, headers, outbox):
+    async def _burn_a_code(self, client, headers, outbox, tries=evs.MAX_ATTEMPTS):
         await _age_address("test@example.com", timedelta(seconds=61))
         assert (await client.post(REQUEST, headers=headers)).status_code == 202
         code = outbox.last_code()
         wrong = f"{(int(code) + 1) % 10**6:06d}"
-        for _ in range(evs.MAX_ATTEMPTS):
+        for _ in range(tries):
             assert (await client.post(CONFIRM, headers=headers, json={"code": wrong})).status_code == 400
+        return code
+
+    async def _reach_the_cap(self, client, headers, outbox):
+        for _ in range(evs.DAILY_FAILURE_LIMIT // evs.MAX_ATTEMPTS):
+            await self._burn_a_code(client, headers, outbox)
+            await _age_address("test@example.com", timedelta(minutes=15))  # stay under the hourly limit
 
     async def test_the_daily_failure_cap_refuses_even_the_right_code(self, client, auth_headers, test_user, outbox):
         assert evs.DAILY_FAILURE_LIMIT % evs.MAX_ATTEMPTS == 0
-        for _ in range(evs.DAILY_FAILURE_LIMIT // evs.MAX_ATTEMPTS):
-            await self._burn_a_code(client, auth_headers, outbox)
-            await _age_address("test@example.com", timedelta(minutes=15))  # stay under the hourly limit
-        await _age_address("test@example.com", timedelta(seconds=61))
-        assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
-        response = await client.post(CONFIRM, headers=auth_headers, json={"code": outbox.last_code()})
+        # 5 + 5 + 4 failures, then one more on a live code: 15, with that
+        # code still under its own cap.
+        await self._burn_a_code(client, auth_headers, outbox)
+        await self._burn_a_code(client, auth_headers, outbox)
+        await self._burn_a_code(client, auth_headers, outbox, tries=evs.MAX_ATTEMPTS - 1)
+        live = await self._burn_a_code(client, auth_headers, outbox, tries=1)
+        response = await client.post(CONFIRM, headers=auth_headers, json={"code": live})
         assert response.status_code == 400
         assert response.json()["detail"] == {
             "error_code": "invalid_verification_code", "message": evs.INVALID_CODE_MESSAGE,
@@ -489,14 +496,28 @@ class TestPerAddressLimits:
         await test_user.refresh()
         assert test_user.email_verified_at is None
 
+    async def test_over_the_cap_no_code_is_mailed(self, client, auth_headers, outbox):
+        """R2: a 429 that says when the cap lapses, not a dead code."""
+        await self._reach_the_cap(client, auth_headers, outbox)
+        await _age_address("test@example.com", timedelta(seconds=61))
+        sent = len(outbox.sent)
+        response = await client.post(REQUEST, headers=auth_headers)
+        assert response.status_code == 429
+        assert response.json()["detail"]["error_code"] == "email_verification_rate_limited"
+        assert "wrong codes" in response.json()["detail"]["message"]
+        # The cap lapses when the oldest code (5 of the 15) leaves the day.
+        oldest = min(r.created_at for r in await OxydeEmailVerificationCode.objects.filter(
+            email_hash=evs.hash_email("test@example.com")).all())
+        expected = (oldest + evs.FAILURE_WINDOW - datetime.now(timezone.utc)).total_seconds()
+        assert abs(int(response.headers["Retry-After"]) - expected) <= 2
+        assert len(outbox.sent) == sent
+
     async def test_the_daily_failure_cap_survives_re_signup_and_lapses_after_a_day(self, client, auth_headers, outbox):
-        for _ in range(evs.DAILY_FAILURE_LIMIT // evs.MAX_ATTEMPTS):
-            await self._burn_a_code(client, auth_headers, outbox)
-            await _age_address("test@example.com", timedelta(minutes=15))
+        await self._reach_the_cap(client, auth_headers, outbox)
         await client.delete("/api/users/me", headers=auth_headers)
         again = await _signup(client)
         await _age_address("test@example.com", timedelta(seconds=61))
-        assert (await client.post(REQUEST, headers=again)).status_code == 202
+        assert (await client.post(REQUEST, headers=again)).status_code == 429
         assert (await client.post(CONFIRM, headers=again, json={"code": outbox.last_code()})).status_code == 400
         # A day later the history is pruned and a code works again.
         await _age_address("test@example.com", evs.FAILURE_WINDOW)
@@ -504,6 +525,18 @@ class TestPerAddressLimits:
         assert await OxydeEmailVerificationCode.objects.filter(
             email_hash=evs.hash_email("test@example.com")).count() == 1
         assert (await client.post(CONFIRM, headers=again, json={"code": outbox.last_code()})).status_code == 200
+
+    def test_the_cap_lapses_when_enough_failures_leave_the_window(self):
+        from types import SimpleNamespace as Row
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        rows = [
+            Row(attempts=5, used_at=None, created_at=t0),
+            Row(attempts=5, used_at=None, created_at=t0 + timedelta(hours=1)),
+            Row(attempts=5, used_at=None, created_at=t0 + timedelta(hours=2)),
+            Row(attempts=1, used_at=t0, created_at=t0 + timedelta(hours=3)),  # a success, no failure
+        ]
+        assert evs._failure_cap_lapses_at(rows) == t0 + evs.FAILURE_WINDOW
+        assert evs._failure_cap_lapses_at(rows[1:]) is None
 
     async def test_a_success_is_not_counted_as_a_failure(self, client, auth_headers, outbox):
         await client.post(REQUEST, headers=auth_headers)
@@ -587,3 +620,119 @@ class TestEmailAndStartup:
         caplog.set_level(logging.INFO, logger="app.services.email_verification_service")
         evs.log_invitation_gate()
         assert "gate: INACTIVE" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Addresses are one account ignoring case (re-review R1, CHT-1789)
+# ---------------------------------------------------------------------------
+
+
+async def _make_user(email: str) -> OxydeUser:
+    from app.utils.security import get_password_hash
+    return await OxydeUser.objects.create(
+        email=email, hashed_password=get_password_hash("password123"), name=email,
+    )
+
+
+class TestCaseInsensitiveAddresses:
+    @pytest.mark.parametrize("variant", ["TEST@example.com", "Test@Example.com", " test@EXAMPLE.COM"])
+    async def test_a_case_variant_signup_is_refused(self, client, test_user, variant):
+        response = await client.post("/api/auth/signup", json={
+            "email": variant, "password": "password123", "name": "Variant",
+        })
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Email already registered"
+        assert await OxydeUser.objects.count() == 1
+
+    async def test_the_variant_lockout_cannot_be_set_up(self, client, auth_headers, test_user, outbox):
+        """The attack: a second account at a case variant spends the
+        victim's shared limits. The variant account cannot exist."""
+        response = await client.post("/api/auth/signup", json={
+            "email": "Test@Example.com", "password": "password123", "name": "Attacker",
+        })
+        assert response.status_code == 400
+        # The victim's bucket is untouched: a code goes out.
+        assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
+
+    @pytest.mark.parametrize("typed", ["test@example.com", "TEST@EXAMPLE.COM", "Test@Example.com"])
+    async def test_login_works_in_any_case(self, client, test_user, typed):
+        response = await client.post("/api/auth/login", json={"email": typed, "password": "testpassword123"})
+        assert response.status_code == 200, response.text
+
+    async def test_login_prefers_the_exact_address(self, client, db):
+        # Two accounts that predate the signup check.
+        exact = await _make_user("Pair@example.com")
+        await _make_user("pair@example.com")
+        response = await client.post("/api/auth/login", json={"email": "Pair@example.com", "password": "password123"})
+        assert response.status_code == 200
+        me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {response.json()['access_token']}"})
+        assert me.json()["id"] == exact.id
+
+    async def test_an_ambiguous_case_insensitive_login_is_refused(self, client, db):
+        await _make_user("Pair@example.com")
+        await _make_user("pair@example.com")
+        response = await client.post("/api/auth/login", json={"email": "PAIR@example.com", "password": "password123"})
+        assert response.status_code == 401
+
+    @pytest.mark.parametrize("stored, typed", [
+        ("a_b@example.com", "aXb@example.com"),
+        ("a%b@example.com", "aZZb@example.com"),
+        # The pattern side carrying the wildcard: must not match a lookalike.
+        ("aXb@example.com", "a_b@example.com"),
+        ("aZZb@example.com", "a%b@example.com"),
+        ("a\\b@example.com", "ab@example.com"),
+    ])
+    async def test_wildcards_in_an_address_match_only_themselves(self, client, db, stored, typed):
+        from app.services.user_service import UserService
+        user = await _make_user(stored)
+        service = UserService()
+        assert await service.find_by_email_ignoring_case(typed) == []
+        assert await service.get_by_email_ignoring_case(typed) is None
+        assert [u.id for u in await service.find_by_email_ignoring_case(stored.upper())] == [user.id]
+        response = await client.post("/api/auth/signup", json={
+            "email": "a_c@example.com", "password": "password123", "name": "Other",
+        })
+        assert response.status_code == 201, response.text
+
+    async def test_a_wildcard_signup_does_not_collide_with_a_lookalike(self, client, db):
+        await _make_user("aXb@example.com")
+        response = await client.post("/api/auth/signup", json={
+            "email": "a_b@example.com", "password": "password123", "name": "Underscore",
+        })
+        assert response.status_code == 201, response.text
+
+    async def test_an_empty_address_matches_nothing(self, db):
+        from app.services.user_service import UserService
+        assert await UserService().find_by_email_ignoring_case("  ") == []
+
+    async def test_accept_ignores_case(self, client, test_team, test_user, no_smtp):
+        bob = await _make_user("Bob@Example.com")
+        token = await _invite(test_team.id, test_user.id, "bob@example.com")
+        headers = {"Authorization": f"Bearer {create_access_token(data={'sub': bob.id})}"}
+        response = await _accept(client, token, headers)
+        assert response.status_code == 200, response.text
+
+    async def test_accept_ignores_case_after_verifying(self, client, test_team, test_user, outbox):
+        bob = await _make_user("Bob@Example.com")
+        token = await _invite(test_team.id, test_user.id, "bob@example.com")
+        headers = {"Authorization": f"Bearer {create_access_token(data={'sub': bob.id})}"}
+        await client.post(REQUEST, headers=headers)
+        assert (await client.post(CONFIRM, headers=headers, json={"code": outbox.last_code()})).status_code == 200
+        assert (await _accept(client, token, headers)).status_code == 200
+
+    async def test_inviting_an_existing_member_in_another_case_is_refused(
+        self, client, auth_headers, test_team, test_user,
+    ):
+        response = await client.post(
+            f"/api/teams/{test_team.id}/invitations", headers=auth_headers, json={"email": "TEST@example.com"},
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "User is already a team member"
+
+    def test_folding_is_ascii_only(self):
+        from app.utils.email_address import fold_email, same_email
+        assert fold_email(" Alice@Corp.COM ") == "alice@corp.com"
+        assert same_email("Bob@Example.com", "bob@example.com")
+        # SQLite's LIKE folds ASCII only; so does the comparison.
+        assert not same_email("\u00c4@x.com", "\u00e4@x.com")
+        assert evs.hash_email("Alice@Corp.com") == evs.hash_email("alice@corp.com")

@@ -21,8 +21,13 @@ Rules:
   ``DAILY_FAILURE_LIMIT`` (15) failed confirmations in a rolling
   ``FAILURE_WINDOW`` (24 h). Past that cap every confirmation, the right
   code included, gets the same 400 as a wrong one, so it is not an
-  oracle. The rows are that history; they are pruned once older than
-  ``FAILURE_WINDOW``.
+  oracle, and no new code is mailed (429 until enough failures leave
+  the window). The rows are that history; they are pruned once older
+  than ``FAILURE_WINDOW``. The address-wide cap is check-then-spend:
+  confirmations racing each other all read the count before any of
+  them spends, so together they can overshoot it by up to
+  ``MAX_ATTEMPTS - 1`` (they share one code, whose own cap is atomic).
+  That is acceptable: it bounds a burst, not a sustained guess rate.
 * Only HMAC-SHA256s are stored: of the code (bound to the user id) and
   of the address, under a key derived from the server's SECRET_KEY for
   this purpose alone. Codes are compared with ``hmac.compare_digest``.
@@ -53,6 +58,7 @@ from app.oxyde_models.email_verification import OxydeEmailVerificationCode
 from app.oxyde_models.user import OxydeUser
 from app.services.email_service import EmailService
 from app.utils.datetimes import ensure_utc
+from app.utils.email_address import fold_email
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +131,7 @@ def hash_code(user_id: str, code: str) -> str:
 
 def hash_email(email: str) -> str:
     """HMAC-SHA256 of the normalised address: what the limits count by."""
-    return hmac.new(_key(), f"email:{email.strip().lower()}".encode(), hashlib.sha256).hexdigest()
+    return hmac.new(_key(), f"email:{fold_email(email)}".encode(), hashlib.sha256).hexdigest()
 
 
 def new_code() -> str:
@@ -166,6 +172,26 @@ def _rate_limited(message: str, retry: int) -> VerificationRefused:
     )
 
 
+def _failures(rows) -> int:
+    """Failed confirmations recorded on ``rows``: every try but a success."""
+    return sum(r.attempts - (1 if r.used_at is not None else 0) for r in rows)
+
+
+def _failure_cap_lapses_at(rows) -> datetime | None:
+    """When the address drops back under the daily failure cap, or None
+    if it is under it now. ``rows`` are its codes in the window, oldest
+    first; a code's failures leave the window with it (they all happened
+    within its TTL of its ``created_at``)."""
+    remaining = _failures(rows)
+    if remaining < DAILY_FAILURE_LIMIT:
+        return None
+    for row in rows:
+        remaining -= _failures([row])
+        if remaining < DAILY_FAILURE_LIMIT:
+            return ensure_utc(row.created_at) + FAILURE_WINDOW
+    return None  # pragma: no cover -- the loop always gets under the cap
+
+
 class EmailVerificationService:
     """Sends and confirms verification codes."""
 
@@ -188,6 +214,17 @@ class EmailVerificationService:
         email_hash = hash_email(user.email)
         codes = OxydeEmailVerificationCode.objects
         await codes.filter(created_at__lt=now - FAILURE_WINDOW).delete()
+
+        # Over the day's failure cap a code could not be confirmed anyway:
+        # say when it lapses instead of mailing a dead one.
+        history = await codes.filter(email_hash=email_hash).order_by("created_at").all()
+        lapses_at = _failure_cap_lapses_at(history)
+        if lapses_at is not None:
+            retry = _seconds_until(lapses_at, now)
+            raise _rate_limited(
+                "Too many wrong codes for this address today. "
+                f"Try again in {(retry + 3599) // 3600} h.", retry,
+            )
 
         # Insert first (unarmed: nothing can confirm it yet), then count:
         # two requests racing each other then both see the other's row,
@@ -248,8 +285,7 @@ class EmailVerificationService:
         codes = OxydeEmailVerificationCode.objects
 
         history = await codes.filter(email_hash=email_hash, created_at__gte=now - FAILURE_WINDOW).all()
-        failures = sum(r.attempts - (1 if r.used_at is not None else 0) for r in history)
-        if failures >= DAILY_FAILURE_LIMIT:
+        if _failures(history) >= DAILY_FAILURE_LIMIT:
             raise invalid
 
         latest = await codes.filter(

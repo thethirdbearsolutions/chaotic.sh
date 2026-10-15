@@ -21,6 +21,7 @@ from app.services.mention_handles import MentionDirectory
 from app.services.team_service import TeamService
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
+from app.utils.email_address import same_email
 from app.enums import TeamRole
 
 logger = logging.getLogger(__name__)
@@ -307,7 +308,7 @@ async def create_invitation(
 
     # Check if user already a member
     user_service = UserService()
-    existing_user = await user_service.get_by_email(invitation_in.email)
+    existing_user = await user_service.get_by_email_ignoring_case(invitation_in.email)
     if existing_user:
         existing_member = await team_service.get_member(team_id, existing_user.id)
         if existing_member:
@@ -477,7 +478,8 @@ async def accept_invitation(token: str, current_user: CurrentUser, _app_session:
             status_code=status.HTTP_403_FORBIDDEN, detail=dict(EMAIL_UNVERIFIED), headers=INVITATION_HEADERS,
         )
 
-    if invitation.email != current_user.email:
+    # Ignoring case (CHT-1789): an address's case is not part of whose it is.
+    if not same_email(invitation.email, current_user.email):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invitation is for a different email",
