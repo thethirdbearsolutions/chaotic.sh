@@ -5,7 +5,7 @@
 
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor, formatTimeAgo, renderPrincipalBadge } from './utils.js';
-import { showModal, closeModal, showToast, showApiError } from './ui.js';
+import { showModal, closeModal, showToast, showApiError, showMentionWarnings } from './ui.js';
 import {
     getDocViewMode, setDocViewMode as persistDocViewMode,
     getCommentDraft, setCommentDraft,
@@ -1753,9 +1753,11 @@ export async function handleAddDocumentComment(event, documentId) {
 
   docCommentSubmitting = true;
   try {
-    await api.createDocumentComment(documentId, content);
+    const created = await api.createDocumentComment(documentId, content);
     textarea.value = '';
     showToast('Comment added!', 'success');
+    // @handles that reached nobody (CHT-1743)
+    showMentionWarnings(created);
     await viewDocument(documentId, false);
   } catch (e) {
     showApiError('add comment', e);

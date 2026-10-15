@@ -2373,6 +2373,11 @@ select:focus-visible {
     flex: 1;
 }
 
+/* One line per @mention warning (CHT-1743) */
+.toast-multiline .toast-message {
+    white-space: pre-line;
+}
+
 .toast-close {
     flex-shrink: 0;
     background: none;

@@ -25,6 +25,7 @@ vi.mock('./api.js', () => ({
 vi.mock('./ui.js', () => ({
     showApiError: vi.fn(),
     showToast: vi.fn(),
+    showMentionWarnings: vi.fn(),
     showModal: vi.fn(),
     closeModal: vi.fn(),
 }));
@@ -108,7 +109,7 @@ vi.mock('./state.js', async (importOriginal) => {
 
 import { setCurrentTeam, setCurrentDetailIssue, getCurrentDetailIssue, getCurrentView, getDetailNavContext, setDetailNavContext } from './state.js';
 import { api } from './api.js';
-import { showToast, showModal, closeModal, showApiError } from './ui.js';
+import { showToast, showModal, closeModal, showApiError, showMentionWarnings } from './ui.js';
 import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
@@ -1388,6 +1389,26 @@ describe('issue-detail-view', () => {
 
             expect(api.createComment).toHaveBeenCalledWith('i1', 'Hello world');
             expect(showToast).toHaveBeenCalledWith('Comment added!', 'success');
+        });
+
+        it('passes the create response to showMentionWarnings (CHT-1743)', async () => {
+            api.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
+            const created = { id: 'c1', content: 'cc @nobody', warnings: ['@nobody matches nobody who can be mentioned here; nobody was notified.'] };
+            api.createComment.mockResolvedValue(created);
+            document.getElementById('new-comment').value = 'cc @nobody';
+
+            await handleAddComment({ preventDefault: vi.fn() }, 'i1');
+
+            expect(showMentionWarnings).toHaveBeenCalledWith(created);
+        });
+
+        it('does not show mention warnings when the submit fails (CHT-1743)', async () => {
+            showMentionWarnings.mockClear();
+            api.createComment.mockRejectedValue(new Error('forbidden'));
+
+            await handleAddComment({ preventDefault: vi.fn() }, 'i1');
+
+            expect(showMentionWarnings).not.toHaveBeenCalled();
         });
 
         it('shows error toast on failure', async () => {
