@@ -7,7 +7,7 @@ from app.oxyde_models.user import OxydeUser
 from app.schemas.user import UserCreate, UserUpdate
 from app.utils.email_address import fold_email
 from app.utils.security import get_password_hash, verify_password
-from app.oxyde_models.team import OxydeTeamMember, OxydeTeamInvitation
+from app.oxyde_models.team import OxydeTeamMember
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.services.agent_service import AgentService, describe_counts
 from app.services.credential_events import revoking
@@ -147,9 +147,9 @@ class UserService:
         return user
 
     async def delete(self, user: OxydeUser) -> None:
-        """Delete a user, their agents and their memberships, invitations
-        and API keys -- only if neither they nor any of their agents
-        authored anything.
+        """Delete a user, their agents and their memberships and API keys
+        -- only if neither they nor any of their agents authored anything.
+        Invitations to their address are kept (CHT-1796).
 
         Otherwise UserDeletionRefusedError (CHT-1467): the same rule
         AgentService.delete applies to one agent, applied to the account
@@ -197,7 +197,12 @@ class UserService:
                 await OxydeAPIKey.objects.filter(principal_user_id=agent.id).delete()
                 await agent.delete()
             await OxydeTeamMember.objects.filter(user_id=user.id).delete()
-            await OxydeTeamInvitation.objects.filter(email=user.email).delete()
+            # Invitations *to* their address are left alone: they belong
+            # to the inviting team, expire on their own, and signup never
+            # proved the address, so deleting them let anyone sign up as
+            # a pending invitee and wipe their invitations on every team
+            # (CHT-1796). Invitations they sent go with the account
+            # through team_invitations.invited_by's ON DELETE CASCADE.
             # Their own keys, and the ones they hold for other people's
             # agents (CHT-1537).
             await OxydeAPIKey.objects.filter(principal_user_id=user.id).delete()
