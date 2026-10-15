@@ -822,6 +822,7 @@ class IssueService:
                     project.team_id,
                     activity_type.value,
                     payload,
+                    project_id=project.id,
                 )
         except Exception:
             logger.exception(
@@ -1062,6 +1063,7 @@ class IssueService:
             response = await issue_response(issue)
             await broadcast_issue_event(
                 project.team_id, "updated", response.model_dump(mode="json"),
+                project_id=project.id,
             )
         except Exception:
             logger.exception(

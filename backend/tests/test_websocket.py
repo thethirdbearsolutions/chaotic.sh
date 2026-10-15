@@ -2,12 +2,24 @@
 import pytest
 from unittest.mock import AsyncMock
 
-from app.websocket import ConnectionManager, broadcast_issue_event, broadcast_comment_event, broadcast_project_event, broadcast_activity_event, broadcast_relation_event, broadcast_attestation_event, broadcast_document_event
+from app.websocket import ConnectionManager, SocketOwner, broadcast_issue_event, broadcast_comment_event, broadcast_project_event, broadcast_activity_event, broadcast_relation_event, broadcast_attestation_event, broadcast_document_event
 
 
 @pytest.fixture
 def manager():
     return ConnectionManager()
+
+
+def _owner(team_id, project_id=None, user_id="user-1"):
+    """An owner with team-wide reach, or confined to ``project_id``."""
+    return SocketOwner(team_id=team_id, user_id=user_id, project_id=project_id)
+
+
+def _seat(manager, team_id, *sockets, project_id=None):
+    """Register already-accepted sockets, owners and all, as connect does."""
+    manager.active_connections.setdefault(team_id, set()).update(sockets)
+    for ws in sockets:
+        manager.owners[ws] = _owner(team_id, project_id)
 
 
 def make_ws():
@@ -22,7 +34,7 @@ class TestConnectionManager:
     @pytest.mark.asyncio
     async def test_connect_accepts_and_stores(self, manager):
         ws = make_ws()
-        await manager.connect(ws, "team-1")
+        await manager.connect(ws, "team-1", owner=_owner("team-1"))
 
         ws.accept.assert_awaited_once()
         assert ws in manager.active_connections["team-1"]
@@ -31,8 +43,8 @@ class TestConnectionManager:
     async def test_connect_multiple_to_same_team(self, manager):
         ws1 = make_ws()
         ws2 = make_ws()
-        await manager.connect(ws1, "team-1")
-        await manager.connect(ws2, "team-1")
+        await manager.connect(ws1, "team-1", owner=_owner("team-1"))
+        await manager.connect(ws2, "team-1", owner=_owner("team-1"))
 
         assert len(manager.active_connections["team-1"]) == 2
 
@@ -40,15 +52,15 @@ class TestConnectionManager:
     async def test_connect_different_teams(self, manager):
         ws1 = make_ws()
         ws2 = make_ws()
-        await manager.connect(ws1, "team-1")
-        await manager.connect(ws2, "team-2")
+        await manager.connect(ws1, "team-1", owner=_owner("team-1"))
+        await manager.connect(ws2, "team-2", owner=_owner("team-2"))
 
         assert len(manager.active_connections["team-1"]) == 1
         assert len(manager.active_connections["team-2"]) == 1
 
     def test_disconnect_removes_connection(self, manager):
         ws = make_ws()
-        manager.active_connections["team-1"] = {ws}
+        _seat(manager, "team-1", ws)
 
         manager.disconnect(ws, "team-1")
         assert "team-1" not in manager.active_connections
@@ -56,7 +68,7 @@ class TestConnectionManager:
     def test_disconnect_keeps_other_connections(self, manager):
         ws1 = make_ws()
         ws2 = make_ws()
-        manager.active_connections["team-1"] = {ws1, ws2}
+        _seat(manager, "team-1", ws1, ws2)
 
         manager.disconnect(ws1, "team-1")
         assert ws2 in manager.active_connections["team-1"]
@@ -70,7 +82,7 @@ class TestConnectionManager:
     def test_disconnect_nonexistent_connection(self, manager):
         ws1 = make_ws()
         ws2 = make_ws()
-        manager.active_connections["team-1"] = {ws1}
+        _seat(manager, "team-1", ws1)
 
         # Disconnecting ws2 (not in set) should not raise
         manager.disconnect(ws2, "team-1")
@@ -80,7 +92,7 @@ class TestConnectionManager:
     async def test_broadcast_to_team(self, manager):
         ws1 = make_ws()
         ws2 = make_ws()
-        manager.active_connections["team-1"] = {ws1, ws2}
+        _seat(manager, "team-1", ws1, ws2)
 
         message = {"type": "test", "data": "hello"}
         await manager.broadcast_to_team("team-1", message)
@@ -98,7 +110,7 @@ class TestConnectionManager:
         ws_alive = make_ws()
         ws_dead = make_ws()
         ws_dead.send_json.side_effect = Exception("connection closed")
-        manager.active_connections["team-1"] = {ws_alive, ws_dead}
+        _seat(manager, "team-1", ws_alive, ws_dead)
 
         await manager.broadcast_to_team("team-1", {"type": "test"})
 
@@ -110,8 +122,8 @@ class TestConnectionManager:
     async def test_broadcast_only_targets_specified_team(self, manager):
         ws1 = make_ws()
         ws2 = make_ws()
-        manager.active_connections["team-1"] = {ws1}
-        manager.active_connections["team-2"] = {ws2}
+        _seat(manager, "team-1", ws1)
+        _seat(manager, "team-2", ws2)
 
         await manager.broadcast_to_team("team-1", {"type": "test"})
 
@@ -125,12 +137,13 @@ class TestBroadcastHelpers:
         mock_broadcast = AsyncMock()
         monkeypatch.setattr("app.websocket.manager.broadcast_to_team", mock_broadcast)
 
-        await broadcast_issue_event("team-1", "created", {"id": "i1", "title": "Test"})
+        await broadcast_issue_event("team-1", "created", {"id": "i1", "title": "Test"}, project_id="p1")
 
         mock_broadcast.assert_awaited_once_with("team-1", {
             "type": "created",
             "entity": "issue",
             "data": {"id": "i1", "title": "Test"},
+            "project_id": "p1",
         })
 
     @pytest.mark.asyncio
@@ -138,12 +151,13 @@ class TestBroadcastHelpers:
         mock_broadcast = AsyncMock()
         monkeypatch.setattr("app.websocket.manager.broadcast_to_team", mock_broadcast)
 
-        await broadcast_comment_event("team-1", "created", {"id": "c1"})
+        await broadcast_comment_event("team-1", "created", {"id": "c1"}, project_id="p1")
 
         mock_broadcast.assert_awaited_once_with("team-1", {
             "type": "created",
             "entity": "comment",
             "data": {"id": "c1"},
+            "project_id": "p1",
         })
 
     @pytest.mark.asyncio
@@ -151,12 +165,13 @@ class TestBroadcastHelpers:
         mock_broadcast = AsyncMock()
         monkeypatch.setattr("app.websocket.manager.broadcast_to_team", mock_broadcast)
 
-        await broadcast_project_event("team-1", "updated", {"id": "p1"})
+        await broadcast_project_event("team-1", "updated", {"id": "p1"}, project_id="p1")
 
         mock_broadcast.assert_awaited_once_with("team-1", {
             "type": "updated",
             "entity": "project",
             "data": {"id": "p1"},
+            "project_id": "p1",
         })
 
     @pytest.mark.asyncio
@@ -164,12 +179,13 @@ class TestBroadcastHelpers:
         mock_broadcast = AsyncMock()
         monkeypatch.setattr("app.websocket.manager.broadcast_to_team", mock_broadcast)
 
-        await broadcast_activity_event("team-1", "created", {"id": "a1"})
+        await broadcast_activity_event("team-1", "created", {"id": "a1"}, project_id="p1")
 
         mock_broadcast.assert_awaited_once_with("team-1", {
             "type": "created",
             "entity": "activity",
             "data": {"id": "a1"},
+            "project_id": "p1",
         })
 
     @pytest.mark.asyncio
@@ -177,12 +193,13 @@ class TestBroadcastHelpers:
         mock_broadcast = AsyncMock()
         monkeypatch.setattr("app.websocket.manager.broadcast_to_team", mock_broadcast)
 
-        await broadcast_relation_event("team-1", "created", {"source_issue_id": "i1", "target_issue_id": "i2"})
+        await broadcast_relation_event("team-1", "created", {"source_issue_id": "i1", "target_issue_id": "i2"}, project_id="p1")
 
         mock_broadcast.assert_awaited_once_with("team-1", {
             "type": "created",
             "entity": "relation",
             "data": {"source_issue_id": "i1", "target_issue_id": "i2"},
+            "project_id": "p1",
         })
 
     @pytest.mark.asyncio
@@ -190,12 +207,13 @@ class TestBroadcastHelpers:
         mock_broadcast = AsyncMock()
         monkeypatch.setattr("app.websocket.manager.broadcast_to_team", mock_broadcast)
 
-        await broadcast_attestation_event("team-1", "completed", {"ritual_id": "r1", "issue_id": "i1"})
+        await broadcast_attestation_event("team-1", "completed", {"ritual_id": "r1", "issue_id": "i1"}, project_id="p1")
 
         mock_broadcast.assert_awaited_once_with("team-1", {
             "type": "completed",
             "entity": "attestation",
             "data": {"ritual_id": "r1", "issue_id": "i1"},
+            "project_id": "p1",
         })
 
     @pytest.mark.asyncio
@@ -204,12 +222,13 @@ class TestBroadcastHelpers:
         mock_broadcast = AsyncMock()
         monkeypatch.setattr("app.websocket.manager.broadcast_to_team", mock_broadcast)
 
-        await broadcast_document_event("team-1", "created", {"id": "d1", "title": "Doc"})
+        await broadcast_document_event("team-1", "created", {"id": "d1", "title": "Doc"}, project_id="p1")
 
         mock_broadcast.assert_awaited_once_with("team-1", {
             "type": "created",
             "entity": "document",
             "data": {"id": "d1", "title": "Doc"},
+            "project_id": "p1",
         })
 
 
@@ -228,7 +247,7 @@ class TestBroadcastWhileDisconnecting:
             await asyncio.sleep(0.05)
 
         slow.send_json.side_effect = slow_send
-        manager.active_connections["team-1"] = {slow, other}
+        _seat(manager, "team-1", slow, other)
 
         async def drop_soon():
             await asyncio.sleep(0.01)
@@ -248,7 +267,7 @@ class TestBroadcastWhileDisconnecting:
             raise RuntimeError("closed")
 
         dead.send_json.side_effect = dies
-        manager.active_connections["team-1"] = {dead}
+        _seat(manager, "team-1", dead)
 
         async def drop_soon():
             await asyncio.sleep(0.01)

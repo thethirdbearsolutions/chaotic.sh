@@ -430,6 +430,7 @@ async def force_clear_ticket_limbo(
                 project.team_id,
                 ActivityType.INTENT_CANCELED.value,
                 payload,
+                project_id=project.id,
             )
         except Exception:
             pass
@@ -627,6 +628,7 @@ async def complete_gate_ritual_for_issue(
         await broadcast_attestation_event(
             project.team_id, "completed",
             {"ritual_id": ritual_id, "issue_id": issue_id},
+            project_id=project.id,
         )
     except Exception:
         pass

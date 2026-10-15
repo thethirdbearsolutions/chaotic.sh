@@ -129,7 +129,7 @@ async def create_document(
 
     document = await document_service.create(document_in, team_id, current_user.id)
     response = await fill_principals(build_document_response(document, author_name=current_user.name))
-    await broadcast_document_event(team_id, "created", response.model_dump(mode="json"))
+    await broadcast_document_event(team_id, "created", response.model_dump(mode="json"), project_id=document.project_id)
     return response
 
 
@@ -243,7 +243,7 @@ async def update_document(
 
     document = await document_service.update(document, document_in, current_user.id)
     response = await fill_principals(build_document_response(document))
-    await broadcast_document_event(document.team_id, "updated", response.model_dump(mode="json"))
+    await broadcast_document_event(document.team_id, "updated", response.model_dump(mode="json"), project_id=document.project_id)
     return response
 
 
@@ -270,7 +270,7 @@ async def delete_document(document_id: str, current_user: CurrentUser):
     team_id = document.team_id
     document_data = {"id": document.id, "title": document.title}
     await document_service.delete(document, current_user.id)
-    await broadcast_document_event(team_id, "deleted", document_data)
+    await broadcast_document_event(team_id, "deleted", document_data, project_id=document.project_id)
 
 
 @router.get("/{document_id}/issues", response_model=list[IssueResponse])
@@ -518,6 +518,7 @@ async def create_comment(
     # Broadcast real-time update (the warnings are the author's alone)
     await broadcast_comment_event(
         document.team_id, "created", response.model_dump(mode="json", exclude={"warnings"}),
+        project_id=document.project_id,
     )
 
     return response
@@ -573,7 +574,7 @@ async def update_comment(
     response = await fill_principals(build_comment_response(comment))
 
     # Broadcast real-time update
-    await broadcast_comment_event(document.team_id, "updated", response.model_dump(mode="json"))
+    await broadcast_comment_event(document.team_id, "updated", response.model_dump(mode="json"), project_id=document.project_id)
 
     return response
 
@@ -611,5 +612,6 @@ async def delete_comment(
     await broadcast_comment_event(
         document.team_id,
         "deleted",
-        {"id": comment.id, "document_id": document_id}
+        {"id": comment.id, "document_id": document_id},
+        project_id=document.project_id,
     )

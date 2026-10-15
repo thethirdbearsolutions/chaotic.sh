@@ -99,7 +99,7 @@ class SprintService:
         from app.websocket import broadcast_sprint_event
 
         response = SprintResponse.model_validate(sprint, from_attributes=True)
-        await broadcast_sprint_event(team_id, "updated", response.model_dump(mode="json"))
+        await broadcast_sprint_event(team_id, "updated", response.model_dump(mode="json"), project_id=sprint.project_id)
 
     async def ensure_sprints_exist(self, project_id: str) -> tuple[OxydeSprint, OxydeSprint]:
         """Ensure Current and Next sprints exist for a project. Returns (current, next)."""

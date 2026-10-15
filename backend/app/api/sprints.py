@@ -64,7 +64,7 @@ async def create_sprint(
     current, _ = await sprint_service.ensure_sprints_exist(project_id)
     response = SprintResponse.model_validate(current)
     if not had_current:
-        await broadcast_sprint_event(project.team_id, "created", response.model_dump(mode="json"))
+        await broadcast_sprint_event(project.team_id, "created", response.model_dump(mode="json"), project_id=project.id)
     return response
 
 
@@ -123,7 +123,7 @@ async def update_sprint(
         # Activated between the check above and the write.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     response = SprintResponse.model_validate(sprint, from_attributes=True)
-    await broadcast_sprint_event(project.team_id, "updated", response.model_dump(mode="json"))
+    await broadcast_sprint_event(project.team_id, "updated", response.model_dump(mode="json"), project_id=project.id)
     return response
 
 
@@ -158,7 +158,7 @@ async def close_sprint(sprint_id: str, current_user: CurrentUser) -> SprintRespo
 
     sprint = await sprint_service.close_sprint(sprint)
     response = SprintResponse.model_validate(sprint, from_attributes=True)
-    await broadcast_sprint_event(project.team_id, "closed", response.model_dump(mode="json"))
+    await broadcast_sprint_event(project.team_id, "closed", response.model_dump(mode="json"), project_id=project.id)
     return response
 
 

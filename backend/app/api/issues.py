@@ -532,8 +532,8 @@ async def create_issue(
         logger.warning("Failed to create cross-references for issue %s", issue.id, exc_info=True)
 
     # Broadcast real-time updates
-    await broadcast_issue_event(project.team_id, "created", response.model_dump(mode="json"))
-    await broadcast_activity_event(project.team_id, "created", {"issue_id": issue.id})
+    await broadcast_issue_event(project.team_id, "created", response.model_dump(mode="json"), project_id=project.id)
+    await broadcast_activity_event(project.team_id, "created", {"issue_id": issue.id}, project_id=project.id)
 
     return response
 
@@ -927,8 +927,8 @@ async def batch_update_issues(
 
     responses = await issues_to_responses(updated)
     for resp in responses:
-        await broadcast_issue_event(team_id, "updated", resp.model_dump(mode="json"))
-        await broadcast_activity_event(team_id, "created", {"issue_id": resp.id})
+        await broadcast_issue_event(team_id, "updated", resp.model_dump(mode="json"), project_id=resp.project_id)
+        await broadcast_activity_event(team_id, "created", {"issue_id": resp.id}, project_id=resp.project_id)
     return responses
 
 
@@ -1248,8 +1248,8 @@ async def update_issue(
             logger.warning("Failed to create cross-references for issue %s", issue.id, exc_info=True)
 
     # Broadcast real-time updates
-    await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"))
-    await broadcast_activity_event(project.team_id, "created", {"issue_id": issue.id})
+    await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"), project_id=project.id)
+    await broadcast_activity_event(project.team_id, "created", {"issue_id": issue.id}, project_id=project.id)
 
     return response
 
@@ -1263,7 +1263,7 @@ async def delete_issue(issue_id: str, current_user: CurrentUser):
     issue, project = await visible_issue(current_user, issue_id)
 
     # Broadcast before deleting (need the ID)
-    await broadcast_issue_event(project.team_id, "deleted", {"id": issue.id, "identifier": issue.identifier})
+    await broadcast_issue_event(project.team_id, "deleted", {"id": issue.id, "identifier": issue.identifier}, project_id=project.id)
 
     await issue_service.delete(issue)
 
@@ -1294,7 +1294,7 @@ async def add_label_to_issue(
 
     issue = await issue_service.add_label_to_issue(issue, label)
     response = await issue_response(issue)
-    await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"))
+    await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"), project_id=project.id)
     return response
 
 
@@ -1323,7 +1323,7 @@ async def remove_label_from_issue(
 
     issue = await issue_service.remove_label_from_issue(issue, label)
     response = await issue_response(issue)
-    await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"))
+    await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"), project_id=project.id)
     return response
 
 
@@ -1519,8 +1519,9 @@ async def create_comment(
     # The warnings are the author's alone.
     await broadcast_comment_event(
         project.team_id, "created", response.model_dump(mode="json", exclude={"warnings"}),
+        project_id=project.id,
     )
-    await broadcast_activity_event(project.team_id, "created", {"issue_id": comment.issue_id})
+    await broadcast_activity_event(project.team_id, "created", {"issue_id": comment.issue_id}, project_id=project.id)
     return response
 
 
@@ -1599,7 +1600,7 @@ async def update_comment(
     await fill_principals(response)
     project = await project_service.get_by_id(issue.project_id)
     if project:
-        await broadcast_comment_event(project.team_id, "updated", response.model_dump(mode="json"))
+        await broadcast_comment_event(project.team_id, "updated", response.model_dump(mode="json"), project_id=project.id)
     return response
 
 
@@ -1636,6 +1637,7 @@ async def delete_comment(
             project.team_id,
             "deleted",
             {"id": comment.id, "issue_id": comment.issue_id},
+            project_id=project.id,
         )
 
 
@@ -1687,6 +1689,7 @@ async def create_relation(
         project.team_id,
         "created",
         {"source_issue_id": relation.issue_id, "target_issue_id": relation.related_issue_id},
+        project_id=project.id,
     )
     # Fill in the related-issue fields and "direction" that list_relations
     # already computes, so create and list return the same shape (CHT-1223).
@@ -1752,7 +1755,7 @@ async def delete_relation(
 
     relation_data = {"source_issue_id": relation.issue_id, "target_issue_id": relation.related_issue_id}
     await issue_service.delete_relation(relation)
-    await broadcast_relation_event(project.team_id, "deleted", relation_data)
+    await broadcast_relation_event(project.team_id, "deleted", relation_data, project_id=project.id)
 
 
 @router.get("/{issue_id}/documents", response_model=list[DocumentResponse])

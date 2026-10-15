@@ -1095,6 +1095,7 @@ class RitualService:
                 return
             await broadcast_attestation_event(
                 project.team_id, event_type, payload,
+                project_id=project.id,
             )
         except Exception:
             logger.exception(
@@ -1214,6 +1215,7 @@ class RitualService:
                         "issue_id": issue_id,
                         "attestation_id": attestation.id,
                     },
+                    project_id=project.id,
                 )
         except Exception:
             logger.exception(
@@ -1672,6 +1674,7 @@ class RitualService:
                         "issue_id": issue_id,
                         "attestation_id": attestation.id,
                     },
+                    project_id=project.id,
                 )
         except Exception:
             logger.exception(
@@ -1984,6 +1987,7 @@ class RitualService:
                     "issue_id": issue_id,
                     "rejection_id": rejection.id,
                 },
+                project_id=project.id,
             )
         except Exception:
             logger.exception(

@@ -609,6 +609,10 @@ async def authenticate(token: str | None, team_id: str) -> Principal:
     except CredentialError as exc:
         code = CLOSE_FORBIDDEN if exc.failure is CredentialFailure.INACTIVE else CLOSE_UNAUTHENTICATED
         raise WsRefused(code, exc.detail) from None
+    # Not the only guard: each socket also records its reach and gets
+    # only the broadcasts it may read (``app.websocket.SocketOwner``,
+    # CHT-1840), so relaxing this does not leak sibling projects. It
+    # would still hand a team-scoped agent every recipient's inbox events.
     if principal.user.is_agent:
         raise WsRefused(CLOSE_FORBIDDEN, "Agents cannot subscribe to the live feed")
     try:
