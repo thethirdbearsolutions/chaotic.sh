@@ -757,6 +757,97 @@
         }
       }
     },
+    "/api/teams/{team_id}/activity": {
+      "get": {
+        "tags": [
+          "teams"
+        ],
+        "summary": "List Team Activity",
+        "description": "The team's administrative log, newest first (CHT-1843, CHT-1845).\n\nMembers added, removed (or leaving) and given another role,\ninvitations created, cancelled and accepted, and invitation\nverification codes issued. For the team's admins only. The route\nkeys on ``team_id`` and never loads the team row, so anyone else\n(a member, an outsider, the caller of a missing team) gets the one\n``team_hidden()`` 403 (CLAUDE.md, CHT-1842). Paged with\n``skip``/``limit``; ``action`` keeps one kind of row. Names are\nresolved at read time, so a deleted user's rows keep only the id.",
+        "operationId": "list_team_activity_api_teams__team_id__activity_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TeamActivityAction"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TeamActivityResponse"
+                  },
+                  "title": "Response List Team Activity Api Teams  Team Id  Activity Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/teams/{team_id}/invitations": {
       "post": {
         "tags": [
@@ -1049,7 +1140,7 @@
           "teams"
         ],
         "summary": "Issue Invitation Verification Code",
-        "description": "Give a team admin a code that lets the invitee accept this one\ninvitation without a verified address (CHT-1828).\n\nWith SMTP configured, accepting an invitation needs a verified\naddress (CHT-1790). When the relay fails, the mailed code fails too,\nand the invitee is stuck. The admin hands this code over instead,\nand the invitee passes it when accepting\n(``POST /api/teams/invitations/{token}/accept`` with ``{\"code\": ...}``).\n\nIt vouches for (this invitation, this account) and nothing more: it\nnever sets ``email_verified_at`` (PR #446 review 1). Anyone can be\nthe admin of a team of their own, so a server-wide verification\nissued by an admin would let anyone verify an address they don't\nown and then accept another team's leaked link. Entry to the admin's\nown team they could grant anyway. Details:\n``EmailVerificationService.issue_for_invitation``.\n\nRefusals, in order, so the action tells nobody more than the\ninvitation already does: 403 for a non-admin (from the team id\nalone, like every invitation route); the delete route's 404 for an\ninvitation that is not this team's, pending and unexpired; 409\n``email_verification_unavailable`` without SMTP, before any lookup\nof the address; then one 409 ``no_verification_requested`` for every\naddress with no account that is active, a person's, unverified and\nasked for a mailed code itself in the last day (the stuck invitee\nhas). A missing account, a passive one and a verified one get that\nsame answer, after the same queries, so neither existence nor\nverification is told (review 5, 6). Then 409 ``ambiguous_account``\non an old database with two accounts differing in case, and 429\npast ``INVITATION_ISSUE_LIMIT`` codes a day for this team and\naddress (cancelling and inviting again does not reset it).\n\nThe answer names the account (name, email, signup time, whether it\nis in any team) and when the invitation was created, so the admin\ncan judge whether it is the invitee's. The issue is logged with ids\nonly, never the code.",
+        "description": "Give a team admin a code that lets the invitee accept this one\ninvitation without a verified address (CHT-1828).\n\nWith SMTP configured, accepting an invitation needs a verified\naddress (CHT-1790). When the relay fails, the mailed code fails too,\nand the invitee is stuck. The admin hands this code over instead,\nand the invitee passes it when accepting\n(``POST /api/teams/invitations/{token}/accept`` with ``{\"code\": ...}``).\n\nIt vouches for (this invitation, this account) and nothing more: it\nnever sets ``email_verified_at`` (PR #446 review 1). Anyone can be\nthe admin of a team of their own, so a server-wide verification\nissued by an admin would let anyone verify an address they don't\nown and then accept another team's leaked link. Entry to the admin's\nown team they could grant anyway. Details:\n``EmailVerificationService.issue_for_invitation``.\n\nRefusals, in order, so the action tells nobody more than the\ninvitation already does: 403 for a non-admin (from the team id\nalone, like every invitation route); the delete route's 404 for an\ninvitation that is not this team's, pending and unexpired; 409\n``email_verification_unavailable`` without SMTP, before any lookup\nof the address; then one 409 ``no_verification_requested`` for every\naddress with no account that is active, a person's, unverified and\nasked for a mailed code itself in the last day (the stuck invitee\nhas). A missing account, a passive one and a verified one get that\nsame answer, after the same queries, so neither existence nor\nverification is told (review 5, 6). Then 409 ``ambiguous_account``\non an old database with two accounts differing in case, and 429\npast ``INVITATION_ISSUE_LIMIT`` codes a day for this team and\naddress (cancelling and inviting again does not reset it).\n\nThe answer names the account (name, email, signup time, whether it\nis in any team) and when the invitation was created, so the admin\ncan judge whether it is the invitee's. The issue is recorded in the\nteam's activity log (VERIFICATION_CODE_ISSUED: who, for which\naccount and invitation), never the code.",
         "operationId": "issue_invitation_verification_code_api_teams__team_id__invitations__invitation_id__verification_code_post",
         "security": [
           {
@@ -15579,6 +15670,135 @@
         "type": "object",
         "title": "SprintUpdate",
         "description": "Schema for updating a sprint."
+      },
+      "TeamActivityAction": {
+        "type": "string",
+        "enum": [
+          "member_added",
+          "member_removed",
+          "role_changed",
+          "invitation_created",
+          "invitation_cancelled",
+          "invitation_accepted",
+          "verification_code_issued"
+        ],
+        "title": "TeamActivityAction",
+        "description": "What a team_activities row records (CHT-1843, CHT-1845).\n\nWho did it is ``actor_id``; whom it concerns, ``target_user_id``. A\nmember leaving on their own is MEMBER_REMOVED with actor and target\nthe same user."
+      },
+      "TeamActivityResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "team_id": {
+            "type": "string",
+            "title": "Team Id"
+          },
+          "action": {
+            "$ref": "#/components/schemas/TeamActivityAction"
+          },
+          "actor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "actor_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Name"
+          },
+          "target_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target User Id"
+          },
+          "target_user_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target User Name"
+          },
+          "invitation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invitation Id"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "old_role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "team_id",
+          "action",
+          "created_at"
+        ],
+        "title": "TeamActivityResponse",
+        "description": "One row of a team's administrative log (CHT-1843, CHT-1845).\n\n``actor_*`` did it, ``target_user_*`` it concerns (the same user when\na member left on their own). ``email`` is the invited address on\ninvitation rows. ``role`` is the role granted (the new one on\nrole_changed, the one held on member_removed); ``old_role`` only on\nrole_changed. Names are null for a user since deleted."
       },
       "TeamCommentResponse": {
         "properties": {

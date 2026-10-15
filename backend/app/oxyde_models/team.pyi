@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from app.utils.datetimes import DateTimeUTC
 from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser
-from app.enums import TeamRole, InvitationStatus
+from app.enums import TeamActivityAction, TeamRole, InvitationStatus
 from app.oxyde_models.enums import DbEnum
 
 class OxydeTeam(Model):
@@ -2059,6 +2059,745 @@ class OxydeTeamInvitationManager(QueryManager[OxydeTeamInvitation]):
     async def bulk_update(  # type: ignore[override]
         self,
         objects: list[OxydeTeamInvitation],
+        fields: list[str],
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Bulk update objects."""
+        ...
+
+
+class OxydeTeamActivity(Model):
+    class Meta:
+        is_table: bool
+        table_name: str
+    id: str
+    team_id: str
+    action: TeamActivityAction
+    actor_id: str | None
+    target_user_id: str | None
+    invitation_id: str | None
+    email: str | None
+    role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276160>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b52760c0>, return_type=PydanticUndefined, when_used='always')] | None
+    old_role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276340>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b5275ee0>, return_type=PydanticUndefined, when_used='always')] | None
+    created_at: datetime
+    objects: ClassVar["OxydeTeamActivityManager"]
+
+
+class OxydeTeamActivityQuery(Query[OxydeTeamActivity]):
+    """Type-safe Query for OxydeTeamActivity model."""
+
+    # Query building methods (sync, return Query)
+
+    def filter(
+        self,
+        *args: Any,
+        action: TeamActivityAction | None = None,
+        action__in: list[TeamActivityAction] | None = None,
+        action__isnull: bool | None = None,
+        actor_id: str | None = None,
+        actor_id__contains: str | None = None,
+        actor_id__icontains: str | None = None,
+        actor_id__startswith: str | None = None,
+        actor_id__istartswith: str | None = None,
+        actor_id__endswith: str | None = None,
+        actor_id__iendswith: str | None = None,
+        actor_id__iexact: str | None = None,
+        actor_id__in: list[str] | None = None,
+        actor_id__isnull: bool | None = None,
+        created_at: datetime | None = None,
+        created_at__gt: datetime | None = None,
+        created_at__gte: datetime | None = None,
+        created_at__lt: datetime | None = None,
+        created_at__lte: datetime | None = None,
+        created_at__between: tuple[datetime, datetime] | None = None,
+        created_at__range: datetime | None = None,
+        created_at__year: int | None = None,
+        created_at__month: int | None = None,
+        created_at__day: int | None = None,
+        created_at__in: list[datetime] | None = None,
+        created_at__isnull: bool | None = None,
+        email: str | None = None,
+        email__contains: str | None = None,
+        email__icontains: str | None = None,
+        email__startswith: str | None = None,
+        email__istartswith: str | None = None,
+        email__endswith: str | None = None,
+        email__iendswith: str | None = None,
+        email__iexact: str | None = None,
+        email__in: list[str] | None = None,
+        email__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        invitation_id: str | None = None,
+        invitation_id__contains: str | None = None,
+        invitation_id__icontains: str | None = None,
+        invitation_id__startswith: str | None = None,
+        invitation_id__istartswith: str | None = None,
+        invitation_id__endswith: str | None = None,
+        invitation_id__iendswith: str | None = None,
+        invitation_id__iexact: str | None = None,
+        invitation_id__in: list[str] | None = None,
+        invitation_id__isnull: bool | None = None,
+        old_role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276340>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b5275ee0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        old_role__in: list[Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276340>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b5275ee0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        old_role__isnull: bool | None = None,
+        role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276160>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b52760c0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        role__in: list[Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276160>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b52760c0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        role__isnull: bool | None = None,
+        target_user_id: str | None = None,
+        target_user_id__contains: str | None = None,
+        target_user_id__icontains: str | None = None,
+        target_user_id__startswith: str | None = None,
+        target_user_id__istartswith: str | None = None,
+        target_user_id__endswith: str | None = None,
+        target_user_id__iendswith: str | None = None,
+        target_user_id__iexact: str | None = None,
+        target_user_id__in: list[str] | None = None,
+        target_user_id__isnull: bool | None = None,
+        team_id: str | None = None,
+        team_id__contains: str | None = None,
+        team_id__icontains: str | None = None,
+        team_id__startswith: str | None = None,
+        team_id__istartswith: str | None = None,
+        team_id__endswith: str | None = None,
+        team_id__iendswith: str | None = None,
+        team_id__iexact: str | None = None,
+        team_id__in: list[str] | None = None,
+        team_id__isnull: bool | None = None,
+    ) -> "OxydeTeamActivityQuery":
+        """Filter by Q-expressions or field lookups."""
+        ...
+
+    def exclude(
+        self,
+        *args: Any,
+        action: TeamActivityAction | None = None,
+        action__in: list[TeamActivityAction] | None = None,
+        action__isnull: bool | None = None,
+        actor_id: str | None = None,
+        actor_id__contains: str | None = None,
+        actor_id__icontains: str | None = None,
+        actor_id__startswith: str | None = None,
+        actor_id__istartswith: str | None = None,
+        actor_id__endswith: str | None = None,
+        actor_id__iendswith: str | None = None,
+        actor_id__iexact: str | None = None,
+        actor_id__in: list[str] | None = None,
+        actor_id__isnull: bool | None = None,
+        created_at: datetime | None = None,
+        created_at__gt: datetime | None = None,
+        created_at__gte: datetime | None = None,
+        created_at__lt: datetime | None = None,
+        created_at__lte: datetime | None = None,
+        created_at__between: tuple[datetime, datetime] | None = None,
+        created_at__range: datetime | None = None,
+        created_at__year: int | None = None,
+        created_at__month: int | None = None,
+        created_at__day: int | None = None,
+        created_at__in: list[datetime] | None = None,
+        created_at__isnull: bool | None = None,
+        email: str | None = None,
+        email__contains: str | None = None,
+        email__icontains: str | None = None,
+        email__startswith: str | None = None,
+        email__istartswith: str | None = None,
+        email__endswith: str | None = None,
+        email__iendswith: str | None = None,
+        email__iexact: str | None = None,
+        email__in: list[str] | None = None,
+        email__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        invitation_id: str | None = None,
+        invitation_id__contains: str | None = None,
+        invitation_id__icontains: str | None = None,
+        invitation_id__startswith: str | None = None,
+        invitation_id__istartswith: str | None = None,
+        invitation_id__endswith: str | None = None,
+        invitation_id__iendswith: str | None = None,
+        invitation_id__iexact: str | None = None,
+        invitation_id__in: list[str] | None = None,
+        invitation_id__isnull: bool | None = None,
+        old_role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276340>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b5275ee0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        old_role__in: list[Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276340>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b5275ee0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        old_role__isnull: bool | None = None,
+        role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276160>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b52760c0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        role__in: list[Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276160>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b52760c0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        role__isnull: bool | None = None,
+        target_user_id: str | None = None,
+        target_user_id__contains: str | None = None,
+        target_user_id__icontains: str | None = None,
+        target_user_id__startswith: str | None = None,
+        target_user_id__istartswith: str | None = None,
+        target_user_id__endswith: str | None = None,
+        target_user_id__iendswith: str | None = None,
+        target_user_id__iexact: str | None = None,
+        target_user_id__in: list[str] | None = None,
+        target_user_id__isnull: bool | None = None,
+        team_id: str | None = None,
+        team_id__contains: str | None = None,
+        team_id__icontains: str | None = None,
+        team_id__startswith: str | None = None,
+        team_id__istartswith: str | None = None,
+        team_id__endswith: str | None = None,
+        team_id__iendswith: str | None = None,
+        team_id__iexact: str | None = None,
+        team_id__in: list[str] | None = None,
+        team_id__isnull: bool | None = None,
+    ) -> "OxydeTeamActivityQuery":
+        """Exclude objects matching field lookups."""
+        ...
+
+    def order_by(self, *fields: Literal["action", "-action", "actor_id", "-actor_id", "created_at", "-created_at", "email", "-email", "id", "-id", "invitation_id", "-invitation_id", "old_role", "-old_role", "role", "-role", "target_user_id", "-target_user_id", "team_id", "-team_id"]) -> "OxydeTeamActivityQuery":  # type: ignore[override]
+        """Order results by fields."""
+        ...
+
+    def limit(self, n: int) -> "OxydeTeamActivityQuery":
+        """Limit number of results."""
+        ...
+
+    def offset(self, n: int) -> "OxydeTeamActivityQuery":
+        """Skip first n results."""
+        ...
+
+    def distinct(self, value: bool = True) -> "OxydeTeamActivityQuery":
+        """Return distinct results."""
+        ...
+
+    def select(self, *fields: Literal["action", "actor_id", "created_at", "email", "id", "invitation_id", "old_role", "role", "target_user_id", "team_id"]) -> "OxydeTeamActivityQuery":  # type: ignore[override]
+        """Select specific fields."""
+        ...
+
+    def join(self, *paths: str) -> "OxydeTeamActivityQuery":
+        """Perform LEFT JOIN for relations."""
+        ...
+
+    def prefetch(self, *paths: str) -> "OxydeTeamActivityQuery":
+        """Prefetch related objects (separate queries)."""
+        ...
+
+    def for_update(self) -> "OxydeTeamActivityQuery":
+        """Add FOR UPDATE lock to query."""
+        ...
+
+    def for_share(self) -> "OxydeTeamActivityQuery":
+        """Add FOR SHARE lock to query."""
+        ...
+
+    def annotate(self, **annotations: Any) -> "OxydeTeamActivityQuery":
+        """Add computed fields using aggregate functions."""
+        ...
+
+    def group_by(self, *fields: Literal["action", "actor_id", "created_at", "email", "id", "invitation_id", "old_role", "role", "target_user_id", "team_id"]) -> "OxydeTeamActivityQuery":  # type: ignore[override]
+        """Add GROUP BY clause."""
+        ...
+
+    def having(self, *q_exprs: Any, **kwargs: Any) -> "OxydeTeamActivityQuery":
+        """Add HAVING clause for filtering grouped results."""
+        ...
+
+    def values(self, *fields: Literal["action", "actor_id", "created_at", "email", "id", "invitation_id", "old_role", "role", "target_user_id", "team_id"]) -> "OxydeTeamActivityQuery":  # type: ignore[override]
+        """Return dicts instead of models."""
+        ...
+
+    def values_list(self, *fields: Literal["action", "actor_id", "created_at", "email", "id", "invitation_id", "old_role", "role", "target_user_id", "team_id"], flat: bool = False) -> "OxydeTeamActivityQuery":  # type: ignore[override]
+        """Return tuples/values instead of models."""
+        ...
+
+    # Terminal methods (async, execute query)
+
+    async def all(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> list[OxydeTeamActivity]:
+        """Execute query and return all results."""
+        ...
+
+    async def first(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeTeamActivity | None:
+        """Execute query and return first result."""
+        ...
+
+    async def last(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeTeamActivity | None:
+        """Execute query and return last result."""
+        ...
+
+    async def count(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Count matching objects."""
+        ...
+
+    async def sum(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate sum of field values."""
+        ...
+
+    async def avg(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate average of field values."""
+        ...
+
+    async def max(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get maximum field value."""
+        ...
+
+    async def min(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get minimum field value."""
+        ...
+
+    async def update(  # type: ignore[override]
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        **values: Any,
+    ) -> int:
+        """Update matching objects."""
+        ...
+
+    async def increment(
+        self,
+        field: str,
+        by: int | float = 1,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Atomically increment a field value."""
+        ...
+
+    async def delete(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Delete matching objects."""
+        ...
+
+class OxydeTeamActivityManager(QueryManager[OxydeTeamActivity]):
+    """Type-safe Manager for OxydeTeamActivity model."""
+
+    # Query building methods (sync, return Query)
+
+    def query(self) -> OxydeTeamActivityQuery:
+        """Return a Query builder for this model."""
+        ...
+
+    def filter(
+        self,
+        *args: Any,
+        action: TeamActivityAction | None = None,
+        action__in: list[TeamActivityAction] | None = None,
+        action__isnull: bool | None = None,
+        actor_id: str | None = None,
+        actor_id__contains: str | None = None,
+        actor_id__icontains: str | None = None,
+        actor_id__startswith: str | None = None,
+        actor_id__istartswith: str | None = None,
+        actor_id__endswith: str | None = None,
+        actor_id__iendswith: str | None = None,
+        actor_id__iexact: str | None = None,
+        actor_id__in: list[str] | None = None,
+        actor_id__isnull: bool | None = None,
+        created_at: datetime | None = None,
+        created_at__gt: datetime | None = None,
+        created_at__gte: datetime | None = None,
+        created_at__lt: datetime | None = None,
+        created_at__lte: datetime | None = None,
+        created_at__between: tuple[datetime, datetime] | None = None,
+        created_at__range: datetime | None = None,
+        created_at__year: int | None = None,
+        created_at__month: int | None = None,
+        created_at__day: int | None = None,
+        created_at__in: list[datetime] | None = None,
+        created_at__isnull: bool | None = None,
+        email: str | None = None,
+        email__contains: str | None = None,
+        email__icontains: str | None = None,
+        email__startswith: str | None = None,
+        email__istartswith: str | None = None,
+        email__endswith: str | None = None,
+        email__iendswith: str | None = None,
+        email__iexact: str | None = None,
+        email__in: list[str] | None = None,
+        email__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        invitation_id: str | None = None,
+        invitation_id__contains: str | None = None,
+        invitation_id__icontains: str | None = None,
+        invitation_id__startswith: str | None = None,
+        invitation_id__istartswith: str | None = None,
+        invitation_id__endswith: str | None = None,
+        invitation_id__iendswith: str | None = None,
+        invitation_id__iexact: str | None = None,
+        invitation_id__in: list[str] | None = None,
+        invitation_id__isnull: bool | None = None,
+        old_role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276340>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b5275ee0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        old_role__in: list[Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276340>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b5275ee0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        old_role__isnull: bool | None = None,
+        role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276160>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b52760c0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        role__in: list[Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276160>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b52760c0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        role__isnull: bool | None = None,
+        target_user_id: str | None = None,
+        target_user_id__contains: str | None = None,
+        target_user_id__icontains: str | None = None,
+        target_user_id__startswith: str | None = None,
+        target_user_id__istartswith: str | None = None,
+        target_user_id__endswith: str | None = None,
+        target_user_id__iendswith: str | None = None,
+        target_user_id__iexact: str | None = None,
+        target_user_id__in: list[str] | None = None,
+        target_user_id__isnull: bool | None = None,
+        team_id: str | None = None,
+        team_id__contains: str | None = None,
+        team_id__icontains: str | None = None,
+        team_id__startswith: str | None = None,
+        team_id__istartswith: str | None = None,
+        team_id__endswith: str | None = None,
+        team_id__iendswith: str | None = None,
+        team_id__iexact: str | None = None,
+        team_id__in: list[str] | None = None,
+        team_id__isnull: bool | None = None,
+    ) -> OxydeTeamActivityQuery:
+        """Filter by Q-expressions or field lookups."""
+        ...
+
+    def exclude(
+        self,
+        *args: Any,
+        action: TeamActivityAction | None = None,
+        action__in: list[TeamActivityAction] | None = None,
+        action__isnull: bool | None = None,
+        actor_id: str | None = None,
+        actor_id__contains: str | None = None,
+        actor_id__icontains: str | None = None,
+        actor_id__startswith: str | None = None,
+        actor_id__istartswith: str | None = None,
+        actor_id__endswith: str | None = None,
+        actor_id__iendswith: str | None = None,
+        actor_id__iexact: str | None = None,
+        actor_id__in: list[str] | None = None,
+        actor_id__isnull: bool | None = None,
+        created_at: datetime | None = None,
+        created_at__gt: datetime | None = None,
+        created_at__gte: datetime | None = None,
+        created_at__lt: datetime | None = None,
+        created_at__lte: datetime | None = None,
+        created_at__between: tuple[datetime, datetime] | None = None,
+        created_at__range: datetime | None = None,
+        created_at__year: int | None = None,
+        created_at__month: int | None = None,
+        created_at__day: int | None = None,
+        created_at__in: list[datetime] | None = None,
+        created_at__isnull: bool | None = None,
+        email: str | None = None,
+        email__contains: str | None = None,
+        email__icontains: str | None = None,
+        email__startswith: str | None = None,
+        email__istartswith: str | None = None,
+        email__endswith: str | None = None,
+        email__iendswith: str | None = None,
+        email__iexact: str | None = None,
+        email__in: list[str] | None = None,
+        email__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        invitation_id: str | None = None,
+        invitation_id__contains: str | None = None,
+        invitation_id__icontains: str | None = None,
+        invitation_id__startswith: str | None = None,
+        invitation_id__istartswith: str | None = None,
+        invitation_id__endswith: str | None = None,
+        invitation_id__iendswith: str | None = None,
+        invitation_id__iexact: str | None = None,
+        invitation_id__in: list[str] | None = None,
+        invitation_id__isnull: bool | None = None,
+        old_role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276340>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b5275ee0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        old_role__in: list[Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276340>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b5275ee0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        old_role__isnull: bool | None = None,
+        role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276160>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b52760c0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        role__in: list[Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276160>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b52760c0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        role__isnull: bool | None = None,
+        target_user_id: str | None = None,
+        target_user_id__contains: str | None = None,
+        target_user_id__icontains: str | None = None,
+        target_user_id__startswith: str | None = None,
+        target_user_id__istartswith: str | None = None,
+        target_user_id__endswith: str | None = None,
+        target_user_id__iendswith: str | None = None,
+        target_user_id__iexact: str | None = None,
+        target_user_id__in: list[str] | None = None,
+        target_user_id__isnull: bool | None = None,
+        team_id: str | None = None,
+        team_id__contains: str | None = None,
+        team_id__icontains: str | None = None,
+        team_id__startswith: str | None = None,
+        team_id__istartswith: str | None = None,
+        team_id__endswith: str | None = None,
+        team_id__iendswith: str | None = None,
+        team_id__iexact: str | None = None,
+        team_id__in: list[str] | None = None,
+        team_id__isnull: bool | None = None,
+    ) -> OxydeTeamActivityQuery:
+        """Exclude objects matching field lookups."""
+        ...
+
+    def values(self, *fields: Literal["action", "actor_id", "created_at", "email", "id", "invitation_id", "old_role", "role", "target_user_id", "team_id"]) -> OxydeTeamActivityQuery:  # type: ignore[override]
+        """Return dicts instead of models."""
+        ...
+
+    def values_list(self, *fields: Literal["action", "actor_id", "created_at", "email", "id", "invitation_id", "old_role", "role", "target_user_id", "team_id"], flat: bool = False) -> OxydeTeamActivityQuery:  # type: ignore[override]
+        """Return tuples/values instead of models."""
+        ...
+
+    def distinct(self, distinct: bool = True) -> OxydeTeamActivityQuery:
+        """Return distinct results."""
+        ...
+
+    def join(self, *paths: str) -> OxydeTeamActivityQuery:
+        """Perform LEFT JOIN for relations."""
+        ...
+
+    def prefetch(self, *paths: str) -> OxydeTeamActivityQuery:
+        """Prefetch related objects (separate queries)."""
+        ...
+
+    def for_update(self) -> OxydeTeamActivityQuery:
+        """Add FOR UPDATE lock to query."""
+        ...
+
+    def for_share(self) -> OxydeTeamActivityQuery:
+        """Add FOR SHARE lock to query."""
+        ...
+
+    # Terminal methods (async, execute query)
+
+    async def get(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> OxydeTeamActivity:
+        """Get single object matching lookups."""
+        ...
+
+    async def get_or_none(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> OxydeTeamActivity | None:
+        """Get object or None if not found."""
+        ...
+
+    async def get_or_create(
+        self,
+        *,
+        defaults: dict[str, Any] | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> tuple[OxydeTeamActivity, bool]:
+        """Get object or create if not found. Returns (object, created)."""
+        ...
+
+    async def update_or_create(
+        self,
+        *,
+        defaults: dict[str, Any] | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> tuple[OxydeTeamActivity, bool]:
+        """Get object, create if missing, or update it when defaults are provided."""
+        ...
+
+    async def all(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        mode: str = "models",
+    ) -> list[OxydeTeamActivity]:
+        """Get all objects."""
+        ...
+
+    async def first(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeTeamActivity | None:
+        """Get first object."""
+        ...
+
+    async def last(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeTeamActivity | None:
+        """Get last object."""
+        ...
+
+    async def count(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Count all objects."""
+        ...
+
+    async def sum(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate sum of field values."""
+        ...
+
+    async def avg(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate average of field values."""
+        ...
+
+    async def max(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get maximum field value."""
+        ...
+
+    async def min(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get minimum field value."""
+        ...
+
+    async def create(  # type: ignore[override]
+        self,
+        *,
+        instance: OxydeTeamActivity | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+        action: TeamActivityAction | None = None,
+        actor_id: str | None = None,
+        created_at: datetime | None = None,
+        email: str | None = None,
+        id: str | None = None,
+        invitation_id: str | None = None,
+        old_role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276340>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b5275ee0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        role: Annotated[app.enums.TeamRole, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7fe5b5276160>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7fe5b52760c0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        target_user_id: str | None = None,
+        team_id: str | None = None,
+    ) -> OxydeTeamActivity:
+        """Create new object."""
+        ...
+
+    async def bulk_create(  # type: ignore[override]
+        self,
+        objects: list[OxydeTeamActivity],
+        *,
+        batch_size: int | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> list[OxydeTeamActivity]:
+        """Bulk create objects."""
+        ...
+
+    async def bulk_update(  # type: ignore[override]
+        self,
+        objects: list[OxydeTeamActivity],
         fields: list[str],
         *,
         client: Any | None = None,

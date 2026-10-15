@@ -17,6 +17,7 @@ from app.services.email_service import EmailService, fire_and_forget
 from app.services.agent_service import AgentService, describe_counts
 from app.services.credential_events import revoking
 from app.services.revocation_service import REASON_PRINCIPAL_DELETED, RevocationService
+from app.services.team_service import TeamService
 
 # Type alias: callers still see "User" but it's now an Oxyde model
 User = OxydeUser
@@ -473,6 +474,8 @@ class UserService:
                 await agent_service._retire_identities(agent.id)
                 await OxydeAPIKey.objects.filter(principal_user_id=agent.id).delete()
                 await agent.delete()
+            # Each team's log says what the account took with it (CHT-1843).
+            await TeamService().record_account_deleted(user.id)
             await OxydeTeamMember.objects.filter(user_id=user.id).delete()
             # Invitations *to* their address are left alone: they belong
             # to the inviting team, expire on their own, and signup never

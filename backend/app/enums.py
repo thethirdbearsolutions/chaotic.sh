@@ -135,6 +135,22 @@ class InvitationStatus(str, Enum):
     EXPIRED = "expired"
 
 
+class TeamActivityAction(str, Enum):
+    """What a team_activities row records (CHT-1843, CHT-1845).
+
+    Who did it is ``actor_id``; whom it concerns, ``target_user_id``. A
+    member leaving on their own is MEMBER_REMOVED with actor and target
+    the same user.
+    """
+    MEMBER_ADDED = "member_added"
+    MEMBER_REMOVED = "member_removed"
+    ROLE_CHANGED = "role_changed"
+    INVITATION_CREATED = "invitation_created"
+    INVITATION_CANCELLED = "invitation_cancelled"
+    INVITATION_ACCEPTED = "invitation_accepted"
+    VERIFICATION_CODE_ISSUED = "verification_code_issued"
+
+
 # --- Project enums ---
 
 class EstimateScale(str, Enum):

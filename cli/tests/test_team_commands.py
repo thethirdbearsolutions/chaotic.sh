@@ -226,6 +226,69 @@ class TestTeamMembers:
         assert 'Alice' in result.output
 
 
+ACTIVITY = [
+    {"id": "a2", "team_id": "t", "action": "role_changed", "actor_id": "u-admin", "actor_name": "Alice",
+     "target_user_id": "u-bob", "target_user_name": "Bob", "invitation_id": None, "email": None,
+     "role": "admin", "old_role": "member", "created_at": "2026-10-15T12:00:00Z"},
+    {"id": "a1", "team_id": "t", "action": "member_removed", "actor_id": "u-admin", "actor_name": "Alice",
+     "target_user_id": "u-gone", "target_user_name": None, "invitation_id": None, "email": None,
+     "role": "member", "old_role": None, "created_at": "2026-10-15T11:00:00Z"},
+    {"id": "a0", "team_id": "t", "action": "invitation_created", "actor_id": "u-admin", "actor_name": "Alice",
+     "target_user_id": None, "target_user_name": None, "invitation_id": "inv-1", "email": "new@example.com",
+     "role": "member", "old_role": None, "created_at": "2026-10-15T10:00:00Z"},
+]
+
+
+class TestTeamActivity:
+    """team activity: the team's administrative log (CHT-1843)."""
+
+    def test_shows_who_did_what_to_whom(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_activity = MagicMock(return_value=ACTIVITY)
+        result = cli_runner.invoke(cli, ['team', 'activity'])
+        assert result.exit_code == 0, result.output
+        out = " ".join(result.output.split())
+        for text in ("role", "->", "removed", "u-gone",
+                     "new@example.com", "inv-1", "Alice", "Bob"):
+            assert text in out, text
+        assert client.get_team_activity.call_args.kwargs == {"skip": 0, "limit": 50, "action": None}
+        assert "--skip" not in out  # fewer rows than the limit: nothing older to page to
+
+    def test_passes_the_filter_and_paging_and_points_to_the_next_page(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_activity = MagicMock(return_value=ACTIVITY[:2])
+        result = cli_runner.invoke(cli, ['team', 'activity', '--action', 'member_removed',
+                                         '--limit', '2', '--skip', '4'])
+        assert result.exit_code == 0, result.output
+        assert client.get_team_activity.call_args.kwargs == {"skip": 4, "limit": 2, "action": "member_removed"}
+        assert "--skip 6" in result.output
+
+    def test_rejects_an_unknown_action(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_activity = MagicMock(return_value=[])
+        result = cli_runner.invoke(cli, ['team', 'activity', '--action', 'MEMBER_REMOVED'])
+        assert result.exit_code == 2
+        client.get_team_activity.assert_not_called()
+
+    def test_empty(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_activity = MagicMock(return_value=[])
+        result = cli_runner.invoke(cli, ['team', 'activity'])
+        assert result.exit_code == 0 and "No team activity recorded" in result.output
+
+    def test_json_is_the_rows(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_activity = MagicMock(return_value=ACTIVITY)
+        result = cli_runner.invoke(cli, ['team', 'activity', '--json'])
+        assert result.exit_code == 0
+        assert json.loads(result.output) == ACTIVITY
+
+
 class TestTeamInvite:
     """Tests for team invite command."""
 

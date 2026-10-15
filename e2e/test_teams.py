@@ -104,6 +104,17 @@ class TestInvitations:
         assert caught.value.status_code == 409
         assert "no SMTP configured" in str(caught.value)
 
+    def test_team_activity_records_invitations(self, api_client, test_team):
+        """CHT-1843: the team's log, through the client, newest first."""
+        invite = api_client.invite_member(test_team["id"], "logged@example.com")
+        api_client.delete_invitation(test_team["id"], invite["id"])
+        rows = api_client.get_team_activity(test_team["id"], limit=2)
+        assert [r["action"] for r in rows] == ["invitation_cancelled", "invitation_created"]
+        assert all(r["invitation_id"] == invite["id"] for r in rows)
+        only = api_client.get_team_activity(test_team["id"], action="invitation_cancelled")
+        assert {r["action"] for r in only} == {"invitation_cancelled"}
+        assert invite["id"] in [r["invitation_id"] for r in only]
+
     def test_invite_response_structure(self, api_client, test_team):
         invite = api_client.invite_member(test_team["id"], "structure@example.com")
         assert "id" in invite
@@ -144,3 +155,59 @@ class TestInvitations:
         # User should now be a member
         members = api_client.get_team_members(test_team["id"])
         assert any(m.get("user_id") == accept_user.id for m in members)
+
+
+def test_the_cli_knows_every_team_activity_action():
+    """`chaotic team activity --action` lists the server's actions by hand
+    (the CLI cannot import the backend); this keeps the two equal."""
+    from app.enums import TeamActivityAction
+    from cli.commands.team import TEAM_ACTIVITY_ACTIONS
+
+    assert sorted(TEAM_ACTIVITY_ACTIONS) == sorted(a.value for a in TeamActivityAction)
+
+
+class TestRemovedMembersAuditReadsTheServersLog:
+    def test_the_audit_finds_a_removal_the_server_logged(self, api_client, test_team):
+        """CHT-1843 (PR #451 review): the audit's SQL against a row the
+        server itself wrote, so the two cannot drift apart on the stored
+        form. A membership row older than the removal stands in for a
+        pre-0033 duplicate the removal left behind."""
+        import sqlite3
+        import uuid
+        from pathlib import Path
+
+        from cli import system
+        from unittest.mock import patch
+
+        from cli.client import Client
+        from conftest import TEST_BASE_URL, _create_user_in_db, _db_path, _run_async
+        from app.oxyde_models.team import OxydeTeamInvitation
+        from app.utils.security import create_access_token
+
+        user = _run_async(_create_user_in_db("audited@example.com", "Audited"))
+        invite = api_client.invite_member(test_team["id"], user.email)
+
+        async def _token():
+            return (await OxydeTeamInvitation.objects.get(id=invite["id"])).token
+
+        with patch('cli.client.get_api_url', return_value=TEST_BASE_URL), \
+             patch('cli.client.get_token', return_value=create_access_token(data={"sub": user.id})), \
+             patch('cli.client.get_api_key', return_value=None):
+            Client().accept_invitation(_run_async(_token()))
+        api_client.remove_member(test_team["id"], user.id)
+        [logged] = api_client.get_team_activity(test_team["id"], action="member_removed")
+
+        conn = sqlite3.connect(_db_path)
+        conn.execute(
+            "INSERT INTO team_members (id, team_id, user_id, role, joined_at) VALUES (?, ?, ?, 'MEMBER', ?)",
+            (str(uuid.uuid4()), test_team["id"], user.id, "2020-01-01 00:00:00.000000"),
+        )
+        conn.commit()
+        conn.close()
+
+        report = system.audit_removed_members(Path(_db_path))
+        [finding] = report["findings"]
+        assert finding["user_id"] == user.id
+        assert [(r["source"], r["activity_id"], r["ordering"]) for r in finding["removals"]] == [
+            ("team_activity", logged["id"], "removed_after_joined"),
+        ]

@@ -27,6 +27,8 @@ import sh.chaotic.api.models.HTTPValidationError
 import sh.chaotic.api.models.InvitationAccept
 import sh.chaotic.api.models.InvitationPreviewResponse
 import sh.chaotic.api.models.InvitationVerificationCodeResponse
+import sh.chaotic.api.models.TeamActivityAction
+import sh.chaotic.api.models.TeamActivityResponse
 import sh.chaotic.api.models.TeamCreate
 import sh.chaotic.api.models.TeamInvitationCreate
 import sh.chaotic.api.models.TeamInvitationCreatedResponse
@@ -257,7 +259,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * POST /api/teams/{team_id}/invitations/{invitation_id}/verification-code
         * Issue Invitation Verification Code
-        * Give a team admin a code that lets the invitee accept this one invitation without a verified address (CHT-1828).  With SMTP configured, accepting an invitation needs a verified address (CHT-1790). When the relay fails, the mailed code fails too, and the invitee is stuck. The admin hands this code over instead, and the invitee passes it when accepting (&#x60;&#x60;POST /api/teams/invitations/{token}/accept&#x60;&#x60; with &#x60;&#x60;{\&quot;code\&quot;: ...}&#x60;&#x60;).  It vouches for (this invitation, this account) and nothing more: it never sets &#x60;&#x60;email_verified_at&#x60;&#x60; (PR #446 review 1). Anyone can be the admin of a team of their own, so a server-wide verification issued by an admin would let anyone verify an address they don&#39;t own and then accept another team&#39;s leaked link. Entry to the admin&#39;s own team they could grant anyway. Details: &#x60;&#x60;EmailVerificationService.issue_for_invitation&#x60;&#x60;.  Refusals, in order, so the action tells nobody more than the invitation already does: 403 for a non-admin (from the team id alone, like every invitation route); the delete route&#39;s 404 for an invitation that is not this team&#39;s, pending and unexpired; 409 &#x60;&#x60;email_verification_unavailable&#x60;&#x60; without SMTP, before any lookup of the address; then one 409 &#x60;&#x60;no_verification_requested&#x60;&#x60; for every address with no account that is active, a person&#39;s, unverified and asked for a mailed code itself in the last day (the stuck invitee has). A missing account, a passive one and a verified one get that same answer, after the same queries, so neither existence nor verification is told (review 5, 6). Then 409 &#x60;&#x60;ambiguous_account&#x60;&#x60; on an old database with two accounts differing in case, and 429 past &#x60;&#x60;INVITATION_ISSUE_LIMIT&#x60;&#x60; codes a day for this team and address (cancelling and inviting again does not reset it).  The answer names the account (name, email, signup time, whether it is in any team) and when the invitation was created, so the admin can judge whether it is the invitee&#39;s. The issue is logged with ids only, never the code.
+        * Give a team admin a code that lets the invitee accept this one invitation without a verified address (CHT-1828).  With SMTP configured, accepting an invitation needs a verified address (CHT-1790). When the relay fails, the mailed code fails too, and the invitee is stuck. The admin hands this code over instead, and the invitee passes it when accepting (&#x60;&#x60;POST /api/teams/invitations/{token}/accept&#x60;&#x60; with &#x60;&#x60;{\&quot;code\&quot;: ...}&#x60;&#x60;).  It vouches for (this invitation, this account) and nothing more: it never sets &#x60;&#x60;email_verified_at&#x60;&#x60; (PR #446 review 1). Anyone can be the admin of a team of their own, so a server-wide verification issued by an admin would let anyone verify an address they don&#39;t own and then accept another team&#39;s leaked link. Entry to the admin&#39;s own team they could grant anyway. Details: &#x60;&#x60;EmailVerificationService.issue_for_invitation&#x60;&#x60;.  Refusals, in order, so the action tells nobody more than the invitation already does: 403 for a non-admin (from the team id alone, like every invitation route); the delete route&#39;s 404 for an invitation that is not this team&#39;s, pending and unexpired; 409 &#x60;&#x60;email_verification_unavailable&#x60;&#x60; without SMTP, before any lookup of the address; then one 409 &#x60;&#x60;no_verification_requested&#x60;&#x60; for every address with no account that is active, a person&#39;s, unverified and asked for a mailed code itself in the last day (the stuck invitee has). A missing account, a passive one and a verified one get that same answer, after the same queries, so neither existence nor verification is told (review 5, 6). Then 409 &#x60;&#x60;ambiguous_account&#x60;&#x60; on an old database with two accounts differing in case, and 429 past &#x60;&#x60;INVITATION_ISSUE_LIMIT&#x60;&#x60; codes a day for this team and address (cancelling and inviting again does not reset it).  The answer names the account (name, email, signup time, whether it is in any team) and when the invitation was created, so the admin can judge whether it is the invitee&#39;s. The issue is recorded in the team&#39;s activity log (VERIFICATION_CODE_ISSUED: who, for which account and invitation), never the code.
          * @param teamId  
          * @param invitationId  
          * @return InvitationVerificationCodeResponse
@@ -310,6 +312,46 @@ import io.ktor.http.ParametersBuilder
             val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.GET,
             "/api/teams",
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * GET /api/teams/{team_id}/activity
+        * List Team Activity
+        * The team&#39;s administrative log, newest first (CHT-1843, CHT-1845).  Members added, removed (or leaving) and given another role, invitations created, cancelled and accepted, and invitation verification codes issued. For the team&#39;s admins only. The route keys on &#x60;&#x60;team_id&#x60;&#x60; and never loads the team row, so anyone else (a member, an outsider, the caller of a missing team) gets the one &#x60;&#x60;team_hidden()&#x60;&#x60; 403 (CLAUDE.md, CHT-1842). Paged with &#x60;&#x60;skip&#x60;&#x60;/&#x60;&#x60;limit&#x60;&#x60;; &#x60;&#x60;action&#x60;&#x60; keeps one kind of row. Names are resolved at read time, so a deleted user&#39;s rows keep only the id.
+         * @param teamId  
+         * @param skip  (optional, default to 0)
+         * @param limit  (optional, default to 50)
+         * @param action  (optional)
+         * @return kotlin.collections.List<TeamActivityResponse>
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun listTeamActivityApiTeamsTeamIdActivityGet(teamId: kotlin.String, skip: kotlin.Int? = 0, limit: kotlin.Int? = 50, action: TeamActivityAction? = null): HttpResponse<kotlin.collections.List<TeamActivityResponse>> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+            skip?.apply { localVariableQuery["skip"] = listOf("$skip") }
+            limit?.apply { localVariableQuery["limit"] = listOf("$limit") }
+            action?.apply { localVariableQuery["action"] = listOf("$action") }
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/api/teams/{team_id}/activity".replace("{" + "team_id" + "}", "$teamId"),
             query = localVariableQuery,
             headers = localVariableHeaders,
             requiresAuthentication = true,

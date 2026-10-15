@@ -35,6 +35,7 @@ class TestPaginationIsSent:
         ("list_api_keys", (), "/api-keys"),
         ("get_team_members", ("t1",), "/teams/t1/members"),
         ("get_invitations", ("t1",), "/teams/t1/invitations"),
+        ("get_team_activity", ("t1",), "/teams/t1/activity"),
         ("get_projects", ("t1",), "/teams/t1/projects"),
         ("get_issue_description_revisions", ("i1",), "/issues/i1/description-revisions"),
         ("get_sub_issues", ("i1",), "/issues/i1/sub-issues"),
@@ -54,6 +55,10 @@ class TestPaginationIsSent:
         assert _call(sent)[:2] == ("GET", path)
         getattr(Client(), method)(*args, skip=20, limit=10)
         assert _call(sent)[:2] == ("GET", f"{path}?skip=20&limit=10")
+
+    def test_team_activity_sends_its_action_filter(self, sent):
+        Client().get_team_activity("t1", skip=5, limit=2, action="member_removed")
+        assert _call(sent)[:2] == ("GET", "/teams/t1/activity?skip=5&limit=2&action=member_removed")
 
     def test_ritual_groups_keep_project_id_with_pagination(self, sent):
         Client().get_ritual_groups("p1", skip=5, limit=2)

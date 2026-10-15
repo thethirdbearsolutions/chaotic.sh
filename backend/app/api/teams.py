@@ -1,7 +1,9 @@
 """Team API routes."""
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Response, status
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, NotAppSession, is_in_team_directory
 from app.api.visibility import team_hidden, visible_team
@@ -10,6 +12,7 @@ from app.schemas.team import (
     TeamUpdate,
     TeamResponse,
     TeamMemberResponse,
+    TeamActivityResponse,
     TeamRoleUpdate,
     TeamInvitationCreate,
     TeamInvitationResponse,
@@ -21,6 +24,7 @@ from app.schemas.team import (
 )
 from app.config import get_settings
 from app.oxyde_models.team import OxydeTeamMember
+from app.oxyde_models.user import OxydeUser
 from app.services.agent_service import AgentService
 from app.services.credential_events import revoking
 from app.services.mention_handles import MentionDirectory
@@ -32,7 +36,8 @@ from app.services.email_verification_service import (
 )
 from app.utils import ensure_utc
 from app.utils.email_address import same_email
-from app.enums import TeamRole
+from app.db.transactions import atomic
+from app.enums import TeamActivityAction, TeamRole
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +200,7 @@ async def update_member_role(
             detail="Cannot change owner's role",
         )
 
-    member = await team_service.update_member_role(member, resolved_role)
+    member = await team_service.update_member_role(member, resolved_role, actor_id=current_user.id)
     return TeamMemberResponse(
         id=member.id,
         user_id=member.user_id,
@@ -240,7 +245,12 @@ async def remove_member(
     # their own, to the team's longest-standing owner.
     agent_service = AgentService()
     async with revoking():
-        await team_service.remove_member(member)
+        if not await team_service.remove_member(member, actor_id=current_user.id):
+            # Removed meanwhile (another admin, a retried request).
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Member not found",
+            )
         if user_id != current_user.id:
             new_owner_id = current_user.id
         else:
@@ -258,6 +268,55 @@ async def remove_member(
         await agent_service.notify_member_agents_released(
             team_id=team_id, released=released, removed=removed, actor=current_user, new_owner=new_owner,
         )
+
+
+@router.get("/{team_id}/activity", response_model=list[TeamActivityResponse])
+@reads
+async def list_team_activity(
+    team_id: str,
+    current_user: CurrentUser,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    action: Annotated[TeamActivityAction | None, Query()] = None,
+) -> list[TeamActivityResponse]:
+    """The team's administrative log, newest first (CHT-1843, CHT-1845).
+
+    Members added, removed (or leaving) and given another role,
+    invitations created, cancelled and accepted, and invitation
+    verification codes issued. For the team's admins only. The route
+    keys on ``team_id`` and never loads the team row, so anyone else
+    (a member, an outsider, the caller of a missing team) gets the one
+    ``team_hidden()`` 403 (CLAUDE.md, CHT-1842). Paged with
+    ``skip``/``limit``; ``action`` keeps one kind of row. Names are
+    resolved at read time, so a deleted user's rows keep only the id.
+    """
+    team_service = TeamService()
+    if not await team_service.is_team_admin(team_id, current_user.id):
+        raise team_hidden()
+
+    rows = await team_service.list_activity(team_id, action=action, skip=skip, limit=limit)
+    user_ids = {uid for r in rows for uid in (r.actor_id, r.target_user_id) if uid}
+    names = {
+        u["id"]: u["name"]
+        for u in await OxydeUser.objects.filter(id__in=sorted(user_ids)).values("id", "name").all()
+    } if user_ids else {}
+    return [
+        TeamActivityResponse(
+            id=r.id,
+            team_id=r.team_id,
+            action=r.action,
+            actor_id=r.actor_id,
+            actor_name=names.get(r.actor_id),
+            target_user_id=r.target_user_id,
+            target_user_name=names.get(r.target_user_id),
+            invitation_id=r.invitation_id,
+            email=r.email,
+            role=r.role,
+            old_role=r.old_role,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
 
 
 # Invitations
@@ -589,7 +648,12 @@ async def delete_invitation(
             detail="Invitation not found",
         )
 
-    await team_service.delete_invitation(invitation)
+    if not await team_service.delete_invitation(invitation, actor_id=current_user.id):
+        # Accepted or cancelled since it was read.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invitation not found",
+        )
 
 
 ISSUE_CODE_INSTRUCTIONS = (
@@ -660,8 +724,9 @@ async def issue_invitation_verification_code(
 
     The answer names the account (name, email, signup time, whether it
     is in any team) and when the invitation was created, so the admin
-    can judge whether it is the invitee's. The issue is logged with ids
-    only, never the code.
+    can judge whether it is the invitee's. The issue is recorded in the
+    team's activity log (VERIFICATION_CODE_ISSUED: who, for which
+    account and invitation), never the code.
     """
     team_service = TeamService()
     if not await team_service.is_team_admin(team_id, current_user.id):
@@ -717,18 +782,20 @@ async def issue_invitation_verification_code(
         )
     account = eligible[0]
 
-    try:
-        code, row = await verification.issue_for_invitation(account, invitation.id, team_id, invitation.email)
-    except VerificationRefused as refused:
-        raise HTTPException(
-            status_code=refused.status_code, detail=refused.detail(), headers=refused.headers,
-        ) from refused
+    # The code and its row in the team's log commit together (CHT-1845).
+    async with atomic():
+        try:
+            code, row = await verification.issue_for_invitation(account, invitation.id, team_id, invitation.email)
+        except VerificationRefused as refused:
+            raise HTTPException(
+                status_code=refused.status_code, detail=refused.detail(), headers=refused.headers,
+            ) from refused
+        await team_service.record_activity(
+            team_id, TeamActivityAction.VERIFICATION_CODE_ISSUED, actor_id=current_user.id,
+            target_user_id=account.id, invitation_id=invitation.id, email=invitation.email,
+        )
 
     in_a_team = await OxydeTeamMember.objects.filter(user_id=account.id).first() is not None
-    logger.info(
-        "invitation code %s issued by admin %s of team %s for user %s via invitation %s",
-        row.id, current_user.id, team_id, account.id, invitation.id,
-    )
     # A credential in a body: not to be cached.
     response.headers.update(INVITATION_HEADERS)
     return InvitationVerificationCodeResponse(

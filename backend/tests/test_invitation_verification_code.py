@@ -195,18 +195,51 @@ class TestIssue:
         assert code not in row.code_hash
         assert row.expires_at - row.created_at == evs.CODE_TTL
 
-    async def test_the_log_line_has_ids_and_never_the_code(
+    async def test_the_team_log_records_it_and_never_the_code(
         self, client, test_team, test_user, auth_headers, pending, outbox, caplog,
     ):
+        """The issue is a row in the team's activity log (CHT-1845), which
+        replaced the ids-only log line; the code is in neither."""
         _, inv_id = pending
         user_id, _ = await _signup(client)
-        with caplog.at_level(logging.INFO, logger="app.api.teams"):
+        with caplog.at_level(logging.INFO):
             code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
-        lines = [r.getMessage() for r in caplog.records if "invitation code" in r.getMessage()]
-        assert len(lines) == 1
-        for value in (test_user.id, test_team.id, user_id, inv_id):
-            assert value in lines[0]
         assert all(code not in r.getMessage() for r in caplog.records)
+        response = await client.get(
+            f"/api/teams/{test_team.id}/activity?action=verification_code_issued", headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+        rows = response.json()
+        assert len(rows) == 1
+        row = rows[0]
+        assert (row["actor_id"], row["target_user_id"], row["invitation_id"]) == (test_user.id, user_id, inv_id)
+        assert row["email"] == INVITEE
+        assert code not in response.text
+
+    async def test_a_refused_issue_records_nothing(
+        self, client, test_team, auth_headers, pending, outbox,
+    ):
+        _, inv_id = pending
+        await _signup(client, asked=False)  # never asked: 409 no_verification_requested
+        assert (await _issue(client, test_team.id, inv_id, auth_headers)).status_code == 409
+        rows = (await client.get(
+            f"/api/teams/{test_team.id}/activity?action=verification_code_issued", headers=auth_headers,
+        )).json()
+        assert rows == []
+
+    async def test_a_rate_limited_issue_records_nothing(
+        self, client, test_team, auth_headers, pending, outbox,
+    ):
+        """Refused inside the transaction that would record it (429)."""
+        _, inv_id = pending
+        await _signup(client)
+        for _ in range(evs.INVITATION_ISSUE_LIMIT):
+            assert (await _issue(client, test_team.id, inv_id, auth_headers)).status_code == 201
+        assert (await _issue(client, test_team.id, inv_id, auth_headers)).status_code == 429
+        rows = (await client.get(
+            f"/api/teams/{test_team.id}/activity?action=verification_code_issued", headers=auth_headers,
+        )).json()
+        assert len(rows) == evs.INVITATION_ISSUE_LIMIT
 
 
 async def _own_team(client, headers, key) -> str:
