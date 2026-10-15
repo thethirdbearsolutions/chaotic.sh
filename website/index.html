@@ -251,15 +251,27 @@
                     <figcaption>The board, for when you'd rather see columns.</figcaption>
                 </figure>
             </div>
+            <!-- Android (CHT-1732). The app is on main with no public build.
+                 It will ship as a signed APK to sideload or track with
+                 Obtainium, not on Google Play (CHT-1729). When a build is
+                 published, replace the badge and the last note with the
+                 download link. -->
+            <div class="feature-card android-card" id="android">
+                <h3 class="feature-title">On your phone: Chaotic for Android <span class="badge-next">No public build yet</span></h3>
+                <p class="feature-description">A native app for the human side: your inbox, issues and sprints, readable offline. Approve or reject a gate with a swipe, or straight from the notification on the lock screen. Push arrives through UnifiedPush (for example ntfy), so it needs no Google Play Services. You sign in as yourself, never as an agent.</p>
+                <p class="feature-note">The code is open on main, but there is no build to install yet. It is planned as an APK you sideload or follow with <a href="https://github.com/ImranR98/Obtainium">Obtainium</a>; it is not planned for Google Play. It signs in through the server's OAuth, so the server needs <code>OAUTH_ENABLED</code> on too.</p>
+            </div>
         </div>
     </section>
 
-    <!-- Agents & MCP Section (CHT-1479, CHT-1595). Facts here come from
-         docs/agents.md and the code on main; keep them in step when those
-         change. OAuth is on main but not yet in a PyPI release: when the
-         next release ships, drop every "Next release" badge in this
-         section: the "Remote: add by URL" card, the "Agents are
-         identities" heading (#identities) and the self-registration card. -->
+    <!-- Agents & MCP Section (CHT-1479, CHT-1595, CHT-1732). Facts here
+         come from docs/agents.md and the code on main; keep them in step
+         when those change. Everything without a badge is deployed (prod
+         at 76a7856, 2026-10-15). OAuth is in the code but off until a
+         server sets OAUTH_ENABLED, and it is not on in prod yet: when the
+         OAuth rollout happens, drop every "Coming soon" badge in this
+         section (the "Remote: add by URL" card, the two OAuth points under
+         #identities, and the consent and Connected Apps captions). -->
     <section class="section section-alt" id="agents">
         <div class="section-content">
             <h2 class="section-title">Agents &amp; MCP</h2>
@@ -275,39 +287,43 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                     <p class="feature-note">Any MCP host that takes a JSON config works the same way: command <code>chaotic</code>, args <code>["mcp"]</code>.</p>
                 </div>
                 <div class="feature-card">
-                    <h3 class="feature-title">Remote: add by URL <span class="badge-next">Next release</span></h3>
+                    <h3 class="feature-title">Remote: add by URL <span class="badge-next">Coming soon</span></h3>
                     <p class="feature-description">The server speaks MCP over Streamable HTTP at <code>/mcp</code>. Give a client the URL and nothing else: it finds Chaotic's sign-in (OAuth), opens a consent page in your browser, and you approve it there. Setup is documented for claude.ai custom connectors, Claude Desktop, ChatGPT, Claude Code and MCP Inspector; the Claude Code flow is the one tested end to end so far. claude.ai, Claude Desktop and ChatGPT connect from their own servers, so they need yours on public https.</p>
                     <pre class="code-block"><code>claude mcp add --transport http chaotic \
   https://your-chaotic-host/mcp
 # then /mcp in a session → Authenticate</code></pre>
-                    <p class="feature-note">OAuth is off by default on a self-hosted server: turn it on with <code>chaotic system config set</code> (<code>APP_BASE_URL</code>, then <code>OAUTH_ENABLED</code>). Scripts and CI send an API key in an <code>Authorization</code> header instead; that works today. The old <code>/mcp/ck_...</code> capability URL is deprecated.</p>
+                    <p class="feature-note">The code is on main but off unless a server turns it on (<code>chaotic system config set</code> <code>APP_BASE_URL</code>, then <code>OAUTH_ENABLED</code>), and it is not in a PyPI release yet. What works today: send an API key in an <code>Authorization</code> header, from scripts, CI or any client that can set one. The old <code>/mcp/ck_...</code> capability URL is deprecated.</p>
                 </div>
             </div>
 
-            <h3 class="subsection-title" id="identities">Agents are identities, and you approve them <span class="badge-next">Next release</span></h3>
+            <h3 class="subsection-title" id="identities">Agents are identities</h3>
             <p class="section-lead">An agent is a teammate with its own name, not a borrowed login. Everything it does is attributed to it, and a human answers for every one.</p>
             <div class="identity-grid">
                 <figure class="screenshot identity-shot">
                     <a href="images/app-consent.png"><img src="images/app-consent.png" width="560" height="636" loading="lazy"
                          alt="Chaotic consent page: Connect MCP Inspector to Chaotic? An Unverified app badge, a warning that approval goes to a program on this computer, then Team, Acts as (create a new agent) and Projects choices"></a>
-                    <figcaption>The consent page in the next release, from a local server on main. The app asked; a person picks the team, the agent and the projects.</figcaption>
+                    <figcaption><span class="badge-next">Coming soon</span> The consent page that comes with add-by-URL, from a local server on main. The app asked; a person picks the team, the agent and the projects.</figcaption>
                 </figure>
                 <ul class="identity-points">
                     <li>
-                        <h4>You approve every connection</h4>
-                        <p>The consent page names the app and the host the approval goes to. An app that registered itself is badged <em>Unverified app</em>, and an approval going to a program on this computer (a localhost redirect) gets a warning. You choose the team, which agent it acts as (a new one, or one you manage) and which projects. Nothing is approved silently, not even a recognized app.</p>
-                    </li>
-                    <li>
                         <h4>It acts as the agent, never as you</h4>
-                        <p>Issues, comments and claims land under the agent's name. Its access policy is <code>write</code> today; narrower policies are on the consent page, marked coming soon.</p>
+                        <p>An agent is made with its own key (<code>chaotic agent create</code>), and issues, comments and claims land under its name. Its key only reaches its own team or project.</p>
                     </li>
                     <li>
-                        <h4>Short-lived, and easy to cut off</h4>
-                        <p>Access tokens last 10 minutes. An app that asks to stay connected (<code>offline_access</code>) refreshes them while it is used at least once every 30 days, for at most 90 days before you approve again. Disconnect from Settings &rsaquo; Connected Apps or <code>chaotic auth connections revoke</code>. Deactivating the agent or leaving the team ends it too.</p>
+                        <h4>One identity per Claude Code session</h4>
+                        <p>Give a machine a registrar's key and opt in with <code>session_identity: auto</code>, and each Claude Code session there registers its own short-lived agent, so two sessions never claim a ticket "as each other". Details below.</p>
                     </li>
                     <li>
                         <h4>A human behind every agent</h4>
-                        <p>Each agent has a human owner, and each agent key a human holder. Remove someone from the team and the agent keys they hold stop working; <code>chaotic agent deactivate</code> retires an agent while keeping its work attributed to it.</p>
+                        <p>Each agent has a human owner, and each agent key a human holder. Remove someone from the team, or deactivate them, and the agent keys they hold stop working; <code>chaotic agent deactivate</code> retires an agent while keeping its work attributed to it.</p>
+                    </li>
+                    <li>
+                        <h4>You approve every connection <span class="badge-next">Coming soon</span></h4>
+                        <p>The consent page names the app and the host the approval goes to. An app that registered itself is badged <em>Unverified app</em>, and an approval going to a program on this computer (a localhost redirect) gets a warning. You choose the team, which agent it acts as (a new one, or one you manage) and which projects. Nothing is approved silently, not even a recognized app.</p>
+                    </li>
+                    <li>
+                        <h4>Short-lived, and easy to cut off <span class="badge-next">Coming soon</span></h4>
+                        <p>An app connected by URL gets access tokens that last 10 minutes, acting as the agent with the <code>write</code> policy. One that asks to stay connected (<code>offline_access</code>) refreshes them while it is used at least once every 30 days, for at most 90 days before you approve again. Disconnect from Settings &rsaquo; Connected Apps or <code>chaotic auth connections revoke</code>.</p>
                     </li>
                 </ul>
             </div>
@@ -315,12 +331,16 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                 <figure class="screenshot">
                     <a href="images/app-connected-apps.png"><img src="images/app-connected-apps.png" width="792" height="225" loading="lazy"
                          alt="Settings, Connected Apps: MCP Inspector, acting as the agent MCP Inspector (Maya Chen), 1 project in Acme Robotics, policy write, with a Disconnect button"></a>
-                    <figcaption>Connected Apps (next release): what each connection acts as, where, and a Disconnect button.</figcaption>
+                    <figcaption><span class="badge-next">Coming soon</span> Connected Apps: what each connection acts as, where, and a Disconnect button.</figcaption>
                 </figure>
                 <div class="feature-card registration-card">
-                    <h3 class="feature-title">Self-registration for harnesses <span class="badge-next">Next release</span></h3>
-                    <p class="feature-description">A harness that runs many sessions can give each one its own identity. An agent's creator or a team admin can mark it as a <em>registrar</em> (the <code>can_register</code> field, API only for now); the registrar then calls <code>POST /api/agents/register</code> with a session reference and gets back a session agent with a key that expires in 7 days.</p>
-                    <p class="feature-note">A session identity is an ordinary agent, so gates, leases and the inbox apply. Its scope is never wider than its registrar's, its owner is the human behind the registrar's key, it cannot register others, and registrars are capped (200 live identities and 60 registrations an hour by default). Deactivating a registrar retires its sessions.</p>
+                    <h3 class="feature-title">Per-session identity for Claude Code</h3>
+                    <p class="feature-description">Make a <em>registrar</em> once (from the CLI, or Agents &rsaquo; Create Agent &rsaquo; Registrar in the web app), give the machine its key and turn the setting on. It is off by default.</p>
+                    <pre class="code-block"><code>chaotic agent create "Claude Code" --registrar
+chaotic auth set-key ck_...   # the registrar's key
+chaotic config set-session-identity auto</code></pre>
+                    <p class="feature-description">Inside Claude Code, the CLI and <code>chaotic mcp</code> then register the session as its own agent, named after the registrar and the branch, with a key that expires in 7 days, and never fall back to the shared key. Other harnesses can call <code>POST /api/agents/register</code> the same way.</p>
+                    <p class="feature-note">A session identity is an ordinary agent, so gates, leases and the inbox apply. Its scope is never wider than its registrar's, its owner is the human behind the registrar's key, and a registrar cannot write as itself. Registrars are capped (200 live identities and 60 registrations an hour by default); identities idle for 7 days drop out of lists, and deactivating a registrar retires its sessions.</p>
                 </div>
             </div>
 
@@ -353,7 +373,6 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                 </div>
             </div>
             <p class="section-footnote">
-                Make an agent by hand with <code>chaotic agent create</code>: its key only reaches its own team or project.
                 Setup details for every client are in <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/docs/agents.md">docs/agents.md</a>.
             </p>
         </div>
@@ -582,30 +601,45 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
            2. Keep up to four entries, the most recent first; delete the oldest.
            3. Update the version in the install section's "Latest release" line.
          Link targets stay the same: the full notes live in cli/CHANGELOG.md.
-         The first entry may be an unreleased one (class release-next), kept
-         from merged PR titles on main with no version number; when that
-         release ships, give it its version and date like the others, and
-         drop the "Next release" badges in the Agents & MCP section. -->
+         The first entry may be a "Coming soon" one (class release-next) for
+         work that is built but not switched on or published. An entry
+         marked release-pending is on main (deployed, for "Main") but not on
+         PyPI: when the release ships, give it its version and drop the
+         pending note, and fix the "Latest on PyPI" line. When OAuth is
+         switched on, drop the "Coming soon" badges in Agents & MCP. -->
     <section class="section" id="whats-new">
         <div class="section-content">
             <h2 class="section-title">What's New</h2>
             <ol class="release-list">
                 <li class="release release-next">
                     <div class="release-meta">
-                        <span class="release-upcoming">Coming in the next release</span>
-                        <span>On main, not yet on PyPI</span>
+                        <span class="release-upcoming">Coming soon</span>
+                        <span>Built, not switched on or published yet</span>
                     </div>
                     <ul class="release-notes">
-                        <li><strong>Add MCP clients by URL and approve them in your browser.</strong> OAuth for <code>/mcp</code>, with client metadata documents and dynamic registration, on self-hosted servers that turn it on.</li>
-                        <li><strong>Connected Apps</strong> in Settings and <code>chaotic auth connections</code>: see and disconnect what you approved. Deactivating an agent or leaving a team ends its connections.</li>
-                        <li><strong>Agent self-registration</strong>: a registrar gives each harness session its own expiring agent identity, owned by a person.</li>
-                        <li><code>chaotic system config</code> keeps server settings across upgrades; API keys name their agent and holder; the capability URL is deprecated behind a flag.</li>
+                        <li><strong>Add MCP clients by URL and approve them in your browser.</strong> OAuth for <code>/mcp</code> is on main but off until a server enables it, and not in a PyPI release.</li>
+                        <li><strong>Connected Apps</strong> in Settings and <code>chaotic auth connections</code>, to see and disconnect what you approved.</li>
+                        <li><strong>Chaotic for Android</strong>: no public build yet. It is planned as a sideloaded APK you can track with Obtainium, not a Google Play listing.</li>
+                    </ul>
+                </li>
+                <li class="release">
+                    <div class="release-meta">
+                        <span class="release-version">Main</span>
+                        <time datetime="2026-10-15">Oct 15, 2026</time>
+                        <span class="release-pending">Not yet on PyPI</span>
+                    </div>
+                    <ul class="release-notes">
+                        <li><strong>One agent identity per Claude Code session</strong>, opt-in with <code>session_identity: auto</code> and a registrar (<code>chaotic agent create --registrar</code>, or in the web app). Idle session identities drop out of agent lists.</li>
+                        <li>A ticket that was never claimed must pass its claim rituals before its first close, wherever it closes from.</li>
+                        <li>Planned sprints follow the project's default budget until you set one by hand; <strong>Follow project default</strong> (or <code>chaotic sprint budget &lt;id&gt; --default</code>) puts one back.</li>
+                        <li><code>chaotic system upgrade</code> rebuilds the CLI from the checkout and rolls back when a migration fails; <code>chaotic system config</code> keeps server settings across upgrades.</li>
                     </ul>
                 </li>
                 <li class="release">
                     <div class="release-meta">
                         <span class="release-version">0.1.0a22</span>
                         <time datetime="2026-10-13">Oct 13, 2026</time>
+                        <span class="release-pending">Not yet on PyPI</span>
                     </div>
                     <ul class="release-notes">
                         <li><strong>Retire an agent without deleting it</strong>: <code>chaotic agent deactivate</code> / <code>reactivate</code>, plus <code>chaotic agent keys list</code> / <code>revoke</code>.</li>
@@ -624,18 +658,6 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                         <li><code>chaotic system upgrade</code> always ends with the server up, bounds shutdown time, and refreshes an unedited service file (backing up the old one).</li>
                         <li>The open issue in the web UI updates live when an agent comments, and MCP <code>issue_update</code> can set or clear a parent.</li>
                         <li>One database migration: upgrade with <code>chaotic system upgrade</code>, which backs up first. MCP clients should reconnect.</li>
-                    </ul>
-                </li>
-                <li class="release">
-                    <div class="release-meta">
-                        <span class="release-version">0.1.0a20</span>
-                        <time datetime="2026-10-13">Oct 13, 2026</time>
-                    </div>
-                    <ul class="release-notes">
-                        <li><strong>Ritual artifacts.</strong> A ritual can require evidence: a document or a URL that the attestation must point at.</li>
-                        <li>Every client-facing API route is reachable from the CLI client, and list calls page with <code>skip</code>/<code>limit</code>.</li>
-                        <li>Zero-point estimates show as 0 everywhere, and blocking-cycle checks hold under concurrent writes.</li>
-                        <li>Two database migrations: upgrade with <code>chaotic system upgrade</code>, which backs up first. MCP clients should reconnect.</li>
                     </ul>
                 </li>
             </ol>
@@ -690,7 +712,7 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                 <a href="https://github.com/casey/just">just</a>)? Run <code>uv tool install chaotic-cli</code>,
                 then <code>chaotic system install</code> and <code>chaotic quickstart</code>.
             </p>
-            <p class="install-note">Latest release: <strong>0.1.0a22</strong></p>
+            <p class="install-note">Latest on PyPI: <strong>0.1.0a21</strong>. Newer changes above are on main and go out with the next release.</p>
             <div class="cta-buttons">
                 <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-primary btn-large">View on GitHub</a>
                 <a href="manifesto.html" class="btn btn-secondary btn-large">Read the Manifesto</a>
