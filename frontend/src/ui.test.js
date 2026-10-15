@@ -15,6 +15,7 @@ import {
   closeInlineDropdownsFromEscape,
   clearModalDirty,
   focusModalFirstField,
+  showMentionWarnings,
 } from './ui.js';
 
 describe('showModal', () => {
@@ -696,5 +697,53 @@ describe('showApiError', () => {
     showApiError('load issue', error);
     const toast = document.querySelector('.toast-error');
     expect(toast.querySelector('.toast-message').textContent).toBe('Failed to load issue: Not found');
+  });
+});
+
+// CHT-1743: @handles that reached nobody, from a comment-create response.
+describe('showMentionWarnings', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    document.body.innerHTML = '<div id="toast-container"></div>';
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows one warning toast per warning, in order', () => {
+    const n = showMentionWarnings({
+      warnings: [
+        '@sam is ambiguous; nobody was notified. Use one of: @sam-lee, @sam-ortiz.',
+        '@nobody matches nobody who can be mentioned here; nobody was notified.',
+      ],
+    });
+    expect(n).toBe(2);
+    const toasts = document.querySelectorAll('.toast.toast-warning');
+    expect(toasts).toHaveLength(2);
+    expect(toasts[0].querySelector('.toast-message').textContent).toContain('Use one of: @sam-lee, @sam-ortiz.');
+    expect(toasts[1].querySelector('.toast-message').textContent).toContain('@nobody matches nobody');
+  });
+
+  it('shows nothing for a response without warnings', () => {
+    expect(showMentionWarnings({ id: 'c1' })).toBe(0);
+    expect(showMentionWarnings({ warnings: [] })).toBe(0);
+    expect(showMentionWarnings(null)).toBe(0);
+    expect(showMentionWarnings(undefined)).toBe(0);
+    expect(showMentionWarnings({ warnings: 'not a list' })).toBe(0);
+    expect(document.querySelectorAll('.toast')).toHaveLength(0);
+  });
+
+  it('skips non-string and empty entries', () => {
+    expect(showMentionWarnings({ warnings: ['', null, 42, { a: 1 }, '@x is ambiguous'] })).toBe(1);
+    expect(document.querySelectorAll('.toast')).toHaveLength(1);
+  });
+
+  it('renders server text as text, never as HTML', () => {
+    showMentionWarnings({ warnings: ['@<img src=x onerror="window.__pwned=1"> matches nobody'] });
+    const msg = document.querySelector('.toast-message');
+    expect(msg.querySelector('img')).toBeNull();
+    expect(msg.textContent).toBe('@<img src=x onerror="window.__pwned=1"> matches nobody');
+    expect(window.__pwned).toBeUndefined();
   });
 });

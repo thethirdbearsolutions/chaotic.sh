@@ -6,7 +6,7 @@
 import { getCommentDraft, setCommentDraft, getDescriptionDraft, setDescriptionDraft, getDescriptionDraftBase } from './storage.js';
 import { getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints, getCurrentView, getDetailNavContext, subscribe } from './state.js';
 import { api } from './api.js';
-import { showToast, showModal, closeModal, showApiError } from './ui.js';
+import { showToast, showModal, closeModal, showApiError, showMentionWarnings } from './ui.js';
 import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate, isOutOfScale } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
@@ -1170,9 +1170,11 @@ export async function handleAddComment(event, issueId) {
     setCommentDraft(issueId, null);
     commentSubmitting = true;
     try {
-        await api.createComment(issueId, content);
+        const created = await api.createComment(issueId, content);
         await viewIssue(issueId);
         showToast('Comment added!', 'success');
+        // @handles that reached nobody (CHT-1743)
+        showMentionWarnings(created);
     } catch (e) {
         // Restore draft on failure so user doesn't lose their comment
         setCommentDraft(issueId, content);

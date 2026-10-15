@@ -213,6 +213,26 @@ export function showToast(message, type = 'success') {
 }
 
 /**
+ * Show the `warnings` a comment-create response carries (CHT-1743): one
+ * warning toast per @handle that reached nobody, unknown or ambiguous (an
+ * ambiguous one names the unique handles to use instead; CHT-1735). The
+ * server caps the list, so this cannot flood the screen. Server text goes
+ * through showToast, which sets textContent, so it is never parsed as HTML.
+ * @param {Object|null|undefined} created - The comment-create response
+ * @returns {number} How many warnings were shown
+ */
+export function showMentionWarnings(created) {
+  const warnings = Array.isArray(created?.warnings) ? created.warnings : [];
+  let shown = 0;
+  for (const warning of warnings) {
+    if (typeof warning !== 'string' || !warning) continue;
+    showToast(warning, 'warning');
+    shown += 1;
+  }
+  return shown;
+}
+
+/**
  * Extract a human-readable message from an error.
  * Handles: plain Error objects, structured API errors with .detail,
  * FastAPI validation error arrays, and nested {message: ...} objects.
