@@ -292,7 +292,7 @@
           "users"
         ],
         "summary": "Delete Me",
-        "description": "Delete the current user and their agents. Refused (409) when the\nuser or any of their agents authored anything, or a non-agent row\nnames the user as its parent (CHT-1467).",
+        "description": "Delete the current user and their agents. Refused (409) when the\nuser or any of their agents authored anything, or a non-agent row\nnames the user as its parent (CHT-1467), or the user is a team's only\nowner (CHT-1865): transfer ownership or delete the team first.",
         "operationId": "delete_me_api_users_me_delete",
         "responses": {
           "204": {

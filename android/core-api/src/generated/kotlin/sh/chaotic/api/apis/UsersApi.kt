@@ -46,7 +46,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * DELETE /api/users/me
         * Delete Me
-        * Delete the current user and their agents. Refused (409) when the user or any of their agents authored anything, or a non-agent row names the user as its parent (CHT-1467).
+        * Delete the current user and their agents. Refused (409) when the user or any of their agents authored anything, or a non-agent row names the user as its parent (CHT-1467), or the user is a team&#39;s only owner (CHT-1865): transfer ownership or delete the team first.
          * @return void
         */
         open suspend fun deleteMeApiUsersMeDelete(): HttpResponse<Unit> {

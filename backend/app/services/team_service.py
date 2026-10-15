@@ -46,8 +46,31 @@ _ANOTHER_OWNER = (
 )
 
 
+# The member row being written belongs to a person with an active
+# account, the only kind of user that may own a team (CHT-1848). Inside
+# the write, so a deactivation between the caller's check and the write
+# cannot slip through (PR #455 review 5). Correlated on team_members.
+_ROW_IS_A_PERSON = (
+    "EXISTS (SELECT 1 FROM users p WHERE p.id = team_members.user_id AND p.is_agent = 0 AND p.is_active = 1)"
+)
+
+
 class LastOwnerError(Exception):
     """The change would leave the team with no owner (CHT-1848)."""
+
+
+class NotAnOwnerCandidate(Exception):
+    """Only a person with an active account can own a team (CHT-1848)."""
+
+
+class OwnerInvitationRefused(Exception):
+    """An invitation with the owner role that cannot make an owner
+    (PR #455 review 1): the account accepting it is not a person with an
+    active account, or the person who sent it is no longer an owner."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
 
 
 class MembershipChanged(Exception):
@@ -235,7 +258,9 @@ class TeamService:
         self, member: OxydeTeamMember, role: TeamRole, *, actor_id: str | None,
     ) -> OxydeTeamMember | None:
         """Update a member's role; logged (ROLE_CHANGED) when it changes.
-        None when the membership is gone.
+        None when the membership is gone. Making an owner requires, in the
+        write, that the member is a person with an active account
+        (NotAnOwnerCandidate otherwise).
 
         An owner's role changes only while another owner remains
         (CHT-1848), and that check is part of the UPDATE itself, so two
@@ -254,6 +279,8 @@ class TeamService:
         if old_role == TeamRole.OWNER:
             sql += f" AND {_ANOTHER_OWNER}"
             params += [member.team_id, TeamRole.OWNER.name, member.id]
+        if role == TeamRole.OWNER:
+            sql += f" AND {_ROW_IS_A_PERSON}"
         async with atomic():
             if not await execute_raw(sql + " RETURNING id", params):
                 current = await OxydeTeamMember.objects.filter(id=member.id).first()
@@ -261,6 +288,8 @@ class TeamService:
                     return None
                 if current.role != old_role:
                     raise MembershipChanged()
+                if role == TeamRole.OWNER:
+                    raise NotAnOwnerCandidate()
                 raise LastOwnerError()
             await self.record_activity(
                 member.team_id, TeamActivityAction.ROLE_CHANGED, actor_id=actor_id,
@@ -278,7 +307,7 @@ class TeamService:
 
         The promotion requires, in the same statement, that the actor is
         still an owner and the target still holds the role the caller
-        read; the actor's step-down follows under the writer lock the
+        read and is a person with an active account; the actor's step-down follows under the writer lock the
         promotion took, with the new owner already in place, so the team
         always has an owner. Raises MembershipChanged when either was
         changed (or removed) meanwhile; nothing is written then.
@@ -289,7 +318,7 @@ class TeamService:
             promoted = await execute_raw(
                 "UPDATE team_members SET role = ? WHERE id = ? AND role = ? AND EXISTS ("
                 "SELECT 1 FROM team_members a WHERE a.team_id = ? AND a.user_id = ? AND a.role = ?"
-                ") RETURNING id",
+                f") AND {_ROW_IS_A_PERSON} RETURNING id",
                 [owner, target.id, old_role.name, target.team_id, actor_id, owner],
             )
             if not promoted:
@@ -298,7 +327,11 @@ class TeamService:
                 "UPDATE team_members SET role = ? WHERE team_id = ? AND user_id = ? AND role = ? RETURNING id",
                 [admin, target.team_id, actor_id, owner],
             )
-            if not stepped_down:  # pragma: no cover -- the promotion's EXISTS saw it, under the lock
+            if not stepped_down:  # pragma: no cover -- unreachable on SQLite, see below
+                # The promotion's EXISTS saw the actor as an owner, and its
+                # write took SQLite's single writer lock, so nothing can
+                # have changed the actor's row since. Raising here rolls
+                # the promotion back with the rest of the transaction.
                 raise MembershipChanged()
             await self.record_activity(
                 target.team_id, TeamActivityAction.OWNERSHIP_TRANSFERRED, actor_id=actor_id,
@@ -314,6 +347,32 @@ class TeamService:
             )
         await target.refresh()
         return target
+
+    async def acting_owner_ids(self, team_id: str, *, excluding: str | None = None) -> list[str]:
+        """The team's owners who can act as one (a person with an active
+        account, as _ANOTHER_OWNER counts them), longest-standing first,
+        without ``excluding`` (CHT-1848). Who inherits the agents of a
+        member who leaves (PR #455 review 3)."""
+        rows = await execute_raw(
+            "SELECT o.user_id FROM team_members o JOIN users u ON u.id = o.user_id "
+            "WHERE o.team_id = ? AND o.role = ? AND u.is_agent = 0 AND u.is_active = 1 "
+            "AND (? IS NULL OR o.user_id != ?) ORDER BY o.joined_at, o.id",
+            [team_id, TeamRole.OWNER.name, excluding, excluding],
+        )
+        return [row["user_id"] for row in rows]
+
+    async def sole_owned_team_ids(self, user_id: str) -> list[str]:
+        """The teams ``user_id`` is the only acting owner of: an OWNER row
+        and no other owner who is a person with an active account. Call it
+        under the writer lock to act on the answer (CHT-1865)."""
+        rows = await execute_raw(
+            "SELECT m.team_id FROM team_members m WHERE m.user_id = ? AND m.role = ? AND NOT EXISTS ("
+            "SELECT 1 FROM team_members o JOIN users u ON u.id = o.user_id "
+            "WHERE o.team_id = m.team_id AND o.role = ? AND o.user_id != ? AND u.is_agent = 0 AND u.is_active = 1"
+            ") ORDER BY m.team_id",
+            [user_id, TeamRole.OWNER.name, TeamRole.OWNER.name, user_id],
+        )
+        return [row["team_id"] for row in rows]
 
     async def remove_member(
         self, member: OxydeTeamMember, *, actor_id: str | None, may_remove_owner: bool = True,
@@ -469,6 +528,8 @@ class TeamService:
             ).update(status=InvitationStatus.ACCEPTED)
             if claimed != 1:
                 return None
+            if invitation.role == TeamRole.OWNER:
+                await self._check_owner_invitation(invitation, user)
             member = await self.get_member(invitation.team_id, user.id)
             joined = False
             if member is None:
@@ -500,6 +561,27 @@ class TeamService:
                 )
         await member.refresh()
         return member
+
+    async def _check_owner_invitation(self, invitation: OxydeTeamInvitation, user: OxydeUser) -> None:
+        """An owner invitation makes an owner only of a person with an
+        active account, and only while its sender is still an acting owner
+        of the team (PR #455 review 1: one sent by an admin before only
+        owners could send them must not make an owner). Read after the
+        claim, under its writer lock; raising rolls the claim back, so the
+        invitation stays pending."""
+        [row] = await execute_raw(
+            "SELECT EXISTS (SELECT 1 FROM users WHERE id = ? AND is_agent = 0 AND is_active = 1) AS person, "
+            "EXISTS (SELECT 1 FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.team_id = ? "
+            "AND m.user_id = ? AND m.role = ? AND u.is_agent = 0 AND u.is_active = 1) AS sender_owns",
+            [user.id, invitation.team_id, invitation.invited_by_id, TeamRole.OWNER.name],
+        )
+        if not row["person"]:
+            raise OwnerInvitationRefused("Only a person with an active account can accept an owner invitation")
+        if not row["sender_owns"]:
+            raise OwnerInvitationRefused(
+                "This owner invitation was sent by someone who is not an owner of the team; "
+                "ask an owner to invite you again"
+            )
 
     async def decline_invitation(self, invitation: OxydeTeamInvitation) -> None:
         """Decline a team invitation."""

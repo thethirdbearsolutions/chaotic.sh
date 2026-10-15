@@ -29,7 +29,9 @@ from app.oxyde_models.user import OxydeUser
 from app.services.agent_service import AgentService
 from app.services.credential_events import revoking
 from app.services.mention_handles import MentionDirectory
-from app.services.team_service import LastOwnerError, MembershipChanged, TeamService
+from app.services.team_service import (
+    LastOwnerError, MembershipChanged, NotAnOwnerCandidate, OwnerInvitationRefused, TeamService,
+)
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
 from app.services.email_verification_service import (
@@ -211,6 +213,8 @@ async def update_member_role(
         raise _last_owner() from None
     except MembershipChanged:
         raise _membership_changed() from None
+    except NotAnOwnerCandidate:
+        raise _not_an_owner_candidate() from None
     if member is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -282,10 +286,11 @@ async def remove_member(
         if user_id != current_user.id:
             new_owner_id = current_user.id
         else:
-            owners = await OxydeTeamMember.objects.filter(
-                team_id=team_id, role=TeamRole.OWNER,
-            ).order_by("joined_at").all()
-            new_owner_id = owners[0].user_id if owners else None
+            # The longest-standing owner who can act as one: a person with
+            # an active account, as the last-owner check counts them, never
+            # an agent's OWNER row or a deactivated account (PR #455 review 3).
+            owners = await team_service.acting_owner_ids(team_id, excluding=user_id)
+            new_owner_id = owners[0] if owners else None
         released = await agent_service.release_member_agents(
             team_id, user_id, new_owner_id, actor_id=current_user.id,
         )
@@ -323,9 +328,18 @@ def _membership_changed() -> HTTPException:
     )
 
 
+def _not_an_owner_candidate() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Only a person with an active account can own a team",
+    )
+
+
 async def _require_owner_candidate(user_id: str) -> None:
     """An owner is a person with an active account (CHT-1848): an agent
-    acts for a person, and a deactivated account cannot act at all."""
+    acts for a person, and a deactivated account cannot act at all. The
+    write checks it again (team_service._ROW_IS_A_PERSON); this answers
+    the common case with a more specific text."""
     user = await UserService().get_by_id(user_id)
     if user is None or user.is_agent:
         raise HTTPException(
@@ -394,6 +408,8 @@ async def transfer_ownership(
     try:
         target = await team_service.transfer_ownership(target, actor_id=current_user.id)
     except MembershipChanged:
+        # Also a target deactivated meanwhile: the promotion requires an
+        # active person in the write itself.
         raise _membership_changed() from None
     return TeamMemberResponse(
         id=target.id,
@@ -485,6 +501,14 @@ async def create_invitation(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admins can invite members",
+        )
+    # Only owners make owners, invitations included (PR #455 review 1):
+    # otherwise an admin invites an address they control as owner and,
+    # once it is accepted, removes the real owners.
+    if invitation_in.role == TeamRole.OWNER and not await _is_team_owner(team_id, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owners can invite an owner",
         )
 
     team = await team_service.get_by_id(team_id)
@@ -746,7 +770,12 @@ async def accept_invitation(
             headers=INVITATION_HEADERS,
         )
 
-    member = await team_service.accept_invitation(invitation, current_user)
+    try:
+        member = await team_service.accept_invitation(invitation, current_user)
+    except OwnerInvitationRefused as refused:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=refused.message, headers=INVITATION_HEADERS,
+        ) from None
     if member is None:
         # Accepted, declined or revoked by someone else meanwhile.
         raise _invitation_gone()

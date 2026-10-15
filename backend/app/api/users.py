@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, NotAppSession
 from app.schemas.user import UserUpdate, UserResponse
-from app.services.user_service import UserDeletionRefusedError, UserService
+from app.services.user_service import SoleOwnerDeletionRefused, UserDeletionRefusedError, UserService
 from app.services.team_service import TeamService
 
 router = APIRouter()
@@ -50,7 +50,8 @@ async def update_me(user_in: UserUpdate, current_user: CurrentUser, _app_session
 async def delete_me(current_user: CurrentUser, _app_session: NotAppSession):
     """Delete the current user and their agents. Refused (409) when the
     user or any of their agents authored anything, or a non-agent row
-    names the user as its parent (CHT-1467)."""
+    names the user as its parent (CHT-1467), or the user is a team's only
+    owner (CHT-1865): transfer ownership or delete the team first."""
     if current_user.is_agent:
         # An agent is deleted by its owner or a team admin, through the
         # agent route and its guard; its own API key is not enough.
@@ -61,5 +62,5 @@ async def delete_me(current_user: CurrentUser, _app_session: NotAppSession):
     user_service = UserService()
     try:
         await user_service.delete(current_user)
-    except UserDeletionRefusedError as refused:
+    except (UserDeletionRefusedError, SoleOwnerDeletionRefused) as refused:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refused)) from refused

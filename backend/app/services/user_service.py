@@ -9,7 +9,7 @@ from app.oxyde_models.user import OxydeUser
 from app.schemas.user import UserCreate, UserUpdate
 from app.utils.email_address import fold_email
 from app.utils.security import get_password_hash, verify_password
-from app.oxyde_models.team import OxydeTeamMember
+from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.oxyde_models.email_verification import OxydeEmailVerificationCode
 from app.oauth.ratelimit import SlidingWindowLimiter
@@ -108,6 +108,21 @@ async def warn_if_accounts_share_an_address() -> int:
 def _label(user: OxydeUser) -> str:
     """'Name' (id prefix): names are not unique, ids are unreadable."""
     return f"'{user.name}' ({user.id[:8]})"
+
+
+class SoleOwnerDeletionRefused(Exception):
+    """Refused (CHT-1865): the account is the only owner of a team who
+    can act as one, so deleting it would leave the team with no owner,
+    which no API call can repair (only an owner makes an owner,
+    CHT-1848). ``team_ids`` names those teams."""
+
+    def __init__(self, team_ids: list[str], labels: list[str]):
+        self.team_ids = team_ids
+        super().__init__(
+            f"This account is the only owner of team(s) {', '.join(labels)}. "
+            "Transfer ownership (chaotic team transfer-ownership USER) or delete the team "
+            "before deleting your account."
+        )
 
 
 class UserDeletionRefusedError(Exception):
@@ -429,6 +444,10 @@ class UserService:
         -- only if neither they nor any of their agents authored anything.
         Invitations to their address are kept (CHT-1796).
 
+        Refused with SoleOwnerDeletionRefused while the account is the
+        only acting owner of a team (CHT-1865), checked under the writer
+        lock with the deletes.
+
         Otherwise UserDeletionRefusedError (CHT-1467): the same rule
         AgentService.delete applies to one agent, applied to the account
         and every agent it owns, so deleting the owner cannot be used to
@@ -440,6 +459,19 @@ class UserService:
         """
         agent_service = AgentService()
         async with revoking():
+            # First statement: SQLite's writer lock, so the sole-owner check
+            # below and the deletes after it are one step. An owner leaving
+            # at the same moment either commits first, and is seen here, or
+            # waits, and then finds this account gone and is refused as the
+            # last owner (CHT-1865). Taken before any read: a transaction
+            # that has read cannot wait for the lock (CHT-1411).
+            await execute_raw("UPDATE team_members SET role = role WHERE 0")
+            sole = await TeamService().sole_owned_team_ids(user.id)
+            if sole:
+                teams = {t.id: t for t in await OxydeTeam.objects.filter(id__in=sole).all()}
+                raise SoleOwnerDeletionRefused(
+                    sole, [teams[t].key if t in teams else t for t in sole],
+                )
             # Every row that names the user as parent, agent or not: the
             # RESTRICT applies to all of them (CHT-1467's review).
             children = await OxydeUser.objects.filter(

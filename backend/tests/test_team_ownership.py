@@ -16,10 +16,12 @@ import pytest_asyncio
 
 from app.api.visibility import TEAM_HIDDEN_DETAIL
 from app.utils.security import create_access_token, get_password_hash
-from app.enums import TeamActivityAction, TeamRole
-from app.oxyde_models.team import OxydeTeamActivity, OxydeTeamMember
+from app.enums import InvitationStatus, TeamActivityAction, TeamRole
+from app.oxyde_models.team import OxydeTeamActivity, OxydeTeamInvitation, OxydeTeamMember
 from app.oxyde_models.user import OxydeUser
-from app.services.team_service import LastOwnerError, MembershipChanged, TeamService
+from app.services.team_service import (
+    LastOwnerError, MembershipChanged, NotAnOwnerCandidate, OwnerInvitationRefused, TeamService,
+)
 
 
 @pytest_asyncio.fixture
@@ -364,3 +366,192 @@ class TestConcurrentOwners:
         )
         assert sorted(r.status_code for r in responses) == [204, 400]
         assert await _owners(test_team.id) == 1
+
+
+async def _person(email, *, active=True):
+    return await OxydeUser.objects.create(
+        email=email, hashed_password=get_password_hash("x"), name=email.split("@")[0], is_active=active,
+    )
+
+
+async def _deactivate(user):
+    await OxydeUser.objects.filter(id=user.id).update(is_active=False)
+
+
+class TestOwnerInvitations:
+    """PR #455 review 1: only owners make owners, invitations included."""
+
+    async def test_an_admin_cannot_invite_an_owner(self, client, auth_headers2, test_team, test_user2):
+        await _join(test_team.id, test_user2.id, TeamRole.ADMIN)
+        response = await client.post(
+            f"/api/teams/{test_team.id}/invitations", headers=auth_headers2,
+            json={"email": "alt@example.com", "role": "owner"},
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Only owners can invite an owner"
+        assert await OxydeTeamInvitation.objects.filter(team_id=test_team.id).count() == 0
+
+    async def test_the_admin_takeover_fails_at_the_first_step(
+        self, client, auth_headers2, test_team, test_user, test_user2,
+    ):
+        """The reproduced escalation: an admin invites an address they
+        control as owner, accepts as it, and removes the real owner."""
+        await _join(test_team.id, test_user2.id, TeamRole.ADMIN)
+        invited = await client.post(
+            f"/api/teams/{test_team.id}/invitations", headers=auth_headers2,
+            json={"email": "alt@example.com", "role": "owner"},
+        )
+        assert invited.status_code == 403
+        alt = await _person("alt@example.com")
+        # Nothing to accept, and the admin alone cannot remove the owner.
+        assert await OxydeTeamInvitation.objects.filter(email="alt@example.com").count() == 0
+        response = await client.delete(
+            f"/api/teams/{test_team.id}/members/{test_user.id}", headers=await _headers_for(alt),
+        )
+        assert response.status_code == 403
+        response = await client.delete(f"/api/teams/{test_team.id}/members/{test_user.id}", headers=auth_headers2)
+        assert response.status_code == 403
+        assert await _role(test_team.id, test_user.id) == TeamRole.OWNER
+
+    async def test_an_owner_invites_an_owner(self, client, auth_headers, test_team):
+        person = await _person("next@example.com")
+        invited = await client.post(
+            f"/api/teams/{test_team.id}/invitations", headers=auth_headers,
+            json={"email": person.email, "role": "owner"},
+        )
+        assert invited.status_code == 201, invited.text
+        token = (await OxydeTeamInvitation.objects.get(id=invited.json()["id"])).token
+        accepted = await client.post(f"/api/teams/invitations/{token}/accept", headers=await _headers_for(person))
+        assert accepted.status_code == 200, accepted.text
+        assert await _role(test_team.id, person.id) == TeamRole.OWNER
+
+    async def _owner_invitation(self, team_id, email, invited_by_id):
+        from datetime import datetime, timedelta, timezone
+        return await OxydeTeamInvitation.objects.create(
+            team_id=team_id, email=email, role=TeamRole.OWNER, token=f"tok-{email}",
+            invited_by_id=invited_by_id, expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        )
+
+    async def test_an_agent_cannot_accept_an_owner_invitation(self, client, test_team, test_user):
+        agent = await _agent(test_team.id)
+        invitation = await self._owner_invitation(test_team.id, agent.email, test_user.id)
+        response = await client.post(
+            f"/api/teams/invitations/{invitation.token}/accept", headers=await _headers_for(agent),
+        )
+        assert response.status_code == 403
+        assert "person with an active account" in response.json()["detail"]
+        assert await _role(test_team.id, agent.id) is None
+        # Refused inside the claim's transaction: the invitation is still pending.
+        assert (await OxydeTeamInvitation.objects.get(id=invitation.id)).status == InvitationStatus.PENDING
+
+    async def test_a_deactivated_account_cannot_accept_an_owner_invitation(self, test_team, test_user):
+        person = await _person("off@example.com")
+        invitation = await self._owner_invitation(test_team.id, person.email, test_user.id)
+        await _deactivate(person)
+        with pytest.raises(OwnerInvitationRefused):
+            await TeamService().accept_invitation(invitation, person)
+        assert await _role(test_team.id, person.id) is None
+        assert (await OxydeTeamInvitation.objects.get(id=invitation.id)).status == InvitationStatus.PENDING
+
+    async def test_an_owner_invitation_an_admin_sent_earlier_makes_no_owner(
+        self, client, test_team, test_user2,
+    ):
+        """Sent before this check existed: its sender is no owner now."""
+        await _join(test_team.id, test_user2.id, TeamRole.ADMIN)
+        alt = await _person("alt@example.com")
+        invitation = await self._owner_invitation(test_team.id, alt.email, test_user2.id)
+        response = await client.post(
+            f"/api/teams/invitations/{invitation.token}/accept", headers=await _headers_for(alt),
+        )
+        assert response.status_code == 403
+        assert await _role(test_team.id, alt.id) is None
+
+
+class TestAccountDeletion:
+    """CHT-1865, folded into PR #455: a team's only owner cannot delete
+    their account, checked under the writer lock with the deletes."""
+
+    async def test_the_only_owner_is_refused(self, client, auth_headers, test_team, test_user, agent_user):
+        """agent_user's OWNER row does not count as another owner."""
+        response = await client.delete("/api/users/me", headers=auth_headers)
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert "only owner of team(s) TEST" in detail
+        assert "Transfer ownership" in detail and "delete the team" in detail
+        assert await OxydeUser.objects.filter(id=test_user.id).count() == 1
+
+    async def test_a_deactivated_co_owner_does_not_count(self, client, auth_headers, test_team, test_user2):
+        await _join(test_team.id, test_user2.id, TeamRole.OWNER)
+        await _deactivate(test_user2)
+        assert (await client.delete("/api/users/me", headers=auth_headers)).status_code == 409
+
+    async def test_with_another_owner_the_account_goes(self, client, auth_headers, test_team, test_user, test_user2):
+        await _join(test_team.id, test_user2.id, TeamRole.OWNER)
+        response = await client.delete("/api/users/me", headers=auth_headers)
+        assert response.status_code == 204, response.text
+        assert await OxydeUser.objects.filter(id=test_user.id).count() == 0
+        assert await _owners(test_team.id) == 1
+
+    async def test_an_owner_leaving_while_the_other_deletes_their_account_leaves_one(
+        self, test_team, test_user, test_user2,
+    ):
+        from app.services.user_service import SoleOwnerDeletionRefused, UserService
+
+        await _join(test_team.id, test_user2.id, TeamRole.OWNER)
+        first = await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=test_user.id).first()
+        results = await asyncio.gather(
+            TeamService().remove_member(first, actor_id=test_user.id),
+            UserService().delete(test_user2),
+            return_exceptions=True,
+        )
+        refused = [r for r in results if isinstance(r, Exception)]
+        assert len(refused) == 1, results
+        assert isinstance(refused[0], (LastOwnerError, SoleOwnerDeletionRefused))
+        assert await _owners(test_team.id) == 1
+
+
+class TestLeaversAgents:
+    """PR #455 review 3: an owner who leaves hands their agents to an
+    owner who can act as one, by the last-owner check's rule."""
+
+    async def test_they_go_to_an_active_person_not_the_longest_standing_row(
+        self, client, auth_headers, test_team, test_user, test_user2,
+    ):
+        from app.schemas.agent import AgentCreate
+        from app.services.agent_service import AgentService
+
+        # Older owner rows than test_user2's: a deactivated person, an agent.
+        gone = await _person("gone@example.com")
+        await _join(test_team.id, gone.id, TeamRole.OWNER)
+        await _deactivate(gone)
+        await _agent(test_team.id, member_role=TeamRole.OWNER)
+        await _join(test_team.id, test_user2.id, TeamRole.OWNER)
+        await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id__in=[gone.id]).update(
+            joined_at="2000-01-01 00:00:00",
+        )
+        agent, _, _ = await AgentService().create(AgentCreate(name="Mine"), test_user, test_team.id)
+
+        response = await client.delete(f"/api/teams/{test_team.id}/members/{test_user.id}", headers=auth_headers)
+        assert response.status_code == 204, response.text
+        assert (await OxydeUser.objects.get(id=agent.id)).parent_user_id == test_user2.id
+
+
+class TestPersonCheckedInTheWrite:
+    """PR #455 review 5: the promotion carries its invariant itself."""
+
+    async def test_a_transfer_to_someone_deactivated_meanwhile_writes_nothing(
+        self, test_team, test_user, test_user2,
+    ):
+        target = await _join(test_team.id, test_user2.id)
+        await _deactivate(test_user2)
+        with pytest.raises(MembershipChanged):
+            await TeamService().transfer_ownership(target, actor_id=test_user.id)
+        assert await _role(test_team.id, test_user.id) == TeamRole.OWNER
+        assert await _role(test_team.id, test_user2.id) == TeamRole.MEMBER
+
+    async def test_a_promotion_of_someone_deactivated_meanwhile_writes_nothing(self, test_team, test_user2):
+        member = await _join(test_team.id, test_user2.id)
+        await _deactivate(test_user2)
+        with pytest.raises(NotAnOwnerCandidate):
+            await TeamService().update_member_role(member, TeamRole.OWNER, actor_id="x")
+        assert await _role(test_team.id, test_user2.id) == TeamRole.MEMBER

@@ -206,17 +206,47 @@ class TestAuditRemovedMembers:
         (finding,) = system.audit_removed_members(db.path)["findings"]
         assert [r["revocation_event_id"] for r in finding["removals"]] == ["e1", "e2"]
 
-    def test_an_owner_leftover_is_ended_by_hand(self, db):
+    def test_an_only_owner_leftover_is_ended_by_hand_with_a_successor(self, db):
+        """PR #455 review 4: the recipe never leaves the team without an
+        owner: it promotes the longest-standing admin (else member) in the
+        same transaction, and deletes only if that took."""
         db.member("m-own", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.member("m-mem", "t1", "u5", "2026-09-01 09:00:00", role="MEMBER")
+        db.member("m-adm2", "t1", "u7", "2026-10-02 09:00:00", role="ADMIN")
+        db.member("m-adm", "t1", "u6", "2026-10-01 10:00:00", role="ADMIN")
         db.event("e1", "t1", "u1", "2026-10-14 12:00:00")
         (finding,) = system.audit_removed_members(db.path)["findings"]
         remedy = "\n".join(finding["remedy"])
         assert "the team's only owner" in remedy
         assert "chaotic team transfer-ownership NEW_OWNER" in remedy
         assert "chaotic system backup" in remedy
-        (delete,) = [step for step in finding["remedy"] if step.startswith("sqlite3 ")]
-        assert shlex.split(delete)[2] == "DELETE FROM team_members WHERE id = 'm-own'"
+        assert "making user u6 (now admin) the owner" in remedy
         assert "revoke the keys user u1 holds" in remedy
+        (step,) = [s for s in finding["remedy"] if s.startswith("sqlite3 ")]
+        db.conn.executescript(shlex.split(step)[2])
+        rows = dict(db.conn.execute("SELECT id, role FROM team_members").fetchall())
+        assert rows == {"m-mem": "MEMBER", "m-adm": "OWNER", "m-adm2": "ADMIN"}
+
+    def test_a_successor_whose_role_changed_meanwhile_deletes_nothing(self, db):
+        db.member("m-own", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.member("m-adm", "t1", "u6", "2026-10-01 10:00:00", role="ADMIN")
+        db.event("e1", "t1", "u1", "2026-10-14 12:00:00")
+        (finding,) = system.audit_removed_members(db.path)["findings"]
+        (step,) = [s for s in finding["remedy"] if s.startswith("sqlite3 ")]
+        db.conn.execute("UPDATE team_members SET role = 'MEMBER' WHERE id = 'm-adm'")
+        db.conn.commit()
+        db.conn.executescript(shlex.split(step)[2])
+        rows = dict(db.conn.execute("SELECT id, role FROM team_members").fetchall())
+        assert rows == {"m-own": "OWNER", "m-adm": "MEMBER"}
+
+    def test_an_only_owner_with_no_one_to_succeed_them_gets_no_recipe(self, db):
+        db.member("m-own", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.event("e1", "t1", "u1", "2026-10-14 12:00:00")
+        (finding,) = system.audit_removed_members(db.path)["findings"]
+        remedy = "\n".join(finding["remedy"])
+        assert not any(step.startswith("sqlite3 ") for step in finding["remedy"])
+        assert "would leave it with no owner" in remedy
+        assert "chaotic team transfer-ownership NEW_OWNER" in remedy
 
     def test_an_owner_leftover_beside_another_owner_is_ended_through_the_api(self, db):
         """CHT-1848: an owner removes another owner while one remains."""
@@ -241,7 +271,7 @@ class TestAuditRemovedMembers:
         db.member("m-off", "t1", "u-off", "2026-10-01 09:00:00", role="OWNER")
         db.event("e1", "t1", "u1", "2026-10-14 12:00:00")
         (finding,) = system.audit_removed_members(db.path)["findings"]
-        assert any(step.startswith("sqlite3 ") for step in finding["remedy"])
+        assert finding["remedy"][0].startswith("user u1 is the team's only owner")
         db.member("m-ok", "t1", "u-ok", "2026-10-01 09:00:00", role="OWNER")
         (finding,) = system.audit_removed_members(db.path)["findings"]
         assert finding["remedy"][-1] == "chaotic team remove-member u1"
@@ -254,7 +284,20 @@ class TestAuditRemovedMembers:
         findings = system.audit_removed_members(db.path)["findings"]
         assert len(findings) == 2
         for finding in findings:
-            assert any(step.startswith("sqlite3 ") for step in finding["remedy"])
+            assert finding["remedy"][0].endswith("the API never removes a team's last owner.")
+
+    def test_a_successor_must_be_an_active_person(self, db):
+        db.conn.executescript(
+            "CREATE TABLE users (id TEXT PRIMARY KEY, is_agent INTEGER NOT NULL, is_active INTEGER NOT NULL);"
+            "INSERT INTO users VALUES ('u1', 0, 1), ('u-agent', 1, 1), ('u-off', 0, 0), ('u-ok', 0, 1);"
+        )
+        db.member("m-own", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.member("m-agent", "t1", "u-agent", "2026-09-01 09:00:00", role="ADMIN")
+        db.member("m-off", "t1", "u-off", "2026-09-01 09:00:00", role="ADMIN")
+        db.member("m-ok", "t1", "u-ok", "2026-10-05 09:00:00", role="MEMBER")
+        db.event("e1", "t1", "u1", "2026-10-14 12:00:00")
+        (finding,) = system.audit_removed_members(db.path)["findings"]
+        assert "making user u-ok (now member)" in "\n".join(finding["remedy"])
 
     def test_changes_no_data(self, db):
         db.member("m-left", "t1", "u1", "2026-10-01 09:00:00")
@@ -361,25 +404,43 @@ class TestActivityLogGaps:
         (finding,) = report["findings"]
         assert [r["source"] for r in finding["removals"]] == ["revocation_event", "request_log"]
 
-    def test_the_owner_remedy_writes_the_log_row_too(self, db):
+    def test_the_owner_remedy_writes_the_log_rows_too(self, db):
         db.activity_log()
         db.member("m-own", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.member("m-adm", "t1", "u6", "2026-10-01 10:00:00", role="ADMIN")
         db.activity("a1", "t1", "u1", "2026-10-16 12:00:00")
         (finding,) = system.audit_removed_members(db.path)["findings"]
         (step,) = [s for s in finding["remedy"] if s.startswith("sqlite3 ")]
         sql = shlex.split(step)[2]
-        assert sql.startswith("BEGIN; DELETE FROM team_members WHERE id = 'm-own';")
+        assert sql.startswith("BEGIN; UPDATE team_members SET role = 'OWNER' WHERE id = 'm-adm'")
         db.conn.executescript(sql)
-        assert db.conn.execute("SELECT count(*) FROM team_members").fetchone()[0] == 0
+        assert dict(db.conn.execute("SELECT id, role FROM team_members").fetchall()) == {"m-adm": "OWNER"}
         rows = db.conn.execute(
-            "SELECT team_id, action, actor_id, target_user_id, role, created_at FROM team_activities "
-            "WHERE id != 'a1'"
+            "SELECT team_id, action, actor_id, target_user_id, role, old_role, created_at FROM team_activities "
+            "WHERE id != 'a1' ORDER BY action DESC"
         ).fetchall()
-        assert [r[:5] for r in rows] == [("t1", "MEMBER_REMOVED", None, "u1", "OWNER")]
-        assert system._parse_stored_datetime(rows[0][5]) is not None
+        assert [r[:6] for r in rows] == [
+            ("t1", "ROLE_CHANGED", None, "u6", "OWNER", "ADMIN"),
+            ("t1", "MEMBER_REMOVED", None, "u1", "OWNER", None),
+        ]
+        assert all(system._parse_stored_datetime(r[6]) is not None for r in rows)
 
-    def test_without_the_activity_table_the_owner_remedy_is_the_bare_delete(self, db):
+    def test_a_recipe_that_does_nothing_logs_nothing(self, db):
+        db.activity_log()
         db.member("m-own", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.member("m-adm", "t1", "u6", "2026-10-01 10:00:00", role="ADMIN")
+        db.activity("a1", "t1", "u1", "2026-10-16 12:00:00")
+        (finding,) = system.audit_removed_members(db.path)["findings"]
+        (step,) = [s for s in finding["remedy"] if s.startswith("sqlite3 ")]
+        db.conn.execute("DELETE FROM team_members WHERE id = 'm-adm'")
+        db.conn.commit()
+        db.conn.executescript(shlex.split(step)[2])
+        assert db.conn.execute("SELECT count(*) FROM team_activities WHERE id != 'a1'").fetchone()[0] == 0
+        assert db.conn.execute("SELECT count(*) FROM team_members").fetchone()[0] == 1
+
+    def test_without_the_activity_table_the_owner_remedy_writes_no_log(self, db):
+        db.member("m-own", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.member("m-adm", "t1", "u6", "2026-10-01 10:00:00", role="ADMIN")
         db.event("e1", "t1", "u1", "2026-10-14 12:00:00")
         (finding,) = system.audit_removed_members(db.path)["findings"]
         (step,) = [s for s in finding["remedy"] if s.startswith("sqlite3 ")]
