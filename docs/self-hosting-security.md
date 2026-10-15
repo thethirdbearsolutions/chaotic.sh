@@ -242,20 +242,31 @@ Rules:
 - Only an admin of the inviting team, and only for a pending, unexpired
   invitation.
 - Only when the account at the invited address is active, a person's,
-  unverified, and asked for a mailed code itself in the last 24 hours,
-  which a stuck invitee has. Anyone can make a team and invite any
+  unverified, and asked for a mailed code itself after this invitation
+  was created and within the last 24 hours, which a stuck invitee has. Anyone can make a team and invite any
   address, so without this rule the answer would describe any account.
   A missing, passive or verified account gets the same 409
   `no_verification_requested`, after the same lookups.
 - Codes are stored as HMACs bound to the user and the invitation, and
-  carry the invitation's id (`invitation_id`, migration 0037), which
+  carry the invitation's and team's ids (`invitation_id`, `team_id`,
+  migration 0037), which
   every address-keyed query excludes. So they don't
   disarm the invitee's mailed codes, and their wrong tries don't count
   against the address's daily failure cap. A code lasts 15 minutes and
-  allows five tries. A new one replaces the invitation's earlier one,
-  and an invitation gets at most three a day (429 with `Retry-After`).
+  allows five tries. A new one replaces the invitation's earlier one.
+  A team can issue at most three a day for one address (429 with
+  `Retry-After`), counted by team and address (`team_id`, kept on the
+  row), so cancelling and inviting again does not reset it, and another
+  team's codes don't use it up.
+- A code typed at accept after the invitation's admin code has expired,
+  been used up or been replaced gets 400 `invitation_code_expired` ("ask
+  the admin for a new one"). It is not tried as a mailed code, so it
+  never spends a mailed code's attempt.
 - The answer shows the account's name, signup time (with when the
-  invitation was created) and whether it is in any team.
+  invitation was created) and whether it is in any team. A signup
+  shortly after the link went out fits both the invitee and someone who
+  saw the link: confirm with the invitee directly. An account that
+  predates the invitation was not made from the link.
 
 The real protection is where the code goes. Send it only through a
 channel you already trust for the invitee, never to whoever asked for

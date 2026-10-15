@@ -30,9 +30,9 @@ from .test_email_verification import (
     _accept,
     _age_codes,
     _codes,
-    _invite,
     _make_legacy_variant,
 )
+from .test_email_verification import _invite as _invite_now
 
 INVITEE = "invitee@example.com"
 
@@ -64,6 +64,17 @@ def outbox(monkeypatch):
 
     monkeypatch.setattr(EmailService, "send", send)
     return box
+
+
+async def _invite(team_id: str, inviter_id: str, email: str, *, ago: timedelta = timedelta(hours=3)) -> str:
+    """An invitation created ``ago`` (three hours back by default), so the
+    account's request in ``_asked`` (two hours back) comes after it, as a
+    stuck invitee's does (second review, 1)."""
+    token = await _invite_now(team_id, inviter_id, email)
+    await OxydeTeamInvitation.objects.filter(token=token).update(
+        created_at=datetime.now(timezone.utc) - ago,
+    )
+    return token
 
 
 def _headers(user_id: str) -> dict:
@@ -220,9 +231,10 @@ class TestScope:
         victim = "victim@example.com"
         _, attacker = await _signup(client, email="attacker@example.org", name="A", asked=False)
         squat_id, squatter = await _signup(client, email=victim, name="Victim Name", asked=False)
-        assert (await client.post(REQUEST, headers=squatter)).status_code == 202  # mailed to the victim
         evil = await _own_team(client, attacker, "EVIL")
         evil_token, evil_inv = await _invite_via_api(client, attacker, evil, victim)
+        # Asked after the attacker's invitation, which the attacker controls.
+        assert (await client.post(REQUEST, headers=squatter)).status_code == 202  # mailed to the victim
         issued = await _issue(client, evil, evil_inv, attacker)
         assert issued.status_code == 201
         code = issued.json()["code"]
@@ -317,7 +329,9 @@ class TestCodeRules:
         user_id, invitee = await _signup(client)
         code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
         await _age_codes(user_id, evs.CODE_TTL + timedelta(seconds=1))
-        assert (await _accept_with(client, token, invitee, code)).status_code == 400
+        response = await _accept_with(client, token, invitee, code)
+        assert response.status_code == 400
+        assert response.json()["detail"]["error_code"] == "invitation_code_expired"
 
     async def test_five_tries_then_dead(self, client, test_team, auth_headers, pending, outbox):
         token, inv_id = pending
@@ -325,9 +339,15 @@ class TestCodeRules:
         code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
         for _ in range(evs.MAX_ATTEMPTS):
             assert (await _accept_with(client, token, invitee, _wrong(code))).status_code == 400
-        assert (await _accept_with(client, token, invitee, code)).status_code == 400
+        response = await _accept_with(client, token, invitee, code)
+        assert response.status_code == 400
+        assert response.json()["detail"]["error_code"] == "invitation_code_expired"
 
-    async def test_at_most_three_codes_per_invitation_a_day(self, client, test_team, auth_headers, pending, outbox):
+    async def test_at_most_three_codes_a_day_per_team_and_address(
+        self, client, test_team, test_user, auth_headers, pending, outbox,
+    ):
+        """Second review, 4: cancelling and inviting again does not reset
+        the limit, and another team's codes do not use it up."""
         _, inv_id = pending
         await _signup(client)
         for _ in range(evs.INVITATION_ISSUE_LIMIT):
@@ -336,6 +356,15 @@ class TestCodeRules:
         assert response.status_code == 429
         assert response.json()["detail"]["error_code"] == "email_verification_rate_limited"
         assert int(response.headers["retry-after"]) > 0
+
+        assert (await client.delete(f"/api/teams/{test_team.id}/invitations/{inv_id}", headers=auth_headers)).status_code == 204
+        again = await _invitation_id(await _invite(test_team.id, test_user.id, INVITEE))
+        assert (await _issue(client, test_team.id, again, auth_headers)).status_code == 429
+
+        other = await OxydeTeam.objects.create(name="Other", key="OTHR")
+        await OxydeTeamMember.objects.create(team_id=other.id, user_id=test_user.id, role=TeamRole.OWNER)
+        theirs = await _invitation_id(await _invite(other.id, test_user.id, INVITEE))
+        assert (await _issue(client, other.id, theirs, auth_headers)).status_code == 201
 
     async def test_the_mailing_limits_do_not_block_it(self, client, test_team, auth_headers, pending, outbox):
         _, inv_id = pending
@@ -347,6 +376,10 @@ class TestCodeRules:
     async def test_issuing_never_extends_the_window(self, client, test_team, auth_headers, pending, outbox):
         """Review 2: only the account's own requests count as asking."""
         _, inv_id = pending
+        # An invitation older than the window, so only the window limits.
+        await OxydeTeamInvitation.objects.filter(id=inv_id).update(
+            created_at=datetime.now(timezone.utc) - evs.FAILURE_WINDOW - timedelta(hours=1),
+        )
         user_id, _ = await _signup(client)
         assert (await _issue(client, test_team.id, inv_id, auth_headers)).status_code == 201
         own = OxydeEmailVerificationCode.objects.filter(email_hash=evs.hash_email(INVITEE), user_id=user_id)
@@ -362,6 +395,44 @@ class TestCodeRules:
             )
         response = await _issue(client, test_team.id, inv_id, auth_headers)
         assert response.json()["detail"]["error_code"] == "no_verification_requested"
+
+
+class TestStaleAdminCode:
+    async def test_a_stale_admin_code_does_not_spend_a_mailed_codes_attempt(
+        self, client, test_team, auth_headers, pending, outbox,
+    ):
+        """Second review, 2: an admin code typed after it expired is
+        answered as one, and never tried as a mailed code."""
+        token, inv_id = pending
+        user_id, invitee = await _signup(client)
+        code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
+        await OxydeEmailVerificationCode.objects.filter(invitation_id=inv_id).update(
+            expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        )
+        assert (await client.post(REQUEST, headers=invitee)).status_code == 202
+        mailed = outbox.last_code()
+        response = await _accept_with(client, token, invitee, code)
+        assert response.status_code == 400
+        assert response.json()["detail"]["error_code"] == "invitation_code_expired"
+        assert "Ask the admin for a new one" in response.json()["detail"]["message"]
+        [row] = await OxydeEmailVerificationCode.objects.filter(
+            email_hash=evs.hash_email(INVITEE), invitation_id__isnull=True, armed=True,
+        ).all()
+        assert row.attempts == 0
+        assert (await client.post(CONFIRM, headers=invitee, json={"code": mailed})).status_code == 200
+
+    async def test_another_account_is_not_told_a_code_was_issued(
+        self, client, test_team, auth_headers, pending, outbox,
+    ):
+        token, inv_id = pending
+        await _signup(client)
+        code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
+        await OxydeEmailVerificationCode.objects.filter(invitation_id=inv_id).update(
+            expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        )
+        _, other = await _signup(client, email="other@example.com", asked=False)
+        response = await _accept_with(client, token, other, code)
+        assert response.json()["detail"]["error_code"] == "invalid_verification_code"
 
 
 class TestRefusals:
@@ -422,7 +493,9 @@ class TestRefusals:
         assert a.json() == b.json()
         assert a.json()["detail"]["error_code"] == "email_verification_unavailable"
 
-    @pytest.mark.parametrize("kind", ["passive", "verified", "deactivated", "asked_long_ago"])
+    @pytest.mark.parametrize(
+        "kind", ["passive", "verified", "deactivated", "asked_long_ago", "asked_before_the_invitation"],
+    )
     async def test_every_ineligible_account_answers_like_no_account(
         self, client, test_team, test_user, auth_headers, outbox, kind, monkeypatch,
     ):
@@ -432,9 +505,9 @@ class TestRefusals:
         calls = []
         real = evs.EmailVerificationService.asked_recently
 
-        async def counting(user_id, email):
+        async def counting(user_id, email, since):
             calls.append(user_id)
-            return await real(user_id, email)
+            return await real(user_id, email, since)
 
         monkeypatch.setattr(evs.EmailVerificationService, "asked_recently", staticmethod(counting))
         nobody = await _invite(test_team.id, test_user.id, "nobody@example.com")
@@ -446,6 +519,10 @@ class TestRefusals:
             await OxydeUser.objects.filter(id=user_id).update(is_active=False)
         elif kind == "asked_long_ago":
             await _asked(user_id, INVITEE, ago=evs.FAILURE_WINDOW + timedelta(minutes=1))
+        elif kind == "asked_before_the_invitation":
+            # Second review, 1: within the day, but before this invitation
+            # existed, so not a request this invitation left stuck.
+            await _asked(user_id, INVITEE, ago=timedelta(hours=4))
         a = await _issue(client, test_team.id, await _invitation_id(nobody), auth_headers)
         n = len(calls)
         b = await _issue(client, test_team.id, await _invitation_id(token), auth_headers)

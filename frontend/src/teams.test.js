@@ -1133,7 +1133,9 @@ describe('issueInvitationCode (CHT-1828)', () => {
     expect(text).toContain('Already in a team: no');
     expect(text.trim().startsWith('Send this code only through a channel you already trust for the invitee, never to whoever asked you for it.')).toBe(true);
     expect(text).toContain('2 h after the invitation was created');
-    expect(text.indexOf('Check with the invitee')).toBeLessThan(text.indexOf('123456'));
+    expect(text).toContain('A signup shortly after you sent the link fits both the invitee and someone who saw the link');
+    expect(text).toContain('One that predates the invitation was not made from the link');
+    expect(text.indexOf('confirm with the invitee directly')).toBeLessThan(text.indexOf('123456'));
     expect(document.getElementById('invitation-code').textContent).toBe('123456');
   });
 

@@ -519,7 +519,7 @@ def register(cli):
         can sign up with that address and ask. They pass it with
         `chaotic team accept-invite <link> --code <code>`, or on the
         invitation page. Shown only now; it expires in 15 minutes, and a
-        new one replaces it (three a day per invitation).
+        new one replaces it (three a day per team and address).
         """
         m = _main()
         issued = _client().issue_invitation_verification_code(m.get_current_team(), invitation_id)
@@ -544,9 +544,10 @@ def register(cli):
         else:
             console.print("  Already in a team: no")
         console.print(
-            "[yellow]Check with the invitee that this account is theirs. If they don't recognise "
-            "it, or it signed up long before you invited them, don't give out the code: cancel "
-            "the invitation.[/yellow]"
+            "[yellow]A signup shortly after you sent the link fits both the invitee and someone "
+            "who saw the link: confirm with the invitee directly. One that predates the invitation "
+            "was not made from the link, but check that the invitee recognises it. If they don't, "
+            "don't give out the code: cancel the invitation.[/yellow]"
         )
         console.print(
             f"Code (expires {esc(str(issued.get('expires_at', '')))}): "

@@ -511,8 +511,10 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
             busy = false;
             accept.disabled = false;
             const errorCode = e && e.detail && e.detail.error_code;
-            if (code !== undefined && (errorCode === 'invalid_verification_code' || (e && e.status === 429))) {
-                // A wrong or spent admin code: the invitation is still good.
+            if (code !== undefined && (errorCode === 'invalid_verification_code'
+                || errorCode === 'invitation_code_expired' || (e && e.status === 429))) {
+                // A wrong, expired or spent admin code: the invitation is
+                // still good.
                 showError(el, (e && e.message) || 'That code did not work.');
                 el.querySelector('#invite-admin-code')?.select?.();
                 return;

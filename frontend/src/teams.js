@@ -653,7 +653,7 @@ export function showInvitationCode(issued) {
                 <li>Signed up: ${escapeHtml(signedUp)} (${escapeHtml(relative)})</li>
                 <li>Already in a team: ${account.member_of_any_team ? 'yes' : 'no'}</li>
             </ul>
-            <p class="warning-text">Check with the invitee that this account is theirs. If they don't recognise it, or it signed up long before you invited them, don't give out the code: cancel the invitation.</p>
+            <p class="warning-text">A signup shortly after you sent the link fits both the invitee and someone who saw the link: confirm with the invitee directly. One that predates the invitation was not made from the link, but check that the invitee recognises it. If they don't, don't give out the code: cancel the invitation.</p>
             <div class="api-key-display">
                 <code id="invitation-code">${escapeHtml(issued?.code || '')}</code>
             </div>

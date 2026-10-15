@@ -448,7 +448,9 @@ class TestTeamInvitationCode:
         assert 'Bob' in flat and 'bob@test.com' in flat
         assert '2 h after the invitation was created' in flat
         assert 'Already in a team: no' in flat
-        assert flat.index('Check with the invitee') < flat.index('123456')
+        assert 'A signup shortly after you sent the link fits both the invitee and someone who saw the link' in flat
+        assert 'One that predates the invitation was not made from the link' in flat
+        assert flat.index('confirm with the invitee directly') < flat.index('123456')
         assert 'accept-invite <link> --code <code>' in flat
 
     def test_a_signup_before_the_invitation_says_so(self, cli_runner):

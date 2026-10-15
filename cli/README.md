@@ -176,7 +176,9 @@ can't receive the verification code. A team admin gets a code for that one
 invitation instead. It shows the account that signed up with the invited
 address: its name, its signup time relative to the invitation, and whether
 it is already in a team. Send the code only through a channel you already
-trust for the invitee, never to whoever asked for it. The invitee passes it
+trust for the invitee, never to whoever asked for it. A signup shortly after
+you sent the link fits both the invitee and someone who saw the link, so
+confirm with the invitee. A team can issue three codes a day per address. The invitee passes it
 with `chaotic team accept-invite <link> --code <code>`. It lets that account
 accept that invitation only; it doesn't verify the address.
 

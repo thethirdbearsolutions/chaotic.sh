@@ -411,6 +411,13 @@ INVITATION_GONE = "This invitation is no longer valid"
 INVITATION_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 
 
+INVITATION_CODE_STALE = {
+    "error_code": "invitation_code_expired",
+    "message": "The code a team admin gave you for this invitation has expired, been used up "
+               "or been replaced. Ask the admin for a new one.",
+}
+
+
 EMAIL_UNVERIFIED = {
     "error_code": "email_unverified",
     "message": "Verify your email address before accepting an invitation: "
@@ -517,13 +524,21 @@ async def accept_invitation(
         # of its attempts and never counts against the address's daily
         # failure cap; with none, the code can only be a mailed one.
         redeemed = await verification.redeem_for_invitation(current_user, invitation.id, code)
-        if redeemed is False:
+        if redeemed == "wrong":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"error_code": "invalid_verification_code", "message": INVALID_CODE_MESSAGE},
                 headers=INVITATION_HEADERS,
             )
-        if redeemed is None:
+        if redeemed == "stale":
+            # Not tried as a mailed code: that would spend a mailed code's
+            # attempt on what is almost surely the admin's old code.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=dict(INVITATION_CODE_STALE),
+                headers=INVITATION_HEADERS,
+            )
+        if redeemed == "none":
             try:
                 await verification.confirm(current_user, code)
             except VerificationRefused as refused:
@@ -583,19 +598,21 @@ async def delete_invitation(
 ISSUE_CODE_INSTRUCTIONS = (
     "Send this code only through a channel you already trust for the invitee, never to "
     "whoever asked you for it: a person who signed up with the invitee's address from a "
-    "leaked link can ask too, and chooses the name shown here. Check with the invitee "
-    "that this account is theirs; a signup long before the invitation, or that they don't "
-    "recognise, is a reason to stop. The code lets this account accept this invitation "
-    "only (it verifies nothing else), works only from a session signed in as this account, "
-    "and expires in 15 minutes."
+    "leaked link can ask too, and chooses the name shown here. A signup shortly after you "
+    "sent the link fits both the invitee and someone who saw the link: confirm with the "
+    "invitee directly. One that predates the invitation was not made from the link, but "
+    "check that the invitee recognises it. The code lets this account accept this "
+    "invitation only (it verifies nothing else), works only from a session signed in as "
+    "this account, and expires in 15 minutes."
 )
 
 NOT_WAITING = {
     "error_code": "no_verification_requested",
     "message": "No unverified account with the invited address has asked for a verification code "
-               "in the last 24 hours. Ask the invitee to sign up and request one (on the invitation "
-               "page, or with `chaotic auth verify-email`); if it doesn't arrive, issue the code then. "
-               "An invitee whose address is already verified can accept without one.",
+               "since this invitation was created (within the last 24 hours). Ask the invitee to "
+               "sign up and request one (on the invitation page, or with `chaotic auth "
+               "verify-email`); if it doesn't arrive, issue the code then. An invitee whose "
+               "address is already verified can accept without one.",
 }
 
 
@@ -641,7 +658,8 @@ async def issue_invitation_verification_code(
     same answer, after the same queries, so neither existence nor
     verification is told (review 5, 6). Then 409 ``ambiguous_account``
     on an old database with two accounts differing in case, and 429
-    past ``INVITATION_ISSUE_LIMIT`` codes for this invitation a day.
+    past ``INVITATION_ISSUE_LIMIT`` codes a day for this team and
+    address (cancelling and inviting again does not reset it).
 
     The answer names the account (name, email, signup time, whether it
     is in any team) and when the invitation was created, so the admin
@@ -670,8 +688,9 @@ async def issue_invitation_verification_code(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=CODE_NOT_NEEDED.detail())
 
     # People only: an agent account has no mailbox and cannot accept.
-    # And only an unverified account that asked for a mailed code itself,
-    # which is what a stuck invitee has done: anyone can make a team and
+    # And only an unverified account that asked for a mailed code itself
+    # since this invitation was created, which is what a stuck invitee
+    # has done: anyone can make a team and
     # invite any address, so without this the answer would describe any
     # account (PR #446 self-review F1). With no account, the same query
     # runs for nobody, so both paths do the same work (review 6).
@@ -681,7 +700,9 @@ async def issue_invitation_verification_code(
     ]
     eligible = []
     for account in accounts or [None]:
-        asked = await verification.asked_recently(account.id if account else "", invitation.email)
+        asked = await verification.asked_recently(
+            account.id if account else "", invitation.email, invitation.created_at,
+        )
         if account is not None and asked and account.email_verified_at is None:
             eligible.append(account)
     if not eligible:
@@ -700,7 +721,7 @@ async def issue_invitation_verification_code(
     account = eligible[0]
 
     try:
-        code, row = await verification.issue_for_invitation(account, invitation.id)
+        code, row = await verification.issue_for_invitation(account, invitation.id, team_id, invitation.email)
     except VerificationRefused as refused:
         raise HTTPException(
             status_code=refused.status_code, detail=refused.detail(), headers=refused.headers,

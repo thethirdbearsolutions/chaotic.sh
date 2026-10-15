@@ -28,7 +28,8 @@ for:
   success is the failed confirmations the daily cap counts.
 
 A team admin's code for one invitation (CHT-1828) is a row here too,
-with ``invitation_id`` set (NULL on every mailed code) and ``code_hash``
+with ``invitation_id`` and ``team_id`` set (NULL on every mailed code)
+and ``code_hash``
 bound to the user and the invitation. Every address-keyed query (the
 mailing limits, the failure cap, the newest-code lookup, "has this
 account asked") filters on ``invitation_id`` being NULL, so it never
@@ -68,6 +69,10 @@ class OxydeEmailVerificationCode(Model):
     # a code is only ever redeemed through a live invitation, so one left
     # behind by a revoked invitation can never be used.
     invitation_id: str | None = Field(default=None)
+    # The inviting team, on the same rows only: the issue limit counts
+    # per team and address, and a cancelled invitation's row is gone.
+    # Plain for the same reason as invitation_id.
+    team_id: str | None = Field(default=None)
     code_hash: str = Field()
     armed: bool = Field(default=False)
     expires_at: DateTimeUTC = Field()
@@ -87,4 +92,7 @@ class OxydeEmailVerificationCode(Model):
             # An invitation's admin-issued codes, newest first: redeeming
             # one and the per-invitation daily limit (CHT-1828).
             Index(("invitation_id", "created_at"), name="ix_email_verification_codes_invitation_created"),
+            # A team's admin-issued codes for an address: the daily issue
+            # limit (CHT-1828).
+            Index(("team_id", "email_hash", "created_at"), name="ix_email_verification_codes_team_email_created"),
         ]

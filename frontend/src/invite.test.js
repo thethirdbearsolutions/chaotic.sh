@@ -672,6 +672,15 @@ describe('email verification on the invite page (CHT-1790)', () => {
         expect(visible('#invite-admin-code-form')).toBe(true);
     });
 
+    it('an expired admin code says to ask for a new one (CHT-1828)', async () => {
+        await openUnverified();
+        api.acceptInvitation.mockRejectedValueOnce(refusal(400, 'invitation_code_expired',
+            'The code a team admin gave you for this invitation has expired, been used up or been replaced. Ask the admin for a new one.'));
+        await submitAdminCode('123456');
+        expect(q('#invite-error').textContent).toContain('Ask the admin for a new one');
+        expect(screenEl().textContent).not.toContain('no longer valid');
+    });
+
     it('an empty admin code is not sent (CHT-1828)', async () => {
         await openUnverified();
         await submitAdminCode('  ');
