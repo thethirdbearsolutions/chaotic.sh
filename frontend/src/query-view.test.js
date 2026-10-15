@@ -20,7 +20,7 @@ vi.mock('./projects.js', () => ({
 
 import { api } from './api.js';
 import { showToast } from './ui.js';
-import { setCurrentProject, setCurrentTeam, getCurrentProject } from './state.js';
+import { setCurrentProject, setCurrentTeam, getCurrentProject, setCurrentView } from './state.js';
 import {
     PAGE_SIZE,
     DEFAULT_WHERE,
@@ -54,6 +54,7 @@ const PAGE_HTML = `
         <button id="query-run-btn">Run</button>
         <button id="query-copy-cli-btn">Copy as CLI</button>
         <code id="query-cli-preview" class="hidden"></code>
+        <div id="query-notice" class="hidden"></div>
         <div id="query-error" class="hidden"></div>
         <div id="query-results"></div>
         <div id="query-pager"></div>
@@ -100,8 +101,16 @@ beforeEach(() => {
     showToast.mockReset();
     setCurrentTeam({ id: 't1', name: 'Team' });
     setCurrentProject(null);
+    setCurrentView('query');
     go('/query');
 });
+
+function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+}
 
 describe('normalizeColumns', () => {
     it('drops unknown and duplicate ids and keeps identifier and title', () => {
@@ -135,6 +144,9 @@ describe('parseQueryUrl / buildQueryUrl', () => {
     it('ignores a bad page number', () => {
         expect(parseQueryUrl('?page=0').page).toBe(1);
         expect(parseQueryUrl('?page=x').page).toBe(1);
+        // Review finding 6: not a safe integer, so not sent as skip=1e+25.
+        expect(parseQueryUrl('?page=100000000000000000000000').page).toBe(1);
+        expect(parseQueryUrl('?page=12').page).toBe(12);
     });
 
     it('round-trips a state and omits defaults', () => {
@@ -150,21 +162,35 @@ describe('Copy as CLI', () => {
         expect(shellQuote(`title~="it's"`)).toBe(`'title~="it'\\''s"'`);
     });
 
-    it('builds the command with sort and scope', () => {
+    it('builds the command with sort, scope and paging', () => {
         expect(buildCliCommand({ where: 'assignee=me', order: '-updated', teamScope: true })).toEqual({
-            command: "chaotic issue list --all-projects --where 'assignee=me' --sort updated --order desc",
+            command: "chaotic issue list --all-projects --where 'assignee=me' --sort updated --order desc --limit 100",
             warning: null,
         });
-        expect(buildCliCommand({ where: 'status=todo', order: '', teamScope: false }).command)
-            .toBe("chaotic issue list --where 'status=todo'");
+        expect(buildCliCommand({ where: 'a=1', teamScope: true, skip: 200 }).command)
+            .toBe("chaotic issue list --all-projects --where 'a=1' --limit 100 --skip 200");
+    });
+
+    // Review finding 4: `issue list` has no --project, so a project query
+    // is pinned with a project row instead of the CLI's current project.
+    it('pins a project scope with a project row', () => {
+        expect(buildCliCommand({ where: 'status=todo or assignee=me', order: '', teamScope: false, projectKey: 'DEM' })).toEqual({
+            command: "chaotic issue list --all-projects --where 'project=DEM (status=todo or assignee=me)' --limit 100",
+            warning: null,
+        });
+        expect(buildCliCommand({ where: '', teamScope: false, projectKey: 'DEM' }).command)
+            .toBe("chaotic issue list --all-projects --where 'project=DEM' --limit 100");
+        const unknown = buildCliCommand({ where: 'x=1', teamScope: false });
+        expect(unknown.command).toBe("chaotic issue list --where 'x=1' --limit 100");
+        expect(unknown.warning).toMatch(/current project/);
     });
 
     it('warns when the order has no exact CLI form', () => {
-        const multi = buildCliCommand({ where: '', order: 'priority,-updated' });
-        expect(multi.command).toBe("chaotic issue list --where '' --sort priority --order asc");
+        const multi = buildCliCommand({ where: '', order: 'priority,-updated', teamScope: true });
+        expect(multi.command).toBe("chaotic issue list --all-projects --where '' --sort priority --order asc --limit 100");
         expect(multi.warning).toMatch(/one field/);
-        const unsupported = buildCliCommand({ where: 'x=1', order: 'due' });
-        expect(unsupported.command).toBe("chaotic issue list --where 'x=1'");
+        const unsupported = buildCliCommand({ where: 'x=1', order: 'due', teamScope: true });
+        expect(unsupported.command).toBe("chaotic issue list --all-projects --where 'x=1' --limit 100");
         expect(unsupported.warning).toMatch(/cannot sort by "due"/);
     });
 });
@@ -399,7 +425,7 @@ describe('interactions', () => {
         const writeText = vi.fn().mockResolvedValue();
         Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
         const cmd = await copyQueryAsCli();
-        expect(cmd).toBe("chaotic issue list --where 'status!=done,canceled'");
+        expect(cmd).toBe("chaotic issue list --all-projects --where 'project=DEM (status!=done,canceled)' --limit 100");
         expect(writeText).toHaveBeenCalledWith(cmd);
         expect(showToast).toHaveBeenCalledWith('Copied CLI command', 'success');
     });
@@ -409,6 +435,140 @@ describe('interactions', () => {
         await copyQueryAsCli();
         const preview = document.getElementById('query-cli-preview');
         expect(preview.classList.contains('hidden')).toBe(false);
-        expect(preview.textContent).toBe("chaotic issue list --where 'status!=done,canceled'");
+        expect(preview.textContent).toBe("chaotic issue list --all-projects --where 'project=DEM (status!=done,canceled)' --limit 100");
+    });
+});
+
+describe('review findings on PR #429', () => {
+    it('1: a response that lands after leaving /query does not touch the URL', async () => {
+        setCurrentProject('p1');
+        const pending = deferred();
+        api.queryIssues.mockReturnValueOnce(pending.promise);
+        const run = loadQueryView();
+        // The user clicks through to an issue while the query is running.
+        setCurrentView('issue');
+        history.pushState({ view: 'issue' }, '', '/issue/DEM-1');
+        pending.resolve(response());
+        await run;
+        expect(window.location.pathname).toBe('/issue/DEM-1');
+        expect(history.state).toEqual({ view: 'issue' });
+    });
+
+    it('1: a failure that lands after leaving /query is dropped too', async () => {
+        setCurrentProject('p1');
+        const pending = deferred();
+        api.queryIssues.mockReturnValueOnce(pending.promise);
+        const run = loadQueryView();
+        setCurrentView('board');
+        pending.reject(Object.assign(new Error('boom'), { status: 400 }));
+        await run;
+        expect(document.getElementById('query-error').classList.contains('hidden')).toBe(true);
+    });
+
+    it('2: rejected where text never reaches the URL', async () => {
+        setCurrentProject('p1');
+        api.queryIssues.mockResolvedValueOnce(response());
+        await loadQueryView();
+        const good = window.location.search;
+        api.queryIssues.mockRejectedValueOnce(Object.assign(new Error('bad'), { status: 400 }));
+        document.getElementById('query-where').value = 'bogus=<x>';
+        await runWhereBox();
+        // A column toggle rewrites the URL from the last accepted query.
+        toggleQueryColumn('labels', true);
+        const params = new URLSearchParams(window.location.search);
+        expect(params.get('where')).toBe('status!=done,canceled');
+        expect(params.get('cols')).toContain('labels');
+        expect(window.location.search).not.toContain('bogus');
+        expect(good).not.toContain('bogus');
+    });
+
+    it('2: a scope change whose run is rejected keeps the old URL', async () => {
+        setCurrentProject('p1');
+        api.queryIssues.mockResolvedValueOnce(response());
+        await loadQueryView();
+        api.queryIssues.mockRejectedValueOnce(Object.assign(new Error('bad'), { status: 400 }));
+        document.getElementById('query-where').value = 'bogus=1';
+        await runWhereBox();
+        const before = history.length;
+        api.queryIssues.mockRejectedValueOnce(Object.assign(new Error('still bad'), { status: 400 }));
+        await setQueryScope('p2');
+        expect(history.length).toBe(before);
+        expect(window.location.search).toBe('?project=p1&where=status%21%3Ddone%2Ccanceled');
+        expect(getCurrentProject()).toBe('p1');
+        // Once a run is accepted the URL moves and the project follows.
+        api.queryIssues.mockResolvedValueOnce(response({ where: 'status=todo' }));
+        document.getElementById('query-where').value = 'status=todo';
+        await setQueryScope('p2');
+        expect(window.location.search).toBe('?project=p2&where=status%3Dtodo');
+        expect(history.length).toBe(before + 1);
+        expect(getCurrentProject()).toBe('p2');
+    });
+
+    it('3: text typed while a run is in flight is kept', async () => {
+        setCurrentProject('p1');
+        const pending = deferred();
+        api.queryIssues.mockReturnValueOnce(pending.promise);
+        const run = loadQueryView();
+        document.getElementById('query-where').value = 'assignee=me';
+        pending.resolve(response({ where: 'status!=done,canceled' }));
+        await run;
+        expect(document.getElementById('query-where').value).toBe('assignee=me');
+        // The URL still records what actually ran.
+        expect(new URLSearchParams(window.location.search).get('where')).toBe('status!=done,canceled');
+    });
+
+    it('5: a link to an unknown project says so', async () => {
+        go('/query?project=gone');
+        api.queryIssues.mockResolvedValue(response());
+        await loadQueryView();
+        const notice = document.getElementById('query-notice');
+        expect(notice.classList.contains('hidden')).toBe(false);
+        expect(notice.textContent).toMatch(/showing all projects/);
+
+        _resetQueryViewForTest();
+        setCurrentProject('p2');
+        go('/query?project=gone');
+        await loadQueryView();
+        expect(document.getElementById('query-notice').textContent).toMatch(/current project/);
+        expect(api.queryIssues.mock.calls.at(-1)[0]).toMatchObject({ projectId: 'p2' });
+
+        _resetQueryViewForTest();
+        go('/query?project=p1');
+        await loadQueryView();
+        expect(document.getElementById('query-notice').classList.contains('hidden')).toBe(true);
+    });
+
+    it('7: the pager is disabled while a run is in flight', async () => {
+        setCurrentProject('p1');
+        api.queryIssues.mockResolvedValueOnce(response({ total: 250, issues: Array.from({ length: 100 }, (_, n) => issue(n + 1)) }));
+        await loadQueryView();
+        const next = () => document.querySelector('[data-query-page="1"]');
+        expect(next().disabled).toBe(false);
+        const pending = deferred();
+        api.queryIssues.mockReturnValueOnce(pending.promise);
+        document.getElementById('query-where').value = 'status=todo';
+        const run = runWhereBox();
+        expect(next().disabled).toBe(true);
+        expect(document.querySelector('[data-query-page="-1"]').disabled).toBe(true);
+        // Even called directly, paging waits for the run.
+        goToQueryPage(1);
+        expect(api.queryIssues).toHaveBeenCalledTimes(2);
+        pending.resolve(response({ where: 'status=todo', total: 250, issues: Array.from({ length: 100 }, (_, n) => issue(n + 1)) }));
+        await run;
+        expect(next().disabled).toBe(false);
+        expect(document.querySelector('[data-query-page="-1"]').disabled).toBe(true);
+    });
+
+    it('8: a failed page load stays on the page that was showing', async () => {
+        setCurrentProject('p1');
+        api.queryIssues.mockResolvedValueOnce(response({ total: 250, issues: Array.from({ length: 100 }, (_, n) => issue(n + 1)) }));
+        await loadQueryView();
+        api.queryIssues.mockRejectedValueOnce(new Error('Network error - check your connection'));
+        await goToQueryPage(1);
+        expect(getQueryState().page).toBe(1);
+        expect(document.querySelectorAll('.query-row')).toHaveLength(100);
+        expect(document.querySelector('[data-query-page="1"]').disabled).toBe(false);
+        expect(document.getElementById('query-error').textContent).toContain('Network error');
+        expect(new URLSearchParams(window.location.search).has('page')).toBe(false);
     });
 });

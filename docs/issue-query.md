@@ -199,7 +199,10 @@ After each run the page rewrites `where` and `order` with the server's
 canonical text, so a copied link carries the text the CLI and MCP take.
 Running a new where text, paging, or changing scope adds a history entry;
 loading a URL and changing columns replace the current one. A query the
-server rejects shows its 400 message under the where box. "Copy as CLI"
-gives the matching `chaotic issue list --where '...'` command; the CLI
-sorts by one field, so an order of several terms is copied as its first
-term only (CHT-1817).
+server rejects shows its 400 message under the where box and does not
+change the URL. "Copy as CLI" gives the matching `chaotic issue list
+--all-projects --where '...' --limit 100` command. `issue list` has no
+`--project` option, so a project's query is copied as
+`project=KEY (<where>)`, which selects the same issues whatever the CLI's
+current project is. The CLI sorts by one field, so an order of several
+terms is copied as its first term only (CHT-1817).

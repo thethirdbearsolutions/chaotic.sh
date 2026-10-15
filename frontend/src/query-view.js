@@ -24,7 +24,7 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor, formatStatus, formatPriority, formatIssueType, formatDate } from './utils.js';
 import { showToast } from './ui.js';
-import { getCurrentProject, setCurrentProject, getCurrentTeam } from './state.js';
+import { getCurrentProject, setCurrentProject, getCurrentTeam, getCurrentView } from './state.js';
 import { getProjects } from './projects.js';
 
 export const PAGE_SIZE = 100;
@@ -122,7 +122,8 @@ export function parseQueryUrl(search) {
         cols: params.has('cols') ? normalizeColumns(params.get('cols').split(',')) : [...DEFAULT_COLUMNS],
         group: params.get('group') || null,
         view: params.get('view') || null,
-        page: Number.isFinite(page) && page >= 1 ? page : 1,
+        // Only a safe integer: a huge page= would send skip as 1e+25 (a 422).
+        page: Number.isSafeInteger(page) && page >= 1 ? page : 1,
     };
 }
 
@@ -156,27 +157,45 @@ export function shellQuote(text) {
 }
 
 /**
- * The `chaotic issue list` command for a query. Returns {command, warning};
+ * The `chaotic issue list` command for a query. Returns {command, warning}.
+ *
+ * `issue list` has no --project option: without --all-projects it runs in
+ * the CLI's current project, whatever that is. So a project-scoped query is
+ * copied as a team query with a `project=KEY` row ANDed in front, which
+ * selects the same issues wherever it is run. `limit`/`skip` carry the
+ * page's paging (the CLI's own default limit is 50).
+ *
  * warning is set when the order has no exact --sort/--order equivalent, in
  * which case only the first term (if the CLI can sort by it) is copied.
  */
-export function buildCliCommand({ where, order, teamScope }) {
+export function buildCliCommand({ where, order, teamScope, projectKey = null, limit = PAGE_SIZE, skip = 0 }) {
     const parts = ['chaotic', 'issue', 'list'];
-    if (teamScope) parts.push('--all-projects');
-    parts.push('--where', shellQuote(where || ''));
+    let text = where || '';
     let warning = null;
+    if (teamScope || projectKey) {
+        parts.push('--all-projects');
+        if (!teamScope) text = text ? `project=${projectKey} (${text})` : `project=${projectKey}`;
+    } else {
+        // Only when the project's key is unknown.
+        warning = "Runs in your CLI's current project.";
+    }
+    parts.push('--where', shellQuote(text));
     const terms = (order || '').split(',').map((t) => t.trim()).filter(Boolean);
     if (terms.length > 0) {
         const first = terms[0];
         const desc = first.startsWith('-');
         const field = first.replace(/^[-+]/, '');
+        let orderWarning = null;
         if (CLI_SORT_FIELDS.includes(field)) {
             parts.push('--sort', field, '--order', desc ? 'desc' : 'asc');
-            if (terms.length > 1) warning = `The CLI sorts by one field; only "${first}" was copied.`;
+            if (terms.length > 1) orderWarning = `The CLI sorts by one field; only "${first}" was copied.`;
         } else {
-            warning = `The CLI cannot sort by "${field}"; the order was not copied.`;
+            orderWarning = `The CLI cannot sort by "${field}"; the order was not copied.`;
         }
+        if (orderWarning) warning = warning ? `${warning} ${orderWarning}` : orderWarning;
     }
+    parts.push('--limit', String(limit));
+    if (skip > 0) parts.push('--skip', String(skip));
     return { command: parts.join(' '), warning };
 }
 
@@ -226,16 +245,25 @@ export function renderPager(total, skip, count) {
 // Page state and DOM wiring
 // ----------------------------------------------------------------------
 
+// `state` is what the page is showing or about to run: scope, the where
+// and order to send, the page, and the client-only cols/group/view.
+// `accepted` is the scope/where/order/page of the last run the server
+// accepted (or, before the first run, what the URL held). The URL is only
+// ever built from `accepted`, so text the server rejected never reaches it.
 let state = null;
+let accepted = null;
 let lastResult = null;
 let requestId = 0;
+let running = false;
 let initialized = false;
 
 /** Test hook: forget the page state and listeners' guard. */
 export function _resetQueryViewForTest() {
     state = null;
+    accepted = null;
     lastResult = null;
     requestId = 0;
+    running = false;
     initialized = false;
 }
 
@@ -248,8 +276,12 @@ function el(id) {
     return document.getElementById(id);
 }
 
+function snapshot(s) {
+    return { projectId: s.projectId, teamScope: s.teamScope, where: s.where, order: s.order, page: s.page };
+}
+
 function writeUrl(mode) {
-    const url = buildQueryUrl(state);
+    const url = buildQueryUrl({ ...accepted, cols: state.cols, group: state.group, view: state.view });
     const current = window.location.pathname + window.location.search;
     if (mode === 'push' && url !== current) {
         history.pushState({ view: 'query' }, '', url);
@@ -289,6 +321,23 @@ function showError(message) {
     }
 }
 
+function showNotice(message) {
+    const box = el('query-notice');
+    if (!box) return;
+    box.textContent = message || '';
+    box.classList.toggle('hidden', !message);
+}
+
+function setPagerDisabled(disabled) {
+    el('query-pager')?.querySelectorAll('button[data-query-page]').forEach((btn) => {
+        if (disabled) {
+            btn.disabled = true;
+        } else if (btn.dataset.enabled === 'true') {
+            btn.disabled = false;
+        }
+    });
+}
+
 function renderResults() {
     const results = el('query-results');
     const pager = el('query-pager');
@@ -304,15 +353,25 @@ function renderResults() {
     } else {
         results.innerHTML = renderResultsTable(issues, state.cols);
     }
-    if (pager) pager.innerHTML = renderPager(total, skip, issues.length);
+    if (pager) {
+        pager.innerHTML = renderPager(total, skip, issues.length);
+        // Remember which buttons this page allows, so a run can disable
+        // them all and its end restore exactly these.
+        pager.querySelectorAll('button[data-query-page]').forEach((btn) => {
+            btn.dataset.enabled = String(!btn.disabled);
+        });
+        if (running) setPagerDisabled(true);
+    }
 }
 
 /**
  * Run the current state's query. `historyMode` is 'replace' for a page load
  * and 'push' for an explicit run (Enter, Run, paging, scope change), so Back
- * steps through queries.
+ * steps through queries. Options:
+ *   onSuccess   called after the URL is written (setQueryScope uses it)
+ *   onFailure   called instead of clearing the results (paging uses it)
  */
-export async function runQuery(historyMode = 'replace') {
+export async function runQuery(historyMode = 'replace', { onSuccess = null, onFailure = null } = {}) {
     if (!state) return;
     const team = getCurrentTeam();
     const scope = state.teamScope ? { teamId: team?.id } : { projectId: state.projectId };
@@ -323,33 +382,52 @@ export async function runQuery(historyMode = 'replace') {
         return;
     }
     const id = ++requestId;
+    const sentWhere = state.where === null ? DEFAULT_WHERE : state.where;
     const results = el('query-results');
+    running = true;
     if (results) results.classList.add('loading');
+    setPagerDisabled(true);
+    // A response is only for this page if no newer run started and the user
+    // has not left it: otherwise writeUrl would rewrite another page's entry.
+    const current = () => id === requestId && getCurrentView() === 'query';
     try {
         const res = await api.queryIssues({
             ...scope,
-            where: state.where === null ? DEFAULT_WHERE : state.where,
+            where: sentWhere,
             order: state.order,
             skip: (state.page - 1) * PAGE_SIZE,
             limit: PAGE_SIZE,
         });
-        if (id !== requestId) return;
+        if (!current()) return;
         // Adopt the server's canonical text, in the URL and in the box.
         state.where = res.where;
         state.order = res.order || null;
+        accepted = snapshot(state);
         lastResult = { issues: res.issues || [], total: res.total, skip: res.skip };
         const box = el('query-where');
-        if (box) box.value = res.where;
+        // Leave the box alone if the user typed while this ran.
+        if (box && box.value.trim() === sentWhere.trim()) box.value = res.where;
         showError(null);
+        running = false;
         renderResults();
         writeUrl(historyMode);
+        if (onSuccess) onSuccess();
     } catch (error) {
-        if (id !== requestId) return;
-        lastResult = null;
+        if (!current()) return;
+        running = false;
+        if (onFailure) {
+            onFailure();
+        } else {
+            lastResult = null;
+        }
         renderResults();
         showError(formatQueryError(error));
     } finally {
-        if (id === requestId && results) results.classList.remove('loading');
+        if (id === requestId) {
+            running = false;
+            if (results) results.classList.remove('loading');
+            setPagerDisabled(false);
+        }
     }
 }
 
@@ -368,11 +446,10 @@ export function setQueryScope(projectId) {
     state.teamScope = !projectId;
     if (projectId) state.projectId = projectId;
     state.page = 1;
-    // Push before setCurrentProject: its URL sync is a replaceState, which
-    // would otherwise rewrite the entry Back returns to.
-    writeUrl('push');
-    if (projectId) setCurrentProject(projectId);
-    return runQuery('replace');
+    showNotice(null);
+    // setCurrentProject syncs ?project= with a replaceState, so it runs after
+    // the new entry is pushed, not on the entry Back returns to.
+    return runQuery('push', { onSuccess: () => { if (projectId) setCurrentProject(projectId); } });
 }
 
 /** Show or hide a column; identifier and title cannot be hidden. */
@@ -386,12 +463,19 @@ export function toggleQueryColumn(colId, on) {
 
 /** Move to another page of results. */
 export function goToQueryPage(delta) {
-    if (!state || !lastResult) return;
+    if (!state || !lastResult || running) return;
     const next = state.page + delta;
     if (next < 1) return;
     if (delta > 0 && lastResult.skip + lastResult.issues.length >= lastResult.total) return;
+    const previous = { page: state.page, result: lastResult };
     state.page = next;
-    return runQuery('push');
+    // On failure stay on the page that was showing, pager and all.
+    return runQuery('push', {
+        onFailure: () => {
+            state.page = previous.page;
+            lastResult = previous.result;
+        },
+    });
 }
 
 /** Copy the query as a `chaotic issue list --where ...` command. */
@@ -400,7 +484,15 @@ export async function copyQueryAsCli() {
     const box = el('query-where');
     // Copy what the user sees: the box, which after a run is canonical.
     const where = box ? box.value.trim() : (state.where ?? DEFAULT_WHERE);
-    const { command, warning } = buildCliCommand({ where, order: state.order, teamScope: state.teamScope });
+    const project = state.teamScope ? null : getProjects().find((p) => p.id === state.projectId);
+    const { command, warning } = buildCliCommand({
+        where,
+        order: state.order,
+        teamScope: state.teamScope,
+        projectKey: project?.key || null,
+        limit: PAGE_SIZE,
+        skip: lastResult ? lastResult.skip : 0,
+    });
     const preview = el('query-cli-preview');
     try {
         await navigator.clipboard.writeText(command);
@@ -461,15 +553,25 @@ export function loadQueryView() {
     initListeners();
     const parsed = parseQueryUrl(window.location.search);
     const projects = getProjects();
+    let notice = null;
     if (!parsed.teamScope) {
         const known = (id) => id && projects.some((p) => p.id === id);
         if (!known(parsed.projectId)) {
+            const linked = parsed.projectId;
             parsed.projectId = known(getCurrentProject()) ? getCurrentProject() : null;
+            // A link to a project this viewer cannot see (or that is gone):
+            // say so rather than silently changing what the link means.
+            if (linked) {
+                notice = parsed.projectId
+                    ? 'The project in this link is not available to you; showing your current project.'
+                    : 'The project in this link is not available to you; showing all projects.';
+            }
         }
         // No project to scope to: query the whole team.
         if (!parsed.projectId) parsed.teamScope = true;
     }
     state = parsed;
+    accepted = snapshot(state);
     lastResult = null;
     const box = el('query-where');
     if (box) box.value = state.where === null ? DEFAULT_WHERE : state.where;
@@ -478,6 +580,7 @@ export function loadQueryView() {
     populateProjectSelect();
     renderColumnPicker();
     showError(null);
+    showNotice(notice);
     renderResults();
     return runQuery('replace');
 }

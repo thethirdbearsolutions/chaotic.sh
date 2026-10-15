@@ -8838,7 +8838,17 @@ button.stat-card-link:hover .stat-note {
     overflow-wrap: anywhere;
 }
 
+.query-notice {
+    margin-bottom: var(--space-lg);
+    padding: var(--space-md) var(--space-lg);
+    font-size: var(--font-base);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
 .query-cli-preview.hidden,
+.query-notice.hidden,
 .query-error.hidden,
 .query-columns-menu.hidden {
     display: none;
