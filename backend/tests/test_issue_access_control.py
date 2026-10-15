@@ -77,16 +77,16 @@ class TestSprintPathAccessControl:
         assert "Sprint not found" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_sprint_path_403_unauthorized(
+    async def test_sprint_path_404_unauthorized(
         self, client, auth_headers, other_sprint
     ):
-        """Sprint on another team returns 403."""
+        """Sprint on another team answers like a missing one: 404 (CHT-1785)."""
         response = await client.get(
             f"/api/issues?sprint_id={other_sprint.id}",
             headers=auth_headers,
         )
-        assert response.status_code == 403
-        assert "Not authorized" in response.json()["detail"]
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Sprint not found"
 
     @pytest.mark.asyncio
     async def test_sprint_path_success_authorized(
@@ -265,15 +265,15 @@ class TestProjectPathAccessControl:
         assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_project_path_403_unauthorized(
+    async def test_project_path_404_unauthorized(
         self, client, auth_headers, other_project
     ):
-        """Project on another team returns 403."""
+        """Project on another team answers like a missing one: 404 (CHT-1785)."""
         response = await client.get(
             f"/api/issues?project_id={other_project.id}",
             headers=auth_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_project_path_success(
@@ -345,7 +345,25 @@ class TestLabelTeamValidation:
     async def test_create_with_other_team_label_fails(
         self, client, auth_headers, test_project, other_team_label
     ):
-        """Creating issue with label from another team returns 400."""
+        """Creating issue with label from another team returns 400: the
+        missing label's 400, since the caller is not in that team (CHT-1785)."""
+        response = await client.post(
+            f"/api/projects/{test_project.id}/issues",
+            headers=auth_headers,
+            json={"title": "Test", "label_ids": [other_team_label.id]},
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Labels not found: " + repr({other_team_label.id})
+
+    @pytest.mark.asyncio
+    async def test_create_with_label_of_another_own_team_fails(
+        self, client, auth_headers, test_project, test_user, other_team_label
+    ):
+        """A label of another team the caller is also in is visible, so the
+        answer says it belongs elsewhere."""
+        await OxydeTeamMember.objects.create(
+            team_id=other_team_label.team_id, user_id=test_user.id, role=TeamRole.MEMBER,
+        )
         response = await client.post(
             f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
@@ -373,7 +391,8 @@ class TestLabelTeamValidation:
     async def test_update_with_other_team_label_fails(
         self, client, auth_headers, test_project, test_user, other_team_label, db
     ):
-        """Updating issue with label from another team returns 400."""
+        """Updating issue with label from another team returns 400 (the
+        missing label's, CHT-1785)."""
         test_project.issue_count += 1
         issue = await OxydeIssue.objects.create(
             project_id=test_project.id,
@@ -389,4 +408,4 @@ class TestLabelTeamValidation:
             json={"label_ids": [other_team_label.id]},
         )
         assert response.status_code == 400
-        assert "does not belong" in response.json()["detail"].lower()
+        assert "labels not found" in response.json()["detail"].lower()

@@ -93,16 +93,22 @@ class TestPermissionsMatchApprove:
 
     async def test_non_member(self, client, test_issue, review_close_ritual, test_user2, auth_headers2):
         approve, reject = await self._both(client, auth_headers2, review_close_ritual, test_issue)
-        assert approve.status_code == reject.status_code == 403
-        assert "Only admins can approve" in approve.json()["detail"]
-        assert "Only admins can reject" in reject.json()["detail"]
+        # Outside the team the ritual is not there at all (CHT-1785).
+        assert approve.status_code == reject.status_code == 404
+        assert approve.json() == reject.json() == {"detail": "Ritual not found"}
 
     async def test_plain_member(self, client, test_team, test_issue, review_close_ritual, test_user2, auth_headers2):
         await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         approve, reject = await self._both(client, auth_headers2, review_close_ritual, test_issue)
         assert approve.status_code == reject.status_code == 403
 
-    async def test_agent_even_as_team_owner(self, client, test_issue, gate_close_ritual, agent_headers):
+    async def test_agent_even_as_team_owner(
+        self, client, test_team, test_issue, gate_close_ritual, agent_user, agent_headers,
+    ):
+        # Scoped to the team too, so it sees the ritual and the issue and
+        # reaches the agent rule rather than the not-found (CHT-1785).
+        agent_user.agent_team_id = test_team.id
+        await agent_user.save(update_fields={"agent_team_id"})
         approve, reject = await self._both(client, agent_headers, gate_close_ritual, test_issue)
         assert approve.status_code == reject.status_code == 403
         assert "Agents cannot approve" in approve.json()["detail"]

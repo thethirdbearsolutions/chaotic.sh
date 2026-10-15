@@ -131,6 +131,17 @@ jobs:
       - name: Rolling backup rotation
         run: bash scripts/sqlite-backup.test.sh
 
+      # keytool, for the Android release script's --new-key (CHT-1729).
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # A throwaway key in a temporary HOME: CI never holds the real one.
+      - name: Android release script
+        run: bash scripts/android-release.test.sh
+
   # The Android app's generated API client must match the backend's current
   # OpenAPI schema (CHT-1609). A PR that changes a route or schema fails here
   # until it also commits the output of `just android-client`.
@@ -182,9 +193,32 @@ jobs:
     defaults:
       run:
         working-directory: android
+    outputs:
+      smoke: ${{ steps.changes.outputs.smoke }}
 
     steps:
       - uses: actions/checkout@v4
+
+      # Whether android-release-smoke should run: always on main and on a
+      # manual run, and on a pull request only when it changes the app or
+      # this workflow. HEAD is the merge ref, compared with the base
+      # branch's current tip, so a commit that reached main after GitHub
+      # built the merge ref can also count (it only ever runs the smoke
+      # test more often, never less).
+      - name: Does this change the Android app?
+        id: changes
+        working-directory: .
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            echo "smoke=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          changed=$(git diff --name-only FETCH_HEAD HEAD -- android .github/workflows/ci.yml)
+          echo "$changed"
+          if [ -n "$changed" ]; then echo "smoke=true"; else echo "smoke=false"; fi >> "$GITHUB_OUTPUT"
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -204,7 +238,21 @@ jobs:
         run: ./gradlew :app:lintFossDebug :app:lintPlayDebug
 
       - name: Unit tests
+        id: unit-tests
         run: ./gradlew test
+
+      # ScreenshotsTest (CHT-1730) draws the main screens with sample data
+      # during the unit tests above; this keeps the foss flavor's PNGs to
+      # look at. They are the test task's declared output, so a run served
+      # from the build cache has them too, and none at all is an error.
+      - name: Upload screenshots
+        if: ${{ !cancelled() && steps.unit-tests.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-screenshots
+          path: android/app/build/screenshots/testFossDebugUnitTest/*.png
+          if-no-files-found: error
+          retention-days: 14
 
       # The build above exported the cache's Room schema to app/schemas.
       # It must match the committed copy: a schema change without a version
@@ -273,6 +321,18 @@ jobs:
         id: release
         run: ./gradlew --continue assembleFossRelease assemblePlayRelease
 
+      - name: Keep the release APKs for the smoke test
+        if: steps.changes.outputs.smoke == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apks
+          path: android/app/build/outputs/apk/*/release/*.apk
+          if-no-files-found: error
+          # Long enough to re-run only the smoke job over a weekend.
+          retention-days: 3
+          # A re-run of this job uploads again under the same name.
+          overwrite: true
+
       - name: Rules R8 asked for, if the release build failed
         if: failure() && steps.release.outcome == 'failure'
         run: |
@@ -280,3 +340,50 @@ jobs:
             [ -f "$f" ] && { echo "--- $f"; cat "$f"; }
           done
           true
+
+  # Launches each minified release APK once on an emulator (CHT-1723). The
+  # build above only proves R8 found every class it was told about; a class
+  # reached only by reflection that R8 stripped or renamed crashes at run
+  # time instead. The script signs a copy of each unsigned APK with a key it
+  # makes and throws away, installs it, and waits for the sign-in screen.
+  android-release-smoke:
+    needs: android
+    if: needs.android.outputs.smoke == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # Only the script is needed; the token stays out of .git/config while
+      # the third-party emulator action runs.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-apks
+          path: release-apks
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # v2.38.0, pinned by commit: a third-party action that runs with the
+      # job's token.
+      - name: Launch each release APK on an emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 34
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: android/scripts/release-smoke-test.sh $(find release-apks -name '*-release-unsigned.apk' | sort)

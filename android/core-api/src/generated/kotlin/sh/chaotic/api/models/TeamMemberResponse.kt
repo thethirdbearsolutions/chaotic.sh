@@ -44,6 +44,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param joinedAt 
  * @param userName 
  * @param userEmail 
+ * @param mentionHandle 
  */
 @Serializable
 
@@ -68,7 +69,10 @@ data class TeamMemberResponse (
     val userName: kotlin.String? = null,
 
     @SerialName(value = "user_email")
-    val userEmail: kotlin.String? = null
+    val userEmail: kotlin.String? = null,
+
+    @SerialName(value = "mention_handle")
+    val mentionHandle: kotlin.String? = null
 
 ) {
 

@@ -351,6 +351,13 @@ class Client:
     def get_me(self, *, as_configured: bool = False) -> dict:
         return self._request("GET", "/auth/me", as_configured=as_configured)
 
+    # Email verification (CHT-1790)
+    def request_email_verification(self) -> dict:
+        return self._request("POST", "/auth/email-verification")
+
+    def confirm_email_verification(self, code: str) -> dict:
+        return self._request("POST", "/auth/email-verification/confirm", {"code": code})
+
     # Users (CHT-1383)
     def get_user(self, user_id: str) -> dict:
         return self._request("GET", f"/users/{user_id}")
@@ -537,6 +544,33 @@ class Client:
             params["mine"] = "true"
         if include_assigned:
             params["include_assigned"] = "true"
+        if limit is not None:
+            params["limit"] = limit
+        query = urlencode(params)
+        return self._request("GET", f"{path}?{query}" if query else path)
+
+    def query_issues(
+        self, project_id: str = None, team_id: str = None, where: str = None,
+        filter_json: str = None, order: str = None, skip: int = None, limit: int = None,
+    ) -> dict:
+        """Run an issue query (CHT-1718): ``where`` text and/or the
+        ``filter`` structure as JSON. Returns the response envelope
+        (``issues``, ``total``, normalized ``query``/``where``/``order``)."""
+        if project_id:
+            path = f"/projects/{project_id}/issues/query"
+        elif team_id:
+            path = f"/teams/{team_id}/issues/query"
+        else:
+            raise ValueError("Must provide project_id or team_id")
+        params = {}
+        if where:
+            params["where"] = where
+        if filter_json:
+            params["filter"] = filter_json
+        if order:
+            params["order"] = order
+        if skip:
+            params["skip"] = skip
         if limit is not None:
             params["limit"] = limit
         query = urlencode(params)

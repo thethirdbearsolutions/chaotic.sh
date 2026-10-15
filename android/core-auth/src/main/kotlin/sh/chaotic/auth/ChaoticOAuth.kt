@@ -5,10 +5,9 @@ package sh.chaotic.auth
  * `backend/app/oauth/builtin.py`).
  *
  * The redirect URI is deliberately not here: it is defined once, in
- * `app/build.gradle.kts`, which derives both the manifest's redirect
- * intent filter and `BuildConfig.OAUTH_REDIRECT_URI` from it, so the move
- * to an App Links https redirect (CHT-1649) is a one-line change there
- * (plus the server's `ANDROID_REDIRECT_URIS`).
+ * `app/build.gradle.kts`, which derives both the manifest's App Links
+ * intent filter (CHT-1649) and `BuildConfig.OAUTH_REDIRECT_URI` from it.
+ * The server lists the same URI in `ANDROID_REDIRECT_URIS`.
  */
 object ChaoticOAuth {
     /** Resolved by the server from code, never fetched: see builtin.py. */

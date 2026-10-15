@@ -44,12 +44,15 @@ async def _live_keys(agent):
 
 @pytest.mark.asyncio
 class TestRemovedCreatorIsRefused:
+    """Out of the agent's team, the creator no longer sees the agent at
+    all: its routes answer like a missing agent (CHT-1785)."""
+
     async def test_cannot_mint_a_key(self, client, auth_headers2, test_user2, test_team):
         agent, _, _ = await _agent_by_departed_creator(test_user2, test_team)
 
         response = await client.post(f"/api/agents/{agent.id}/keys", headers=auth_headers2)
 
-        assert response.status_code == 403, response.text
+        assert response.status_code == 404, response.text
         assert await _live_keys(agent) == 1
 
     async def test_cannot_update(self, client, auth_headers2, test_user2, test_team):
@@ -59,7 +62,7 @@ class TestRemovedCreatorIsRefused:
             f"/api/agents/{agent.id}", json={"name": "Renamed"}, headers=auth_headers2,
         )
 
-        assert response.status_code == 403, response.text
+        assert response.status_code == 404, response.text
         assert (await UserService().get_by_id(agent.id)).name == "Orphan"
 
     async def test_cannot_delete(self, client, auth_headers2, test_user2, test_team):
@@ -67,7 +70,7 @@ class TestRemovedCreatorIsRefused:
 
         response = await client.delete(f"/api/agents/{agent.id}", headers=auth_headers2)
 
-        assert response.status_code == 403, response.text
+        assert response.status_code == 404, response.text
         assert await UserService().get_by_id(agent.id) is not None
 
     async def test_cannot_deactivate(self, client, auth_headers2, test_user2, test_team):
@@ -75,7 +78,7 @@ class TestRemovedCreatorIsRefused:
 
         response = await client.post(f"/api/agents/{agent.id}/deactivate", headers=auth_headers2)
 
-        assert response.status_code == 403, response.text
+        assert response.status_code == 404, response.text
         assert (await UserService().get_by_id(agent.id)).is_active is True
 
     async def test_cannot_reactivate(self, client, auth_headers, auth_headers2, test_user2, test_team):
@@ -85,7 +88,7 @@ class TestRemovedCreatorIsRefused:
 
         response = await client.post(f"/api/agents/{agent.id}/reactivate", headers=auth_headers2)
 
-        assert response.status_code == 403, response.text
+        assert response.status_code == 404, response.text
         assert (await UserService().get_by_id(agent.id)).is_active is False
 
     async def test_cannot_revoke_a_key_someone_else_minted(
@@ -99,7 +102,7 @@ class TestRemovedCreatorIsRefused:
 
         response = await client.delete(f"/api/api-keys/{minted.json()['id']}", headers=auth_headers2)
 
-        assert response.status_code == 403, response.text
+        assert response.status_code == 404, response.text
         signed_in = await client.get(
             "/api/auth/me", headers={"Authorization": f"Bearer {minted.json()['key']}"},
         )
@@ -121,7 +124,7 @@ class TestRemovedCreatorIsRefused:
         minted = await client.post(f"/api/agents/{agent.id}/keys", headers=auth_headers2)
         retired = await client.post(f"/api/agents/{agent.id}/deactivate", headers=auth_headers2)
 
-        assert minted.status_code == 403 and retired.status_code == 403
+        assert minted.status_code == 404 and retired.status_code == 404
         assert await _live_keys(agent) == 1
 
     async def test_admin_of_another_team_is_still_refused(self, client, auth_headers2, test_user2, test_team):
@@ -134,7 +137,7 @@ class TestRemovedCreatorIsRefused:
 
         response = await client.post(f"/api/agents/{agent.id}/keys", headers=auth_headers2)
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -186,7 +189,7 @@ class TestReaddedCreatorManagesAgain:
     async def test_rights_return_with_membership(self, client, auth_headers2, test_user2, test_team):
         agent, _, key_id = await _agent_by_departed_creator(test_user2, test_team)
         refused = await client.post(f"/api/agents/{agent.id}/keys", headers=auth_headers2)
-        assert refused.status_code == 403
+        assert refused.status_code == 404
 
         await _rejoin(test_user2, test_team)
 

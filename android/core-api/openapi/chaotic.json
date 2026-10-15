@@ -117,6 +117,80 @@
         ]
       }
     },
+    "/api/auth/email-verification": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Request Email Verification",
+        "description": "Mail a six-digit code to the signed-in person's address (CHT-1790).\n\nConfirm it with ``POST /api/auth/email-verification/confirm`` within\n15 minutes. A new code retires any older one. At most one code a\nminute and five an hour (429 ``email_verification_rate_limited``,\nwith Retry-After). 409 ``email_already_verified`` once verified;\n409 ``email_verification_unavailable`` when the server has no SMTP\n(then invitations do not require a verified address); 502\n``email_send_failed`` when the mail relay failed. People only: an\nagent gets 403 ``human_required``.",
+        "operationId": "request_email_verification_api_auth_email_verification_post",
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationSent"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/auth/email-verification/confirm": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Confirm Email Verification",
+        "description": "Confirm the code from the verification email (CHT-1790) and\nreturn the account, now with ``email_verified_at`` set.\n\nA wrong, expired, superseded or used-up code (five tries per code)\nall get the same 400 ``invalid_verification_code``. 409\n``email_already_verified`` once verified. People only: an agent gets\n403 ``human_required``.",
+        "operationId": "confirm_email_verification_api_auth_email_verification_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailVerificationConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/users/{user_id}": {
       "get": {
         "tags": [
@@ -764,13 +838,56 @@
         }
       }
     },
+    "/api/teams/invitations/{token}": {
+      "get": {
+        "tags": [
+          "teams"
+        ],
+        "summary": "Preview Invitation",
+        "description": "The public preview the /invite/<token> page shows (CHT-1265).\n\nUnauthenticated: the emailed link is opened before anyone signs in.\nIt tells the token's holder only what the page needs (team name,\nrole, inviter, a masked address, expiry), and answers an unknown,\nexpired, accepted, declined or revoked token with the same 404, so\na lookup cannot tell them apart.\n\nThreat model: the token is a bearer credential, not only a pointer\nto an inbox. Signup does not verify email ownership. With SMTP\nconfigured, accepting requires a verified address (CHT-1790), so a\nleaked token alone is not enough; without SMTP nothing can verify\none, and while the invited address has no account, anyone holding\nthe token can sign up as that address and accept. Keep it out of every log,\nReferer and history entry: it is redacted from the request log\n(app.log_redaction), and the /invite/ page is served no-referrer and\nmoves it out of the address bar on load.\n\nNot rate limited here, on purpose (CHT-1369): rate limiting is the\nreverse proxy's job, and an in-process per-address counter behind a\nproxy would see one address for everyone, so one client could lock\nevery invitee out. The token's 256 random bits are what make\nguessing hopeless.",
+        "operationId": "preview_invitation_api_teams_invitations__token__get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationPreviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/teams/invitations/{token}/accept": {
       "post": {
         "tags": [
           "teams"
         ],
         "summary": "Accept Invitation",
-        "description": "Accept a team invitation.",
+        "description": "Accept a team invitation.\n\nAn unknown, expired, accepted, declined or revoked invitation gets\nthe preview's one 404, checked before the email match, so whatever\naccount asks, the answer does not tell those states apart (CHT-1265\nreview F10). Before CHT-1788 a used token could be accepted again\nand added a second membership row.",
         "operationId": "accept_invitation_api_teams_invitations__token__accept_post",
         "security": [
           {
@@ -2309,7 +2426,7 @@
           "issues"
         ],
         "summary": "Create Comment",
-        "description": "Create a comment on an issue.",
+        "description": "Create a comment on an issue. `warnings` names each @handle that\nreached nobody (CHT-1735).",
         "operationId": "create_comment_api_issues__issue_id__comments_post",
         "security": [
           {
@@ -2343,7 +2460,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueCommentResponse"
+                  "$ref": "#/components/schemas/IssueCommentCreated"
                 }
               }
             }
@@ -4892,7 +5009,7 @@
           "documents"
         ],
         "summary": "Create Comment",
-        "description": "Create a comment on a document.",
+        "description": "Create a comment on a document. `warnings` names each @handle that\nreached nobody (CHT-1735).",
         "operationId": "create_comment_api_documents__document_id__comments_post",
         "security": [
           {
@@ -4926,7 +5043,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentCommentResponse"
+                  "$ref": "#/components/schemas/DocumentCommentCreated"
                 }
               }
             }
@@ -5135,7 +5252,7 @@
           "labels"
         ],
         "summary": "Get Label",
-        "description": "Get label by ID.",
+        "description": "Get label by ID. Another team's label answers like a missing one\n(CHT-1785).",
         "operationId": "get_label_api_labels__label_id__get",
         "security": [
           {
@@ -6165,7 +6282,7 @@
           "templates"
         ],
         "summary": "Get Template",
-        "description": "Get a template by ID.",
+        "description": "Get a template by ID. One the caller cannot see answers like a\nmissing one (CHT-1785).",
         "operationId": "get_template_api_templates__template_id__get",
         "security": [
           {
@@ -7799,6 +7916,250 @@
         }
       }
     },
+    "/api/projects/{project_id}/issues/query": {
+      "get": {
+        "tags": [
+          "nested-aliases"
+        ],
+        "summary": "Query Project Issues",
+        "description": "Run an issue query in one project (CHT-1718; docs/issue-query.md).",
+        "operationId": "query_project_issues_api_projects__project_id__issues_query_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "where",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 4000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Where"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueQueryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/teams/{team_id}/issues/query": {
+      "get": {
+        "tags": [
+          "nested-aliases"
+        ],
+        "summary": "Query Team Issues",
+        "description": "Run an issue query across every project of a team (CHT-1718).",
+        "operationId": "query_team_issues_api_teams__team_id__issues_query_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          },
+          {
+            "name": "where",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 4000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Where"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueQueryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{project_id}/sprints": {
       "post": {
         "tags": [
@@ -8852,6 +9213,17 @@
             "type": "boolean",
             "title": "Idle",
             "default": false
+          },
+          "mention_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mention Handle"
           }
         },
         "type": "object",
@@ -9610,6 +9982,82 @@
         "title": "DocumentCommentCreate",
         "description": "Schema for creating a document comment."
       },
+      "DocumentCommentCreated": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "author_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Id"
+          },
+          "author_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "document_id",
+          "author_id",
+          "content",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DocumentCommentCreated",
+        "description": "A new document comment, as its author sees it: with `warnings`\nabout @handles that reached nobody (CHT-1735, see IssueCommentCreated)."
+      },
       "DocumentCommentResponse": {
         "properties": {
           "id": {
@@ -10101,6 +10549,42 @@
         "title": "DocumentUpdate",
         "description": "Schema for updating a document."
       },
+      "EmailVerificationConfirm": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "EmailVerificationConfirm",
+        "description": "The code from the verification email (CHT-1790)."
+      },
+      "EmailVerificationSent": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "expires_at"
+        ],
+        "title": "EmailVerificationSent",
+        "description": "A verification code was mailed (CHT-1790)."
+      },
       "EstimateScale": {
         "type": "string",
         "enum": [
@@ -10456,6 +10940,47 @@
         ],
         "title": "InboxSyncResponse",
         "description": "One page of GET /inbox/sync (CHT-1607). The client contract:\n\n* Store `next_cursor` and send it back as `since` next time. While\n  `has_more` is true, fetch again at once; otherwise wait for the next\n  poll or push.\n* Upsert every entry by `id`; drop it when `state` is `resolved` or\n  `archived`. The same entry can come more than once: the cursor stays\n  a few seconds behind the newest change, so recent changes are sent\n  again on the next sync.\n* When `retry_after` is set, the cursor is being held back behind\n  rows just sent: syncing again sooner than that many seconds returns\n  the same rows. Push or user action may still sync earlier.\n* When `reset` is true, the server restarted the sync (the caller's\n  teams changed since the cursor was issued): clear the cache before\n  applying this page, then page on as usual.\n* Drop any held entry whose team is not in `team_ids` (a left or\n  deleted team sends no tombstones).\n* Display fields (`issue_identifier`, `document_title`, `source_user`)\n  are resolved when sent. A document title or a person's name change\n  re-sends the open entries that show it; anything else that changes\n  them does not, so treat them as a snapshot."
+      },
+      "InvitationPreviewResponse": {
+        "properties": {
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/TeamRole"
+          },
+          "invited_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invited By Name"
+          },
+          "email_hint": {
+            "type": "string",
+            "title": "Email Hint"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_name",
+          "role",
+          "invited_by_name",
+          "email_hint",
+          "expires_at"
+        ],
+        "title": "InvitationPreviewResponse",
+        "description": "What the public /invite/<token> page shows before anyone signs in\n(CHT-1265). Only what the page needs: no ids, no token, no status\n(a preview exists only for a valid invitation), and the invited\naddress only masked, enough to say which account to sign in with."
       },
       "InvitationStatus": {
         "type": "string",
@@ -10852,6 +11377,82 @@
         "title": "IssueCommentCreate",
         "description": "Schema for creating a comment."
       },
+      "IssueCommentCreated": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "issue_id": {
+            "type": "string",
+            "title": "Issue Id"
+          },
+          "author_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Id"
+          },
+          "author_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "issue_id",
+          "author_id",
+          "content",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "IssueCommentCreated",
+        "description": "A new comment, as its author sees it: with `warnings` about\n@handles that reached nobody (CHT-1735). Only the author gets them;\nthe comment broadcast to the team carries none."
+      },
       "IssueCommentResponse": {
         "properties": {
           "id": {
@@ -11187,6 +11788,78 @@
         ],
         "title": "IssuePriority",
         "description": "Issue priority."
+      },
+      "IssueQuery": {
+        "properties": {
+          "filter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueryGroup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "order_by": {
+            "items": {
+              "$ref": "#/components/schemas/QueryOrder"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "title": "Order By"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "IssueQuery",
+        "description": "A whole query: the filter tree (None: everything in scope) and the\nordering. This is what a saved view stores."
+      },
+      "IssueQueryResponse": {
+        "properties": {
+          "query": {
+            "$ref": "#/components/schemas/IssueQuery"
+          },
+          "where": {
+            "type": "string",
+            "title": "Where"
+          },
+          "order": {
+            "type": "string",
+            "title": "Order"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "skip": {
+            "type": "integer",
+            "title": "Skip"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/IssueResponse"
+            },
+            "type": "array",
+            "title": "Issues"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "where",
+          "order",
+          "total",
+          "skip",
+          "limit",
+          "issues"
+        ],
+        "title": "IssueQueryResponse",
+        "description": "What the query endpoint returns.\n\n``query`` is the normalized structure that ran (the ``where`` text and\nthe ``filter`` JSON combined), and ``where``/``order`` are its\ncanonical text forms. Parsed again they select the same issues in\nthe same order, though not always the identical structure (nested\nsame-kind groups flatten, one-row groups and one-value ``label all``\nsimplify). A web page can keep ``where``/``order`` in its URL; a\nsaved view should store ``query``. ``total`` counts every match, so\n``total > skip + len(issues)`` means there is another page."
       },
       "IssueRelationCreate": {
         "properties": {
@@ -11933,6 +12606,22 @@
         ],
         "title": "MarkAllReadResponse",
         "description": "Response for POST /inbox/mark-all-read."
+      },
+      "OrderField": {
+        "type": "string",
+        "enum": [
+          "created",
+          "updated",
+          "priority",
+          "status",
+          "title",
+          "estimate",
+          "identifier",
+          "due",
+          "completed"
+        ],
+        "title": "OrderField",
+        "description": "A field a query can be ordered by."
       },
       "PendingApprovalIssueResponse": {
         "properties": {
@@ -12885,6 +13574,132 @@
         ],
         "title": "PushTransport",
         "description": "How the server delivers to a `push_devices` row (CHT-1604).\n\nWEB_PUSH: standard Web Push (RFC 8030) with VAPID (RFC 8292) and an\naes128gcm payload encrypted to the device's keys (RFC 8291), POSTed\nto the device's endpoint URL. UnifiedPush distributors such as ntfy\naccept it. The only transport today.\n\nA later transport (an FCM relay, CHT-1608) is a new member here and\nnothing else: the column stores the member's name as text, so adding\none needs no migration, and `p256dh`/`auth` are nullable in the table\nfor a transport that has no per-device keys."
+      },
+      "QueryField": {
+        "type": "string",
+        "enum": [
+          "status",
+          "priority",
+          "type",
+          "assignee",
+          "creator",
+          "project",
+          "sprint",
+          "label",
+          "estimate",
+          "parent",
+          "identifier",
+          "created",
+          "updated",
+          "completed",
+          "due",
+          "title",
+          "text"
+        ],
+        "title": "QueryField",
+        "description": "A field a filter row can test (``FIELDS`` says how)."
+      },
+      "QueryGroup": {
+        "properties": {
+          "match": {
+            "type": "string",
+            "enum": [
+              "all",
+              "any"
+            ],
+            "title": "Match",
+            "default": "all"
+          },
+          "rows": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/QueryRow"
+                },
+                {
+                  "$ref": "#/components/schemas/QueryGroup"
+                }
+              ]
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Rows"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "rows"
+        ],
+        "title": "QueryGroup",
+        "description": "Rows (or nested groups) combined with AND (``all``) or OR (``any``)."
+      },
+      "QueryOp": {
+        "type": "string",
+        "enum": [
+          "is",
+          "is_not",
+          "all",
+          "contains",
+          "not_contains",
+          "begins_with",
+          "gte",
+          "lte",
+          "after",
+          "before",
+          "between",
+          "empty",
+          "not_empty"
+        ],
+        "title": "QueryOp",
+        "description": "A filter row's operator."
+      },
+      "QueryOrder": {
+        "properties": {
+          "field": {
+            "$ref": "#/components/schemas/OrderField"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "title": "Direction",
+            "default": "desc"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "field"
+        ],
+        "title": "QueryOrder"
+      },
+      "QueryRow": {
+        "properties": {
+          "field": {
+            "$ref": "#/components/schemas/QueryField"
+          },
+          "op": {
+            "$ref": "#/components/schemas/QueryOp"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Values"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "field",
+          "op"
+        ],
+        "title": "QueryRow",
+        "description": "One filter row: ``field op values``."
       },
       "RitualArtifact": {
         "type": "string",
@@ -14501,6 +15316,17 @@
               }
             ],
             "title": "User Email"
+          },
+          "mention_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mention Handle"
           }
         },
         "type": "object",
@@ -15090,6 +15916,18 @@
             "format": "date-time",
             "title": "Updated At"
           },
+          "email_verified_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Verified At"
+          },
           "kind": {
             "anyOf": [
               {
@@ -15201,7 +16039,7 @@
         },
         "type": "object",
         "title": "UserUpdate",
-        "description": "Schema for updating a user."
+        "description": "Schema for updating a user.\n\nNo ``email`` on purpose: a change of address would have to clear\n``email_verified_at`` too (CHT-1790; see\napp.services.email_verification_service)."
       },
       "ValidationError": {
         "description": "One request-validation error: where it is (`loc`) and what is wrong (`msg`).",

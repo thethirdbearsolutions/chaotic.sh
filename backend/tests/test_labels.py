@@ -83,7 +83,7 @@ async def test_get_label_not_member(client, auth_headers2, test_label):
         f"/api/labels/{test_label.id}",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -144,7 +144,7 @@ async def test_update_label_not_member(client, auth_headers2, test_label):
         headers=auth_headers2,
         json={"name": "Unauthorized Update"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -477,7 +477,7 @@ async def test_batch_update_unauthorized(client, auth_headers2, test_project, te
             "priority": "high",
         },
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio

@@ -137,7 +137,7 @@ class TestServerAssembly:
         tools = asyncio.run(server.list_tools())
         by_name = {t.name: t for t in tools}
         assert set(by_name["issue_list"].input_schema["properties"]) == {
-            "status", "priority", "assignee", "label", "search", "sprint",
+            "status", "priority", "assignee", "label", "search", "where", "sprint",
             "epic", "all_projects", "project", "limit", "sort_by", "order", "detail",
         }
         assert by_name["issue_view"].input_schema["properties"]["identifier"]["type"] == "string"
@@ -790,6 +790,17 @@ class TestIssueComment:
 
         assert result == comment
         client.create_comment.assert_called_once_with("issue-uuid-1", "hello")
+
+    async def test_comment_warnings_only_when_there_are_some(self, mcp_mod, mock_issue):
+        """CHT-1735: `warnings` like issue_create's, absent when empty."""
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
+        client.create_comment = MagicMock(return_value={"id": "c1", "warnings": []})
+        assert await mcp_mod.issue_comment(identifier="CHT-100", content="hi") == {"id": "c1"}
+
+        client.create_comment = MagicMock(return_value={"id": "c1", "warnings": ["@x matches nobody"]})
+        result = await mcp_mod.issue_comment(identifier="CHT-100", content="@x")
+        assert result["warnings"] == ["@x matches nobody"]
 
     async def test_comment_with_assign(self, mcp_mod, mock_issue):
         from cli.main import client

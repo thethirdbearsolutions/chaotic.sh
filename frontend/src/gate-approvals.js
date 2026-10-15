@@ -10,7 +10,7 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { api } from './api.js';
-import { showModal, closeModal, showToast, showApiError } from './ui.js';
+import { showModal, closeModal, showToast, showApiError, showMentionWarnings } from './ui.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects } from './projects.js';
@@ -172,14 +172,17 @@ async function handleReviewApproval(event, ritualId, issueId, ritualName) {
 
     try {
         await api.approveTicketRitual(ritualId, issueId);
+        let createdComment = null;
         if (comment) {
             try {
-                await api.createComment(issueId, comment);
+                createdComment = await api.createComment(issueId, comment);
             } catch (commentErr) {
                 console.error('Failed to post approval comment:', commentErr);
             }
         }
         showToast(`Review ritual "${ritualName}" approved!`, 'success');
+        // @handles in the approval comment that reached nobody (CHT-1743)
+        showMentionWarnings(createdComment);
         closeModal();
         loadGateApprovals();
     } catch (e) {

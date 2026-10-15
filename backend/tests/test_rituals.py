@@ -1886,10 +1886,10 @@ class TestRitualAPIEndpointsNullProject:
     These four tests were shadowed by the later TestRitualAPIEndpoints class
     and never collected (CHT-1373). Revived, they failed: they created an
     issue with a bogus project_id, which the schema's FOREIGN KEY constraint
-    now rejects, so the branch is unreachable through the database. The
-    branch still exists in app/api/rituals.py (each endpoint re-fetches the
-    project after the issue), so it is exercised by making the project
-    lookup come back empty instead.
+    now rejects, so the branch is unreachable through the database. It is
+    exercised by making the project lookup come back empty instead. Since
+    CHT-1785 a row whose project cannot be found is one nobody can see, so
+    it answers with that row's own not-found (app.api.visibility).
     """
 
     @pytest.fixture
@@ -1909,7 +1909,7 @@ class TestRitualAPIEndpointsNullProject:
             headers=auth_headers,
         )
         assert response.status_code == 404
-        assert "Project not found" in response.json()["detail"]
+        assert response.json()["detail"] == "Issue not found"
 
     async def test_attest_ritual_for_issue_null_project(
         self, client, auth_headers, db, test_project, test_issue, project_lookup_returns_none
@@ -1927,7 +1927,7 @@ class TestRitualAPIEndpointsNullProject:
             json={"note": "Test note"},
         )
         assert response.status_code == 404
-        assert "Project not found" in response.json()["detail"]
+        assert response.json()["detail"] == "Ritual not found"
 
     async def test_complete_gate_ritual_for_issue_null_project(
         self, client, auth_headers, db, test_project, test_issue, project_lookup_returns_none
@@ -1945,7 +1945,7 @@ class TestRitualAPIEndpointsNullProject:
             json={"note": "Test note"},
         )
         assert response.status_code == 404
-        assert "Project not found" in response.json()["detail"]
+        assert response.json()["detail"] == "Ritual not found"
 
     async def test_approve_issue_attestation_null_project(
         self, client, auth_headers, db, test_project, test_issue, project_lookup_returns_none
@@ -1962,7 +1962,7 @@ class TestRitualAPIEndpointsNullProject:
             headers=auth_headers,
         )
         assert response.status_code == 404
-        assert "Project not found" in response.json()["detail"]
+        assert response.json()["detail"] == "Ritual not found"
 
 
 @pytest.mark.asyncio
@@ -3449,7 +3449,7 @@ class TestRitualAPIEndpoints:
             f"/api/projects/{test_project.id}/rituals",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_get_ritual_api(self, client, auth_headers, test_project, db):
         """Test getting a single ritual via API."""
@@ -3638,7 +3638,7 @@ class TestLimboStatusAPI:
             f"/api/rituals/limbo?project_id={test_project.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -4369,7 +4369,7 @@ class TestRitualGroupsAPI:
             f"/api/rituals/groups?project_id={test_project.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_create_ritual_group_api_project_not_found(self, client, auth_headers):
         """Test creating ritual group for non-existent project."""
@@ -4395,7 +4395,7 @@ class TestRitualGroupsAPI:
             f"/api/rituals/groups/{group.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 # ============================================================================
@@ -4415,8 +4415,8 @@ class TestRitualAPIEdgeCases:
             f"/api/rituals/{ritual.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
-        assert "Not a member" in response.json()["detail"]
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Ritual not found"
 
     async def test_update_ritual_api_not_found(self, client, auth_headers):
         """Test updating non-existent ritual."""
@@ -4470,7 +4470,7 @@ class TestRitualAPIEdgeCases:
             headers=auth_headers2,
             json={"note": "Test"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_attest_ritual_api_wrong_project(self, client, auth_headers, test_project, db, test_team):
         """Test attesting when ritual belongs to different project."""
@@ -4728,7 +4728,7 @@ class TestTicketRitualAPIEdgeCases:
             f"/api/rituals/issue/{test_issue.id}/pending",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_attest_ritual_for_issue_api_ritual_not_found(self, client, auth_headers, test_issue):
         """Test attesting to non-existent ticket ritual."""
@@ -4769,7 +4769,7 @@ class TestTicketRitualAPIEdgeCases:
             headers=auth_headers2,
             json={"note": "Test"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_attest_ritual_for_issue_api_wrong_project(self, client, auth_headers, test_project, test_issue, db, test_team):
         """Test attesting when ritual belongs to different project."""
@@ -5108,7 +5108,7 @@ class TestPendingGatesAPIEdgeCases:
             f"/api/rituals/pending-gates?project_id={test_project.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -6308,7 +6308,7 @@ class TestAttestationHistoryAPI:
             f"/api/rituals/history?project_id={test_project.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_history_pagination(self, client, auth_headers, db, test_project, test_user):
         """Test history endpoint respects skip and limit."""

@@ -20,24 +20,39 @@ DCR, still acts only as an agent, at /mcp only. What decides it is the
 client sends: a CIMD document or a dynamic registration may copy the
 app's name or redirect and still gets an agent.
 
-The redirect is the app's RFC 8252 §7.1 private-use scheme, its
-application id (``sh.chaotic.android:/oauth2redirect``). The client is
-public (``token_endpoint_auth_method`` ``none``): PKCE S256 is its proof,
-as for every client here, and refresh tokens rotate with reuse detection
-as for every connection (``TokenService.refresh``).
+The redirect is an https URL on chaotic.sh,
+``https://chaotic.sh/app/oauth2redirect``, meant to be verified for the
+app through Android App Links (CHT-1649): once
+``https://chaotic.sh/.well-known/assetlinks.json``
+(``website/.well-known/assetlinks.json``) names the package and the
+release signing key's certificate fingerprint, Android hands the
+redirect only to the app signed with that key. Another app on the phone
+can still start a sign-in with this ``client_id``, but the code goes to
+the real app, which has no matching request and drops it. The URI is the
+same for every server, so a self-hosted one needs nothing on its own
+domain. The client is public (``token_endpoint_auth_method`` ``none``):
+PKCE S256 is its proof, as for every client here, and refresh tokens
+rotate with reuse detection as for every connection
+(``TokenService.refresh``).
 
-Residual risk (PR #361 review, M1): Android does not reserve a
-private-use scheme for one app. Any app installed on the phone can
-register ``sh.chaotic.android:``, start this flow itself (PKCE protects
-a code from interception, not from an app that began the flow), and if
-the person approves, receive a session that acts as them. The consent
-page therefore does not claim the request comes from the official app,
-and asks the person to continue only if they just started signing in
-from it. The fix is an Android App Links redirect (an https URL on a
-domain whose ``assetlinks.json`` names the release signing key), which
-needs that key, so it is a follow-up: add the https URI to
-``ANDROID_REDIRECT_URIS`` and, once every released build uses it, drop
-the private-use one.
+Residual risk until that file carries the release fingerprint and is
+deployed (it ships as ``[]``; ``scripts/android-release.sh`` refuses to
+publish a release before the live file names the key): nothing is
+verified. Android 12+ then opens the redirect in the browser, on
+chaotic.sh's explanatory page, which passes the code to nothing; on
+Android 10 and 11 it offers a chooser that lists every app declaring
+the same link, so an app that started the sign-in itself could be
+picked and receive the session. Even when verified, the protection is
+per phone: a device that could not fetch the file at install falls back
+the same way. The consent page therefore still asks the person to
+continue only if they just started signing in from the app.
+
+The earlier RFC 8252 §7.1 private-use redirect,
+``sh.chaotic.android:/oauth2redirect``, is gone and is refused, and no
+other client may use the app's scheme or its ``/app/`` paths
+(``clients.reserved_redirect_problem``): Android does not reserve a
+private-use scheme for one app, so any installed app could register it
+(PR #361 review, M1). No released build ever used it.
 """
 from __future__ import annotations
 
@@ -52,7 +67,7 @@ class BuiltinClient:
     client_id: str
     # What the consent page and Connected apps call it.
     name: str
-    # The platform's application id, which is also the redirect scheme.
+    # The platform's application id (the Android package name).
     app_id: str
     platform: str
     redirect_uris: tuple[str, ...]
@@ -78,12 +93,15 @@ class BuiltinClient:
 
 ANDROID_APP_ID = "sh.chaotic.android"
 
-# Every redirect the app may use, matched exactly. One line per URI: the
-# Android App Links https redirect (module docstring, residual risk) is
-# added here, and the private-use one removed once no released build
-# needs it.
+# The domain whose assetlinks.json verifies the app's redirect: the
+# website (website/, deployed to chaotic.sh), not any Chaotic server.
+ANDROID_APP_LINKS_HOST = "chaotic.sh"
+
+# Every redirect the app may use, matched exactly: the Android App Links
+# https redirect only (module docstring). android/app/build.gradle.kts
+# defines the same URI, and a test keeps the two in step.
 ANDROID_REDIRECT_URIS: tuple[str, ...] = (
-    f"{ANDROID_APP_ID}:/oauth2redirect",  # RFC 8252 §7.1 private-use scheme
+    f"https://{ANDROID_APP_LINKS_HOST}/app/oauth2redirect",
 )
 
 ANDROID = BuiltinClient(

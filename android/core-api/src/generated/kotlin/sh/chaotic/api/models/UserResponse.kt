@@ -46,6 +46,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param updatedAt 
  * @param isAgent 
  * @param parentUserName 
+ * @param emailVerifiedAt 
  * @param kind 
  * @param externalRef 
  * @param registeredById 
@@ -84,6 +85,9 @@ data class UserResponse (
 
     @SerialName(value = "parent_user_name")
     val parentUserName: kotlin.String? = null,
+
+    @SerialName(value = "email_verified_at")
+    val emailVerifiedAt: kotlin.String? = null,
 
     @Contextual @SerialName(value = "kind")
     val kind: AgentKind? = null,

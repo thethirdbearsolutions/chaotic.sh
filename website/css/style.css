@@ -1345,6 +1345,7 @@ section[id] {
 
 .registration-card {
     background: var(--bg-primary);
+    min-width: 0;
 }
 
 .registration-card:hover {
@@ -1949,4 +1950,19 @@ section[id] {
     .manifesto-cta .btn-large {
         width: 100%;
     }
+}
+
+/* Android card and not-yet-on-PyPI marker (CHT-1732) */
+.android-card {
+    max-width: 800px;
+    margin: 3rem auto 0;
+}
+
+.android-card:hover {
+    transform: none;
+}
+
+.release-pending {
+    color: var(--warning-color);
+    font-size: 0.875rem;
 }

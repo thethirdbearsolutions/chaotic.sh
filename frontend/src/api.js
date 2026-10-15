@@ -111,6 +111,16 @@ export class ApiClient {
         return this.request('GET', '/auth/me');
     }
 
+    // Email verification by mailed code (CHT-1790). With SMTP configured,
+    // accepting an invitation requires a verified address.
+    async requestEmailVerification() {
+        return this.request('POST', '/auth/email-verification');
+    }
+
+    async confirmEmailVerification(code) {
+        return this.request('POST', '/auth/email-verification/confirm', { code });
+    }
+
     // OAuth consent (CHT-1519)
     async getOAuthRequest(requestId) {
         return this.request('GET', `/oauth/requests/${encodeURIComponent(requestId)}`);
@@ -182,8 +192,13 @@ export class ApiClient {
         return this.request('GET', `/teams/${teamId}/invitations`);
     }
 
+    // Public preview for the /invite/<token> page (CHT-1265): works signed out.
+    async getInvitation(token) {
+        return this.request('GET', `/teams/invitations/${encodeURIComponent(token)}`);
+    }
+
     async acceptInvitation(token) {
-        return this.request('POST', `/teams/invitations/${token}/accept`);
+        return this.request('POST', `/teams/invitations/${encodeURIComponent(token)}/accept`);
     }
 
     async deleteInvitation(teamId, invitationId) {

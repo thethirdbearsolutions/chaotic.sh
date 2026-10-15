@@ -435,7 +435,7 @@ class TestAPIKeyAPIEndpoints:
         assert "API key not found" in response.json()["detail"]
 
     async def test_revoke_api_key_not_owner(self, client, auth_headers2, test_user, db):
-        """DELETE /api-keys/{id} should return 403 when not the owner."""
+        """DELETE /api-keys/{id} should return 404 when not the owner."""
         service = APIKeyService()
         api_key, _ = await service.create(test_user.id, APIKeyCreate(name="Not Yours"))
 
@@ -443,8 +443,8 @@ class TestAPIKeyAPIEndpoints:
             f"/api/api-keys/{api_key.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
-        assert "Not authorized" in response.json()["detail"]
+        assert response.status_code == 404
+        assert response.json()["detail"] == "API key not found"
 
     async def test_create_api_key_unauthenticated(self, client):
         """POST /api-keys without auth should return 401."""

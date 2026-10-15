@@ -284,7 +284,8 @@ async def mark_inbox_read(
     if not entry:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inbox entry not found")
     if entry.recipient_user_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your inbox entry")
+        # Someone else's entry answers exactly like a missing one (CHT-1785).
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inbox entry not found")
     # A removed team member must not read/re-fetch entries from a team they've
     # left (CHT-1274) — scope the single-entry read to current membership too,
     # mirroring the list/count paths. 404 (not 403) so it's indistinguishable
@@ -319,7 +320,8 @@ async def archive_inbox_entry(
     if not entry:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inbox entry not found")
     if entry.recipient_user_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your inbox entry")
+        # Someone else's entry answers exactly like a missing one (CHT-1785).
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inbox entry not found")
     if not await inbox_service.is_member_of_entry_team(current_user.id, entry):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inbox entry not found")
 

@@ -80,6 +80,27 @@ export function getValidViews() {
 // `sprint-project-filter`, `doc-project-filter`, ...).
 const viewsWithProject = ['issues', 'board', 'sprints', 'epics', 'documents', 'rituals', 'approvals', 'my-issues'];
 
+// The sidebar section each detail route belongs to, keyed by the first URL
+// segment (CHT-1752). Used only when a detail page is the first page loaded:
+// in-app navigation keeps the section the user came from highlighted.
+const detailRouteSection = {
+    issue: 'issues',
+    issues: 'issues',
+    epic: 'epics',
+    sprint: 'sprints',
+    document: 'documents',
+    projects: 'projects',
+};
+
+/**
+ * Mark the sidebar nav item for `view` active and clear the others.
+ */
+export function setActiveNav(view) {
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.view === view);
+    });
+}
+
 /**
  * Navigate to a view by name.
  * Updates URL, highlights nav item, hides/shows view containers, calls load handler.
@@ -113,10 +134,7 @@ export function navigateTo(view, pushHistory = true) {
         history.pushState({ view }, '', url);
     }
 
-    // Update nav items
-    document.querySelectorAll('.nav-item').forEach(item => {
-        item.classList.toggle('active', item.dataset.view === view);
-    });
+    setActiveNav(view);
 
     // Run cleanup callbacks
     if (onBeforeNavigate) onBeforeNavigate();
@@ -164,7 +182,11 @@ export function handleRoute() {
     if (parts.length === 0 || parts[0] === '') {
         navigateTo('my-issues', false);
     } else if (onDetailRoute && onDetailRoute(parts)) {
-        return; // Detail route handled
+        // Detail route handled. The page HTML marks Dashboard active, so on a
+        // direct load or reload point the sidebar at the page's own section.
+        const section = detailRouteSection[parts[0]];
+        if (section) setActiveNav(section);
+        return;
     } else {
         // Standard view routing
         view = parts[0];

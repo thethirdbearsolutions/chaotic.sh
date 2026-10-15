@@ -23,6 +23,8 @@
 
 package sh.chaotic.api.apis
 
+import sh.chaotic.api.models.EmailVerificationConfirm
+import sh.chaotic.api.models.EmailVerificationSent
 import sh.chaotic.api.models.HTTPValidationError
 import sh.chaotic.api.models.Token
 import sh.chaotic.api.models.UserCreate
@@ -44,6 +46,39 @@ import io.ktor.http.ParametersBuilder
         httpClientEngine,
         httpClientConfig,
     ) {
+
+        /**
+        * POST /api/auth/email-verification/confirm
+        * Confirm Email Verification
+        * Confirm the code from the verification email (CHT-1790) and return the account, now with &#x60;&#x60;email_verified_at&#x60;&#x60; set.  A wrong, expired, superseded or used-up code (five tries per code) all get the same 400 &#x60;&#x60;invalid_verification_code&#x60;&#x60;. 409 &#x60;&#x60;email_already_verified&#x60;&#x60; once verified. People only: an agent gets 403 &#x60;&#x60;human_required&#x60;&#x60;.
+         * @param emailVerificationConfirm  
+         * @return UserResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun confirmEmailVerificationApiAuthEmailVerificationConfirmPost(emailVerificationConfirm: EmailVerificationConfirm): HttpResponse<UserResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = emailVerificationConfirm
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.POST,
+            "/api/auth/email-verification/confirm",
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return jsonRequest(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
 
         /**
         * GET /api/auth/me
@@ -105,6 +140,39 @@ import io.ktor.http.ParametersBuilder
             )
 
             return jsonRequest(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * POST /api/auth/email-verification
+        * Request Email Verification
+        * Mail a six-digit code to the signed-in person&#39;s address (CHT-1790).  Confirm it with &#x60;&#x60;POST /api/auth/email-verification/confirm&#x60;&#x60; within 15 minutes. A new code retires any older one. At most one code a minute and five an hour (429 &#x60;&#x60;email_verification_rate_limited&#x60;&#x60;, with Retry-After). 409 &#x60;&#x60;email_already_verified&#x60;&#x60; once verified; 409 &#x60;&#x60;email_verification_unavailable&#x60;&#x60; when the server has no SMTP (then invitations do not require a verified address); 502 &#x60;&#x60;email_send_failed&#x60;&#x60; when the mail relay failed. People only: an agent gets 403 &#x60;&#x60;human_required&#x60;&#x60;.
+         * @return EmailVerificationSent
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun requestEmailVerificationApiAuthEmailVerificationPost(): HttpResponse<EmailVerificationSent> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.POST,
+            "/api/auth/email-verification",
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
             localVariableConfig,
             localVariableBody,
             localVariableAuthNames

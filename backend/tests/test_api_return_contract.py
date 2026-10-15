@@ -44,7 +44,9 @@ _TOOLS_PATH = _API_DIR.parent / "mcp_server" / "backend.py"
 
 # Auth dependencies, not API functions: they return the current user row,
 # a bool, or an auth-method string, and are never a tool's output.
-_NOT_API_FUNCTIONS = {"deps"}
+# ``visibility`` (CHT-1785) is the same kind of helper: it loads the row
+# a route is keyed by, or raises its not-found.
+_NOT_API_FUNCTIONS = {"deps", "visibility"}
 
 # Single functions that are route plumbing, not API functions: the
 # Idempotency-Key endpoint marker and its test (CHT-1621). A decorator

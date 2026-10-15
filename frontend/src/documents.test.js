@@ -18,9 +18,10 @@ import {
   bulkDeleteDocuments,
   enterSelectionMode,
   toggleDocSelection,
+  handleAddDocumentComment,
 } from './documents.js';
 import { api } from './api.js';
-import { showToast } from './ui.js';
+import { showToast, showMentionWarnings, showApiError } from './ui.js';
 import { getDocumentDraft, getDocumentDraftBase, setDocumentDraft, getCommentDraft, setCommentDraft } from './storage.js';
 import { registerActions } from './event-delegation.js';
 
@@ -35,6 +36,7 @@ vi.mock('./api.js', () => ({
     createDocument: vi.fn(),
     updateDocument: vi.fn(),
     deleteDocument: vi.fn(),
+    createDocumentComment: vi.fn(),
   },
 }));
 
@@ -44,6 +46,7 @@ vi.mock('./ui.js', () => ({
   showModal: vi.fn(),
   closeModal: vi.fn(),
   showToast: vi.fn(),
+  showMentionWarnings: vi.fn(),
 }));
 
 // Mock event-delegation.js
@@ -808,7 +811,8 @@ describe('viewDocument (CHT-1213 polish)', () => {
       api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
       api.getDocumentComments.mockResolvedValue([]);
       await viewDocument('doc-1');
-      expect(mockSetupMentionAutocomplete).toHaveBeenCalledWith('new-doc-comment', 'doc-mention-suggestions');
+      // A team-wide document: no project-scoped agent is offered (CHT-1731).
+      expect(mockSetupMentionAutocomplete).toHaveBeenCalledWith('new-doc-comment', 'doc-mention-suggestions', { projectId: null });
     });
   });
 
@@ -1314,5 +1318,48 @@ describe('bulk actions identify failed documents (CHT-1224)', () => {
 
     expect(showToast).toHaveBeenCalledWith(expect.stringContaining('Doc A'), 'warning');
     expect(showToast).toHaveBeenCalledWith(expect.stringContaining('Deleted 1'), 'warning');
+  });
+});
+
+// CHT-1743: the comment-create response's @mention warnings reach the author.
+describe('handleAddDocumentComment mention warnings (CHT-1743)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div class="view"></div>
+      <div id="document-detail-view" class="hidden">
+        <div id="document-detail-content"></div>
+      </div>
+      <textarea id="new-doc-comment"></textarea>
+    `;
+    vi.clearAllMocks();
+    vi.spyOn(history, 'pushState').mockImplementation(() => {});
+    api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+    api.getDocumentComments.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('passes the create response to showMentionWarnings after a successful submit', async () => {
+    const created = { id: 'c1', content: 'hi @sam', warnings: ['@sam is ambiguous; nobody was notified. Use one of: @sam-lee, @sam-ortiz.'] };
+    api.createDocumentComment.mockResolvedValue(created);
+    document.getElementById('new-doc-comment').value = 'hi @sam';
+
+    await handleAddDocumentComment({ preventDefault: vi.fn() }, 'doc-1');
+
+    expect(api.createDocumentComment).toHaveBeenCalledWith('doc-1', 'hi @sam');
+    expect(showToast).toHaveBeenCalledWith('Comment added!', 'success');
+    expect(showMentionWarnings).toHaveBeenCalledWith(created);
+  });
+
+  it('does not show mention warnings when the submit fails', async () => {
+    api.createDocumentComment.mockRejectedValue(new Error('forbidden'));
+    document.getElementById('new-doc-comment').value = 'hi @sam';
+
+    await handleAddDocumentComment({ preventDefault: vi.fn() }, 'doc-1');
+
+    expect(showMentionWarnings).not.toHaveBeenCalled();
+    expect(showApiError).toHaveBeenCalledWith('add comment', expect.objectContaining({ message: 'forbidden' }));
   });
 });

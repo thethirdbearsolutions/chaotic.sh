@@ -522,7 +522,7 @@ class TestRegisterOnly:
         from app.mcp_server.backend import InProcessBackend
 
         resolvers = {
-            "resolve_team", "resolve_project", "optional_project", "team_for_project",
+            "resolve_team", "resolve_member_team", "resolve_project", "optional_project", "team_for_project",
             "resolve_assignee", "resolve_sprint", "resolve_document", "me_id",
         }
         writes, reads = set(), set()
@@ -548,6 +548,7 @@ class TestRegisterOnly:
             "list_document_issues", "list_document_revisions", "list_documents", "list_inbox",
             "list_issue_description_revisions", "list_issues", "list_labels", "list_projects",
             "list_ready_issues", "list_relations", "list_rituals", "list_sprints", "list_sub_issues",
+            "query_issues",
             "list_transactions", "server_info",
         }
 
@@ -881,6 +882,57 @@ class TestReviewFollowUps:
             assert renamed.status_code == 200
             renamed = await client.patch(f"/api/agents/{agent_id}", json={"name": "TEST USER"}, headers=auth_headers)
             assert renamed.status_code == 422 and _code(renamed) == "name_matches_member"
+
+    @pytest.mark.parametrize("name", ["Test", "test · user", "Test-User", "TEST_USER"])
+    async def test_a_persons_mention_handle_is_refused(self, client, auth_headers, registrar, test_team, name):
+        """CHT-1731 re-review L3: an agent named by one of a person's
+        @handles ("Test" or "test-user" beside "Test User") would make that
+        handle ambiguous, so it is refused like the name itself."""
+        _, key = registrar
+        response = await _register(client, key, name=name)
+        assert response.status_code == 422 and _code(response) == "name_matches_member"
+        created = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": name}, headers=auth_headers)
+        assert created.status_code == 422 and _code(created) == "name_matches_member"
+
+    async def test_a_session_tail_handle_that_is_a_persons_is_refused(
+        self, client, auth_headers, registrar, test_team,
+    ):
+        """CHT-1741: "Ethan Bot · smith" would claim the session tail
+        handle `ethan-smith`, a person's, though its whole name is not
+        one. Refused on register, create and rename; a tail that is
+        nobody's handle, and the weak first word, stay allowed."""
+        ethan = await OxydeUser.objects.create(
+            email="ethan@example.com", hashed_password=get_password_hash("pw-12345678"), name="Ethan Smith",
+        )
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=ethan.id, role=TeamRole.MEMBER)
+        _, key = registrar
+        name = "Ethan Bot · smith"
+
+        response = await _register(client, key, name=name)
+        assert response.status_code == 422 and _code(response) == "name_matches_member"
+        created = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": name}, headers=auth_headers)
+        assert created.status_code == 422 and _code(created) == "name_matches_member"
+
+        allowed = await client.post(
+            f"/api/teams/{test_team.id}/agents", json={"name": "Ethan Bot · jones"}, headers=auth_headers,
+        )
+        assert allowed.status_code == 201, allowed.text
+        renamed = await client.patch(
+            f"/api/agents/{allowed.json()['id']}", json={"name": name}, headers=auth_headers,
+        )
+        assert renamed.status_code == 422 and _code(renamed) == "name_matches_member"
+        identity = await _register(client, key, name="Ethan Bot · jones")
+        assert identity.status_code == 201, identity.text
+
+        from app.services.mention_handles import MentionDirectory
+
+        d = await MentionDirectory.for_team(test_team.id)
+        assert d.resolve("ethan-smith") == ethan.id
+
+    async def test_a_name_that_only_starts_like_a_person_is_allowed(self, client, auth_headers, test_team):
+        for name in ("Test Bot", "Tester", "🤖"):
+            created = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": name}, headers=auth_headers)
+            assert created.status_code == 201, (name, created.text)
 
     async def test_external_ref_is_shown_only_to_the_identity_its_owner_and_admins(
         self, client, auth_headers, registrar, test_user2, auth_headers2, test_team,

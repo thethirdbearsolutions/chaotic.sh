@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('./auth.js', () => ({ showMainScreen: vi.fn(), updateUserInfo: vi.fn() }));
+vi.mock('./auth.js', () => ({
+    showMainScreen: vi.fn(), updateUserInfo: vi.fn(), showAuthScreen: vi.fn(), showLogin: vi.fn(), showSignup: vi.fn(),
+}));
 vi.mock('./teams.js', () => ({ getTeams: vi.fn(() => []), loadTeams: vi.fn(), selectTeam: vi.fn() }));
 vi.mock('./onboarding.js', () => ({ showOnboarding: vi.fn(), hasCompletedOnboarding: vi.fn(() => true) }));
 vi.mock('./router.js', () => ({ initRouter: vi.fn() }));
@@ -8,9 +10,21 @@ vi.mock('./oauth-consent.js', async (importOriginal) => ({
     ...(await importOriginal()),
     showConsent: vi.fn(),
 }));
+vi.mock('./invite.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    showInvite: vi.fn(),
+    hideInvite: vi.fn(),
+    showMissingToken: vi.fn(),
+}));
+vi.mock('./ui.js', () => ({ showToast: vi.fn() }));
+vi.mock('./api.js', () => ({ api: { logout: vi.fn() } }));
 
-import { initApp } from './init.js';
-import { showMainScreen } from './auth.js';
+import { initApp, openInvite, showSignedOut } from './init.js';
+import { showMainScreen, showAuthScreen, showLogin, showSignup } from './auth.js';
+import { showInvite, hideInvite, showMissingToken, forgetInviteToken } from './invite.js';
+import { showToast } from './ui.js';
+import { api } from './api.js';
+import { getCurrentUser, setCurrentUser } from './state.js';
 import { loadTeams, getTeams, selectTeam } from './teams.js';
 import { showConsent } from './oauth-consent.js';
 import { initRouter } from './router.js';
@@ -85,5 +99,162 @@ describe('initApp', () => {
             await initApp();
             expect(initRouter).not.toHaveBeenCalled();
         });
+    });
+});
+
+describe('invitation links (CHT-1265)', () => {
+    const TOKEN = 'Zm9vYmFyYmF6cXV4MDEyMzQ1Njc4OWFiY2RlZg_-AB';
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        getTeams.mockReturnValue([]);
+        hasCompletedOnboarding.mockReturnValue(true);
+        setCurrentUser(null);
+        sessionStorage.clear();
+        forgetInviteToken(); // and the module's in-memory copy
+        history.replaceState(null, '', `/invite/${TOKEN}`);
+    });
+
+    it('after sign-in, initApp brings the person back to the invitation', async () => {
+        setCurrentUser({ id: 'u1', email: 'r@example.com' });
+        await initApp();
+        expect(showInvite).toHaveBeenCalledWith(TOKEN, expect.objectContaining({ user: getCurrentUser() }));
+        expect(showMainScreen).not.toHaveBeenCalled();
+        expect(loadTeams).not.toHaveBeenCalled();
+        expect(initRouter).not.toHaveBeenCalled();
+    });
+
+    it('signed out, the invitation page shows instead of the sign-in form', async () => {
+        await showSignedOut();
+        expect(showInvite).toHaveBeenCalledWith(TOKEN, expect.objectContaining({ user: null }));
+        expect(showAuthScreen).not.toHaveBeenCalled();
+    });
+
+    it('signed out anywhere else, the sign-in form shows', async () => {
+        history.replaceState(null, '', '/issues');
+        await showSignedOut();
+        expect(showAuthScreen).toHaveBeenCalled();
+        expect(showInvite).not.toHaveBeenCalled();
+    });
+
+    it('signed out on /invite with nothing stored, says to reopen the emailed link (CHT-1792)', async () => {
+        history.replaceState(null, '', '/invite');
+        await showSignedOut();
+        expect(showMissingToken).toHaveBeenCalled();
+        expect(showInvite).not.toHaveBeenCalled();
+        expect(showAuthScreen).not.toHaveBeenCalled();
+    });
+
+    it('signed in on /invite with nothing stored, the same hint instead of the app (CHT-1792)', async () => {
+        history.replaceState(null, '', '/invite/');
+        setCurrentUser({ id: 'u1', email: 'r@example.com' });
+        await initApp();
+        expect(showMissingToken).toHaveBeenCalled();
+        expect(showInvite).not.toHaveBeenCalled();
+        expect(showMainScreen).not.toHaveBeenCalled();
+        expect(loadTeams).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['/invite/short'],
+        [`/invite/${TOKEN.slice(0, 12)}`],
+        ['/invite//'],
+    ])('signed out on %s (no usable token), the same hint (review F1)', async (path) => {
+        history.replaceState(null, '', path);
+        await showSignedOut();
+        expect(showMissingToken).toHaveBeenCalled();
+        expect(showInvite).not.toHaveBeenCalled();
+        expect(showAuthScreen).not.toHaveBeenCalled();
+    });
+
+    it('signed in on a truncated link, the hint instead of the app (review F1)', async () => {
+        history.replaceState(null, '', `/invite/${TOKEN.slice(0, 12)}`);
+        setCurrentUser({ id: 'u1', email: 'r@example.com' });
+        await initApp();
+        expect(showMissingToken).toHaveBeenCalled();
+        expect(showMainScreen).not.toHaveBeenCalled();
+    });
+
+    it.each([['/invitations'], ['/invites/x'], ['/team/invite']])(
+        'signed out on %s, the sign-in form, not the hint', async (path) => {
+            history.replaceState(null, '', path);
+            await showSignedOut();
+            expect(showAuthScreen).toHaveBeenCalled();
+            expect(showMissingToken).not.toHaveBeenCalled();
+        },
+    );
+
+    it('the consent page still comes before any invitation handling (review F3)', async () => {
+        history.replaceState(null, '', '/oauth/consent/abcdefghijklmnop0123');
+        setCurrentUser({ id: 'u1', email: 'r@example.com' });
+        await initApp();
+        expect(showConsent).toHaveBeenCalled();
+        expect(showMissingToken).not.toHaveBeenCalled();
+        expect(showInvite).not.toHaveBeenCalled();
+        expect(showMainScreen).not.toHaveBeenCalled();
+    });
+
+    it('the page opens the login or signup form on the same URL', async () => {
+        await openInvite(TOKEN);
+        const { showAuth } = showInvite.mock.calls[0][1];
+
+        showAuth('signup');
+        expect(showAuthScreen).toHaveBeenCalled();
+        expect(showSignup).toHaveBeenCalled();
+
+        showAuth('login');
+        expect(showLogin).toHaveBeenCalled();
+    });
+
+    it('moves the token out of the address bar on load, and finds it again after sign-in', async () => {
+        await showSignedOut();
+        expect(window.location.pathname).toBe('/invite');
+        expect(window.location.href).not.toContain(TOKEN);
+        expect(sessionStorage.getItem('chaotic.inviteToken')).toBe(TOKEN);
+
+        // Signing in runs initApp on /invite: the stored token brings the
+        // person back to the same invitation.
+        showInvite.mockClear();
+        setCurrentUser({ id: 'u1', email: 'r@example.com' });
+        await initApp();
+        expect(showInvite).toHaveBeenCalledWith(TOKEN, expect.objectContaining({ user: getCurrentUser() }));
+    });
+
+    it('accepting drops the token from the URL and boots into the joined team', async () => {
+        await openInvite(TOKEN);
+        const { enterTeam } = showInvite.mock.calls[0][1];
+        getTeams.mockReturnValue([{ id: 't1' }, { id: 'joined' }]);
+
+        await enterTeam('joined', 'Acme');
+
+        expect(window.location.pathname).toBe('/');
+        expect(window.location.href).not.toContain(TOKEN);
+        expect(hideInvite).toHaveBeenCalled();
+        expect(showMainScreen).toHaveBeenCalled();
+        expect(selectTeam).toHaveBeenCalledWith({ id: 'joined' }, true);
+        expect(showToast).toHaveBeenCalledWith('You joined Acme', 'success');
+    });
+
+    it('signing out from a mismatched account shows the invitation again, signed out', async () => {
+        setCurrentUser({ id: 'u1', email: 'coyote@acme.test' });
+        await openInvite(TOKEN);
+        const { signOut } = showInvite.mock.calls[0][1];
+
+        signOut();
+
+        expect(api.logout).toHaveBeenCalled();
+        expect(getCurrentUser()).toBeNull();
+        expect(showInvite).toHaveBeenLastCalledWith(TOKEN, expect.objectContaining({ user: null }));
+    });
+
+    it('initApp selects the requested team, else the first', async () => {
+        history.replaceState(null, '', '/');
+        getTeams.mockReturnValue([{ id: 't1' }, { id: 't2' }]);
+        await initApp({ teamId: 't2' });
+        expect(selectTeam).toHaveBeenCalledWith({ id: 't2' }, true);
+
+        selectTeam.mockClear();
+        await initApp({ teamId: 'not-mine' });
+        expect(selectTeam).toHaveBeenCalledWith({ id: 't1' }, true);
     });
 });

@@ -56,7 +56,16 @@ class Backend(Protocol):
     async def resolve_team(self, team: str | None) -> str:
         """The team id a team-wide tool should act on. Raises
         ToolInputError when there is none, or when ``team`` is given and
-        not accessible / ambiguous."""
+        not accessible / ambiguous. A project-scoped key has no team-wide
+        scope (CHT-1780): the HTTP side refuses it here, the stdio side
+        leaves the refusal to the server."""
+
+    async def resolve_member_team(self, team: str | None) -> str:
+        """The team whose *directory* a tool reads: its labels, its
+        project list, the inbox's team filter. Same as ``resolve_team``
+        except that a project-scoped key, which ``resolve_team`` refuses,
+        gets its own project's team; the server confines what it reads
+        there (CHT-1780)."""
 
     async def resolve_project(self, project: str | None, team: str | None) -> tuple[str, str]:
         """``(project_id, team_id)`` for a project-scoped tool. A project
@@ -112,6 +121,23 @@ class Backend(Protocol):
         order: str,
         skip: int | None = None,
     ) -> list: ...
+
+    async def query_issues(
+        self,
+        *,
+        project_id: str | None,
+        team_id: str | None,
+        where: str | None,
+        filter_json: str | None,
+        order: str | None,
+        limit: int,
+        skip: int = 0,
+    ) -> dict:
+        """Run an issue query (CHT-1718) in a project or, with only
+        ``team_id``, across the team. ``where`` is the text form,
+        ``filter_json`` the structure as JSON; the server ANDs them.
+        Returns the query response: ``issues``, ``total``, and the
+        normalized ``query``/``where``/``order``."""
 
     async def list_ready_issues(
         self, *, project_id: str | None, team_id: str | None,

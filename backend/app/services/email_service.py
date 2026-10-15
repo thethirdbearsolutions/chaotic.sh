@@ -1,9 +1,12 @@
-"""SMTP email delivery for gate-pending notices and team invitations (CHT-1251).
+"""SMTP email delivery: gate-pending notices, team invitations (CHT-1251)
+and email-verification codes (CHT-1790).
 
-Exactly two things send email: a GATE ritual becoming pending for a human,
-and a team invitation (the accept link is otherwise undeliverable without
-DB access). Everything else in the human-supervision surface (mentions,
-assignment, review requests) is inbox-only -- see InboxService.
+Exactly three things send email: a GATE ritual becoming pending for a
+human, a team invitation (the accept link is otherwise undeliverable
+without DB access), and an email-verification code a person asked for
+(app.services.email_verification_service). Everything else in the
+human-supervision surface (mentions, assignment, review requests) is
+inbox-only -- see InboxService.
 
 Doctrine:
   * Unconfigured SMTP (no smtp_host) => log-and-skip. Never an error in
@@ -12,7 +15,10 @@ Doctrine:
     loud log (logger.exception/error). Still never raises into the
     caller -- a flaky mail relay must not turn a ticket update or an
     invitation create into a 500.
-  * Sends are fire-and-forget from the caller's perspective: scheduled
+  * The verification code is the one exception to the next rule: the
+    person is waiting for it, so its send is awaited and a False from
+    send() is reported to them (502), still without send() raising.
+  * Other sends are fire-and-forget from the caller's perspective: scheduled
     via asyncio.create_task so the mutating request returns without
     waiting on an SMTP round-trip. Tasks are held in a module-level set
     so they aren't garbage-collected mid-flight (the standard
@@ -63,7 +69,8 @@ async def drain() -> None:
 
 
 class EmailService:
-    """Renders and sends the two plain-text email templates."""
+    """Renders and sends the plain-text gate and invitation templates
+    (the verification code renders its own) and sends any of them."""
 
     def __init__(self):
         self.settings = get_settings()

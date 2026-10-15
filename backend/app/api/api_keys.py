@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.db.transactions import atomic
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, NotAppSession, can_manage_agent, get_api_key_record
+from app.api.deps import CurrentUser, NotAppSession, can_manage_agent, check_user_in_team, get_api_key_record
 from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated
 from app.services.agent_service import AgentService
 from app.services.api_key_service import APIKeyService
@@ -121,11 +121,21 @@ async def revoke_api_key(
     # as. Beyond that, a key that signs in as an agent may be revoked by
     # whoever may manage the agent: its team's admins, and its creator
     # while still in the team (CHT-1508).
+    #
+    # Someone with no view of the key at all (not its holder or principal,
+    # and not in the team of the agent it signs in as) gets the missing
+    # key's 404, so a key id does not say it exists (CHT-1785). Someone in
+    # that team who may not manage the agent gets the 403.
     allowed = current_user.id in (api_key.holder_user_id, api_key.principal_user_id)
     if not allowed:
         agent_service = AgentService()
         agent = await agent_service.get_by_id(api_key.principal_user_id)
-        allowed = agent is not None and await can_manage_agent(current_user, agent)
+        if agent is None or not await check_user_in_team(current_user, agent.agent_team_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="API key not found",
+            )
+        allowed = await can_manage_agent(current_user, agent)
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

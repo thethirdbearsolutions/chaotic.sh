@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="robots" content="noindex">
+    <title>Chaotic didn't open</title>
+    <!--
+      The Chaotic Android app's sign-in redirect (CHT-1649). Android hands
+      https://chaotic.sh/app/oauth2redirect straight to the app once
+      /.well-known/assetlinks.json verifies the release-signed app (Android
+      App Links), and this page is never loaded. It loads only when Android
+      has not verified the app on this phone.
+
+      It deliberately does nothing with the sign-in result in its address:
+      no script, and no link or intent that passes the code on. Handing it
+      to "the app called sh.chaotic.android" would trust a package name,
+      which any APK can take; only App Links verification checks the
+      signing key (PR #412 review, M1). The CSP keeps it that way.
+    -->
+    <style>
+        :root { color-scheme: light dark; --fg: #1a1a1a; --muted: #555; --bg: #fafafa; }
+        @media (prefers-color-scheme: dark) { :root { --fg: #eee; --muted: #aaa; --bg: #141414; } }
+        body { margin: 0; background: var(--bg); color: var(--fg);
+               font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+        main { max-width: 32rem; margin: 0 auto; padding: 3rem 1rem; }
+        h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+        p, ul { margin: 0 0 1rem; }
+        .muted { color: var(--muted); font-size: 0.9rem; }
+        code { font-size: 0.85rem; overflow-wrap: anywhere; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>The Chaotic app didn't open</h1>
+    <p>Signing in to the Chaotic Android app ends here only when Android hasn't confirmed that the app on this
+        phone is the official one, so it did not hand the sign-in to it. Nothing was signed in; you can close
+        this page.</p>
+    <ul>
+        <li>Install or update the app from the official
+            <a href="https://github.com/thethirdbearsolutions/chaotic.sh/releases">GitHub releases</a>
+            (or Obtainium), with the phone online, then sign in again.</li>
+        <li>If the app came from anywhere else, uninstall it: it is not the official build.</li>
+    </ul>
+    <p class="muted">Building the app yourself? Approve the link for your build once (Android 12 or newer):<br>
+        <code>adb shell pm set-app-links-user-selection --user cur --package sh.chaotic.android true chaotic.sh</code></p>
+</main>
+</body>
+</html>

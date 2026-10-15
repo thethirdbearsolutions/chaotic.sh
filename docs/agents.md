@@ -209,7 +209,8 @@ one of them (there is deliberately no count here to rot, CHT-1395):
   `ritual_complete`, `ritual_reject`
 - **inbox:** `inbox_list`, `inbox_mark_read`, `inbox_mark_all_read` (what
   is waiting on you: @mentions, assignments, gates and reviews awaiting
-  an admin -- the human-to-agent handoff channel, CHT-1338)
+  an admin -- the human-to-agent handoff channel, CHT-1338; an @mention
+  reaches people only for now, not agents, CHT-1731)
 - **other:** `label_list`, `activity_recent`, `project_list` (enumerate
   the team's projects -- every other tool filters by project, this one
   tells you which projects exist), `server_info` (which commit, version
@@ -473,6 +474,60 @@ is shown only here.
   holds the registrar's key. So it stops working when that person leaves
   the team, like any agent key they hold.
 
+### @mentioning an agent or a session
+
+Every active agent of a team can be @mentioned, session identities
+included, and the mention lands in its inbox (`inbox_list`,
+`chaotic inbox`). Each person and agent has one handle that reaches
+exactly them. It is shown by the web comment box's autocomplete, by
+`chaotic agent list` (under the name) and `chaotic team members`, as
+`mention_handle` on `GET /api/teams/{id}/agents` and `/members`, and by
+`chaotic agent register` for the identity it registered (CHT-1731):
+
+- a person: the first word of their name (`@ethan`) when no one else in
+  the team has that word, else the whole name (`@ethan-smith`);
+- an agent: its whole name (`@claude-mcp`);
+- a session identity with a default name (`<registrar> · … · <tail>`):
+  first word and tail (`@claude-3f9a1c`);
+- when even that is shared: the **id handle**, first word and the start
+  of the id (`@claude.28b1c019`). It is looked up by the id alone, so it
+  keeps working after a rename, and no name can claim it.
+
+A handle that more than one of them could mean reaches **nobody**: in a
+team of Claude sessions, `@claude` notifies none of them. It never picks
+one and never notifies them all. Two exceptions keep old habits working
+without letting anyone take another's handle:
+
+- When everyone who shares a word has it only as a first word, people
+  come first: `@ethan` stays Ethan's beside an agent called "Ethan Bot",
+  and `@claude` still reaches a person named Claude. Any other overlap
+  between a person and an agent (a person renamed `claude-mcp`, an agent
+  named "Ethan") reaches nobody, so neither can take the other's handle.
+- An idle session identity (keys unused for 7 days) is still reached by
+  its own handle but claims no shared first word, so old sessions do not
+  make `@claude` ambiguous. A deactivated agent is not mentionable.
+  A non-session agent whose keys are all revoked is still mentionable;
+  its mentions wait in its inbox.
+
+An agent may not be named with a person's @handle ("Ethan" or
+"Ethan · smith" beside a person "Ethan Smith"), nor with a name whose
+session tail handle is one ("Ethan Bot · smith" would claim
+`ethan-smith`), just as it may not take their name; creating, renaming
+or registering one is refused with `name_matches_member`. A trailing `.`, `-` or `_` after a handle is
+sentence punctuation and is ignored.
+
+A project-scoped agent is reached only from its own project, and the web
+autocomplete offers it only there. One comment notifies at most 25
+principals; later handles are ignored. Handles follow names, so renaming
+an agent changes its handle (its id handle aside).
+
+The author is told when an @handle reached nobody: the comment create
+response (`POST /api/issues/{id}/comments`, `/api/documents/{id}/comments`,
+MCP `issue_comment`, `chaotic issue comment`) carries `warnings`, one per
+unknown or ambiguous handle. An ambiguous one lists the handles to use
+instead, only for principals the author could mention from there. A word
+with an `@` inside it, such as an email address, is not a mention.
+
 ## Remote MCP (Streamable HTTP, `/mcp`)
 
 If you'd rather point a *hosted* client at your chaotic instance instead
@@ -712,16 +767,18 @@ agent. It is built into the server as the OAuth client
 `builtin:sh.chaotic.android`, resolved from code: the server fetches
 nothing to recognise it (an air-gapped server works), and no stored or
 published document can change the redirects it accepts. Its redirect is
-fixed, `sh.chaotic.android:/oauth2redirect`, with PKCE S256,
+fixed, `https://chaotic.sh/app/oauth2redirect`, with PKCE S256,
 `offline_access` and rotating refresh tokens like every connection.
 
-That redirect is an Android private-use scheme, and Android does not
-reserve one for a single app: another app installed on the same phone
-can claim it, start a sign-in itself, and get a session as you if you
-approve it. So approve the sign-in page only when you have just tapped
-"Sign in" in the Chaotic app yourself. A verified https redirect
-(Android App Links), which closes this, is planned before the app
-ships.
+That redirect is an Android App Link (CHT-1649): once chaotic.sh
+publishes the app's release key, Android hands it only to the genuine,
+release-signed app, so another app on the phone that starts a sign-in
+cannot receive the result. Until then, and on a phone that could not
+verify the link when the app was installed, that protection is missing
+(see "Residual risk" in [self-hosting-security.md](self-hosting-security.md)).
+Either way, approve the sign-in page only when you have just tapped
+"Sign in" in the Chaotic app yourself. How to install the app:
+[android.md](android.md).
 
 Signing in shows "Sign in to Chaotic for Android as you?" with nothing
 to choose: no team, agent or projects. The sign-in is account-wide. The

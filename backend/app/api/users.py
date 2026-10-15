@@ -16,21 +16,16 @@ async def get_user(user_id: str, current_user: CurrentUser) -> UserResponse:
     user_service = UserService()
     user = await user_service.get_by_id(user_id)
 
-    if not user:
+    # Users can always look up themselves; anyone else needs a shared
+    # team. One the caller does not share a team with answers like a
+    # missing one (CHT-1785).
+    if not user or (
+        user.id != current_user.id and not await TeamService().shares_team(current_user.id, user_id)
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
-
-    # Users can always look up themselves
-    if user.id != current_user.id:
-        # Otherwise, require shared team membership
-        team_service = TeamService()
-        if not await team_service.shares_team(current_user.id, user_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to view this user",
-            )
 
     response = UserResponse.model_validate(user)
     if user.is_agent:

@@ -286,7 +286,7 @@ class TestListAgentKeys:
         assert (await client.get(f"/api/agents/{w['agent_id']}/keys", headers=dave_headers)).status_code == 403
 
         await OxydeTeamMember.objects.filter(team_id=w["team"].id, user_id=w["bob"].id).delete()
-        assert (await client.get(f"/api/agents/{w['agent_id']}/keys", headers=w["bob_headers"])).status_code == 403
+        assert (await client.get(f"/api/agents/{w['agent_id']}/keys", headers=w["bob_headers"])).status_code == 404
 
     async def test_the_agent_itself_may_not(self, client, world):
         response = await client.get(f"/api/agents/{world['agent_id']}/keys", headers=_bearer(world["k1"]))
@@ -326,6 +326,12 @@ class TestMintRechecksInsideTheTransaction:
         async def stale(user, agent):
             return True
 
+        async def stale_in_team(user, team_id):
+            return True
+
+        # Both route checks are stale: seeing the agent (CHT-1785) and
+        # managing it.
+        monkeypatch.setattr("app.api.visibility.check_user_in_team", stale_in_team)
         monkeypatch.setattr("app.api.agents.can_manage_agent", stale)
         before = await OxydeAPIKey.objects.filter(principal_user_id=w["agent_id"]).count()
 

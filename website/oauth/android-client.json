@@ -2,7 +2,7 @@
   "client_id": "builtin:sh.chaotic.android",
   "client_name": "Chaotic for Android",
   "redirect_uris": [
-    "sh.chaotic.android:/oauth2redirect"
+    "https://chaotic.sh/app/oauth2redirect"
   ],
   "grant_types": [
     "authorization_code",

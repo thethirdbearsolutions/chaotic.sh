@@ -1,6 +1,7 @@
 """Issue and label tools."""
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
 from pydantic import Field
@@ -15,7 +16,9 @@ from ..constants import (
     SORT_ORDER,
     STATUS_VALUES,
     TEAM_FIELD_DESC,
+    WHERE_DESC,
 )
+from ..query import simple_filter_rows
 from ..errors import BackendError, ToolInputError
 from ..estimates import off_scale_warning
 from ..shapes import (
@@ -146,6 +149,10 @@ async def issue_list(
         str | None,
         Field(description="Free-text search over title, description, and identifier.")
     ] = None,
+    where: Annotated[
+        str | None,
+        Field(description=WHERE_DESC)
+    ] = None,
     sprint: Annotated[
         str | None,
         Field(description="Filter by sprint: a sprint name, 'current', 'next', or a sprint id.")
@@ -174,7 +181,9 @@ async def issue_list(
 
     Returns compact rows plus `count` and `truncated`; truncated=true means
     `limit` cut the list -- narrow the filter rather than assume you saw
-    everything. Pass detail=true for full rows.
+    everything. Pass detail=true for full rows. With `where`, the result
+    also carries `total` (every match) and `where` (the query as the
+    server read it).
     """
     project_id = None
     # Explicit `project` wins over all_projects -- same precedence as
@@ -203,6 +212,27 @@ async def issue_list(
     sprint_id = None
     if sprint and project_id:
         sprint_id = await backend.resolve_sprint(sprint, project_id)
+
+    if where is not None and where.strip():
+        # The query endpoint (CHT-1718). The plain filters become rows
+        # ANDed with `where`, so both kinds of argument keep their meaning.
+        rows = simple_filter_rows(
+            statuses=status, priorities=priority, assignee_id=assignee_id,
+            label=label, search=search, sprint_id=sprint_id, parent_id=parent_id,
+        )
+        result = await backend.query_issues(
+            project_id=project_id,
+            team_id=team_id if not project_id else None,
+            where=where,
+            filter_json=json.dumps({"match": "all", "rows": rows}) if rows else None,
+            order=("-" if order == "desc" else "") + sort_by,
+            limit=limit,
+        )
+        out = listing("issues", result["issues"], limit, COMPACT_ISSUE_FIELDS, detail)
+        out["truncated"] = result["total"] > len(result["issues"])
+        out["total"] = result["total"]
+        out["where"] = result["where"]
+        return out
 
     filters = dict(
         project_id=project_id,
@@ -315,7 +345,7 @@ async def _project_for_new_issue(
     if project is None:
         # `team` only picks the project, which the parent already did; one
         # that does not own it is refused like a mismatched `project`.
-        if team is not None and await backend.resolve_team(team) != await backend.team_for_project(parent_project):
+        if team is not None and await backend.resolve_member_team(team) != await backend.team_for_project(parent_project):
             raise ToolInputError(
                 f"Parent {parent} is in project {parent_key}, which is not in team {team}: a sub-issue is "
                 "created in its parent's project. Omit `team`, or pass the team that owns it."
@@ -517,9 +547,16 @@ async def issue_comment(
         Field(description="Also assign the issue: 'me', a user/agent id, or a name/email.")
     ] = None,
 ) -> dict:
-    """Add a comment to an issue, optionally assigning it in the same call."""
+    """Add a comment to an issue, optionally assigning it in the same call.
+
+    An @handle that reached nobody (unknown, or ambiguous: it names
+    several principals) is reported back in `warnings`, an ambiguous one
+    with the unique handles to use instead (absent otherwise).
+    """
     iss = await backend.get_issue(identifier)
     comment = await backend.create_comment(iss["id"], content)
+    if "warnings" in comment and not comment["warnings"]:
+        comment = {k: v for k, v in comment.items() if k != "warnings"}
     if assign_to:
         team_id = await backend.team_for_project(iss.get("project_id"))
         assignee_id = await backend.resolve_assignee(assign_to, team_id)
@@ -767,7 +804,7 @@ async def label_list(
     it a caller has to already know the taxonomy to filter by it, or
     guess. Also the source of the names issue_label accepts.
     """
-    team_id = await backend.resolve_team(team)
+    team_id = await backend.resolve_member_team(team)
     return {"labels": list(await backend.list_labels(team_id, 1000) or [])}
 
 

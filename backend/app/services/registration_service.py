@@ -28,7 +28,8 @@ The rules, each enforced here and tested in tests/test_agent_register.py:
    ``agent_session_key_ttl_seconds`` and revokes the identity's others.
 5. Caps (429): active identities per registrar, registrations per
    rolling hour per registrar (rotations count).
-8. A name equal to a human team member's name is refused.
+8. A name equal to a human team member's name, or to one of their
+   @handles (CHT-1731), is refused.
 
 Rule 6 (registrars are register-only) is a request-path check in
 ``app.api.deps`` and the MCP backend; rule 7 (deactivating a registrar
@@ -101,19 +102,32 @@ def normalize_name(name: str) -> str:
 
 
 async def member_named(team_id: str, name: str) -> bool:
-    """Is `name` (normalized) the name of a human member of `team_id`?"""
+    """Is `name` a human member's name in `team_id`: equal when normalized,
+    or does an @handle an agent of that name would claim equal one of
+    theirs (CHT-1731), e.g. "Ethan" or "Ethan · smith" beside a person
+    "Ethan Smith"? That includes a session's tail handle: "Ethan Bot ·
+    smith" would claim ``ethan-smith`` (CHT-1741). An agent may take
+    none of them."""
+    from app.services.mention_handles import agent_name_handles, handle_words
+
     member_ids = [m.user_id for m in await OxydeTeamMember.objects.filter(team_id=team_id).all()]
     if not member_ids:  # pragma: no cover - an agent's team always has its creator or an admin
         return False
-    people = await OxydeUser.objects.filter(id__in=member_ids, is_agent=False).values("name").all()
+    people = await OxydeUser.objects.filter(id__in=member_ids, is_agent=False).all()
     wanted = normalize_name(name)
-    return any(normalize_name(p["name"] if isinstance(p, dict) else p.name) == wanted for p in people)
+    claims = agent_name_handles(name)
+    return any(
+        normalize_name(p.name) == wanted or not claims.isdisjoint(handle_words(p))
+        for p in people
+    )
 
 
 def name_matches_member_detail(name: str) -> dict:
     return {
         "error_code": "name_matches_member",
-        "message": f"{name!r} is the name of a person in this team; an agent may not share it.",
+        "message": (
+            f"{name!r} is the name or @handle of a person in this team; an agent may not share it."
+        ),
     }
 
 

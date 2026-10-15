@@ -78,18 +78,91 @@ async def get_current_principal(request: Request, user: CurrentUser) -> Principa
 CurrentPrincipal = Annotated[Principal, Depends(get_current_principal)]
 
 
-async def check_user_team_access(user: User, team_id: str) -> bool:
-    """Check if a user has access to a team.
+def is_project_scoped_agent(user: User) -> bool:
+    """An agent confined to one project (``agent_project_id`` set). Such
+    an agent also carries ``agent_team_id`` (its project's team), which
+    is *not* a grant of team-wide access (CHT-1780)."""
+    return bool(user.is_agent and user.agent_project_id)
 
-    For humans: must be a team member
-    For agents: must be scoped to this team
+
+def confined_project_id(user: User) -> str | None:
+    """The one project a project-scoped agent may see, else None. For
+    team-wide queries that must narrow to it rather than refuse: the
+    relations of an issue, cross-reference targets (CHT-1780)."""
+    return user.agent_project_id if is_project_scoped_agent(user) else None
+
+
+async def check_user_team_access(user: User, team_id: str) -> bool:
+    """May ``user`` read and write ``team_id``'s team-wide data: every
+    project's issues, the team activity and comment feeds, team-level
+    (project-less) documents, templates?
+
+    For humans: must be a team member.
+    For agents: must be *team*-scoped to this team. A project-scoped
+    agent is refused even for its own team (CHT-1780): it reaches its
+    project through ``check_user_project_access``, and the few team
+    reads it needs (the team row, its members and agents, labels) go
+    through ``check_user_in_team``.
     """
     if user.is_agent:
+        if user.agent_project_id:
+            return False
         return user.agent_team_id == team_id
 
     team_service = TeamService()
     member = await team_service.get_member(team_id, user.id)
     return member is not None
+
+
+async def agent_home_team_id(user: User) -> str | None:
+    """The team an agent belongs to: ``agent_team_id``, or for a
+    project-scoped agent created without one, its project's team."""
+    if user.agent_team_id:
+        return user.agent_team_id
+    if user.agent_project_id:
+        from app.services.project_service import ProjectService
+
+        project = await ProjectService().get_by_id(user.agent_project_id)
+        return project.team_id if project else None
+    return None
+
+
+async def can_access_document(user: User, document) -> bool:
+    """The read rule for one document: project access for a project's
+    document, team access for a team-level one. ``GET /documents/{id}``
+    applies it, and so must every route that returns documents some other
+    way, such as the documents linked to an issue (CHT-1780)."""
+    if document.project_id:
+        return await check_user_project_access(user, document.project_id, document.team_id)
+    return await check_user_team_access(user, document.team_id)
+
+
+async def accessible_project_ids(user: User, project_ids) -> set[str]:
+    """Of ``project_ids``, those ``user`` may read: one access check per
+    distinct project, for filtering a mixed list of issues (CHT-1780)."""
+    from app.services.project_service import ProjectService
+
+    allowed = set()
+    for project_id in set(project_ids):
+        project = await ProjectService().get_by_id(project_id)
+        if project and await check_user_project_access(user, project_id, project.team_id):
+            allowed.add(project_id)
+    return allowed
+
+
+async def check_user_in_team(user: User, team_id: str) -> bool:
+    """Is ``user`` part of ``team_id`` at all -- a member, or an agent of
+    that team at either scope? This is the bar for the team's *directory*,
+    which a project-scoped agent needs for ordinary work in its project:
+    the team row, its members and agents (to resolve an assignee or a
+    mention), and its labels (to label its issues). Never use it for
+    team-wide *data*; that is ``check_user_team_access`` (CHT-1780).
+    """
+    if not team_id:
+        return False
+    if user.is_agent:
+        return await agent_home_team_id(user) == team_id
+    return await check_user_team_access(user, team_id)
 
 
 async def can_manage_agent(user: User, agent: User) -> bool:

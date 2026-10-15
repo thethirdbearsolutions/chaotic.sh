@@ -152,6 +152,14 @@ class IssueCommentResponse(HasPrincipals, BaseModel):
         return name_deleted_author(self, "author_id", "author_name")
 
 
+class IssueCommentCreated(IssueCommentResponse):
+    """A new comment, as its author sees it: with `warnings` about
+    @handles that reached nobody (CHT-1735). Only the author gets them;
+    the comment broadcast to the team carries none."""
+
+    warnings: list[str] = Field(default_factory=list)
+
+
 class LabelCreate(BaseModel):
     """Schema for creating a label."""
 

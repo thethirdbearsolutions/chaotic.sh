@@ -5,8 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from app.auth.access import reads, registers, writes
 from app.api.deps import (
     CurrentPrincipal, CurrentUser, NotAppSession, can_manage_agent, check_not_app_session,
-    check_user_team_access, get_api_key_record,
+    get_api_key_record,
 )
+from app.api.visibility import visible_agent, visible_project, visible_team
 from app.enums import AgentKind
 from app.schemas.agent import (
     AgentCreate, AgentRegister, AgentRegistered, AgentUpdate, AgentResponse, AgentCreated,
@@ -20,8 +21,8 @@ from app.services.agent_service import (
     AgentHasAuthoredContentError, AgentInactiveError, AgentManageDeniedError, AgentService, is_idle,
 )
 from app.services.api_key_service import APIKeyService
+from app.services.mention_handles import MentionDirectory
 from app.services.team_service import TeamService
-from app.services.project_service import ProjectService
 from app.services.user_service import UserService
 
 router = APIRouter()
@@ -52,11 +53,15 @@ async def _refuse_member_name(team_id: str, name: str) -> None:
         raise HTTPException(status_code=422, detail=name_matches_member_detail(name))
 
 
-def agent_response(agent, *, show_ref: bool = True, last_used_at=None) -> AgentResponse:
+def agent_response(
+    agent, *, show_ref: bool = True, last_used_at=None, mention_handle: str | None = None,
+) -> AgentResponse:
     """The wire form of an agent row (with `parent_user` joined).
     `show_ref`: see ``sees_external_ref``. `last_used_at`: from
-    ``AgentService.session_last_used``, for a session identity."""
+    ``AgentService.session_last_used``, for a session identity.
+    `mention_handle`: from ``MentionDirectory.handle_for`` (CHT-1731)."""
     return AgentResponse(
+        mention_handle=mention_handle,
         last_used_at=last_used_at,
         idle=is_idle(last_used_at),
         id=agent.id,
@@ -74,6 +79,13 @@ def agent_response(agent, *, show_ref: bool = True, last_used_at=None) -> AgentR
         registered_by_id=agent.registered_by_id,
         can_register=agent.can_register,
     )
+
+
+async def _mention_handle(agent) -> str | None:
+    """The @handle that reaches `agent` in its team (CHT-1731)."""
+    if not agent.agent_team_id:
+        return None
+    return (await MentionDirectory.for_team(agent.agent_team_id)).handle_for(agent.id)
 
 
 async def _last_used(agent):
@@ -97,12 +109,8 @@ async def create_team_agent(
     """Create a team-scoped agent. The API key is only shown once."""
     # Verify user has permission to create agents in this team
     team_service = TeamService()
-    team = await team_service.get_by_id(team_id)
-    if not team:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Team not found",
-        )
+    # Visible (else 404, as if missing), then membership (403) (CHT-1785).
+    await visible_team(current_user, team_id)
 
     # Check if user is a member of the team
     member = await team_service.get_member(team_id, current_user.id)
@@ -156,13 +164,8 @@ async def create_project_agent(
 ):
     """Create a project-scoped agent. The API key is only shown once."""
     # Verify project exists and user has access
-    project_service = ProjectService()
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    # Visible (else 404, as if missing), then membership (403) (CHT-1785).
+    project = await visible_project(current_user, project_id)
 
     # Check if user is a member of the project's team
     team_service = TeamService()
@@ -220,31 +223,21 @@ async def list_team_agents(
     identity must still resolve.
     """
     # Verify user has access to the team
-    team_service = TeamService()
-    team = await team_service.get_by_id(team_id)
-    if not team:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Team not found",
-        )
-
-    # Use check_user_team_access which handles both regular members
-    # and agent users (CHT-732)
-    if not await check_user_team_access(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    # Team directory: members and agents of the team at either scope,
+    # project-scoped agents included (CHT-732, CHT-1780); anyone else gets
+    # the missing team's 404 (CHT-1785).
+    await visible_team(current_user, team_id)
 
     agent_service = AgentService()
     agents = await agent_service.list_by_team(team_id)
     last_used = await agent_service.session_last_used(agents)
 
     admin = await _is_team_admin(current_user, team_id)
+    directory = await MentionDirectory.for_team(team_id)
     responses = [
         agent_response(
             agent, show_ref=await sees_external_ref(current_user, agent, admin=admin),
-            last_used_at=last_used.get(agent.id),
+            last_used_at=last_used.get(agent.id), mention_handle=directory.handle_for(agent.id),
         )
         for agent in agents
     ]
@@ -258,25 +251,13 @@ async def get_agent(
     current_user: CurrentUser,
 ):
     """Get an agent by ID."""
-    agent_service = AgentService()
-    agent = await agent_service.get_by_id(agent_id)
-
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent not found",
-        )
-
-    # Use check_user_team_access which handles both regular members
-    # and agent users (CHT-732)
-    if not await check_user_team_access(current_user, agent.agent_team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to view this agent",
-        )
+    # Team directory, as for the list above (CHT-732, CHT-1780); outside
+    # it, the missing agent's 404 (CHT-1785).
+    agent = await visible_agent(current_user, agent_id)
 
     return agent_response(
         agent, show_ref=await sees_external_ref(current_user, agent), last_used_at=await _last_used(agent),
+        mention_handle=await _mention_handle(agent),
     )
 
 
@@ -296,13 +277,8 @@ async def update_agent(
     if agent_in.can_register is not None:
         check_not_app_session(principal)
     agent_service = AgentService()
-    agent = await agent_service.get_by_id(agent_id)
-
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent not found",
-        )
+    # Visible (else 404, as if missing), then manageable (403) (CHT-1785).
+    agent = await visible_agent(current_user, agent_id)
 
     if not await can_manage_agent(current_user, agent):
         raise HTTPException(
@@ -344,13 +320,8 @@ async def create_agent_key(
 ):
     """Mint a new API key for an existing agent. The key is only shown once."""
     agent_service = AgentService()
-    agent = await agent_service.get_by_id(agent_id)
-
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent not found",
-        )
+    # Visible (else 404, as if missing), then manageable (403) (CHT-1785).
+    agent = await visible_agent(current_user, agent_id)
 
     if not await can_manage_agent(current_user, agent):
         raise HTTPException(
@@ -393,13 +364,8 @@ async def list_agent_keys(
     for itself (CHT-1508). Same authorization as minting one. Revoke one
     with DELETE /api-keys/{id}."""
     agent_service = AgentService()
-    agent = await agent_service.get_by_id(agent_id)
-
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent not found",
-        )
+    # Visible (else 404, as if missing), then manageable (403) (CHT-1785).
+    agent = await visible_agent(current_user, agent_id)
 
     if not await can_manage_agent(current_user, agent):
         raise HTTPException(
@@ -463,13 +429,8 @@ async def reactivate_agent(
 async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> AgentResponse:
     action = "reactivate" if active else "deactivate"
     agent_service = AgentService()
-    agent = await agent_service.get_by_id(agent_id)
-
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent not found",
-        )
+    # Visible (else 404, as if missing), then manageable (403) (CHT-1785).
+    agent = await visible_agent(current_user, agent_id)
 
     if not await can_manage_agent(current_user, agent):
         raise HTTPException(
@@ -505,13 +466,8 @@ async def delete_agent(
     """Delete an agent and its API keys. Refused (409) when the agent
     authored anything (CHT-1427)."""
     agent_service = AgentService()
-    agent = await agent_service.get_by_id(agent_id)
-
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent not found",
-        )
+    # Visible (else 404, as if missing), then manageable (403) (CHT-1785).
+    agent = await visible_agent(current_user, agent_id)
 
     if not await can_manage_agent(current_user, agent):
         raise HTTPException(
@@ -556,7 +512,10 @@ async def register_agent(
     if not reg.created:
         response.status_code = status.HTTP_200_OK
     return AgentRegistered(
-        agent=agent_response(reg.agent, last_used_at=await _last_used(reg.agent)),
+        agent=agent_response(
+            reg.agent, last_used_at=await _last_used(reg.agent),
+            mention_handle=await _mention_handle(reg.agent),
+        ),
         created=reg.created,
         api_key=reg.full_key,
         api_key_id=reg.api_key.id,

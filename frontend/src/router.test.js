@@ -335,6 +335,39 @@ describe('router', () => {
             expect(setCurrentView).not.toHaveBeenCalled();
         });
 
+        // CHT-1752: the page HTML marks Dashboard active; a directly loaded
+        // detail page must point the sidebar at its own section instead.
+        it.each([
+            ['/issue/CHT-1', 'issues'],
+            ['/issues/CHT-1', 'issues'],
+            ['/epic/CHT-2', 'epics'],
+            ['/sprint/s-1', 'sprints'],
+            ['/document/d-1', 'documents'],
+            ['/projects/p-1/settings', 'projects'],
+        ])('highlights the parent section for a directly loaded %s', (path, section) => {
+            document.body.insertAdjacentHTML('beforeend', `
+                <a class="nav-item" data-view="epics"></a>
+                <a class="nav-item" data-view="sprints"></a>
+                <a class="nav-item" data-view="documents"></a>
+                <a class="nav-item" data-view="projects"></a>
+            `);
+            document.querySelector('[data-view="my-issues"]').classList.add('active');
+            configureRouter({ detailRoute: vi.fn(() => true) });
+            window.location.pathname = path;
+            handleRoute();
+            const active = [...document.querySelectorAll('.nav-item.active')].map(n => n.dataset.view);
+            expect(active).toEqual([section]);
+        });
+
+        it('leaves the nav alone for a detail route with no known section', () => {
+            document.querySelector('[data-view="board"]').classList.add('active');
+            configureRouter({ detailRoute: vi.fn(() => true) });
+            window.location.pathname = '/mystery/x';
+            handleRoute();
+            const active = [...document.querySelectorAll('.nav-item.active')].map(n => n.dataset.view);
+            expect(active).toEqual(['board']);
+        });
+
         it('falls through to standard routing when detailRoute returns false', () => {
             const detailRoute = vi.fn(() => false);
             configureRouter({ detailRoute });

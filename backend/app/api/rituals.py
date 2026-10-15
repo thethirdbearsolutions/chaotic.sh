@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.idempotency import IdempotentRoute, idempotent
-from app.api.deps import CurrentUser, check_user_project_access
+from app.api.deps import CurrentUser
+from app.api.visibility import (
+    visible_issue, visible_project, visible_ritual, visible_ritual_group,
+)
 from app.schemas.ritual import (
     _coerce_enum,
     RitualCreate,
@@ -29,13 +32,11 @@ from app.schemas.ritual import (
     RitualRejectionResponse,
 )
 from app.oxyde_models.ritual import OxydeRitualRejection
-from app.services.issue_service import IssueService
 from app.services.ritual_service import (
     NothingToRejectError,
     RitualAlreadyResolvedError,
     RitualService,
 )
-from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
 from app.enums import ApprovalMode, RitualTrigger, ActivityType
@@ -108,16 +109,10 @@ async def create_ritual(
     Not directly routed here (CHT-1223): canonical route is the
     path-nested ``POST /projects/{project_id}/rituals`` in nested.py.
     """
-    project_service = ProjectService()
     team_service = TeamService()
     ritual_service = RitualService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    project = await visible_project(current_user, project_id)
 
     if not await team_service.is_team_admin(project.team_id, current_user.id):
         raise HTTPException(
@@ -148,21 +143,9 @@ async def list_rituals(
     Not directly routed here (CHT-1223): canonical route is the
     path-nested ``GET /projects/{project_id}/rituals`` in nested.py.
     """
-    project_service = ProjectService()
     ritual_service = RitualService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    await visible_project(current_user, project_id)
 
     rituals = await ritual_service.list_by_project(project_id, include_inactive=include_inactive)
     return [RitualResponse.model_validate(r) for r in rituals[skip:skip + limit]]
@@ -177,21 +160,9 @@ async def list_attestation_history(
     limit: int = 50,
 ):
     """List attestation history for a project."""
-    project_service = ProjectService()
     ritual_service = RitualService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    await visible_project(current_user, project_id)
 
     rows = await ritual_service.list_attestation_history(project_id, skip, limit)
 
@@ -248,21 +219,9 @@ async def get_limbo_status(
     current_user: CurrentUser,
 ) -> LimboStatusResponse:
     """Check if project is in limbo and get pending rituals."""
-    project_service = ProjectService()
     ritual_service = RitualService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    await visible_project(current_user, project_id)
 
     in_limbo, limbo_sprint, pending = await ritual_service.check_limbo(project_id)
 
@@ -327,21 +286,9 @@ async def get_issues_with_pending_gates(
     current_user: CurrentUser,
 ):
     """Get all issues with pending GATE rituals."""
-    project_service = ProjectService()
     ritual_service = RitualService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    await visible_project(current_user, project_id)
 
     issues = await ritual_service.get_issues_with_pending_gates(project_id)
     return [PendingGateIssueResponse(**issue) for issue in issues]
@@ -354,21 +301,9 @@ async def get_issues_with_pending_approvals(
     current_user: CurrentUser,
 ):
     """Get all issues with pending approvals (GATE + REVIEW rituals)."""
-    project_service = ProjectService()
     ritual_service = RitualService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    await visible_project(current_user, project_id)
 
     issues = await ritual_service.get_issues_with_pending_approvals(project_id)
     return [PendingApprovalIssueResponse(**issue) for issue in issues]
@@ -381,17 +316,11 @@ async def force_clear_limbo(
     current_user: CurrentUser,
 ):
     """Force-clear limbo without completing rituals (admin only)."""
-    project_service = ProjectService()
     team_service = TeamService()
     ritual_service = RitualService()
     sprint_service = SprintService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    project = await visible_project(current_user, project_id)
 
     is_admin = await team_service.is_team_admin(project.team_id, current_user.id)
     if not is_admin:
@@ -428,23 +357,10 @@ async def force_clear_ticket_limbo(
         OxydeTicketLimbo, OxydeTicketLimboBlocker,
     )
 
-    issue_service = IssueService()
     team_service = TeamService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project_service = ProjectService()
-    project = await project_service.get_by_id(issue.project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    # Visible (else 404, as if missing), then admin (403) (CHT-1785).
+    issue, project = await visible_issue(current_user, issue_id)
 
     is_admin = await team_service.is_team_admin(project.team_id, current_user.id)
     if not is_admin:
@@ -539,29 +455,9 @@ async def get_pending_ticket_rituals(
     current_user: CurrentUser,
 ) -> TicketRitualsStatusResponse:
     """Get pending ticket-level rituals (both close and claim) for an issue."""
-    issue_service = IssueService()
-    project_service = ProjectService()
     ritual_service = RitualService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, issue.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     close_rituals = await ritual_service.get_pending_ticket_rituals(issue.project_id, issue_id)
     claim_rituals = await ritual_service.get_pending_claim_rituals(issue.project_id, issue_id)
@@ -611,35 +507,10 @@ async def attest_ritual_for_issue(
 ) -> RitualAttestationResponse:
     """Attest to a ticket-close ritual for an issue."""
     ritual_service = RitualService()
-    issue_service = IssueService()
-    project_service = ProjectService()
 
-    ritual = await ritual_service.get_by_id(ritual_id)
-    if not ritual:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual not found",
-        )
-
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, issue.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    # Each answers like a missing row when the caller cannot see it (CHT-1785).
+    ritual, _ritual_project = await visible_ritual(current_user, ritual_id)
+    issue, project = await visible_issue(current_user, issue_id)
 
     if ritual.project_id != issue.project_id:
         raise HTTPException(
@@ -699,30 +570,12 @@ async def complete_gate_ritual_for_issue(
 ) -> RitualAttestationResponse:
     """Complete a GATE mode ticket-close ritual (human-only)."""
     ritual_service = RitualService()
-    issue_service = IssueService()
-    project_service = ProjectService()
     team_service = TeamService()
 
-    ritual = await ritual_service.get_by_id(ritual_id)
-    if not ritual:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual not found",
-        )
-
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    # Visible first, each answering like a missing row when the caller
+    # cannot see it; then the admin rule, a 403 (CHT-1785).
+    ritual, _ritual_project = await visible_ritual(current_user, ritual_id)
+    issue, project = await visible_issue(current_user, issue_id)
 
     if not await team_service.is_team_admin(project.team_id, current_user.id):
         raise HTTPException(
@@ -786,31 +639,12 @@ async def _human_ritual_decider(ritual_id: str, issue_id: str, current_user, ver
     never drift apart: the ritual, issue and project exist, the caller is
     a team admin and a human, and the ritual is a ticket-level ritual of
     the issue's project. Returns (ritual, issue, project)."""
-    ritual_service = RitualService()
-    issue_service = IssueService()
-    project_service = ProjectService()
     team_service = TeamService()
 
-    ritual = await ritual_service.get_by_id(ritual_id)
-    if not ritual:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual not found",
-        )
-
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    # Visible first, each answering like a missing row when the caller
+    # cannot see it; then the admin rule, a 403 (CHT-1785).
+    ritual, _ritual_project = await visible_ritual(current_user, ritual_id)
+    issue, project = await visible_issue(current_user, issue_id)
 
     if not await team_service.is_team_admin(project.team_id, current_user.id):
         raise HTTPException(
@@ -992,16 +826,10 @@ async def create_ritual_group(
     current_user: CurrentUser,
 ):
     """Create a new ritual group for a project."""
-    project_service = ProjectService()
     team_service = TeamService()
     ritual_service = RitualService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    project = await visible_project(current_user, project_id)
 
     if not await team_service.is_team_admin(project.team_id, current_user.id):
         raise HTTPException(
@@ -1028,21 +856,9 @@ async def list_ritual_groups(
     limit: int = 1000,
 ):
     """List ritual groups for a project."""
-    project_service = ProjectService()
     ritual_service = RitualService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    await visible_project(current_user, project_id)
 
     groups = await ritual_service.list_groups_by_project(project_id)
     return [_group_response(g) for g in groups[skip:skip + limit]]
@@ -1055,28 +871,8 @@ async def get_ritual_group(
     current_user: CurrentUser,
 ):
     """Get a ritual group by ID."""
-    ritual_service = RitualService()
-    project_service = ProjectService()
 
-    group = await ritual_service.get_group_by_id(group_id)
-    if not group:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual group not found",
-        )
-
-    project = await project_service.get_by_id(group.project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, group.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    group, project = await visible_ritual_group(current_user, group_id)
 
     return _group_response(group)
 
@@ -1090,22 +886,10 @@ async def update_ritual_group(
 ):
     """Update a ritual group."""
     ritual_service = RitualService()
-    project_service = ProjectService()
     team_service = TeamService()
 
-    group = await ritual_service.get_group_by_id(group_id)
-    if not group:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual group not found",
-        )
-
-    project = await project_service.get_by_id(group.project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    # Visible (else 404, as if missing), then admin (403) (CHT-1785).
+    group, project = await visible_ritual_group(current_user, group_id)
 
     if not await team_service.is_team_admin(project.team_id, current_user.id):
         raise HTTPException(
@@ -1125,22 +909,10 @@ async def delete_ritual_group(
 ):
     """Delete a ritual group."""
     ritual_service = RitualService()
-    project_service = ProjectService()
     team_service = TeamService()
 
-    group = await ritual_service.get_group_by_id(group_id)
-    if not group:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual group not found",
-        )
-
-    project = await project_service.get_by_id(group.project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    # Visible (else 404, as if missing), then admin (403) (CHT-1785).
+    group, project = await visible_ritual_group(current_user, group_id)
 
     if not await team_service.is_team_admin(project.team_id, current_user.id):
         raise HTTPException(
@@ -1163,28 +935,8 @@ async def get_ritual(
     current_user: CurrentUser,
 ):
     """Get ritual by ID."""
-    ritual_service = RitualService()
-    project_service = ProjectService()
 
-    ritual = await ritual_service.get_by_id(ritual_id)
-    if not ritual:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual not found",
-        )
-
-    project = await project_service.get_by_id(ritual.project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, ritual.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    ritual, project = await visible_ritual(current_user, ritual_id)
 
     return ritual
 
@@ -1198,22 +950,10 @@ async def update_ritual(
 ):
     """Update a ritual."""
     ritual_service = RitualService()
-    project_service = ProjectService()
     team_service = TeamService()
 
-    ritual = await ritual_service.get_by_id(ritual_id, include_inactive=True)
-    if not ritual:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual not found",
-        )
-
-    project = await project_service.get_by_id(ritual.project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    # Visible (else 404, as if missing), then admin (403) (CHT-1785).
+    ritual, project = await visible_ritual(current_user, ritual_id, include_inactive=True)
 
     if not await team_service.is_team_admin(project.team_id, current_user.id):
         raise HTTPException(
@@ -1239,22 +979,10 @@ async def delete_ritual(
 ):
     """Delete a ritual."""
     ritual_service = RitualService()
-    project_service = ProjectService()
     team_service = TeamService()
 
-    ritual = await ritual_service.get_by_id(ritual_id)
-    if not ritual:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual not found",
-        )
-
-    project = await project_service.get_by_id(ritual.project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    # Visible (else 404, as if missing), then admin (403) (CHT-1785).
+    ritual, project = await visible_ritual(current_user, ritual_id)
 
     if not await team_service.is_team_admin(project.team_id, current_user.id):
         raise HTTPException(
@@ -1288,29 +1016,15 @@ async def attest_ritual(
     ``?project_id=`` keep working unchanged.
     """
     ritual_service = RitualService()
-    project_service = ProjectService()
 
-    ritual = await ritual_service.get_by_id(ritual_id)
-    if not ritual:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual not found",
-        )
+    # Visible first, each answering like a missing row when the caller
+    # cannot see it (CHT-1785).
+    ritual, _ritual_project = await visible_ritual(current_user, ritual_id)
 
     resolved_project_id = project_id if project_id is not None else ritual.project_id
 
-    project = await project_service.get_by_id(resolved_project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    await visible_project(current_user, resolved_project_id)
 
-    if not await check_user_project_access(current_user, resolved_project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
 
     in_limbo, limbo_sprint, _ = await ritual_service.check_limbo(resolved_project_id)
     if not in_limbo or not limbo_sprint:
@@ -1381,24 +1095,15 @@ async def approve_attestation(
     ``?project_id=`` callers keep working unchanged.
     """
     ritual_service = RitualService()
-    project_service = ProjectService()
     team_service = TeamService()
 
-    ritual = await ritual_service.get_by_id(ritual_id)
-    if not ritual:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual not found",
-        )
+    # Visible first, each answering like a missing row when the caller
+    # cannot see it (CHT-1785).
+    ritual, _ritual_project = await visible_ritual(current_user, ritual_id)
 
     resolved_project_id = project_id if project_id is not None else ritual.project_id
 
-    project = await project_service.get_by_id(resolved_project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    project = await visible_project(current_user, resolved_project_id)
 
     if not await team_service.is_team_admin(project.team_id, current_user.id):
         raise HTTPException(
@@ -1457,24 +1162,15 @@ async def complete_gate_ritual(
     ``?project_id=`` callers keep working unchanged.
     """
     ritual_service = RitualService()
-    project_service = ProjectService()
     team_service = TeamService()
 
-    ritual = await ritual_service.get_by_id(ritual_id)
-    if not ritual:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ritual not found",
-        )
+    # Visible first, each answering like a missing row when the caller
+    # cannot see it (CHT-1785).
+    ritual, _ritual_project = await visible_ritual(current_user, ritual_id)
 
     resolved_project_id = project_id if project_id is not None else ritual.project_id
 
-    project = await project_service.get_by_id(resolved_project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    project = await visible_project(current_user, resolved_project_id)
 
     if not await team_service.is_team_admin(project.team_id, current_user.id):
         raise HTTPException(

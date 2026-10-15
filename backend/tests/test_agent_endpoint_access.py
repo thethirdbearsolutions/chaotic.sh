@@ -55,7 +55,7 @@ class TestAgentGetTeam:
             f"/api/teams/{other_team.id}", headers=agent_headers
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -104,7 +104,7 @@ class TestAgentListTeamAgents:
             f"/api/teams/{other_team.id}/agents", headers=agent_headers
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -159,7 +159,7 @@ class TestAgentGetAgent:
             f"/api/agents/{other_agent.id}", headers=agent_headers
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -290,4 +290,4 @@ class TestProjectScopedAgent:
             f"/api/teams/{other_team.id}", headers=headers
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 404

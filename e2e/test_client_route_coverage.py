@@ -70,6 +70,10 @@ ROUTES_NOT_FOR_THE_CLIENT = {
     # Inbox sync (CHT-1607): the native app's offline cache. The CLI reads
     # the inbox live (`GET /api/inbox`) and keeps no cache to sync.
     ("GET", "/api/inbox/sync"): "inbox cursor sync: the native app's offline cache",
+    # Invitation landing page (CHT-1265): the public preview the emailed
+    # /invite/<token> link shows before sign-in. The CLI accepts a token
+    # directly (`chaotic team accept`) and has nothing to preview.
+    ("GET", "/api/teams/invitations/{token}"): "invitation preview: the /invite/<token> page (frontend)",
 }
 
 # Routes that exist server-side but have no Client method yet. Empty since
@@ -89,6 +93,7 @@ PARAMS_NOT_EXPOSED = {
 # once more with these overrides so every branch is exercised.
 EXTRA_INVOCATIONS = {
     "get_ready_issues": [{"project_id": None, "team_id": "sentinel"}],
+    "query_issues": [{"project_id": None, "team_id": "sentinel"}],
 }
 
 

@@ -179,6 +179,55 @@ too. An in-process per-IP counter behind a proxy would see one IP for
 everyone; a per-key-prefix counter would let an attacker lock a real key
 out with wrong guesses.
 
+## Team invitations and email verification
+
+Signup takes any email address on trust. An invitation names an address
+and is accepted with the token in its link, by a signed-in account with
+that address. So without some proof of the address, anyone holding a
+leaked invitation link, while the invited person has no account yet,
+could sign up as that address, accept, and join the team (CHT-1790).
+
+**With SMTP configured** (`SMTP_HOST` set), the invitation link is
+emailed, and accepting also requires the account to have verified its
+address: `POST /api/auth/email-verification` mails a six-digit code to
+the account's address and `POST /api/auth/email-verification/confirm`
+checks it (the CLI's `chaotic auth verify-email` does both). An
+unverified account gets a 403 with `error_code: "email_unverified"`
+from the accept, checked after the invitation is found to be valid and
+before its address is compared, so it gets the same answer whether its
+address matches or not and the refusal cannot be used to guess the
+invited address. Codes last 15 minutes, allow five tries, and only the
+newest one sent works. The limits count per address (an HMAC of it,
+ASCII-folded: only A-Z are lowercased, by `fold_email` in
+`backend/app/utils/email_address.py`, to match SQLite's case-insensitive
+comparison), not per account, so deleting the account and signing up
+again resets nothing: one code a minute and five an hour (429 with
+`Retry-After` past that), and at most 15 failed confirmations a day,
+after which every code, the right one included, gets the same 400 as a
+wrong one until the day has passed, and no new code is mailed (429
+with `Retry-After` for when the cap lapses). That history is kept for
+a day, also after the account is deleted. Because the limits are per
+address, an address is one account whatever its case: signup refuses
+an address that differs from an existing one only in case (ASCII
+letters), login accepts any case, and an invitation matches its
+account ignoring case. The database does not enforce this (there is no
+unique index on the case-folded address), and accounts made before this
+check that differ only in case keep working, sharing one set of limits. Only HMACs of the codes and the
+addresses are stored, under a key derived from `SECRET_KEY`. A failed
+send is reported to the person (502 `email_send_failed`) rather than
+only logged. At startup the server logs whether this gate is active
+("Invitation email-verification gate: ACTIVE" or "INACTIVE"). Accounts that
+existed before this change start unverified; existing team members are
+not affected, only accepting a new invitation is.
+
+**Without SMTP**, nothing can verify an address (the request answers 409
+`email_verification_unavailable`) and accepting works as before: the
+admin hands the invitation link over by hand, and the link is the
+credential. Treat it like a password: send it over a channel only the
+invitee reads, and revoke an invitation that may have leaked
+(`DELETE /api/teams/{team_id}/invitations/{id}`). If you run a
+multi-user server where that is not good enough, configure SMTP.
+
 ## Hardening, in priority order
 
 1. **Keep the default: bind to loopback, put a TLS-terminating reverse
@@ -440,18 +489,42 @@ One client is neither: the **Chaotic Android app** is built into the
 server (CHT-1602, `backend/app/oauth/builtin.py`). Its `client_id`,
 `builtin:sh.chaotic.android`, is not a URL, so nothing is fetched for it
 and no outbound access is needed; its redirect,
-`sh.chaotic.android:/oauth2redirect`, comes from the code, not from
+`https://chaotic.sh/app/oauth2redirect`, comes from the code, not from
 anything stored or published. The same metadata is published at
 `https://chaotic.sh/oauth/android-client.json` for reference only; the
 server never reads it.
 
-Residual risk: that redirect is a private-use URI scheme, which any
-Android app on the same phone can also register. A malicious app could
-start the sign-in itself and, if the person approves the page, receive a
-session acting as them. The consent page does not claim the request
-comes from the official app, and tells the person to continue only if
-they just started signing in from it. Moving to a verified https
-redirect (Android App Links) closes this and is planned before release.
+That redirect is an Android App Link (CHT-1649). Once chaotic.sh's
+`/.well-known/assetlinks.json` names the app's release signing key,
+Android hands the redirect only to the app signed with that key. Another
+app on the phone can still start a sign-in with the app's `client_id`,
+but the code then goes to the real Chaotic app, which did not start it
+and drops it. The redirect is the same for every server, so a
+self-hosted one needs nothing on its own domain. No other client may
+register a redirect under `https://chaotic.sh/app/` or on the app's
+`sh.chaotic.android:` scheme; the app's earlier private-use redirect,
+`sh.chaotic.android:/oauth2redirect`, which any app could claim, is
+refused.
+
+Residual risk: that protection exists only once `assetlinks.json` carries
+the release key's fingerprint and the website is deployed (it ships
+empty until the key exists; the release script refuses to publish an
+app release before the live file names the key), and only on phones
+that verified the link when the app was installed. Without verification,
+Android 12 and newer open the redirect in the browser, on a chaotic.sh
+page that explains what happened and passes the code to nothing; Android
+10 and 11 offer a chooser listing every app that declares the same link,
+where an app that started the sign-in itself could be picked and receive
+a session acting as the person. So the consent page still tells the
+person to continue only if they just started signing in from the app.
+
+What reaches chaotic.sh: nothing, when the link is verified on the
+phone. When it is not, the browser loads the redirect page on chaotic.sh,
+and the website host's request logs record its address: a one-time
+authorization code (useless without the app's PKCE verifier, and
+expiring within minutes), `state`, and `iss`, which is your server's
+`APP_BASE_URL`. Returning the response in the URL fragment instead,
+which never reaches a server, is a follow-up (CHT-1737).
 
 An admin can disable the app by setting `is_active` to false on its
 `oauth_clients` row. That blocks new sign-ins and refreshes at once, but

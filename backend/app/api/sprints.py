@@ -1,11 +1,11 @@
 """Sprint API routes."""
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, check_user_project_access
+from app.api.deps import CurrentUser
+from app.api.visibility import visible_project, visible_sprint
 from app.schemas.sprint import SprintCreate, SprintUpdate, SprintResponse
 from app.schemas.budget_transaction import BudgetTransactionResponse
 from app.services.sprint_service import SprintNotPlannedError, SprintService
-from app.services.project_service import ProjectService
 from app.enums import SprintStatus
 from app.oxyde_models.issue import OxydeBudgetTransaction
 from app.websocket import broadcast_sprint_event
@@ -26,21 +26,9 @@ async def list_sprints(
     Not directly routed here (CHT-1223): canonical route is the
     path-nested ``GET /projects/{project_id}/sprints`` in nested.py.
     """
-    project_service = ProjectService()
     sprint_service = SprintService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    await visible_project(current_user, project_id)
 
     sprints = await sprint_service.list_by_project(project_id, skip, limit, sprint_status)
     return [SprintResponse.model_validate(sprint) for sprint in sprints]
@@ -62,21 +50,9 @@ async def create_sprint(
     Not directly routed here (CHT-1223): canonical route is the
     path-nested ``POST /projects/{project_id}/sprints`` in nested.py.
     """
-    project_service = ProjectService()
     sprint_service = SprintService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    project = await visible_project(current_user, project_id)
 
     # CHT-1225: this endpoint is a get-or-create no-op (see docstring), so
     # ensure_sprints_exist() runs unconditionally on every call -- broadcast
@@ -101,20 +77,8 @@ async def get_current_sprint(
 ) -> SprintResponse:
     """Get the current (active) sprint for a project, creating if needed."""
     sprint_service = SprintService()
-    project_service = ProjectService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    if not await check_user_project_access(current_user, project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    await visible_project(current_user, project_id)
 
     current, _ = await sprint_service.ensure_sprints_exist(project_id)
     return SprintResponse.model_validate(current)
@@ -124,22 +88,8 @@ async def get_current_sprint(
 @reads
 async def get_sprint(sprint_id: str, current_user: CurrentUser) -> SprintResponse:
     """Get sprint by ID."""
-    sprint_service = SprintService()
-    project_service = ProjectService()
 
-    sprint = await sprint_service.get_by_id(sprint_id)
-    if not sprint:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sprint not found",
-        )
-
-    project = await project_service.get_by_id(sprint.project_id)
-    if not await check_user_project_access(current_user, sprint.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    sprint, project = await visible_sprint(current_user, sprint_id)
 
     return SprintResponse.model_validate(sprint)
 
@@ -153,21 +103,8 @@ async def update_sprint(
 ) -> SprintResponse:
     """Update a sprint."""
     sprint_service = SprintService()
-    project_service = ProjectService()
 
-    sprint = await sprint_service.get_by_id(sprint_id)
-    if not sprint:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sprint not found",
-        )
-
-    project = await project_service.get_by_id(sprint.project_id)
-    if not await check_user_project_access(current_user, sprint.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    sprint, project = await visible_sprint(current_user, sprint_id)
 
     # Only a planned sprint follows the project default (CHT-1495): an
     # active or closed sprint's budget changes only by hand (CHT-1701).
@@ -204,21 +141,8 @@ async def close_sprint(sprint_id: str, current_user: CurrentUser) -> SprintRespo
     If no pending sprint rituals, immediately rotates to next sprint.
     """
     sprint_service = SprintService()
-    project_service = ProjectService()
 
-    sprint = await sprint_service.get_by_id(sprint_id)
-    if not sprint:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sprint not found",
-        )
-
-    project = await project_service.get_by_id(sprint.project_id)
-    if not await check_user_project_access(current_user, sprint.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    sprint, project = await visible_sprint(current_user, sprint_id)
 
     if sprint.status != SprintStatus.ACTIVE:
         raise HTTPException(
@@ -251,22 +175,8 @@ async def list_transactions(
     Returns the audit trail of effort spent against this sprint.
     Transactions are created when issues are marked as done.
     """
-    sprint_service = SprintService()
-    project_service = ProjectService()
 
-    sprint = await sprint_service.get_by_id(sprint_id)
-    if not sprint:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sprint not found",
-        )
-
-    project = await project_service.get_by_id(sprint.project_id)
-    if not await check_user_project_access(current_user, sprint.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    sprint, project = await visible_sprint(current_user, sprint_id)
 
     transactions = await OxydeBudgetTransaction.objects.filter(
         sprint_id=sprint_id

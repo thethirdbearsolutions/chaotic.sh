@@ -19,6 +19,12 @@ class OxydeUser(Model):
     is_superuser: bool = Field(default=False)
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # When the person proved they receive mail at `email` by entering a
+    # code sent there (CHT-1790, migration 0032). NULL: never verified,
+    # which every account made before 0032 starts as. With SMTP
+    # configured, accepting a team invitation requires it. Always NULL
+    # for an agent.
+    email_verified_at: DateTimeUTC | None = Field(default=None)
 
     # Agent-specific fields
     is_agent: bool = Field(default=False)

@@ -237,7 +237,7 @@ class TestRitualGroupErrors:
             f"/api/rituals/groups/{group.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_update_ritual_group_project_not_found(
         self, client, auth_headers, db
@@ -298,7 +298,7 @@ class TestRitualCRUDErrors:
             f"/api/rituals/{sprint_ritual.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_update_ritual_project_not_found(
         self, client, auth_headers, db

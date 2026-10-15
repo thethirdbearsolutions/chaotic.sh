@@ -228,6 +228,8 @@ def register(cli):
             f"[green]{esc(verb)} session identity '{escape(identity['name'])}' ({esc(identity['id'][:8])}).[/green]"
         )
         console.print(f"Key expires: {escape(str(result.get('expires_at') or 'never'))}")
+        if identity.get("mention_handle"):
+            console.print(f"Mention it as: @{escape(identity['mention_handle'])}")
         console.print()
         console.print("[bold yellow]API Key (save this - it won't be shown again!):[/bold yellow]")
         console.print(f"[cyan]{esc(result['api_key'])}[/cyan]")
@@ -283,6 +285,11 @@ def register(cli):
                 name_markup = f"{name_markup} [dim](idle)[/dim]"
             if nested:
                 name_markup = f"  └ {name_markup}"
+            if a.get("mention_handle"):
+                # The @handle that reaches exactly this agent (CHT-1731),
+                # under its name: the table has no width for a column.
+                handle_markup = f"[dim]@{esc(a['mention_handle'])}[/dim]"
+                name_markup = f"{name_markup}\n    {handle_markup}" if nested else f"{name_markup}\n{handle_markup}"
             created_by = a.get("parent_user_name", "Unknown")
             created_at = a["created_at"][:10]
             table.add_row(agent_id, markup(name_markup), scope, kind, created_by, created_at)

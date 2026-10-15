@@ -115,11 +115,14 @@ def register(cli):
             return
         table = Table(title="Team Members")
         table.add_column("Name")
+        # The @handle that reaches exactly this member (CHT-1731).
+        table.add_column("Handle")
         table.add_column("Email")
         table.add_column("Role")
 
         for member in members:
-            table.add_row(member.get("user_name", "Unknown"), member.get("user_email", ""), member["role"])
+            handle = f"@{member['mention_handle']}" if member.get("mention_handle") else ""
+            table.add_row(member.get("user_name", "Unknown"), handle, member.get("user_email", ""), member["role"])
 
         console.print(table)
 
@@ -136,11 +139,29 @@ def register(cli):
 
     @team.command("accept-invite")
     @click.argument("token")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def team_accept_invite(token):
         """Accept a team invitation."""
-        _client().accept_invitation(token)
+        m = _main()
+        try:
+            member = _client().accept_invitation(token)
+        except m.APIError as e:
+            # CHT-1790: with SMTP configured the server requires a verified
+            # address; say how to get one instead of the bare refusal.
+            detail = getattr(e, "detail", None)
+            if not (isinstance(detail, dict) and detail.get("error_code") == "email_unverified"):
+                raise
+            hint = "Verify your email address first: run `chaotic auth verify-email`, then accept again."
+            if m.is_json_output():
+                m.output_json({"error": str(e), "error_code": "email_unverified", "hint": hint})
+            else:
+                console.print(f"[yellow]{esc(hint)}[/yellow]")
+            raise SystemExit(1)
+        if m.is_json_output():
+            m.output_json(member)
+            return
         console.print(f"[green]Joined team successfully![/green]")
 
     @team.command("remove-member")

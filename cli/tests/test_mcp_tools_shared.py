@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import pathlib
 import re
 
@@ -75,6 +76,7 @@ class FakeBackend:
              "recipient_user_id": "u-agent"},
         ]
         self.list_result: list = []
+        self.query_total = 0
 
     def _rec(self, name, *args, **kwargs):
         self.calls.append((name, args, kwargs))
@@ -87,6 +89,10 @@ class FakeBackend:
     # scope
     async def resolve_team(self, team):
         self._rec("resolve_team", team)
+        return "team-1"
+
+    async def resolve_member_team(self, team):
+        self._rec("resolve_member_team", team)
         return "team-1"
 
     async def resolve_project(self, project, team):
@@ -137,6 +143,14 @@ class FakeBackend:
     async def list_ready_issues(self, **kw):
         self._rec("list_ready_issues", **kw)
         return list(self.list_result)
+
+    async def query_issues(self, **kw):
+        self._rec("query_issues", **kw)
+        return {
+            "issues": list(self.list_result), "total": self.query_total,
+            "where": kw["where"], "order": kw["order"], "query": {},
+            "skip": 0, "limit": kw["limit"],
+        }
 
     async def create_issue(self, project_id, **fields):
         self._rec("create_issue", project_id, **fields)
@@ -408,13 +422,13 @@ async def test_team_kwarg_is_dropped_when_not_advertised(fake):
     tools = _tools(fake)
     result = await tools["label_list"](team="ignored")
     assert result == {"labels": fake.labels}
-    assert fake.calls_to("resolve_team") == [((None,), {})]
+    assert fake.calls_to("resolve_member_team") == [((None,), {})]
 
 
 async def test_team_kwarg_is_forwarded_when_advertised():
     fake = FakeBackend(team_param=True)
     await _tools(fake)["label_list"](team="t-explicit")
-    assert fake.calls_to("resolve_team") == [(("t-explicit",), {})]
+    assert fake.calls_to("resolve_member_team") == [(("t-explicit",), {})]
 
 
 async def test_positional_calls_work(fake):
@@ -591,6 +605,53 @@ class TestIssueListBody:
         fake.list_result = [dict(fake.issues["CHT-1"])]
         result = await _tools(fake)["issue_list"](detail=True)
         assert result["issues"] == [fake.issues["CHT-1"]]
+
+
+class TestIssueListWhere:
+    """`where` (CHT-1718) runs the query endpoint instead of the list."""
+
+    async def test_where_alone(self, fake):
+        fake.list_result = [dict(fake.issues["CHT-1"])]
+        fake.query_total = 1
+        result = await _tools(fake)["issue_list"](where="status=todo or assignee=me")
+        assert fake.calls_to("list_issues") == []
+        (_, kwargs), = fake.calls_to("query_issues")
+        assert kwargs["where"] == "status=todo or assignee=me"
+        assert kwargs["filter_json"] is None
+        assert kwargs["order"] == "-updated"
+        assert kwargs["project_id"] == "proj-1" and kwargs["team_id"] is None
+        assert result["count"] == 1 and result["truncated"] is False
+        assert result["total"] == 1 and result["where"] == "status=todo or assignee=me"
+        assert set(result["issues"][0]) == set(RESPONSE_SHAPES["compact_issue_fields"])
+
+    async def test_plain_filters_become_anded_rows(self, fake):
+        await _tools(fake)["issue_list"](
+            where="type=bug", status=["todo"], priority=["high", "urgent"], assignee="me",
+            label="ux", search="login", sort_by="priority", order="asc",
+        )
+        (_, kwargs), = fake.calls_to("query_issues")
+        assert json.loads(kwargs["filter_json"]) == {"match": "all", "rows": [
+            {"field": "status", "op": "is", "values": ["todo"]},
+            {"field": "priority", "op": "is", "values": ["high", "urgent"]},
+            {"field": "assignee", "op": "is", "values": ["user-me"]},
+            {"field": "label", "op": "is", "values": ["ux"]},
+            {"field": "text", "op": "contains", "values": ["login"]},
+        ]}
+        assert kwargs["order"] == "priority"
+
+    async def test_truncated_comes_from_total(self, fake):
+        fake.list_result = [dict(fake.issues["CHT-1"])] * 2
+        fake.query_total = 7
+        result = await _tools(fake)["issue_list"](where="type=bug", limit=2, all_projects=True)
+        (_, kwargs), = fake.calls_to("query_issues")
+        assert kwargs["project_id"] is None and kwargs["team_id"] == "team-1"
+        assert kwargs["limit"] == 2
+        assert result["truncated"] is True and result["total"] == 7
+
+    async def test_blank_where_is_the_plain_list(self, fake):
+        await _tools(fake)["issue_list"](where="  ")
+        assert fake.calls_to("query_issues") == []
+        assert len(fake.calls_to("list_issues")) == 1
 
 
 class TestIssueViewBody:
@@ -852,12 +913,12 @@ class TestInboxTools:
         }
         assert "body" not in result["entries"][0]
         assert fake.calls_to("list_inbox") == [((None,), {"unread": False, "limit": 21})]
-        assert fake.calls_to("resolve_team") == []
+        assert fake.calls_to("resolve_member_team") == []
 
     async def test_explicit_team_is_resolved(self):
         fake = FakeBackend(team_param=True)
         await _tools(fake)["inbox_list"](team="team-1")
-        assert fake.calls_to("resolve_team") == [(("team-1",), {})]
+        assert fake.calls_to("resolve_member_team") == [(("team-1",), {})]
         assert fake.calls_to("list_inbox") == [(("team-1",), {"unread": False, "limit": 21})]
         assert (await _tools(fake)["inbox_mark_all_read"](team="team-1"))["marked_count"] == 1
         assert fake.calls_to("mark_all_inbox_read")[-1] == (("team-1",), {})

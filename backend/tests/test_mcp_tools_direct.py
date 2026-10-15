@@ -69,6 +69,26 @@ class TestIssueListBranches:
         result = await tools.issue_list(sprint="current")
         assert "error" not in result
 
+    async def test_where_query(self, test_project, test_user):
+        """`where` (CHT-1718) runs the query endpoint in process, ANDed
+        with the plain filters; a bad query is a structured error."""
+        bug = await tools.issue_create(title="Login bug", issue_type="bug", priority="high")
+        await tools.issue_create(title="Chore", issue_type="chore")
+        await tools.issue_update(bug["identifier"], assignee="me")
+
+        result = await tools.issue_list(where="type=bug or title~=nothing", priority=["high"])
+        assert "error" not in result, result
+        assert [i["identifier"] for i in result["issues"]] == [bug["identifier"]]
+        assert result["total"] == 1 and result["truncated"] is False
+        assert result["where"] == "(type=bug or title~=nothing) priority=high"
+        assert result["issues"][0]["status"] == "backlog"  # wire form
+
+        team_wide = await tools.issue_list(where="assignee=me", all_projects=True, limit=1)
+        assert [i["identifier"] for i in team_wide["issues"]] == [bug["identifier"]]
+
+        bad = await tools.issue_list(where="bogus=1")
+        assert "unknown field 'bogus'" in bad["error"]["message"]
+
     async def test_bad_issue_type_reports_error(self, test_project):
         result = await tools.issue_create(title="Bad type", issue_type="not-a-real-type")
         assert "error" in result
@@ -280,6 +300,12 @@ class TestIssueCommentAssignTo:
         assert result["content"] == "hi"
         updated = await tools.issue_view(test_issue.identifier)
         assert updated["assignee_id"] == test_user.id
+        assert "warnings" not in result
+
+    async def test_comment_reports_an_unreached_mention(self, test_issue, test_user):
+        """CHT-1735: in process, as over HTTP."""
+        result = await tools.issue_comment(test_issue.identifier, content="@nobody look")
+        assert result["warnings"] == ["@nobody matches nobody who can be mentioned here; nobody was notified."]
 
 
 class TestIssueReady:
@@ -1732,28 +1758,35 @@ class TestProjectList:
         finally:
             context.current_mcp_principal.reset(token)
 
-    async def test_project_scoped_agent_has_no_team_wide_access(self, db, test_project):
-        # project_list is team-wide; a purely project-scoped agent has no
-        # team-wide access via REST either, so resolve_team refuses it with
-        # a clean {"error": ...}, never a crash (mirrors activity_recent).
+    @pytest.mark.parametrize("with_team_id", [False, True])
+    async def test_project_scoped_agent_sees_only_its_project(self, db, test_team, test_project, with_team_id):
+        # project_list is the team's directory: a project-scoped agent gets
+        # its team's list confined to its own project, so a key or name
+        # resolves; its sibling projects stay invisible (CHT-1780). Before,
+        # one created without agent_team_id was refused outright and one
+        # with it (the shape agent_service creates) saw every project.
+        from app.oxyde_models.project import OxydeProject
         from app.oxyde_models.user import OxydeUser
         from app.utils.security import get_password_hash
 
+        sibling = await OxydeProject.objects.create(name="Sibling", key="SIBL", team_id=test_team.id)
         agent = await OxydeUser.objects.create(
             email="project-agent-projlist@example.com",
             hashed_password=get_password_hash("x"),
             name="Project Agent",
             is_agent=True,
             agent_project_id=test_project.id,
+            agent_team_id=test_team.id if with_team_id else None,
         )
         token = context.current_mcp_principal.set(api_key_principal(agent))
         try:
             result = await tools.project_list()
-            assert "error" in result
-            assert "scoped to a single project" in result["error"]["message"]
-            # A scope-resolution failure is caller-fixable input, never a
-            # server bug (PR #271 review, finding 1).
-            assert result["error"]["error_code"] == "tool_input"
+            assert "error" not in result, result
+            assert [p["id"] for p in result["projects"]] == [test_project.id]
+            assert sibling.id not in {p["id"] for p in result["projects"]}
+            assert "error" not in await tools.project_list(team=test_team.key)
+            other = await tools.project_list(team="no-such-team")
+            assert other["error"]["error_code"] == "tool_input"
         finally:
             context.current_mcp_principal.reset(token)
 
@@ -1794,9 +1827,9 @@ class TestIssueTypeAliases:
 
 
 class TestTeamIdForProjectHelper:
-    async def test_missing_project_errors(self):
+    async def test_missing_project_errors(self, test_user):
         with pytest.raises(tools.ToolContextError, match="Project not found"):
-            await tools._team_id_for_project("no-such-project-id")
+            await tools._team_id_for_project(test_user, "no-such-project-id")
 
 
 class TestResolveDocumentIdAgentBranches:

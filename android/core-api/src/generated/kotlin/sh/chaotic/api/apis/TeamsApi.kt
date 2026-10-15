@@ -24,6 +24,7 @@
 package sh.chaotic.api.apis
 
 import sh.chaotic.api.models.HTTPValidationError
+import sh.chaotic.api.models.InvitationPreviewResponse
 import sh.chaotic.api.models.TeamCreate
 import sh.chaotic.api.models.TeamInvitationCreate
 import sh.chaotic.api.models.TeamInvitationResponse
@@ -51,7 +52,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * POST /api/teams/invitations/{token}/accept
         * Accept Invitation
-        * Accept a team invitation.
+        * Accept a team invitation.  An unknown, expired, accepted, declined or revoked invitation gets the preview&#39;s one 404, checked before the email match, so whatever account asks, the answer does not tell those states apart (CHT-1265 review F10). Before CHT-1788 a used token could be accepted again and added a second membership row.
          * @param token  
          * @return TeamMemberResponse
         */
@@ -350,6 +351,40 @@ import io.ktor.http.ParametersBuilder
             query = localVariableQuery,
             headers = localVariableHeaders,
             requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * GET /api/teams/invitations/{token}
+        * Preview Invitation
+        * The public preview the /invite/&lt;token&gt; page shows (CHT-1265).  Unauthenticated: the emailed link is opened before anyone signs in. It tells the token&#39;s holder only what the page needs (team name, role, inviter, a masked address, expiry), and answers an unknown, expired, accepted, declined or revoked token with the same 404, so a lookup cannot tell them apart.  Threat model: the token is a bearer credential, not only a pointer to an inbox. Signup does not verify email ownership. With SMTP configured, accepting requires a verified address (CHT-1790), so a leaked token alone is not enough; without SMTP nothing can verify one, and while the invited address has no account, anyone holding the token can sign up as that address and accept. Keep it out of every log, Referer and history entry: it is redacted from the request log (app.log_redaction), and the /invite/ page is served no-referrer and moves it out of the address bar on load.  Not rate limited here, on purpose (CHT-1369): rate limiting is the reverse proxy&#39;s job, and an in-process per-address counter behind a proxy would see one address for everyone, so one client could lock every invitee out. The token&#39;s 256 random bits are what make guessing hopeless.
+         * @param token  
+         * @return InvitationPreviewResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun previewInvitationApiTeamsInvitationsTokenGet(token: kotlin.String): HttpResponse<InvitationPreviewResponse> {
+
+            val localVariableAuthNames = listOf<String>()
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/api/teams/invitations/{token}".replace("{" + "token" + "}", "$token"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = false,
             )
 
             return request(

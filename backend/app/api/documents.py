@@ -1,7 +1,13 @@
 """Document API routes."""
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, check_user_team_access, check_user_project_access
+from app.api.deps import (
+    CurrentUser, accessible_project_ids, check_user_project_access,
+    check_user_team_access,
+)
+from app.api.visibility import (
+    can_see_label, can_see_project, not_found, visible_document, visible_issue, visible_sprint,
+)
 from app.api.issues import ensure_utc, issues_to_responses
 from app.schemas.document import (
     DocumentCreate,
@@ -9,6 +15,7 @@ from app.schemas.document import (
     DocumentResponse,
     DocumentCommentCreate,
     DocumentCommentUpdate,
+    DocumentCommentCreated,
     DocumentCommentResponse,
     DocumentLinkedResponse,
     DocumentRevisionListItem,
@@ -21,7 +28,6 @@ from app.services.principals import fill_principals
 from app.websocket import broadcast_comment_event, broadcast_document_event
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
-from app.services.issue_service import IssueService
 from app.services.project_service import ProjectService
 
 router = APIRouter()
@@ -65,6 +71,16 @@ def build_document_response(doc, author_name: str | None = None) -> DocumentResp
     )
 
 
+async def _visible_sprint_or_400(current_user, sprint_id: str):
+    """A sprint named in a document body: missing, or in a project the
+    caller cannot see, is the same 400 (CHT-1785)."""
+    sprint = await SprintService().get_by_id(sprint_id)
+    project = await ProjectService().get_by_id(sprint.project_id) if sprint else None
+    if not await can_see_project(current_user, project):
+        raise not_found("Sprint not found", status.HTTP_400_BAD_REQUEST)
+    return sprint
+
+
 @writes
 async def create_document(
     team_id: str,
@@ -79,9 +95,8 @@ async def create_document(
     document_service = DocumentService()
 
     # Authorize at the project level when the doc is project-scoped, so a
-    # project-scoped agent (agent_project_id set, agent_team_id None) can create
-    # docs in its own project — check_user_team_access only matches agent_team_id
-    # and would always reject such agents (CHT-1273).
+    # project-scoped agent can create docs in its own project —
+    # check_user_team_access always rejects such agents (CHT-1273, CHT-1780).
     #
     # check_user_project_access's agent branch matches agent_project_id==project_id
     # with NO relation to team_id, and project_id is a request-body field, so we
@@ -89,16 +104,17 @@ async def create_document(
     # agent could POST to any other team T2 with its own project_id and land a doc
     # in T2 (CHT-1273 review CRITICAL). Mirror create_issue, which derives the
     # team from the fetched project rather than trusting an independent path+body.
+    #
+    # A project the caller cannot see answers like a missing one
+    # (CHT-1785), so its project access is part of the same 400.
     if document_in.project_id:
         project = await ProjectService().get_by_id(document_in.project_id)
-        if not project or project.team_id != team_id:
+        if not project or project.team_id != team_id or not await can_see_project(current_user, project):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Project not found in this team",
             )
-        authorized = await check_user_project_access(
-            current_user, document_in.project_id, team_id,
-        )
+        authorized = True
     else:
         authorized = await check_user_team_access(current_user, team_id)
     if not authorized:
@@ -116,13 +132,7 @@ async def create_document(
 
     # Validate sprint belongs to document's project
     if document_in.sprint_id:
-        sprint_service = SprintService()
-        sprint = await sprint_service.get_by_id(document_in.sprint_id)
-        if not sprint:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Sprint not found",
-            )
+        sprint = await _visible_sprint_or_400(current_user, document_in.sprint_id)
         if document_in.project_id and sprint.project_id != document_in.project_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -154,34 +164,27 @@ async def list_documents(
     limit = min(limit, 10000)
     document_service = DocumentService()
 
-    if not await check_user_team_access(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
-
-    # Check project access if filtering by project
+    # A project filter is the project-confined path: project access is
+    # enough (list_filtered also pins team_id, so a project of another
+    # team lists nothing). Without one the listing is team-wide, which a
+    # project-scoped agent may not read (CHT-1780). A sprint filter alone
+    # does not confine: a team-level document may carry any sprint.
     if project_id:
         if not await check_user_project_access(current_user, project_id, team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this project",
             )
+    elif not await check_user_team_access(current_user, team_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this team",
+        )
 
     # Check sprint access if filtering by sprint
+    # (a sprint the caller cannot see answers like a missing one, CHT-1785)
     if sprint_id:
-        sprint_service = SprintService()
-        sprint = await sprint_service.get_by_id(sprint_id)
-        if not sprint:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Sprint not found",
-            )
-        if not await check_user_project_access(current_user, sprint.project_id, team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this sprint",
-            )
+        await visible_sprint(current_user, sprint_id)
 
     documents = await document_service.list_filtered(
         team_id=team_id,
@@ -199,28 +202,9 @@ async def list_documents(
 @reads
 async def get_document(document_id: str, current_user: CurrentUser) -> DocumentResponse:
     """Get document by ID."""
-    document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    # For documents with a project, check project access; otherwise team access
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not a member of this team",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not a member of this team",
-            )
+    # A document the caller cannot see answers like a missing one (CHT-1785).
+    document = await visible_document(current_user, document_id)
 
     return await fill_principals(build_document_response(document))
 
@@ -235,47 +219,41 @@ async def update_document(
     """Update a document."""
     document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
+    # A document the caller cannot see answers like a missing one (CHT-1785).
+    document = await visible_document(current_user, document_id)
 
-    # For documents with a project, check project access; otherwise team access
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not a member of this team",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not a member of this team",
-            )
-
-    # Check access to target project if moving document to a different project
-    if document_in.project_id is not None and document_in.project_id != document.project_id:
-        if document_in.project_id:  # Moving to a specific project (not making global)
-            if not await check_user_project_access(current_user, document_in.project_id, document.team_id):
+    # Check access to the target if moving the document (CHT-1780). An
+    # explicit null -- what the CLI and MCP send for "make it team-level"
+    # -- or "" makes the document team-level, which needs team access: a
+    # project-scoped agent could otherwise publish its project's document
+    # to the whole team. "" is normalised to null; it used to reach the
+    # foreign key and fail as a 500. A project must be in the document's
+    # team.
+    if "project_id" in document_in.model_fields_set:
+        if document_in.project_id == "":
+            document_in.project_id = None
+        if document_in.project_id != document.project_id:
+            if document_in.project_id:
+                # One the caller cannot see answers like a missing one
+                # (CHT-1785).
+                target = await ProjectService().get_by_id(document_in.project_id)
+                if not target or target.team_id != document.team_id \
+                        or not await can_see_project(current_user, target):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Project not found in this team",
+                    )
+            elif not await check_user_team_access(current_user, document.team_id):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Not authorized for target project",
+                    detail="Not authorized to make this document team-level",
                 )
 
     # Validate sprint belongs to document's project
     target_sprint_id = document_in.sprint_id if document_in.sprint_id is not None else document.sprint_id
     target_project_id = document_in.project_id if document_in.project_id is not None else document.project_id
     if target_sprint_id:
-        sprint_service = SprintService()
-        sprint = await sprint_service.get_by_id(target_sprint_id)
-        if not sprint:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Sprint not found",
-            )
+        sprint = await _visible_sprint_or_400(current_user, target_sprint_id)
         if target_project_id and sprint.project_id != target_project_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -295,20 +273,10 @@ async def delete_document(document_id: str, current_user: CurrentUser):
     document_service = DocumentService()
     team_service = TeamService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    # Verify user is a member of the document's team
-    has_access = await check_user_team_access(current_user, document.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    # Same access rule as reading it: project access for a project's
+    # document, team access for a team-level one (CHT-1780). Out of scope
+    # answers like missing (CHT-1785); the author/admin rule below is a 403.
+    document = await visible_document(current_user, document_id)
 
     # Only author or team admin can delete
     is_admin = await team_service.is_team_admin(document.team_id, current_user.id)
@@ -330,28 +298,14 @@ async def get_document_issues(document_id: str, current_user: CurrentUser) -> li
     """Get issues linked to a document."""
     document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
+    # A document the caller cannot see answers like a missing one (CHT-1785).
+    await visible_document(current_user, document_id)
 
-    # Check access to document
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not a member of this team",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not a member of this team",
-            )
-
-    issues = await document_service.get_linked_issues(document_id)
+    # A link does not grant access: only issues in projects this caller
+    # can read (CHT-1780).
+    linked = await document_service.get_linked_issues(document_id)
+    allowed = await accessible_project_ids(current_user, [i.project_id for i in linked])
+    issues = [i for i in linked if i.project_id in allowed]
     # Through the shared builder (CHT-1371): a hand-rolled IssueResponse
     # here had already drifted (no lease_expires_at) and missed the
     # resolved companions.
@@ -365,48 +319,16 @@ async def link_document_to_issue(
 ) -> DocumentLinkedResponse:
     """Link a document to an issue."""
     document_service = DocumentService()
-    issue_service = IssueService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    # Check access to document
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-
-    # Check access to issue (must be on same team via project)
-    project_service = ProjectService()
-    issue_project = await project_service.get_by_id(issue.project_id)
-    if not issue_project or issue_project.team_id != document.team_id:
+    # Both must be visible to the caller, each answering like a missing
+    # row when it is not (CHT-1785). Both visible but in different teams
+    # (a person in both) stays a 403.
+    document = await visible_document(current_user, document_id)
+    issue, issue_project = await visible_issue(current_user, issue_id)
+    if issue_project.team_id != document.team_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Document and issue must be in the same team",
-        )
-    if not await check_user_project_access(current_user, issue.project_id, issue_project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized for this issue",
         )
 
     try:
@@ -423,48 +345,16 @@ async def unlink_document_from_issue(
 ) -> None:
     """Unlink a document from an issue."""
     document_service = DocumentService()
-    issue_service = IssueService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    # Check access to document
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-
-    # Check access to issue (must be on same team via project)
-    project_service = ProjectService()
-    issue_project = await project_service.get_by_id(issue.project_id)
-    if not issue_project or issue_project.team_id != document.team_id:
+    # Both must be visible to the caller, each answering like a missing
+    # row when it is not (CHT-1785). Both visible but in different teams
+    # (a person in both) stays a 403.
+    document = await visible_document(current_user, document_id)
+    issue, issue_project = await visible_issue(current_user, issue_id)
+    if issue_project.team_id != document.team_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Document and issue must be in the same team",
-        )
-    if not await check_user_project_access(current_user, issue.project_id, issue_project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized for this issue",
         )
 
     await document_service.unlink_issue(document_id, issue_id)
@@ -479,28 +369,9 @@ async def unlink_document_from_issue(
 @reads
 async def get_document_labels(document_id: str, current_user: CurrentUser):
     """Get labels for a document."""
-    document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    # Check access to document
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not a member of this team",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not a member of this team",
-            )
+    # A document the caller cannot see answers like a missing one (CHT-1785).
+    document = await visible_document(current_user, document_id)
 
     return [
         LabelResponse(
@@ -523,33 +394,12 @@ async def add_label_to_document(
     """Add a label to a document."""
     document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
+    # Each answers like a missing row when the caller cannot see it
+    # (CHT-1785): the document by its read rule, the label by its team.
+    document = await visible_document(current_user, document_id)
     label = await document_service.get_label_by_id(label_id)
-    if not label:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Label not found",
-        )
-
-    # Check access to document
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
+    if not await can_see_label(current_user, label):
+        raise not_found("Label not found")
 
     # Check that label belongs to the same team as the document
     if label.team_id != document.team_id:
@@ -570,26 +420,8 @@ async def remove_label_from_document(
     """Remove a label from a document."""
     document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    # Check access to document
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
+    # A document the caller cannot see answers like a missing one (CHT-1785).
+    await visible_document(current_user, document_id)
 
     await document_service.remove_label(document_id, label_id)
 
@@ -597,22 +429,6 @@ async def remove_label_from_document(
 # ============================================================================
 # Document Revisions
 # ============================================================================
-
-
-async def _check_document_access(document, current_user) -> None:
-    """403 unless current_user can access this document (project- or team-scoped)."""
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
 
 
 def _revision_author_name(rev) -> str | None:
@@ -632,14 +448,7 @@ async def list_document_revisions(
     limit = min(limit, 10000)
     document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    await _check_document_access(document, current_user)
+    await visible_document(current_user, document_id)
 
     revisions = await document_service.list_revisions(document_id, skip, limit)
     return await fill_principals([
@@ -666,14 +475,7 @@ async def get_document_revision(
     """Get a single revision snapshot by version number."""
     document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    await _check_document_access(document, current_user)
+    await visible_document(current_user, document_id)
 
     rev = await document_service.get_revision(document_id, version)
     if not rev:
@@ -712,42 +514,30 @@ def build_comment_response(comment, author_name: str | None = None) -> DocumentC
     )
 
 
-@router.post("/{document_id}/comments", response_model=DocumentCommentResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/{document_id}/comments", response_model=DocumentCommentCreated, status_code=status.HTTP_201_CREATED)
 @writes
 async def create_comment(
     document_id: str,
     comment_in: DocumentCommentCreate,
     current_user: CurrentUser,
-):
-    """Create a comment on a document."""
+) -> DocumentCommentCreated:
+    """Create a comment on a document. `warnings` names each @handle that
+    reached nobody (CHT-1735)."""
     document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
+    # A document the caller cannot see answers like a missing one (CHT-1785).
+    document = await visible_document(current_user, document_id)
 
-    # Check document access
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
+    warnings: list[str] = []
+    comment = await document_service.create_comment(document_id, comment_in, current_user.id, warnings=warnings)
+    response = await fill_principals(DocumentCommentCreated(
+        **build_comment_response(comment, author_name=current_user.name).model_dump(), warnings=warnings,
+    ))
 
-    comment = await document_service.create_comment(document_id, comment_in, current_user.id)
-    response = await fill_principals(build_comment_response(comment, author_name=current_user.name))
-
-    # Broadcast real-time update
-    await broadcast_comment_event(document.team_id, "created", response.model_dump(mode="json"))
+    # Broadcast real-time update (the warnings are the author's alone)
+    await broadcast_comment_event(
+        document.team_id, "created", response.model_dump(mode="json", exclude={"warnings"}),
+    )
 
     return response
 
@@ -763,26 +553,8 @@ async def list_comments(
     """List comments for a document."""
     document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    # Check document access
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
+    # A document the caller cannot see answers like a missing one (CHT-1785).
+    await visible_document(current_user, document_id)
 
     comments = await document_service.list_comments(document_id, skip, limit)
     return await fill_principals([build_comment_response(comment) for comment in comments])
@@ -799,26 +571,8 @@ async def update_comment(
     """Update a comment."""
     document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    # Check document access
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
+    # A document the caller cannot see answers like a missing one (CHT-1785).
+    document = await visible_document(current_user, document_id)
 
     comment = await document_service.get_comment_by_id(comment_id)
     if not comment or comment.document_id != document_id:
@@ -853,26 +607,8 @@ async def delete_comment(
     """Delete a comment."""
     document_service = DocumentService()
 
-    document = await document_service.get_by_id(document_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    # Check document access
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
+    # A document the caller cannot see answers like a missing one (CHT-1785).
+    document = await visible_document(current_user, document_id)
 
     comment = await document_service.get_comment_by_id(comment_id)
     if not comment or comment.document_id != document_id:

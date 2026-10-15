@@ -103,6 +103,9 @@ def _users(path: str) -> dict[str, dict]:
 
 
 NEW = {"kind", "external_ref", "registered_by_id", "can_register"}
+# Added to users by later migrations on the way to head, unrelated to
+# 0023: email_verified_at (0032, CHT-1790), never backfilled.
+LATER = {"email_verified_at"}
 
 
 def _indexes_and_fks(path: str):
@@ -130,7 +133,8 @@ def test_agents_become_assistants_and_nothing_else_changes(at_before):
     assert new_indexes <= set(indexes_after)
     assert set(after) == set(before) == set(USERS)
     for user_id, row in after.items():
-        assert {k: v for k, v in row.items() if k not in NEW} == before[user_id], user_id
+        assert {k: v for k, v in row.items() if k not in NEW | LATER} == before[user_id], user_id
+        assert row["email_verified_at"] is None, user_id
         assert row["kind"] == ("ASSISTANT" if USERS[user_id][0] else None), user_id
         assert row["external_ref"] is None and row["registered_by_id"] is None
         assert row["can_register"] == 0

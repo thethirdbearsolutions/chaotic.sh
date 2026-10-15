@@ -85,7 +85,7 @@ class TestDeactivateAgent:
 
         assert response.status_code == 403
 
-    async def test_admin_of_another_team_gets_403(
+    async def test_admin_of_another_team_gets_404(
         self, client, auth_headers2, test_user, test_user2, test_team, test_project,
     ):
         agent, key, _ = await _agent_with_work(test_user, test_team, test_project)
@@ -94,7 +94,7 @@ class TestDeactivateAgent:
 
         response = await client.post(f"/api/agents/{agent.id}/deactivate", headers=auth_headers2)
 
-        assert response.status_code == 403
+        assert response.status_code == 404
         await _assert_untouched(agent, key, client)
 
     async def test_non_admin_member_gets_403(
@@ -286,7 +286,7 @@ class TestReactivateAgent:
         assert response.status_code == 200 and response.json()["is_active"] is True
         await _assert_untouched(agent, key, client)
 
-    async def test_admin_of_another_team_gets_403(
+    async def test_admin_of_another_team_gets_404(
         self, client, auth_headers, auth_headers2, test_user, test_user2, test_team, test_project,
     ):
         agent, _, _ = await _agent_with_work(test_user, test_team, test_project)
@@ -296,7 +296,7 @@ class TestReactivateAgent:
 
         response = await client.post(f"/api/agents/{agent.id}/reactivate", headers=auth_headers2)
 
-        assert response.status_code == 403
+        assert response.status_code == 404
         assert (await AgentService().get_by_id(agent.id)).is_active is False
 
     async def test_non_admin_member_gets_403(

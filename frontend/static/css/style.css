@@ -899,9 +899,55 @@ textarea {
 
 /* View header controls */
 .view-header-controls {
+    flex: 1 1 auto;
+    min-width: 0;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 0.75rem;
+}
+
+/* Documents toolbar (CHT-1757): the search box had no flex basis and
+   shrank to a sliver, and the buttons wrapped their own labels. Give the
+   search a real width, keep button labels on one line, and let the row
+   wrap instead of squeezing. */
+.view-header-controls .search-box {
+    flex: 0 1 240px;
+    min-width: 200px;
+    max-width: none;
+}
+
+/* The global `select { width: 100% }` would give each select its own
+   line once the row can wrap */
+.view-header-controls .filter-select {
+    width: auto;
+}
+
+.view-header-controls .btn,
+.view-header-controls .view-toggle {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+    .view-header-controls {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 0.5rem;
+    }
+
+    /* Search gets its own row; the two selects share the next one */
+    .view-header-controls .search-box {
+        flex: 1 1 100%;
+        min-width: 0;
+    }
+
+    .view-header-controls .filter-select {
+        flex: 1 1 140px;
+        min-width: 0;
+        max-width: none;
+    }
 }
 
 /* Filter select styling */
@@ -1159,6 +1205,13 @@ textarea {
     font-size: var(--font-sm);
 }
 
+/* An agent among the suggestions (CHT-1731). */
+.mention-kind {
+    color: var(--text-muted);
+    font-size: var(--font-xs);
+    margin-left: 4px;
+}
+
 /* ============================================================================
    10. DOCUMENTS
    ============================================================================ */
@@ -1225,6 +1278,20 @@ textarea {
 
 .document-content.markdown-body li {
     margin-bottom: 0.25em;
+}
+
+/* GFM task lists ("- [ ] item"): marked keeps the list bullet, so the item
+   showed a bullet and a checkbox. Drop the bullet and space the box from the
+   text, in every rendered-markdown container (CHT-1753). */
+.markdown-body li:has(> input[type="checkbox"]:first-child) {
+    list-style: none;
+}
+
+/* Same :has() guard, so a browser without it keeps bullet + box side by side
+   rather than pulling the box onto the bullet. */
+.markdown-body li:has(> input[type="checkbox"]:first-child) > input[type="checkbox"]:first-child {
+    margin: 0 0.5em 0 -1.4em;
+    vertical-align: middle;
 }
 
 .document-content.markdown-body code {
@@ -2306,6 +2373,11 @@ select:focus-visible {
     flex: 1;
 }
 
+/* One line per @mention warning (CHT-1743) */
+.toast-multiline .toast-message {
+    white-space: pre-line;
+}
+
 .toast-close {
     flex-shrink: 0;
     background: none;
@@ -3233,6 +3305,16 @@ input[type="checkbox"] {
 
 .dropdown-option span {
     flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* The shortcut hint is a span too: without this it took half the row as a
+   long grey bar and squeezed the label onto two lines (CHT-1751). */
+.dropdown-option .dropdown-shortcut {
+    flex: 0 0 auto;
 }
 
 .dropdown-shortcut {
@@ -4919,6 +5001,14 @@ input[type="checkbox"] {
         padding: 16px;
     }
 
+    .create-issue-toolbar {
+        padding: 0 16px 12px;
+    }
+
+    .create-issue-more {
+        padding: 0 16px;
+    }
+
     .create-issue-title-input {
         font-size: var(--font-xl);
     }
@@ -4957,8 +5047,35 @@ input[type="checkbox"] {
         gap: 4px;
     }
 
+    /* Two-line issue rows (CHT-1748). On one line the sprint badge, estimate
+       and avatar kept their width and the title shrank to nothing, so a row
+       read "HRB-18 BUG D Dock Lights". Line 1 is now the icons, id, type and
+       a title of up to two lines; line 2 is the meta, under the identifier. */
+    .issue-row-left {
+        flex: 1 1 100%;
+        min-height: 0;
+        padding-top: 10px;
+    }
+
+    .issue-row .issue-identifier {
+        min-width: 0;
+    }
+
+    .issue-row .issue-title {
+        white-space: normal;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        line-height: 1.35;
+    }
+
     .issue-row-right {
+        flex: 1 1 100%;
+        justify-content: flex-start;
         gap: 2px;
+        /* priority + status buttons (2 x 24px) and the 8px gaps after them */
+        padding: 0 0 8px 56px;
     }
 }
 
@@ -5108,15 +5225,16 @@ input[type="checkbox"] {
     border-color: var(--accent-color);
 }
 
+/* The property chips sit right under the description, always visible
+   (CHT-1770); they used to be a band inside the collapsed "More options"
+   panel. */
 .create-issue-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 8px;
-    padding: 12px 20px;
-    border-top: 1px solid var(--border-color);
-    background: var(--bg-secondary);
+    padding: 0 20px 16px;
 }
 
 .toolbar-buttons {
@@ -5184,17 +5302,35 @@ input[type="checkbox"] {
     transform: rotate(180deg);
 }
 
+/* Template and due date: the only fields still behind the disclosure */
+.create-issue-more {
+    padding: 0 20px;
+    border-top: 1px solid var(--border-color);
+}
+
+.create-issue-more .more-options-toggle {
+    margin-top: 0;
+}
+
+.create-issue-more .create-issue-options-content {
+    padding: 0 0 12px;
+}
+
 /* Collapsible options panel */
 .create-issue-options {
     overflow: hidden;
-    transition: max-height 0.25s ease, opacity 0.2s ease;
+    transition: max-height 0.25s ease, opacity 0.2s ease, visibility 0.25s;
     max-height: 500px;
     opacity: 1;
+    visibility: visible;
 }
 
+/* visibility: hidden also takes the collapsed fields out of the Tab order
+   (CHT-1770 review L3) */
 .create-issue-options.collapsed {
     max-height: 0;
     opacity: 0;
+    visibility: hidden;
 }
 
 .create-issue-options-content {
@@ -6441,10 +6577,13 @@ input[type="checkbox"] {
 }
 
 /* Agent list in settings */
+/* Wraps so the action buttons drop to their own line when the row is narrow,
+   instead of crushing the avatar and the meta text (CHT-1749). */
 .agent-item {
     display: flex;
     align-items: center;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
     padding: 12px 16px;
     border-bottom: 1px solid var(--border-color);
 }
@@ -6453,8 +6592,13 @@ input[type="checkbox"] {
     border-bottom: none;
 }
 
+.agent-item > .agent-avatar {
+    flex-shrink: 0;
+}
+
 .agent-info {
-    flex: 1;
+    flex: 1 1 220px;
+    min-width: 0;
 }
 
 .agent-name {
@@ -6466,7 +6610,9 @@ input[type="checkbox"] {
     font-size: var(--font-sm);
     color: var(--text-tertiary);
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
     margin-top: 2px;
 }
 
@@ -6474,6 +6620,7 @@ input[type="checkbox"] {
     background: var(--bg-tertiary);
     padding: 2px 6px;
     border-radius: var(--radius-sm);
+    white-space: nowrap;
 }
 
 /* Agent badge for activity feeds */
@@ -7330,6 +7477,30 @@ input[type="checkbox"] {
     letter-spacing: 0.5px;
 }
 
+/* Secondary line under a stat (CHT-1762) */
+.stat-note {
+    margin-top: 4px;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+/* The budget tile jumps to the ledger below it (CHT-1762) */
+button.stat-card-link {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    width: 100%;
+    transition: border-color 0.15s ease;
+}
+
+button.stat-card-link:hover {
+    border-color: var(--accent-color);
+}
+
+button.stat-card-link:hover .stat-note {
+    color: var(--accent-color);
+}
+
 .sprint-detail-sections {
     padding: 24px;
 }
@@ -8043,6 +8214,69 @@ input[type="checkbox"] {
     font-variant-numeric: tabular-nums;
 }
 
+/* Epic detail page: progress bar and sub-issue rows. epic-detail-view.js
+   rendered these classes with no styles at all, so the bar had no height and
+   the status/assignee came out as 16px body text (CHT-1750). */
+.epic-detail-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 480px;
+}
+
+.epic-detail-progress-bar {
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.epic-detail-progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: #3b82f6;
+    transition: width 0.3s ease;
+}
+
+.epic-detail-progress-fill.epic-progress-complete {
+    background: #22c55e;
+}
+
+.epic-detail-progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.sub-issue-item .sub-issue-title {
+    min-width: 0;
+}
+
+.sub-issue-status-badge {
+    flex-shrink: 0;
+    font-size: var(--font-sm);
+    white-space: nowrap;
+}
+
+.sub-issue-assignee {
+    flex-shrink: 0;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+    /* The status icon already leads the row; keep the title readable. */
+    .sub-issue-assignee {
+        display: none;
+    }
+}
+
 .epic-estimate {
     font-size: var(--font-base);
     color: var(--text-secondary);
@@ -8463,6 +8697,41 @@ input[type="checkbox"] {
 .oauth-disabled { color: var(--text-muted); }
 .oauth-actions { display: flex; justify-content: flex-end; gap: var(--space-md); }
 
+/* Invitation landing page, /invite/<token> (CHT-1265) */
+#invite-screen {
+    min-height: 100vh;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+.invite-page {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 48px var(--space-xl);
+}
+.invite-page h1 { font-size: var(--font-xl); margin-bottom: var(--space-lg); }
+.invite-page .invite-team { font-size: 2rem; margin: var(--space-sm) 0; word-break: break-word; }
+.invite-lead { color: var(--text-secondary); }
+.invite-muted { color: var(--text-muted); font-size: var(--font-sm); }
+.invite-warning { color: var(--warning-color); }
+.invite-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-md);
+    margin-top: var(--space-xl);
+}
+.invite-actions a.btn { text-decoration: none; }
+.invite-verify { margin-top: var(--space-lg); }
+.invite-code-form { margin-top: var(--space-md); }
+.invite-code-form input { letter-spacing: 0.3em; font-variant-numeric: tabular-nums; max-width: 12ch; }
+.invite-auth-notice {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--space-md) var(--space-lg);
+    margin-bottom: var(--space-lg);
+    color: var(--text-secondary);
+}
+
 /* CHT-1606: a rejected gate/review and the reason it was sent back */
 .badge-inbox-gate_rejected {
     background: #5f1e1e;
@@ -8479,4 +8748,48 @@ input[type="checkbox"] {
     border-radius: var(--radius-sm);
     border-left: 3px solid var(--error-color);
     line-height: 1.5;
+}
+
+/* CHT-1755 review M1: a search under the Open default says how many closed
+   matches it hides, with a one-click way to show them */
+.search-hidden-closed {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
+.search-hidden-closed.hidden {
+    display: none;
+}
+
+.search-hidden-closed .btn-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent-color);
+    cursor: pointer;
+}
+
+.search-hidden-closed .btn-link:hover {
+    text-decoration: underline;
+}
+
+/* CHT-1771: at phone width the floating create button (.mobile-fab: 56px
+   tall, 24px off the bottom) sat over the last row of every view: list
+   estimates and assignees, Settings' Revoke buttons, an epic's last
+   sub-issue. Leave room to scroll the content clear of it. Kept last so it
+   wins over the shorthand `padding` the 768/640px blocks set. */
+@media (max-width: 768px) {
+    .main-content {
+        padding-bottom: calc(56px + 24px + 16px + env(safe-area-inset-bottom, 0px));
+    }
 }

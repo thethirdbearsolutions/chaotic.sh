@@ -7,6 +7,14 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
+def _api_error(cls, message, status_code, detail):
+    """An APIError as the client raises it; the test double takes no kwargs."""
+    error = cls(message)
+    error.status_code = status_code
+    error.detail = detail
+    return error
+
+
 @pytest.fixture(autouse=True)
 def mock_dependencies(patched_client, patched_auth, patched_project):
     """Mock client, config, and auth before importing main."""
@@ -437,3 +445,178 @@ class TestAuthKeysMarkup:
         assert name in result.output
         assert "[/red]@x.test" in result.output
         assert f"(parent: {name})" in result.output
+
+
+class TestAuthVerifyEmail:
+    """auth verify-email (CHT-1790)."""
+
+    def test_requests_a_code_then_confirms_the_prompted_one(self, cli_runner):
+        from cli.main import cli, client
+
+        client.request_email_verification = MagicMock(
+            return_value={"email": "alice@test.com", "expires_at": "2026-01-01T00:15:00Z"})
+        client.confirm_email_verification = MagicMock(
+            return_value={"email": "alice@test.com", "email_verified_at": "2026-01-01T00:01:00Z"})
+
+        with patch('cli.commands.auth._interactive', return_value=True):
+            result = cli_runner.invoke(cli, ['auth', 'verify-email'], input=" 123456 \n")
+
+        assert result.exit_code == 0, result.output
+        assert 'alice@test.com' in result.output
+        assert 'expires at' in result.output
+        assert '15 minutes' not in result.output
+        assert 'verified' in result.output
+        client.request_email_verification.assert_called_once_with()
+        client.confirm_email_verification.assert_called_once_with('123456')
+
+    def test_with_code_confirms_without_requesting(self, cli_runner):
+        from cli.main import cli, client
+
+        client.request_email_verification = MagicMock()
+        client.confirm_email_verification = MagicMock(
+            return_value={"email": "alice@test.com", "email_verified_at": "2026-01-01T00:01:00Z"})
+
+        result = cli_runner.invoke(cli, ['auth', 'verify-email', '--code', '654321'])
+
+        assert result.exit_code == 0, result.output
+        client.request_email_verification.assert_not_called()
+        client.confirm_email_verification.assert_called_once_with('654321')
+
+    def test_rate_limited_suggests_code_option(self, cli_runner):
+        from cli.main import cli, client
+        from cli.main import APIError
+
+        client.request_email_verification = MagicMock(side_effect=_api_error(
+            APIError, "A code was sent less than a minute ago. Wait 42 s before asking for another.", 429,
+            {"error_code": "email_verification_rate_limited", "message": "..."},
+        ))
+        client.confirm_email_verification = MagicMock()
+
+        result = cli_runner.invoke(cli, ['auth', 'verify-email'])
+
+        assert result.exit_code == 1
+        assert 'Wait 42 s' in result.output
+        assert '--code' in result.output
+        client.confirm_email_verification.assert_not_called()
+
+    def test_other_request_errors_are_reported(self, cli_runner):
+        from cli.main import cli, client
+        from cli.main import APIError
+
+        client.request_email_verification = MagicMock(side_effect=_api_error(
+            APIError, "Email verification is unavailable: this server has no SMTP configured, so it cannot send a code.", 409,
+            {"error_code": "email_verification_unavailable", "message": "..."},
+        ))
+
+        result = cli_runner.invoke(cli, ['auth', 'verify-email'])
+
+        assert result.exit_code == 1
+        assert 'no SMTP configured' in result.output
+
+    def test_wrong_code_is_reported(self, cli_runner):
+        from cli.main import cli, client
+        from cli.main import APIError
+
+        client.confirm_email_verification = MagicMock(side_effect=_api_error(
+            APIError, "That code is wrong, has expired or has been used up.", 400,
+            {"error_code": "invalid_verification_code", "message": "..."},
+        ))
+
+        result = cli_runner.invoke(cli, ['auth', 'verify-email', '--code', '000000'])
+
+        assert result.exit_code == 1
+        assert 'code is wrong' in result.output
+
+    @pytest.mark.parametrize("verified, expected", [
+        ("2026-01-01T00:00:00Z", "Email verified: yes"),
+        (None, "Email verified: no"),
+    ])
+    def test_whoami_shows_verification_for_a_human(self, cli_runner, verified, expected):
+        from cli.main import cli, client
+
+        client.get_me = MagicMock(return_value={
+            "id": "u-1", "name": "Alice", "email": "alice@test.com",
+            "is_agent": False, "email_verified_at": verified,
+        })
+
+        result = cli_runner.invoke(cli, ['auth', 'whoami'])
+
+        assert result.exit_code == 0, result.output
+        assert expected in result.output
+
+    def test_not_in_a_terminal_it_requests_and_stops(self, cli_runner):
+        from cli.main import cli, client
+
+        client.request_email_verification = MagicMock(
+            return_value={"email": "alice@test.com", "expires_at": "2026-01-01T00:15:00Z"})
+        client.confirm_email_verification = MagicMock()
+
+        with patch('cli.commands.auth._interactive', return_value=False):
+            result = cli_runner.invoke(cli, ['auth', 'verify-email'])
+
+        assert result.exit_code == 0, result.output
+        assert '--code' in result.output
+        client.confirm_email_verification.assert_not_called()
+
+    def test_json_requests_and_prints_where_and_until_when(self, cli_runner):
+        import json
+        from cli.main import cli, client
+
+        client.request_email_verification = MagicMock(
+            return_value={"email": "alice@test.com", "expires_at": "2026-01-01T00:15:00Z"})
+        client.confirm_email_verification = MagicMock()
+
+        with patch('cli.commands.auth._interactive', return_value=True):
+            result = cli_runner.invoke(cli, ['auth', 'verify-email', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {"email": "alice@test.com", "expires_at": "2026-01-01T00:15:00Z"}
+        client.confirm_email_verification.assert_not_called()
+
+    def test_json_confirm_prints_the_user(self, cli_runner):
+        import json
+        from cli.main import cli, client
+
+        user = {"email": "alice@test.com", "email_verified_at": "2026-01-01T00:01:00Z"}
+        client.confirm_email_verification = MagicMock(return_value=user)
+
+        result = cli_runner.invoke(cli, ['auth', 'verify-email', '--code', '123456', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == user
+
+    def test_json_rate_limited_is_a_json_error(self, cli_runner):
+        import json
+        from cli.main import cli, client, APIError
+
+        client.request_email_verification = MagicMock(side_effect=_api_error(
+            APIError, "Wait 42 s before asking for another.", 429,
+            {"error_code": "email_verification_rate_limited", "message": "..."},
+        ))
+
+        result = cli_runner.invoke(cli, ['auth', 'verify-email', '--json'])
+
+        assert result.exit_code == 1
+        body = json.loads(result.stdout)
+        assert body["error_code"] == "email_verification_rate_limited"
+        assert "--code" in body["hint"]
+
+    def test_json_other_errors_use_the_common_shape(self, cli_runner):
+        import json
+        from cli.main import cli, client, APIError
+
+        client.confirm_email_verification = MagicMock(side_effect=_api_error(
+            APIError, "That code is wrong", 400,
+            {"error_code": "invalid_verification_code", "message": "..."},
+        ))
+
+        result = cli_runner.invoke(cli, ['auth', 'verify-email', '--code', '1', '--json'])
+
+        assert result.exit_code == 1
+        assert json.loads(result.stdout) == {"error": "That code is wrong"}
+
+    def test_local_time_falls_back_to_the_raw_value(self):
+        from cli.commands.auth import _local_time
+
+        assert _local_time("not a time") == "not a time"
+        assert len(_local_time("2026-01-01T00:15:00")) == 5

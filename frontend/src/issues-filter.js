@@ -10,6 +10,7 @@ import { formatStatus, formatPriority, escapeHtml, sanitizeColor } from './utils
 import { getCurrentTeam, getCurrentProject, setCurrentProject } from './state.js';
 import { getIssueFilters, setIssueFilters } from './storage.js';
 import { selectAssigneeFilter } from './assignees.js';
+import { OPEN_STATUSES } from './constants.js';
 
 // ========================================
 // Filter Getter Functions
@@ -65,6 +66,29 @@ export const FILTER_CATEGORIES = [
 
 export const CLOSED_STATUSES = ['done', 'canceled'];
 
+// The issue list opens on the Open preset (CHT-1755): with no `status` in
+// the URL it shows open work only. Choosing every status is a choice too,
+// so it is written as `status=all` and survives a reload or a shared link.
+// `all` matches no checkbox, so restoring it leaves every box unchecked,
+// which is what "no status filter" has always meant here.
+export const DEFAULT_STATUSES = OPEN_STATUSES;
+export const ALL_STATUSES_PARAM = 'all';
+
+function sameStatusSet(selected, preset) {
+    return selected.length === preset.length && preset.every(s => selected.includes(s));
+}
+
+/**
+ * Name the preset a status selection matches: 'open', 'closed', 'all'
+ * (nothing selected), or null for a hand-picked set.
+ */
+export function getStatusPreset(selected = getSelectedStatuses()) {
+    if (selected.length === 0) return 'all';
+    if (sameStatusSet(selected, OPEN_STATUSES)) return 'open';
+    if (sameStatusSet(selected, CLOSED_STATUSES)) return 'closed';
+    return null;
+}
+
 // ========================================
 // Filter Count Functions
 // ========================================
@@ -73,8 +97,12 @@ export function getFilterCategoryCount(category) {
     switch (category) {
         case 'project':
             return getCurrentProject() ? 1 : 0;
-        case 'status':
-            return getSelectedStatuses().length;
+        case 'status': {
+            // A preset is one filter, not four (CHT-1755)
+            const preset = getStatusPreset();
+            if (preset === 'all') return 0;
+            return preset ? 1 : getSelectedStatuses().length;
+        }
         case 'priority':
             return getSelectedPriorities().length;
         case 'type':
@@ -118,7 +146,14 @@ export function syncFiltersToUrl() {
     const groupBy = document.getElementById('group-by-select')?.value;
     const sort = document.getElementById('sort-by-select')?.value;
 
-    statuses.forEach(s => params.append('status', s));
+    // The default (Open) is left out to keep the common URL clean, like the
+    // default sort below; "every status" is spelled out (CHT-1755).
+    const statusPreset = getStatusPreset(statuses);
+    if (statusPreset === 'all') {
+        params.append('status', ALL_STATUSES_PARAM);
+    } else if (statusPreset !== 'open') {
+        statuses.forEach(s => params.append('status', s));
+    }
     priorities.forEach(p => params.append('priority', p));
     labels.forEach(l => params.append('label', l));
     excludedLabels.forEach(l => params.append('exclude_label', l));
@@ -158,17 +193,22 @@ export function loadFiltersFromUrl(setSuppressProjectSubscriber) {
         }
     }
 
-    // Apply status filters
-    const statuses = params.getAll('status');
-    if (statuses.length > 0) {
-        const dropdown = document.getElementById('status-filter-dropdown');
-        if (dropdown) {
-            const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
-            checkboxes.forEach(cb => {
-                cb.checked = statuses.includes(cb.value);
-            });
-            updateStatusFilterLabel();
-        }
+    // Apply status filters (CHT-1755). `status=all` checks nothing, i.e.
+    // every status. No status in the URL means the Open default, but only
+    // the first time the dropdown is filled on this page load: in-app
+    // navigation reaches /issues as `?project=...` alone (the router keeps
+    // just that param), and there the boxes already hold the user's last
+    // choice, as every other filter's controls do.
+    const urlStatuses = params.getAll('status');
+    const statusDropdown = document.getElementById('status-filter-dropdown');
+    if (statusDropdown && (urlStatuses.length > 0 || !statusDropdown.dataset.statusApplied)) {
+        const statuses = urlStatuses.length > 0 ? urlStatuses : DEFAULT_STATUSES;
+        const checkboxes = statusDropdown.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(cb => {
+            cb.checked = statuses.includes(cb.value);
+        });
+        statusDropdown.dataset.statusApplied = 'true';
+        updateStatusFilterLabel();
     }
 
     // Apply priority filters
@@ -263,8 +303,11 @@ export function updateStatusFilterLabel() {
     const label = dropdown?.querySelector('.multi-select-label');
     if (!label) return;
 
-    if (selectedStatuses.length === 0) {
+    const preset = getStatusPreset(selectedStatuses);
+    if (preset === 'all') {
         label.textContent = 'All Statuses';
+    } else if (preset === 'open' || preset === 'closed') {
+        label.textContent = preset === 'open' ? 'Open' : 'Closed';
     } else if (selectedStatuses.length === 1) {
         label.textContent = formatStatus(selectedStatuses[0]);
     } else {

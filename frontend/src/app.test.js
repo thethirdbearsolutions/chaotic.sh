@@ -52,7 +52,7 @@ vi.mock('./auth.js', () => ({
     logout: vi.fn(),
     initAuth: vi.fn(),
 }));
-vi.mock('./init.js', () => ({ initApp: vi.fn() }));
+vi.mock('./init.js', () => ({ initApp: vi.fn(), showSignedOut: vi.fn() }));
 vi.mock('./documents.js', () => ({
     loadDocuments: vi.fn(),
     viewDocument: vi.fn(),
@@ -236,7 +236,7 @@ import { loadBoard } from './board.js';
 import { loadSprints } from './sprints.js';
 import { loadRitualsView } from './rituals-view.js';
 import { loadDocuments } from './documents.js';
-import { initApp } from './init.js';
+import { initApp, showSignedOut } from './init.js';
 import { initIssueTooltip } from './issue-tooltip.js';
 import { closeSidebar } from './sidebar.js';
 import { hideTooltip } from './issue-tooltip.js';
@@ -639,10 +639,12 @@ describe('app.js DOMContentLoaded initialization', () => {
         expect(initIssueTooltip).toHaveBeenCalled();
     });
 
-    it('shows auth screen when no token', async () => {
+    it('shows the signed-out page when no token', async () => {
+        // showSignedOut picks the invitation page on /invite/ (CHT-1265)
+        // and the auth screen everywhere else; see init.test.js.
         api.getToken.mockReturnValue(null);
         await domReadyCallback();
-        expect(showAuthScreen).toHaveBeenCalled();
+        expect(showSignedOut).toHaveBeenCalled();
         expect(initApp).not.toHaveBeenCalled();
     });
 
@@ -666,7 +668,7 @@ describe('app.js DOMContentLoaded initialization', () => {
         api.getMe.mockRejectedValue(error);
         await domReadyCallback();
         expect(api.logout).toHaveBeenCalled();
-        expect(showAuthScreen).toHaveBeenCalled();
+        expect(showSignedOut).toHaveBeenCalled();
     });
 
     it('logs out and falls back to auth screen on a real 403', async () => {
@@ -676,7 +678,7 @@ describe('app.js DOMContentLoaded initialization', () => {
         api.getMe.mockRejectedValue(error);
         await domReadyCallback();
         expect(api.logout).toHaveBeenCalled();
-        expect(showAuthScreen).toHaveBeenCalled();
+        expect(showSignedOut).toHaveBeenCalled();
     });
 
     it('does NOT log out on a network error during boot (retains the token)', async () => {

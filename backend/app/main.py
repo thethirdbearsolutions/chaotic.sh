@@ -18,6 +18,7 @@ from app.oxyde_db import init_oxyde, close_oxyde, bootstrap_if_empty, verify_mig
 from app.api import api_router
 from app.websocket import SocketOwner, manager
 from app.services import credential_events, email_service, push_sender
+from app.services.email_verification_service import log_invitation_gate
 from app.services.push_service import PushService
 from app import ws_auth
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
@@ -70,6 +71,8 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(f"Refusing to start: {exc}") from exc
     # CHT-1522: the /mcp/<key> capability URL is deprecated.
     warn_if_capability_url_enabled()
+    # CHT-1790: whether invitations require a verified address here.
+    log_invitation_gate()
     await init_oxyde()
     # CHT-1195: a brand-new database gets its schema from the migration
     # chain here, the one case where migrating at startup cannot hurt.
@@ -246,7 +249,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     case. Registering this handler makes every non-2xx response at least
     valid JSON with a `detail` key, matching every other error path.
     """
-    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    # An invitation token is a path segment (CHT-1265): redact it here
+    # too, not only in uvicorn's access log.
+    logger.exception(
+        "Unhandled exception on %s %s",
+        request.method, log_redaction.redact_request_target(request.url.path),
+    )
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 # API routes
@@ -518,7 +526,16 @@ async def spa_fallback(request: Request, full_path: str):
     """
     if full_path == ".well-known" or full_path.startswith(".well-known/"):
         return JSONResponse({"detail": "Not Found"}, status_code=404)
-    return _render_index(request)
+    response = _render_index(request)
+    if full_path == "invite" or full_path.startswith("invite/"):
+        # The invitation landing page (CHT-1265): its path carries the
+        # token, a bearer credential for an unregistered invitee
+        # (CHT-1790). No Referer at all, not even to this origin's own
+        # assets and API (a proxy logs Referers), and never cached. The
+        # page then moves the token out of the address bar.
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 if __name__ == "__main__":

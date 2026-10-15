@@ -52,7 +52,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from app.oauth.clients import has_only_uri_characters, redirect_uri_problem
+from app.oauth.clients import has_only_uri_characters, redirect_uri_problem, reserved_redirect_problem
 
 FETCH_TIMEOUT_SECONDS = 3.0
 MAX_DOCUMENT_BYTES = 16 * 1024
@@ -277,7 +277,7 @@ def parse_client_metadata(client_id: str, body: bytes) -> dict:
     if len(redirect_uris) > MAX_DOCUMENT_REDIRECT_URIS:
         raise CIMDError(f"the client's metadata document declares more than {MAX_DOCUMENT_REDIRECT_URIS} redirect_uris")
     for uri in redirect_uris:
-        problem = redirect_uri_problem(uri, allow_private_use=True)
+        problem = redirect_uri_problem(uri, allow_private_use=True) or reserved_redirect_problem(uri)
         if problem:
             raise CIMDError(f"the client's metadata document has an unusable redirect_uri: {problem}")
     method = document.get("token_endpoint_auth_method", "none")

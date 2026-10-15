@@ -99,9 +99,18 @@ fi
 #   generator still writes the (now unused) empty classes; the check below
 #   fails on any other empty class, so a new anyOf cannot slip in unmapped.
 JSON_PRIMITIVE_SCHEMAS="LocationInner OldValue NewValue"
+# - An issue query's `rows` (CHT-1718) are a recursive union of a filter
+#   row and a nested group. The generator flattens a oneOf into one class
+#   with every member's required fields, which decodes neither member, so
+#   each row stays a JsonObject. The (unused) flattened class is still
+#   written.
+JSON_OBJECT_SCHEMAS="RowsInner"
 type_mappings="AnyType=JsonElement,object=JsonObject"
 for name in $JSON_PRIMITIVE_SCHEMAS; do
     type_mappings="$type_mappings,$name=kotlinx.serialization.json.JsonPrimitive"
+done
+for name in $JSON_OBJECT_SCHEMAS; do
+    type_mappings="$type_mappings,$name=kotlinx.serialization.json.JsonObject"
 done
 java -jar "$jar" generate \
     --input-spec "$work/chaotic.json" \

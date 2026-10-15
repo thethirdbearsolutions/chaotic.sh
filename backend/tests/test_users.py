@@ -127,8 +127,8 @@ async def test_get_other_user_no_shared_team(client, auth_headers, test_user2):
         f"/api/users/{test_user2.id}",
         headers=auth_headers,
     )
-    assert response.status_code == 403
-    assert "not authorized" in response.json()["detail"].lower()
+    assert response.status_code == 404
+    assert response.json()["detail"] == "User not found"
 
 
 @pytest.mark.asyncio

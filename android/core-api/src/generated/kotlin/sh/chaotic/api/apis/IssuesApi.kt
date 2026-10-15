@@ -30,6 +30,7 @@ import sh.chaotic.api.models.IssueActivityFeedResponse
 import sh.chaotic.api.models.IssueActivityResponse
 import sh.chaotic.api.models.IssueBatchUpdate
 import sh.chaotic.api.models.IssueCommentCreate
+import sh.chaotic.api.models.IssueCommentCreated
 import sh.chaotic.api.models.IssueCommentResponse
 import sh.chaotic.api.models.IssueCommentUpdate
 import sh.chaotic.api.models.IssueDescriptionRevisionListItem
@@ -129,13 +130,13 @@ import io.ktor.http.ParametersBuilder
         /**
         * POST /api/issues/{issue_id}/comments
         * Create Comment
-        * Create a comment on an issue.
+        * Create a comment on an issue. &#x60;warnings&#x60; names each @handle that reached nobody (CHT-1735).
          * @param issueId  
          * @param issueCommentCreate  
-         * @return IssueCommentResponse
+         * @return IssueCommentCreated
         */
             @Suppress("UNCHECKED_CAST")
-        open suspend fun createCommentApiIssuesIssueIdCommentsPost(issueId: kotlin.String, issueCommentCreate: IssueCommentCreate): HttpResponse<IssueCommentResponse> {
+        open suspend fun createCommentApiIssuesIssueIdCommentsPost(issueId: kotlin.String, issueCommentCreate: IssueCommentCreate): HttpResponse<IssueCommentCreated> {
 
             val localVariableAuthNames = listOf<String>("HTTPBearer")
 

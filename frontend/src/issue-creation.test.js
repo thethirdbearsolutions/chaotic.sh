@@ -256,6 +256,27 @@ describe('issue-creation', () => {
             showCreateIssueModal();
             expect(document.getElementById('create-issue-due-date')).toBeTruthy();
         });
+
+        // CHT-1770: the common fields are visible chips, not behind "More options"
+        it('shows the property chips outside the collapsed panel', () => {
+            showCreateIssueModal();
+            const panel = document.getElementById('create-issue-options-panel');
+            for (const type of ['status', 'priority', 'type', 'labels', 'assignee', 'estimate', 'sprint']) {
+                const chip = document.querySelector(`.toolbar-btn[data-dropdown-type="${type}"]`);
+                expect(chip, type).toBeTruthy();
+                expect(panel.contains(chip), type).toBe(false);
+            }
+        });
+
+        it('keeps only template and due date behind the disclosure', () => {
+            showCreateIssueModal();
+            const panel = document.getElementById('create-issue-options-panel');
+            expect(panel.classList.contains('collapsed')).toBe(true);
+            expect(panel.querySelector('#create-issue-template')).toBeTruthy();
+            expect(panel.querySelector('#create-issue-due-date')).toBeTruthy();
+            expect(panel.querySelector('.toolbar-btn')).toBeNull();
+            expect(document.getElementById('more-options-toggle').textContent).toContain('Template and due date');
+        });
     });
 
     describe('showCreateSubIssueModal', () => {
@@ -305,6 +326,15 @@ describe('issue-creation', () => {
         it('does not render project selector', () => {
             showCreateSubIssueModal('parent-1', 'proj-1');
             expect(document.getElementById('create-issue-project')).toBeNull();
+        });
+
+        it('shows every property chip with no disclosure left to open (CHT-1770)', () => {
+            showCreateSubIssueModal('parent-1', 'proj-1');
+            expect(document.getElementById('create-issue-options-panel')).toBeNull();
+            expect(document.getElementById('more-options-toggle')).toBeNull();
+            for (const type of ['status', 'priority', 'type', 'labels', 'assignee', 'estimate']) {
+                expect(document.querySelector(`.toolbar-btn[data-dropdown-type="${type}"]`), type).toBeTruthy();
+            }
         });
     });
 
@@ -710,6 +740,22 @@ describe('issue-creation', () => {
             expect(toggle.classList.contains('expanded')).toBe(true);
         });
 
+        it('keeps a collapsed panel out of the Tab order (CHT-1770 review L3)', () => {
+            showCreateIssueModal();
+            const panel = document.getElementById('create-issue-options-panel');
+            const toggle = document.getElementById('more-options-toggle');
+            expect(panel.hasAttribute('inert')).toBe(true);
+            expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+            toggleCreateIssueOptions();
+            expect(panel.hasAttribute('inert')).toBe(false);
+            expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+            toggleCreateIssueOptions();
+            expect(panel.hasAttribute('inert')).toBe(true);
+            expect(toggle.getAttribute('aria-expanded')).toBe('false');
+        });
+
         it('toggles back to collapsed', () => {
             showCreateIssueModal();
             toggleCreateIssueOptions();
@@ -777,6 +823,21 @@ describe('issue-creation', () => {
             setCreateIssueField('priority', 'high', 'High');
             expect(document.getElementById('create-issue-priority').value).toBe('high');
             expect(document.getElementById('create-issue-priority-label').textContent).toBe('High');
+        });
+
+        it('relabels the modal chip, not another .toolbar-btn earlier on the page (CHT-1770 review N5)', () => {
+            const stray = document.createElement('div');
+            stray.innerHTML = '<button class="toolbar-btn" id="stray-a">A</button><button class="toolbar-btn" id="stray-b">B</button>';
+            document.body.prepend(stray);
+
+            setCreateIssueField('status', 'todo', 'Todo');
+            setCreateIssueField('priority', 'high', 'High');
+
+            expect(document.getElementById('stray-a').textContent).toBe('A');
+            expect(document.getElementById('stray-b').textContent).toBe('B');
+            expect(document.querySelector('.create-issue-modal .toolbar-btn[data-dropdown-type="status"]').textContent).toContain('Todo');
+            expect(document.querySelector('.create-issue-modal .toolbar-btn[data-dropdown-type="priority"]').textContent).toContain('High');
+            stray.remove();
         });
 
         it('updates type button with badge', () => {

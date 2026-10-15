@@ -787,7 +787,7 @@ async def test_list_sprints_not_member(client, auth_headers2, test_project):
         f"/api/projects/{test_project.id}/sprints",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -807,7 +807,7 @@ async def test_get_current_sprint_not_member(client, auth_headers2, test_project
         f"/api/sprints/current?project_id={test_project.id}",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -827,7 +827,7 @@ async def test_get_sprint_not_member(client, auth_headers2, test_sprint):
         f"/api/sprints/{test_sprint.id}",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -849,7 +849,7 @@ async def test_update_sprint_not_member(client, auth_headers2, test_sprint):
         headers=auth_headers2,
         json={"name": "Unauthorized Update"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -875,7 +875,7 @@ async def test_close_sprint_not_member(client, auth_headers2, test_project, db):
         f"/api/sprints/{sprint.id}/close",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -1214,7 +1214,7 @@ async def test_list_transactions_not_found(client, auth_headers):
 
 @pytest.mark.asyncio
 async def test_list_transactions_not_member(client, auth_headers2, test_project, db):
-    """Test GET /sprints/{sprint_id}/transactions returns 403 when not a team member."""
+    """Test GET /sprints/{sprint_id}/transactions returns 404 when not a team member."""
     sprint = await OxydeSprint.objects.create(
         project_id=test_project.id,
         name="Member Check Sprint",
@@ -1225,7 +1225,7 @@ async def test_list_transactions_not_member(client, auth_headers2, test_project,
         f"/api/sprints/{sprint.id}/transactions",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio

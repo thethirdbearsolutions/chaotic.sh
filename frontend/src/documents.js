@@ -5,7 +5,7 @@
 
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor, formatTimeAgo, renderPrincipalBadge } from './utils.js';
-import { showModal, closeModal, showToast, showApiError } from './ui.js';
+import { showModal, closeModal, showToast, showApiError, showMentionWarnings } from './ui.js';
 import {
     getDocViewMode, setDocViewMode as persistDocViewMode,
     getCommentDraft, setCommentDraft,
@@ -870,8 +870,10 @@ async function renderDocumentCommentsSection(doc) {
  * form isn't in the DOM.
  * @param {string} documentId
  * @param {AbortSignal} signal - detail-view lifecycle signal (CHT-1102)
+ * @param {string|null} [projectId] - the document's project (null: team-wide),
+ *   which limits the agents @mention autocomplete offers (CHT-1731)
  */
-function wireDocumentCommentForm(documentId, signal) {
+function wireDocumentCommentForm(documentId, signal, projectId = null) {
   const commentTextarea = document.getElementById('new-doc-comment');
   if (!commentTextarea) return;
 
@@ -890,7 +892,7 @@ function wireDocumentCommentForm(documentId, signal) {
     }
   }, { signal });
 
-  setupMentionAutocomplete('new-doc-comment', 'doc-mention-suggestions');
+  setupMentionAutocomplete('new-doc-comment', 'doc-mention-suggestions', { projectId });
 }
 
 /**
@@ -1132,7 +1134,7 @@ export async function viewDocument(documentId, pushHistory = true) {
 
     // Comment form: Cmd/Ctrl+Enter submit, draft persistence, @mention
     // autocomplete (CHT-1213 — all already exist on the issue comment box)
-    wireDocumentCommentForm(doc.id, docDetailSignal);
+    wireDocumentCommentForm(doc.id, docDetailSignal, doc.project_id || null);
 
     // Quote-and-comment (CHT-1173 was scoped to "issue detail view" only;
     // CHT-1213 generalizes it to also cover the document body/comments)
@@ -1751,9 +1753,11 @@ export async function handleAddDocumentComment(event, documentId) {
 
   docCommentSubmitting = true;
   try {
-    await api.createDocumentComment(documentId, content);
+    const created = await api.createDocumentComment(documentId, content);
     textarea.value = '';
     showToast('Comment added!', 'success');
+    // @handles that reached nobody (CHT-1743)
+    showMentionWarnings(created);
     await viewDocument(documentId, false);
   } catch (e) {
     showApiError('add comment', e);

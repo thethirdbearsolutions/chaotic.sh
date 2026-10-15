@@ -7,15 +7,60 @@
 
 import { escapeHtml, escapeAttr } from './utils.js';
 import { getMembers } from './teams.js';
+import { getAgents } from './agents.js';
 
+/**
+ * The @handle that mentions this team member. The server works it out
+ * (`mention_handle`, CHT-1731: unique across the team's people and
+ * agents); the first word of the name is the pre-CHT-1731 fallback for a
+ * server that doesn't send one. Accepts a team-member row
+ * (`user_name`/`user_email`) or a plain `{name, email}`.
+ */
 export function getMemberHandle(member) {
-    if (member.name) {
-        return member.name.split(' ')[0].toLowerCase();
+    if (member.mention_handle) {
+        return member.mention_handle;
     }
-    if (member.email) {
-        return member.email.split('@')[0].toLowerCase();
+    const name = member.user_name || member.name;
+    const email = member.user_email || member.email;
+    if (name) {
+        return name.split(' ')[0].toLowerCase();
+    }
+    if (email) {
+        return email.split('@')[0].toLowerCase();
     }
     return 'user';
+}
+
+/**
+ * Everyone the autocomplete offers: the team's members, then its agents
+ * (CHT-1731). An agent is offered only with a server-given handle (an
+ * older server could not deliver to it), and not when it is deactivated
+ * or an idle session identity (one can still type its handle). With a
+ * `projectId` (null for a team-wide document), an agent scoped to another
+ * project is left out: the server would not deliver to it from here.
+ */
+export function getMentionables(members = [], agents = [], { projectId } = {}) {
+    const seen = new Set();
+    const out = [];
+    for (const m of members) {
+        const id = m.user_id || m.id;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        out.push({
+            id,
+            name: m.user_name || m.name || m.user_email || m.email || 'User',
+            email: m.user_email || m.email || '',
+            handle: getMemberHandle(m),
+            isAgent: false,
+        });
+    }
+    for (const a of agents) {
+        if (!a.mention_handle || a.is_active === false || a.idle || seen.has(a.id)) continue;
+        if (projectId !== undefined && a.agent_project_id && a.agent_project_id !== projectId) continue;
+        seen.add(a.id);
+        out.push({ id: a.id, name: a.name || 'Agent', email: '', handle: a.mention_handle, isAgent: true });
+    }
+    return out;
 }
 
 /**
@@ -55,11 +100,15 @@ export function isInsideCodeSpan(text, pos) {
  * mechanical parameterization.
  * @param {string} [textareaId='new-comment']
  * @param {string} [containerId='mention-suggestions']
+ * @param {{projectId?: string|null}} [context] - the issue's or document's
+ *   project (null: a team-wide document); see getMentionables (CHT-1731)
  */
-export function setupMentionAutocomplete(textareaId = 'new-comment', containerId = 'mention-suggestions') {
+export function setupMentionAutocomplete(textareaId = 'new-comment', containerId = 'mention-suggestions', context = {}) {
     const textarea = document.getElementById(textareaId);
     const container = document.getElementById(containerId);
     if (!textarea || !container) return;
+    // Kept on the element, so a re-bind for another issue updates it.
+    textarea.mentionContext = context;
     if (textarea.dataset.mentionsBound === 'true') return;
     textarea.dataset.mentionsBound = 'true';
 
@@ -103,13 +152,7 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
             return;
         }
         const query = match[2].toLowerCase();
-        const suggestions = getMembers()
-            .map(m => ({
-                id: m.id,
-                name: m.name || m.email || 'User',
-                email: m.email || '',
-                handle: getMemberHandle(m),
-            }))
+        const suggestions = getMentionables(getMembers(), getAgents(), textarea.mentionContext || {})
             .filter(m => !query || m.handle.includes(query) || m.name.toLowerCase().includes(query) || m.email.toLowerCase().includes(query))
             .slice(0, 6);
 
@@ -120,7 +163,7 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
 
         container.innerHTML = suggestions.map(s => `
             <button type="button" class="mention-suggestion" data-handle="${escapeAttr(s.handle)}">
-                <span class="mention-name">${escapeHtml(s.name)}</span>
+                <span class="mention-name">${escapeHtml(s.name)}${s.isAgent ? ' <span class="mention-kind">agent</span>' : ''}</span>
                 <span class="mention-handle">@${escapeHtml(s.handle)}</span>
             </button>
         `).join('');

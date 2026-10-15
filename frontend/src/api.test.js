@@ -475,6 +475,28 @@ describe('ApiClient', () => {
       });
     });
 
+    describe('email verification (CHT-1790)', () => {
+      beforeEach(() => {
+        fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+      });
+
+      it('requestEmailVerification POSTs with no body', async () => {
+        await client.requestEmailVerification();
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/auth/email-verification',
+          expect.objectContaining({ method: 'POST' })
+        );
+      });
+
+      it('confirmEmailVerification POSTs the code', async () => {
+        await client.confirmEmailVerification('123456');
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/auth/email-verification/confirm',
+          expect.objectContaining({ method: 'POST', body: JSON.stringify({ code: '123456' }) })
+        );
+      });
+    });
+
     describe('logout', () => {
       it('clears the token', () => {
         client.setToken('token123');
@@ -1523,6 +1545,22 @@ describe('ApiClient', () => {
             method: 'POST',
           })
         );
+      });
+
+      it('keeps an odd token inside its path segment', async () => {
+        await client.acceptInvitation('a/b?c');
+        expect(fetchMock).toHaveBeenCalledWith('/api/teams/invitations/a%2Fb%3Fc/accept', expect.anything());
+      });
+    });
+
+    describe('getInvitation (CHT-1265)', () => {
+      it('GETs the public preview by token, in the path only', async () => {
+        await client.getInvitation('abc123token');
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/teams/invitations/abc123token',
+          expect.objectContaining({ method: 'GET' }),
+        );
+        expect(fetchMock.mock.calls[0][1].body).toBeUndefined();
       });
     });
 

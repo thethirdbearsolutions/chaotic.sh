@@ -10,6 +10,8 @@ captures/
 *.keystore
 *.jks
 app/foss-canary/
+# Release signing (CHT-1729) lives in ~/.chaotic, never here.
+*signing.properties
 # Release artifacts and signing material never belong in the repo
 *.apk
 *.aab
