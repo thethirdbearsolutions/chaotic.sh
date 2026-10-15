@@ -288,7 +288,7 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                 </div>
                 <div class="feature-card">
                     <h3 class="feature-title">Remote: add by URL <span class="badge-next">Coming soon</span></h3>
-                    <p class="feature-description">The server speaks MCP over Streamable HTTP at <code>/mcp</code>. Give a client the URL and nothing else: it finds Chaotic's sign-in (OAuth), opens a consent page in your browser, and you approve it there. Setup is documented for claude.ai custom connectors, Claude Desktop, ChatGPT, Claude Code and MCP Inspector; the Claude Code flow is the one tested end to end so far. claude.ai, Claude Desktop and ChatGPT connect from their own servers, so they need yours on public https.</p>
+                    <p class="feature-description">The server speaks MCP over Streamable HTTP at <code>/mcp</code> today, with an API key. Once OAuth is on, you give a client the URL and nothing else: it finds Chaotic's sign-in (OAuth), opens a consent page in your browser, and you approve it there. Setup is documented for claude.ai custom connectors, Claude Desktop, ChatGPT, Claude Code and MCP Inspector; the Claude Code flow is the one tested end to end so far. claude.ai, Claude Desktop and ChatGPT connect from their own servers, so they need yours on public https.</p>
                     <pre class="code-block"><code>claude mcp add --transport http chaotic \
   https://your-chaotic-host/mcp
 # then /mcp in a session → Authenticate</code></pre>
