@@ -43,58 +43,12 @@ jobs:
       - name: Run tests with coverage
         run: uv run pytest --cov=app --cov-report=term-missing -v
 
-  # The CLI is installed by users on their own Python, so its suite runs on
-  # the oldest version cli/pyproject.toml's requires-python allows and on the
-  # newest one known to pass (CHT-1834). Keep the first entry in step with
-  # requires-python. A matrix names the checks "cli (3.10)" and "cli (3.13)".
+  # The CLI suite on its oldest and newest supported Python, plus a run of
+  # each test file on its own (CHT-1834). It lives in cli-tests.yml so that
+  # publish-cli.yml gates releases on exactly the same jobs. The checks are
+  # named "cli / cli (3.10)" and "cli / cli (3.14)".
   cli:
-    name: cli (${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.10', '3.13']
-    defaults:
-      run:
-        working-directory: cli
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        # --locked fails when uv.lock is out of date with pyproject.toml (CHT-1201).
-        # --python pins the venv to the matrix version rather than whatever
-        # interpreter uv would pick first.
-        run: uv sync --locked --python ${{ matrix.python-version }}  # the dev group is a default group (CHT-1698)
-
-      - name: Lint (pyflakes rules)
-        run: uv run --no-sync ruff check .
-
-      # Coverage is reported, not gated, so it is reported on both legs.
-      - name: Run tests with coverage
-        run: uv run --no-sync pytest --cov=cli --cov=chaotic_mcp_tools --cov-report=term-missing -v
-
-      # Each test file alone, in its own process, to catch a file that only
-      # passes because an earlier file imported or patched something for it
-      # (CHT-1825 found 39 such files on 3.10). Files run in parallel to keep
-      # this to about a minute; serially it is over three. One leg suffices:
-      # the oldest Python is where such a bug surfaced.
-      - name: Run each test file alone
-        if: matrix.python-version == '3.10'
-        run: |
-          ls tests/test_*.py | xargs -P "$(nproc)" -I{} sh -c '
-            out=$(uv run --no-sync pytest -q -p no:cacheprovider "$1" 2>&1) || {
-              printf "::error file=cli/%s::%s fails when run on its own\n%s\n" "$1" "$1" "$out"
-              exit 1
-            }' _ {}
+    uses: ./.github/workflows/cli-tests.yml
 
   e2e:
     runs-on: ubuntu-latest

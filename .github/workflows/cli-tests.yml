@@ -1,0 +1,61 @@
+name: CLI tests
+
+# The CLI suite, shared by ci.yml (every push and PR) and publish-cli.yml
+# (the release gate), so the two cannot drift apart (CHT-1834).
+#
+# Users install the CLI on their own Python, so the suite runs on the oldest
+# version cli/pyproject.toml's requires-python allows and on the newest
+# release. Keep the first entry in step with requires-python, and the
+# classifiers in cli/pyproject.toml in step with this list.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  cli:
+    name: cli (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.14']
+    defaults:
+      run:
+        working-directory: cli
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        id: sync
+        # --locked fails when uv.lock is out of date with pyproject.toml (CHT-1201).
+        # --python pins the venv to the matrix version rather than whatever
+        # interpreter uv would pick first.
+        run: uv sync --locked --python ${{ matrix.python-version }}  # the dev group is a default group (CHT-1698)
+
+      - name: Lint (pyflakes rules)
+        run: uv run --no-sync ruff check .
+
+      # Coverage is reported, not gated (no fail_under), so both legs report it.
+      - name: Run tests with coverage
+        run: uv run --no-sync pytest --cov=cli --cov=chaotic_mcp_tools --cov-report=term-missing -v
+
+      # Each test file alone, in its own process (see the script's header).
+      # One leg is enough: the oldest Python is where such a bug surfaced. It
+      # also runs when the full suite failed, since that is exactly when the
+      # isolation results are most useful.
+      - name: Run each test file alone
+        if: ${{ matrix.python-version == '3.10' && !cancelled() && steps.sync.outcome == 'success' }}
+        run: bash scripts/test-each-file.sh

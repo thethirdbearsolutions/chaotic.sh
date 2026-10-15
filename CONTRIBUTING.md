@@ -6,8 +6,10 @@ shape before you write the code.
 
 ## Setup
 
-You need Python 3.11 (what CI runs), [uv](https://docs.astral.sh/uv/),
-Node 20 for the frontend, and optionally [just](https://github.com/casey/just).
+You need Python 3.11 (what CI runs the backend and e2e suites on; the CLI
+suite runs on 3.10 and 3.14, and the CLI supports 3.10 and up),
+[uv](https://docs.astral.sh/uv/), Node 20 for the frontend, and optionally
+[just](https://github.com/casey/just).
 
 ```bash
 just sync
