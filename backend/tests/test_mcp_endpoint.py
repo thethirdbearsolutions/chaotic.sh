@@ -1073,3 +1073,47 @@ class TestOAuthAccessTokens:
         enable_oauth(monkeypatch, enabled=False)
         resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
         assert resp.status_code == 401 and resp.headers["www-authenticate"] == "Bearer"
+
+
+class TestActivityRecentHidesASessionAddress:
+    """CHT-1864: activity_recent reads the team feed, so a session
+    identity's address is null for a reader its external_ref is hidden
+    from, and carries nothing of the ref for one it is shown to."""
+
+    async def _session_activity(self, client, auth_headers, test_project):
+        from .test_agent_register import REF, _bearer, _register, _registrar
+
+        _, key = await _registrar(client, auth_headers, team_id=test_project.team_id)
+        registered = (await _register(client, key)).json()
+        made = await client.post(
+            f"/api/projects/{test_project.id}/issues", json={"title": "by a session"},
+            headers=_bearer(registered["api_key"]),
+        )
+        assert made.status_code == 201, made.text
+        return registered["agent"]["id"], REF
+
+    async def _emails(self, client, headers, session_id):
+        resp = await _tool_call(client, headers, "activity_recent", {"limit": 50})
+        payload = json.loads(resp.json()["result"]["content"][0]["text"])
+        rows = [a for a in payload["activities"] if a["user_id"] == session_id]
+        assert rows
+        return {a["user_email"] for a in rows}
+
+    async def test_plain_teammate_gets_null_and_holder_gets_a_ref_free_address(
+        self, client, auth_headers, bearer_headers, test_team, test_project,
+    ):
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.oxyde_models.user import OxydeUser
+        from .test_session_emails_migration import carries_ref
+
+        session_id, ref = await self._session_activity(client, auth_headers, test_project)
+        mate = await OxydeUser.objects.create(email="mate-mcp@example.com", hashed_password="x", name="Mate")
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=mate.id, role=TeamRole.MEMBER)
+        _, mate_key = await APIKeyService().create(mate.id, APIKeyCreate(name="mate"))
+        mate_headers = {**_MCP_HEADERS, "Authorization": f"Bearer {mate_key}"}
+
+        assert await self._emails(client, mate_headers, session_id) == {None}
+        session = await OxydeUser.objects.get(id=session_id)
+        assert await self._emails(client, bearer_headers, session_id) == {session.email}
+        assert not carries_ref(session.email, ref)

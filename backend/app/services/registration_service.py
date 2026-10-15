@@ -205,7 +205,10 @@ class RegistrationService:
 
             if existing is None:
                 agent = await OxydeUser.objects.create(
-                    email=f"session-{_ref_slug(req.external_ref)}-{_rand()}@agent.local",
+                    # Nothing of the ref in the address (CHT-1864): an
+                    # address is shown to readers the ref is hidden from.
+                    # The ref is looked up by external_ref, never by this.
+                    email=session_email(),
                     hashed_password="",
                     name=name,
                     is_agent=True,
@@ -415,11 +418,11 @@ class RegistrationService:
         return f"{caller.name} · {external_ref[-8:]}"[:255]
 
 
-def _ref_slug(ref: str) -> str:
-    return "".join(c if c.isalnum() else "-" for c in ref[-24:]).strip("-").lower() or "ref"
-
-
-def _rand() -> str:
+def session_email() -> str:
+    """A new session identity's address: random, and nothing else. Until
+    CHT-1864 it carried the last 24 characters of the external_ref, which
+    leaked the ref to readers ``sees_external_ref`` hides it from;
+    migration 0039 rewrote those addresses to this form."""
     import uuid
 
-    return uuid.uuid4().hex[:12]
+    return f"session-{uuid.uuid4().hex}@agent.local"
