@@ -1089,29 +1089,21 @@ def _refuse_basic_auth(request):
             assert endpoint.__name__ in seen
 
     async def test_register_never_consults_a_credential(self, client, oauth_settings, auth_headers, monkeypatch):
-        """Behavioural: every credential check raises if called, and a
-        request carrying a valid session and cookie gets the same answer
-        as an anonymous one."""
-        import app.auth.credentials as credentials
-        from app.services.api_key_service import APIKeyService
+        """Behavioural: no credential check runs, not even one whose
+        failure is swallowed (the recorded calls stay empty; PR #402
+        review M1), and a request carrying a valid login as a bearer and
+        a cookie gets the same answer as an anonymous one."""
+        from .oauth_tokens import credential_tripwire
 
-        def tripwire(*args, **kwargs):
-            raise AssertionError("a public OAuth endpoint consulted a credential")
-
-        async def async_tripwire(*args, **kwargs):
-            tripwire()
-
-        monkeypatch.setattr(credentials, "decode_token", tripwire)
-        monkeypatch.setattr(credentials.CredentialResolver, "resolve", async_tripwire)
-        monkeypatch.setattr(APIKeyService, "validate_key", async_tripwire)
-        monkeypatch.setattr(APIKeyService, "find_by_key", async_tripwire)
         oauth_settings(oauth_dcr_max_per_ip_per_hour=100)
+        calls = credential_tripwire(monkeypatch)
 
         with_login = await client.post(
             "/oauth/register", json=_registration(),
             headers={**auth_headers, "Cookie": f"chaotic_token={auth_headers['Authorization'][7:]}"},
         )
         anonymous = await client.post("/oauth/register", json=_registration())
+        assert calls == []
         assert with_login.status_code == anonymous.status_code == 201, with_login.text
 
         def shape(body):

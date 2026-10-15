@@ -33,6 +33,8 @@ from app.services.revocation_service import RevocationService
 from app.services.token_service import TokenError, TokenService
 from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
 
+from .oauth_tokens import NEAR_MISS_APP_RESOURCES
+
 BASE = "https://tracker.example.com"
 MCP = BASE + "/mcp"
 APP_ID = ANDROID.client_id
@@ -189,8 +191,11 @@ class TestBuiltinClient:
         from app.oxyde_models.oauth import OxydeOAuthAuthorizationRequest
         assert (await OxydeOAuthAuthorizationRequest.objects.get(id=request_id)).resource == BASE
 
-    async def test_the_mcp_resource_is_refused(self, client, oauth_on, no_fetch):
-        response = await _authorize(client, resource=MCP)
+    @pytest.mark.parametrize("resource", NEAR_MISS_APP_RESOURCES)
+    async def test_the_mcp_resource_and_near_misses_are_refused(self, client, oauth_on, no_fetch, resource):
+        """CHT-1564 / review L1: /mcp, and anything that is not exactly
+        ``<base>`` give or take one trailing slash."""
+        response = await _authorize(client, resource=resource)
         assert response.status_code == 302
         query = _query(response.headers["location"])
         assert response.headers["location"].startswith(APP_REDIRECT + "?")
@@ -304,6 +309,47 @@ class TestAppSession:
         code = await _app_code(client, web_headers)
         response = await _exchange(client, code, resource=MCP)
         assert response.status_code == 400 and response.json()["error"] == "invalid_target"
+
+    @pytest.mark.parametrize("resource", [None, BASE, BASE + "/"])
+    async def test_the_base_resource_with_or_without_slash_at_the_token_endpoint(
+        self, client, oauth_on, no_fetch, web_headers, test_team, resource,
+    ):
+        """CHT-1564 for the built-in app: ``<base>``, with or without one
+        trailing slash, or nothing, both on the exchange and the refresh."""
+        code = await _app_code(client, web_headers)
+        exchanged = await _exchange(client, code, resource=resource)
+        assert exchanged.status_code == 200, (resource, exchanged.text)
+        session = await OxydeHolderSession.objects.get(id=exchanged.json()["chaotic"]["holder_session_id"])
+        assert session.resource == BASE
+        data = {"grant_type": "refresh_token", "client_id": APP_ID, "refresh_token": exchanged.json()["refresh_token"]}
+        if resource is not None:
+            data["resource"] = resource
+        refreshed = await client.post("/oauth/token", data=data, headers=FORM)
+        assert refreshed.status_code == 200, (resource, refreshed.text)
+        # The refreshed token is for the whole server, never /mcp (review N3).
+        access = refreshed.json()["access_token"]
+        await TokenService().validate_access(access, resource=BASE)
+        with pytest.raises(TokenError):
+            await TokenService().validate_access(access, resource=MCP)
+
+    @pytest.mark.parametrize("resource", NEAR_MISS_APP_RESOURCES)
+    async def test_near_miss_base_resources_are_refused_at_the_token_endpoint(
+        self, client, oauth_on, no_fetch, web_headers, test_team, resource,
+    ):
+        code = await _app_code(client, web_headers)
+        response = await _exchange(client, code, resource=resource)
+        assert response.status_code == 400 and response.json()["error"] == "invalid_target"
+        assert await OxydeHolderSession.objects.count() == 0
+
+    @pytest.mark.parametrize("resource", NEAR_MISS_APP_RESOURCES)
+    async def test_near_miss_base_resources_are_refused_at_refresh(self, client, app_tokens, resource):
+        """CHT-1564 at refresh as at the exchange (review L1): a refresh
+        that lost the built-in branch would take /mcp here. The refusal
+        does not spend the token."""
+        data = {"grant_type": "refresh_token", "client_id": APP_ID, "refresh_token": app_tokens["refresh_token"]}
+        response = await client.post("/oauth/token", data={**data, "resource": resource}, headers=FORM)
+        assert response.status_code == 400 and response.json()["error"] == "invalid_target", response.text
+        assert (await client.post("/oauth/token", data=data, headers=FORM)).status_code == 200
 
     async def test_device_name_is_cleaned_and_optional(self, client, oauth_on, no_fetch, web_headers, test_team):
         code = await _app_code(client, web_headers)

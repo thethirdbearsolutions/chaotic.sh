@@ -61,3 +61,55 @@ async def server_token(agent, team, holder, *, scopes=("chaotic:write",)):
 
 def bearer(issued) -> dict[str, str]:
     return {"Authorization": f"Bearer {issued.access_token}"}
+
+
+# --- CHT-1564 helpers ---------------------------------------------------------
+
+# Resource values that must never be taken for this server's: the
+# comparison is exact after trimming one trailing slash, so any URL
+# "normalisation" (case, default port, userinfo, dot segments, percent
+# decoding) or looser matching (prefix, scheme) would wrongly accept one.
+# Both client kinds refuse all of these; MCP and MCP + "/" are refused for
+# the built-in app as well (NEAR_MISS_APP_RESOURCES).
+NEAR_MISS_RESOURCES = (
+    BASE + "//", MCP + "//", BASE + "/api", MCP + "/x",
+    "http://tracker.example.com", "http://tracker.example.com/mcp",
+    "HTTPS://TRACKER.EXAMPLE.COM/mcp", "https://TRACKER.example.com", BASE + "/MCP",
+    MCP + "?x", MCP + "#", MCP + "#x", BASE + "#",
+    "https://tracker.example.com:443/mcp", "https://tracker.example.com:443",
+    "https://u@tracker.example.com/mcp", MCP + "%2F", MCP + "/.", BASE + "/./mcp",
+    "https://other.example/mcp", "https://tracker.example.com.evil/mcp", "tracker.example.com/mcp",
+)
+NEAR_MISS_APP_RESOURCES = NEAR_MISS_RESOURCES + (MCP, MCP + "/")
+
+
+def credential_tripwire(monkeypatch) -> list[str]:
+    """Arm a tripwire on every way the app resolves a login: each one
+    records its name in the returned list, then raises. Assert the list
+    is empty after the request; the raise alone could be swallowed by an
+    ``except Exception`` between the endpoint and the check (PR #402
+    review, M1). Both ``decode_token`` bindings are patched: the one
+    ``app.auth.credentials`` imported and the one ``is_web_login`` uses
+    (review, L3)."""
+    import app.auth.credentials as credentials
+    import app.utils.security as security
+
+    calls: list[str] = []
+
+    def sync(name):
+        def trip(*args, **kwargs):
+            calls.append(name)
+            raise AssertionError(f"a public OAuth endpoint consulted a credential: {name}")
+        return trip
+
+    def asynchronous(name):
+        async def trip(*args, **kwargs):
+            sync(name)()
+        return trip
+
+    monkeypatch.setattr(credentials, "decode_token", sync("credentials.decode_token"))
+    monkeypatch.setattr(security, "decode_token", sync("security.decode_token"))
+    monkeypatch.setattr(credentials.CredentialResolver, "resolve", asynchronous("CredentialResolver.resolve"))
+    monkeypatch.setattr(APIKeyService, "validate_key", asynchronous("APIKeyService.validate_key"))
+    monkeypatch.setattr(APIKeyService, "find_by_key", asynchronous("APIKeyService.find_by_key"))
+    return calls

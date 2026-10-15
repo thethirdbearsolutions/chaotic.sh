@@ -20,6 +20,8 @@ from app.services import token_service as ts
 from app.services.token_service import TokenError, TokenService
 from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
 
+from .oauth_tokens import NEAR_MISS_RESOURCES, credential_tripwire
+
 BASE = "https://tracker.example.com"
 MCP = BASE + "/mcp"
 REDIRECT = "https://app.example/cb"
@@ -175,6 +177,13 @@ class TestCodeExchange:
             await _token(client, _exchange(public_client, code, resource="https://other.example/mcp")),
             400, "invalid_target",
         )
+
+    @pytest.mark.parametrize("resource", NEAR_MISS_RESOURCES)
+    async def test_near_miss_resource_values_are_refused(self, client, public_client, auth_headers, test_team, resource):
+        """CHT-1564 at the code exchange, as at refresh (review L1)."""
+        code = await _code(client, public_client, auth_headers, test_team.id)
+        _assert_error(await _token(client, _exchange(public_client, code, resource=resource)), 400, "invalid_target")
+        assert await OxydeHolderSession.objects.count() == 0
 
     async def test_resource_mismatch_with_the_code(self, client, public_client, auth_headers, test_team):
         code = await _code(client, public_client, auth_headers, test_team.id)
@@ -397,6 +406,24 @@ class TestRefresh:
         _assert_error(await _token(client, _refresh(public_client, tokens["refresh_token"], resource="https://x.example")),
                       400, "invalid_target")
         assert (await _token(client, _refresh(public_client, tokens["refresh_token"], resource=BASE))).status_code == 200
+
+    @pytest.mark.parametrize("resource", [MCP, MCP + "/", BASE, BASE + "/"])
+    async def test_both_resource_values_are_accepted(self, client, public_client, tokens, resource):
+        """CHT-1564: a refresh may name either published identifier, with
+        or without the trailing slash; all mean /mcp, the token's own."""
+        response = await _token(client, _refresh(public_client, tokens["refresh_token"], resource=resource))
+        assert response.status_code == 200, (resource, response.text)
+        await TokenService().validate_access(response.json()["access_token"], resource=MCP)
+        with pytest.raises(TokenError):
+            await TokenService().validate_access(response.json()["access_token"], resource=BASE)
+
+    @pytest.mark.parametrize("resource", NEAR_MISS_RESOURCES)
+    async def test_near_miss_resource_values_are_refused(self, client, public_client, tokens, resource):
+        """CHT-1564: one trailing slash is tolerated, nothing more, and
+        the refresh token is not spent by the refusal."""
+        _assert_error(await _token(client, _refresh(public_client, tokens["refresh_token"], resource=resource)),
+                      400, "invalid_target")
+        assert (await _token(client, _refresh(public_client, tokens["refresh_token"]))).status_code == 200
 
     async def test_resource_mismatch_with_the_token(self, client, public_client, tokens):
         await OxydeAuthToken.objects.filter(kind=TokenKind.REFRESH).update(resource=BASE)
@@ -676,21 +703,133 @@ class TestRevoke:
                       400, "invalid_request")
 
 
-# --- CHT-1564 guard: both endpoints exist and are covered ------------------------
+# --- CHT-1564 guard: the whole OAuth route inventory ------------------------------
 
 
-def test_token_and_revoke_are_public_oauth_posts():
-    """The route-level guard in test_oauth_registration.py walks every
-    public OAuth POST route; make sure token and revoke are among them."""
-    from fastapi.routing import APIRoute, iter_route_contexts
+def test_the_oauth_route_inventory_is_pinned():
+    """Every route of any kind (APIRoute, Starlette Route, Mount, ...) at
+    /oauth* or /.well-known/oauth*, with its methods, is exactly this list
+    (PR #402 review, M2). The no-ambient-auth guards walk the public POST
+    routes in ``PUBLIC_OAUTH_METHODS``, so a route added here without a
+    decision about it, under any method, fails this test first. The
+    consent API under /api/oauth is a logged-in SPA API and is not public;
+    the SPA's /oauth/consent page is served by the catch-all GET."""
+    from fastapi.routing import iter_route_contexts
 
     from app.main import app
     from app.oauth.cors import PUBLIC_OAUTH_METHODS
 
-    posts = {path for path, methods in PUBLIC_OAUTH_METHODS.items() if "POST" in methods}
-    assert {"/oauth/token", "/oauth/revoke"} <= posts
-    routed = {
-        rc.path for rc in iter_route_contexts(app.routes)
-        if isinstance(rc.original_route, APIRoute) and "POST" in rc.original_route.methods
-    }
-    assert {"/oauth/token", "/oauth/revoke"} <= routed
+    inventory = sorted(
+        (rc.path, type(rc.original_route).__name__, tuple(sorted(getattr(rc.original_route, "methods", None) or ())))
+        for rc in iter_route_contexts(app.routes)
+        if rc.path.startswith(("/oauth", "/.well-known/oauth"))
+    )
+    assert inventory == sorted([
+        ("/.well-known/oauth-authorization-server", "APIRoute", ("GET",)),
+        ("/.well-known/oauth-protected-resource", "APIRoute", ("GET",)),
+        ("/.well-known/oauth-protected-resource/mcp", "APIRoute", ("GET",)),
+        ("/oauth/authorize", "APIRoute", ("GET",)),
+        ("/oauth/register", "APIRoute", ("POST",)),
+        ("/oauth/revoke", "APIRoute", ("POST",)),
+        ("/oauth/token", "APIRoute", ("POST",)),
+    ])
+    public_posts = {path for path, methods in PUBLIC_OAUTH_METHODS.items() if "POST" in methods}
+    assert public_posts == {path for path, _kind, methods in inventory if "POST" in methods}
+
+
+def test_the_inventory_sees_non_apiroute_routes():
+    """The inventory above is not limited to APIRoutes: a Starlette route
+    or a mount under /oauth shows up in it."""
+    from fastapi import FastAPI
+    from fastapi.routing import iter_route_contexts
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Mount, Route
+
+    async def endpoint(request):
+        return PlainTextResponse("")
+
+    probe = FastAPI()
+    probe.router.routes.append(Route("/oauth/extra", endpoint, methods=["PUT"]))
+    probe.router.routes.append(Mount("/oauth/static", routes=[]))
+    found = {rc.path for rc in iter_route_contexts(probe.routes) if rc.path.startswith(("/oauth", "/.well-known/oauth"))}
+    assert {"/oauth/extra", "/oauth/static"} <= found
+
+
+# --- CHT-1564: behavioural no-ambient-auth checks on token and revoke --------------
+
+
+def _login_headers(auth_headers):
+    """A real web login, as a bearer and also as a cookie. Nothing in the
+    app reads any cookie today, so the cookie names are arbitrary: the
+    point is only that a request carrying one is answered as if it did
+    not (review N1)."""
+    jwt = auth_headers["Authorization"][7:]
+    return {**auth_headers, "Cookie": f"chaotic_token={jwt}; session={jwt}"}
+
+
+class TestNoAmbientAuthBehaviour:
+    async def test_token_and_revoke_never_consult_a_credential(
+        self, client, public_client, auth_headers, test_team, monkeypatch,
+    ):
+        """With a valid login attached, the code exchange, a refresh and a
+        revocation all succeed and no credential check runs at all, even
+        one whose failure was swallowed (the recorded calls stay empty)."""
+        code = await _code(client, public_client, auth_headers, test_team.id)
+        headers = _login_headers(auth_headers)
+        calls = credential_tripwire(monkeypatch)
+        exchanged = await _token(client, _exchange(public_client, code), headers=headers)
+        assert calls == [] and exchanged.status_code == 200, (calls, exchanged.text)
+        refreshed = await _token(client, _refresh(public_client, exchanged.json()["refresh_token"]), headers=headers)
+        assert calls == [] and refreshed.status_code == 200, (calls, refreshed.text)
+        revoked = await client.post(
+            "/oauth/revoke", data={"token": refreshed.json()["refresh_token"], "client_id": public_client},
+            headers={**FORM, **headers},
+        )
+        assert calls == [] and revoked.status_code == 200, (calls, revoked.text)
+
+    async def test_failed_requests_never_consult_a_credential_either(
+        self, client, confidential_client, auth_headers, monkeypatch,
+    ):
+        """The error paths too: a refused client authentication is not a
+        cue to look at the login."""
+        cid, _secret = confidential_client
+        calls = credential_tripwire(monkeypatch)
+        headers = _login_headers(auth_headers)
+        _assert_error(await _token(client, _refresh(cid, "crt_" + "0" * 64), headers=headers), 401, "invalid_client")
+        _assert_error(await client.post("/oauth/revoke", data={"token": "x", "client_id": cid},
+                                        headers={**FORM, **headers}), 401, "invalid_client")
+        _assert_error(await _token(client, {"grant_type": "refresh_token", "refresh_token": "x"}, headers=headers),
+                      401, "invalid_client")
+        assert calls == []
+
+    async def test_a_login_or_garbage_credentials_change_nothing(self, client, public_client, tokens, auth_headers):
+        """The same refresh answers the same with a login, with a garbage
+        bearer and cookie, and with neither: none of them is read."""
+        garbage = {"Authorization": "Bearer not-a-token", "Cookie": "chaotic_token=garbage; session=garbage"}
+        first = await _token(client, _refresh(public_client, tokens["refresh_token"]), headers=garbage)
+        assert first.status_code == 200, first.text
+        second = await _token(client, _refresh(public_client, first.json()["refresh_token"]),
+                              headers=_login_headers(auth_headers))
+        assert second.status_code == 200, second.text
+        assert second.json()["chaotic"] == tokens["chaotic"] == first.json()["chaotic"]
+
+    async def test_a_login_session_is_not_client_authentication_at_revoke(
+        self, client, confidential_client, auth_headers, test_team,
+    ):
+        """A confidential client's token is not revoked on the strength of
+        a login: the client secret is required, the bearer and cookie
+        count for nothing."""
+        cid, secret = confidential_client
+        code = await _code(client, cid, auth_headers, test_team.id)
+        body = (await _token(client, _exchange(cid, code, client_secret=secret))).json()
+        for data in ({"token": body["refresh_token"], "client_id": cid}, {"token": body["refresh_token"]}):
+            response = await client.post("/oauth/revoke", data=data, headers={**FORM, **_login_headers(auth_headers)})
+            _assert_error(response, 401, "invalid_client")
+        assert (await OxydeHolderSession.objects.get(id=body["chaotic"]["holder_session_id"])).revoked_at is None
+
+    async def test_a_login_does_not_name_the_client_at_token(self, client, public_client, tokens, auth_headers):
+        """Without a client_id in the body, a login does not stand in for
+        one: the refresh is refused and the token is not spent."""
+        data = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]}
+        _assert_error(await _token(client, data, headers=_login_headers(auth_headers)), 401, "invalid_client")
+        assert (await _token(client, _refresh(public_client, tokens["refresh_token"]))).status_code == 200
