@@ -49,6 +49,7 @@ import hashlib
 import hmac
 import logging
 import secrets
+from urllib.parse import urlsplit
 from datetime import datetime, timedelta, timezone
 
 from oxyde import F
@@ -57,6 +58,7 @@ from app.config import get_settings
 from app.oxyde_models.email_verification import OxydeEmailVerificationCode
 from app.oxyde_models.user import OxydeUser
 from app.services.email_service import EmailService
+from app.utils.local_host import is_local_host
 from app.utils.datetimes import ensure_utc
 from app.utils.email_address import fold_email
 
@@ -86,6 +88,48 @@ def log_invitation_gate() -> None:
         logger.info(
             "Invitation email-verification gate: INACTIVE (no SMTP configured); "
             "an invitation link alone is enough to accept it, so hand links over privately."
+        )
+
+
+def warn_if_app_base_url_is_local() -> None:
+    """Warn once at startup when APP_BASE_URL names a local-only host
+    (CHT-1822). That means loopback, or 0.0.0.0/:: copied from a bind
+    address. The default, http://localhost:24267, is such a host.
+
+    Every absolute link the server builds starts with APP_BASE_URL:
+    invitation accept links, and the issue link in a ritual-gate email.
+    On such a host nobody on another machine can open them. The host is
+    never taken from the request (that would allow Host-header link
+    poisoning), so setting APP_BASE_URL is the fix. The wording depends
+    on SMTP:
+
+    - With SMTP, those links go out by email as they are, and nothing
+      can correct them.
+    - Without SMTP, the invitation link is shown to the admin, and the
+      web UI and the CLI rebuild it on the address they reached.
+
+    The message names only the host, never a token or a secret."""
+    settings = get_settings()
+    try:
+        host = urlsplit(settings.app_base_url).hostname
+    except ValueError:
+        return
+    if not is_local_host(host):
+        return
+    fix = "Set APP_BASE_URL to this server's public URL (chaotic system config set APP_BASE_URL https://your-chaotic-host)."
+    if EmailService().is_configured():
+        logger.warning(
+            "APP_BASE_URL names %s, a host only this machine can reach, and SMTP is configured: "
+            "emailed links (team invitations, ritual-gate notifications) point there and cannot be "
+            "opened from another machine. %s",
+            host, fix,
+        )
+    else:
+        logger.warning(
+            "APP_BASE_URL names %s, a host only this machine can reach, and SMTP is not configured: "
+            "invitation links this server builds point there. The web UI and the CLI correct them "
+            "when they reached the server at another address; anything else does not. %s",
+            host, fix,
         )
 
 

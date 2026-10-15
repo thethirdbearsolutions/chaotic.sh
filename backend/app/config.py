@@ -83,9 +83,11 @@ class Settings(BaseSettings):
     # and this app applies the list itself (app.main).
     forwarded_allow_ips: str = DEFAULT_FORWARDED_ALLOW_IPS
 
-    # Public base URL, used to build absolute links in outbound email
-    # (invitation accept links). No scheme/host detection from requests --
-    # explicit env var, same as everything else here.
+    # Public base URL, used to build absolute links: invitation accept
+    # links, emailed or (without SMTP) shown to the inviting admin. No
+    # scheme/host detection from requests -- explicit env var, same as
+    # everything else here. Startup warns while it names a host only this
+    # machine can reach, as this default does (CHT-1822).
     app_base_url: str = "http://localhost:24267"
 
     # OAuth 2.1 for remote MCP clients (CHT-1368; design doc "MCP OAuth

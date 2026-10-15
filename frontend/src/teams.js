@@ -444,7 +444,7 @@ export async function handleInvite(event) {
     const invitation = await api.createInvitation(getCurrentTeam().id, email, role);
     await loadTeamInvitations();
     if (invitation && invitation.accept_url) {
-      showInviteLink(email, invitation.accept_url);
+      showInviteLink(email, inviteLinkForDisplay(invitation.accept_url));
       return false;
     }
     closeModal();
@@ -453,6 +453,58 @@ export async function handleInvite(event) {
     showApiError('send invitation', e);
   }
   return false;
+}
+
+/**
+ * Whether a URL host names only this machine (CHT-1822). That covers
+ * loopback (localhost, *.localhost, 127.0.0.0/8, ::1, ::ffff:127.x.y.z)
+ * and unspecified (0.0.0.0, ::). The host is read with the browser's own
+ * URL parser, so 127.1, 2130706433 and 0x7f.1 count as 127.0.0.1. Keep
+ * this in step with backend/app/utils/local_host.py and
+ * cli/src/cli/local_host.py; all three are tested against
+ * testdata/local-hosts.json.
+ * @param {string} host - A URL hostname, IPv6 with or without brackets
+ * @returns {boolean}
+ */
+export function isLocalHost(host) {
+  let h = String(host ?? '').trim();
+  if (!h || /[/?#@\\\s%]/.test(h)) return false;
+  if (h.includes(':') && !h.startsWith('[')) h = `[${h}]`;
+  let hostname;
+  try {
+    hostname = new URL(`http://${h}/`).hostname;
+  } catch {
+    return false;
+  }
+  hostname = hostname.replace(/\.$/, '');
+  if (hostname === 'localhost' || hostname.endsWith('.localhost')) return true;
+  // The URL parser has already put IPv4 and IPv6 in canonical form.
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) || hostname === '0.0.0.0') return true;
+  return /^\[::(1|ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}|ffff:0:0)?\]$/.test(hostname);
+}
+
+/**
+ * The accept link to show (CHT-1822). The server builds it from
+ * APP_BASE_URL, which defaults to http://localhost:24267; a server that
+ * never set it hands out a link no remote invitee can open. When the link
+ * names a local-only host (isLocalHost) and this page was not loaded from one, rebuild it
+ * on the origin the admin actually reached, keeping only the path
+ * (/invite/<token>) from the server's link. Anything else is left as is.
+ * @param {string} acceptUrl - accept_url from the create response
+ * @param {string} [origin] - this page's origin (window.location.origin)
+ * @returns {string}
+ */
+export function inviteLinkForDisplay(acceptUrl, origin = window.location.origin) {
+  let parsed;
+  let here;
+  try {
+    parsed = new URL(acceptUrl);
+    here = new URL(origin);
+  } catch {
+    return acceptUrl;
+  }
+  if (!isLocalHost(parsed.hostname) || isLocalHost(here.hostname)) return acceptUrl;
+  return here.origin + parsed.pathname;
 }
 
 /**

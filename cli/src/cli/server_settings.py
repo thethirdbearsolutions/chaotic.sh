@@ -44,7 +44,7 @@ KNOWN: dict[str, Setting] = {
         "bool", "false", "Serve OAuth 2.1 for remote MCP clients. Needs APP_BASE_URL."),
     "APP_BASE_URL": Setting(
         "url", "http://localhost:24267",
-        "The public origin people and clients reach the server at: the OAuth issuer, and the base of emailed links."),
+        "The public origin people and clients reach the server at: the OAuth issuer, and the base of invitation links."),
     "FORWARDED_ALLOW_IPS": Setting(
         "proxies", "127.0.0.1,::1",
         "Reverse proxies (IP addresses or CIDR networks) whose X-Forwarded-* headers are believed. Empty: none."),
