@@ -67,7 +67,7 @@ class TestAssigneeValidation:
     async def test_create_issue_with_non_member_assignee(
         self, client, auth_headers, test_project, non_member_user
     ):
-        """Assigning to user not on the team returns 400."""
+        """Assigning to user not on the team returns the missing user's 400."""
         response = await client.post(
             f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
@@ -77,7 +77,9 @@ class TestAssigneeValidation:
             },
         )
         assert response.status_code == 400
-        assert "Assignee is not a member" in response.json()["detail"]
+        # Answered like a missing user: someone outside the team is not
+        # confirmed to exist (CHT-1819).
+        assert response.json()["detail"] == "Assignee not found"
 
 
 @pytest.mark.asyncio
@@ -203,14 +205,16 @@ class TestUpdateIssueValidation:
     async def test_update_issue_with_non_member_assignee(
         self, client, auth_headers, test_issue, test_project, non_member_user
     ):
-        """Updating issue with assignee not on team returns 400."""
+        """Updating issue with assignee not on team returns the missing user's 400."""
         response = await client.patch(
             f"/api/issues/{test_issue.id}?project_id={test_project.id}",
             headers=auth_headers,
             json={"assignee_id": non_member_user.id},
         )
         assert response.status_code == 400
-        assert "Assignee is not a member" in response.json()["detail"]
+        # Answered like a missing user: someone outside the team is not
+        # confirmed to exist (CHT-1819).
+        assert response.json()["detail"] == "Assignee not found"
 
     async def test_get_issue_unauthenticated(self, client, test_issue):
         """GET /issues/{id} returns 401 without auth headers."""

@@ -154,7 +154,8 @@ class TestRitualGroupServiceValidation:
             group_id=group.id,
             weight=1,
         )
-        with pytest.raises(ValueError, match="different project"):
+        # Answered like a missing group (CHT-1819).
+        with pytest.raises(ValueError, match="not found in this project"):
             await service.create(ritual_in, test_project.id)
 
     async def test_group_members_must_share_a_trigger(self, db, test_project):
@@ -352,7 +353,8 @@ class TestRitualGroupServiceValidation:
 
         service = RitualService()
         update = RitualUpdate(group_id=group.id)
-        with pytest.raises(ValueError, match="different project"):
+        # Answered like a missing group (CHT-1819).
+        with pytest.raises(ValueError, match="not found in this project"):
             await service.update(ritual, update)
 
     async def test_update_ritual_remove_from_group(self, db, test_project):

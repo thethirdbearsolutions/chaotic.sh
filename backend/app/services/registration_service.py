@@ -20,7 +20,10 @@ The rules, each enforced here and tested in tests/test_agent_register.py:
    holder is an active member of its team. A registered identity can
    never register (one level).
 2. Scope: at most the registrar's. ``project_id`` may narrow a
-   team-scoped registrar; anything wider is a 403 naming the limit.
+   team-scoped registrar; a ``team_id`` wider than it is a 403 naming
+   the limit. A ``project_id`` the caller cannot see is the missing
+   project's 404, whoever calls (CHT-1785, CHT-1819): a project
+   elsewhere used to answer 403 naming its team, an existence oracle.
 3. Idempotent on (team, external_ref): the same registrar gets the same
    identity back (renamed if asked); another registrar, or an agent not
    registered by this caller, gets 409; a deactivated identity gets 409.
@@ -267,8 +270,14 @@ class RegistrationService:
 
         project = None
         if req.project_id is not None:
+            # A project the caller cannot see answers like a missing one,
+            # before any other check can tell the two apart. For an agent
+            # registrar that also confines it: a project-scoped one sees
+            # only its project, a team-scoped one only its team's.
+            from app.api.deps import check_user_project_access
+
             project = await OxydeProject.objects.get_or_none(id=req.project_id)
-            if project is None:
+            if project is None or not await check_user_project_access(caller, project):
                 raise RegistrationRefused(404, "project_not_found", "Project not found.")
 
         if caller.is_agent:
@@ -289,20 +298,11 @@ class RegistrationService:
                     403, "scope_exceeds_registrar",
                     f"This registrar is limited to team {team_id}; it cannot register into team {req.team_id}.",
                 )
+            # A project it can see is its own (project-scoped) or in its
+            # team (team-scoped): checked above.
             if caller.agent_project_id:
-                if project is not None and project.id != caller.agent_project_id:
-                    raise RegistrationRefused(
-                        403, "scope_exceeds_registrar",
-                        f"This registrar is limited to project {caller.agent_project_id}; "
-                        f"it cannot register into project {project.id}.",
-                    )
                 project_id = caller.agent_project_id
             else:
-                if project is not None and project.team_id != team_id:
-                    raise RegistrationRefused(
-                        403, "scope_exceeds_registrar",
-                        f"This registrar is limited to team {team_id}; project {project.id} is in another team.",
-                    )
                 project_id = project.id if project is not None else None
         else:
             holder_id = caller.id

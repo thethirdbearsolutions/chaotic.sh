@@ -97,11 +97,22 @@ async def _validate_assignee(
     (`current_assignee_id`) is not a new assignment, so an update that
     touches other fields of an issue already held by a retired agent
     still goes through.
+
+    A user outside the project's team answers exactly like a missing one
+    (CHT-1785, CHT-1819), and is checked first: a name or a "deactivated"
+    reply would confirm that someone in another team exists.
     """
     if not assignee_id:
         return
     user = await OxydeUser.objects.get_or_none(id=assignee_id)
-    if not user:
+    # Agents: the team they are scoped to; humans: team membership.
+    if user is None:
+        in_team = False
+    elif user.is_agent:
+        in_team = user.agent_team_id == team_id
+    else:
+        in_team = await TeamService().get_member(team_id, assignee_id) is not None
+    if not in_team:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Assignee not found",
@@ -111,13 +122,7 @@ async def _validate_assignee(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Assignee '{user.name}' is deactivated and cannot be assigned work",
         )
-    # Agents: check team scope; humans: check team membership
     if user.is_agent:
-        if user.agent_team_id != team_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Assignee (agent) is not scoped to this project's team",
-            )
         # A project-scoped agent works only in its project: assigned
         # elsewhere, it could not open the issue, and its inbox would
         # carry the issue's title out of the project (CHT-1780).
@@ -126,14 +131,6 @@ async def _validate_assignee(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Assignee (agent) is scoped to a different project",
-            )
-    else:
-        team_service = TeamService()
-        member = await team_service.get_member(team_id, assignee_id)
-        if not member:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Assignee is not a member of this project's team",
             )
 
 

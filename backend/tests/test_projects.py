@@ -326,3 +326,27 @@ async def test_project_service_increment_issue_count(db, test_project):
 
     assert new_count == original_count + 1
     assert test_project.issue_count == original_count + 1
+
+
+@pytest.mark.asyncio
+async def test_project_lead_must_be_in_the_team(client, auth_headers, test_team, test_project, test_user, test_user2):
+    """A lead from the team is kept; one outside it, or one that does not
+    exist, gets the same 400 (CHT-1819). The id used to be stored
+    unchecked: another team's user was accepted, a missing one was a 500."""
+    ok = await client.patch(f"/api/projects/{test_project.id}", json={"lead_id": test_user.id}, headers=auth_headers)
+    assert ok.status_code == 200 and ok.json()["lead_id"] == test_user.id
+    created = await client.post(
+        f"/api/teams/{test_team.id}/projects", json={"name": "Led", "key": "LED", "lead_id": test_user.id},
+        headers=auth_headers,
+    )
+    assert created.status_code == 201 and created.json()["lead_id"] == test_user.id
+    for lead_id in (test_user2.id, "00000000-0000-0000-0000-000000000000"):
+        refused = await client.patch(f"/api/projects/{test_project.id}", json={"lead_id": lead_id}, headers=auth_headers)
+        assert (refused.status_code, refused.json()) == (400, {"detail": "Lead not found"}), lead_id
+        refused = await client.post(
+            f"/api/teams/{test_team.id}/projects", json={"name": "X", "key": "XLD", "lead_id": lead_id},
+            headers=auth_headers,
+        )
+        assert (refused.status_code, refused.json()) == (400, {"detail": "Lead not found"}), lead_id
+    cleared = await client.patch(f"/api/projects/{test_project.id}", json={"lead_id": None}, headers=auth_headers)
+    assert cleared.status_code == 200 and cleared.json()["lead_id"] is None

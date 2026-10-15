@@ -499,7 +499,7 @@ class TestAssigneeValidation:
     async def test_assign_agent_wrong_team(
         self, client, auth_headers, db, test_issue
     ):
-        """Assign agent scoped to wrong team → 400 (lines 57-58)."""
+        """Assign agent scoped to wrong team → the missing assignee's 400 (CHT-1819)."""
         from app.utils.security import get_password_hash
         from oxyde import execute_raw
         import uuid
@@ -521,19 +521,19 @@ class TestAssigneeValidation:
             json={"assignee_id": agent_id},
         )
         assert response.status_code == 400
-        assert "agent" in response.json()["detail"].lower()
+        assert response.json()["detail"] == "Assignee not found"
 
     async def test_assign_non_member(
         self, client, auth_headers, db, test_issue, test_user2
     ):
-        """Assign non-member user → 400 (line 65)."""
+        """Assign non-member user → the missing assignee's 400 (CHT-1819)."""
         response = await client.patch(
             f"/api/issues/{test_issue.id}",
             headers=auth_headers,
             json={"assignee_id": test_user2.id},
         )
         assert response.status_code == 400
-        assert "not a member" in response.json()["detail"].lower()
+        assert response.json()["detail"] == "Assignee not found"
 
 
 # === Cross-team relation check (line 1209) ===
