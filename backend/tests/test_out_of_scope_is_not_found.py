@@ -414,6 +414,7 @@ ROUTES = [
     ("POST", "/api/agents/{agent}/reactivate", None, "agent"),
     ("DELETE", "/api/api-keys/{api_key}", None, "api_key"),
     ("GET", "/api/users/{user}", None, "user"),
+    ("GET", "/api/users/{agent}", None, "agent"),
 ]
 
 

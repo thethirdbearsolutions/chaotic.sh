@@ -70,15 +70,7 @@ async def login(user_in: UserLogin):
 @reads
 async def get_me(current_user: CurrentUser):
     """Get current user info."""
-    parent_user_name = None
-    if current_user.is_agent and current_user.parent_user_id:
-        user_service = UserService()
-        parent_user = await user_service.get_by_id(current_user.parent_user_id)
-        parent_user_name = parent_user.name if parent_user else None
-    registered_by_name = None
-    if current_user.registered_by_id:
-        registrar = await UserService().get_by_id(current_user.registered_by_id)
-        registered_by_name = registrar.name if registrar else None
+    parent_user_name, registered_by_name = await UserService().related_names(current_user)
 
     return UserResponse(
         id=current_user.id,

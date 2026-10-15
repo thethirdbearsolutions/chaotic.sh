@@ -268,6 +268,20 @@ class UserService:
         """Get user by ID."""
         return await OxydeUser.objects.get_or_none(id=user_id)
 
+    async def related_names(self, user: OxydeUser) -> tuple[str | None, str | None]:
+        """``(parent_user_name, registered_by_name)`` for a user row: an
+        agent's owner and registrar, by name. A row loaded without its
+        relations joined has neither, so the routes that return a
+        ``UserResponse`` fill them through this (CHT-1841)."""
+        parent_user_name = registered_by_name = None
+        if user.is_agent and user.parent_user_id:
+            parent = await self.get_by_id(user.parent_user_id)
+            parent_user_name = parent.name if parent else None
+        if user.registered_by_id:
+            registrar = await self.get_by_id(user.registered_by_id)
+            registered_by_name = registrar.name if registrar else None
+        return parent_user_name, registered_by_name
+
     async def get_by_email(self, email: str) -> OxydeUser | None:
         """Get user by email."""
         return await OxydeUser.objects.get_or_none(email=email)
