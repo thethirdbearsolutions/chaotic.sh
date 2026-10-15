@@ -36,6 +36,7 @@ import sh.chaotic.api.models.IssueCommentUpdate
 import sh.chaotic.api.models.IssueDescriptionRevisionListItem
 import sh.chaotic.api.models.IssueDescriptionRevisionResponse
 import sh.chaotic.api.models.IssuePriority
+import sh.chaotic.api.models.IssueQueryFieldsResponse
 import sh.chaotic.api.models.IssueRelationCreate
 import sh.chaotic.api.models.IssueRelationResponse
 import sh.chaotic.api.models.IssueResponse
@@ -421,6 +422,39 @@ import io.ktor.http.ParametersBuilder
             val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.GET,
             "/api/issues/{issue_id}/documents".replace("{" + "issue_id" + "}", "$issueId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * GET /api/issues/query/fields
+        * Get Issue Query Fields
+        * The issue query&#39;s vocabulary (CHT-1783): each field with its value kind and operators, each operator&#39;s arity and text form, the enum values, the order fields and the caps. It is what a query builder needs to build its row editors, served from the allow-list the query endpoints validate against. It is the same for every caller and holds no data, so any signed-in caller may read it.
+         * @return IssueQueryFieldsResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun getIssueQueryFieldsApiIssuesQueryFieldsGet(): HttpResponse<IssueQueryFieldsResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/api/issues/query/fields",
             query = localVariableQuery,
             headers = localVariableHeaders,
             requiresAuthentication = true,

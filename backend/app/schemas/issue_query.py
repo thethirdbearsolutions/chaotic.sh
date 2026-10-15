@@ -94,6 +94,34 @@ class FieldSpec:
     enum: type | None = None
 
 
+class QueryFieldKind(StrEnum):
+    """How a field's values are read and resolved (``FieldSpec.kind``)."""
+
+    ENUM = "enum"
+    USER = "user"
+    PROJECT = "project"
+    SPRINT = "sprint"
+    LABEL = "label"
+    NUMBER = "number"
+    ISSUE = "issue"
+    IDENTIFIER = "identifier"
+    DATE = "date"
+    TEXT = "text"
+
+
+# Words a value of a kind may be instead of a name: `assignee=me`,
+# `sprint=current`, `due=today`. The resolver and the date check read
+# these, and the vocabulary endpoint serves them (CHT-1783).
+ME = "me"
+CURRENT_SPRINT = "current"
+DATE_KEYWORDS = ("today", "yesterday")
+KIND_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "user": (ME,),
+    "sprint": (CURRENT_SPRINT,),
+    "date": DATE_KEYWORDS,
+}
+
+
 _NULLABLE_REF = frozenset({"is", "is_not", "empty", "not_empty"})
 _DATE = frozenset({"after", "before", "between"})
 
@@ -160,6 +188,7 @@ class OrderField(StrEnum):
 ORDER_FIELDS = tuple(f.value for f in OrderField)
 assert set(FIELDS) == {f.value for f in QueryField}
 assert set(OP_ARITY) == {o.value for o in QueryOp}
+assert {spec.kind for spec in FIELDS.values()} <= {k.value for k in QueryFieldKind}
 
 # A date value: an ISO date or datetime, `today`, `yesterday`, or a
 # relative offset back from now such as -7d, -2w, -12h.
@@ -179,7 +208,7 @@ MAX_NUMBER = 1_000_000
 
 
 def is_date_value(value: str) -> bool:
-    if value in ("today", "yesterday") or _RELATIVE.match(value):
+    if value in DATE_KEYWORDS or _RELATIVE.match(value):
         return True
     if not (_ISO_DATE.match(value) or _ISO_DATETIME.match(value)):
         return False
@@ -355,3 +384,59 @@ class IssueQueryResponse(BaseModel):
     skip: int
     limit: int
     issues: list[IssueResponse]
+
+
+class QueryFieldInfo(BaseModel):
+    """One field a filter row can test, as the query builder needs it."""
+
+    name: QueryField
+    kind: QueryFieldKind = Field(description="How values are read: picks the value editor.")
+    ops: list[QueryOp] = Field(description="The operators this field accepts.")
+    enum_values: list[str] | None = Field(
+        default=None, description="For an enum field, every value it accepts; otherwise null.",
+    )
+    keywords: list[str] = Field(
+        default_factory=list,
+        description="Words accepted in place of a name or date, such as `me` or `current`.",
+    )
+    aliases: list[str] = Field(
+        default_factory=list, description="Other names the text form accepts for this field.",
+    )
+
+
+class QueryOpInfo(BaseModel):
+    """One operator: how many values it takes and how the text writes it."""
+
+    name: QueryOp
+    min_values: int
+    max_values: int
+    text: str = Field(
+        description="How the text form writes it, with `{field}` for the field name "
+        "and a, b for values.",
+    )
+
+
+class QueryLimits(BaseModel):
+    """The caps a query is checked against."""
+
+    max_depth: int = Field(description="Groups nest at most this deep; the root group is 1.")
+    max_rows: int = Field(description="Filter rows in the whole query (groups not counted).")
+    max_values: int = Field(description="Values in one row.")
+    max_value_length: int = Field(description="Characters in one value.")
+    max_order_terms: int
+    max_where_length: int = Field(description="Characters in the `where` text.")
+    max_filter_json_length: int = Field(description="Characters in the `filter` JSON.")
+    max_number: int = Field(description="The largest number a number field takes.")
+
+
+class IssueQueryFieldsResponse(BaseModel):
+    """The issue query's vocabulary (CHT-1783): every field with its kind
+    and operators, every operator's arity, the order fields and the caps.
+    Built from the allow-list the validator checks, so it cannot drift
+    from what the query endpoints accept. It holds no data."""
+
+    fields: list[QueryFieldInfo]
+    ops: list[QueryOpInfo]
+    order_fields: list[OrderField]
+    default_order: str = Field(description="The order used when none is given, as `order` text.")
+    limits: QueryLimits

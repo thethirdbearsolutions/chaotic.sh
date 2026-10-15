@@ -160,6 +160,63 @@ every match, so `total > skip + len(issues)` means there is another page.
 A query that does not parse, fails validation, or names something that
 is not there gets a 400. Its `detail` says what is wrong.
 
+## The vocabulary
+
+```
+GET /api/issues/query/fields
+```
+
+This endpoint returns what a query may say: the tables above and the
+limits, as JSON. It is built from the allow-list the query endpoints
+validate against, so a query builder can use it for its row editors
+instead of keeping its own copy (CHT-1783). It returns the same answer
+to every signed-in caller, agents included. It contains no issues,
+names or other data, only the vocabulary.
+
+```json
+{
+  "fields": [
+    {"name": "status", "kind": "enum", "ops": ["is", "is_not"],
+     "enum_values": ["backlog", "todo", ...], "keywords": [], "aliases": []},
+    {"name": "assignee", "kind": "user", "ops": ["is", "is_not", "empty", "not_empty"],
+     "enum_values": null, "keywords": ["me"], "aliases": []},
+    ...
+  ],
+  "ops": [
+    {"name": "is", "min_values": 1, "max_values": 100, "text": "{field}=a,b"},
+    {"name": "between", "min_values": 2, "max_values": 2, "text": "{field}=a..b"},
+    {"name": "empty", "min_values": 0, "max_values": 0, "text": "{field}="},
+    ...
+  ],
+  "order_fields": ["created", "updated", "priority", ...],
+  "default_order": "-updated",
+  "limits": {"max_depth": 4, "max_rows": 50, "max_values": 100,
+             "max_value_length": 200, "max_order_terms": 3,
+             "max_where_length": 4000, "max_filter_json_length": 16000,
+             "max_number": 1000000}
+}
+```
+
+- **`kind`** says how a field's values are read, and so which value
+  editor fits it. The kinds are `enum`, `user`, `project`, `sprint`,
+  `label`, `number`, `issue` (an identifier or id), `identifier`, `date`
+  and `text`.
+- **`ops`** lists the operators the field accepts. Any other operator is
+  a 400.
+- **`enum_values`** lists every value an `enum` field accepts. It is
+  null for the other kinds.
+- **`keywords`** are words accepted in place of a value: `me` for a user
+  field, `current` for sprint, and `today` and `yesterday` for a date.
+  Dates also take offsets such as `-7d`.
+- **`aliases`** are other names the text form accepts for the field.
+- **`min_values`/`max_values`** give how many values a row with that
+  operator takes. `empty` and `not_empty` take none, and `between` takes
+  two.
+- **`text`** is how the text form writes the operator: `{field}` stands
+  for the field, and `a` and `b` stand for values. `all` is written as
+  one `=` clause per value. `gte` and `after` share a form, and so do
+  `lte` and `before`: the field's kind decides which one is meant.
+
 ## In the CLI
 
 ```

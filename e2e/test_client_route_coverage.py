@@ -74,6 +74,10 @@ ROUTES_NOT_FOR_THE_CLIENT = {
     # /invite/<token> link shows before sign-in. The CLI accepts a token
     # directly (`chaotic team accept`) and has nothing to preview.
     ("GET", "/api/teams/invitations/{token}"): "invitation preview: the /invite/<token> page (frontend)",
+    # Issue query vocabulary (CHT-1783): the web query builder's row
+    # editors. The CLI sends `--where` text and reads the server's 400s;
+    # docs/issue-query.md is its reference.
+    ("GET", "/api/issues/query/fields"): "query builder vocabulary: the /query page (frontend)",
 }
 
 # Routes that exist server-side but have no Client method yet. Empty since

@@ -43,11 +43,23 @@ from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.team import OxydeTeamMember
 from app.oxyde_models.user import OxydeUser
 from app.schemas.issue_query import (
+    CURRENT_SPRINT,
     FIELDS,
+    KIND_KEYWORDS,
     MAX_DEPTH,
+    MAX_NUMBER,
     MAX_ORDER_TERMS,
+    MAX_ROWS,
+    MAX_VALUE_LENGTH,
+    MAX_VALUES,
+    ME,
+    OP_ARITY,
     ORDER_FIELDS,
     IssueQuery,
+    IssueQueryFieldsResponse,
+    QueryFieldInfo,
+    QueryLimits,
+    QueryOpInfo,
     QueryGroup,
     QueryOrder,
     QueryRow,
@@ -504,6 +516,66 @@ _ORDER_COLUMN = {
 DEFAULT_ORDER = [QueryOrder(field="updated", direction="desc")]
 
 
+# Values for the operator examples. Dates for a date field, so a range
+# renders the way it does for one (a `between` of two equal days is
+# written as one day, so the two must differ).
+_EXAMPLE_VALUES = {"date": ("2026-01-01", "2026-12-31")}
+
+
+def _op_text(op: str) -> str:
+    """The text form of ``op``, rendered by the real renderer from a row
+    of the first field that takes it, with ``{field}`` for the field and
+    ``a``/``b`` for the values."""
+    field_name = next(f for f, spec in FIELDS.items() if op in spec.ops)
+    kind = FIELDS[field_name].kind
+    a, b = _EXAMPLE_VALUES.get(kind, ("a", "b"))
+    lo, hi = OP_ARITY[op]
+    values = [a, b][: max(lo, min(hi, 2))]
+    row = QueryRow.model_construct(field=field_name, op=op, values=values)
+    text = _render_row(row)
+    # Field names are words and values here are `a`/`b` or dates, so
+    # the field name only occurs where a clause begins.
+    text = re.sub(rf"\b{field_name}(?=[=!~^])", "{field}", text)
+    return text.replace(a, "a").replace(b, "b")
+
+
+def vocabulary() -> IssueQueryFieldsResponse:
+    """The fields, operators, order fields and caps, from the allow-list
+    the validator and the parser use (CHT-1783)."""
+    aliases: dict[str, list[str]] = {}
+    for alias, name in _FIELD_ALIASES.items():
+        aliases.setdefault(name, []).append(alias)
+    return IssueQueryFieldsResponse(
+        fields=[
+            QueryFieldInfo(
+                name=name,
+                kind=spec.kind,
+                ops=[op for op in OP_ARITY if op in spec.ops],
+                enum_values=[m.value for m in spec.enum] if spec.enum else None,
+                keywords=list(KIND_KEYWORDS.get(spec.kind, ())),
+                aliases=aliases.get(name, []),
+            )
+            for name, spec in FIELDS.items()
+        ],
+        ops=[
+            QueryOpInfo(name=op, min_values=lo, max_values=hi, text=_op_text(op))
+            for op, (lo, hi) in OP_ARITY.items()
+        ],
+        order_fields=list(ORDER_FIELDS),
+        default_order=render_order(DEFAULT_ORDER),
+        limits=QueryLimits(
+            max_depth=MAX_DEPTH,
+            max_rows=MAX_ROWS,
+            max_values=MAX_VALUES,
+            max_value_length=MAX_VALUE_LENGTH,
+            max_order_terms=MAX_ORDER_TERMS,
+            max_where_length=MAX_WHERE_LENGTH,
+            max_filter_json_length=MAX_FILTER_JSON_LENGTH,
+            max_number=MAX_NUMBER,
+        ),
+    )
+
+
 def _all(qs: list[Q]) -> Q:
     return reduce(operator.and_, qs)
 
@@ -682,7 +754,7 @@ class _Compiler:
 
     async def _user(self, value: str) -> str:
         lowered = value.lower()
-        if lowered == "me":
+        if lowered == ME:
             return self.scope.user.id
         if self._principals is None:
             member_ids = [
@@ -734,7 +806,7 @@ class _Compiler:
                 project_id__in=self.scope.project_ids
             ).all()
         lowered = value.lower()
-        if lowered == "current":
+        if lowered == CURRENT_SPRINT:
             # Every project in scope has its own active sprint; read, never
             # create (a query is not where sprints get materialised).
             return [s.id for s in self._sprints if s.status == SprintStatus.ACTIVE]
