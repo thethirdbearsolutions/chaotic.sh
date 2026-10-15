@@ -425,7 +425,7 @@ class Client:
         return self._request("GET", self._with_query(f"/teams/{team_id}/invitations", skip=skip, limit=limit))
 
     def accept_invitation(self, token: str) -> dict:
-        return self._request("POST", f"/teams/invitations/{token}/accept")
+        return self._request("POST", f"/teams/invitations/{quote(token, safe='')}/accept")
 
     def delete_invitation(self, team_id: str, invitation_id: str):
         return self._request("DELETE", f"/teams/{team_id}/invitations/{invitation_id}")

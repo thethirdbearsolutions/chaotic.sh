@@ -134,3 +134,10 @@ class TestEmailVerification:
     def test_confirm(self, sent):
         Client().confirm_email_verification("123456")
         assert _call(sent) == ("POST", "/auth/email-verification/confirm", {"code": "123456"})
+
+
+def test_accept_invitation_escapes_the_token(sent):
+    """CHT-1823: the token is one path segment, whatever it holds."""
+    Client().accept_invitation("../a/b?c#d")
+    method, path, _ = _call(sent)
+    assert (method, path) == ("POST", "/teams/invitations/..%2Fa%2Fb%3Fc%23d/accept")

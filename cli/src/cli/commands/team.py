@@ -1,4 +1,5 @@
 """Team management commands."""
+import re
 import sys
 from urllib.parse import urlsplit
 
@@ -43,6 +44,11 @@ def invite_link_for_display(accept_url: str, web_url: str | None) -> str:
     return f"{here.scheme}://{host}{port}{link.path}"
 
 
+# The server's tokens are secrets.token_urlsafe(32): 43 characters of
+# this alphabet. Same rule as inviteToken in frontend/src/invite.js.
+INVITE_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{16,128}")
+
+
 def invite_token_from_arg(value: str) -> tuple[str, str | None]:
     """The token in ``chaotic team accept-invite``'s argument (CHT-1823),
     and the host of the link it came from (None when there is none).
@@ -51,26 +57,30 @@ def invite_token_from_arg(value: str) -> tuple[str, str | None]:
     ``https://host/invite/<token>``; the token is the link's last path
     segment, and the segment before it must be ``invite``. A link
     without a scheme (``host/invite/<token>``) is read as a path, so it
-    has no host. Raises click.UsageError for a link with no token. The
-    message never repeats the argument: it is a credential."""
-    text = value.strip()
-    if not text:
-        raise click.UsageError("Pass the invitation link or its token.")
-    if "/" not in text:
-        return text, None
+    has no host. Either way the token must match INVITE_TOKEN_RE, so
+    nothing else (``..``, a trailing ``.`` or ``>`` from a paste, ``#``,
+    ``?``, control or zero-width characters) reaches the request path.
+    Raises click.UsageError otherwise; the message never repeats the
+    argument, because it is a credential."""
     bad = click.UsageError(
-        "That link has no invitation token in it. Pass the whole link "
+        "That is not an invitation link or token. Pass the whole link "
         "(https://<host>/invite/<token>) or just the token."
     )
-    try:
-        parts = urlsplit(text)
-        host = parts.hostname if parts.scheme else None
-    except ValueError:
-        raise bad from None
-    segments = [s for s in parts.path.split("/") if s]
-    if len(segments) < 2 or segments[-2] != "invite":
+    text = value.strip()
+    host = None
+    if "/" in text:
+        try:
+            parts = urlsplit(text)
+            host = parts.hostname if parts.scheme else None
+        except ValueError:
+            raise bad from None
+        segments = [s for s in parts.path.split("/") if s]
+        if len(segments) < 2 or segments[-2] != "invite":
+            raise bad
+        text = segments[-1]
+    if not INVITE_TOKEN_RE.fullmatch(text):
         raise bad
-    return segments[-1], host
+    return text, host
 
 
 def foreign_invite_host(link_host: str | None, web_url: str | None) -> str | None:

@@ -5,6 +5,7 @@ Tests cover: team list, create, use, show, members, invite, accept-invite.
 import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+import click
 import pytest
 
 
@@ -405,11 +406,11 @@ class TestTeamAcceptInvite:
 
         client.accept_invitation = MagicMock(return_value={})
 
-        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123'])
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123456789'])
 
         assert result.exit_code == 0
         assert 'Joined team' in result.output
-        client.accept_invitation.assert_called_once_with('inv-token-123')
+        client.accept_invitation.assert_called_once_with('inv-token-123456789')
 
     def test_accept_invite_unverified_email_hints_verify_email(self, cli_runner):
         """CHT-1790: the server's email_unverified refusal becomes a hint."""
@@ -421,7 +422,7 @@ class TestTeamAcceptInvite:
             {"error_code": "email_unverified", "message": "Verify your email address"},
         ))
 
-        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123'])
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123456789'])
 
         assert result.exit_code == 1
         assert 'chaotic auth verify-email' in result.output
@@ -436,7 +437,7 @@ class TestTeamAcceptInvite:
             "Invitation is for a different email",
         ))
 
-        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123'])
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123456789'])
 
         assert result.exit_code == 1
         assert 'Invitation is for a different email' in result.output
@@ -452,7 +453,7 @@ class TestTeamAcceptInvite:
             {"error_code": "email_unverified", "message": "Verify your email address"},
         ))
 
-        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123', '--json'])
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123456789', '--json'])
 
         assert result.exit_code == 1
         body = json.loads(result.stdout)
@@ -465,7 +466,7 @@ class TestTeamAcceptInvite:
 
         client.accept_invitation = MagicMock(return_value={"team_id": "t-1", "role": "member"})
 
-        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123', '--json'])
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123456789', '--json'])
 
         assert result.exit_code == 0, result.output
         assert json.loads(result.stdout) == {"team_id": "t-1", "role": "member"}
@@ -553,7 +554,7 @@ class TestTeamAcceptInviteLink:
         result, accept = self._accept(cli_runner, arg)
         assert result.exit_code == 2
         accept.assert_not_called()
-        assert "invitation link or its token" in result.output
+        assert "not an invitation link or token" in result.output
 
     @pytest.mark.parametrize("arg", [
         "https://chaotic.example.com/invite/",
@@ -561,12 +562,31 @@ class TestTeamAcceptInviteLink:
         "https://chaotic.example.com/issue/{t}",
         "{t}/extra",
         "https://[::1/invite/{t}",
+        # CHT-1823 review: anything outside [A-Za-z0-9_-]{16,128} is refused.
+        "https://chaotic.example.com/invite/..",
+        "https://chaotic.example.com/invite/.",
+        "https://chaotic.example.com/invite/{t}.",
+        "<https://chaotic.example.com/invite/{t}>",
+        "(https://chaotic.example.com/invite/{t})",
+        "https://chaotic.example.com/invite/{t}\u200b",
+        "https://chaotic.example.com/invite/{t} extra",
+        "https://chaotic.example.com/invite/{t}%0A",
+        "https://chaotic.example.com/invite/short",
+        "https://chaotic.example.com/invite/" + "a" * 129,
+        "{t}#x",
+        "{t}?x",
+        "{t}.",
+        "{t}\u200b",
+        "{t}\x07",
+        "<{t}>",
+        "short",
+        "a" * 129,
     ])
     def test_a_link_without_a_token_fails_without_echoing_it(self, cli_runner, web_url, arg):
         result, accept = self._accept(cli_runner, arg.format(t=self.TOKEN))
         assert result.exit_code == 2
         accept.assert_not_called()
-        assert "no invitation token" in result.output
+        assert "not an invitation link or token" in result.output
         assert self.TOKEN not in result.output
 
     def test_help_mentions_the_link(self, cli_runner):
@@ -580,11 +600,19 @@ class TestTeamAcceptInviteLink:
 class TestInviteTokenFromArg:
     def test_bare_token_has_no_host(self):
         from cli.commands.team import invite_token_from_arg
-        assert invite_token_from_arg("abc") == ("abc", None)
+        token = "a" * 16
+        assert invite_token_from_arg(f" {token}\n") == (token, None)
+
+    def test_length_bounds(self):
+        from cli.commands.team import invite_token_from_arg
+        assert invite_token_from_arg("A-_9" * 32)[0] == "A-_9" * 32
+        with pytest.raises(click.UsageError):
+            invite_token_from_arg("a" * 15)
 
     def test_link_host(self):
         from cli.commands.team import invite_token_from_arg
-        assert invite_token_from_arg("https://h.example/invite/abc") == ("abc", "h.example")
+        token = "x" * 43
+        assert invite_token_from_arg(f"https://h.example/invite/{token}") == (token, "h.example")
 
     @pytest.mark.parametrize("link_host,web_url,expected", [
         (None, "https://a.example", None),
