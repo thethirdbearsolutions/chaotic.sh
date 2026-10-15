@@ -155,6 +155,45 @@ describe('invitation links (CHT-1265)', () => {
         expect(loadTeams).not.toHaveBeenCalled();
     });
 
+    it.each([
+        ['/invite/short'],
+        [`/invite/${TOKEN.slice(0, 12)}`],
+        ['/invite//'],
+    ])('signed out on %s (no usable token), the same hint (review F1)', async (path) => {
+        history.replaceState(null, '', path);
+        await showSignedOut();
+        expect(showMissingToken).toHaveBeenCalled();
+        expect(showInvite).not.toHaveBeenCalled();
+        expect(showAuthScreen).not.toHaveBeenCalled();
+    });
+
+    it('signed in on a truncated link, the hint instead of the app (review F1)', async () => {
+        history.replaceState(null, '', `/invite/${TOKEN.slice(0, 12)}`);
+        setCurrentUser({ id: 'u1', email: 'r@example.com' });
+        await initApp();
+        expect(showMissingToken).toHaveBeenCalled();
+        expect(showMainScreen).not.toHaveBeenCalled();
+    });
+
+    it.each([['/invitations'], ['/invites/x'], ['/team/invite']])(
+        'signed out on %s, the sign-in form, not the hint', async (path) => {
+            history.replaceState(null, '', path);
+            await showSignedOut();
+            expect(showAuthScreen).toHaveBeenCalled();
+            expect(showMissingToken).not.toHaveBeenCalled();
+        },
+    );
+
+    it('the consent page still comes before any invitation handling (review F3)', async () => {
+        history.replaceState(null, '', '/oauth/consent/abcdefghijklmnop0123');
+        setCurrentUser({ id: 'u1', email: 'r@example.com' });
+        await initApp();
+        expect(showConsent).toHaveBeenCalled();
+        expect(showMissingToken).not.toHaveBeenCalled();
+        expect(showInvite).not.toHaveBeenCalled();
+        expect(showMainScreen).not.toHaveBeenCalled();
+    });
+
     it('the page opens the login or signup form on the same URL', async () => {
         await openInvite(TOKEN);
         const { showAuth } = showInvite.mock.calls[0][1];

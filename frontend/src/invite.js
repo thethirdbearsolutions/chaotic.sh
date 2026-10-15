@@ -28,9 +28,11 @@
  * page is served with Referrer-Policy: no-referrer, and the token goes
  * only to this server's own API, never in a query string.
  *
- * On /invite with no token to read back (storage was blocked and the
- * page reloaded, or the address was typed), the page says to open the
- * emailed link again (CHT-1792).
+ * On an invitation address with no usable token (/invite with nothing
+ * to read back, because storage was blocked and the page reloaded or the
+ * address was typed; or /invite/<something> that is not a token, as a
+ * link an email client cut short), the page says to open the emailed
+ * link again (CHT-1792).
  */
 
 import { api } from './api.js';
@@ -105,6 +107,18 @@ export function isInvitePath(pathname) {
     return pathname === INVITE_PATH || pathname === `${INVITE_PATH}/`;
 }
 
+/**
+ * Whether ``pathname`` is any invitation address: /invite, or
+ * /invite/<anything>, valid token or not. Where takeInviteToken()
+ * finds no token on one of these, the page shows the missing-token
+ * hint rather than falling through to sign-in or the app (CHT-1792).
+ * @param {string} pathname
+ * @returns {boolean}
+ */
+export function isInviteAddress(pathname) {
+    return isInvitePath(pathname) || Boolean(pathname && pathname.startsWith(INVITE_PREFIX));
+}
+
 /** Forget the stored token (accepted, or no longer valid). */
 export function forgetInviteToken() {
     heldToken = null;
@@ -150,6 +164,14 @@ function showOnly(el) {
     el.classList.remove('hidden');
 }
 
+/** Show the invitation screen alone, without an auth note; return it. */
+function takeOver() {
+    const el = screen();
+    clearAuthNotice();
+    showOnly(el);
+    return el;
+}
+
 /** Hide the invitation page (once accepted, the app takes over). */
 export function hideInvite() {
     document.getElementById('invite-screen')?.classList.add('hidden');
@@ -180,16 +202,21 @@ function expiry(preview) {
     return ` · expires ${escapeHtml(date)}`;
 }
 
+export const NEW_INVITATION_HINT = 'Ask whoever invited you to send a new invitation.';
+export const RELOAD_HINT = 'Reload the page to try again.';
+
 /**
- * Render the "no longer valid" page: nothing about the invitation.
+ * Render the "no longer valid" page, or another failure to load the
+ * invitation: nothing about the invitation itself.
  * @param {HTMLElement} el
  * @param {string} [message]
+ * @param {string} [hint] - what to do next
  */
-export function renderGone(el, message = GONE_MESSAGE) {
+export function renderGone(el, message = GONE_MESSAGE, hint = NEW_INVITATION_HINT) {
     el.innerHTML = `
         <div class="invite-page">
             <h1>${escapeHtml(message)}</h1>
-            <p class="invite-muted">Ask whoever invited you to send a new invitation.</p>
+            <p class="invite-muted">${escapeHtml(hint)}</p>
             <div class="invite-actions">
                 <a class="btn btn-secondary" href="/">Go to Chaotic</a>
             </div>
@@ -197,17 +224,18 @@ export function renderGone(el, message = GONE_MESSAGE) {
 }
 
 /**
- * The page for /invite with no token to read back: storage was blocked
- * and the page reloaded, or the address was typed (CHT-1792). It cannot
- * know which invitation this was, so it says how to get back to it.
+ * The page for an invitation address with no usable token: /invite with
+ * nothing to read back (storage blocked and the page reloaded, or the
+ * address typed), or a link cut short (CHT-1792). It cannot know which
+ * invitation this was, so it says how to get back to it.
  * @param {HTMLElement} el
  */
 export function renderMissingToken(el) {
     el.innerHTML = `
         <div class="invite-page">
             <h1>Open your invitation link again</h1>
-            <p>This page no longer has the invitation it was showing. Open the link in your
-                invitation email again to see it.</p>
+            <p>This page doesn't have an invitation to show. Open the link in your
+                invitation email again, all of it if it was split across lines.</p>
             <p class="invite-muted">If this happens each time you reload, your browser may be blocking
                 site storage for Chaotic; open the link and accept without reloading.</p>
             <div class="invite-actions">
@@ -217,13 +245,13 @@ export function renderMissingToken(el) {
 }
 
 /**
- * Take over the page with the missing-token hint (CHT-1792).
+ * Take over the page with the missing-token hint (CHT-1792). Whatever
+ * followed /invite/ leaves the address bar too: it is not a usable
+ * token, but it may be most of one.
  */
 export function showMissingToken() {
-    const el = screen();
-    clearAuthNotice();
-    showOnly(el);
-    renderMissingToken(el);
+    if (window.location.pathname !== INVITE_PATH) history.replaceState(null, '', INVITE_PATH);
+    renderMissingToken(takeOver());
 }
 
 /**
@@ -323,9 +351,7 @@ function showError(el, message) {
  * @param {() => void} deps.signOut - sign out and show this page again
  */
 export async function showInvite(token, { user = null, showAuth, enterTeam, signOut } = {}) {
-    const el = screen();
-    clearAuthNotice();
-    showOnly(el);
+    const el = takeOver();
     el.innerHTML = '<div class="invite-page"><p>Loading invitation…</p></div>';
     let preview;
     try {
@@ -335,7 +361,9 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
             forgetInviteToken();
             renderGone(el);
         } else {
-            renderGone(el, (e && e.message) || 'Something went wrong. Reload the page to try again.');
+            // Anything else may pass (a network error, a proxy's 429 or
+            // 5xx): keep the token and say to reload.
+            renderGone(el, (e && e.message) || 'Something went wrong.', RELOAD_HINT);
         }
         return;
     }
