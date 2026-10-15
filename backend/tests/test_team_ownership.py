@@ -279,6 +279,39 @@ class TestAdminsAreNotOwners:
         assert await _role(test_team.id, test_user.id) == TeamRole.OWNER
 
 
+class TestPromotedMeanwhile:
+    """PR #455 review 1: the route reads the role before the delete, so
+    the delete must re-check it for a caller who may not remove owners."""
+
+    async def test_a_member_made_an_owner_after_the_read_is_not_removed(self, test_team, test_user, test_user2):
+        member = await _join(test_team.id, test_user2.id)
+        await OxydeTeamMember.objects.filter(id=member.id).update(role=TeamRole.OWNER)
+        with pytest.raises(MembershipChanged):
+            await TeamService().remove_member(member, actor_id="an-admin", may_remove_owner=False)
+        assert await _role(test_team.id, test_user2.id) == TeamRole.OWNER
+        assert await OxydeTeamActivity.objects.filter(team_id=test_team.id).count() == 0
+
+    async def test_the_route_answers_409(self, client, auth_headers2, test_team, test_user, test_user2, monkeypatch):
+        await _join(test_team.id, test_user2.id, TeamRole.ADMIN)
+        victim = await OxydeUser.objects.create(
+            email="victim@example.com", hashed_password=get_password_hash("x"), name="Victim",
+        )
+        row = await _join(test_team.id, victim.id)
+        original = TeamService.remove_member
+
+        async def promoted_first(self, member, **kwargs):
+            await OxydeTeamMember.objects.filter(id=row.id).update(role=TeamRole.OWNER)
+            return await original(self, member, **kwargs)
+
+        monkeypatch.setattr(TeamService, "remove_member", promoted_first)
+        response = await client.delete(f"/api/teams/{test_team.id}/members/{victim.id}", headers=auth_headers2)
+        assert response.status_code == 409
+        # The stand-in promotion ran in the request's transaction, which
+        # the refusal rolled back; the membership itself is still there.
+        assert await _role(test_team.id, victim.id) is not None
+        assert await OxydeTeamActivity.objects.filter(team_id=test_team.id).count() == 0
+
+
 class TestConcurrentOwners:
     """The check that another owner remains is in the write, so racing
     requests cannot each see the other still there."""

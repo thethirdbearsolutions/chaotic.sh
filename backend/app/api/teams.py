@@ -250,8 +250,10 @@ async def remove_member(
 
     # An owner leaves on their own, or is removed by another owner, and
     # only while another owner remains (checked in the delete) (CHT-1848).
-    if (member.role == TeamRole.OWNER and user_id != current_user.id
-            and not await _is_team_owner(team_id, current_user)):
+    # The delete re-checks the role, so a member made an owner after this
+    # read is not removed by a caller who may not remove owners.
+    may_remove_owner = user_id == current_user.id or await _is_team_owner(team_id, current_user)
+    if member.role == TeamRole.OWNER and not may_remove_owner:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only owners can remove an owner",
@@ -264,9 +266,13 @@ async def remove_member(
     agent_service = AgentService()
     async with revoking():
         try:
-            removed_now = await team_service.remove_member(member, actor_id=current_user.id)
+            removed_now = await team_service.remove_member(
+                member, actor_id=current_user.id, may_remove_owner=may_remove_owner,
+            )
         except LastOwnerError:
             raise _last_owner() from None
+        except MembershipChanged:
+            raise _membership_changed() from None
         if not removed_now:
             # Removed meanwhile (another admin, a retried request).
             raise HTTPException(

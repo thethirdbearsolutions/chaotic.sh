@@ -315,7 +315,9 @@ class TeamService:
         await target.refresh()
         return target
 
-    async def remove_member(self, member: OxydeTeamMember, *, actor_id: str | None) -> bool:
+    async def remove_member(
+        self, member: OxydeTeamMember, *, actor_id: str | None, may_remove_owner: bool = True,
+    ) -> bool:
         """Remove a member from a team, logged (MEMBER_REMOVED) in the
         same transaction, whether or not it ended a connection (CHT-1843).
         Actor and target the same: they left.
@@ -326,17 +328,22 @@ class TeamService:
 
         An owner is removed only while another owner remains (CHT-1848),
         checked in the DELETE itself, so two owners leaving at once leave
-        one; LastOwnerError otherwise. The role logged is the one the row
-        held when it was deleted.
+        one; LastOwnerError otherwise. With ``may_remove_owner`` False
+        (the caller may not remove an owner) the DELETE also requires the
+        row not to be an owner, so a member made an owner after the
+        caller read it is not removed: MembershipChanged. The role logged
+        is the one the row held when it was deleted.
         """
+        owner = TeamRole.OWNER.name
+        guard = f"(role != ? OR {_ANOTHER_OWNER})" if may_remove_owner else "role != ?"
+        params = [member.id, owner] + ([member.team_id, owner, member.id] if may_remove_owner else [])
         async with atomic():
             deleted = await execute_raw(
-                f"DELETE FROM team_members WHERE id = ? AND (role != ? OR {_ANOTHER_OWNER}) RETURNING role",
-                [member.id, TeamRole.OWNER.name, member.team_id, TeamRole.OWNER.name, member.id],
+                f"DELETE FROM team_members WHERE id = ? AND {guard} RETURNING role", params,
             )
             if not deleted:
                 if await OxydeTeamMember.objects.filter(id=member.id).first() is not None:
-                    raise LastOwnerError()
+                    raise LastOwnerError() if may_remove_owner else MembershipChanged()
                 return False
             await self.record_activity(
                 member.team_id, TeamActivityAction.MEMBER_REMOVED, actor_id=actor_id,

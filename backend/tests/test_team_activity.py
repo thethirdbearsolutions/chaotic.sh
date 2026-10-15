@@ -217,7 +217,7 @@ class TestRacesLogOnlyWhatHappened:
     ):
         await _join(test_team.id, test_user2.id)
 
-        async def gone(self, member, *, actor_id):
+        async def gone(self, member, *, actor_id, **_):
             return False
 
         monkeypatch.setattr(TeamService, "remove_member", gone)
