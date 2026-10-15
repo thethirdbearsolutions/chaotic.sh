@@ -562,7 +562,7 @@ async def test_team_scope_and_project_field(client, auth_headers, test_team, tes
 async def test_access_matches_the_issue_list(client, auth_headers2, test_team, test_project, test_user):
     await _issue(test_project, test_user, title="secret")
     r = await _query(client, auth_headers2, f"projects/{test_project.id}")
-    assert r.status_code == 403
+    assert r.status_code == 404
     r = await _query(client, auth_headers2, f"teams/{test_team.id}")
     assert r.status_code == 403
     r = await _query(client, auth_headers2, "projects/no-such-project")
@@ -582,7 +582,7 @@ async def test_project_scoped_agent_is_confined(client, test_team, test_project,
     )
     headers = {"Authorization": f"Bearer {create_access_token(data={'sub': agent.id})}"}
     await _issue(other, test_user, title="other")
-    assert (await _query(client, headers, f"projects/{other.id}")).status_code == 403
+    assert (await _query(client, headers, f"projects/{other.id}")).status_code == 404
     assert (await _query(client, headers, f"projects/{test_project.id}")).status_code == 200
     # A project-scoped agent has no team scope (CHT-1780): the team query
     # is refused, as GET /issues?team_id is.

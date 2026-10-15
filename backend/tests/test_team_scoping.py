@@ -129,7 +129,7 @@ class TestIssueCommentAuthChecks:
     async def test_update_comment_requires_project_access(
         self, client, auth_headers2, test_issue, db, test_user, test_user2
     ):
-        """403 for user not in the project's team."""
+        """404 for user not in the project's team."""
         comment = await OxydeIssueComment.objects.create(
             issue_id=test_issue.id,
             author_id=test_user2.id,
@@ -141,13 +141,13 @@ class TestIssueCommentAuthChecks:
             headers=auth_headers2,
             json={"content": "Updated"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_delete_comment_requires_project_access(
         self, client, auth_headers2, test_issue, db, test_user, test_user2
     ):
-        """403 for user not in the project's team."""
+        """404 for user not in the project's team."""
         comment = await OxydeIssueComment.objects.create(
             issue_id=test_issue.id,
             author_id=test_user2.id,
@@ -158,7 +158,7 @@ class TestIssueCommentAuthChecks:
             f"/api/issues/{test_issue.id}/comments/{comment.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 class TestDocumentCommentAuthChecks:
@@ -168,7 +168,7 @@ class TestDocumentCommentAuthChecks:
     async def test_update_document_comment_requires_team_access(
         self, client, db, test_user2, auth_headers2, other_team
     ):
-        """403 for user not in the document's team."""
+        """404 for user not in the document's team."""
         # Create a document in other_team that test_user2 is NOT a member of
         # (other_team only has test_user as owner)
         doc = await OxydeDocument.objects.create(
@@ -190,13 +190,13 @@ class TestDocumentCommentAuthChecks:
             headers=auth_headers2,
             json={"content": "Updated"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_delete_document_comment_requires_team_access(
         self, client, db, test_user2, auth_headers2, other_team
     ):
-        """403 for user not in the document's team."""
+        """404 for user not in the document's team."""
         doc = await OxydeDocument.objects.create(
             team_id=other_team["team"].id,
             author_id=test_user2.id,
@@ -215,4 +215,4 @@ class TestDocumentCommentAuthChecks:
             f"/api/documents/{doc.id}/comments/{comment.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404

@@ -388,7 +388,7 @@ class TestRitualAttestationFlow:
     async def test_attest_ritual_cross_team_denied(
         self, client, db, test_project, test_issue, other_team
     ):
-        """POST /rituals/{id}/attest-issue/{id} returns 403 for non-team-member."""
+        """POST /rituals/{id}/attest-issue/{id} returns 404 for non-team-member."""
         # Create user on other_team
         other_user = await OxydeUser.objects.create(
             email="attest-other@example.com",
@@ -412,7 +412,7 @@ class TestRitualAttestationFlow:
             headers=other_headers,
             json={"note": "Should be denied"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -504,7 +504,7 @@ class TestPendingApprovalsEdgeCases:
     async def test_pending_approvals_non_member(
         self, client, db, test_project, other_team
     ):
-        """GET /rituals/pending-approvals returns 403 for non-team-member."""
+        """GET /rituals/pending-approvals returns 404 for non-team-member."""
         other_user = await OxydeUser.objects.create(
             email="pending-other@example.com",
             hashed_password=get_password_hash("test"),
@@ -518,8 +518,8 @@ class TestPendingApprovalsEdgeCases:
             f"/api/rituals/pending-approvals?project_id={test_project.id}",
             headers=other_headers,
         )
-        assert response.status_code == 403
-        assert "Not a member" in response.json()["detail"]
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Project not found"
 
 
 @pytest.mark.asyncio
@@ -682,6 +682,9 @@ class TestAgentApprovalDenied:
         self, client, agent_headers, agent_user, db, test_project, limbo_sprint
     ):
         """POST /{ritual_id}/approve by agent returns 403."""
+        # Scoped to the team, so it sees the ritual (CHT-1785).
+        agent_user.agent_team_id = test_project.team_id
+        await agent_user.save(update_fields={"agent_team_id"})
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="review-ritual",

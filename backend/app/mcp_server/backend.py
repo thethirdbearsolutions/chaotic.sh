@@ -40,6 +40,8 @@ from app.api import projects as projects_api
 from app.api import rituals as rituals_api
 from app.api import sprints as sprints_api
 from app.enums import IssuePriority, IssueRelationType, IssueStatus, IssueType, SprintStatus
+from app.api.deps import can_access_document
+from app.api.visibility import can_see_project
 from app.auth.access import Access, access_of, authorize
 from app.mcp_server import scope
 from app.mcp_server.context import get_current_mcp_principal, get_current_mcp_user
@@ -121,9 +123,11 @@ def _dump_list(rows) -> list:
     return [_dump(r) for r in (rows or [])]
 
 
-async def _team_id_for_project(project_id: str) -> str:
+async def _team_id_for_project(user, project_id: str) -> str:
+    """The team of a project ``user`` may see. One it may not see is "not
+    found", as a missing one is (CHT-1785)."""
     project = await ProjectService().get_by_id(project_id)
-    if not project:
+    if not await can_see_project(user, project):
         raise ToolInputError("Project not found.")
     return project.team_id
 
@@ -137,14 +141,17 @@ async def _resolve_document_id(user, document_id: str) -> str:
     from app.services.team_service import TeamService
 
     doc_service = DocumentService()
+    # An exact id the caller cannot see falls through to the fuzzy search
+    # below, which only looks where it can: so it reads "No document
+    # found", exactly as an id that does not exist does (CHT-1785).
     exact = await doc_service.get_by_id(document_id)
-    if exact:
+    if exact and await can_access_document(user, exact):
         return exact.id
 
     if user.is_agent:
         team_ids = [user.agent_team_id] if user.agent_team_id else []
         if not team_ids and user.agent_project_id:
-            team_id = await _team_id_for_project(user.agent_project_id)
+            team_id = await _team_id_for_project(user, user.agent_project_id)
             team_ids = [team_id]
     else:
         team_ids = [t.id for t in await TeamService().get_user_teams(user.id)]
@@ -204,7 +211,7 @@ class InProcessBackend:
 
     @_translated(Access.READ)
     async def team_for_project(self, project_id: str) -> str:
-        return await _team_id_for_project(project_id)
+        return await _team_id_for_project(self._user, project_id)
 
     @_translated(Access.READ)
     async def resolve_assignee(self, value: str, team_id: str) -> str:

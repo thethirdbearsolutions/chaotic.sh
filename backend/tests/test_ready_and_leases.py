@@ -212,9 +212,9 @@ async def test_ready_team_scoped_spans_all_projects(client, auth_headers, test_t
 
 @pytest.mark.asyncio
 async def test_ready_requires_project_access(client, auth_headers2, test_project, db):
-    """A user with no team membership is 403'd, not silently empty."""
+    """A user with no team membership is refused with a 404, not silently empty."""
     response = await client.get(f"/api/projects/{test_project.id}/issues/ready", headers=auth_headers2)
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio

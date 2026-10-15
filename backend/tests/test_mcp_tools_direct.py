@@ -1827,9 +1827,9 @@ class TestIssueTypeAliases:
 
 
 class TestTeamIdForProjectHelper:
-    async def test_missing_project_errors(self):
+    async def test_missing_project_errors(self, test_user):
         with pytest.raises(tools.ToolContextError, match="Project not found"):
-            await tools._team_id_for_project("no-such-project-id")
+            await tools._team_id_for_project(test_user, "no-such-project-id")
 
 
 class TestResolveDocumentIdAgentBranches:

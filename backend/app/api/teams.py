@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Response, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, NotAppSession, check_user_in_team
+from app.api.visibility import visible_team
 from app.schemas.team import (
     TeamCreate,
     TeamUpdate,
@@ -64,24 +65,10 @@ async def list_my_teams(current_user: CurrentUser):
 @reads
 async def get_team(team_id: str, current_user: CurrentUser):
     """Get team by ID."""
-    team_service = TeamService()
-    team = await team_service.get_by_id(team_id)
-
-    if not team:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Team not found",
-        )
-
     # Team directory: members and agents of the team at either scope,
-    # project-scoped agents included (CHT-732, CHT-1780).
-    if not await check_user_in_team(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
-
-    return team
+    # project-scoped agents included (CHT-732, CHT-1780). Anyone else gets
+    # the missing team's 404 (CHT-1785).
+    return await visible_team(current_user, team_id)
 
 
 @router.patch("/{team_id}", response_model=TeamResponse)
@@ -91,13 +78,8 @@ async def update_team(
 ):
     """Update a team."""
     team_service = TeamService()
-    team = await team_service.get_by_id(team_id)
-
-    if not team:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Team not found",
-        )
+    # Visible (else 404, as if missing), then admin (403) (CHT-1785).
+    team = await visible_team(current_user, team_id)
 
     if not await team_service.is_team_admin(team_id, current_user.id):
         raise HTTPException(
@@ -114,13 +96,8 @@ async def update_team(
 async def delete_team(team_id: str, current_user: CurrentUser):
     """Delete a team."""
     team_service = TeamService()
-    team = await team_service.get_by_id(team_id)
-
-    if not team:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Team not found",
-        )
+    # Visible (else 404, as if missing), then owner (403) (CHT-1785).
+    team = await visible_team(current_user, team_id)
 
     member = await team_service.get_member(team_id, current_user.id)
     if not member or member.role != TeamRole.OWNER:

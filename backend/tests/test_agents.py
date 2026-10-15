@@ -466,7 +466,7 @@ class TestAgentAPIEndpoints:
             headers=auth_headers2,
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_get_agent_endpoint(self, client, auth_headers, test_team, db, test_user):
         """GET /agents/{agent_id} should return agent details."""
@@ -497,7 +497,7 @@ class TestAgentAPIEndpoints:
         assert "Agent not found" in response.json()["detail"]
 
     async def test_get_agent_not_authorized(self, client, auth_headers2, test_team, db, test_user):
-        """GET /agents/{agent_id} should return 403 for non-team members."""
+        """GET /agents/{agent_id} should return 404 for non-team members."""
         service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Test Bot"), test_user, test_team.id
@@ -508,7 +508,7 @@ class TestAgentAPIEndpoints:
             headers=auth_headers2,
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_update_agent_endpoint(self, client, auth_headers, test_team, db, test_user):
         """PATCH /agents/{agent_id} should update agent."""
@@ -611,14 +611,14 @@ class TestAgentAPIEndpoints:
         assert "Project not found" in response.json()["detail"]
 
     async def test_create_project_agent_not_member(self, client, auth_headers2, test_project):
-        """POST /projects/{project_id}/agents should return 403 for non-team members."""
+        """POST /projects/{project_id}/agents should return 404 for non-team members."""
         response = await client.post(
             f"/api/projects/{test_project.id}/agents",
             json={"name": "Bot"},
             headers=auth_headers2,
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_list_agents_team_not_found(self, client, auth_headers):
         """GET /teams/{team_id}/agents should return 404 for non-existent team."""
@@ -630,13 +630,13 @@ class TestAgentAPIEndpoints:
         assert response.status_code == 404
 
     async def test_list_agents_not_member(self, client, auth_headers2, test_team):
-        """GET /teams/{team_id}/agents should return 403 for non-members."""
+        """GET /teams/{team_id}/agents should return 404 for non-members."""
         response = await client.get(
             f"/api/teams/{test_team.id}/agents",
             headers=auth_headers2,
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_agent_cannot_create_team_agent(self, client, test_team, db, test_user):
         """POST /teams/{team_id}/agents should return 403 when called by an agent.
