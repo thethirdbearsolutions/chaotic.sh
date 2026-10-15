@@ -1,6 +1,7 @@
 # Known gitleaks findings that are not secrets (CHT-1733). Every one is a
-# test fixture: RFC 8291 Web Push test vectors, placeholder ck_ keys,
-# made-up UUIDs and literal "s3cr3t"/"nope" strings. Fingerprint format:
+# test fixture: RFC 8291 Web Push test vectors, placeholder ck_ keys and
+# invite tokens, made-up UUIDs and literal "s3cr3t"/"nope" strings.
+# Fingerprint format:
 # <commit>:<file>:<rule>:<line>. A new finding fails the secret-scan job.
 # If it is a fixture, mark the line with a trailing `gitleaks:allow`
 # comment. Add a fingerprint here only for a commit already on main: a
@@ -25,3 +26,5 @@ aaae3e042df406571f097cc48e772897d8980bc1:android/testdata/web-push-vectors.json:
 aaae3e042df406571f097cc48e772897d8980bc1:android/testdata/web-push-vectors.json:generic-api-key:8
 aaae3e042df406571f097cc48e772897d8980bc1:backend/tests/test_push_vectors.py:generic-api-key:69
 d5996583288017a5766b395d072a9fd61e3f9e43:cli/tests/test_service_file_reconcile.py:generic-api-key:24
+b5a8a95c4a501721e792ff67d3ae411ecd2228c1:frontend/src/init.test.js:generic-api-key:105
+b5a8a95c4a501721e792ff67d3ae411ecd2228c1:frontend/src/invite.test.js:generic-api-key:14
