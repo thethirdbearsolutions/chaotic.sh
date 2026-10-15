@@ -426,9 +426,9 @@ function handleAttestation(data) {
 }
 
 /**
- * Inbox events (CHT-1250) fan out team-wide (see broadcast_inbox_event's
- * docstring) -- filter to this user's own entries client-side, same as
- * issue events filter on assignee_id.
+ * Inbox events (CHT-1250). The server sends each one only to its
+ * recipient's sockets (CHT-1840); the check below stays as a second guard
+ * (a socket signed in as someone else in another tab, an older server).
  */
 function handleInbox(data, context) {
     if (data.recipient_user_id !== getCurrentUser()?.id) return;

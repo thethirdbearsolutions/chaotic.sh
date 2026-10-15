@@ -435,6 +435,8 @@ async def websocket_endpoint(
         principal = await ws_auth.authenticate(presented.token, team_id)
         # What the socket may receive (CHT-1840): a principal whose reach
         # cannot be recorded is refused, never given team-wide fan-out.
+        # Defensive while ``authenticate`` refuses agents: only an agent
+        # can fail it, so this is unreachable until that refusal goes.
         try:
             owner = SocketOwner.of(team_id, principal)
         except ValueError:

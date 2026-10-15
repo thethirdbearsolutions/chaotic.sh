@@ -1689,7 +1689,7 @@ async def create_relation(
         project.team_id,
         "created",
         {"source_issue_id": relation.issue_id, "target_issue_id": relation.related_issue_id},
-        project_id=project.id,
+        project_ids=[project.id, related_project.id],
     )
     # Fill in the related-issue fields and "direction" that list_relations
     # already computes, so create and list return the same shape (CHT-1223).
@@ -1754,8 +1754,17 @@ async def delete_relation(
         )
 
     relation_data = {"source_issue_id": relation.issue_id, "target_issue_id": relation.related_issue_id}
+    # The payload names both issues, so the event names both projects
+    # (CHT-1840); one whose issue is gone is unknown (None), which no
+    # confined socket matches.
+    other_id = relation.related_issue_id if relation.issue_id == issue_id else relation.issue_id
+    other = await issue_service.get_by_id(other_id)
+    projects = {issue_id: project.id, other_id: other.project_id if other else None}
     await issue_service.delete_relation(relation)
-    await broadcast_relation_event(project.team_id, "deleted", relation_data, project_id=project.id)
+    await broadcast_relation_event(
+        project.team_id, "deleted", relation_data,
+        project_ids=[projects[relation.issue_id], projects[relation.related_issue_id]],  # source, target
+    )
 
 
 @router.get("/{issue_id}/documents", response_model=list[DocumentResponse])

@@ -5,10 +5,11 @@ refusal was the only thing keeping a project-scoped principal off the
 team-wide fan-out: every broadcast went to every socket in the team. These
 tests take that refusal away (or seat a confined socket directly) and
 check that a socket confined to one project still receives that project's
-events and nothing else. They fail if the manager goes back to sending
-every team message to every socket, if a call site tags its event with
-the wrong project (or none), or if a socket can be registered without a
-recorded reach.
+events and nothing else, and that an inbox event reaches its recipient's
+sockets only. They fail if the manager goes back to sending every team
+message to every socket, or if a socket can be registered without a
+recorded reach. That each call site tags its event with the right
+project is checked by ``test_ws_broadcast_tags.py``.
 """
 import asyncio
 import inspect
@@ -66,15 +67,45 @@ class TestManagerFiltersByReach:
         await m.broadcast_to_team("t1", {"type": "x", "project_id": None})
         ws.send_json.assert_not_awaited()
 
-    async def test_inbox_events_never_reach_a_confined_socket(self, monkeypatch):
+    async def test_an_inbox_event_reaches_its_recipients_sockets_only(self, monkeypatch):
         m = ConnectionManager()
         monkeypatch.setattr(websocket_module, "manager", m)
-        wide, confined = _ws(), _ws()
-        await m.connect(wide, "t1", owner=SocketOwner(team_id="t1", user_id="u", project_id=None))
+        mine, mine_too, theirs, confined = _ws(), _ws(), _ws(), _ws()
+        await m.connect(mine, "t1", owner=SocketOwner(team_id="t1", user_id="u", project_id=None))
+        await m.connect(mine_too, "t1", owner=SocketOwner(team_id="t1", user_id="u", project_id=None))
+        await m.connect(theirs, "t1", owner=SocketOwner(team_id="t1", user_id="v", project_id=None))
         await m.connect(confined, "t1", owner=SocketOwner(team_id="t1", user_id="a", project_id="p1"))
-        await websocket_module.broadcast_inbox_event("t1", "created", {"recipient_user_id": "u"})
-        assert len(_sent(wide)) == 1
-        confined.send_json.assert_not_awaited()
+        for recipient in ("u", "a"):
+            await websocket_module.broadcast_inbox_event(
+                "t1", "created", {"recipient_user_id": recipient}, recipient_user_id=recipient,
+            )
+        assert len(_sent(mine)) == 1 and len(_sent(mine_too)) == 1
+        theirs.send_json.assert_not_awaited()
+        confined.send_json.assert_not_awaited()  # team-level, so not even its own
+
+    async def test_a_relation_reaches_a_confined_socket_only_within_its_project(self, monkeypatch):
+        m = ConnectionManager()
+        monkeypatch.setattr(websocket_module, "manager", m)
+        wide, p1, p2 = _ws(), _ws(), _ws()
+        await m.connect(wide, "t1", owner=SocketOwner(team_id="t1", user_id="u", project_id=None))
+        await m.connect(p1, "t1", owner=SocketOwner(team_id="t1", user_id="a", project_id="p1"))
+        await m.connect(p2, "t1", owner=SocketOwner(team_id="t1", user_id="b", project_id="p2"))
+        await websocket_module.broadcast_relation_event("t1", "created", {"n": 1}, project_ids=["p1", "p1"])
+        await websocket_module.broadcast_relation_event("t1", "created", {"n": 2}, project_ids=["p1", "p2"])
+        assert [m_["data"]["n"] for m_ in _sent(wide)] == [1, 2]
+        assert [m_["data"]["n"] for m_ in _sent(p1)] == [1]
+        p2.send_json.assert_not_awaited()
+        assert _sent(wide)[1]["project_id"] is None  # across projects: no single one
+
+    async def test_a_document_leaving_a_project_is_deleted_for_its_confined_sockets_only(self, monkeypatch):
+        m = ConnectionManager()
+        monkeypatch.setattr(websocket_module, "manager", m)
+        wide, p1 = _ws(), _ws()
+        await m.connect(wide, "t1", owner=SocketOwner(team_id="t1", user_id="u", project_id=None))
+        await m.connect(p1, "t1", owner=SocketOwner(team_id="t1", user_id="a", project_id="p1"))
+        await websocket_module.broadcast_document_left_project("t1", {"id": "d"}, project_id="p1")
+        wide.send_json.assert_not_awaited()
+        assert [(x["type"], x["entity"]) for x in _sent(p1)] == [("deleted", "document")]
 
 
 class TestReachIsRecorded:
@@ -112,25 +143,27 @@ class TestReachIsRecorded:
         assert (await owner_for(test_user, test_team.id)).project_id is None
         assert (await owner_for(team_agent, test_team.id)).project_id is None
         assert (await owner_for(project_agent, test_team.id)).project_id == test_project.id
-        # An agent on a team that is not its own has no reach there at all.
+        # An agent on a team that is not its own has no reach there at
+        # all, whatever its scope.
         with pytest.raises(ValueError):
             await owner_for(team_agent, other_team.id)
+        with pytest.raises(ValueError):
+            await owner_for(project_agent, other_team.id)
 
 
-def test_every_project_scoped_broadcast_must_name_its_project():
-    """A new broadcast_*_event, or a call site that forgets which project
-    its event belongs to, fails with a TypeError rather than defaulting
-    to team-level (which a confined socket would miss) or to untagged."""
+def test_every_broadcast_must_say_who_may_hear_it():
+    """A new broadcast_*_event, or a call site that forgets where its
+    event belongs, fails with a TypeError rather than defaulting to
+    team-level or untagged: project events name their project, relations
+    both projects, inbox events their recipient (CHT-1840)."""
     names = [n for n in dir(websocket_module) if n.startswith("broadcast_") and n.endswith("_event")]
     assert len(names) >= 9
+    routing = {"broadcast_inbox_event": "recipient_user_id", "broadcast_relation_event": "project_ids"}
     for name in names:
         params = inspect.signature(getattr(websocket_module, name)).parameters
-        if name == "broadcast_inbox_event":
-            assert "project_id" not in params  # team-level by definition
-            continue
-        project_id = params["project_id"]
-        assert project_id.kind is inspect.Parameter.KEYWORD_ONLY, name
-        assert project_id.default is inspect.Parameter.empty, name
+        key = params[routing.get(name, "project_id")]
+        assert key.kind is inspect.Parameter.KEYWORD_ONLY, name
+        assert key.default is inspect.Parameter.empty, name
 
 
 @pytest.fixture
@@ -235,3 +268,69 @@ class TestWithoutTheAgentRefusal:
         await asyncio.wait_for(task, 5)
         ws.close.assert_awaited_once_with(code=4003)
         assert ws not in manager.owners
+
+
+@pytest.mark.usefixtures("no_recheck")
+class TestInboxGoesToItsRecipientOnly:
+    async def test_bob_does_not_hear_carols_mention(self, client, auth_headers, test_user, test_team, test_issue):
+        """CHT-1840 (PR #452 review, 1): inbox events used to reach every
+        socket in the team, so any member could read every other
+        member's inbox traffic off /ws. Three humans, real sockets."""
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.utils.security import get_password_hash
+
+        people = {}
+        for name in ("Bob", "Carol"):
+            people[name] = await OxydeUser.objects.create(
+                email=f"{name.lower()}@example.com", hashed_password=get_password_hash("x"), name=name,
+            )
+            await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=people[name].id, role=TeamRole.MEMBER)
+        sockets, tasks = {}, []
+        for name, user in (("Alice", test_user), *people.items()):
+            sockets[name] = FakeWebSocket(headers={"Authorization": f"Bearer {jwt_for(user)}"})
+            tasks.append(await run_endpoint(sockets[name], test_team.id))
+        try:
+            r = await client.post(
+                f"/api/issues/{test_issue.id}/comments", headers=auth_headers,
+                json={"content": "ping @carol please review"},
+            )
+            assert r.status_code == 201, r.text
+            carol_headers = {"Authorization": f"Bearer {jwt_for(people['Carol'])}"}
+            r = await client.get("/api/inbox", headers=carol_headers, params={"team_id": test_team.id})
+            assert r.status_code == 200, r.text
+            entry_id = r.json()[0]["id"]
+            for path in (f"/api/inbox/{entry_id}/read", f"/api/inbox/{entry_id}/archive"):
+                r = await client.post(path, headers=carol_headers)
+                assert r.status_code == 200, r.text
+            r = await client.post("/api/inbox/mark-all-read", headers=auth_headers, params={"team_id": test_team.id})
+            assert r.status_code == 200, r.text
+        finally:
+            for ws in sockets.values():
+                await ws.close()
+            await asyncio.gather(*tasks)
+
+        def inbox(name):
+            return [m for m in _sent(sockets[name]) if m["entity"] == "inbox"]
+
+        carols = inbox("Carol")
+        assert [m["type"] for m in carols] == ["created", "read", "archived"]
+        assert all(m["data"]["recipient_user_id"] == people["Carol"].id for m in carols)
+        assert carols[0]["data"]["kind"] == "mention"  # the wire value, as on REST
+        assert inbox("Bob") == [] and inbox("Alice") == []
+        # Bob still hears the comment itself.
+        assert any(m["entity"] == "comment" for m in _sent(sockets["Bob"]))
+
+    async def test_mark_all_read_goes_to_its_reader_only(self, client, auth_headers, test_user, test_team):
+        from unittest.mock import patch
+
+        sent = []
+
+        async def capture(team_id, message):
+            sent.append(message)
+
+        with patch.object(manager, "broadcast_to_team", side_effect=capture), \
+                patch("app.api.inbox.InboxService.mark_all_read", AsyncMock(return_value=3)):
+            r = await client.post("/api/inbox/mark-all-read", headers=auth_headers, params={"team_id": test_team.id})
+        assert r.status_code == 200, r.text
+        assert [(m["type"], m["recipient_user_id"]) for m in sent] == [("read-all", test_user.id)]

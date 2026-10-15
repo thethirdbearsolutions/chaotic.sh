@@ -588,16 +588,22 @@ async def gate_claim_ritual(make_ritual):
 
 
 @pytest_asyncio.fixture
-async def captured_broadcasts(monkeypatch):
+async def captured_broadcasts(db, monkeypatch):
     """Capture all WebSocket broadcasts as a list of (team_id, message) tuples.
 
     Tests assert against this list to verify state transitions emit the
     expected events without depending on a real WebSocket connection.
+    Afterwards every captured envelope is checked for its routing tags
+    (``tests/broadcast_tags.py``, CHT-1840): a broadcast tagged with no
+    project, or the wrong one, fails the test that made it.
     """
+    from tests.broadcast_tags import assert_tagged
+
     captured: list[tuple[str, dict]] = []
 
     async def _capture(team_id: str, message: dict):
         captured.append((team_id, message))
 
     monkeypatch.setattr("app.websocket.manager.broadcast_to_team", _capture)
-    return captured
+    yield captured
+    await assert_tagged([message for _team_id, message in captured])

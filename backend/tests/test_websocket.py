@@ -193,13 +193,16 @@ class TestBroadcastHelpers:
         mock_broadcast = AsyncMock()
         monkeypatch.setattr("app.websocket.manager.broadcast_to_team", mock_broadcast)
 
-        await broadcast_relation_event("team-1", "created", {"source_issue_id": "i1", "target_issue_id": "i2"}, project_id="p1")
+        await broadcast_relation_event(
+            "team-1", "created", {"source_issue_id": "i1", "target_issue_id": "i2"}, project_ids=["p1", "p1"],
+        )
 
         mock_broadcast.assert_awaited_once_with("team-1", {
             "type": "created",
             "entity": "relation",
             "data": {"source_issue_id": "i1", "target_issue_id": "i2"},
             "project_id": "p1",
+            "project_ids": ["p1", "p1"],
         })
 
     @pytest.mark.asyncio

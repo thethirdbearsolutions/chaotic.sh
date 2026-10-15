@@ -73,6 +73,26 @@ class InboxEntryResponse(HasPrincipals, BaseModel):
         return _coerce_enum(InboxEntryKind, v)
 
 
+class InboxEntryEvent(BaseModel):
+    """The ``data`` of an inbox ``created`` event on /ws: dumped in json
+    mode, so ``kind`` is its wire value (``"mention"``), like REST, not
+    the stored name it used to go out as (CHT-1840)."""
+
+    id: str
+    recipient_user_id: str
+    kind: InboxEntryKind
+    issue_id: str | None = None
+    document_id: str | None = None
+    ritual_id: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def coerce_kind(cls, v):
+        return _coerce_enum(InboxEntryKind, v)
+
+
 class InboxSyncResponse(BaseModel):
     """One page of GET /inbox/sync (CHT-1607). The client contract:
 

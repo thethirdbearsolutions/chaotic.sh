@@ -25,7 +25,7 @@ from app.schemas.document import (
 from app.schemas.issue import IssueResponse, LabelResponse
 from app.services.document_service import DocumentService
 from app.services.principals import fill_principals
-from app.websocket import broadcast_comment_event, broadcast_document_event
+from app.websocket import broadcast_comment_event, broadcast_document_event, broadcast_document_left_project
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
 from app.services.project_service import ProjectService
@@ -241,8 +241,15 @@ async def update_document(
                 detail="Sprint must belong to the document's project",
             )
 
+    old_project_id = document.project_id
     document = await document_service.update(document, document_in, current_user.id)
     response = await fill_principals(build_document_response(document))
+    if old_project_id is not None and old_project_id != document.project_id:
+        # Moved out of a project: the sockets confined to it drop it
+        # (CHT-1840); the "updated" below reaches its new readers.
+        await broadcast_document_left_project(
+            document.team_id, {"id": document.id, "title": document.title}, project_id=old_project_id,
+        )
     await broadcast_document_event(document.team_id, "updated", response.model_dump(mode="json"), project_id=document.project_id)
     return response
 

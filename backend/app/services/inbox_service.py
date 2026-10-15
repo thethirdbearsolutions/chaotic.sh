@@ -110,22 +110,18 @@ class InboxService:
         return existing is not None
 
     async def _broadcast(self, team_id: str, event_type: str, entry) -> None:
-        """Tell the team's sockets, once the entry is committed: a client
-        that refetches on the event must find it (a writer can run inside
-        a transaction, as the ritual mode change's carry does)."""
-        payload = {
-            "id": entry.id,
-            "recipient_user_id": entry.recipient_user_id,
-            "kind": entry.kind.name if hasattr(entry.kind, "name") else entry.kind,
-            "issue_id": entry.issue_id,
-            "document_id": entry.document_id,
-            "ritual_id": entry.ritual_id,
-        }
+        """Tell the recipient's sockets, once the entry is committed: a
+        client that refetches on the event must find it (a writer can run
+        inside a transaction, as the ritual mode change's carry does)."""
+        from app.schemas.inbox import InboxEntryEvent
+
+        payload = InboxEntryEvent.model_validate(entry).model_dump(mode="json")
+        recipient_user_id = entry.recipient_user_id
 
         async def send() -> None:
             try:
                 from app.websocket import broadcast_inbox_event
-                await broadcast_inbox_event(team_id, event_type, payload)
+                await broadcast_inbox_event(team_id, event_type, payload, recipient_user_id=recipient_user_id)
             except Exception:
                 logger.exception("Failed to broadcast inbox event %s for entry=%s", event_type, entry.id)
 
