@@ -7,6 +7,14 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
+def _api_error(cls, message, status_code, detail):
+    """An APIError as the client raises it; the test double takes no kwargs."""
+    error = cls(message)
+    error.status_code = status_code
+    error.detail = detail
+    return error
+
+
 @pytest.fixture(autouse=True)
 def mock_dependencies(patched_client, patched_auth, patched_project):
     """Mock client, config, and auth before importing main."""
@@ -259,3 +267,34 @@ class TestTeamAcceptInvite:
         assert result.exit_code == 0
         assert 'Joined team' in result.output
         client.accept_invitation.assert_called_once_with('inv-token-123')
+
+    def test_accept_invite_unverified_email_hints_verify_email(self, cli_runner):
+        """CHT-1790: the server's email_unverified refusal becomes a hint."""
+        from cli.main import cli, client
+        from cli.main import APIError
+
+        client.accept_invitation = MagicMock(side_effect=_api_error(
+            APIError, "Verify your email address before accepting an invitation", 403,
+            {"error_code": "email_unverified", "message": "Verify your email address"},
+        ))
+
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123'])
+
+        assert result.exit_code == 1
+        assert 'chaotic auth verify-email' in result.output
+        assert 'Joined team' not in result.output
+
+    def test_accept_invite_other_errors_are_unchanged(self, cli_runner):
+        from cli.main import cli, client
+        from cli.main import APIError
+
+        client.accept_invitation = MagicMock(side_effect=_api_error(
+            APIError, "Invitation is for a different email", 403,
+            "Invitation is for a different email",
+        ))
+
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', 'inv-token-123'])
+
+        assert result.exit_code == 1
+        assert 'Invitation is for a different email' in result.output
+        assert 'verify-email' not in result.output

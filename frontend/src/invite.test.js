@@ -340,6 +340,22 @@ describe('showInvite', () => {
             expect(screenEl().querySelector('#invite-accept').disabled).toBe(false);
         });
 
+        it('a 403 for an unverified address shows the server message, not a mismatch', async () => {
+            api.getInvitation.mockResolvedValue(preview());
+            api.acceptInvitation.mockRejectedValue(Object.assign(
+                new Error('Verify your email address before accepting an invitation'),
+                { status: 403, detail: { error_code: 'email_unverified', message: 'Verify your email address before accepting an invitation' } },
+            ));
+            await showInvite(TOKEN, deps({ user: ROADRUNNER }));
+
+            screenEl().querySelector('#invite-accept').click();
+            await flush();
+
+            const error = screenEl().querySelector('#invite-error');
+            expect(error.textContent).toContain('Verify your email address');
+            expect(error.textContent).not.toContain('different email address');
+        });
+
         it('another error is shown and accept can be retried', async () => {
             api.getInvitation.mockResolvedValue(preview());
             api.acceptInvitation.mockRejectedValueOnce(new Error('Network error - check your connection'));

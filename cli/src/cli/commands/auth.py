@@ -122,7 +122,45 @@ def register(cli):
             if user.get("registered_by_id"):
                 registrar = user.get("registered_by_name") or user["registered_by_id"]
                 lines_markup.append(f"[dim]Registered by:[/dim] {escape(registrar)}")
+        else:
+            # CHT-1790: whether the address has been proved by a mailed code.
+            verified = user.get("email_verified_at")
+            lines_markup.append(
+                "[dim]Email verified:[/dim] yes" if verified
+                else "[dim]Email verified:[/dim] no (run `chaotic auth verify-email`)"
+            )
         console.print(Panel("\n".join(lines_markup), title="Current User"))
+
+    @auth.command("verify-email")
+    @click.option("--code", default=None, help="Confirm a code you already received, without requesting a new one.")
+    @_main().require_auth
+    @_main().handle_error
+    def auth_verify_email(code):
+        """Verify your account's email address with a mailed code.
+
+        Without --code, asks the server to email a six-digit code to your
+        address, then prompts for it. With --code, confirms a code you
+        already received. With SMTP configured on the server, accepting a
+        team invitation requires a verified address.
+        """
+        m = _main()
+        if code is None:
+            try:
+                sent = _client().request_email_verification()
+            except m.APIError as e:
+                if getattr(e, "status_code", None) == 429:
+                    console.print(f"[red]Error: {escape(str(e))}[/red]")
+                    console.print(
+                        "[dim]If you already have a code: chaotic auth verify-email --code <code>[/dim]"
+                    )
+                    raise SystemExit(1)
+                raise
+            console.print(
+                f"Sent a verification code to [bold]{escape(sent['email'])}[/bold]; it expires in 15 minutes."
+            )
+            code = click.prompt("Code")
+        user = _client().confirm_email_verification(code.strip())
+        console.print(f"[green]Email address {escape(user['email'])} verified.[/green]")
 
     @auth.group("keys")
     def auth_keys():

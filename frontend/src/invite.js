@@ -329,6 +329,10 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
                 // Used, revoked or expired since the page loaded.
                 forgetInviteToken();
                 renderGone(el);
+            } else if (e && e.status === 403 && e.detail && e.detail.error_code === 'email_unverified') {
+                // CHT-1790: with SMTP on, the account must verify its
+                // address first. Not a mismatch: say what the server says.
+                showError(el, e.message);
             } else if (e && e.status === 403) {
                 showError(el, `This invitation is for a different email address. Only ${preview.email_hint} can accept it.`);
             } else {

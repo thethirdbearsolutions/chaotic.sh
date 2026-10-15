@@ -111,6 +111,16 @@ export class ApiClient {
         return this.request('GET', '/auth/me');
     }
 
+    // Email verification by mailed code (CHT-1790). With SMTP configured,
+    // accepting an invitation requires a verified address.
+    async requestEmailVerification() {
+        return this.request('POST', '/auth/email-verification');
+    }
+
+    async confirmEmailVerification(code) {
+        return this.request('POST', '/auth/email-verification/confirm', { code });
+    }
+
     // OAuth consent (CHT-1519)
     async getOAuthRequest(requestId) {
         return this.request('GET', `/oauth/requests/${encodeURIComponent(requestId)}`);

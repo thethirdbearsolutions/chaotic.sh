@@ -143,7 +143,20 @@ def register(cli):
     @_main().handle_error
     def team_accept_invite(token):
         """Accept a team invitation."""
-        _client().accept_invitation(token)
+        m = _main()
+        try:
+            _client().accept_invitation(token)
+        except m.APIError as e:
+            # CHT-1790: with SMTP configured the server requires a verified
+            # address; say how to get one instead of the bare refusal.
+            detail = getattr(e, "detail", None)
+            if not (isinstance(detail, dict) and detail.get("error_code") == "email_unverified"):
+                raise
+            console.print(
+                "[yellow]Verify your email address first: run `chaotic auth verify-email`, "
+                "then accept again.[/yellow]"
+            )
+            raise SystemExit(1)
         console.print(f"[green]Joined team successfully![/green]")
 
     @team.command("remove-member")

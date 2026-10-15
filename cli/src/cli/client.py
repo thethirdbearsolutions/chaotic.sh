@@ -351,6 +351,13 @@ class Client:
     def get_me(self, *, as_configured: bool = False) -> dict:
         return self._request("GET", "/auth/me", as_configured=as_configured)
 
+    # Email verification (CHT-1790)
+    def request_email_verification(self) -> dict:
+        return self._request("POST", "/auth/email-verification")
+
+    def confirm_email_verification(self, code: str) -> dict:
+        return self._request("POST", "/auth/email-verification/confirm", {"code": code})
+
     # Users (CHT-1383)
     def get_user(self, user_id: str) -> dict:
         return self._request("GET", f"/users/{user_id}")
