@@ -191,11 +191,15 @@ async def check_user_project_access(user: User, project) -> bool:
     body ``project_id``, so each had to pin the project to the team by
     hand. A route holding a ``project_id`` and a ``team_id`` loads the
     project with ``app.api.visibility.visible_project_in_team``, which
-    checks and pins in one step. Passing an id here is refused.
+    checks and pins in one step. Anything but a project row (an id,
+    None, a document row that also has ``team_id``) is refused.
     """
-    if project is None or isinstance(project, str):
+    from app.oxyde_models.project import OxydeProject
+
+    if not isinstance(project, OxydeProject):
         raise TypeError(
-            "check_user_project_access takes a project row, not an id (CHT-1807); "
+            "check_user_project_access takes a project row (OxydeProject), not an id "
+            "or another row (CHT-1807); "
             "load it with app.api.visibility.visible_project / visible_project_in_team"
         )
     if user.is_agent:

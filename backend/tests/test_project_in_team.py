@@ -19,11 +19,16 @@ seen by three callers:
 * ``a_agent``: a team-scoped agent of team A, naming B's project under A.
   It cannot see the project, so the answer must be the one for a project
   that does not exist (CHT-1785).
+* ``b_only``: a person in team B only, naming B's project (which they
+  see) under team A's URL. They are not in team A, so the answer is the
+  refusal for team A, the same as for a missing project, as before the
+  pin moved into ``visible_project_in_team``.
 """
 import ast
 import inspect
 import pathlib
 import uuid
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -38,11 +43,12 @@ from app.schemas.agent import AgentCreate
 from app.services.agent_service import AgentService
 
 @pytest_asyncio.fixture
-async def world(db, test_user, test_team, test_project, auth_headers):
+async def world(db, test_user, test_user2, test_team, test_project, auth_headers, auth_headers2):
     """Team A (test_team, PROJ) and team B (QQQ), both with an issue and a
     project document matching "secret"; test_user is in both."""
     team_b = await OxydeTeam.objects.create(name="Team B", key="TB")
     await OxydeTeamMember.objects.create(team_id=team_b.id, user_id=test_user.id, role=TeamRole.MEMBER)
+    await OxydeTeamMember.objects.create(team_id=team_b.id, user_id=test_user2.id, role=TeamRole.MEMBER)
     project_b = await OxydeProject.objects.create(team_id=team_b.id, name="Q", key="QQQ")
     for project in (test_project, project_b):
         await OxydeIssue.objects.create(
@@ -64,6 +70,7 @@ async def world(db, test_user, test_team, test_project, auth_headers):
         "both_teams": (auth_headers, test_team.id, project_b.id),
         "own_elsewhere": ({"Authorization": f"Bearer {proj_key}"}, team_b.id, test_project.id),
         "a_agent": ({"Authorization": f"Bearer {a_key}"}, test_team.id, project_b.id),
+        "b_only": (auth_headers2, test_team.id, project_b.id),
     }
 
 
@@ -92,9 +99,10 @@ class TestSearchIssues:
             assert response.status_code == 404, (caller, response.text)
             assert response.json() == {"detail": "Project not found in this team"}
 
-        headers, team, project = world["a_agent"]
-        response = await _same_as_missing(client, call(headers), headers, team, project)
-        assert response.status_code == 403
+        for caller in ("a_agent", "b_only"):
+            headers, team, project = world[caller]
+            response = await _same_as_missing(client, call(headers), headers, team, project)
+            assert response.status_code == 403, (caller, response.text)
 
 
 @pytest.mark.asyncio
@@ -113,9 +121,10 @@ class TestTeamActivities:
             assert response.status_code == 404, (caller, response.text)
             assert response.json() == {"detail": "Project not found"}
 
-        headers, team, project = world["a_agent"]
-        response = await _same_as_missing(client, call(headers), headers, team, project)
-        assert response.status_code == 403
+        for caller in ("a_agent", "b_only"):
+            headers, team, project = world[caller]
+            response = await _same_as_missing(client, call(headers), headers, team, project)
+            assert response.status_code == 403, (caller, response.text)
 
 
 @pytest.mark.asyncio
@@ -133,9 +142,10 @@ class TestListDocuments:
             response = await call(headers)(team, project)
             assert response.status_code == 200 and response.json() == [], (caller, response.text)
 
-        headers, team, project = world["a_agent"]
-        response = await _same_as_missing(client, call(headers), headers, team, project)
-        assert response.status_code == 403
+        for caller in ("a_agent", "b_only"):
+            headers, team, project = world[caller]
+            response = await _same_as_missing(client, call(headers), headers, team, project)
+            assert response.status_code == 403, (caller, response.text)
 
         # The same filter under the project's own team still lists.
         headers, _, _ = world["both_teams"]
@@ -154,7 +164,7 @@ class TestCreateDocument:
                 )
             return go
 
-        for caller in ("both_teams", "own_elsewhere", "a_agent"):
+        for caller in ("both_teams", "own_elsewhere", "a_agent", "b_only"):
             headers, team, project = world[caller]
             response = await _same_as_missing(client, call(headers), headers, team, project)
             assert response.status_code == 400, (caller, response.text)
@@ -169,11 +179,23 @@ class TestTheCheckTakesARow:
         assert list(inspect.signature(deps.check_user_project_access).parameters) == ["user", "project"]
 
     @pytest.mark.asyncio
-    async def test_an_id_is_refused(self, db, test_user, test_project, test_team):
+    async def test_anything_but_a_project_row_is_refused(self, db, test_user, test_project, test_team):
         with pytest.raises(TypeError):
             await deps.check_user_project_access(test_user, test_project.id)
         with pytest.raises(TypeError):
             await deps.check_user_project_access(test_user, test_project.id, test_team.id)
+        with pytest.raises(TypeError):
+            await deps.check_user_project_access(test_user, None)
+        # Rows shaped like a project (``id`` and ``team_id``) are not one:
+        # a document row is the realistic mistake.
+        document = OxydeDocument(team_id=test_team.id, project_id=test_project.id, author_id=test_user.id,
+                                 title="d", content="")
+        with pytest.raises(TypeError):
+            await deps.check_user_project_access(test_user, document)
+        with pytest.raises(TypeError):
+            await deps.check_user_project_access(
+                test_user, SimpleNamespace(id=test_project.id, team_id=test_team.id),
+            )
 
     @pytest.mark.asyncio
     async def test_team_comes_from_the_row(self, db, test_user, test_team, test_project):
@@ -195,3 +217,43 @@ class TestTheCheckTakesARow:
                     if name == "check_user_project_access" and len(node.args) + len(node.keywords) != 2:
                         offenders.append(f"{path}:{node.lineno}")
         assert offenders == []
+
+
+@pytest.mark.asyncio
+class TestOtherPins:
+    """The two routes that pinned by hand between two row values now go
+    through the same helper (CHT-1807 review)."""
+
+    async def test_template_from_project_of_another_team(self, client, world):
+        headers, team, project = world["both_teams"]  # test_user owns team A
+        response = await client.post(
+            f"/api/teams/{team}/templates/from-project", headers=headers,
+            json={"name": "t", "project_id": project},
+        )
+        assert response.status_code == 400
+        assert response.json() == {"detail": "Project belongs to a different team"}
+
+    async def test_template_from_unseen_project_is_missing(self, client, world, test_user2, auth_headers2):
+        # test_user2 owns a team of its own, and cannot see team A's project.
+        own = await OxydeTeam.objects.create(name="Own", key="OWN")
+        await OxydeTeamMember.objects.create(team_id=own.id, user_id=test_user2.id, role=TeamRole.OWNER)
+
+        async def call(project):
+            return await client.post(
+                f"/api/teams/{own.id}/templates/from-project", headers=auth_headers2,
+                json={"name": "t", "project_id": project},
+            )
+
+        response = await call(world["project_a"])
+        missing = await call(str(uuid.uuid4()))
+        assert (response.status_code, response.json()) == (missing.status_code, missing.json())
+        assert response.status_code == 404
+
+    async def test_move_document_to_project_of_another_team(self, client, world, auth_headers):
+        doc = await OxydeDocument.objects.filter(title="PROJ secret doc").first()
+        response = await client.patch(
+            f"/api/documents/{doc.id}", headers=auth_headers, json={"project_id": world["project_b"]},
+        )
+        assert response.status_code == 400
+        assert response.json() == {"detail": "Project not found in this team"}
+        assert (await OxydeDocument.objects.get(id=doc.id)).project_id == world["project_a"]

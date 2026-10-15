@@ -236,13 +236,11 @@ async def update_document(
             if document_in.project_id:
                 # One the caller cannot see answers like a missing one
                 # (CHT-1785).
-                target = await ProjectService().get_by_id(document_in.project_id)
-                if not target or target.team_id != document.team_id \
-                        or not await can_see_project(current_user, target):
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Project not found in this team",
-                    )
+                missing = not_found("Project not found in this team", status.HTTP_400_BAD_REQUEST)
+                await visible_project_in_team(
+                    current_user, document_in.project_id, document.team_id,
+                    hidden=missing, elsewhere=missing,
+                )
             elif not await check_user_team_access(current_user, document.team_id):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,

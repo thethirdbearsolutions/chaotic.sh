@@ -37,6 +37,7 @@ from app.api.deps import (
     check_user_in_team,
     check_user_project_access,
     check_user_team_access,
+    is_project_scoped_agent,
 )
 
 
@@ -83,6 +84,12 @@ async def visible_project_in_team(
       project-scoped agent sees its own project whichever team the URL
       names, so without this pin it could read or write another team
       through its own project's id (CHT-1273 review CRITICAL).
+
+      A caller who is not in the URL's team at all gets ``hidden``
+      instead, as it did before the pin moved here: the answer for a
+      team you are not in does not depend on the project you name. The
+      exception is a project-scoped agent naming its own project, which
+      it already knows; it gets ``elsewhere``.
     """
     from app.services.project_service import ProjectService
 
@@ -90,6 +97,8 @@ async def visible_project_in_team(
     if not await can_see_project(user, project):
         raise hidden
     if project.team_id != team_id:
+        if not (is_project_scoped_agent(user) or await check_user_in_team(user, team_id)):
+            raise hidden
         if elsewhere is None:
             return None
         raise elsewhere
