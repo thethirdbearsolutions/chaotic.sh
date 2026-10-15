@@ -293,13 +293,6 @@ class RegistrationService:
                 )
             holder_id = calling_key.holder_user_id
             team_id = caller.agent_team_id
-            if team_id is None:
-                # Only an agent migration 0036 could not place: its
-                # project was deleted before every agent carried a team
-                # (CHT-1837). It reaches nothing, so it registers nothing.
-                raise RegistrationRefused(
-                    403, "scope_exceeds_registrar", "This registrar belongs to no team.",
-                )
             if req.team_id is not None and req.team_id != team_id:
                 raise RegistrationRefused(
                     403, "scope_exceeds_registrar",

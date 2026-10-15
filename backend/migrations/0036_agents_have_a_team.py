@@ -33,6 +33,10 @@ agent as it is (agent_team_id NULL) and prints why:
   setting the team would break that index and fail the upgrade, so it
   is left for an operator to resolve.
 
+An agent left without a team cannot sign in at all: an agent's API key
+works only while its holder is a member of the agent's team
+(app/auth/credentials.py), and no one is a member of no team.
+
 To count the rows before upgrading (read-only):
 
     SELECT count(*), sum(p.id IS NOT NULL) FROM users AS u
