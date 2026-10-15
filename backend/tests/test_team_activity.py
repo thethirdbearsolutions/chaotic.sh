@@ -312,6 +312,31 @@ class TestAccountDeletion:
             (TeamActivityAction.MEMBER_REMOVED, test_user2.id),
         ]
 
+    async def test_deleting_the_older_of_two_shared_accounts_is_logged_and_hands_the_address_on(
+        self, test_team, test_user,
+    ):
+        """CHT-1827's remedy (delete the older account at a shared address)
+        goes through UserService.delete: its removal is logged in the
+        delete's transaction, and the address hand-off runs after it."""
+        from app.oxyde_models.user import OxydeUser
+        from app.services.user_service import UserService
+
+        from .test_email_verification import _make_legacy_variant, _make_user
+
+        holder = await _make_user("Pair@example.com")
+        variant = await _make_legacy_variant("pair@example.com")
+        await _join(test_team.id, holder.id)
+        await _join(test_team.id, variant.id)
+
+        await UserService().delete(holder)
+
+        rows = await OxydeTeamActivity.objects.filter(team_id=test_team.id).all()
+        assert [(r.action, r.actor_id, r.target_user_id) for r in rows] == [
+            (TeamActivityAction.MEMBER_REMOVED, holder.id, holder.id),
+        ]
+        assert (await OxydeUser.objects.get(id=variant.id)).email_folded == "pair@example.com"
+        assert await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=variant.id).count() == 1
+
     async def test_a_refused_deletion_logs_nothing(self, client, auth_headers2, test_team, test_user2, test_issue):
         from app.oxyde_models.issue import OxydeIssue
 
