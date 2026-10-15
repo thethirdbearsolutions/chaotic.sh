@@ -24,12 +24,14 @@ The text form, by example (docs/issue-query.md has the reference)::
 """
 from __future__ import annotations
 
+import functools
 import json
 import operator
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from functools import reduce
+from typing import get_args
 
 from oxyde import Q
 from oxyde.queries.conditions import Condition
@@ -44,9 +46,12 @@ from app.oxyde_models.team import OxydeTeamMember
 from app.oxyde_models.user import OxydeUser
 from app.schemas.issue_query import (
     CURRENT_SPRINT,
+    DATE_FORMATS,
     DATE_KEYWORDS,
+    DATE_OFFSET_UNITS,
     FIELDS,
     KIND_KEYWORDS,
+    MAX_DATE_OFFSET,
     MAX_DEPTH,
     MAX_NUMBER,
     MAX_ORDER_TERMS,
@@ -54,11 +59,14 @@ from app.schemas.issue_query import (
     MAX_VALUE_LENGTH,
     MAX_VALUES,
     ME,
+    MIN_NUMBER,
     OP_ARITY,
     ORDER_FIELDS,
+    RELATIVE_DATE,
     IssueQuery,
     IssueQueryFieldsResponse,
     QueryFieldInfo,
+    QueryDateValues,
     QueryLimits,
     QueryOpInfo,
     QueryGroup,
@@ -68,6 +76,7 @@ from app.schemas.issue_query import (
 from app.services.issue_service import _PRIORITY_ORDER, _STATUS_ORDER, _get_order
 
 MAX_WHERE_LENGTH = 4000
+MAX_ORDER_LENGTH = 200
 # Parentheses the parser follows before giving up. Only a guard on its
 # recursion: redundant parentheses build no group, so the depth cap
 # (MAX_DEPTH) is checked on the tree they produce, not here.
@@ -205,7 +214,7 @@ class _Parser:
     def parse(self) -> dict | None:
         if not self.tokens:
             return None
-        node = self.expr(1)
+        node = self.expr(0)  # depth: parentheses open around this point
         tok = self.peek()
         if tok is not None:
             raise self.lexer.error(f"unexpected '{tok[0]}'", tok[1])
@@ -540,9 +549,11 @@ def _op_text(op: str) -> str:
     return text.replace(a, "a").replace(b, "b")
 
 
+@functools.cache
 def vocabulary() -> IssueQueryFieldsResponse:
     """The fields, operators, order fields and caps, from the allow-list
-    the validator and the parser use (CHT-1783)."""
+    the validator and the parser use (CHT-1783). Built once: it depends
+    only on constants. The one instance is shared, so do not mutate it."""
     aliases: dict[str, list[str]] = {}
     for alias, name in _FIELD_ALIASES.items():
         aliases.setdefault(name, []).append(alias)
@@ -562,16 +573,27 @@ def vocabulary() -> IssueQueryFieldsResponse:
             QueryOpInfo(name=op, min_values=lo, max_values=hi, text=_op_text(op))
             for op, (lo, hi) in OP_ARITY.items()
         ],
+        match_values=list(get_args(QueryGroup.model_fields["match"].annotation)),
+        date_values=QueryDateValues(
+            formats=list(DATE_FORMATS),
+            offset_units=dict(DATE_OFFSET_UNITS),
+            max_offset=MAX_DATE_OFFSET,
+        ),
         order_fields=list(ORDER_FIELDS),
+        order_directions=list(get_args(QueryOrder.model_fields["direction"].annotation)),
         default_order=render_order(DEFAULT_ORDER),
+        default_order_by=DEFAULT_ORDER,
         limits=QueryLimits(
             max_depth=MAX_DEPTH,
             max_rows=MAX_ROWS,
             max_values=MAX_VALUES,
             max_value_length=MAX_VALUE_LENGTH,
             max_order_terms=MAX_ORDER_TERMS,
+            max_order_length=MAX_ORDER_LENGTH,
             max_where_length=MAX_WHERE_LENGTH,
+            max_parens=MAX_PARENS,
             max_filter_json_length=MAX_FILTER_JSON_LENGTH,
+            min_number=MIN_NUMBER,
             max_number=MAX_NUMBER,
         ),
     )
@@ -625,14 +647,13 @@ def _date_bound(value: str, now: datetime, upper: bool) -> tuple[datetime, bool]
     it means "up to the end of time", inclusive. A datetime whose offset
     carries it past the representable range in UTC is a QueryError (a
     400), never an OverflowError (a 500)."""
-    m = re.match(r"^-([0-9]{1,4})([hdw])$", value)
+    m = RELATIVE_DATE.match(value)
     try:
         if m:
             n, unit = int(m.group(1)), m.group(2)
-            delta = {"h": timedelta(hours=n), "d": timedelta(days=n), "w": timedelta(weeks=n)}[unit]
-            return now - delta, True
-        if value in DATE_KEYWORDS:
-            day = now.date() - timedelta(days=DATE_KEYWORDS[value])
+            return now - timedelta(**{DATE_OFFSET_UNITS[unit]: n}), True
+        if value.lower() in DATE_KEYWORDS:
+            day = now.date() - timedelta(days=DATE_KEYWORDS[value.lower()])
         elif re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", value):
             day = date.fromisoformat(value)
         else:

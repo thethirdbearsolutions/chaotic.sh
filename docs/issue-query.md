@@ -188,12 +188,21 @@ names or other data, only the vocabulary.
     {"name": "empty", "min_values": 0, "max_values": 0, "text": "{field}="},
     ...
   ],
+  "match_values": ["all", "any"],
+  "date_values": {
+    "formats": ["YYYY-MM-DD", "YYYY-MM-DD[T ]HH:MM[:SS[.ffffff]][Z|+HH:MM|-HH:MM]"],
+    "offset_units": {"h": "hours", "d": "days", "w": "weeks"},
+    "max_offset": 9999
+  },
   "order_fields": ["created", "updated", "priority", ...],
+  "order_directions": ["asc", "desc"],
   "default_order": "-updated",
+  "default_order_by": [{"field": "updated", "direction": "desc"}],
   "limits": {"max_depth": 4, "max_rows": 50, "max_values": 100,
              "max_value_length": 200, "max_order_terms": 3,
-             "max_where_length": 4000, "max_filter_json_length": 16000,
-             "max_number": 1000000}
+             "max_order_length": 200, "max_where_length": 4000,
+             "max_parens": 32, "max_filter_json_length": 16000,
+             "min_number": 0, "max_number": 1000000}
 }
 ```
 
@@ -207,7 +216,12 @@ names or other data, only the vocabulary.
   null for the other kinds.
 - **`keywords`** are words accepted in place of a value: `me` for a user
   field, `current` for sprint, and `today` and `yesterday` for a date.
-  Dates also take offsets such as `-7d`.
+  They match in any case (`ME`, `Today`). In a shared query `me` means
+  whoever runs it.
+- **`date_values`** describes the rest of a date's values: the absolute
+  `formats`, and offsets back from now written `-N` and a unit from
+  `offset_units` (`-7d`, `-2w`, `-12h`), with N from 0 to `max_offset`
+  in ASCII digits.
 - **`aliases`** are other names the text form accepts for the field.
 - **`min_values`/`max_values`** give how many values a row with that
   operator takes. `empty` and `not_empty` take none, and `between` takes
@@ -216,6 +230,18 @@ names or other data, only the vocabulary.
   for the field, and `a` and `b` stand for values. `all` is written as
   one `=` clause per value. `gte` and `after` share a form, and so do
   `lte` and `before`: the field's kind decides which one is meant.
+  Three more things to know when filling it in:
+  - a value with a space, comma, quote, parenthesis, `..`, or that is
+    the word `or` or `and`, goes in double quotes (`sprint="Sprint 1"`),
+    and a range is quoted whole (`created="2026-10-01 09:00.."`);
+  - on a `text` or `title` field, `{field}=a` and `{field}!=a` mean
+    `contains` and `not_contains`: free text has no exact match;
+  - on a date field, `{field}=a` with one value means `between a a`,
+    the whole of that day.
+- **`match_values`**, **`order_directions`** and **`default_order_by`**
+  are the group combinations, the order directions and the default
+  order as structure, for a client that edits `filter` and `order_by`
+  rather than text.
 
 ## In the CLI
 

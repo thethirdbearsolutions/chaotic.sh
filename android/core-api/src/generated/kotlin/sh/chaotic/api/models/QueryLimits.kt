@@ -41,8 +41,11 @@ import kotlinx.serialization.encoding.Encoder
  * @param maxValues Values in one row.
  * @param maxValueLength Characters in one value.
  * @param maxOrderTerms 
+ * @param maxOrderLength Characters in the `order` text.
  * @param maxWhereLength Characters in the `where` text.
+ * @param maxParens Parentheses the `where` text may nest.
  * @param maxFilterJsonLength Characters in the `filter` JSON.
+ * @param minNumber The smallest number a number field takes.
  * @param maxNumber The largest number a number field takes.
  */
 @Serializable
@@ -68,13 +71,25 @@ data class QueryLimits (
     @SerialName(value = "max_order_terms")
     val maxOrderTerms: kotlin.Int,
 
+    /* Characters in the `order` text. */
+    @SerialName(value = "max_order_length")
+    val maxOrderLength: kotlin.Int,
+
     /* Characters in the `where` text. */
     @SerialName(value = "max_where_length")
     val maxWhereLength: kotlin.Int,
 
+    /* Parentheses the `where` text may nest. */
+    @SerialName(value = "max_parens")
+    val maxParens: kotlin.Int,
+
     /* Characters in the `filter` JSON. */
     @SerialName(value = "max_filter_json_length")
     val maxFilterJsonLength: kotlin.Int,
+
+    /* The smallest number a number field takes. */
+    @SerialName(value = "min_number")
+    val minNumber: kotlin.Int,
 
     /* The largest number a number field takes. */
     @SerialName(value = "max_number")

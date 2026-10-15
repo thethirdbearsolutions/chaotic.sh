@@ -40,7 +40,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param name 
  * @param minValues 
  * @param maxValues 
- * @param text How the text form writes it, with `{field}` for the field name and a, b for values.
+ * @param text How the text form writes it, with `{field}` for the field name and a, b for values. A value with a space, comma, quote, parenthesis or `..` goes in double quotes. On a text field `=`/`!=` mean contains/not_contains, and on a date field `{field}=a` is between a and a.
  */
 @Serializable
 
@@ -55,7 +55,7 @@ data class QueryOpInfo (
     @SerialName(value = "max_values")
     val maxValues: kotlin.Int,
 
-    /* How the text form writes it, with `{field}` for the field name and a, b for values. */
+    /* How the text form writes it, with `{field}` for the field name and a, b for values. A value with a space, comma, quote, parenthesis or `..` goes in double quotes. On a text field `=`/`!=` mean contains/not_contains, and on a date field `{field}=a` is between a and a. */
     @SerialName(value = "text")
     val text: kotlin.String
 

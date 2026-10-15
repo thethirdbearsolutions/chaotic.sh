@@ -216,7 +216,7 @@ _WhereParam = Annotated[str | None, Query(max_length=issue_query.MAX_WHERE_LENGT
 _FilterParam = Annotated[
     str | None, Query(alias="filter", max_length=issue_query.MAX_FILTER_JSON_LENGTH),
 ]
-_OrderParam = Annotated[str | None, Query(max_length=200)]
+_OrderParam = Annotated[str | None, Query(max_length=issue_query.MAX_ORDER_LENGTH)]
 _SkipParam = Annotated[int, Query(ge=0)]
 _LimitParam = Annotated[int, Query(ge=1, le=1000)]
 

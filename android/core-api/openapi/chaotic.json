@@ -11858,6 +11858,17 @@
             "type": "array",
             "title": "Ops"
           },
+          "match_values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Match Values",
+            "description": "How a group combines its rows: all (AND), any (OR)."
+          },
+          "date_values": {
+            "$ref": "#/components/schemas/QueryDateValues"
+          },
           "order_fields": {
             "items": {
               "$ref": "#/components/schemas/OrderField"
@@ -11865,10 +11876,25 @@
             "type": "array",
             "title": "Order Fields"
           },
+          "order_directions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Order Directions"
+          },
           "default_order": {
             "type": "string",
             "title": "Default Order",
             "description": "The order used when none is given, as `order` text."
+          },
+          "default_order_by": {
+            "items": {
+              "$ref": "#/components/schemas/QueryOrder"
+            },
+            "type": "array",
+            "title": "Default Order By",
+            "description": "The same order, as structure."
           },
           "limits": {
             "$ref": "#/components/schemas/QueryLimits"
@@ -11878,8 +11904,12 @@
         "required": [
           "fields",
           "ops",
+          "match_values",
+          "date_values",
           "order_fields",
+          "order_directions",
           "default_order",
+          "default_order_by",
           "limits"
         ],
         "title": "IssueQueryFieldsResponse",
@@ -13645,6 +13675,39 @@
         "title": "PushTransport",
         "description": "How the server delivers to a `push_devices` row (CHT-1604).\n\nWEB_PUSH: standard Web Push (RFC 8030) with VAPID (RFC 8292) and an\naes128gcm payload encrypted to the device's keys (RFC 8291), POSTed\nto the device's endpoint URL. UnifiedPush distributors such as ntfy\naccept it. The only transport today.\n\nA later transport (an FCM relay, CHT-1608) is a new member here and\nnothing else: the column stores the member's name as text, so adding\none needs no migration, and `p256dh`/`auth` are nullable in the table\nfor a transport that has no per-device keys."
       },
+      "QueryDateValues": {
+        "properties": {
+          "formats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Formats",
+            "description": "The absolute forms, in UTC unless an offset is given."
+          },
+          "offset_units": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Offset Units",
+            "description": "Relative offsets back from now are `-N` then a unit: each unit and what it counts (`-7d` is 7 days ago)."
+          },
+          "max_offset": {
+            "type": "integer",
+            "title": "Max Offset",
+            "description": "The largest N in an offset."
+          }
+        },
+        "type": "object",
+        "required": [
+          "formats",
+          "offset_units",
+          "max_offset"
+        ],
+        "title": "QueryDateValues",
+        "description": "What a date field's values may be, besides its keywords."
+      },
       "QueryField": {
         "type": "string",
         "enum": [
@@ -13805,15 +13868,30 @@
             "type": "integer",
             "title": "Max Order Terms"
           },
+          "max_order_length": {
+            "type": "integer",
+            "title": "Max Order Length",
+            "description": "Characters in the `order` text."
+          },
           "max_where_length": {
             "type": "integer",
             "title": "Max Where Length",
             "description": "Characters in the `where` text."
           },
+          "max_parens": {
+            "type": "integer",
+            "title": "Max Parens",
+            "description": "Parentheses the `where` text may nest."
+          },
           "max_filter_json_length": {
             "type": "integer",
             "title": "Max Filter Json Length",
             "description": "Characters in the `filter` JSON."
+          },
+          "min_number": {
+            "type": "integer",
+            "title": "Min Number",
+            "description": "The smallest number a number field takes."
           },
           "max_number": {
             "type": "integer",
@@ -13828,8 +13906,11 @@
           "max_values",
           "max_value_length",
           "max_order_terms",
+          "max_order_length",
           "max_where_length",
+          "max_parens",
           "max_filter_json_length",
+          "min_number",
           "max_number"
         ],
         "title": "QueryLimits",
@@ -13871,7 +13952,7 @@
           "text": {
             "type": "string",
             "title": "Text",
-            "description": "How the text form writes it, with `{field}` for the field name and a, b for values."
+            "description": "How the text form writes it, with `{field}` for the field name and a, b for values. A value with a space, comma, quote, parenthesis or `..` goes in double quotes. On a text field `=`/`!=` mean contains/not_contains, and on a date field `{field}=a` is between a and a."
           }
         },
         "type": "object",

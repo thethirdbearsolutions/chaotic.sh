@@ -24,9 +24,11 @@
 package sh.chaotic.api.models
 
 import sh.chaotic.api.models.OrderField
+import sh.chaotic.api.models.QueryDateValues
 import sh.chaotic.api.models.QueryFieldInfo
 import sh.chaotic.api.models.QueryLimits
 import sh.chaotic.api.models.QueryOpInfo
+import sh.chaotic.api.models.QueryOrder
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -42,8 +44,12 @@ import kotlinx.serialization.encoding.Encoder
  *
  * @param fields 
  * @param ops 
+ * @param matchValues How a group combines its rows: all (AND), any (OR).
+ * @param dateValues 
  * @param orderFields 
+ * @param orderDirections 
  * @param defaultOrder The order used when none is given, as `order` text.
+ * @param defaultOrderBy The same order, as structure.
  * @param limits 
  */
 @Serializable
@@ -56,12 +62,26 @@ data class IssueQueryFieldsResponse (
     @SerialName(value = "ops")
     val ops: kotlin.collections.List<QueryOpInfo>,
 
+    /* How a group combines its rows: all (AND), any (OR). */
+    @SerialName(value = "match_values")
+    val matchValues: kotlin.collections.List<kotlin.String>,
+
+    @SerialName(value = "date_values")
+    val dateValues: QueryDateValues,
+
     @SerialName(value = "order_fields")
     val orderFields: kotlin.collections.List<@Contextual OrderField>,
+
+    @SerialName(value = "order_directions")
+    val orderDirections: kotlin.collections.List<kotlin.String>,
 
     /* The order used when none is given, as `order` text. */
     @SerialName(value = "default_order")
     val defaultOrder: kotlin.String,
+
+    /* The same order, as structure. */
+    @SerialName(value = "default_order_by")
+    val defaultOrderBy: kotlin.collections.List<QueryOrder>,
 
     @SerialName(value = "limits")
     val limits: QueryLimits
