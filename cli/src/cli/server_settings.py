@@ -25,6 +25,7 @@ import binascii
 import ipaddress
 import re
 from dataclasses import dataclass
+from datetime import date
 from urllib.parse import urlsplit
 
 SETTINGS_KEY = "settings"  # in server.json
@@ -32,7 +33,7 @@ SETTINGS_KEY = "settings"  # in server.json
 
 @dataclass(frozen=True)
 class Setting:
-    kind: str  # bool | url | proxies | origins | port | vapid | text
+    kind: str  # bool | url | proxies | origins | port | vapid | keyids | date | text
     default: str  # the server's default, for display only
     help: str
     secret: bool = False
@@ -49,6 +50,12 @@ KNOWN: dict[str, Setting] = {
         "Reverse proxies (IP addresses or CIDR networks) whose X-Forwarded-* headers are believed. Empty: none."),
     "MCP_CAPABILITY_URL_ENABLED": Setting(
         "bool", "true", "Serve the deprecated /mcp/<api-key> capability URL."),
+    "MCP_LEGACY_SHARED_KEY_IDS": Setting(
+        "keyids", "",
+        "API key ids (comma-separated, from 'chaotic auth keys list') of a shared MCP identity being retired: "
+        "/mcp calls with them get a retirement notice. Empty: no notice."),
+    "MCP_LEGACY_RETIRE_DATE": Setting(
+        "date", "", "The retirement date (YYYY-MM-DD) the MCP_LEGACY_SHARED_KEY_IDS notice gives. Empty: no date."),
     "OAUTH_DCR_ENABLED": Setting(
         "bool", "true", "Let OAuth clients register themselves (RFC 7591)."),
     "CORS_ORIGINS": Setting(
@@ -277,6 +284,20 @@ def _vapid_key_ok(value: str) -> bool:
     return len(raw) == 32 and 0 < int.from_bytes(raw, "big") < _P256_ORDER
 
 
+_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_ISO_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+
+
+def _date_ok(value: str) -> bool:
+    if not _ISO_DATE.match(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def normalize(name: str, value: str) -> tuple[str, str | None]:
     """(the value to store, None) or (value, why it is refused). Never
     puts a secret value in the reason."""
@@ -319,6 +340,22 @@ def normalize(name: str, value: str) -> tuple[str, str | None]:
         if value and not _vapid_key_ok(value):
             return value, (f"{name} must be a P-256 private key: 32 bytes in base64url "
                            "(a PEM cannot go in the service file)")
+    elif kind == "keyids":
+        # The server keeps only entries that are key ids (UUIDs) and logs
+        # the rest (app.config); refuse them here instead.
+        ids = []
+        for entry in (e.strip() for e in value.split(",")):
+            if not entry:
+                continue
+            if not _UUID.match(entry):
+                return value, f"{name}: {entry!r} is not an API key id (see 'chaotic auth keys list')"
+            if entry.lower() not in ids:
+                ids.append(entry.lower())
+        value = ",".join(ids)
+    elif kind == "date":
+        value = value.strip()
+        if value and not _date_ok(value):
+            return value, f"{name} must be a date written YYYY-MM-DD, not {shown}"
     elif kind == "port":
         digits = value.strip()
         if not (digits.isascii() and digits.isdigit()) or not 1 <= int(digits) <= 65535:
@@ -440,6 +477,9 @@ def check_combination(settings: dict[str, str], skip: frozenset[str] = frozenset
         if settings.get("MCP_CAPABILITY_URL_ENABLED", KNOWN["MCP_CAPABILITY_URL_ENABLED"].default) != "false":
             warnings.append("OAuth is on and the deprecated capability URL (/mcp/<api-key>) is still served; "
                             "set MCP_CAPABILITY_URL_ENABLED=false once no connector uses it")
+    if settings.get("MCP_LEGACY_RETIRE_DATE") and not settings.get("MCP_LEGACY_SHARED_KEY_IDS"):
+        warnings.append("MCP_LEGACY_RETIRE_DATE is set but MCP_LEGACY_SHARED_KEY_IDS is not: "
+                        "no retirement notice is shown")
     return errors, warnings
 
 

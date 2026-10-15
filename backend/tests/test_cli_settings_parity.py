@@ -267,3 +267,34 @@ def test_cli_vapid_key_subset_of_server(value):
     stored, problem = cli_settings.normalize("VAPID_PRIVATE_KEY", value)
     if problem is None and stored:
         vapid._from_setting(stored)
+
+
+@pytest.mark.parametrize("raw", [
+    "0b7e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d",
+    " 0B7E2A3C-1D4F-4A5B-8C6D-7E8F9A0B1C2D ,, 1b7e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d,",
+    "",
+])
+def test_cli_accepted_legacy_key_ids_are_kept_by_the_server(monkeypatch, raw):
+    """CHT-1720: what `config set MCP_LEGACY_SHARED_KEY_IDS` stores, the
+    server keeps as is (it only drops entries that are not key ids, which
+    the CLI refuses)."""
+    from app.config import Settings
+
+    stored, problem = cli_settings.normalize("MCP_LEGACY_SHARED_KEY_IDS", raw)
+    assert problem is None
+    monkeypatch.setenv("MCP_LEGACY_SHARED_KEY_IDS", stored)
+    assert Settings().mcp_legacy_shared_key_ids == stored
+
+
+@pytest.mark.parametrize("raw", ["2026-11-15", " 2027-02-28 ", "", "2026-02-30", "2026-W46-7", "20261115", "soon"])
+def test_legacy_retire_date_cli_and_server_agree(monkeypatch, raw):
+    """The CLI accepts exactly the dates the server keeps."""
+    from app.config import Settings
+
+    stored, problem = cli_settings.normalize("MCP_LEGACY_RETIRE_DATE", raw)
+    monkeypatch.setenv("MCP_LEGACY_RETIRE_DATE", raw)
+    server = Settings().mcp_legacy_retire_date
+    if problem is None:
+        assert server == stored
+    else:
+        assert server == "" and raw.strip() != ""

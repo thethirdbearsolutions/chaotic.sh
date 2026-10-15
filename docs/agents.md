@@ -255,7 +255,12 @@ move (CHT-1360). Both transports
 produce the identical envelope. Successful writes can carry advisory
 `warnings` (a list of sentences) next to the result: today `issue_create`
 and `issue_update` add one when the estimate is not on the project's
-declared `estimate_scale` (CHT-1365); the write still happened as given. (The CLI's own `--json` mode keeps its
+declared `estimate_scale` (CHT-1365); the write still happened as given.
+On the HTTP transport a result can also carry a top-level `notice`
+string, success or error alike: the server adds it when your key belongs
+to a shared identity that is being retired (`MCP_LEGACY_SHARED_KEY_IDS`,
+CHT-1720), and says there when and how to switch. Read it and act on it;
+no tool ever returns a `notice` of its own. (The CLI's own `--json` mode keeps its
 flat `{"error": "..."}` string -- that contract is for shells and exit
 codes, this one is for models.)
 

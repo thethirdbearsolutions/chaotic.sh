@@ -1268,3 +1268,44 @@ class TestReviewFindings:
             result = server.invoke("check")
         assert result.exit_code == 1
         assert "server.json says HOST 127.0.0.1 but the service file says 0.0.0.0" in result.output
+
+
+class TestLegacySharedKeySettings:
+    """MCP_LEGACY_SHARED_KEY_IDS / MCP_LEGACY_RETIRE_DATE (CHT-1720):
+    refused here where the server would log and drop them."""
+
+    ID = "0b7e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d"
+
+    def test_ids_are_normalised(self):
+        raw = f" {self.ID.upper()} ,,{self.ID}, 1b7e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d"
+        assert ss.normalize("MCP_LEGACY_SHARED_KEY_IDS", raw) == (
+            f"{self.ID},1b7e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d", None)
+        assert ss.normalize("MCP_LEGACY_SHARED_KEY_IDS", "") == ("", None)
+        assert not ss.is_secret("MCP_LEGACY_SHARED_KEY_IDS")
+
+    @pytest.mark.parametrize("entry", ["ck_abc123", "0b7e2a3c", "*", "{" + ID + "}", ID.replace("-", "")])
+    def test_a_non_id_is_refused(self, entry):
+        _value, problem = ss.normalize("MCP_LEGACY_SHARED_KEY_IDS", f"{self.ID},{entry}")
+        assert problem and "not an API key id" in problem
+
+    def test_dates(self):
+        assert ss.normalize("MCP_LEGACY_RETIRE_DATE", " 2026-11-15 ") == ("2026-11-15", None)
+        assert ss.normalize("MCP_LEGACY_RETIRE_DATE", "") == ("", None)
+        for bad in ("2026-13-01", "15/11/2026", "20261115", "2026-W46-7", "soon"):
+            assert "YYYY-MM-DD" in ss.normalize("MCP_LEGACY_RETIRE_DATE", bad)[1], bad
+
+    def test_a_date_without_ids_is_a_warning(self):
+        errors, warnings = ss.check({"settings": {"MCP_LEGACY_RETIRE_DATE": "2026-11-15"}})
+        assert errors == [] and any("no retirement notice" in w for w in warnings)
+        assert ss.check({"settings": {"MCP_LEGACY_RETIRE_DATE": "2026-11-15",
+                                      "MCP_LEGACY_SHARED_KEY_IDS": self.ID}}) == ([], [])
+
+    def test_set_writes_them_to_the_unit(self, server):
+        assert server.invoke("set", "MCP_LEGACY_SHARED_KEY_IDS", self.ID.upper()).exit_code == 0
+        assert server.invoke("set", "MCP_LEGACY_RETIRE_DATE", "2026-11-15").exit_code == 0
+        assert server.info()["settings"] == {
+            "MCP_LEGACY_SHARED_KEY_IDS": self.ID, "MCP_LEGACY_RETIRE_DATE": "2026-11-15"}
+        unit = server.unit.read_text()
+        assert f"Environment=MCP_LEGACY_SHARED_KEY_IDS={self.ID}\n" in unit
+        assert "Environment=MCP_LEGACY_RETIRE_DATE=2026-11-15\n" in unit
+        assert server.invoke("set", "MCP_LEGACY_SHARED_KEY_IDS", "ck_nope").exit_code != 0

@@ -41,6 +41,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from app.config import get_settings
+from app.mcp_server.legacy import install_instructions_notice
 from app.mcp_server.auth import BearerHeaderAuth, CapabilityPathRedaction, CapabilityURLAuth
 from app.mcp_server.tools import ALL_TOOLS, preserve_root_logger
 
@@ -125,6 +126,9 @@ def get_fastmcp() -> MCPServer:
                     'error_code, read message.'
                 ),
             )
+        # A listed legacy shared key sees a retirement notice after these
+        # instructions (legacy.py, CHT-1720); everyone else sees them as is.
+        install_instructions_notice(_fastmcp)
         add_tools(_fastmcp, ALL_TOOLS)
         # streamable_http_app() is what builds the session manager, and in
         # mcp 2.x it is also where the transport settings live (they were
