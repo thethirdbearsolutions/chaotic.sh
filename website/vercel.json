@@ -10,5 +10,28 @@
       "destination": "https://github.com/thethirdbearsolutions/chaotic.sh/tree/main/docs/:path*",
       "permanent": false
     }
+  ],
+  "rewrites": [
+    {
+      "source": "/app/oauth2redirect",
+      "destination": "/app/oauth2redirect.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/.well-known/assetlinks.json",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json" },
+        { "key": "Cache-Control", "value": "public, max-age=300" }
+      ]
+    },
+    {
+      "source": "/app/oauth2redirect",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "X-Frame-Options", "value": "DENY" }
+      ]
+    }
   ]
 }

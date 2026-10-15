@@ -712,16 +712,14 @@ agent. It is built into the server as the OAuth client
 `builtin:sh.chaotic.android`, resolved from code: the server fetches
 nothing to recognise it (an air-gapped server works), and no stored or
 published document can change the redirects it accepts. Its redirect is
-fixed, `sh.chaotic.android:/oauth2redirect`, with PKCE S256,
+fixed, `https://chaotic.sh/app/oauth2redirect`, with PKCE S256,
 `offline_access` and rotating refresh tokens like every connection.
 
-That redirect is an Android private-use scheme, and Android does not
-reserve one for a single app: another app installed on the same phone
-can claim it, start a sign-in itself, and get a session as you if you
-approve it. So approve the sign-in page only when you have just tapped
-"Sign in" in the Chaotic app yourself. A verified https redirect
-(Android App Links), which closes this, is planned before the app
-ships.
+That redirect is a verified Android App Link (CHT-1649): Android hands
+it only to the genuine, release-signed app, so another app on the phone
+that starts a sign-in cannot receive the result. Still approve the
+sign-in page only when you have just tapped "Sign in" in the Chaotic app
+yourself. How to install the app: [android.md](android.md).
 
 Signing in shows "Sign in to Chaotic for Android as you?" with nothing
 to choose: no team, agent or projects. The sign-in is account-wide. The

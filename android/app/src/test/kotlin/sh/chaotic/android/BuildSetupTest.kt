@@ -18,12 +18,12 @@ class BuildSetupTest {
     }
 
     @Test
-    fun theRedirectIsTheBuiltInClientsPrivateUseScheme() {
+    fun theRedirectIsTheBuiltInClientsAppLinksUrl() {
         // backend/app/oauth/builtin.py lists the same URI; a backend test
-        // checks app/build.gradle.kts against it. The scheme is the
-        // application id (RFC 8252 §7.1).
-        assertEquals("sh.chaotic.android:/oauth2redirect", BuildConfig.OAUTH_REDIRECT_URI)
-        assertTrue(BuildConfig.OAUTH_REDIRECT_URI.startsWith(BuildConfig.APPLICATION_ID + ":"))
+        // checks app/build.gradle.kts against it. https on chaotic.sh, whose
+        // assetlinks.json verifies it for this app (CHT-1649), never a
+        // private-use scheme another app could claim.
+        assertEquals("https://chaotic.sh/app/oauth2redirect", BuildConfig.OAUTH_REDIRECT_URI)
     }
 
     @Test

@@ -440,18 +440,30 @@ One client is neither: the **Chaotic Android app** is built into the
 server (CHT-1602, `backend/app/oauth/builtin.py`). Its `client_id`,
 `builtin:sh.chaotic.android`, is not a URL, so nothing is fetched for it
 and no outbound access is needed; its redirect,
-`sh.chaotic.android:/oauth2redirect`, comes from the code, not from
+`https://chaotic.sh/app/oauth2redirect`, comes from the code, not from
 anything stored or published. The same metadata is published at
 `https://chaotic.sh/oauth/android-client.json` for reference only; the
 server never reads it.
 
-Residual risk: that redirect is a private-use URI scheme, which any
-Android app on the same phone can also register. A malicious app could
-start the sign-in itself and, if the person approves the page, receive a
-session acting as them. The consent page does not claim the request
-comes from the official app, and tells the person to continue only if
-they just started signing in from it. Moving to a verified https
-redirect (Android App Links) closes this and is planned before release.
+That redirect is an Android App Link (CHT-1649): chaotic.sh's
+`/.well-known/assetlinks.json` names the app's release signing key, so
+Android hands the redirect only to the genuine app. Another app on the
+phone can start a sign-in with the app's `client_id`, but the code then
+goes to the real Chaotic app, which did not start it and drops it. The
+redirect is the same for every server, so a self-hosted one needs
+nothing on its own domain, and no other client may register a redirect
+under `https://chaotic.sh/app/`. The app's earlier private-use redirect,
+`sh.chaotic.android:/oauth2redirect`, which any app could claim, is
+refused.
+
+What reaches chaotic.sh: nothing, when the link is verified on the
+phone. When it is not (a self-built app, or a phone that was offline
+when the app was installed), the browser loads the redirect page on
+chaotic.sh, so the website's host sees that request: a one-time
+authorization code, useless without the app's PKCE verifier and expiring
+within minutes, and the `iss` parameter, which is your server's
+`APP_BASE_URL`. The page itself loads nothing else and hands the code to
+the app.
 
 An admin can disable the app by setting `is_active` to false on its
 `oauth_clients` row. That blocks new sign-ins and refreshes at once, but

@@ -23,6 +23,7 @@ from app.oauth.clients import (
     known_client_name,
     redirect_uri_matches,
     redirect_uri_problem,
+    reserved_redirect_problem,
 )
 from app.oxyde_models.oauth import OxydeOAuthClient
 from app.services.oauth_client_service import (
@@ -216,6 +217,30 @@ class TestDocumentRedirectRules:
     def test_refused(self, uri):
         assert redirect_uri_problem(uri, allow_private_use=True) is not None
         assert dcr_redirect_uri_problem(uri) is not None
+
+
+class TestReservedAppRedirect:
+    """CHT-1649: the Android app's App Links paths belong to the built-in
+    client; no registration or metadata document may name them."""
+
+    @pytest.mark.parametrize("uri", [
+        "https://chaotic.sh/app/oauth2redirect", "https://chaotic.sh/app/oauth2redirect/",
+        "https://chaotic.sh/app/other?x=1", "https://chaotic.sh/app", "https://chaotic.sh:443/app/oauth2redirect",
+    ])
+    def test_refused_for_every_other_client(self, uri):
+        assert redirect_uri_problem(uri) is None  # a well-formed https URI...
+        assert reserved_redirect_problem(uri) is not None  # ...that is the app's
+        assert dcr_redirect_uri_problem(uri) is not None
+        with pytest.raises(cimd.CIMDError, match="reserved for the Chaotic app"):
+            cimd.parse_client_metadata(CIMD_URL, json.dumps(_doc(redirect_uris=[uri])).encode())
+
+    @pytest.mark.parametrize("uri", [
+        "https://chaotic.sh/oauth/cb", "https://chaotic.sh/apps/cb", "https://www.chaotic.sh/app/oauth2redirect",
+        "https://app.example/app/oauth2redirect",
+    ])
+    def test_the_rest_of_the_domain_is_not_reserved(self, uri):
+        assert reserved_redirect_problem(uri) is None
+        assert dcr_redirect_uri_problem(uri) is None
 
 
 class TestResource:

@@ -20,7 +20,7 @@ from app.auth.credentials import CredentialError, CredentialFailure, mcp_resolve
 from app.config import get_settings
 from app.enums import HolderVia, OAuthClientRegistration, TokenKind
 from app.oauth import cimd, ratelimit
-from app.oauth.builtin import ANDROID, BUILTIN_PREFIX
+from app.oauth.builtin import ANDROID, ANDROID_APP_ID, ANDROID_APP_LINKS_HOST, BUILTIN_PREFIX
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeOAuthClient
 from app.oxyde_models.push import OxydePushDevice
 from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
@@ -38,7 +38,9 @@ from .oauth_tokens import NEAR_MISS_APP_RESOURCES
 BASE = "https://tracker.example.com"
 MCP = BASE + "/mcp"
 APP_ID = ANDROID.client_id
-APP_REDIRECT = "sh.chaotic.android:/oauth2redirect"
+APP_REDIRECT = "https://chaotic.sh/app/oauth2redirect"
+# The private-use redirect the app used before App Links (CHT-1649).
+OLD_PRIVATE_USE_REDIRECT = "sh.chaotic.android:/oauth2redirect"
 VERIFIER = "dBjftJeZ4CVP-mJ92K9-cLu7_Yyz0n2KfK_Prv8yWg2xyz"
 FORM = {"Content-Type": "application/x-www-form-urlencoded"}
 CIMD_ID = "https://apps.example.org/chaotic-clone.json"
@@ -215,6 +217,36 @@ class TestBuiltinClient:
         found = re.findall(r'^val oauthRedirectUri = "([^"$]+)"$', gradle, re.MULTILINE)
         assert len(found) == 1, "android/app/build.gradle.kts must define oauthRedirectUri as one literal"
         assert found[0] in ANDROID.redirect_uris
+
+    async def test_the_redirect_is_an_app_links_url_on_the_website(self):
+        """CHT-1649: https only, on the domain whose assetlinks.json
+        verifies the app. A private-use scheme, which any app can claim,
+        is never accepted."""
+        assert ANDROID.redirect_uris == (APP_REDIRECT,)
+        for uri in ANDROID.redirect_uris:
+            parts = urlsplit(uri)
+            assert parts.scheme == "https" and parts.hostname == ANDROID_APP_LINKS_HOST
+            assert not parts.query and not parts.fragment
+
+    async def test_the_private_use_redirect_is_refused(self, client, oauth_on, no_fetch):
+        """The old private-use redirect gets the error page, never a
+        redirect: an app claiming the scheme receives nothing."""
+        response = await _authorize(client, redirect_uri=OLD_PRIVATE_USE_REDIRECT)
+        assert response.status_code == 400
+        assert "location" not in response.headers
+        assert "not one this app registered" in response.text
+
+    async def test_a_row_stored_with_the_private_use_redirect_is_rewritten(self, client, oauth_on, no_fetch, db):
+        """A server that ran an older version has the old redirect in its
+        stored row: the next authorize rewrites it from the constant, and
+        the old URI stops working on that server too."""
+        await OxydeOAuthClient.objects.create(
+            id=APP_ID, registration=OAuthClientRegistration.BUILTIN, client_name=ANDROID.name,
+            redirect_uris=json.dumps([OLD_PRIVATE_USE_REDIRECT]), token_endpoint_auth_method="none",
+        )
+        assert (await _authorize(client, redirect_uri=OLD_PRIVATE_USE_REDIRECT)).status_code == 400
+        assert json.loads((await OxydeOAuthClient.objects.get(id=APP_ID)).redirect_uris) == [APP_REDIRECT]
+        await _request_id(client)
 
     async def test_a_builtin_row_this_server_does_not_know_cannot_authenticate(self, oauth_on, db):
         await OxydeOAuthClient.objects.create(
@@ -608,7 +640,20 @@ async def _register(client, **metadata):
 
 @pytest.fixture
 def cimd_clone(monkeypatch):
-    """A CIMD document that copies the app's name and redirect."""
+    """A CIMD document that copies the app's name and its old private-use
+    redirect (a document may use one; the app's App Links redirect it may
+    not, see cimd_clone_with_the_apps_redirect)."""
+    async def fetch(url):
+        return cimd.FetchedDocument(json.dumps({
+            "client_id": CIMD_ID, "client_name": "Chaotic for Android",
+            "redirect_uris": [OLD_PRIVATE_USE_REDIRECT], "token_endpoint_auth_method": "none",
+        }).encode(), "max-age=3600")
+
+    monkeypatch.setattr(cimd, "fetch", fetch)
+
+
+@pytest.fixture
+def cimd_clone_with_the_apps_redirect(monkeypatch):
     async def fetch(url):
         return cimd.FetchedDocument(json.dumps({
             "client_id": CIMD_ID, "client_name": "Chaotic for Android",
@@ -622,6 +667,13 @@ class TestOtherClientsStayAgents:
     async def test_dcr_cannot_take_the_apps_redirect(self, client, oauth_on):
         response = await _register(client, redirect_uris=[APP_REDIRECT])
         assert response.status_code == 400 and response.json()["error"] == "invalid_redirect_uri"
+
+    async def test_a_metadata_document_cannot_take_the_apps_redirect(
+        self, client, oauth_on, cimd_clone_with_the_apps_redirect,
+    ):
+        response = await _authorize(client, CIMD_ID)
+        assert response.status_code == 400 and "location" not in response.headers
+        assert "reserved for the Chaotic app" in response.text
 
     async def test_dcr_client_asking_for_the_whole_server_gets_an_agent_at_mcp(
         self, client, oauth_on, web_headers, test_team, test_user,
@@ -649,7 +701,7 @@ class TestOtherClientsStayAgents:
     async def test_cimd_clone_of_the_app_gets_an_agent(
         self, client, oauth_on, cimd_clone, web_headers, test_team, test_user,
     ):
-        request_id = await _request_id(client, CIMD_ID, resource=BASE)
+        request_id = await _request_id(client, CIMD_ID, redirect_uri=OLD_PRIVATE_USE_REDIRECT, resource=BASE)
         view = (await client.get(f"/api/oauth/requests/{request_id}", headers=web_headers)).json()
         assert view["acts_as"] == "agent" and view["client"]["trust"] == "cimd"
         # Asking to be the person is not an option the endpoint has.
@@ -744,3 +796,59 @@ class TestOtherClientsStayAgents:
         await OxydeHolderSession.objects.filter(id=issued.holder_session_id).update(via=HolderVia.APP)
         await _refused(mcp_resolver, issued.access_token)
         await _refused(rest_resolver, issued.access_token)
+
+
+# --- Android App Links (CHT-1649) -------------------------------------------
+
+WEBSITE = REPO / "website"
+FINGERPRINT = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){31}$")
+
+
+class TestAppLinks:
+    """The website (deployed to chaotic.sh) verifies the app's redirect:
+    /.well-known/assetlinks.json names the package and its release
+    signing-cert fingerprint, and /app/oauth2redirect is a fallback page
+    for a phone where verification did not happen."""
+
+    def _assetlinks(self):
+        return json.loads((WEBSITE / ".well-known" / "assetlinks.json").read_text())
+
+    def test_assetlinks_only_names_the_app_with_well_formed_fingerprints(self):
+        # An empty list until the release key exists (CHT-1729): it then
+        # holds the statement scripts/android-release.sh prints.
+        statements = self._assetlinks()
+        assert isinstance(statements, list)
+        for statement in statements:
+            assert set(statement) == {"relation", "target"}
+            assert statement["relation"] == ["delegate_permission/common.handle_all_urls"]
+            target = statement["target"]
+            assert set(target) == {"namespace", "package_name", "sha256_cert_fingerprints"}
+            assert target["namespace"] == "android_app"
+            assert target["package_name"] == ANDROID_APP_ID
+            fingerprints = target["sha256_cert_fingerprints"]
+            assert fingerprints and len(set(fingerprints)) == len(fingerprints)
+            assert all(FINGERPRINT.match(f) for f in fingerprints), fingerprints
+
+    def test_vercel_serves_assetlinks_and_the_fallback_without_redirecting(self):
+        # Android does not follow a redirect when it fetches assetlinks.json.
+        config = json.loads((WEBSITE / "vercel.json").read_text())
+        assert config.get("cleanUrls") is not True and config.get("trailingSlash") is None
+        for rule in config.get("redirects", []):
+            assert not rule["source"].startswith(("/.well-known", "/app")), rule
+        path = urlsplit(APP_REDIRECT).path
+        rewrites = {r["source"]: r["destination"] for r in config.get("rewrites", [])}
+        assert (WEBSITE / rewrites[path].lstrip("/")).is_file()
+        json_headers = [
+            h for rule in config["headers"] if rule["source"] == "/.well-known/assetlinks.json"
+            for h in rule["headers"] if h["key"].lower() == "content-type"
+        ]
+        assert json_headers == [{"key": "Content-Type", "value": "application/json"}]
+
+    def test_the_fallback_page_hands_the_code_only_to_the_app_package(self):
+        page = (WEBSITE / "app" / "oauth2redirect.html").read_text()
+        host_and_path = APP_REDIRECT.removeprefix("https://")
+        assert f"'intent://{host_and_path}'" in page
+        assert f"package={ANDROID_APP_ID};" in page
+        assert '<meta name="referrer" content="no-referrer">' in page
+        # Nothing loaded from elsewhere, so the code in the address goes nowhere else.
+        assert not re.search(r"<(script|link|img|iframe)[^>]+(src|href)=", page)

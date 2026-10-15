@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from app.oauth.builtin import ANDROID_APP_LINKS_HOST
+
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]"})
 
 # DCR limits (design §2.2).
@@ -163,11 +165,31 @@ def redirect_uri_problem(uri: object, *, allow_private_use: bool = False) -> str
     return "a redirect_uri must be https, or http on a loopback host"
 
 
+def reserved_redirect_problem(uri: str) -> str | None:
+    """Why a client other than a built-in one may not use ``uri``: the
+    Android app's App Links paths (``https://chaotic.sh/app/...``,
+    CHT-1649) belong to the built-in client. A code sent there is handed
+    to the Chaotic app, so another client could gain nothing from it,
+    but a registration that names the app's redirect is either a mistake
+    or an impersonation, and is refused as such. Expects a URI that
+    passed ``redirect_uri_problem`` (lower-case host)."""
+    try:
+        parts = urlsplit(uri)
+    except ValueError:
+        return None
+    if parts.scheme == "https" and parts.hostname == ANDROID_APP_LINKS_HOST and (
+        parts.path == "/app" or parts.path.startswith("/app/")
+    ):
+        return f"a redirect_uri under https://{ANDROID_APP_LINKS_HOST}/app/ is reserved for the Chaotic app"
+    return None
+
+
 def dcr_redirect_uri_problem(uri: object) -> str | None:
     """The rule for a dynamically registered redirect URI: ``https`` or
-    loopback ``http`` only (``redirect_uri_problem``). A DCR client is
+    loopback ``http`` only (``redirect_uri_problem``), and none of the
+    built-in app's (``reserved_redirect_problem``). A DCR client is
     unproven, so it gets no private-use schemes."""
-    return redirect_uri_problem(uri)
+    return redirect_uri_problem(uri) or reserved_redirect_problem(uri)
 
 
 def redirect_host(uri: str) -> str:

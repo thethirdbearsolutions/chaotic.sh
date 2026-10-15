@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Push notifications (CHT-1612); asked for after sign-in, with a reason. -->
@@ -28,6 +29,25 @@
             android:name=".NotificationTapActivity"
             android:exported="false"
             android:targetActivity=".MainActivity" />
+
+        <!-- The sign-in redirect (CHT-1649): AppAuth's receiver, declared again so it
+             answers only the verified App Links URL. tools:node="replace" drops AppAuth's
+             own filter on a custom scheme, which any app could also claim. Host and path
+             come from oauthRedirectUri in build.gradle.kts; chaotic.sh's
+             /.well-known/assetlinks.json verifies them for the release key. -->
+        <activity
+            android:name="net.openid.appauth.RedirectUriReceiverActivity"
+            android:exported="true"
+            tools:node="replace">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="${oauthRedirectHost}" />
+                <data android:path="${oauthRedirectPath}" />
+            </intent-filter>
+        </activity>
 
         <!-- UnifiedPush events, forwarded by the connector library's own receiver (CHT-1612). -->
         <service
