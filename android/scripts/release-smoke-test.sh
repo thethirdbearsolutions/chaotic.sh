@@ -28,7 +28,9 @@
 # answering (an install that never returns, a launch that never reports)
 # ends the run within minutes with a line naming the step, instead of at
 # the CI job's timeout. Exit status: 0 passed, 1 the app or an APK failed,
-# 2 usage, 3 the device stopped answering. When SMOKE_NO_RETRY_MARKER names
+# 2 usage, 3 an adb call ran out of time (the device stopped answering;
+# for am start -W, possibly an app that hangs while starting, which then
+# fails the retry the same way). When SMOKE_NO_RETRY_MARKER names
 # a file, every failure except 3 creates it, so CI retries a stuck device
 # (or an emulator that never booted) but not a crash it would only repeat.
 set -euo pipefail
@@ -97,7 +99,7 @@ STUCK_FLAG="$WORK/stuck"
 # for the main shell to find.
 stuck() {
     echo "FAIL (device): $1" >&3
-    echo "The emulator stopped answering; this says nothing about the app." >&3
+    echo "adb got no answer in time: the emulator stopped answering, or (only for a launch) the app hung while starting." >&3
     : > "$STUCK_FLAG"
     exit 3
 }
