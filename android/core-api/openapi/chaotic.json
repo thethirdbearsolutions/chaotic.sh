@@ -1496,6 +1496,33 @@
         }
       }
     },
+    "/api/issues/query/fields": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Get Issue Query Fields",
+        "description": "The issue query's vocabulary (CHT-1783): each field with its value\nkind and operators, each operator's arity and text form, the enum\nvalues, the order fields and the caps. It is what a query builder\nneeds to build its row editors, served from the allow-list the query\nendpoints validate against. It is the same for every caller and\nholds no data, so any signed-in caller may read it.",
+        "operationId": "get_issue_query_fields_api_issues_query_fields_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueQueryFieldsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/issues/search": {
       "get": {
         "tags": [
@@ -11815,6 +11842,79 @@
         "title": "IssueQuery",
         "description": "A whole query: the filter tree (None: everything in scope) and the\nordering. This is what a saved view stores."
       },
+      "IssueQueryFieldsResponse": {
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/QueryFieldInfo"
+            },
+            "type": "array",
+            "title": "Fields"
+          },
+          "ops": {
+            "items": {
+              "$ref": "#/components/schemas/QueryOpInfo"
+            },
+            "type": "array",
+            "title": "Ops"
+          },
+          "match_values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Match Values",
+            "description": "How a group combines its rows: all (AND), any (OR)."
+          },
+          "date_values": {
+            "$ref": "#/components/schemas/QueryDateValues"
+          },
+          "order_fields": {
+            "items": {
+              "$ref": "#/components/schemas/OrderField"
+            },
+            "type": "array",
+            "title": "Order Fields"
+          },
+          "order_directions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Order Directions"
+          },
+          "default_order": {
+            "type": "string",
+            "title": "Default Order",
+            "description": "The order used when none is given, as `order` text."
+          },
+          "default_order_by": {
+            "items": {
+              "$ref": "#/components/schemas/QueryOrder"
+            },
+            "type": "array",
+            "title": "Default Order By",
+            "description": "The same order, as structure."
+          },
+          "limits": {
+            "$ref": "#/components/schemas/QueryLimits"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fields",
+          "ops",
+          "match_values",
+          "date_values",
+          "order_fields",
+          "order_directions",
+          "default_order",
+          "default_order_by",
+          "limits"
+        ],
+        "title": "IssueQueryFieldsResponse",
+        "description": "The issue query's vocabulary (CHT-1783): every field with its kind\nand operators, every operator's arity, the order fields and the caps.\nBuilt from the allow-list the validator checks, so it cannot drift\nfrom what the query endpoints accept. It holds no data."
+      },
       "IssueQueryResponse": {
         "properties": {
           "query": {
@@ -13575,6 +13675,39 @@
         "title": "PushTransport",
         "description": "How the server delivers to a `push_devices` row (CHT-1604).\n\nWEB_PUSH: standard Web Push (RFC 8030) with VAPID (RFC 8292) and an\naes128gcm payload encrypted to the device's keys (RFC 8291), POSTed\nto the device's endpoint URL. UnifiedPush distributors such as ntfy\naccept it. The only transport today.\n\nA later transport (an FCM relay, CHT-1608) is a new member here and\nnothing else: the column stores the member's name as text, so adding\none needs no migration, and `p256dh`/`auth` are nullable in the table\nfor a transport that has no per-device keys."
       },
+      "QueryDateValues": {
+        "properties": {
+          "formats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Formats",
+            "description": "The absolute forms, in UTC unless an offset is given."
+          },
+          "offset_units": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Offset Units",
+            "description": "Relative offsets back from now are `-N` then a unit: each unit and what it counts (`-7d` is 7 days ago)."
+          },
+          "max_offset": {
+            "type": "integer",
+            "title": "Max Offset",
+            "description": "The largest N in an offset."
+          }
+        },
+        "type": "object",
+        "required": [
+          "formats",
+          "offset_units",
+          "max_offset"
+        ],
+        "title": "QueryDateValues",
+        "description": "What a date field's values may be, besides its keywords."
+      },
       "QueryField": {
         "type": "string",
         "enum": [
@@ -13598,6 +13731,81 @@
         ],
         "title": "QueryField",
         "description": "A field a filter row can test (``FIELDS`` says how)."
+      },
+      "QueryFieldInfo": {
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/QueryField"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/QueryFieldKind",
+            "description": "How values are read: picks the value editor."
+          },
+          "ops": {
+            "items": {
+              "$ref": "#/components/schemas/QueryOp"
+            },
+            "type": "array",
+            "title": "Ops",
+            "description": "The operators this field accepts."
+          },
+          "enum_values": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enum Values",
+            "description": "For an enum field, every value it accepts; otherwise null."
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Keywords",
+            "description": "Words accepted in place of a name or date, such as `me` or `current`."
+          },
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Aliases",
+            "description": "Other names the text form accepts for this field."
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "ops"
+        ],
+        "title": "QueryFieldInfo",
+        "description": "One field a filter row can test, as the query builder needs it."
+      },
+      "QueryFieldKind": {
+        "type": "string",
+        "enum": [
+          "enum",
+          "user",
+          "project",
+          "sprint",
+          "label",
+          "number",
+          "issue",
+          "identifier",
+          "date",
+          "text"
+        ],
+        "title": "QueryFieldKind",
+        "description": "How a field's values are read and resolved (``FieldSpec.kind``)."
       },
       "QueryGroup": {
         "properties": {
@@ -13634,6 +13842,80 @@
         "title": "QueryGroup",
         "description": "Rows (or nested groups) combined with AND (``all``) or OR (``any``)."
       },
+      "QueryLimits": {
+        "properties": {
+          "max_depth": {
+            "type": "integer",
+            "title": "Max Depth",
+            "description": "Groups nest at most this deep; the root group is 1."
+          },
+          "max_rows": {
+            "type": "integer",
+            "title": "Max Rows",
+            "description": "Filter rows in the whole query (groups not counted)."
+          },
+          "max_values": {
+            "type": "integer",
+            "title": "Max Values",
+            "description": "Values in one row."
+          },
+          "max_value_length": {
+            "type": "integer",
+            "title": "Max Value Length",
+            "description": "Characters in one value."
+          },
+          "max_order_terms": {
+            "type": "integer",
+            "title": "Max Order Terms"
+          },
+          "max_order_length": {
+            "type": "integer",
+            "title": "Max Order Length",
+            "description": "Characters in the `order` text."
+          },
+          "max_where_length": {
+            "type": "integer",
+            "title": "Max Where Length",
+            "description": "Characters in the `where` text."
+          },
+          "max_parens": {
+            "type": "integer",
+            "title": "Max Parens",
+            "description": "Parentheses the `where` text may nest."
+          },
+          "max_filter_json_length": {
+            "type": "integer",
+            "title": "Max Filter Json Length",
+            "description": "Characters in the `filter` JSON."
+          },
+          "min_number": {
+            "type": "integer",
+            "title": "Min Number",
+            "description": "The smallest number a number field takes."
+          },
+          "max_number": {
+            "type": "integer",
+            "title": "Max Number",
+            "description": "The largest number a number field takes."
+          }
+        },
+        "type": "object",
+        "required": [
+          "max_depth",
+          "max_rows",
+          "max_values",
+          "max_value_length",
+          "max_order_terms",
+          "max_order_length",
+          "max_where_length",
+          "max_parens",
+          "max_filter_json_length",
+          "min_number",
+          "max_number"
+        ],
+        "title": "QueryLimits",
+        "description": "The caps a query is checked against."
+      },
       "QueryOp": {
         "type": "string",
         "enum": [
@@ -13653,6 +13935,35 @@
         ],
         "title": "QueryOp",
         "description": "A filter row's operator."
+      },
+      "QueryOpInfo": {
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/QueryOp"
+          },
+          "min_values": {
+            "type": "integer",
+            "title": "Min Values"
+          },
+          "max_values": {
+            "type": "integer",
+            "title": "Max Values"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "How the text form writes it, with `{field}` for the field name and a, b for values. A value with a space, comma, quote, parenthesis or `..` goes in double quotes. On a text field `=`/`!=` mean contains/not_contains, and on a date field `{field}=a` is between a and a."
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "min_values",
+          "max_values",
+          "text"
+        ],
+        "title": "QueryOpInfo",
+        "description": "One operator: how many values it takes and how the text writes it."
       },
       "QueryOrder": {
         "properties": {

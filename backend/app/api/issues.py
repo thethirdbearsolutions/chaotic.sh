@@ -37,7 +37,7 @@ from app.schemas.issue import (
     LabelResponse,
 )
 from app.schemas.document import DocumentResponse
-from app.schemas.issue_query import IssueQueryResponse
+from app.schemas.issue_query import IssueQueryFieldsResponse, IssueQueryResponse
 from app.services import issue_query
 from app.services.document_service import DocumentService
 from app.api.rituals import pending_ritual_responses
@@ -829,6 +829,18 @@ async def list_issues(
         )
 
     return await issues_to_responses(issues)
+
+
+@router.get("/query/fields", response_model=IssueQueryFieldsResponse)
+@reads
+async def get_issue_query_fields(current_user: CurrentUser) -> IssueQueryFieldsResponse:
+    """The issue query's vocabulary (CHT-1783): each field with its value
+    kind and operators, each operator's arity and text form, the enum
+    values, the order fields and the caps. It is what a query builder
+    needs to build its row editors, served from the allow-list the query
+    endpoints validate against. It is the same for every caller and
+    holds no data, so any signed-in caller may read it."""
+    return issue_query.vocabulary()
 
 
 def _team_refused() -> HTTPException:

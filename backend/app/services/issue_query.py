@@ -24,12 +24,14 @@ The text form, by example (docs/issue-query.md has the reference)::
 """
 from __future__ import annotations
 
+import functools
 import json
 import operator
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from functools import reduce
+from typing import get_args
 
 from oxyde import Q
 from oxyde.queries.conditions import Condition
@@ -43,11 +45,30 @@ from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.team import OxydeTeamMember
 from app.oxyde_models.user import OxydeUser
 from app.schemas.issue_query import (
+    CURRENT_SPRINT,
+    DATE_FORMATS,
+    DATE_KEYWORDS,
+    DATE_OFFSET_UNITS,
     FIELDS,
+    KIND_KEYWORDS,
+    MAX_DATE_OFFSET,
     MAX_DEPTH,
+    MAX_NUMBER,
     MAX_ORDER_TERMS,
+    MAX_ROWS,
+    MAX_VALUE_LENGTH,
+    MAX_VALUES,
+    ME,
+    MIN_NUMBER,
+    OP_ARITY,
     ORDER_FIELDS,
+    RELATIVE_DATE,
     IssueQuery,
+    IssueQueryFieldsResponse,
+    QueryFieldInfo,
+    QueryDateValues,
+    QueryLimits,
+    QueryOpInfo,
     QueryGroup,
     QueryOrder,
     QueryRow,
@@ -55,6 +76,7 @@ from app.schemas.issue_query import (
 from app.services.issue_service import _PRIORITY_ORDER, _STATUS_ORDER, _get_order
 
 MAX_WHERE_LENGTH = 4000
+MAX_ORDER_LENGTH = 200
 # Parentheses the parser follows before giving up. Only a guard on its
 # recursion: redundant parentheses build no group, so the depth cap
 # (MAX_DEPTH) is checked on the tree they produce, not here.
@@ -192,7 +214,7 @@ class _Parser:
     def parse(self) -> dict | None:
         if not self.tokens:
             return None
-        node = self.expr(1)
+        node = self.expr(0)  # depth: parentheses open around this point
         tok = self.peek()
         if tok is not None:
             raise self.lexer.error(f"unexpected '{tok[0]}'", tok[1])
@@ -504,6 +526,79 @@ _ORDER_COLUMN = {
 DEFAULT_ORDER = [QueryOrder(field="updated", direction="desc")]
 
 
+# Values for the operator examples. Dates for a date field, so a range
+# renders the way it does for one (a `between` of two equal days is
+# written as one day, so the two must differ).
+_EXAMPLE_VALUES = {"date": ("2026-01-01", "2026-12-31")}
+
+
+def _op_text(op: str) -> str:
+    """The text form of ``op``, rendered by the real renderer from a row
+    of the first field that takes it, with ``{field}`` for the field and
+    ``a``/``b`` for the values."""
+    field_name = next(f for f, spec in FIELDS.items() if op in spec.ops)
+    kind = FIELDS[field_name].kind
+    a, b = _EXAMPLE_VALUES.get(kind, ("a", "b"))
+    lo, hi = OP_ARITY[op]
+    values = [a, b][: max(lo, min(hi, 2))]
+    row = QueryRow.model_construct(field=field_name, op=op, values=values)
+    text = _render_row(row)
+    # Field names are words and values here are `a`/`b` or dates, so
+    # the field name only occurs where a clause begins.
+    text = re.sub(rf"\b{field_name}(?=[=!~^])", "{field}", text)
+    return text.replace(a, "a").replace(b, "b")
+
+
+@functools.cache
+def vocabulary() -> IssueQueryFieldsResponse:
+    """The fields, operators, order fields and caps, from the allow-list
+    the validator and the parser use (CHT-1783). Built once: it depends
+    only on constants. The one instance is shared, so do not mutate it."""
+    aliases: dict[str, list[str]] = {}
+    for alias, name in _FIELD_ALIASES.items():
+        aliases.setdefault(name, []).append(alias)
+    return IssueQueryFieldsResponse(
+        fields=[
+            QueryFieldInfo(
+                name=name,
+                kind=spec.kind,
+                ops=[op for op in OP_ARITY if op in spec.ops],
+                enum_values=[m.value for m in spec.enum] if spec.enum else None,
+                keywords=list(KIND_KEYWORDS.get(spec.kind, ())),
+                aliases=aliases.get(name, []),
+            )
+            for name, spec in FIELDS.items()
+        ],
+        ops=[
+            QueryOpInfo(name=op, min_values=lo, max_values=hi, text=_op_text(op))
+            for op, (lo, hi) in OP_ARITY.items()
+        ],
+        match_values=list(get_args(QueryGroup.model_fields["match"].annotation)),
+        date_values=QueryDateValues(
+            formats=list(DATE_FORMATS),
+            offset_units=dict(DATE_OFFSET_UNITS),
+            max_offset=MAX_DATE_OFFSET,
+        ),
+        order_fields=list(ORDER_FIELDS),
+        order_directions=list(get_args(QueryOrder.model_fields["direction"].annotation)),
+        default_order=render_order(DEFAULT_ORDER),
+        default_order_by=DEFAULT_ORDER,
+        limits=QueryLimits(
+            max_depth=MAX_DEPTH,
+            max_rows=MAX_ROWS,
+            max_values=MAX_VALUES,
+            max_value_length=MAX_VALUE_LENGTH,
+            max_order_terms=MAX_ORDER_TERMS,
+            max_order_length=MAX_ORDER_LENGTH,
+            max_where_length=MAX_WHERE_LENGTH,
+            max_parens=MAX_PARENS,
+            max_filter_json_length=MAX_FILTER_JSON_LENGTH,
+            min_number=MIN_NUMBER,
+            max_number=MAX_NUMBER,
+        ),
+    )
+
+
 def _all(qs: list[Q]) -> Q:
     return reduce(operator.and_, qs)
 
@@ -552,14 +647,13 @@ def _date_bound(value: str, now: datetime, upper: bool) -> tuple[datetime, bool]
     it means "up to the end of time", inclusive. A datetime whose offset
     carries it past the representable range in UTC is a QueryError (a
     400), never an OverflowError (a 500)."""
-    m = re.match(r"^-([0-9]{1,4})([hdw])$", value)
+    m = RELATIVE_DATE.match(value)
     try:
         if m:
             n, unit = int(m.group(1)), m.group(2)
-            delta = {"h": timedelta(hours=n), "d": timedelta(days=n), "w": timedelta(weeks=n)}[unit]
-            return now - delta, True
-        if value in ("today", "yesterday"):
-            day = now.date() - timedelta(days=0 if value == "today" else 1)
+            return now - timedelta(**{DATE_OFFSET_UNITS[unit]: n}), True
+        if value.lower() in DATE_KEYWORDS:
+            day = now.date() - timedelta(days=DATE_KEYWORDS[value.lower()])
         elif re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", value):
             day = date.fromisoformat(value)
         else:
@@ -682,7 +776,7 @@ class _Compiler:
 
     async def _user(self, value: str) -> str:
         lowered = value.lower()
-        if lowered == "me":
+        if lowered == ME:
             return self.scope.user.id
         if self._principals is None:
             member_ids = [
@@ -734,7 +828,7 @@ class _Compiler:
                 project_id__in=self.scope.project_ids
             ).all()
         lowered = value.lower()
-        if lowered == "current":
+        if lowered == CURRENT_SPRINT:
             # Every project in scope has its own active sprint; read, never
             # create (a query is not where sprints get materialised).
             return [s.id for s in self._sprints if s.status == SprintStatus.ACTIVE]

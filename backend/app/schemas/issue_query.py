@@ -94,6 +94,36 @@ class FieldSpec:
     enum: type | None = None
 
 
+class QueryFieldKind(StrEnum):
+    """How a field's values are read and resolved (``FieldSpec.kind``)."""
+
+    ENUM = "enum"
+    USER = "user"
+    PROJECT = "project"
+    SPRINT = "sprint"
+    LABEL = "label"
+    NUMBER = "number"
+    ISSUE = "issue"
+    IDENTIFIER = "identifier"
+    DATE = "date"
+    TEXT = "text"
+
+
+# Words a value of a kind may be instead of a name: `assignee=me`,
+# `sprint=current`, `due=today`. The resolver and the date check read
+# these, and the vocabulary endpoint serves them (CHT-1783).
+ME = "me"
+CURRENT_SPRINT = "current"
+# A date keyword names a whole day: this many days before today (UTC).
+# Keywords match in any case, as `me` and `current` do.
+DATE_KEYWORDS: dict[str, int] = {"today": 0, "yesterday": 1}
+KIND_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "user": (ME,),
+    "sprint": (CURRENT_SPRINT,),
+    "date": tuple(DATE_KEYWORDS),
+}
+
+
 _NULLABLE_REF = frozenset({"is", "is_not", "empty", "not_empty"})
 _DATE = frozenset({"after", "before", "between"})
 
@@ -160,10 +190,26 @@ class OrderField(StrEnum):
 ORDER_FIELDS = tuple(f.value for f in OrderField)
 assert set(FIELDS) == {f.value for f in QueryField}
 assert set(OP_ARITY) == {o.value for o in QueryOp}
+assert {spec.kind for spec in FIELDS.values()} <= {k.value for k in QueryFieldKind}
+# Every operator is taken by some field (the vocabulary renders each
+# one's text form from such a field).
+assert set(KIND_KEYWORDS) <= {k.value for k in QueryFieldKind}
+assert set().union(*(spec.ops for spec in FIELDS.values())) == set(OP_ARITY)
 
 # A date value: an ISO date or datetime, `today`, `yesterday`, or a
-# relative offset back from now such as -7d, -2w, -12h.
-_RELATIVE = re.compile(r"^-(\d{1,4})([hdw])$")
+# relative offset back from now such as -7d, -2w, -12h: a minus sign,
+# 1 to MAX_DATE_OFFSET, then a unit, whose timedelta argument is its
+# value here. The validator and the resolver both read RELATIVE_DATE, so
+# they agree on the digits (the validator's \d once took any Unicode
+# digit, which the resolver's [0-9] then did not match).
+DATE_OFFSET_UNITS: dict[str, str] = {"h": "hours", "d": "days", "w": "weeks"}
+MAX_DATE_OFFSET = 9999
+RELATIVE_DATE = re.compile(
+    rf"^-([0-9]{{1,{len(str(MAX_DATE_OFFSET))}}})([{''.join(DATE_OFFSET_UNITS)}])$"
+)
+# The absolute forms, as the vocabulary endpoint describes them; the two
+# regexes below are what enforces them.
+DATE_FORMATS = ("YYYY-MM-DD", "YYYY-MM-DD[T ]HH:MM[:SS[.ffffff]][Z|+HH:MM|-HH:MM]")
 # The ISO forms the docs promise, and only those: `datetime.fromisoformat`
 # alone also takes 20261001, 2026-W40-1 and other forms nobody types on
 # purpose. [0-9], not \d, which matches every Unicode digit.
@@ -175,11 +221,12 @@ _ISO_DATETIME = re.compile(
 # Whole numbers: ASCII digits only (int() also takes 1_000 and Unicode
 # digits), within a range an estimate could mean.
 _NUMBER = re.compile(r"^[0-9]{1,7}$")
+MIN_NUMBER = 0  # _NUMBER takes no sign
 MAX_NUMBER = 1_000_000
 
 
 def is_date_value(value: str) -> bool:
-    if value in ("today", "yesterday") or _RELATIVE.match(value):
+    if value.lower() in DATE_KEYWORDS or RELATIVE_DATE.match(value):
         return True
     if not (_ISO_DATE.match(value) or _ISO_DATETIME.match(value)):
         return False
@@ -192,7 +239,10 @@ def is_date_value(value: str) -> bool:
 
 def normalise_date_value(value: str) -> str:
     """The T form of an ISO datetime written with a space; any other
-    date value unchanged. Call it on a value ``is_date_value`` accepted."""
+    date value unchanged, except that a keyword is lowercased. Call it on
+    a value ``is_date_value`` accepted."""
+    if value.lower() in DATE_KEYWORDS:
+        return value.lower()
     if _ISO_DATETIME.match(value) and value[10] == " ":
         return value[:10] + "T" + value[11:]
     return value
@@ -207,7 +257,7 @@ def _check_value(field: str, spec: FieldSpec, value: str) -> None:
             )
     elif spec.kind == "number":
         if not _NUMBER.match(value) or int(value) > MAX_NUMBER:
-            raise ValueError(f"{field} takes whole numbers from 0 to {MAX_NUMBER}, not '{value}'")
+            raise ValueError(f"{field} takes whole numbers from {MIN_NUMBER} to {MAX_NUMBER}, not '{value}'")
     elif spec.kind == "date":
         if not is_date_value(value):
             raise ValueError(
@@ -355,3 +405,79 @@ class IssueQueryResponse(BaseModel):
     skip: int
     limit: int
     issues: list[IssueResponse]
+
+
+class QueryFieldInfo(BaseModel):
+    """One field a filter row can test, as the query builder needs it."""
+
+    name: QueryField
+    kind: QueryFieldKind = Field(description="How values are read: picks the value editor.")
+    ops: list[QueryOp] = Field(description="The operators this field accepts.")
+    enum_values: list[str] | None = Field(
+        default=None, description="For an enum field, every value it accepts; otherwise null.",
+    )
+    keywords: list[str] = Field(
+        default_factory=list,
+        description="Words accepted in place of a name or date, such as `me` or `current`.",
+    )
+    aliases: list[str] = Field(
+        default_factory=list, description="Other names the text form accepts for this field.",
+    )
+
+
+class QueryOpInfo(BaseModel):
+    """One operator: how many values it takes and how the text writes it."""
+
+    name: QueryOp
+    min_values: int
+    max_values: int
+    text: str = Field(
+        description="How the text form writes it, with `{field}` for the field name "
+        "and a, b for values. A value with a space, comma, quote, parenthesis or `..` "
+        "goes in double quotes. On a text field `=`/`!=` mean contains/not_contains, "
+        "and on a date field `{field}=a` is between a and a.",
+    )
+
+
+class QueryDateValues(BaseModel):
+    """What a date field's values may be, besides its keywords."""
+
+    formats: list[str] = Field(description="The absolute forms, in UTC unless an offset is given.")
+    offset_units: dict[str, str] = Field(
+        description="Relative offsets back from now are `-N` then a unit: "
+        "each unit and what it counts (`-7d` is 7 days ago).",
+    )
+    max_offset: int = Field(description="The largest N in an offset.")
+
+
+class QueryLimits(BaseModel):
+    """The caps a query is checked against."""
+
+    max_depth: int = Field(description="Groups nest at most this deep; the root group is 1.")
+    max_rows: int = Field(description="Filter rows in the whole query (groups not counted).")
+    max_values: int = Field(description="Values in one row.")
+    max_value_length: int = Field(description="Characters in one value.")
+    max_order_terms: int
+    max_order_length: int = Field(description="Characters in the `order` text.")
+    max_where_length: int = Field(description="Characters in the `where` text.")
+    max_parens: int = Field(description="Parentheses the `where` text may nest.")
+    max_filter_json_length: int = Field(description="Characters in the `filter` JSON.")
+    min_number: int = Field(description="The smallest number a number field takes.")
+    max_number: int = Field(description="The largest number a number field takes.")
+
+
+class IssueQueryFieldsResponse(BaseModel):
+    """The issue query's vocabulary (CHT-1783): every field with its kind
+    and operators, every operator's arity, the order fields and the caps.
+    Built from the allow-list the validator checks, so it cannot drift
+    from what the query endpoints accept. It holds no data."""
+
+    fields: list[QueryFieldInfo]
+    ops: list[QueryOpInfo]
+    match_values: list[str] = Field(description="How a group combines its rows: all (AND), any (OR).")
+    date_values: QueryDateValues
+    order_fields: list[OrderField]
+    order_directions: list[str]
+    default_order: str = Field(description="The order used when none is given, as `order` text.")
+    default_order_by: list[QueryOrder] = Field(description="The same order, as structure.")
+    limits: QueryLimits
