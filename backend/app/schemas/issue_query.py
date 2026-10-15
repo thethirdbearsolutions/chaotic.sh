@@ -185,6 +185,10 @@ class OrderField(StrEnum):
     IDENTIFIER = "identifier"
     DUE = "due"
     COMPLETED = "completed"
+    TYPE = "type"
+    ASSIGNEE = "assignee"
+    SPRINT = "sprint"
+    PROJECT = "project"
 
 
 ORDER_FIELDS = tuple(f.value for f in OrderField)

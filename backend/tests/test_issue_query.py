@@ -533,6 +533,91 @@ async def test_ordering_nulls_last_and_paging(client, auth_headers, test_project
 
 
 @pytest.mark.asyncio
+async def test_ordering_by_type_assignee_sprint_project(
+    client, auth_headers, test_team, test_project, test_user,
+):
+    """CHT-1815: the type and relation order keys, nulls last, and groups
+    that share a name kept apart."""
+    from app.oxyde_models.project import OxydeProject
+    from app.oxyde_models.sprint import OxydeSprint
+    from app.oxyde_models.user import OxydeUser
+
+    now = datetime.now(timezone.utc)
+    # Two users with the same name, and one whose name sorts first only
+    # when case is ignored.
+    zed_a = await OxydeUser.objects.create(email="za@example.com", hashed_password="x", name="Zed")
+    zed_b = await OxydeUser.objects.create(email="zb@example.com", hashed_password="x", name="Zed")
+    amy = await OxydeUser.objects.create(email="amy@example.com", hashed_password="x", name="amy")
+    # activation order old, cur; creation order the reverse, so the test
+    # tells the two apart
+    old = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Old", status=SprintStatus.COMPLETED,
+        activated_at=now - timedelta(days=20), created_at=now - timedelta(days=1),
+    )
+    cur = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Cur", status=SprintStatus.ACTIVE,
+        activated_at=now - timedelta(days=5), created_at=now - timedelta(days=30),
+    )
+    nxt = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Next", status=SprintStatus.PLANNED,
+        created_at=now - timedelta(days=40),
+    )
+    other = await OxydeProject.objects.create(team_id=test_team.id, name="Alpha", key="AAA", color="#000000")
+
+    await _issue(test_project, test_user, title="b1", issue_type=IssueType.EPIC,
+                 assignee_id=zed_b.id, sprint_id=nxt.id)
+    await _issue(test_project, test_user, title="a1", issue_type=IssueType.BUG,
+                 assignee_id=zed_a.id, sprint_id=cur.id)
+    await _issue(test_project, test_user, title="b2", issue_type=IssueType.TASK,
+                 assignee_id=zed_b.id, sprint_id=old.id)
+    await _issue(test_project, test_user, title="none", issue_type=IssueType.FEATURE)
+    await _issue(test_project, test_user, title="a2", issue_type=IssueType.BUG,
+                 assignee_id=zed_a.id, sprint_id=cur.id)
+    await _issue(test_project, test_user, title="amy", issue_type=IssueType.DOCS,
+                 assignee_id=amy.id, sprint_id=old.id)
+    await _issue(other, test_user, title="alpha", issue_type=IssueType.CHORE, assignee_id=test_user.id)
+
+    async def order(o, scope=f"projects/{test_project.id}"):
+        r = await _query(client, auth_headers, scope, order=o)
+        assert r.status_code == 200, r.text
+        assert r.json()["order"] == o
+        return [i["title"] for i in r.json()["issues"]]
+
+    # type in the enum's order (task, bug, feature, chore, docs, ..., epic);
+    # ties newest-created first
+    assert await order("type") == ["b2", "a2", "a1", "none", "amy", "b1"]
+    assert await order("-type") == ["b1", "amy", "none", "a2", "a1", "b2"]
+
+    # assignee by name ignoring case; the two Zeds never interleave;
+    # unassigned last either way
+    by_assignee = await order("assignee")
+    assert by_assignee[0] == "amy" and by_assignee[-1] == "none"
+    zeds = [t[0] for t in by_assignee[1:5]]
+    first, second = ("a", "b") if zed_a.id < zed_b.id else ("b", "a")
+    assert zeds == [first, first, second, second]
+    by_assignee_desc = await order("-assignee")
+    assert by_assignee_desc[-2:] == ["amy", "none"]
+    assert [t[0] for t in by_assignee_desc[:4]] == [second, second, first, first]
+
+    # sprint: activated ones by activation (old, cur), then the planned
+    # one; no sprint last either way
+    assert await order("sprint") == ["amy", "b2", "a2", "a1", "b1", "none"]
+    assert await order("-sprint") == ["b1", "a2", "a1", "amy", "b2", "none"]
+    assert await order("sprint,type") == ["b2", "amy", "a2", "a1", "b1", "none"]
+
+    # project by key, across the team
+    team_scope = f"teams/{test_team.id}"
+    assert (await order("project", team_scope))[0] == "alpha"
+    assert (await order("-project", team_scope))[-1] == "alpha"
+    by_project = await order("project,-assignee", team_scope)
+    assert by_project[0] == "alpha" and by_project[-2:] == ["amy", "none"]
+
+    # an assignee whose user is gone sorts with the unassigned
+    await OxydeUser.objects.filter(id=amy.id).delete()
+    assert (await order("assignee"))[-2:] == ["amy", "none"]
+
+
+@pytest.mark.asyncio
 async def test_team_scope_and_project_field(client, auth_headers, test_team, test_project, test_user):
     from app.oxyde_models.project import OxydeProject
     from app.oxyde_models.team import OxydeTeam

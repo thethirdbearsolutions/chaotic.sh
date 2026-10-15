@@ -12718,7 +12718,11 @@
           "estimate",
           "identifier",
           "due",
-          "completed"
+          "completed",
+          "type",
+          "assignee",
+          "sprint",
+          "project"
         ],
         "title": "OrderField",
         "description": "A field a query can be ordered by."
