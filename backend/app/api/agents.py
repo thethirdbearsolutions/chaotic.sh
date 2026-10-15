@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from app.auth.access import reads, registers, writes
 from app.api.deps import (
     CurrentPrincipal, CurrentUser, NotAppSession, can_manage_agent, check_not_app_session,
-    check_user_team_access, get_api_key_record,
+    check_user_in_team, get_api_key_record,
 )
 from app.enums import AgentKind
 from app.schemas.agent import (
@@ -240,9 +240,9 @@ async def list_team_agents(
             detail="Team not found",
         )
 
-    # Use check_user_team_access which handles both regular members
-    # and agent users (CHT-732)
-    if not await check_user_team_access(current_user, team_id):
+    # Team directory: members and agents of the team at either scope,
+    # project-scoped agents included (CHT-732, CHT-1780).
+    if not await check_user_in_team(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",
@@ -280,9 +280,8 @@ async def get_agent(
             detail="Agent not found",
         )
 
-    # Use check_user_team_access which handles both regular members
-    # and agent users (CHT-732)
-    if not await check_user_team_access(current_user, agent.agent_team_id):
+    # Team directory, as for the list above (CHT-732, CHT-1780).
+    if not await check_user_in_team(current_user, agent.agent_team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view this agent",

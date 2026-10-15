@@ -2166,10 +2166,16 @@ class IssueService:
         statuses=None, priorities=None, issue_type=None,
         team_ids: list[str] | None = None,
         sort_by: str | None = None, order: str | None = None,
+        project_id: str | None = None,
     ) -> list[OxydeIssue]:
-        """List issues assigned to a user, optionally scoped to specific teams."""
+        """List issues assigned to a user, optionally scoped to specific
+        teams and/or one project (a project-scoped agent's, CHT-1780)."""
         conditions = ["i.assignee_id = ?"]
         params = [user_id]
+
+        if project_id:
+            conditions.append("i.project_id = ?")
+            params.append(project_id)
 
         if team_ids:
             placeholders = ",".join("?" for _ in team_ids)
@@ -2550,8 +2556,16 @@ class IssueService:
     # Cross-reference auto-linking (CHT-133)
     _IDENTIFIER_RE = re.compile(r'\b([A-Z]{2,10}-\d+)\b')
 
-    async def create_cross_references(self, issue_id: str, text: str) -> list[OxydeIssueRelation]:
-        """Extract issue identifiers from text and create relates_to links."""
+    async def create_cross_references(
+        self, issue_id: str, text: str, *, project_id: str | None = None,
+    ) -> list[OxydeIssueRelation]:
+        """Extract issue identifiers from text and create relates_to links.
+
+        ``project_id`` confines the targets to one project: the author's,
+        when the author is a project-scoped agent. Otherwise its text could
+        name a sibling issue, link it, and read its title back through
+        the relations list (CHT-1780).
+        """
         if not text:
             return []
 
@@ -2581,11 +2595,12 @@ class IssueService:
 
         # Batch lookup: resolve identifiers to issues in same team
         placeholders = ",".join("?" for _ in identifiers)
+        confine = " AND i.project_id = ?" if project_id else ""
         target_rows = await execute_raw(
             f"SELECT i.id, i.identifier FROM issues i "
             f"JOIN projects p ON i.project_id = p.id "
-            f"WHERE i.identifier IN ({placeholders}) AND p.team_id = ?",
-            list(identifiers) + [source_team_id],
+            f"WHERE i.identifier IN ({placeholders}) AND p.team_id = ?{confine}",
+            list(identifiers) + [source_team_id] + ([project_id] if project_id else []),
         )
         if not target_rows:
             return []
@@ -2623,23 +2638,31 @@ class IssueService:
 
         return created
 
-    async def list_relations(self, issue_id: str, team_id: str | None = None) -> list[dict]:
-        """List all relations for an issue (both outgoing and incoming)."""
+    async def list_relations(
+        self, issue_id: str, team_id: str | None = None, *, project_id: str | None = None,
+    ) -> list[dict]:
+        """List all relations for an issue (both outgoing and incoming).
+
+        ``project_id`` (with ``team_id``) keeps only relations whose other
+        issue is in that project: the viewer's, when it is a project-scoped
+        agent (CHT-1780)."""
         # Outgoing relations
         if team_id is not None:
+            confine = " AND i.project_id = ?" if project_id else ""
+            extra = [project_id] if project_id else []
             outgoing_rows = await execute_raw(
                 "SELECT ir.*, i.identifier as rel_identifier, i.title as rel_title, i.status as rel_status "
                 "FROM issue_relations ir JOIN issues i ON ir.related_issue_id = i.id "
                 "JOIN projects p ON i.project_id = p.id "
-                "WHERE ir.issue_id = ? AND p.team_id = ?",
-                [issue_id, team_id],
+                "WHERE ir.issue_id = ? AND p.team_id = ?" + confine,
+                [issue_id, team_id] + extra,
             )
             incoming_rows = await execute_raw(
                 "SELECT ir.*, i.identifier as rel_identifier, i.title as rel_title, i.status as rel_status "
                 "FROM issue_relations ir JOIN issues i ON ir.issue_id = i.id "
                 "JOIN projects p ON i.project_id = p.id "
-                "WHERE ir.related_issue_id = ? AND p.team_id = ?",
-                [issue_id, team_id],
+                "WHERE ir.related_issue_id = ? AND p.team_id = ?" + confine,
+                [issue_id, team_id] + extra,
             )
         else:
             outgoing_rows = await execute_raw(

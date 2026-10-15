@@ -1529,3 +1529,59 @@ class TestSignalAndPipeHandling:
 
     def test_timeout_still_exits_124(self, monkeypatch):
         assert self._run(monkeypatch, lambda *a, **kw: None) == 124
+
+
+class TestDocScopeForProjectScopedKeys:
+    """`await doc`/`await docs` ask the project feed when that is all the
+    key can read (CHT-1780): the team feed refuses a project-scoped key."""
+
+    def _run(self, monkeypatch, args, *, me=None, doc=None, doc_raises=False):
+        from click.testing import CliRunner
+        import click
+
+        seen = {}
+
+        def fake_await_event(**kw):
+            seen.update(kw)
+
+        class C:
+            def get_me(self):
+                return me or {}
+
+            def get_document(self, document_id):
+                if doc_raises:
+                    raise RuntimeError("boom")
+                return doc
+
+        monkeypatch.setattr(await_cmd, "_await_event", fake_await_event)
+        monkeypatch.setattr(await_cmd, "_client", lambda: C())
+        monkeypatch.setattr(await_cmd, "_main", lambda: type("M", (), {
+            "get_current_team": staticmethod(lambda: "team_1"),
+            "get_current_project": staticmethod(lambda: None),
+        }))
+
+        @click.group()
+        def root():
+            pass
+
+        await_cmd.register(root)
+        result = CliRunner().invoke(root, ["await", *args])
+        assert result.exit_code == 0, result.output
+        return seen
+
+    def test_doc_uses_the_documents_project(self, monkeypatch):
+        seen = self._run(monkeypatch, ["doc", "d1"], doc={"id": "d1", "project_id": "p1"})
+        assert seen["project_id"] == "p1" and seen["scope"] == {"document_id": "d1"}
+
+    def test_team_level_doc_and_failed_lookup_keep_the_team_feed(self, monkeypatch):
+        assert self._run(monkeypatch, ["doc", "d1"], doc={"id": "d1", "project_id": None})["project_id"] is None
+        assert self._run(monkeypatch, ["doc", "d1"], doc_raises=True)["project_id"] is None
+
+    def test_docs_uses_a_project_scoped_keys_project(self, monkeypatch):
+        me = {"is_agent": True, "agent_project_id": "p9", "agent_team_id": "team_1"}
+        assert self._run(monkeypatch, ["docs"], me=me)["project_id"] == "p9"
+
+    def test_docs_stays_team_wide_for_other_keys(self, monkeypatch):
+        assert self._run(monkeypatch, ["docs"], me={"is_agent": False})["project_id"] is None
+        team_agent = {"is_agent": True, "agent_project_id": None, "agent_team_id": "team_1"}
+        assert self._run(monkeypatch, ["docs"], me=team_agent)["project_id"] is None

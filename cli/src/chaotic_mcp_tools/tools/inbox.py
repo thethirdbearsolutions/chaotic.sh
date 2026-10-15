@@ -24,7 +24,7 @@ async def _inbox_team(backend: Backend, team: str | None) -> str | None:
     caller's teams), so an omitted team is passed through as None rather
     than resolved to a default. That also keeps the tools usable from a
     project-scoped key, which has no team to default to (PR #285 review)."""
-    return await backend.resolve_team(team) if team is not None else None
+    return await backend.resolve_member_team(team) if team is not None else None
 
 
 async def inbox_list(

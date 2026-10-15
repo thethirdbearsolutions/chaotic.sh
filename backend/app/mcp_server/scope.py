@@ -8,11 +8,17 @@ a user, and tools resolve context from *that user's* memberships,
 mirroring the exact access rules ``app.api.deps`` already enforces for
 every other authenticated endpoint:
 
-* Team-wide tools (``activity_recent``, ``project_list``, and
-  ``issue_list``/``doc_list`` with ``all_projects=true``) mirror
-  ``check_user_team_access``: a human must be a team member; an agent
-  must be team-scoped (``agent_team_id``) -- a *project*-scoped agent has
-  no team-wide access via REST either, so it gets none here.
+* Team-wide tools (``activity_recent`` without a project, and
+  ``issue_list``/``doc_list`` with ``all_projects=true``) resolve through
+  ``resolve_team``, which mirrors ``check_user_team_access``: a human
+  must be a team member; an agent must be team-scoped. A *project*-scoped
+  agent carries its project's team in ``agent_team_id`` too, but that is
+  not team-wide access, via REST or here (CHT-1780).
+* Team *directory* tools (``label_list``, ``project_list``, the inbox's
+  team filter) resolve through ``resolve_member_team``, which mirrors
+  ``check_user_in_team``: a project-scoped agent gets its own team, and
+  the API confines what it reads there (``project_list`` lists only its
+  project).
 * Project-scoped tools mirror ``check_user_project_access``: a
   project-scoped agent defaults to (and is confined to) its own project;
   everyone else resolves within an accessible team.
@@ -29,6 +35,7 @@ from __future__ import annotations
 
 from chaotic_mcp_tools import ToolInputError
 
+from app.api.deps import agent_home_team_id
 from app.oxyde_models.user import OxydeUser as User
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
@@ -67,10 +74,10 @@ def _match(items, value: str, *, key_attr: str = "key"):
 async def resolve_team(user: User, team: str | None) -> str:
     """Resolve a team-wide scope. See module docstring for the rules."""
     if user.is_agent:
-        if not user.agent_team_id:
+        if user.agent_project_id or not user.agent_team_id:
             raise ToolContextError(
                 "This API key is scoped to a single project, not a team -- "
-                "team-wide tools (activity_recent, project_list, "
+                "team-wide reads (activity_recent without `project`, "
                 "all_projects=true) aren't available for it. Pass `project` "
                 "instead, or use a team-scoped or human API key."
             )
@@ -98,6 +105,25 @@ async def resolve_team(user: User, team: str | None) -> str:
     raise ToolContextError(
         f"This API key's user belongs to multiple teams ({options}); pass `team` to disambiguate."
     )
+
+
+async def resolve_member_team(user: User, team: str | None) -> str:
+    """Resolve the team whose directory (labels, project list, inbox
+    filter) a tool reads. As ``resolve_team``, except that a
+    project-scoped agent resolves to its own project's team."""
+    if user.is_agent and user.agent_project_id:
+        team_id = await agent_home_team_id(user)
+        if not team_id:
+            raise ToolContextError("This API key's scoped project no longer exists.")
+        if team:
+            this_team = await TeamService().get_by_id(team_id)
+            if not this_team or not _match([this_team], team):
+                raise ToolContextError(
+                    f"This API key is scoped to a project in team "
+                    f"'{this_team.name if this_team else team_id}'; '{team}' is not accessible to it."
+                )
+        return team_id
+    return await resolve_team(user, team)
 
 
 async def resolve_project(user: User, project: str | None, team: str | None = None) -> tuple[str, str]:

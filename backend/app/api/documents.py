@@ -1,7 +1,10 @@
 """Document API routes."""
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, check_user_team_access, check_user_project_access
+from app.api.deps import (
+    CurrentUser, accessible_project_ids, can_access_document, check_user_project_access,
+    check_user_team_access,
+)
 from app.api.issues import ensure_utc, issues_to_responses
 from app.schemas.document import (
     DocumentCreate,
@@ -80,9 +83,8 @@ async def create_document(
     document_service = DocumentService()
 
     # Authorize at the project level when the doc is project-scoped, so a
-    # project-scoped agent (agent_project_id set, agent_team_id None) can create
-    # docs in its own project — check_user_team_access only matches agent_team_id
-    # and would always reject such agents (CHT-1273).
+    # project-scoped agent can create docs in its own project —
+    # check_user_team_access always rejects such agents (CHT-1273, CHT-1780).
     #
     # check_user_project_access's agent branch matches agent_project_id==project_id
     # with NO relation to team_id, and project_id is a request-body field, so we
@@ -155,19 +157,22 @@ async def list_documents(
     limit = min(limit, 10000)
     document_service = DocumentService()
 
-    if not await check_user_team_access(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
-
-    # Check project access if filtering by project
+    # A project filter is the project-confined path: project access is
+    # enough (list_filtered also pins team_id, so a project of another
+    # team lists nothing). Without one the listing is team-wide, which a
+    # project-scoped agent may not read (CHT-1780). A sprint filter alone
+    # does not confine: a team-level document may carry any sprint.
     if project_id:
         if not await check_user_project_access(current_user, project_id, team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this project",
             )
+    elif not await check_user_team_access(current_user, team_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this team",
+        )
 
     # Check sprint access if filtering by sprint
     if sprint_id:
@@ -257,13 +262,33 @@ async def update_document(
                 detail="Not a member of this team",
             )
 
-    # Check access to target project if moving document to a different project
-    if document_in.project_id is not None and document_in.project_id != document.project_id:
-        if document_in.project_id:  # Moving to a specific project (not making global)
-            if not await check_user_project_access(current_user, document_in.project_id, document.team_id):
+    # Check access to the target if moving the document (CHT-1780). An
+    # explicit null -- what the CLI and MCP send for "make it team-level"
+    # -- or "" makes the document team-level, which needs team access: a
+    # project-scoped agent could otherwise publish its project's document
+    # to the whole team. "" is normalised to null; it used to reach the
+    # foreign key and fail as a 500. A project must be in the document's
+    # team.
+    if "project_id" in document_in.model_fields_set:
+        if document_in.project_id == "":
+            document_in.project_id = None
+        if document_in.project_id != document.project_id:
+            if document_in.project_id:
+                target = await ProjectService().get_by_id(document_in.project_id)
+                if not target or target.team_id != document.team_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Project not found in this team",
+                    )
+                if not await check_user_project_access(current_user, document_in.project_id, document.team_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Not authorized for target project",
+                    )
+            elif not await check_user_team_access(current_user, document.team_id):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Not authorized for target project",
+                    detail="Not authorized to make this document team-level",
                 )
 
     # Validate sprint belongs to document's project
@@ -303,8 +328,12 @@ async def delete_document(document_id: str, current_user: CurrentUser):
             detail="Document not found",
         )
 
-    # Verify user is a member of the document's team
-    has_access = await check_user_team_access(current_user, document.team_id)
+    # Same access rule as reading it: project access for a project's
+    # document, team access for a team-level one (CHT-1780).
+    if document.project_id:
+        has_access = await check_user_project_access(current_user, document.project_id, document.team_id)
+    else:
+        has_access = await check_user_team_access(current_user, document.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -352,7 +381,11 @@ async def get_document_issues(document_id: str, current_user: CurrentUser) -> li
                 detail="Not a member of this team",
             )
 
-    issues = await document_service.get_linked_issues(document_id)
+    # A link does not grant access: only issues in projects this caller
+    # can read (CHT-1780).
+    linked = await document_service.get_linked_issues(document_id)
+    allowed = await accessible_project_ids(current_user, [i.project_id for i in linked])
+    issues = [i for i in linked if i.project_id in allowed]
     # Through the shared builder (CHT-1371): a hand-rolled IssueResponse
     # here had already drifted (no lease_expires_at) and missed the
     # resolved companions.
@@ -602,18 +635,11 @@ async def remove_label_from_document(
 
 async def _check_document_access(document, current_user) -> None:
     """403 unless current_user can access this document (project- or team-scoped)."""
-    if document.project_id:
-        if not await check_user_project_access(current_user, document.project_id, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
-    else:
-        if not await check_user_team_access(current_user, document.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this document",
-            )
+    if not await can_access_document(current_user, document):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized for this document",
+        )
 
 
 def _revision_author_name(rev) -> str | None:

@@ -5,7 +5,11 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, status, Query, Header
 from app.auth.access import reads, writes
 from app.api.idempotency import IdempotentRoute, idempotent
-from app.api.deps import CurrentUser, check_user_project_access, check_user_team_access
+from app.api.deps import (
+    CurrentUser, can_access_document, check_user_project_access, check_user_team_access,
+    confined_project_id,
+    is_project_scoped_agent,
+)
 from app.utils import ensure_utc
 
 logger = logging.getLogger(__name__)
@@ -80,6 +84,7 @@ router = APIRouter(route_class=IdempotentRoute)
 
 async def _validate_assignee(
     assignee_id: str | None, team_id: str, current_assignee_id: str | None = None,
+    *, project_id: str | None = None,
 ) -> None:
     """Validate that assignee exists and belongs to the project's team (CHT-293).
 
@@ -108,6 +113,15 @@ async def _validate_assignee(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Assignee (agent) is not scoped to this project's team",
+            )
+        # A project-scoped agent works only in its project: assigned
+        # elsewhere, it could not open the issue, and its inbox would
+        # carry the issue's title out of the project (CHT-1780).
+        if user.agent_project_id and project_id and user.agent_project_id != project_id \
+                and assignee_id != current_assignee_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Assignee (agent) is scoped to a different project",
             )
     else:
         team_service = TeamService()
@@ -457,7 +471,7 @@ async def create_issue(
         )
 
     # Validate assignee, sprint, labels, and parent (CHT-293, CHT-294, CHT-296, CHT-295)
-    await _validate_assignee(issue_in.assignee_id, project.team_id)
+    await _validate_assignee(issue_in.assignee_id, project.team_id, project_id=project.id)
     await _validate_sprint(issue_in.sprint_id, project_id)
     await _validate_labels(issue_in.label_ids, project.team_id)
     await _validate_parent(issue_in.parent_id, project_id)
@@ -529,7 +543,9 @@ async def create_issue(
 
     # Auto-link cross-referenced issues (CHT-133)
     try:
-        await issue_service.create_cross_references(issue.id, issue_in.description)
+        await issue_service.create_cross_references(
+            issue.id, issue_in.description, project_id=confined_project_id(current_user),
+        )
     except Exception:
         logger.warning("Failed to create cross-references for issue %s", issue.id, exc_info=True)
 
@@ -798,8 +814,13 @@ async def list_issues(
             sprint_id, skip, limit, issue_type=issue_type, sort_by=sort_by, order=order
         )
     elif assignee_id:
-        # Assignee-only query: scope to user's accessible teams
-        if current_user.is_agent:
+        # Assignee-only query: scope to user's accessible teams, and a
+        # project-scoped agent to its own project (CHT-1780).
+        confine_to = current_user.agent_project_id if is_project_scoped_agent(current_user) else None
+        if confine_to:
+            project = await project_service.get_by_id(confine_to)
+            team_ids = [project.team_id] if project else []
+        elif current_user.is_agent:
             team_ids = [current_user.agent_team_id] if current_user.agent_team_id else []
         else:
             user_teams = await team_service.get_user_teams(current_user.id)
@@ -811,12 +832,15 @@ async def list_issues(
             # `issue mine` queries by assignee alone -- an agent checking
             # its own claims must not see a phantom still-mine issue
             # whose lease already lapsed server-side.
-            for tid in team_ids:
-                await issue_service.release_expired_leases(team_id=tid)
+            if confine_to:
+                await issue_service.release_expired_leases(project_id=confine_to)
+            else:
+                for tid in team_ids:
+                    await issue_service.release_expired_leases(team_id=tid)
             issues = await issue_service.list_by_assignee(
                 assignee_id, skip, limit,
                 statuses=statuses, priorities=priorities, issue_type=issue_type, team_ids=team_ids,
-                sort_by=sort_by, order=order,
+                sort_by=sort_by, order=order, project_id=confine_to,
             )
     else:
         raise HTTPException(
@@ -846,14 +870,22 @@ async def search_issues(
     issue_service = IssueService()
     project_service = ProjectService()
 
-    has_access = await check_user_team_access(current_user, team_id)
+    # With project_id this is a project search, which project access
+    # covers (a project-scoped agent's own, CHT-1780); without one it is
+    # team-wide.
+    if project_id:
+        has_access = await check_user_project_access(current_user, project_id, team_id)
+    else:
+        has_access = await check_user_team_access(current_user, team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this team",
         )
 
-    # If project_id provided, verify it belongs to this team
+    # The project must be in this team. For a project-scoped agent this is
+    # the check that pins its project to the team in the URL: its project
+    # access above does not look at team_id.
     if project_id:
         project = await project_service.get_by_id(project_id)
         if not project or project.team_id != team_id:
@@ -958,13 +990,20 @@ async def list_team_activities(
     sprint_service = SprintService()
     document_service = DocumentService()
 
-    has_access = await check_user_team_access(current_user, team_id)
+    # As in search_issues: project access for one project's feed (what a
+    # project-scoped agent's `chaotic await` polls), team access for the
+    # team's (CHT-1780).
+    if project_id:
+        has_access = await check_user_project_access(current_user, project_id, team_id)
+    else:
+        has_access = await check_user_team_access(current_user, team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this team",
         )
 
+    # Pins the project to the URL's team (see search_issues).
     if project_id:
         project = await ProjectService().get_by_id(project_id)
         if not project or project.team_id != team_id:
@@ -1213,7 +1252,9 @@ async def update_issue(
 
     # Validate assignee, sprint, labels, parent if provided (CHT-293, CHT-294, CHT-296, CHT-295)
     if issue_in.assignee_id is not None:
-        await _validate_assignee(issue_in.assignee_id, project.team_id, issue.assignee_id)
+        await _validate_assignee(
+            issue_in.assignee_id, project.team_id, issue.assignee_id, project_id=project.id,
+        )
     if issue_in.sprint_id is not None:
         await _validate_sprint(issue_in.sprint_id, issue.project_id)
     if issue_in.label_ids is not None:
@@ -1290,7 +1331,9 @@ async def update_issue(
     # Auto-link cross-referenced issues when description changes (CHT-133)
     if issue_in.description is not None:
         try:
-            await issue_service.create_cross_references(issue.id, issue_in.description)
+            await issue_service.create_cross_references(
+                issue.id, issue_in.description, project_id=confined_project_id(current_user),
+            )
         except Exception:
             logger.warning("Failed to create cross-references for issue %s", issue.id, exc_info=True)
 
@@ -1647,7 +1690,9 @@ async def create_comment(
 
     # Auto-link cross-referenced issues (CHT-133)
     try:
-        await issue_service.create_cross_references(issue_id, comment_in.content)
+        await issue_service.create_cross_references(
+            issue_id, comment_in.content, project_id=confined_project_id(current_user),
+        )
     except Exception:
         logger.warning("Failed to create cross-references for issue %s", issue_id, exc_info=True)
 
@@ -1757,7 +1802,9 @@ async def update_comment(
     # creation and description updates -- editing a comment to add a
     # "CHT-123" reference should auto-link it too. Idempotent: existing
     # relations are a no-op (see create_cross_references).
-    await issue_service.create_cross_references(issue_id, comment.content)
+    await issue_service.create_cross_references(
+        issue_id, comment.content, project_id=confined_project_id(current_user),
+    )
     response = IssueCommentResponse(
         id=comment.id,
         issue_id=comment.issue_id,
@@ -1941,7 +1988,9 @@ async def list_relations(
             detail="Not authorized to access this project",
         )
 
-    relations = await issue_service.list_relations(issue_id, team_id=project.team_id)
+    relations = await issue_service.list_relations(
+        issue_id, team_id=project.team_id, project_id=confined_project_id(current_user),
+    )
     return [IssueRelationResponse.model_validate(r) for r in relations[skip:skip + limit]]
 
 
@@ -2015,7 +2064,12 @@ async def get_issue_documents(issue_id: str, current_user: CurrentUser):
             detail="Not authorized to access this project",
         )
 
-    documents = await document_service.get_linked_documents_for_issue(issue_id)
+    # A link does not grant access: only the documents this caller could
+    # open by id (CHT-1780).
+    documents = [
+        doc for doc in await document_service.get_linked_documents_for_issue(issue_id)
+        if await can_access_document(current_user, doc)
+    ]
     return await fill_principals([
         DocumentResponse(
             id=doc.id,

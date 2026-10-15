@@ -670,6 +670,29 @@ def _resolve_principal_id() -> str | None:
     return (me or {}).get("id")
 
 
+def _document_project_id(document_id: str) -> str | None:
+    """The project a document belongs to, for scoping `await doc` to the
+    project feed (CHT-1780): a project-scoped key may read its project's
+    feed but not the team's. None for a team-level document, or when the
+    lookup fails (the team feed is asked then, and the server decides)."""
+    try:
+        return (_client().get_document(document_id) or {}).get("project_id")
+    except Exception:
+        return None
+
+
+def _key_project_id() -> str | None:
+    """The project a project-scoped agent key is confined to, else None
+    (CHT-1780). `await docs` watches that project's documents for such a
+    key, since the team feed refuses it; a failed lookup keeps the team
+    feed."""
+    try:
+        me = _client().get_me() or {}
+    except Exception:
+        return None
+    return me.get("agent_project_id") if me.get("is_agent") else None
+
+
 def _require_current_team() -> str:
     """Return the configured current team_id, or exit 2 if unset."""
     m = _main()
@@ -908,7 +931,7 @@ def register(cli):
         team_id = _require_current_team()
         scope = {"document_id": document_id}
         _await_event(
-            team_id=team_id, project_id=None, scope=scope,
+            team_id=team_id, project_id=_document_project_id(document_id), scope=scope,
             type_spec=type_spec, include_self=include_self,
             timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
@@ -917,13 +940,14 @@ def register(cli):
     @await_.command("docs")
     @_common_options
     def await_docs(type_spec, include_self, timeout_spec, json_output, until_cmd):
-        """Wait on any document in the current team.
+        """Wait on any document in the current team (for a project-scoped
+        agent key, in its project).
 
         For a specific document, use `chaotic await doc ID` instead.
         """
         team_id = _require_current_team()
         _await_event(
-            team_id=team_id, project_id=None, scope={},
+            team_id=team_id, project_id=_key_project_id(), scope={},
             type_spec=type_spec, include_self=include_self,
             timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,

@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, NotAppSession, check_user_team_access
+from app.api.deps import CurrentUser, NotAppSession, check_user_in_team
 from app.utils import ensure_utc
 from app.schemas.team import (
     TeamCreate,
@@ -74,9 +74,9 @@ async def get_team(team_id: str, current_user: CurrentUser):
             detail="Team not found",
         )
 
-    # Use check_user_team_access which handles both regular members
-    # and agent users (CHT-732)
-    if not await check_user_team_access(current_user, team_id):
+    # Team directory: members and agents of the team at either scope,
+    # project-scoped agents included (CHT-732, CHT-1780).
+    if not await check_user_in_team(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",
@@ -145,9 +145,9 @@ async def list_team_members(
     """List team members."""
     team_service = TeamService()
 
-    # Use check_user_team_access which handles both regular members
-    # and agent users (CHT-732)
-    if not await check_user_team_access(current_user, team_id):
+    # Team directory: members and agents of the team at either scope,
+    # project-scoped agents included (CHT-732, CHT-1780).
+    if not await check_user_in_team(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",

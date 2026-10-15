@@ -584,10 +584,59 @@ async def test_project_scoped_agent_is_confined(client, test_team, test_project,
     await _issue(other, test_user, title="other")
     assert (await _query(client, headers, f"projects/{other.id}")).status_code == 403
     assert (await _query(client, headers, f"projects/{test_project.id}")).status_code == 200
-    # team scope follows check_user_team_access, as GET /issues?team_id does
+    # A project-scoped agent has no team scope (CHT-1780): the team query
+    # is refused, as GET /issues?team_id is.
     listed = await client.get(f"/api/issues?team_id={test_team.id}", headers=headers)
     queried = await _query(client, headers, f"teams/{test_team.id}")
-    assert listed.status_code == queried.status_code
+    assert listed.status_code == queried.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_project_scoped_agent_cannot_probe_sibling_names(client, auth_headers, test_team, test_project, test_user):
+    """Names resolve in the caller's scope (CHT-1780): a sibling project's
+    key or issue, or an agent scoped to it, answers exactly like a name
+    that does not exist, so the 200/400 split tells the agent nothing."""
+    from app.utils.security import create_access_token
+    from app.oxyde_models.project import OxydeProject
+    from app.oxyde_models.user import OxydeUser
+
+    other = await OxydeProject.objects.create(team_id=test_team.id, name="Other", key="OTH", color="#000000")
+    agent = await OxydeUser.objects.create(
+        email="scoped@example.com", hashed_password="x", name="Scoped", is_agent=True,
+        agent_team_id=test_team.id, agent_project_id=test_project.id,
+    )
+    await OxydeUser.objects.create(
+        email="sibbot@example.com", hashed_password="x", name="SibBot", is_agent=True,
+        agent_team_id=test_team.id, agent_project_id=other.id,
+    )
+    headers = {"Authorization": f"Bearer {create_access_token(data={'sub': agent.id})}"}
+    await _issue(other, test_user, title="other")
+    mine = f"projects/{test_project.id}"
+
+    def same_as_missing(real, fake):
+        assert real.status_code == fake.status_code == 400, (real.text, fake.text)
+        assert real.json()["detail"].replace("OTH-1", "X").replace("OTH", "X").replace("SibBot", "X") == \
+            fake.json()["detail"].replace("NOPE-1", "X").replace("NOPE", "X")
+
+    same_as_missing(
+        await _query(client, headers, mine, where="project=OTH"),
+        await _query(client, headers, mine, where="project=NOPE"),
+    )
+    same_as_missing(
+        await _query(client, headers, mine, where="parent=OTH-1"),
+        await _query(client, headers, mine, where="parent=NOPE-1"),
+    )
+    same_as_missing(
+        await _query(client, headers, mine, where="assignee=SibBot"),
+        await _query(client, headers, mine, where="assignee=NOPE"),
+    )
+    # Its own project and team members still resolve.
+    assert (await _query(client, headers, mine, where="project=PROJ")).status_code == 200
+    assert (await _query(client, headers, mine, where=f"assignee={test_user.email}")).status_code == 200
+    # A team member still names every project in the team.
+    team = f"teams/{test_team.id}"
+    assert (await _query(client, auth_headers, team, where="project=OTH parent=OTH-1")).status_code == 200
+    assert (await _query(client, auth_headers, team, where="assignee=SibBot")).status_code == 200
 
 
 @pytest.mark.asyncio

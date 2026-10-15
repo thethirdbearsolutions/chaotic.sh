@@ -56,7 +56,16 @@ class Backend(Protocol):
     async def resolve_team(self, team: str | None) -> str:
         """The team id a team-wide tool should act on. Raises
         ToolInputError when there is none, or when ``team`` is given and
-        not accessible / ambiguous."""
+        not accessible / ambiguous. A project-scoped key has no team-wide
+        scope (CHT-1780): the HTTP side refuses it here, the stdio side
+        leaves the refusal to the server."""
+
+    async def resolve_member_team(self, team: str | None) -> str:
+        """The team whose *directory* a tool reads: its labels, its
+        project list, the inbox's team filter. Same as ``resolve_team``
+        except that a project-scoped key, which ``resolve_team`` refuses,
+        gets its own project's team; the server confines what it reads
+        there (CHT-1780)."""
 
     async def resolve_project(self, project: str | None, team: str | None) -> tuple[str, str]:
         """``(project_id, team_id)`` for a project-scoped tool. A project
