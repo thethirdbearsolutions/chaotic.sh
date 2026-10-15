@@ -7,7 +7,7 @@ from app.auth.access import reads, writes
 from app.api.idempotency import IdempotentRoute, idempotent
 from app.api.deps import (
     CurrentUser, can_access_document, check_user_team_access,
-    confined_project_id,
+    confined_project_id, is_eligible_project_member,
     is_project_scoped_agent,
 )
 from app.api.visibility import (
@@ -87,53 +87,31 @@ router = APIRouter(route_class=IdempotentRoute)
 
 
 async def _validate_assignee(
-    assignee_id: str | None, team_id: str, current_assignee_id: str | None = None,
-    *, project_id: str | None = None,
+    assignee_id: str | None, project, current_assignee_id: str | None = None,
 ) -> None:
-    """Validate that assignee exists and belongs to the project's team (CHT-293).
+    """The assignee must be eligible for work in ``project``: an active
+    member of its team, or an active agent of that team or of this
+    project (``is_eligible_project_member``, CHT-1830; the same rule as a
+    project's lead). CHT-293 checked the team, CHT-1494 refused retired
+    accounts, CHT-1780 kept a project-scoped agent in its own project.
 
-    A deactivated user or agent can't be newly assigned work: it can never
-    sign in to do it (CHT-1494). Re-sending an issue's existing assignee
-    (`current_assignee_id`) is not a new assignment, so an update that
-    touches other fields of an issue already held by a retired agent
-    still goes through.
-
-    A user outside the project's team answers exactly like a missing one
-    (CHT-1785, CHT-1819), and is checked first: a name or a "deactivated"
-    reply would confirm that someone in another team exists. An empty
-    string names no one and is "not found" too (it used to reach the
-    users foreign key and fail with a 500).
+    Every refusal is the same "Assignee not found", naming nobody: a
+    name, or a "deactivated" reply, would confirm that an account exists
+    (CHT-1785, CHT-1819). An empty string names no one and is "not
+    found" too (it used to reach the users foreign key and fail with a
+    500). Re-sending an issue's existing assignee
+    (``current_assignee_id``) is not a new assignment, so an update that
+    touches other fields of an issue held by someone since retired or
+    moved still goes through.
     """
-    if assignee_id is None:
+    if assignee_id is None or (current_assignee_id is not None and assignee_id == current_assignee_id):
         return
     user = await OxydeUser.objects.get_or_none(id=assignee_id)
-    # Agents: the team they are scoped to; humans: team membership.
-    if user is None:
-        in_team = False
-    elif user.is_agent:
-        in_team = user.agent_team_id == team_id
-    else:
-        in_team = await TeamService().get_member(team_id, assignee_id) is not None
-    if not in_team:
+    if not await is_eligible_project_member(user, project.team_id, project.id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Assignee not found",
         )
-    if not user.is_active and assignee_id != current_assignee_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Assignee '{user.name}' is deactivated and cannot be assigned work",
-        )
-    if user.is_agent:
-        # A project-scoped agent works only in its project: assigned
-        # elsewhere, it could not open the issue, and its inbox would
-        # carry the issue's title out of the project (CHT-1780).
-        if user.agent_project_id and project_id and user.agent_project_id != project_id \
-                and assignee_id != current_assignee_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Assignee (agent) is scoped to a different project",
-            )
 
 
 async def _validate_sprint(current_user, sprint_id: str | None, project_id: str) -> None:
@@ -469,7 +447,7 @@ async def create_issue(
     project = await visible_project(current_user, project_id)
 
     # Validate assignee, sprint, labels, and parent (CHT-293, CHT-294, CHT-296, CHT-295)
-    await _validate_assignee(issue_in.assignee_id, project.team_id, project_id=project.id)
+    await _validate_assignee(issue_in.assignee_id, project)
     await _validate_sprint(current_user, issue_in.sprint_id, project_id)
     await _validate_labels(current_user, issue_in.label_ids, project.team_id)
     await _validate_parent(current_user, issue_in.parent_id, project_id)
@@ -1186,9 +1164,7 @@ async def update_issue(
 
     # Validate assignee, sprint, labels, parent if provided (CHT-293, CHT-294, CHT-296, CHT-295)
     if issue_in.assignee_id is not None:
-        await _validate_assignee(
-            issue_in.assignee_id, project.team_id, issue.assignee_id, project_id=project.id,
-        )
+        await _validate_assignee(issue_in.assignee_id, project, issue.assignee_id)
     if issue_in.sprint_id is not None:
         await _validate_sprint(current_user, issue_in.sprint_id, issue.project_id)
     if issue_in.label_ids is not None:
