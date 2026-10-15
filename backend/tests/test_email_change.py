@@ -22,11 +22,29 @@ from app.services.user_service import (
 )
 from app.utils.security import create_access_token, get_password_hash
 
-from .test_email_verification import CONFIRM, REQUEST, Outbox, _make_legacy_variant, _make_user  # noqa: F401
-from .test_email_verification import no_smtp, outbox  # noqa: F401 -- fixtures
+from .test_email_verification import CONFIRM, REQUEST, Outbox, _make_legacy_variant, _make_user
 
 CHANGE = "/api/auth/email"
 PASSWORD = "testpassword123"
+
+
+@pytest.fixture
+def no_smtp(monkeypatch):
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def outbox(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    get_settings.cache_clear()
+    box = Outbox()
+
+    async def send(self, to, subject, body):
+        return await box.send(self, to, subject, body)
+
+    monkeypatch.setattr(email_service_module.EmailService, "send", send)
+    return box
 
 
 @pytest.fixture(autouse=True)
