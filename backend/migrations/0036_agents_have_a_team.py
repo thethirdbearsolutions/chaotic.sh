@@ -55,7 +55,9 @@ anyway) and prints why:
 
 None of these can be reached through the product afterwards (every
 agent route 404s an agent with no team), so the line gives the SQL to
-retire it. Back up first (`chaotic system backup`), stop the server,
+retire it; for an agent already inactive (deactivated by hand, or
+retired when its project or team was deleted, CHT-1844) it says
+"(already inactive)" and gives only the keys step. Back up first (`chaotic system backup`), stop the server,
 then for each id:
 
     UPDATE users SET is_active = 0 WHERE id = '<id>';
@@ -99,7 +101,8 @@ depends_on = "0034_users_email_folded"
 # and that project's team exist.
 TEAMLESS_AGENTS_SQL = (
     "SELECT u.id AS id, u.agent_project_id AS project_id, p.id AS project_found, "
-    "p.team_id AS project_team_id, t.id AS team_id, u.external_ref AS external_ref "
+    "p.team_id AS project_team_id, t.id AS team_id, u.external_ref AS external_ref, "
+    "u.is_active AS is_active "
     "FROM users AS u "
     "LEFT JOIN projects AS p ON p.id = u.agent_project_id "
     "LEFT JOIN teams AS t ON t.id = p.team_id "
@@ -142,6 +145,13 @@ RETIRE = (
     "stop the server, and run: UPDATE users SET is_active = 0 WHERE id = '{id}'; "
     "UPDATE api_keys SET is_active = 0 WHERE principal_user_id = '{id}';"
 )
+# For an agent already deactivated (by hand, or retired when its project
+# or team was deleted, CHT-1844): only its keys could still need it.
+RETIRE_INACTIVE = (
+    "(already inactive) Nothing in the product can reach it; to make sure its keys are revoked, "
+    "back up (`chaotic system backup`), stop the server, and run: "
+    "UPDATE api_keys SET is_active = 0 WHERE principal_user_id = '{id}';"
+)
 
 
 def sql_literal(value: str) -> str:
@@ -169,7 +179,7 @@ def plan_backfill(
     held = set(held)
     for row in agents:
         agent_id, project_id, team_id = row["id"], row["project_id"], row["team_id"]
-        retire = RETIRE.format(id=agent_id)
+        retire = (RETIRE if row.get("is_active", 1) else RETIRE_INACTIVE).format(id=agent_id)
         if project_id is None:
             left[agent_id] = (
                 f"[0036] agent {agent_id} has neither a team nor a project; agent_team_id left NULL. "
@@ -208,15 +218,18 @@ def plan_revocations(keys: list[dict], placed: dict) -> dict[str, list[str]]:
     return revoked
 
 
-def report_lines(placed: dict, revoked: dict, left: dict, *, done: bool) -> list[str]:
+def report_lines(
+    placed: dict, revoked: dict, left: dict, *, done: bool, inactive: frozenset = frozenset(),
+) -> list[str]:
     """The [0036] lines, ids only. ``done``: the writes have committed
-    (else they are only queued)."""
+    (else they are only queued). ``inactive``: agents already
+    deactivated, said so on their line."""
     did = "" if done else " (queued)"
     lines = []
     for agent_id, (team_id, project_id) in placed.items():
         lines.append(
             f"[0036] agent {agent_id}: agent_team_id set to {team_id}, the team of its project "
-            f"{project_id}{did}"
+            f"{project_id}{' (already inactive)' if agent_id in inactive else ''}{did}"
         )
     keys = [key_id for ids in revoked.values() for key_id in ids]
     if keys:
@@ -323,6 +336,7 @@ def backfill(ctx, echo=print) -> int | None:
         for row in _read_through_oxyde(database, HELD_REFS_SQL, [])
     }
     placed, left = plan_backfill(agents, held)
+    inactive = frozenset(row["id"] for row in agents if not row["is_active"])
     revoked = plan_revocations(_read_through_oxyde(database, TEAMLESS_KEYS_SQL, []), placed)
     for agent_id, (team_id, _project_id) in placed.items():
         ctx.execute(
@@ -335,7 +349,7 @@ def backfill(ctx, echo=print) -> int | None:
 
     commit = getattr(ctx, "_execute_collected_sql", None)
     if not callable(commit):
-        for line in report_lines(placed, revoked, left, done=False):
+        for line in report_lines(placed, revoked, left, done=False, inactive=inactive):
             echo(line)
         return len(placed)
 
@@ -346,7 +360,7 @@ def backfill(ctx, echo=print) -> int | None:
         # and prints nothing but the executor's error).
         await commit()
         now_placed, now_revoked = await _written(database, placed, revoked)
-        for line in report_lines(now_placed, now_revoked, left, done=True):
+        for line in report_lines(now_placed, now_revoked, left, done=True, inactive=inactive):
             echo(line)
         missing = set(placed) - set(now_placed)
         if missing:

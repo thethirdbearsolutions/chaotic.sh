@@ -63,6 +63,9 @@ KEYS = {
     "k-clash": ("a-clash", 1),
 }
 REVOKED = ["k-legacy-1", "k-legacy-2", "k-twin"]
+# Deactivated already: a-nothing as a team delete retires one (CHT-1844),
+# a-twin-1 by hand. Placed or left as any other, and said so.
+INACTIVE = {"a-nothing", "a-twin-1"}
 
 
 def _seed(path: str) -> None:
@@ -85,10 +88,10 @@ def _seed(path: str) -> None:
             c.execute(
                 "INSERT INTO users (id, email, email_folded, hashed_password, name, created_at, updated_at, "
                 "is_agent, is_active, is_superuser, can_register, parent_user_id, agent_team_id, "
-                "agent_project_id, external_ref) VALUES (?, ?, ?, 'x', ?, ?, ?, ?, 1, 0, 0, ?, ?, ?, ?)",
+                "agent_project_id, external_ref) VALUES (?, ?, ?, 'x', ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)",
                 (
                     user_id, f"{user_id}@example.com", f"{user_id}@example.com", user_id,
-                    f"2026-01-01T00:00:{n:02d}+00:00", NOW, is_agent,
+                    f"2026-01-01T00:00:{n:02d}+00:00", NOW, is_agent, 0 if user_id in INACTIVE else 1,
                     "u-human" if is_agent else None, team_id, project_id, ref,
                 ),
             )
@@ -137,8 +140,9 @@ def test_legacy_agents_get_their_projects_team_their_keys_are_revoked_and_the_re
         assert keys_after[key_id] == expected, key_id
 
     for user_id, (team_id, project_id) in PLACED.items():
+        note = " (already inactive)" if user_id in INACTIVE else ""
         assert (
-            f"[0036] agent {user_id}: agent_team_id set to {team_id}, the team of its project {project_id}\n"
+            f"[0036] agent {user_id}: agent_team_id set to {team_id}, the team of its project {project_id}{note}\n"
             in output
         )
     assert f"[0036] revoked 3 API key(s) of the agents given a team, " in output
@@ -146,12 +150,16 @@ def test_legacy_agents_get_their_projects_team_their_keys_are_revoked_and_the_re
     assert ": " + ", ".join(REVOKED) + "\n" in output
     assert "[0036] agent a-orphan: its project p-gone no longer exists; agent_team_id left NULL." in output
     assert "[0036] agent a-ghostteam: its project p-dead's team t-dead no longer exists; agent_team_id left NULL." in output
-    assert "[0036] agent a-nothing has neither a team nor a project; agent_team_id left NULL." in output
+    assert (
+        "[0036] agent a-nothing has neither a team nor a project; agent_team_id left NULL. (already inactive)"
+        in output
+    )
     assert "[0036] agent a-clash: team t-2 already has an identity with its external_ref;" in output
     assert "[0036] agent a-twin-2: team t-1 already has an identity with its external_ref;" in output
     # Each left agent's line carries the steps to retire it.
     for user_id in LEFT:
-        assert f"UPDATE users SET is_active = 0 WHERE id = '{user_id}';" in output
+        retire_user = f"UPDATE users SET is_active = 0 WHERE id = '{user_id}';"
+        assert (retire_user in output) == (user_id not in INACTIVE), user_id
         assert f"UPDATE api_keys SET is_active = 0 WHERE principal_user_id = '{user_id}';" in output
     assert "chaotic system backup" in output
     assert "[0036] 3 agent(s) given their project's team, 5 left without one" in output
