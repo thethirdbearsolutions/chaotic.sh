@@ -24,6 +24,7 @@
 package sh.chaotic.api.apis
 
 import sh.chaotic.api.models.HTTPValidationError
+import sh.chaotic.api.models.UserLookupResponse
 import sh.chaotic.api.models.UserResponse
 import sh.chaotic.api.models.UserUpdate
 
@@ -80,10 +81,10 @@ import io.ktor.http.ParametersBuilder
         * Get User
         * Get user by ID.
          * @param userId  
-         * @return UserResponse
+         * @return UserLookupResponse
         */
             @Suppress("UNCHECKED_CAST")
-        open suspend fun getUserApiUsersUserIdGet(userId: kotlin.String): HttpResponse<UserResponse> {
+        open suspend fun getUserApiUsersUserIdGet(userId: kotlin.String): HttpResponse<UserLookupResponse> {
 
             val localVariableAuthNames = listOf<String>("HTTPBearer")
 

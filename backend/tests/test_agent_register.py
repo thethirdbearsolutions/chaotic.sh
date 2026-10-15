@@ -946,19 +946,23 @@ class TestReviewFollowUps:
         agent_id = session["agent"]["id"]
         member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
-        async def seen(headers, via_users=False):
+        async def seen(headers):
             one = (await client.get(f"/api/agents/{agent_id}", headers=headers)).json()["external_ref"]
             listed = [
                 a["external_ref"] for a in (await client.get(f"/api/teams/{test_team.id}/agents", headers=headers)).json()
                 if a["id"] == agent_id
             ][0]
             assert one == listed
-            if via_users:  # /users/{id} answers an agent only to itself (agents share no team)
-                assert (await client.get(f"/api/users/{agent_id}", headers=headers)).json()["external_ref"] == one
+            # /users/{id} shows whom the team directory shows (CHT-1841),
+            # and hides the address, made from the ref, with the ref.
+            user = await client.get(f"/api/users/{agent_id}", headers=headers)
+            assert user.status_code == 200, user.text
+            assert user.json()["external_ref"] == one
+            assert (user.json()["email"] is None) == (one is None)
             return one
 
         assert await seen(auth_headers) == REF  # owner (and team owner)
-        assert await seen(_bearer(session["api_key"]), via_users=True) == REF  # the identity itself
+        assert await seen(_bearer(session["api_key"])) == REF  # the identity itself
         assert await seen(auth_headers2) is None  # a plain teammate
         await OxydeTeamMember.objects.filter(id=member.id).update(role=TeamRole.ADMIN)
         assert await seen(auth_headers2) == REF  # a team admin

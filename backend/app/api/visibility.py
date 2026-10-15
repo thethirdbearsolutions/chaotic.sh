@@ -26,6 +26,8 @@ What "see" means per row is the matching read rule in ``app.api.deps``:
   document, team access for a team-level one).
 * label, team, agent: ``is_in_team_directory`` (the team directory, which a
   project-scoped agent shares).
+* user: listed in a team directory the caller is in, or the caller itself
+  (``visible_user``).
 * template: ``can_read_team_data`` (team-wide data).
 """
 from __future__ import annotations
@@ -281,3 +283,32 @@ async def visible_agent(user, agent_id: str):
     if agent is None or not await is_in_team_directory(user, agent.agent_team_id):
         raise not_found("Agent not found")
     return agent
+
+
+async def visible_user(user, user_id: str):
+    """The user (a person or an agent), or the "User not found" 404.
+
+    Anyone sees themselves. Anyone else is seen by exactly the callers
+    whose team directory (``is_in_team_directory``) lists them: a person
+    in every team they are a member of, an agent in its own team, as
+    ``/teams/{id}/members`` and ``/teams/{id}/agents`` list them
+    (CHT-1841). So a project-scoped agent sees its team's members and
+    every agent of its team, and nobody outside a team sees anyone in it
+    through it."""
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.services.user_service import UserService
+
+    target = await UserService().get_by_id(user_id)
+    if target is None:
+        raise not_found("User not found")
+    if target.id == user.id:
+        return target
+    if target.is_agent:
+        # A retired agent has no team (CHT-1844), so no directory lists it.
+        team_ids = [target.agent_team_id] if target.agent_team_id else []
+    else:
+        team_ids = [m.team_id for m in await OxydeTeamMember.objects.filter(user_id=target.id).all()]
+    for team_id in team_ids:
+        if await is_in_team_directory(user, team_id):
+            return target
+    raise not_found("User not found")

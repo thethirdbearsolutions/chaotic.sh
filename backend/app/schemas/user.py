@@ -59,6 +59,18 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class UserLookupResponse(UserResponse):
+    """``GET /users/{id}``: anyone in the caller's team directory, or the
+    caller itself (CHT-1841). The routes that return the caller's own
+    account keep ``UserResponse``, whose ``email`` is never null."""
+
+    # None only for a session identity seen by someone who may not see
+    # its external_ref: that address is made from the ref
+    # (RegistrationService). A person's address, and any other agent's,
+    # is always shown.
+    email: str | None
+
+
 class EmailVerificationSent(BaseModel):
     """A verification code was mailed (CHT-1790)."""
 
