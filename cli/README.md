@@ -167,8 +167,13 @@ chaotic team show              # Show current team details
 chaotic team create            # Create a new team
 chaotic team members           # List team members
 chaotic team invite            # Invite a member
-chaotic team accept-invite     # Accept an invitation (needs a verified email when the server has SMTP)
+chaotic team accept-invite <link-or-token>  # Accept an invitation (needs a verified email when the server has SMTP)
 ```
+
+`accept-invite` takes the link you were sent (`https://<host>/invite/<token>`)
+or just its token. It accepts on the server your profile is configured for,
+and warns, without stopping, when the link names another host; use
+`--profile` to pick the profile for the link's server.
 
 ## Projects
 
