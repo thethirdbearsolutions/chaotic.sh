@@ -117,6 +117,80 @@
         ]
       }
     },
+    "/api/auth/email-verification": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Request Email Verification",
+        "description": "Mail a six-digit code to the signed-in person's address (CHT-1790).\n\nConfirm it with ``POST /api/auth/email-verification/confirm`` within\n15 minutes. A new code retires any older one. At most one code a\nminute and five an hour (429 ``email_verification_rate_limited``,\nwith Retry-After). 409 ``email_already_verified`` once verified;\n409 ``email_verification_unavailable`` when the server has no SMTP\n(then invitations do not require a verified address); 502\n``email_send_failed`` when the mail relay failed. People only: an\nagent gets 403 ``human_required``.",
+        "operationId": "request_email_verification_api_auth_email_verification_post",
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationSent"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/auth/email-verification/confirm": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Confirm Email Verification",
+        "description": "Confirm the code from the verification email (CHT-1790) and\nreturn the account, now with ``email_verified_at`` set.\n\nA wrong, expired, superseded or used-up code (five tries per code)\nall get the same 400 ``invalid_verification_code``. 409\n``email_already_verified`` once verified. People only: an agent gets\n403 ``human_required``.",
+        "operationId": "confirm_email_verification_api_auth_email_verification_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailVerificationConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/users/{user_id}": {
       "get": {
         "tags": [
@@ -770,7 +844,7 @@
           "teams"
         ],
         "summary": "Preview Invitation",
-        "description": "The public preview the /invite/<token> page shows (CHT-1265).\n\nUnauthenticated: the emailed link is opened before anyone signs in.\nIt tells the token's holder only what the page needs (team name,\nrole, inviter, a masked address, expiry), and answers an unknown,\nexpired, accepted, declined or revoked token with the same 404, so\na lookup cannot tell them apart.\n\nThreat model: the token is a bearer credential, not only a pointer\nto an inbox. Signup does not verify email ownership (CHT-1790), so\nwhile the invited address has no account, anyone holding the token\ncan sign up as that address and accept. Keep it out of every log,\nReferer and history entry: it is redacted from the request log\n(app.log_redaction), and the /invite/ page is served no-referrer and\nmoves it out of the address bar on load.\n\nNot rate limited here, on purpose (CHT-1369): rate limiting is the\nreverse proxy's job, and an in-process per-address counter behind a\nproxy would see one address for everyone, so one client could lock\nevery invitee out. The token's 256 random bits are what make\nguessing hopeless.",
+        "description": "The public preview the /invite/<token> page shows (CHT-1265).\n\nUnauthenticated: the emailed link is opened before anyone signs in.\nIt tells the token's holder only what the page needs (team name,\nrole, inviter, a masked address, expiry), and answers an unknown,\nexpired, accepted, declined or revoked token with the same 404, so\na lookup cannot tell them apart.\n\nThreat model: the token is a bearer credential, not only a pointer\nto an inbox. Signup does not verify email ownership. With SMTP\nconfigured, accepting requires a verified address (CHT-1790), so a\nleaked token alone is not enough; without SMTP nothing can verify\none, and while the invited address has no account, anyone holding\nthe token can sign up as that address and accept. Keep it out of every log,\nReferer and history entry: it is redacted from the request log\n(app.log_redaction), and the /invite/ page is served no-referrer and\nmoves it out of the address bar on load.\n\nNot rate limited here, on purpose (CHT-1369): rate limiting is the\nreverse proxy's job, and an in-process per-address counter behind a\nproxy would see one address for everyone, so one client could lock\nevery invitee out. The token's 256 random bits are what make\nguessing hopeless.",
         "operationId": "preview_invitation_api_teams_invitations__token__get",
         "parameters": [
           {
@@ -10475,6 +10549,42 @@
         "title": "DocumentUpdate",
         "description": "Schema for updating a document."
       },
+      "EmailVerificationConfirm": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "EmailVerificationConfirm",
+        "description": "The code from the verification email (CHT-1790)."
+      },
+      "EmailVerificationSent": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "expires_at"
+        ],
+        "title": "EmailVerificationSent",
+        "description": "A verification code was mailed (CHT-1790)."
+      },
       "EstimateScale": {
         "type": "string",
         "enum": [
@@ -15806,6 +15916,18 @@
             "format": "date-time",
             "title": "Updated At"
           },
+          "email_verified_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Verified At"
+          },
           "kind": {
             "anyOf": [
               {
@@ -15917,7 +16039,7 @@
         },
         "type": "object",
         "title": "UserUpdate",
-        "description": "Schema for updating a user."
+        "description": "Schema for updating a user.\n\nNo ``email`` on purpose: a change of address would have to clear\n``email_verified_at`` too (CHT-1790; see\napp.services.email_verification_service)."
       },
       "ValidationError": {
         "description": "One request-validation error: where it is (`loc`) and what is wrong (`msg`).",

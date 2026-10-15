@@ -45,8 +45,10 @@ from app.oxyde_models.oauth import (
 )
 from app.oxyde_models.push import OxydePushDevice, OxydePushPreference
 from app.oxyde_models.idempotency import OxydeIdempotencyRecord
+from app.oxyde_models.email_verification import OxydeEmailVerificationCode
 
 __all__ = [
+    "OxydeEmailVerificationCode",
     "OxydeIdempotencyRecord",
     "OxydePushDevice",
     "OxydePushPreference",

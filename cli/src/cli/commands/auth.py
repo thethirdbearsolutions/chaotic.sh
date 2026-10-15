@@ -30,6 +30,23 @@ def _trust_label(connection) -> str:
     return f"{label} · {client['host']}" if client.get("host") else label
 
 
+def _interactive() -> bool:
+    """May verify-email prompt for the code? Only in a terminal."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _local_time(iso: str) -> str:
+    """A server timestamp as local wall-clock time, or as sent if it
+    does not parse."""
+    try:
+        moment = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return str(iso)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone().strftime("%H:%M")
+
+
 def _main():
     """Late-bind to cli.main for test mock compatibility."""
     return sys.modules['cli.main']
@@ -122,7 +139,60 @@ def register(cli):
             if user.get("registered_by_id"):
                 registrar = user.get("registered_by_name") or user["registered_by_id"]
                 lines_markup.append(f"[dim]Registered by:[/dim] {escape(registrar)}")
+        else:
+            # CHT-1790: whether the address has been proved by a mailed code.
+            # Neutral: the CLI cannot tell whether this server can verify.
+            verified = user.get("email_verified_at")
+            lines_markup.append(
+                "[dim]Email verified:[/dim] yes" if verified else "[dim]Email verified:[/dim] no"
+            )
         console.print(Panel("\n".join(lines_markup), title="Current User"))
+
+    @auth.command("verify-email")
+    @click.option("--code", default=None, help="Confirm a code you already received, without requesting a new one.")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    def auth_verify_email(code):
+        """Verify your account's email address with a mailed code.
+
+        Without --code, asks the server to email a six-digit code to your
+        address, then prompts for it; with --json or when not run in a
+        terminal, it only requests the code and prints where it went and
+        when it expires (confirm it afterwards with --code). With --code,
+        confirms a code you already received. With SMTP configured on the
+        server, accepting a team invitation requires a verified address.
+        """
+        m = _main()
+        if code is None:
+            try:
+                sent = _client().request_email_verification()
+            except m.APIError as e:
+                if getattr(e, "status_code", None) != 429:
+                    raise
+                hint = "If you already have a code: chaotic auth verify-email --code <code>"
+                if m.is_json_output():
+                    m.output_json({"error": str(e), "error_code": "email_verification_rate_limited", "hint": hint})
+                else:
+                    console.print(f"[red]Error: {escape(str(e))}[/red]")
+                    console.print(f"[dim]{escape(hint)}[/dim]")
+                raise SystemExit(1)
+            if m.is_json_output():
+                m.output_json({"email": sent["email"], "expires_at": sent["expires_at"]})
+                return
+            console.print(
+                f"Sent a verification code to [bold]{escape(sent['email'])}[/bold]; "
+                f"it expires at {escape(_local_time(sent['expires_at']))}."
+            )
+            if not _interactive():
+                console.print("Confirm it with: chaotic auth verify-email --code <code>")
+                return
+            code = click.prompt("Code")
+        user = _client().confirm_email_verification(code.strip())
+        if m.is_json_output():
+            m.output_json(user)
+            return
+        console.print(f"[green]Email address {escape(user['email'])} verified.[/green]")
 
     @auth.group("keys")
     def auth_keys():

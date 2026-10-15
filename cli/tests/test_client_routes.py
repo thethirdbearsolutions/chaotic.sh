@@ -122,3 +122,15 @@ class TestTeamAgents:
         assert _call(sent)[:2] == ("GET", "/teams/t1/agents")
         Client().get_team_agents("t1", hide_idle=True)
         assert _call(sent)[:2] == ("GET", "/teams/t1/agents?hide_idle=true")
+
+
+class TestEmailVerification:
+    """CHT-1790."""
+
+    def test_request(self, sent):
+        Client().request_email_verification()
+        assert _call(sent)[:2] == ("POST", "/auth/email-verification")
+
+    def test_confirm(self, sent):
+        Client().confirm_email_verification("123456")
+        assert _call(sent) == ("POST", "/auth/email-verification/confirm", {"code": "123456"})

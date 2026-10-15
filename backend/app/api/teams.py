@@ -22,6 +22,7 @@ from app.services.mention_handles import MentionDirectory
 from app.services.team_service import TeamService
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
+from app.utils.email_address import same_email
 from app.enums import TeamRole
 
 logger = logging.getLogger(__name__)
@@ -284,7 +285,7 @@ async def create_invitation(
 
     # Check if user already a member
     user_service = UserService()
-    existing_user = await user_service.get_by_email(invitation_in.email)
+    existing_user = await user_service.get_by_email_ignoring_case(invitation_in.email)
     if existing_user:
         existing_member = await team_service.get_member(team_id, existing_user.id)
         if existing_member:
@@ -366,6 +367,13 @@ INVITATION_GONE = "This invitation is no longer valid"
 INVITATION_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 
 
+EMAIL_UNVERIFIED = {
+    "error_code": "email_unverified",
+    "message": "Verify your email address before accepting an invitation: "
+               "run `chaotic auth verify-email`, then accept again.",
+}
+
+
 def _invitation_gone() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND, detail=INVITATION_GONE, headers=INVITATION_HEADERS,
@@ -384,9 +392,11 @@ async def preview_invitation(token: str, response: Response) -> InvitationPrevie
     a lookup cannot tell them apart.
 
     Threat model: the token is a bearer credential, not only a pointer
-    to an inbox. Signup does not verify email ownership (CHT-1790), so
-    while the invited address has no account, anyone holding the token
-    can sign up as that address and accept. Keep it out of every log,
+    to an inbox. Signup does not verify email ownership. With SMTP
+    configured, accepting requires a verified address (CHT-1790), so a
+    leaked token alone is not enough; without SMTP nothing can verify
+    one, and while the invited address has no account, anyone holding
+    the token can sign up as that address and accept. Keep it out of every log,
     Referer and history entry: it is redacted from the request log
     (app.log_redaction), and the /invite/ page is served no-referrer and
     moves it out of the address bar on load.
@@ -433,7 +443,20 @@ async def accept_invitation(token: str, current_user: CurrentUser, _app_session:
     if invitation is None:
         raise _invitation_gone()
 
-    if invitation.email != current_user.email:
+    # CHT-1790: signup takes any address on trust, so with SMTP configured
+    # the account must have proved it receives mail at its address. Checked
+    # before the email match, so an unverified account gets this same
+    # answer whichever address it has and cannot use the mismatch 403 to
+    # guess the invitee's. Without SMTP nothing can verify an address and
+    # the invitation link (handed over by hand) is the only delivery path,
+    # so the token itself stays the credential, as before.
+    if EmailService().is_configured() and current_user.email_verified_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=dict(EMAIL_UNVERIFIED), headers=INVITATION_HEADERS,
+        )
+
+    # Ignoring case (CHT-1789): an address's case is not part of whose it is.
+    if not same_email(invitation.email, current_user.email):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invitation is for a different email",

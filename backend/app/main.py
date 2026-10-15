@@ -18,6 +18,7 @@ from app.oxyde_db import init_oxyde, close_oxyde, bootstrap_if_empty, verify_mig
 from app.api import api_router
 from app.websocket import SocketOwner, manager
 from app.services import credential_events, email_service, push_sender
+from app.services.email_verification_service import log_invitation_gate
 from app.services.push_service import PushService
 from app import ws_auth
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
@@ -70,6 +71,8 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(f"Refusing to start: {exc}") from exc
     # CHT-1522: the /mcp/<key> capability URL is deprecated.
     warn_if_capability_url_enabled()
+    # CHT-1790: whether invitations require a verified address here.
+    log_invitation_gate()
     await init_oxyde()
     # CHT-1195: a brand-new database gets its schema from the migration
     # chain here, the one case where migrating at startup cannot hurt.

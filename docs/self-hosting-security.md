@@ -179,6 +179,55 @@ too. An in-process per-IP counter behind a proxy would see one IP for
 everyone; a per-key-prefix counter would let an attacker lock a real key
 out with wrong guesses.
 
+## Team invitations and email verification
+
+Signup takes any email address on trust. An invitation names an address
+and is accepted with the token in its link, by a signed-in account with
+that address. So without some proof of the address, anyone holding a
+leaked invitation link, while the invited person has no account yet,
+could sign up as that address, accept, and join the team (CHT-1790).
+
+**With SMTP configured** (`SMTP_HOST` set), the invitation link is
+emailed, and accepting also requires the account to have verified its
+address: `POST /api/auth/email-verification` mails a six-digit code to
+the account's address and `POST /api/auth/email-verification/confirm`
+checks it (the CLI's `chaotic auth verify-email` does both). An
+unverified account gets a 403 with `error_code: "email_unverified"`
+from the accept, checked after the invitation is found to be valid and
+before its address is compared, so it gets the same answer whether its
+address matches or not and the refusal cannot be used to guess the
+invited address. Codes last 15 minutes, allow five tries, and only the
+newest one sent works. The limits count per address (an HMAC of it,
+ASCII-folded: only A-Z are lowercased, by `fold_email` in
+`backend/app/utils/email_address.py`, to match SQLite's case-insensitive
+comparison), not per account, so deleting the account and signing up
+again resets nothing: one code a minute and five an hour (429 with
+`Retry-After` past that), and at most 15 failed confirmations a day,
+after which every code, the right one included, gets the same 400 as a
+wrong one until the day has passed, and no new code is mailed (429
+with `Retry-After` for when the cap lapses). That history is kept for
+a day, also after the account is deleted. Because the limits are per
+address, an address is one account whatever its case: signup refuses
+an address that differs from an existing one only in case (ASCII
+letters), login accepts any case, and an invitation matches its
+account ignoring case. The database does not enforce this (there is no
+unique index on the case-folded address), and accounts made before this
+check that differ only in case keep working, sharing one set of limits. Only HMACs of the codes and the
+addresses are stored, under a key derived from `SECRET_KEY`. A failed
+send is reported to the person (502 `email_send_failed`) rather than
+only logged. At startup the server logs whether this gate is active
+("Invitation email-verification gate: ACTIVE" or "INACTIVE"). Accounts that
+existed before this change start unverified; existing team members are
+not affected, only accepting a new invitation is.
+
+**Without SMTP**, nothing can verify an address (the request answers 409
+`email_verification_unavailable`) and accepting works as before: the
+admin hands the invitation link over by hand, and the link is the
+credential. Treat it like a password: send it over a channel only the
+invitee reads, and revoke an invitation that may have leaked
+(`DELETE /api/teams/{team_id}/invitations/{id}`). If you run a
+multi-user server where that is not good enough, configure SMTP.
+
 ## Hardening, in priority order
 
 1. **Keep the default: bind to loopback, put a TLS-terminating reverse

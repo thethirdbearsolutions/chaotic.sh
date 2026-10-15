@@ -10,6 +10,8 @@ vi.mock('./api.js', () => ({
     api: {
         getInvitation: vi.fn(),
         acceptInvitation: vi.fn(),
+        requestEmailVerification: vi.fn(),
+        confirmEmailVerification: vi.fn(),
     },
 }));
 
@@ -204,10 +206,10 @@ describe('rendering', () => {
         expect(warning).toContain('r***@example.com');
     });
 
-    it('treats a case difference as a different account, like the server', () => {
+    it('ignores a case difference, like the server (CHT-1789)', () => {
         const el = document.createElement('div');
         renderSignedIn(el, preview(), { ...ROADRUNNER, email: 'roadrunner@EXAMPLE.com' });
-        expect(el.querySelector('#invite-accept')).toBeNull();
+        expect(el.querySelector('#invite-accept')).not.toBeNull();
     });
 });
 
@@ -347,6 +349,12 @@ describe('showInvite', () => {
             expect(d.enterTeam).not.toHaveBeenCalled();
         });
 
+        it('an account whose address differs only in case may accept (CHT-1789)', async () => {
+            api.getInvitation.mockResolvedValue(preview({ email_hint: 'r***@example.com' }));
+            await showInvite(TOKEN, deps({ user: { ...ROADRUNNER, email: 'RoadRunner@Example.com' } }));
+            expect(screenEl().querySelector('#invite-accept')).not.toBeNull();
+        });
+
         it('a 403 on accept says the address differs', async () => {
             api.getInvitation.mockResolvedValue(preview());
             api.acceptInvitation.mockRejectedValue(Object.assign(new Error('Invitation is for a different email'), {
@@ -361,6 +369,22 @@ describe('showInvite', () => {
             expect(error.classList.contains('hidden')).toBe(false);
             expect(error.textContent).toContain('different email address');
             expect(screenEl().querySelector('#invite-accept').disabled).toBe(false);
+        });
+
+        it('a 403 for an unverified address shows the server message, not a mismatch', async () => {
+            api.getInvitation.mockResolvedValue(preview());
+            api.acceptInvitation.mockRejectedValue(Object.assign(
+                new Error('Verify your email address before accepting an invitation'),
+                { status: 403, detail: { error_code: 'email_unverified', message: 'Verify your email address before accepting an invitation' } },
+            ));
+            await showInvite(TOKEN, deps({ user: ROADRUNNER }));
+
+            screenEl().querySelector('#invite-accept').click();
+            await flush();
+
+            const error = screenEl().querySelector('#invite-error');
+            expect(error.textContent).toContain('Verify your email address');
+            expect(error.textContent).not.toContain('different email address');
         });
 
         it('another error is shown and accept can be retried', async () => {
@@ -450,6 +474,175 @@ describe('showInvite', () => {
             expect(d.signOut).toHaveBeenCalled();
             expect(api.acceptInvitation).not.toHaveBeenCalled();
         });
+    });
+});
+
+describe('email verification on the invite page (CHT-1790)', () => {
+    const MEMBER = { team_id: 'team-1' };
+    const SENT = { email: 'roadrunner@example.com', expires_at: '2026-10-22T00:15:00Z' };
+
+    function refusal(status, errorCode, message) {
+        return Object.assign(new Error(message), { status, detail: { error_code: errorCode, message } });
+    }
+
+    const unverified = () => refusal(403, 'email_unverified', 'Verify your email address before accepting');
+
+    async function openUnverified(d = deps({ user: ROADRUNNER })) {
+        api.getInvitation.mockResolvedValue(preview());
+        api.acceptInvitation.mockRejectedValueOnce(unverified());
+        await showInvite(TOKEN, d);
+        screenEl().querySelector('#invite-accept').click();
+        await flush();
+        return d;
+    }
+
+    const q = (sel) => screenEl().querySelector(sel);
+    const visible = (sel) => !q(sel).classList.contains('hidden');
+
+    async function submitCode(value) {
+        q('#invite-code').value = value;
+        q('#invite-code-form').dispatchEvent(new Event('submit', { cancelable: true }));
+        await flush();
+    }
+
+    it('an unverified refusal offers Send code instead of Accept', async () => {
+        await openUnverified();
+        expect(visible('#invite-verify')).toBe(true);
+        expect(visible('#invite-accept-actions')).toBe(false);
+        expect(visible('#invite-code-form')).toBe(false);
+        expect(q('#invite-error').textContent).toContain('Verify your email address');
+        expect(q('#invite-error').textContent).not.toContain('different email address');
+        expect(q('#invite-verify').textContent).toContain('roadrunner@example.com');
+    });
+
+    it('Send code asks for a code and shows the code box', async () => {
+        await openUnverified();
+        api.requestEmailVerification.mockResolvedValue(SENT);
+        q('#invite-send-code').click();
+        await flush();
+        expect(api.requestEmailVerification).toHaveBeenCalledTimes(1);
+        expect(visible('#invite-code-form')).toBe(true);
+        expect(q('#invite-verify-status').textContent).toContain('We sent a code to roadrunner@example.com');
+        expect(q('#invite-send-code').textContent).toBe('Send a new code');
+        expect(q('#invite-send-code').disabled).toBe(false);
+    });
+
+    it('a confirmed code accepts again by itself and enters the team', async () => {
+        const d = await openUnverified();
+        api.requestEmailVerification.mockResolvedValue(SENT);
+        api.confirmEmailVerification.mockResolvedValue({ email_verified_at: '2026-10-22T00:01:00Z' });
+        api.acceptInvitation.mockResolvedValueOnce(MEMBER);
+        q('#invite-send-code').click();
+        await flush();
+        await submitCode(' 123456 ');
+        await flush();
+        expect(api.confirmEmailVerification).toHaveBeenCalledWith('123456');
+        expect(api.acceptInvitation).toHaveBeenCalledTimes(2);
+        expect(d.enterTeam).toHaveBeenCalledWith('team-1', 'Acme <Rockets>');
+        expect(screenEl().textContent).toContain('You joined');
+    });
+
+    it('a wrong code says so and leaves the box up to try again', async () => {
+        await openUnverified();
+        api.requestEmailVerification.mockResolvedValue(SENT);
+        api.confirmEmailVerification.mockRejectedValue(
+            refusal(400, 'invalid_verification_code', 'That code is wrong, has expired or has been used up.'));
+        q('#invite-send-code').click();
+        await flush();
+        await submitCode('000000');
+        expect(q('#invite-verify-status').textContent).toContain('That code is wrong');
+        expect(visible('#invite-code-form')).toBe(true);
+        expect(q('#invite-confirm-code').disabled).toBe(false);
+        expect(api.acceptInvitation).toHaveBeenCalledTimes(1);
+    });
+
+    it('an empty code is not sent', async () => {
+        await openUnverified();
+        await submitCode('   ');
+        expect(api.confirmEmailVerification).not.toHaveBeenCalled();
+    });
+
+    it('a 429 shows the wait and still offers the code box', async () => {
+        await openUnverified();
+        api.requestEmailVerification.mockRejectedValue(
+            refusal(429, 'email_verification_rate_limited', 'Wait 42 s before asking for another.'));
+        q('#invite-send-code').click();
+        await flush();
+        expect(q('#invite-verify-status').textContent).toContain('Wait 42 s');
+        expect(visible('#invite-code-form')).toBe(true);
+    });
+
+    it.each([
+        [409, 'email_verification_unavailable', 'Email verification is unavailable: this server has no SMTP'],
+        [502, 'email_send_failed', 'The verification email could not be sent'],
+    ])('a %s shows the server message and no code box', async (status, errorCode, message) => {
+        await openUnverified();
+        api.requestEmailVerification.mockRejectedValue(refusal(status, errorCode, message));
+        q('#invite-send-code').click();
+        await flush();
+        expect(q('#invite-verify-status').textContent).toContain(message);
+        expect(visible('#invite-code-form')).toBe(false);
+    });
+
+    it('server text is shown as text, never as markup', async () => {
+        await openUnverified();
+        api.requestEmailVerification.mockRejectedValue(refusal(502, 'email_send_failed', '<img src=x onerror=alert(1)>'));
+        q('#invite-send-code').click();
+        await flush();
+        expect(q('#invite-verify-status').querySelector('img')).toBeNull();
+        expect(q('#invite-verify-status').textContent).toContain('<img');
+    });
+
+    it('already verified (elsewhere) just accepts again', async () => {
+        await openUnverified();
+        api.requestEmailVerification.mockRejectedValue(
+            refusal(409, 'email_already_verified', 'Your email address is already verified.'));
+        api.acceptInvitation.mockResolvedValueOnce(MEMBER);
+        q('#invite-send-code').click();
+        await flush();
+        await flush();
+        expect(api.acceptInvitation).toHaveBeenCalledTimes(2);
+        expect(screenEl().textContent).toContain('You joined');
+    });
+
+    it('already verified on confirm also accepts again', async () => {
+        await openUnverified();
+        api.confirmEmailVerification.mockRejectedValue(
+            refusal(409, 'email_already_verified', 'Your email address is already verified.'));
+        api.acceptInvitation.mockResolvedValueOnce(MEMBER);
+        await submitCode('123456');
+        await flush();
+        expect(api.acceptInvitation).toHaveBeenCalledTimes(2);
+    });
+
+    it('an expired session signs out from either step', async () => {
+        const d = await openUnverified();
+        api.requestEmailVerification.mockRejectedValue(Object.assign(new Error('expired'), { status: 401 }));
+        q('#invite-send-code').click();
+        await flush();
+        expect(d.signOut).toHaveBeenCalledTimes(1);
+        api.confirmEmailVerification.mockRejectedValue(Object.assign(new Error('expired'), { status: 401 }));
+        await submitCode('123456');
+        expect(d.signOut).toHaveBeenCalledTimes(2);
+    });
+
+    it('a failed request without a message falls back to a generic one', async () => {
+        await openUnverified();
+        api.requestEmailVerification.mockRejectedValue(null);
+        q('#invite-send-code').click();
+        await flush();
+        expect(q('#invite-verify-status').textContent).toBe('Something went wrong');
+        api.confirmEmailVerification.mockRejectedValue(null);
+        await submitCode('123456');
+        expect(q('#invite-verify-status').textContent).toBe('Something went wrong');
+    });
+
+    it('an unparseable expiry is left out of the message', async () => {
+        await openUnverified();
+        api.requestEmailVerification.mockResolvedValue({ email: 'roadrunner@example.com', expires_at: 'soon' });
+        q('#invite-send-code').click();
+        await flush();
+        expect(q('#invite-verify-status').textContent).toBe('We sent a code to roadrunner@example.com.');
     });
 });
 

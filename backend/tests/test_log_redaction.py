@@ -60,6 +60,11 @@ class TestSecretFormat:
         ("app/api/idempotency.py", "uuid4"): "idempotency claim token: names a request, grants nothing",
         ("app/services/issue_service.py", "random"): "shuffles issue order for display",
         ("app/services/ritual_selection.py", "random"): "seeded ritual sampling, deterministic by design",
+        ("app/services/email_verification_service.py", "randbelow"): (
+            "six-digit email verification code (CHT-1790): a secret, but only ever in an email "
+            "and a POST body, never a URL or a header, and short-lived and attempt-capped; "
+            "a mint_secret prefix would make it untypeable"
+        ),
         ("app/services/push_sender.py", "urandom"): "RFC 8188 per-message salt for Web Push encryption, sent in clear",
     }
     _TOKEN_CALLS = {"token_hex", "token_urlsafe", "token_bytes", "urandom", "uuid4", "randbits", "SystemRandom"}

@@ -5,6 +5,7 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 from datetime import datetime, timezone
 from app.oxyde_models.user import OxydeUser
 from app.schemas.user import UserCreate, UserUpdate
+from app.utils.email_address import fold_email
 from app.utils.security import get_password_hash, verify_password
 from app.oxyde_models.team import OxydeTeamMember, OxydeTeamInvitation
 from app.oxyde_models.api_key import OxydeAPIKey
@@ -96,9 +97,35 @@ class UserService:
         """Get user by email."""
         return await OxydeUser.objects.get_or_none(email=email)
 
+    async def find_by_email_ignoring_case(self, email: str) -> list[OxydeUser]:
+        """Every account whose address equals ``email`` ignoring (ASCII)
+        case (CHT-1790). Normally none or one; more only for accounts
+        made before signup refused case variants.
+
+        ``iexact`` narrows it in the database (Oxyde escapes ``%``, ``_``
+        and ``\\`` in it, so they match only themselves); the Python
+        comparison then decides, so a LIKE quirk can only miss a row,
+        never let a different address through.
+        """
+        folded = fold_email(email)
+        if not folded:
+            return []
+        rows = await OxydeUser.objects.filter(email__iexact=email.strip()).order_by("created_at").all()
+        return [user for user in rows if fold_email(user.email) == folded]
+
+    async def get_by_email_ignoring_case(self, email: str) -> OxydeUser | None:
+        """The account at ``email``: an exact match first, else the one
+        account that matches ignoring case, else None (none, or several
+        made before case variants were refused)."""
+        exact = await self.get_by_email(email)
+        if exact is not None:
+            return exact
+        matches = await self.find_by_email_ignoring_case(email)
+        return matches[0] if len(matches) == 1 else None
+
     async def authenticate(self, email: str, password: str) -> OxydeUser | None:
-        """Authenticate a user."""
-        user = await self.get_by_email(email)
+        """Authenticate a user, by their address in any case."""
+        user = await self.get_by_email_ignoring_case(email)
         if not user:
             return None
         if not verify_password(password, user.hashed_password):

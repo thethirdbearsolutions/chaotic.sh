@@ -475,6 +475,28 @@ describe('ApiClient', () => {
       });
     });
 
+    describe('email verification (CHT-1790)', () => {
+      beforeEach(() => {
+        fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+      });
+
+      it('requestEmailVerification POSTs with no body', async () => {
+        await client.requestEmailVerification();
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/auth/email-verification',
+          expect.objectContaining({ method: 'POST' })
+        );
+      });
+
+      it('confirmEmailVerification POSTs the code', async () => {
+        await client.confirmEmailVerification('123456');
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/auth/email-verification/confirm',
+          expect.objectContaining({ method: 'POST', body: JSON.stringify({ code: '123456' }) })
+        );
+      });
+    });
+
     describe('logout', () => {
       it('clears the token', () => {
         client.setToken('token123');

@@ -19,14 +19,19 @@
  * invitation is no longer valid", and nothing else: the server answers
  * all of them with the same 404.
  *
- * The token is a bearer credential: while the invited address has no
- * account, whoever holds it can sign up as that address and join
- * (CHT-1790). So on load it moves from the path into sessionStorage and
- * the address bar becomes /invite: this tab's back button and any later
- * Referer no longer carry it, though the browser's own history list
- * still records the /invite/<token> address it opened (CHT-1792). The
- * page is served with Referrer-Policy: no-referrer, and the token goes
- * only to this server's own API, never in a query string.
+ * With SMTP configured on the server, accepting also needs a verified
+ * address (CHT-1790): the server refuses with `email_unverified`, and the
+ * page then offers "Send code" and a box for the six-digit code it mails,
+ * and tries the accept again by itself once the code is confirmed.
+ *
+ * The token is a bearer credential: without SMTP, while the invited
+ * address has no account, whoever holds it can sign up as that address
+ * and join (CHT-1790). So on load it moves from the path into
+ * sessionStorage and the address bar becomes /invite: this tab's back
+ * button and any later Referer no longer carry it, though the browser's
+ * own history list still records the /invite/<token> address it opened
+ * (CHT-1792). The page is served with Referrer-Policy: no-referrer, and
+ * the token goes only to this server's own API, never in a query string.
  *
  * On an invitation address with no usable token (/invite with nothing
  * to read back, because storage was blocked and the page reloaded or the
@@ -279,7 +284,8 @@ export function renderSignedOut(el, preview) {
  * @param {object} user - the signed-in user (GET /auth/me)
  */
 export function renderSignedIn(el, preview, user) {
-    const mismatch = maskEmail(user.email) !== preview.email_hint;
+    // Ignoring case, as the server compares (CHT-1789).
+    const mismatch = maskEmail(user.email).toLowerCase() !== String(preview.email_hint || '').toLowerCase();
     const you = `<p class="invite-muted">Signed in as <strong>${escapeHtml(user.email)}</strong></p>`;
     if (mismatch) {
         el.innerHTML = `
@@ -301,11 +307,112 @@ export function renderSignedIn(el, preview, user) {
             ${summary(preview)}
             ${you}
             <p id="invite-error" class="invite-warning hidden" role="alert"></p>
-            <div class="invite-actions">
+            <div id="invite-verify" class="invite-verify hidden">
+                <p>Verify your email address to continue: we will email a six-digit code to
+                    <strong>${escapeHtml(user.email)}</strong>.</p>
+                <form id="invite-code-form" class="invite-code-form hidden">
+                    <div class="form-group">
+                        <label for="invite-code">Code from the email</label>
+                        <input type="text" id="invite-code" inputmode="numeric" autocomplete="one-time-code"
+                            pattern="[0-9]{6}" maxlength="6" required>
+                    </div>
+                    <button type="submit" id="invite-confirm-code" class="btn btn-primary">Verify</button>
+                </form>
+                <p id="invite-verify-status" class="invite-muted hidden" role="status"></p>
+                <div class="invite-actions">
+                    <button type="button" id="invite-send-code" class="btn btn-secondary">Send code</button>
+                </div>
+            </div>
+            <div class="invite-actions" id="invite-accept-actions">
                 <a class="btn btn-secondary" href="/">Not now</a>
                 <button type="button" id="invite-accept" class="btn btn-primary">Accept invitation</button>
             </div>
         </div>`;
+}
+
+function clockTime(iso) {
+    const when = new Date(iso);
+    if (Number.isNaN(when.getTime())) return '';
+    return when.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * The email-verification step (CHT-1790): "Send code", then the code,
+ * then `onVerified` (which accepts again). Every message is set with
+ * textContent.
+ * @param {HTMLElement} el
+ * @param {object} handlers
+ * @param {() => void} handlers.onVerified - the address is verified (or already was)
+ * @param {() => void} handlers.signOut - the session expired
+ */
+function wireVerification(el, { onVerified, signOut }) {
+    const box = el.querySelector('#invite-verify');
+    const send = el.querySelector('#invite-send-code');
+    const form = el.querySelector('#invite-code-form');
+    const input = el.querySelector('#invite-code');
+    const confirm = el.querySelector('#invite-confirm-code');
+    const status = el.querySelector('#invite-verify-status');
+    const say = (message) => {
+        status.textContent = message;
+        status.classList.remove('hidden');
+    };
+    const showForm = () => {
+        form.classList.remove('hidden');
+        input.focus?.();
+    };
+
+    send.addEventListener('click', async () => {
+        if (send.disabled) return;
+        send.disabled = true;
+        try {
+            const sent = await api.requestEmailVerification();
+            const until = clockTime(sent.expires_at);
+            say(`We sent a code to ${sent.email}${until ? `; it works until ${until}` : ''}.`);
+            send.textContent = 'Send a new code';
+            showForm();
+        } catch (e) {
+            const code = e && e.detail && e.detail.error_code;
+            if (e && e.status === 401) {
+                signOut();
+                return;
+            }
+            if (code === 'email_already_verified') {
+                onVerified();
+                return;
+            }
+            say((e && e.message) || 'Something went wrong');
+            // Rate limited: a code sent a moment ago may still be on its way.
+            if (e && e.status === 429) showForm();
+        } finally {
+            send.disabled = false;
+        }
+    });
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (confirm.disabled) return;
+        const value = input.value.trim();
+        if (!value) return;
+        confirm.disabled = true;
+        try {
+            await api.confirmEmailVerification(value);
+        } catch (e) {
+            confirm.disabled = false;
+            const code = e && e.detail && e.detail.error_code;
+            if (e && e.status === 401) {
+                signOut();
+            } else if (code === 'email_already_verified') {
+                onVerified();
+            } else {
+                say((e && e.message) || 'Something went wrong');
+                input.select?.();
+            }
+            return;
+        }
+        confirm.disabled = false;
+        box.classList.add('hidden');
+        onVerified();
+    });
 }
 
 /**
@@ -384,7 +491,7 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
     const accept = el.querySelector('#invite-accept');
     if (!accept) return;
     let busy = false;
-    accept.addEventListener('click', async () => {
+    const doAccept = async () => {
         if (busy) return;
         busy = true;
         accept.disabled = true;
@@ -403,6 +510,12 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
                 // Used, revoked or expired since the page loaded.
                 forgetInviteToken();
                 renderGone(el);
+            } else if (e && e.status === 403 && e.detail && e.detail.error_code === 'email_unverified') {
+                // CHT-1790: with SMTP on, the account must verify its
+                // address first. Not a mismatch: offer the code instead.
+                showError(el, 'Verify your email address to continue.');
+                el.querySelector('#invite-accept-actions').classList.add('hidden');
+                el.querySelector('#invite-verify').classList.remove('hidden');
             } else if (e && e.status === 403) {
                 showError(el, `This invitation is for a different email address. Only ${preview.email_hint} can accept it.`);
             } else {
@@ -422,6 +535,16 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
             showOnly(el);
             renderJoined(el, preview);
         }
+    };
+    accept.addEventListener('click', doAccept);
+    wireVerification(el, {
+        onVerified: () => {
+            el.querySelector('#invite-verify').classList.add('hidden');
+            el.querySelector('#invite-error').classList.add('hidden');
+            el.querySelector('#invite-accept-actions').classList.remove('hidden');
+            doAccept();
+        },
+        signOut,
     });
 }
 
