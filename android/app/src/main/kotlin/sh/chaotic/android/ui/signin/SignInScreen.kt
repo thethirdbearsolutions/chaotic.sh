@@ -64,7 +64,7 @@ fun SignInScreen(ended: SessionEnded?, viewModel: SignInViewModel = hiltViewMode
 }
 
 @Composable
-private fun SignInContent(
+internal fun SignInContent(
     ui: SignInUiState,
     ended: SessionEnded?,
     onServerInputChanged: (String) -> Unit,
