@@ -69,6 +69,26 @@ class TestIssueListBranches:
         result = await tools.issue_list(sprint="current")
         assert "error" not in result
 
+    async def test_where_query(self, test_project, test_user):
+        """`where` (CHT-1718) runs the query endpoint in process, ANDed
+        with the plain filters; a bad query is a structured error."""
+        bug = await tools.issue_create(title="Login bug", issue_type="bug", priority="high")
+        await tools.issue_create(title="Chore", issue_type="chore")
+        await tools.issue_update(bug["identifier"], assignee="me")
+
+        result = await tools.issue_list(where="type=bug or title~=nothing", priority=["high"])
+        assert "error" not in result, result
+        assert [i["identifier"] for i in result["issues"]] == [bug["identifier"]]
+        assert result["total"] == 1 and result["truncated"] is False
+        assert result["where"] == "(type=bug or title~=nothing) priority=high"
+        assert result["issues"][0]["status"] == "backlog"  # wire form
+
+        team_wide = await tools.issue_list(where="assignee=me", all_projects=True, limit=1)
+        assert [i["identifier"] for i in team_wide["issues"]] == [bug["identifier"]]
+
+        bad = await tools.issue_list(where="bogus=1")
+        assert "unknown field 'bogus'" in bad["error"]["message"]
+
     async def test_bad_issue_type_reports_error(self, test_project):
         result = await tools.issue_create(title="Bad type", issue_type="not-a-real-type")
         assert "error" in result

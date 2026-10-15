@@ -89,6 +89,7 @@ PARAMS_NOT_EXPOSED = {
 # once more with these overrides so every branch is exercised.
 EXTRA_INVOCATIONS = {
     "get_ready_issues": [{"project_id": None, "team_id": "sentinel"}],
+    "query_issues": [{"project_id": None, "team_id": "sentinel"}],
 }
 
 

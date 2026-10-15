@@ -48,15 +48,23 @@ CHT-1245 added ``GET /projects/{project_id}/issues/ready`` and
 ``GET /teams/{team_id}/issues/ready`` below -- a brand new endpoint, so
 it's path-nested from the start rather than getting a flat query-param
 route first and migrating later.
+
+CHT-1718 added ``GET /projects/{project_id}/issues/query`` and
+``GET /teams/{team_id}/issues/query`` the same way. Its parameters are
+few and fixed (``where``, ``filter``, ``order``, ``skip``, ``limit``),
+because the filters live inside the query, so the drift worry above
+does not apply to it.
 """
 from typing import Annotated
 
-from fastapi import APIRouter, status, Header
+from fastapi import APIRouter, status, Header, Query
 
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser
 from app.schemas.project import ProjectCreate, ProjectResponse
 from app.schemas.issue import IssueCreate, IssueResponse, LabelCreate, LabelResponse
+from app.schemas.issue_query import IssueQueryResponse
+from app.services import issue_query
 from app.schemas.document import DocumentCreate, DocumentResponse
 from app.schemas.sprint import SprintCreate, SprintResponse
 from app.enums import SprintStatus
@@ -198,6 +206,54 @@ async def list_team_ready_issues(
     return await _issues.list_ready_issues(
         current_user, team_id=team_id,
         mine=mine, include_assigned=include_assigned, limit=limit,
+    )
+
+
+# The issue query (CHT-1718). GET, so the URL is the whole state: a page
+# can keep `where`/`order` in its own URL and a read-only credential can
+# run it. Both routes take the same parameters, declared once here.
+_WhereParam = Annotated[str | None, Query(max_length=issue_query.MAX_WHERE_LENGTH)]
+_FilterParam = Annotated[
+    str | None, Query(alias="filter", max_length=issue_query.MAX_FILTER_JSON_LENGTH),
+]
+_OrderParam = Annotated[str | None, Query(max_length=200)]
+_SkipParam = Annotated[int, Query(ge=0)]
+_LimitParam = Annotated[int, Query(ge=1, le=1000)]
+
+
+@router.get("/projects/{project_id}/issues/query", response_model=IssueQueryResponse)
+@reads
+async def query_project_issues(
+    project_id: str,
+    current_user: CurrentUser,
+    where: _WhereParam = None,
+    filter_json: _FilterParam = None,
+    order: _OrderParam = None,
+    skip: _SkipParam = 0,
+    limit: _LimitParam = 100,
+) -> IssueQueryResponse:
+    """Run an issue query in one project (CHT-1718; docs/issue-query.md)."""
+    return await _issues.query_issues(
+        current_user, project_id=project_id, where=where, filter_json=filter_json,
+        order=order, skip=skip, limit=limit,
+    )
+
+
+@router.get("/teams/{team_id}/issues/query", response_model=IssueQueryResponse)
+@reads
+async def query_team_issues(
+    team_id: str,
+    current_user: CurrentUser,
+    where: _WhereParam = None,
+    filter_json: _FilterParam = None,
+    order: _OrderParam = None,
+    skip: _SkipParam = 0,
+    limit: _LimitParam = 100,
+) -> IssueQueryResponse:
+    """Run an issue query across every project of a team (CHT-1718)."""
+    return await _issues.query_issues(
+        current_user, team_id=team_id, where=where, filter_json=filter_json,
+        order=order, skip=skip, limit=limit,
     )
 
 

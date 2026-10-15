@@ -96,54 +96,60 @@ export function showCreateIssueModal(preselectedProjectId = null) {
             <div class="create-issue-body">
                 <input type="text" id="create-issue-title" class="create-issue-title-input" placeholder="Issue title" autofocus>
                 <textarea id="create-issue-description" class="create-issue-description-input" placeholder="Add description..." rows="4"></textarea>
-                <button type="button" class="more-options-toggle" id="more-options-toggle" data-action="toggle-create-options">
-                    <svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    More options
-                </button>
             </div>
-            <div class="create-issue-options collapsed" id="create-issue-options-panel">
-                <div class="create-issue-options-content">
-                    <div class="create-issue-template">
-                        <label for="create-issue-template">Template</label>
-                        <select id="create-issue-template" data-action="apply-template">
-                            ${ISSUE_TEMPLATES.map(t => `<option value="${t.id}">${t.label}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="create-issue-meta">
-                        <label for="create-issue-due-date">Due date</label>
-                        <input type="date" id="create-issue-due-date" class="create-issue-date-input">
-                    </div>
+            <!-- Status, priority, type, labels, assignee, estimate and sprint
+                 are what most issues are created with, so they show as chips
+                 up front; only template and due date stay behind the
+                 disclosure (CHT-1770). -->
+            <div class="create-issue-toolbar">
+                <div class="toolbar-buttons">
+                    <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="status">
+                        ${getStatusIcon('backlog')}
+                        <span id="create-issue-status-label">Backlog</span>
+                    </button>
+                    <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="priority">
+                        ${getPriorityIcon('no_priority')}
+                        <span id="create-issue-priority-label">Priority</span>
+                    </button>
+                    <button type="button" class="toolbar-btn" id="create-issue-type-btn" data-action="toggle-create-dropdown" data-dropdown-type="type">
+                        <span class="issue-type-badge type-task">Task</span>
+                        <span id="create-issue-type-label">Task</span>
+                    </button>
+                    <button type="button" class="toolbar-btn" id="create-issue-labels-btn" data-action="toggle-create-dropdown" data-dropdown-type="labels">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12.99V3h9.99l7.6 7.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                        <span id="create-issue-labels-label">Labels</span>
+                    </button>
+                    <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="assignee">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
+                        <span id="create-issue-assignee-label">Assignee</span>
+                    </button>
+                    <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="estimate">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        <span id="create-issue-estimate-label">Estimate</span>
+                    </button>
+                    <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="sprint">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                        <span id="create-issue-sprint-label">Sprint</span>
+                    </button>
                 </div>
-                <div class="create-issue-toolbar">
-                    <div class="toolbar-buttons">
-                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="status">
-                            ${getStatusIcon('backlog')}
-                            <span id="create-issue-status-label">Backlog</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="priority">
-                            ${getPriorityIcon('no_priority')}
-                            <span id="create-issue-priority-label">Priority</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-type-btn" data-action="toggle-create-dropdown" data-dropdown-type="type">
-                            <span class="issue-type-badge type-task">Task</span>
-                            <span id="create-issue-type-label">Task</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-labels-btn" data-action="toggle-create-dropdown" data-dropdown-type="labels">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12.99V3h9.99l7.6 7.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-                            <span id="create-issue-labels-label">Labels</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="assignee">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
-                            <span id="create-issue-assignee-label">Assignee</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="estimate">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                            <span id="create-issue-estimate-label">Estimate</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="sprint">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                            <span id="create-issue-sprint-label">Sprint</span>
-                        </button>
+            </div>
+            <div class="create-issue-more">
+                <button type="button" class="more-options-toggle" id="more-options-toggle" data-action="toggle-create-options" aria-expanded="false" aria-controls="create-issue-options-panel">
+                    <svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    Template and due date
+                </button>
+                <div class="create-issue-options collapsed" id="create-issue-options-panel" inert>
+                    <div class="create-issue-options-content">
+                        <div class="create-issue-template">
+                            <label for="create-issue-template">Template</label>
+                            <select id="create-issue-template" data-action="apply-template">
+                                ${ISSUE_TEMPLATES.map(t => `<option value="${t.id}">${t.label}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div class="create-issue-meta">
+                            <label for="create-issue-due-date">Due date</label>
+                            <input type="date" id="create-issue-due-date" class="create-issue-date-input">
+                        </div>
                     </div>
                 </div>
             </div>
@@ -183,8 +189,11 @@ export function toggleCreateIssueOptions() {
     const panel = document.getElementById('create-issue-options-panel');
     const toggle = document.getElementById('more-options-toggle');
     if (panel && toggle) {
-        panel.classList.toggle('collapsed');
+        const collapsed = panel.classList.toggle('collapsed');
         toggle.classList.toggle('expanded');
+        // A collapsed panel's fields are out of the Tab order (CHT-1770 review L3)
+        panel.toggleAttribute('inert', collapsed);
+        toggle.setAttribute('aria-expanded', String(!collapsed));
     }
 }
 
@@ -215,39 +224,34 @@ export function showCreateSubIssueModal(parentId, projectId) {
             <div class="create-issue-body">
                 <input type="text" id="create-issue-title" class="create-issue-title-input" placeholder="Sub-issue title" autofocus>
                 <textarea id="create-issue-description" class="create-issue-description-input" placeholder="Add description..." rows="4"></textarea>
-                <button type="button" class="more-options-toggle" id="more-options-toggle" data-action="toggle-create-options">
-                    <svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    More options
-                </button>
             </div>
-            <div class="create-issue-options collapsed" id="create-issue-options-panel">
-                <div class="create-issue-toolbar">
-                    <div class="toolbar-buttons">
-                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="status">
-                            ${getStatusIcon('backlog')}
-                            <span id="create-issue-status-label">Backlog</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="priority">
-                            ${getPriorityIcon('no_priority')}
-                            <span id="create-issue-priority-label">Priority</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-type-btn" data-action="toggle-create-dropdown" data-dropdown-type="type">
-                            <span class="issue-type-badge type-task">Task</span>
-                            <span id="create-issue-type-label">Task</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-labels-btn" data-action="toggle-create-dropdown" data-dropdown-type="labels">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12.99V3h9.99l7.6 7.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-                            <span id="create-issue-labels-label">Labels</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="assignee">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
-                            <span id="create-issue-assignee-label">Assignee</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="estimate">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                            <span id="create-issue-estimate-label">Estimate</span>
-                        </button>
-                    </div>
+            <!-- Every field here is a chip up front (CHT-1770) -->
+            <div class="create-issue-toolbar">
+                <div class="toolbar-buttons">
+                    <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="status">
+                        ${getStatusIcon('backlog')}
+                        <span id="create-issue-status-label">Backlog</span>
+                    </button>
+                    <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="priority">
+                        ${getPriorityIcon('no_priority')}
+                        <span id="create-issue-priority-label">Priority</span>
+                    </button>
+                    <button type="button" class="toolbar-btn" id="create-issue-type-btn" data-action="toggle-create-dropdown" data-dropdown-type="type">
+                        <span class="issue-type-badge type-task">Task</span>
+                        <span id="create-issue-type-label">Task</span>
+                    </button>
+                    <button type="button" class="toolbar-btn" id="create-issue-labels-btn" data-action="toggle-create-dropdown" data-dropdown-type="labels">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12.99V3h9.99l7.6 7.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                        <span id="create-issue-labels-label">Labels</span>
+                    </button>
+                    <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="assignee">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
+                        <span id="create-issue-assignee-label">Assignee</span>
+                    </button>
+                    <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="estimate">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        <span id="create-issue-estimate-label">Estimate</span>
+                    </button>
                 </div>
             </div>
             <div class="create-issue-footer">
@@ -461,12 +465,14 @@ export function setCreateIssueField(field, value, label) {
     markModalDirty();
 
     const safeLabel = escapeHtml(label);
+    // Find the chip by what it edits, inside the create modal, not by its
+    // position among every .toolbar-btn on the page (CHT-1770 review N5)
+    const chip = document.querySelector(
+        `.create-issue-modal .toolbar-btn[data-action="toggle-create-dropdown"][data-dropdown-type="${field}"]`);
     if (field === 'status') {
-        const btn = document.querySelector('.toolbar-btn:first-child');
-        btn.innerHTML = `${getStatusIcon(value)}<span id="create-issue-status-label">${safeLabel}</span>`;
+        if (chip) chip.innerHTML = `${getStatusIcon(value)}<span id="create-issue-status-label">${safeLabel}</span>`;
     } else if (field === 'priority') {
-        const btn = document.querySelectorAll('.toolbar-btn')[1];
-        btn.innerHTML = `${getPriorityIcon(value)}<span id="create-issue-priority-label">${safeLabel}</span>`;
+        if (chip) chip.innerHTML = `${getPriorityIcon(value)}<span id="create-issue-priority-label">${safeLabel}</span>`;
     } else if (field === 'type') {
         const btn = document.getElementById('create-issue-type-btn');
         if (btn) {
@@ -478,7 +484,7 @@ export function setCreateIssueField(field, value, label) {
     // The chosen option had focus and is gone with the dropdown; put focus
     // back on the toolbar button that opened it rather than on <body>
     // (CHT-1231).
-    document.querySelector(`.toolbar-btn[data-action="toggle-create-dropdown"][data-dropdown-type="${field}"]`)?.focus();
+    chip?.focus();
 }
 
 async function submitCreateIssue({ keepOpen = false } = {}) {

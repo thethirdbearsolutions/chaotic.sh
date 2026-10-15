@@ -122,6 +122,23 @@ class Backend(Protocol):
         skip: int | None = None,
     ) -> list: ...
 
+    async def query_issues(
+        self,
+        *,
+        project_id: str | None,
+        team_id: str | None,
+        where: str | None,
+        filter_json: str | None,
+        order: str | None,
+        limit: int,
+        skip: int = 0,
+    ) -> dict:
+        """Run an issue query (CHT-1718) in a project or, with only
+        ``team_id``, across the team. ``where`` is the text form,
+        ``filter_json`` the structure as JSON; the server ANDs them.
+        Returns the query response: ``issues``, ``total``, and the
+        normalized ``query``/``where``/``order``."""
+
     async def list_ready_issues(
         self, *, project_id: str | None, team_id: str | None,
         mine: bool, include_assigned: bool, limit: int,

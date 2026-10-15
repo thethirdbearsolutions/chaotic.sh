@@ -122,6 +122,152 @@ def _relations_or_none(iss):
         return None
 
 
+def _print_issue_list(m, issues, *, all_projects, project_id, team_id, limit, skip, total=None):
+    """Print `issue list` results (or JSON). ``total`` is the query
+    endpoint's match count (CHT-1718); without it, a full page is taken
+    to mean there may be more."""
+    # JSON output mode (CHT-170)
+    if m.is_json_output():
+        m.output_json(issues)
+        return
+
+    if not issues:
+        console.print("[yellow]No issues found.[/yellow]")
+        return
+
+    # Build project/sprint lookup maps
+    project_keys = {}
+    if all_projects:
+        # One projects call for the Project column; sprints are
+        # project-scoped, so fetch once per project that has sprinted
+        # issues (bounded by project count, no per-issue calls)
+        projects = _client().get_projects(team_id)
+        project_keys = {p["id"]: p["key"] for p in projects}
+        sprint_names = {}
+        for pid in {i["project_id"] for i in issues if i.get("sprint_id")}:
+            for s in _client().get_sprints(pid):
+                sprint_names[s["id"]] = s["name"]
+    else:
+        sprints = _client().get_sprints(project_id)
+        sprint_names = {s["id"]: s["name"] for s in sprints}
+
+    table = Table(title="Issues (all projects)" if all_projects else "Issues")
+    table.add_column("ID")
+    table.add_column("Title")
+    if all_projects:
+        table.add_column("Project")
+    table.add_column("Status")
+    table.add_column("Priority")
+    table.add_column("Type")
+    table.add_column("Estimate")
+    table.add_column("Sprint")
+
+    for i in issues:
+        row = [
+            i["identifier"],
+            i["title"][:50] + ("..." if len(i["title"]) > 50 else ""),
+        ]
+        if all_projects:
+            row.append(project_keys.get(i.get("project_id"), "-"))
+        row.extend([
+            i["status"].replace("_", " ").title(),
+            i["priority"].replace("_", " ").title(),
+            i.get("issue_type", "task").replace("_", " ").title(),
+            "-" if i.get("estimate") is None else str(i.get("estimate")),
+            sprint_names.get(i.get("sprint_id"), "-"),
+        ])
+        table.add_row(*row)
+
+    console.print(table)
+
+    # Truncation warning (CHT-946) + pagination hint (CHT-950)
+    next_skip = (skip or 0) + len(issues)
+    if total is not None:
+        if total > next_skip:
+            console.print(f"\n[yellow]Showing {esc(len(issues))} of {esc(total)} issues. Use --skip {esc(next_skip)} to see the next page, or --limit to adjust.[/yellow]")
+    elif len(issues) >= limit:
+        next_skip = (skip or 0) + limit
+        console.print(f"\n[yellow]Showing {esc(limit)} issues (results may be truncated). Use --skip {esc(next_skip)} to see next page, or --limit to adjust.[/yellow]")
+
+    # Search tip (CHT-949)
+    console.print("\n[dim]Tip: Use 'chaotic issue search <query>' to search by title, description, or identifier.[/dim]")
+
+
+def _csv(value, lower=False):
+    if not value:
+        return None
+    items = [v.strip() for v in value.split(",") if v.strip()]
+    return [v.lower() for v in items] if lower else items
+
+
+def _issue_query(m, *, where, status, priority, sprint, no_sprint, epic, label,
+                 exclude_label, exclude_status, exclude_priority, exclude_issue_type,
+                 exclude_assignee, assignee, search, limit, skip, sort_by, order,
+                 all_projects):
+    """`issue list --where` (CHT-1718): run the query endpoint. Every other
+    filter flag becomes a query row ANDed with the --where text, so it
+    means what it means without --where; the server parses and validates
+    all of it and says what is wrong."""
+    import json
+
+    from click.core import ParameterSource
+
+    from chaotic_mcp_tools.query import simple_filter_rows
+
+    if not all_projects and not m.get_current_project():
+        raise click.ClickException(
+            "No project selected. Run 'chaotic project use <project_id>' or pass --all-projects."
+        )
+    if sprint and no_sprint:
+        raise click.UsageError("Cannot use both --sprint and --no-sprint")
+    if sprint and all_projects:
+        raise click.UsageError(
+            "Cannot use --sprint with --all-projects (sprints are project-scoped); "
+            "use --where 'sprint=current' to match each project's current sprint"
+        )
+    ctx = click.get_current_context()
+    order_text = None
+    if sort_by.lower() == "random":
+        if ctx.get_parameter_source("sort_by") is not ParameterSource.DEFAULT:
+            raise click.UsageError("--sort random cannot be combined with --where")
+    else:
+        order_text = ("-" if order.lower() == "desc" else "") + sort_by.lower()
+
+    project_id = None if all_projects else m.get_current_project()
+    team_id = m.get_current_team() if all_projects else None
+    excluded = None
+    if exclude_assignee:
+        excluded = [
+            "unassigned" if token.lower() == "unassigned" else m.resolve_assignee_id(token)
+            for token in _csv(exclude_assignee)
+        ]
+    rows = simple_filter_rows(
+        statuses=_csv(status, lower=True),
+        priorities=_csv(priority, lower=True),
+        assignee_id=m.resolve_assignee_id(assignee) if assignee else None,
+        labels_all=_csv(label),
+        search=search,
+        sprint_id=m.resolve_sprint_id(sprint, project_id) if sprint else None,
+        no_sprint=no_sprint,
+        parent_id=_client().get_issue_by_identifier(epic)["id"] if epic else None,
+        exclude_statuses=_csv(exclude_status, lower=True),
+        exclude_priorities=_csv(exclude_priority, lower=True),
+        exclude_issue_types=_csv(exclude_issue_type, lower=True),
+        exclude_assignee_ids=excluded,
+        exclude_labels=_csv(exclude_label),
+    )
+    text = where[0] if len(where) == 1 else " ".join(f"({w})" for w in where)
+    result = _client().query_issues(
+        project_id=project_id, team_id=team_id, where=text,
+        filter_json=json.dumps({"match": "all", "rows": rows}) if rows else None,
+        order=order_text, skip=skip or None, limit=limit,
+    )
+    _print_issue_list(
+        m, result["issues"], all_projects=all_projects, project_id=project_id,
+        team_id=team_id, limit=limit, skip=skip, total=result["total"],
+    )
+
+
 def register(cli):
     """Register issue commands on the CLI group."""
 
@@ -144,17 +290,55 @@ def register(cli):
     @click.option("--exclude-assignee", "exclude_assignee", help="Exclude issues assigned to this user ('me', a name, user ID, or 'unassigned'). Comma-separated for multiple.")
     @click.option("--assignee", help="Filter by assignee ('me', a name, or user ID)")
     @click.option("--search", help="Search in title, description, and identifier.")
+    @click.option("--where", "-w", "where", multiple=True, metavar="QUERY", help="Filter with a query (repeatable; all must match, and so must any other filter flag). Syntax above.")
     @click.option("--limit", "-n", type=int, default=50, help="Maximum number of issues to show (default: 50)")
     @click.option("--skip", type=int, default=0, help="Number of issues to skip (for pagination)")
-    @click.option("--sort-by", "--sort", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random)")
+    @click.option("--sort-by", "--sort", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random; with --where: most recently updated)")
     @click.option("--order", "-o", type=click.Choice(["asc", "desc"], case_sensitive=False), default="desc", help="Sort direction (default: desc)")
     @click.option("--all-projects", "all_projects", is_flag=True, help="List issues across all projects in the team (adds a Project column)")
     @_main().json_option
     @_main().require_team
     @_main().handle_error
-    def issue_list(status, priority, sprint, no_sprint, epic, label, exclude_label, exclude_status, exclude_priority, exclude_issue_type, exclude_assignee, assignee, search, limit, skip, sort_by, order, all_projects):
-        """List issues in current project (or team-wide with --all-projects)."""
+    def issue_list(status, priority, sprint, no_sprint, epic, label, exclude_label, exclude_status, exclude_priority, exclude_issue_type, exclude_assignee, assignee, search, where, limit, skip, sort_by, order, all_projects):
+        """List issues in current project (or team-wide with --all-projects).
+
+        \b
+        --where takes a query: clauses `field op values`, separated by
+        spaces and all required; `or` between clauses means either
+        (AND binds tighter); parentheses group. Quote the whole query.
+        \b
+          =    is any of (comma-separated)     status=todo,in_progress
+          !=   is none of                      priority!=low,no_priority
+          ~=   contains   !~= doesn't contain  title~="login page"
+          ^=   begins with                     title^=Fix
+          f=   (no value) is empty; f!= is set  sprint=   assignee!=
+          ..   range (estimate, dates)         estimate=3..8  created=-7d..
+        \b
+        Fields: status priority type assignee creator project sprint
+        label estimate parent identifier created updated completed due
+        title text. People: me, a name, an email or an id. Sprints: a
+        name, an id or current. Dates: YYYY-MM-DD, today, yesterday,
+        -7d, -2w, -12h (UTC). label=a,b has either; label=a label=b
+        has both. A name that matches nothing (a label, person or
+        sprint) is an error here, where --label alone lists nothing.
+        \b
+        Examples:
+          chaotic issue list -w 'status!=done,canceled assignee=me or assignee='
+          chaotic issue list --all-projects -w 'sprint=current label=bug'
+          chaotic issue list -w 'updated=-2d.. (priority=urgent or type=bug)'
+        \b
+        Reference: docs/issue-query.md.
+        """
         m = _main()
+        if where:
+            return _issue_query(
+                m, where=where, status=status, priority=priority, sprint=sprint,
+                no_sprint=no_sprint, epic=epic, label=label, exclude_label=exclude_label,
+                exclude_status=exclude_status, exclude_priority=exclude_priority,
+                exclude_issue_type=exclude_issue_type, exclude_assignee=exclude_assignee,
+                assignee=assignee, search=search, limit=limit, skip=skip, sort_by=sort_by,
+                order=order, all_projects=all_projects,
+            )
         if not all_projects and not m.get_current_project():
             raise click.ClickException(
                 "No project selected. Run 'chaotic project use <project_id>' or pass --all-projects."
@@ -228,67 +412,10 @@ def register(cli):
             exclude_assignee_id=exclude_assignee_id,
         )
 
-        # JSON output mode (CHT-170)
-        if m.is_json_output():
-            m.output_json(issues)
-            return
-
-        if not issues:
-            console.print("[yellow]No issues found.[/yellow]")
-            return
-
-        # Build project/sprint lookup maps
-        project_keys = {}
-        if all_projects:
-            # One projects call for the Project column; sprints are
-            # project-scoped, so fetch once per project that has sprinted
-            # issues (bounded by project count, no per-issue calls)
-            projects = _client().get_projects(team_id)
-            project_keys = {p["id"]: p["key"] for p in projects}
-            sprint_names = {}
-            for pid in {i["project_id"] for i in issues if i.get("sprint_id")}:
-                for s in _client().get_sprints(pid):
-                    sprint_names[s["id"]] = s["name"]
-        else:
-            sprints = _client().get_sprints(project_id)
-            sprint_names = {s["id"]: s["name"] for s in sprints}
-
-        table = Table(title="Issues (all projects)" if all_projects else "Issues")
-        table.add_column("ID")
-        table.add_column("Title")
-        if all_projects:
-            table.add_column("Project")
-        table.add_column("Status")
-        table.add_column("Priority")
-        table.add_column("Type")
-        table.add_column("Estimate")
-        table.add_column("Sprint")
-
-        for i in issues:
-            row = [
-                i["identifier"],
-                i["title"][:50] + ("..." if len(i["title"]) > 50 else ""),
-            ]
-            if all_projects:
-                row.append(project_keys.get(i.get("project_id"), "-"))
-            row.extend([
-                i["status"].replace("_", " ").title(),
-                i["priority"].replace("_", " ").title(),
-                i.get("issue_type", "task").replace("_", " ").title(),
-                "-" if i.get("estimate") is None else str(i.get("estimate")),
-                sprint_names.get(i.get("sprint_id"), "-"),
-            ])
-            table.add_row(*row)
-
-        console.print(table)
-
-        # Truncation warning (CHT-946) + pagination hint (CHT-950)
-        if len(issues) >= limit:
-            next_skip = (skip or 0) + limit
-            console.print(f"\n[yellow]Showing {esc(limit)} issues (results may be truncated). Use --skip {esc(next_skip)} to see next page, or --limit to adjust.[/yellow]")
-
-        # Search tip (CHT-949)
-        console.print("\n[dim]Tip: Use 'chaotic issue search <query>' to search by title, description, or identifier.[/dim]")
+        _print_issue_list(
+            m, issues, all_projects=all_projects, project_id=project_id,
+            team_id=team_id, limit=limit, skip=skip,
+        )
 
     @issue.command("mine")
     @click.option("--status", help="Filter by status (backlog, todo, in_progress, in_review, done, canceled). Comma-separated for multiple.")

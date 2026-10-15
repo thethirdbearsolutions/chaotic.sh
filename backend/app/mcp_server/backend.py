@@ -252,6 +252,21 @@ class InProcessBackend:
         )
         return _dump_list(rows)
 
+    @_translated(issues_api.query_issues)
+    async def query_issues(
+        self, *, project_id, team_id, where, filter_json, order, limit, skip=0,
+    ) -> dict:
+        return _dump(await issues_api.query_issues(
+            current_user=self._user,
+            project_id=project_id,
+            team_id=team_id,
+            where=where,
+            filter_json=filter_json,
+            order=order,
+            skip=skip,
+            limit=limit,
+        ))
+
     @_translated(issues_api.list_ready_issues)
     async def list_ready_issues(self, *, project_id, team_id, mine, include_assigned, limit) -> list:
         rows = await issues_api.list_ready_issues(
