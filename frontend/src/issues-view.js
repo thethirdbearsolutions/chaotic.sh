@@ -422,7 +422,9 @@ export function clearProjectFilter() {
 }
 
 export function setStatusPreset(preset) {
-    const statusValues = preset === 'open' ? OPEN_STATUSES : CLOSED_STATUSES;
+    const statusValues = preset === 'open' ? OPEN_STATUSES
+        : preset === 'closed' ? CLOSED_STATUSES
+        : [];  // 'all' (CHT-1755): no status filter
     const dropdown = document.getElementById('status-filter-dropdown');
     if (!dropdown) return;
 

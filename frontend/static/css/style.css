@@ -899,9 +899,55 @@ textarea {
 
 /* View header controls */
 .view-header-controls {
+    flex: 1 1 auto;
+    min-width: 0;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 0.75rem;
+}
+
+/* Documents toolbar (CHT-1757): the search box had no flex basis and
+   shrank to a sliver, and the buttons wrapped their own labels. Give the
+   search a real width, keep button labels on one line, and let the row
+   wrap instead of squeezing. */
+.view-header-controls .search-box {
+    flex: 0 1 240px;
+    min-width: 200px;
+    max-width: none;
+}
+
+/* The global `select { width: 100% }` would give each select its own
+   line once the row can wrap */
+.view-header-controls .filter-select {
+    width: auto;
+}
+
+.view-header-controls .btn,
+.view-header-controls .view-toggle {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+    .view-header-controls {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 0.5rem;
+    }
+
+    /* Search gets its own row; the two selects share the next one */
+    .view-header-controls .search-box {
+        flex: 1 1 100%;
+        min-width: 0;
+    }
+
+    .view-header-controls .filter-select {
+        flex: 1 1 140px;
+        min-width: 0;
+        max-width: none;
+    }
 }
 
 /* Filter select styling */
@@ -4950,6 +4996,14 @@ input[type="checkbox"] {
         padding: 16px;
     }
 
+    .create-issue-toolbar {
+        padding: 0 16px 12px;
+    }
+
+    .create-issue-more {
+        padding: 0 16px;
+    }
+
     .create-issue-title-input {
         font-size: var(--font-xl);
     }
@@ -5166,15 +5220,16 @@ input[type="checkbox"] {
     border-color: var(--accent-color);
 }
 
+/* The property chips sit right under the description, always visible
+   (CHT-1770); they used to be a band inside the collapsed "More options"
+   panel. */
 .create-issue-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 8px;
-    padding: 12px 20px;
-    border-top: 1px solid var(--border-color);
-    background: var(--bg-secondary);
+    padding: 0 20px 16px;
 }
 
 .toolbar-buttons {
@@ -5240,6 +5295,20 @@ input[type="checkbox"] {
 
 .more-options-toggle.expanded .chevron-icon {
     transform: rotate(180deg);
+}
+
+/* Template and due date: the only fields still behind the disclosure */
+.create-issue-more {
+    padding: 0 20px;
+    border-top: 1px solid var(--border-color);
+}
+
+.create-issue-more .more-options-toggle {
+    margin-top: 0;
+}
+
+.create-issue-more .create-issue-options-content {
+    padding: 0 0 12px;
 }
 
 /* Collapsible options panel */
@@ -7399,6 +7468,30 @@ input[type="checkbox"] {
     letter-spacing: 0.5px;
 }
 
+/* Secondary line under a stat (CHT-1762) */
+.stat-note {
+    margin-top: 4px;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+/* The budget tile jumps to the ledger below it (CHT-1762) */
+button.stat-card-link {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    width: 100%;
+    transition: border-color 0.15s ease;
+}
+
+button.stat-card-link:hover {
+    border-color: var(--accent-color);
+}
+
+button.stat-card-link:hover .stat-note {
+    color: var(--accent-color);
+}
+
 .sprint-detail-sections {
     padding: 24px;
 }
@@ -8611,4 +8704,15 @@ input[type="checkbox"] {
     border-radius: var(--radius-sm);
     border-left: 3px solid var(--error-color);
     line-height: 1.5;
+}
+
+/* CHT-1771: at phone width the floating create button (.mobile-fab: 56px
+   tall, 24px off the bottom) sat over the last row of every view: list
+   estimates and assignees, Settings' Revoke buttons, an epic's last
+   sub-issue. Leave room to scroll the content clear of it. Kept last so it
+   wins over the shorthand `padding` the 768/640px blocks set. */
+@media (max-width: 768px) {
+    .main-content {
+        padding-bottom: calc(56px + 24px + 16px + env(safe-area-inset-bottom, 0px));
+    }
 }

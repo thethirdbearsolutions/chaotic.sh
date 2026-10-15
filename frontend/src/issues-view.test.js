@@ -110,10 +110,21 @@ import {
     setTypeFilter,
     setAssigneeFilter,
     setSprintFilter,
+    setStatusPreset,
 } from './issues-view.js';
 
 // Actions registered at module import time — capture before vi.clearAllMocks wipes them
 const issuesViewActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
+
+// Status checkbox helpers (CHT-1755)
+function checkStatuses(values) {
+    document.querySelectorAll('#status-filter-dropdown input[type="checkbox"]').forEach(cb => {
+        cb.checked = values.includes(cb.value);
+    });
+}
+function checkedStatuses() {
+    return [...document.querySelectorAll('#status-filter-dropdown input[type="checkbox"]:checked')].map(cb => cb.value);
+}
 
 describe('issues-view', () => {
     let replaceStateSpy;
@@ -133,7 +144,9 @@ describe('issues-view', () => {
                     <label class="multi-select-option"><input type="checkbox" value="backlog"></label>
                     <label class="multi-select-option"><input type="checkbox" value="todo"></label>
                     <label class="multi-select-option"><input type="checkbox" value="in_progress"></label>
+                    <label class="multi-select-option"><input type="checkbox" value="in_review"></label>
                     <label class="multi-select-option"><input type="checkbox" value="done"></label>
+                    <label class="multi-select-option"><input type="checkbox" value="canceled"></label>
                 </div>
             </div>
             <div id="priority-filter-dropdown" class="multi-select-dropdown">
@@ -552,7 +565,9 @@ describe('issues-view', () => {
             expect(url).toContain('status=todo');
         });
 
-        it('generates clean URL with no filters', () => {
+        // CHT-1755: the Open preset is the default, so it stays out of the URL
+        it('generates clean URL when only the default (Open) status filter is set', () => {
+            checkStatuses(['backlog', 'todo', 'in_progress', 'in_review']);
             syncFiltersToUrl();
 
             expect(replaceStateSpy).toHaveBeenCalledWith(
@@ -560,6 +575,19 @@ describe('issues-view', () => {
                 '',
                 '/issues'
             );
+        });
+
+        it('writes status=all when every status is shown (CHT-1755)', () => {
+            syncFiltersToUrl();
+            expect(replaceStateSpy).toHaveBeenCalledWith({ view: 'issues' }, '', '/issues?status=all');
+            expect(localStorage.getItem('chaotic_issues_filters_team-1')).toBe('status=all');
+        });
+
+        it('still lists a hand-picked status set, even one inside Open (CHT-1755)', () => {
+            checkStatuses(['todo', 'in_progress']);
+            syncFiltersToUrl();
+            const url = replaceStateSpy.mock.calls[0][2];
+            expect(url).toBe('/issues?status=todo&status=in_progress');
         });
 
         it('saves filters to localStorage scoped by team (CHT-1042)', () => {
@@ -570,6 +598,7 @@ describe('issues-view', () => {
 
         it('clears localStorage when no filters (CHT-1042)', () => {
             localStorage.setItem('chaotic_issues_filters_team-1', 'project=proj-1');
+            checkStatuses(['backlog', 'todo', 'in_progress', 'in_review']);
             syncFiltersToUrl();
             expect(localStorage.getItem('chaotic_issues_filters_team-1')).toBeNull();
         });
@@ -708,9 +737,9 @@ describe('issues-view', () => {
 
             // Should apply project from URL
             expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
-            // Should NOT restore stale status filters from localStorage
-            const todoCheckbox = document.querySelector('#status-filter-dropdown input[value="todo"]');
-            expect(todoCheckbox.checked).toBe(false);
+            // Should NOT restore stale status filters from localStorage: the
+            // statuses are the Open default (CHT-1755), not the saved pair
+            expect(checkedStatuses()).toEqual(['backlog', 'todo', 'in_progress', 'in_review']);
             localStorage.removeItem('chaotic_issues_filters_team-1');
         });
 
@@ -727,9 +756,102 @@ describe('issues-view', () => {
             // URL project should be applied
             expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
             // Stale status filter from localStorage should NOT be restored
-            const todoCheckbox = document.querySelector('#status-filter-dropdown input[value="todo"]');
-            expect(todoCheckbox.checked).toBe(false);
+            expect(checkedStatuses()).toEqual(['backlog', 'todo', 'in_progress', 'in_review']);
             localStorage.removeItem('chaotic_issues_filters_team-1');
+        });
+
+        // CHT-1755: the list opens on open work, and "every status" sticks
+        describe('default status filter (CHT-1755)', () => {
+            beforeEach(() => localStorage.removeItem('chaotic_issues_filters_team-1'));
+            afterEach(() => localStorage.removeItem('chaotic_issues_filters_team-1'));
+
+            const setSearch = (search) => Object.defineProperty(window, 'location', {
+                value: { search, pathname: '/issues', href: `http://localhost/issues${search}` },
+                writable: true,
+                configurable: true,
+            });
+
+            it('checks the Open preset when neither the URL nor storage names a status', () => {
+                setSearch('');
+                loadFiltersFromUrl();
+                expect(checkedStatuses()).toEqual(['backlog', 'todo', 'in_progress', 'in_review']);
+            });
+
+            it('applies the default over unset boxes on the first load of the page', () => {
+                checkStatuses(['done']);
+                setSearch('?project=proj-1');
+                loadFiltersFromUrl();
+                expect(checkedStatuses()).toEqual(['backlog', 'todo', 'in_progress', 'in_review']);
+            });
+
+            it('keeps the user\'s choice when in-app navigation returns with only ?project=', () => {
+                setSearch('');
+                loadFiltersFromUrl();               // first load: Open
+                setStatusPreset('all');             // user shows every status
+                setSearch('?project=proj-1');       // router: /board?project= -> /issues?project=
+                loadFiltersFromUrl();
+                expect(checkedStatuses()).toEqual([]);
+            });
+
+            it('status=all from the URL checks nothing, i.e. every status', () => {
+                checkStatuses(['todo']);
+                setSearch('?status=all');
+                loadFiltersFromUrl();
+                expect(checkedStatuses()).toEqual([]);
+            });
+
+            it('restores a saved status=all instead of the default', () => {
+                setSearch('');
+                localStorage.setItem('chaotic_issues_filters_team-1', 'status=all&project=proj-1');
+                loadFiltersFromUrl();
+                expect(checkedStatuses()).toEqual([]);
+                expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
+                localStorage.removeItem('chaotic_issues_filters_team-1');
+            });
+
+            it('round-trips every preset through the URL', () => {
+                for (const set of [['backlog', 'todo', 'in_progress', 'in_review'], ['done', 'canceled'], [], ['in_review']]) {
+                    checkStatuses(set);
+                    replaceStateSpy.mockClear();
+                    syncFiltersToUrl();
+                    const url = replaceStateSpy.mock.calls[0][2];
+                    // a fresh page: boxes in some other state, default not yet applied
+                    checkStatuses(['todo', 'done']);
+                    delete document.getElementById('status-filter-dropdown').dataset.statusApplied;
+                    setSearch(url.slice('/issues'.length));
+                    loadFiltersFromUrl();
+                    expect(checkedStatuses()).toEqual(set);
+                }
+            });
+
+            it('labels the status dropdown with the preset name', () => {
+                setSearch('');
+                loadFiltersFromUrl();
+                expect(document.querySelector('#status-filter-dropdown .multi-select-label').textContent).toBe('Open');
+            });
+
+            it('counts a preset as one filter and "all" as none', () => {
+                checkStatuses(['backlog', 'todo', 'in_progress', 'in_review']);
+                expect(getFilterCategoryCount('status')).toBe(1);
+                checkStatuses(['done', 'canceled']);
+                expect(getFilterCategoryCount('status')).toBe(1);
+                checkStatuses([]);
+                expect(getFilterCategoryCount('status')).toBe(0);
+                checkStatuses(['todo', 'done']);
+                expect(getFilterCategoryCount('status')).toBe(2);
+            });
+
+            it('setStatusPreset("all") clears every status', () => {
+                checkStatuses(['todo']);
+                setStatusPreset('all');
+                expect(checkedStatuses()).toEqual([]);
+            });
+
+            it('names the preset on the filter chip', () => {
+                checkStatuses(['backlog', 'todo', 'in_progress', 'in_review']);
+                updateFilterChips();
+                expect(document.getElementById('filter-chips-row').textContent.replace(/\s+/g, '')).toContain('Status:Open');
+            });
         });
 
         it('does not fall back when URL has filter params (CHT-1085)', () => {

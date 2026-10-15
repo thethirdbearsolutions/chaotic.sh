@@ -389,10 +389,17 @@ function renderSprintDetail() {
     // Separate issues by status
     const openIssues = issues.filter(i => OPEN_STATUSES.includes(i.status));
     const closedIssues = issues.filter(i => i.status === 'done');
+    const canceledIssues = issues.filter(i => i.status === 'canceled');
 
-    // Calculate stats
-    const totalPoints = issues.reduce((sum, i) => sum + (i.estimate || 0), 0);
-    const completedPoints = closedIssues.reduce((sum, i) => sum + (i.estimate || 0), 0);
+    // Calculate stats. A canceled issue is not work anyone will do, so it
+    // is out of the sprint's scope total (CHT-1762); it also never charges
+    // the budget, which only a close to done does (CLAUDE.md).
+    const sumPoints = list => list.reduce((sum, i) => sum + (i.estimate || 0), 0);
+    const scopePoints = sumPoints(issues.filter(i => i.status !== 'canceled'));
+    const completedPoints = sumPoints(closedIssues);
+    const canceledNote = canceledIssues.length > 0
+        ? `<div class="stat-note">${canceledIssues.length} canceled not counted</div>`
+        : '';
 
     // Status label
     let statusBadge = '';
@@ -437,13 +444,16 @@ function renderSprintDetail() {
                 <div class="stat-value">${closedIssues.length}</div>
                 <div class="stat-label">Completed</div>
             </div>
-            <div class="stat-card">
+            <button type="button" class="stat-card stat-card-link" data-action="scroll-to-budget-ledger"
+                title="Show the budget ledger: one transaction per issue closed while this sprint was active">
                 <div class="stat-value">${budgetDisplay}</div>
-                <div class="stat-label">Budget</div>
-            </div>
+                <div class="stat-label">Budget spent</div>
+                <div class="stat-note">See ledger \u2193</div>
+            </button>
             <div class="stat-card">
-                <div class="stat-value">${completedPoints} / ${totalPoints}</div>
-                <div class="stat-label">Points Done</div>
+                <div class="stat-value">${completedPoints} / ${scopePoints}</div>
+                <div class="stat-label">Points done of scope</div>
+                ${canceledNote}
             </div>
         </div>
 
@@ -474,7 +484,16 @@ function renderSprintDetail() {
                 `}
             </details>
 
-            <div class="sprint-detail-section sprint-budget-section">
+            ${canceledIssues.length > 0 ? `
+                <details class="sprint-detail-section">
+                    <summary><h3>Canceled Issues (${canceledIssues.length})</h3></summary>
+                    <div class="sprint-issues-list">
+                        ${canceledIssues.map(issue => renderSprintIssueRow(issue)).join('')}
+                    </div>
+                </details>
+            ` : ''}
+
+            <div class="sprint-detail-section sprint-budget-section" id="sprint-budget-ledger">
                 <h3>Budget Ledger</h3>
                 ${renderBudgetLedger()}
             </div>
@@ -506,7 +525,7 @@ function renderSprintIssueRow(issue) {
     // Sanitize values for use in class names (only allow known values)
     const validPriorities = ['urgent', 'high', 'medium', 'low'];
     const safePriority = validPriorities.includes(issue.priority) ? issue.priority : '';
-    const safeStatus = BOARD_STATUSES.includes(issue.status) ? issue.status : 'backlog';
+    const safeStatus = [...BOARD_STATUSES, 'canceled'].includes(issue.status) ? issue.status : 'backlog';
 
     const priorityClass = safePriority ? `badge-priority-${safePriority}` : '';
     const statusClass = `status-dot-${safeStatus}`;
@@ -1117,6 +1136,9 @@ registerActions({
     },
     'complete-gate-ritual': (_event, data) => {
         completeGateRitual(data.ritualId, data.projectId, data.ritualName, data.ritualArtifact || '');
+    },
+    'scroll-to-budget-ledger': () => {
+        document.getElementById('sprint-budget-ledger')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     },
     'navigate-sprint-issue': (event, data) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {

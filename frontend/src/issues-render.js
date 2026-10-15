@@ -10,7 +10,6 @@ import { formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor } f
 import { getActiveFilterCategory, setActiveFilterCategory, getCurrentProject } from './state.js';
 import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
-import { OPEN_STATUSES } from './constants.js';
 import { setCachedCurrentSprintId } from './sprints.js';
 import {
     getSelectedStatuses,
@@ -20,7 +19,7 @@ import {
     getFilterCategoryCount,
     getTotalFilterCount,
     FILTER_CATEGORIES,
-    CLOSED_STATUSES,
+    getStatusPreset,
 } from './issues-filter.js';
 
 // ========================================
@@ -257,8 +256,7 @@ function renderStatusOptions(container) {
         { value: 'canceled', label: 'Canceled', icon: '<svg width="14" height="14" viewBox="0 0 16 16" class="status-canceled"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 5l6 6M11 5l-6 6" stroke="currentColor" stroke-width="1.5"/></svg>' },
     ];
 
-    const isOpenPreset = OPEN_STATUSES.every(s => selected.includes(s)) && !CLOSED_STATUSES.some(s => selected.includes(s)) && selected.length === OPEN_STATUSES.length;
-    const isClosedPreset = CLOSED_STATUSES.every(s => selected.includes(s)) && !OPEN_STATUSES.some(s => selected.includes(s)) && selected.length === CLOSED_STATUSES.length;
+    const preset = getStatusPreset(selected);
 
     let html = `
         <div class="filter-options-header">
@@ -266,8 +264,9 @@ function renderStatusOptions(container) {
             ${selected.length > 0 ? '<button class="filter-options-clear" data-action="clear-status-filter-new">Clear</button>' : ''}
         </div>
         <div class="filter-presets">
-            <button class="filter-preset-btn ${isOpenPreset ? 'active' : ''}" data-action="set-status-preset" data-value="open">Open</button>
-            <button class="filter-preset-btn ${isClosedPreset ? 'active' : ''}" data-action="set-status-preset" data-value="closed">Closed</button>
+            <button class="filter-preset-btn ${preset === 'open' ? 'active' : ''}" data-action="set-status-preset" data-value="open">Open</button>
+            <button class="filter-preset-btn ${preset === 'closed' ? 'active' : ''}" data-action="set-status-preset" data-value="closed">Closed</button>
+            <button class="filter-preset-btn ${preset === 'all' ? 'active' : ''}" data-action="set-status-preset" data-value="all">All</button>
         </div>
     `;
 
@@ -573,7 +572,12 @@ export function updateFilterChips() {
     // Status chips
     const statuses = getSelectedStatuses();
     if (statuses.length > 0) {
-        const statusLabels = statuses.map(s => formatStatus(s)).join(', ');
+        // Name a preset rather than list its members: "Status: Open" says
+        // that done and canceled are hidden (CHT-1755)
+        const statusPreset = getStatusPreset(statuses);
+        const statusLabels = statusPreset === 'open' ? 'Open'
+            : statusPreset === 'closed' ? 'Closed'
+            : statuses.map(s => formatStatus(s)).join(', ');
         chips.push({
             category: 'status',
             label: 'Status',

@@ -448,6 +448,61 @@ describe('viewSprint', () => {
         expect(detailView.innerHTML).toContain('CHT-1');
     });
 
+    // CHT-1762: a canceled issue is out of scope, so it leaves the
+    // "points done" denominator, and it gets its own list instead of
+    // vanishing from both the open and the completed one.
+    it('leaves canceled issues out of the points scope and lists them separately', async () => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 13, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([
+            { id: 'i1', identifier: 'CHT-1', title: 'Open one', status: 'todo', estimate: 17 },
+            { id: 'i2', identifier: 'CHT-2', title: 'Done one', status: 'done', estimate: 13 },
+            { id: 'i3', identifier: 'CHT-3', title: 'Dropped one', status: 'canceled', estimate: 8 },
+        ]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([]);
+
+        await viewSprint('s1');
+
+        const view = document.getElementById('sprint-detail-view');
+        const tiles = [...view.querySelectorAll('.stat-card')].map(t => t.textContent.replace(/\s+/g, ' ').trim());
+        expect(tiles).toContain('13 / 30 Points done of scope 1 canceled not counted');
+        expect(tiles.some(t => t.includes('13 / 38'))).toBe(false);
+        expect(view.innerHTML).toContain('Canceled Issues (1)');
+        expect(view.querySelector('.status-dot-canceled')).toBeTruthy();
+    });
+
+    it('omits the canceled list and note when nothing is canceled', async () => {
+        api.getSprint.mockResolvedValue({ id: 's1', name: 'Sprint 1', status: 'active', budget: 20, points_spent: 0, project_id: 'p1' });
+        api.getIssues.mockResolvedValue([{ id: 'i1', identifier: 'CHT-1', title: 'Open one', status: 'todo', estimate: 3 }]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([]);
+
+        await viewSprint('s1');
+
+        const view = document.getElementById('sprint-detail-view');
+        expect(view.innerHTML).not.toContain('Canceled Issues');
+        expect(view.innerHTML).not.toContain('canceled not counted');
+    });
+
+    it('the budget tile scrolls to the budget ledger (CHT-1762)', async () => {
+        api.getSprint.mockResolvedValue({ id: 's1', name: 'Sprint 1', status: 'active', budget: 20, points_spent: 5, project_id: 'p1' });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([]);
+
+        await viewSprint('s1');
+
+        const tile = document.querySelector('[data-action="scroll-to-budget-ledger"]');
+        expect(tile.textContent).toContain('5 / 20 points');
+        const ledger = document.getElementById('sprint-budget-ledger');
+        ledger.scrollIntoView = vi.fn();
+        sprintsActions['scroll-to-budget-ledger']();
+        expect(ledger.scrollIntoView).toHaveBeenCalled();
+    });
+
     it('shows error on sprint not found', async () => {
         api.getSprint.mockResolvedValue(null);
 
