@@ -235,6 +235,33 @@ class TestReservedAppRedirect:
             cimd.parse_client_metadata(CIMD_URL, json.dumps(_doc(redirect_uris=[uri])).encode())
 
     @pytest.mark.parametrize("uri", [
+        # PR #412 review, L2: paths a browser or Android reads as /app/...
+        "https://chaotic.sh/x/../app/oauth2redirect", "https://chaotic.sh/./app/oauth2redirect",
+        "https://chaotic.sh/app/./oauth2redirect", "https://chaotic.sh/%61pp/oauth2redirect",
+        "https://chaotic.sh/app%2Foauth2redirect", "https://chaotic.sh//app/oauth2redirect",
+        "https://chaotic.sh/app;x/oauth2redirect", "https://chaotic.sh/x/..",
+    ])
+    def test_ambiguous_paths_on_the_domain_are_refused(self, uri):
+        assert reserved_redirect_problem(uri) is not None
+        assert dcr_redirect_uri_problem(uri) is not None
+        with pytest.raises(cimd.CIMDError):
+            cimd.parse_client_metadata(CIMD_URL, json.dumps(_doc(redirect_uris=[uri])).encode())
+
+    @pytest.mark.parametrize("uri", [
+        # PR #412 review, L3: the app's old private-use redirect and its scheme.
+        "sh.chaotic.android:/oauth2redirect", "sh.chaotic.android://cb", "sh.chaotic.android.debug:/cb",
+    ])
+    def test_the_apps_scheme_is_refused_for_metadata_documents(self, uri):
+        assert redirect_uri_problem(uri, allow_private_use=True) is None  # a well-formed private-use URI...
+        assert reserved_redirect_problem(uri) is not None  # ...on the app's own scheme
+        with pytest.raises(cimd.CIMDError, match="reserved for the Chaotic app"):
+            cimd.parse_client_metadata(CIMD_URL, json.dumps(_doc(redirect_uris=[uri])).encode())
+
+    @pytest.mark.parametrize("uri", ["sh.chaotic.androidx:/cb", "com.example.app:/oauth/cb"])
+    def test_other_schemes_are_not_reserved(self, uri):
+        assert reserved_redirect_problem(uri) is None
+
+    @pytest.mark.parametrize("uri", [
         "https://chaotic.sh/oauth/cb", "https://chaotic.sh/apps/cb", "https://www.chaotic.sh/app/oauth2redirect",
         "https://app.example/app/oauth2redirect",
     ])

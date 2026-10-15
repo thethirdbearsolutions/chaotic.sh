@@ -58,23 +58,38 @@ server's built-in client `builtin:sh.chaotic.android`). The browser then
 returns to the app at `https://chaotic.sh/app/oauth2redirect`, an
 [Android App Link](https://developer.android.com/training/app-links):
 chaotic.sh publishes the release key's fingerprint, so Android delivers
-that address only to the genuine app, whichever server you use (CHT-1649).
+that address only to the app signed with that key, whichever server you
+use (CHT-1649). That protection starts once the fingerprint is published
+(CHT-1738), and holds on a phone that verified the link when the app was
+installed.
 
 If Android has not verified the link (the phone was offline when the app
-was installed, or you built the app yourself), the browser shows a
-"Return to the Chaotic app" page instead. Its button finishes signing
-in. Reinstalling the release while online makes Android verify it again.
+was installed, the app isn't the official build, or you built it
+yourself), the browser shows "The Chaotic app didn't open" on chaotic.sh
+instead and nothing is signed in. That page deliberately passes the
+sign-in to nothing: handing it to "the app called sh.chaotic.android"
+would trust a name any APK can take. Install or update the official
+release while online and sign in again. On Android 10 and 11 an
+unverified link can instead show a chooser of apps: pick Chaotic only if
+you just tapped "Sign in" in it.
+
+When the link is not verified, the website's host also logs the page's
+address: a one-time code (useless without the app's PKCE secret), and
+your server's address. Keeping that out of the address is CHT-1737.
 
 ## Building it yourself
 
 Debug builds (`./gradlew :app:assembleFossDebug`) are signed with your
-debug key, which chaotic.sh does not list, so sign-in always ends on the
-"Return to the Chaotic app" page: tap its button. On Android 12 or newer
-you can instead approve the link for the debug build once:
+debug key, which chaotic.sh does not list, so Android never verifies the
+link for them and sign-in ends on the "didn't open" page. On Android 12
+or newer, approve the link for your build once (this is your explicit
+choice for this phone; undo it by uninstalling, or with `false`):
 
 ```bash
 adb shell pm set-app-links-user-selection --user cur --package sh.chaotic.android true chaotic.sh
 ```
+
+On Android 10 and 11, pick Chaotic in the chooser the link shows.
 
 A release build without the release key (`./gradlew assembleFossRelease`
 anywhere but the release machine, CI included) is unsigned.
@@ -104,7 +119,11 @@ asks for a password (twice) and writes:
 | `~/.chaotic/android-signing.properties` | where it is and its password; `android/app/build.gradle.kts` reads it |
 
 Both are mode 600, outside the repository, and must never be committed
-or uploaded anywhere. **Back them up before the first release**: copy
+or uploaded anywhere. The script builds with `--no-configuration-cache`:
+a `./gradlew assembleFossRelease` you run by hand on that machine stores
+the signing passwords, encrypted with a key in `~/.gradle`, in Gradle's
+configuration cache under `android/.gradle/`. Delete
+`android/.gradle/configuration-cache` afterwards if that matters to you. **Back them up before the first release**: copy
 the `.jks` file to two places that are not the Mac (an encrypted USB
 drive kept offline, a password manager that stores files), store the
 password with it, and check that a copy opens with
@@ -134,7 +153,8 @@ scripts/android-release.sh --snapshot --write-assetlinks
 ```
 
 builds and verifies a signed APK, prints the key's SHA-256 fingerprint,
-and writes it into `website/.well-known/assetlinks.json`. Or paste it by
+and writes it into `website/.well-known/assetlinks.json` (only with
+`--snapshot`: nothing is staged in the same run). Or paste it by
 hand: the file must be exactly
 
 ```json
@@ -184,7 +204,10 @@ redirect URI's host, `chaotic.sh`, must serve the file itself.
 
    It builds `assembleFossRelease` signed, verifies the signature with
    `apksigner` (and that the signer is the key in `~/.chaotic`), prints
-   the signing-cert fingerprint and the APK's SHA-256, and stages
+   the signing-cert fingerprint and the APK's SHA-256. It refuses to go
+   on unless `assetlinks.json` names that key both at the release commit
+   and live on `https://chaotic.sh` (the website is deployed). Then it
+   stages
    `chaotic-android-<version>.apk`, `SHA256SUMS` and the release notes in
    `android/app/build/github-release/android-v<version>/`.
 3. It prints the `gh release create android-v<version> …` command and

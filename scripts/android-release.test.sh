@@ -83,6 +83,36 @@ check "the backup advice is printed" grep -q "BACK IT UP" "$WORK/new-key.log"
 printf '%s\n%s\n' "$PW" "$PW" | bash "$SCRIPT" --new-key >"$WORK/again.log" 2>&1
 check "--new-key never replaces a key" bash -c "[ $? != 0 ] && grep -q 'already exists' '$WORK/again.log'"
 
+# A relative storeFile resolves against ~/.chaotic, as Gradle resolves it.
+cp "$PROPS" "$WORK/props.bak"
+sed -i 's|^storeFile=.*|storeFile=android-release.jks|' "$PROPS"
+check "a relative storeFile resolves in ~/.chaotic" test "$(store_file)" = "$STORE"
+check "and the keystore opens through it" test "$(keystore_fingerprint)" = "$FROM_KEYSTORE"
+cp "$WORK/props.bak" "$PROPS"
+check "an absolute storeFile is used as is" test "$(store_file)" = "$STORE"
+
+# No release is staged before assetlinks.json names the key, both committed
+# at HEAD and live on the website (PR #412 review, M2).
+REPO="$WORK/repo"
+mkdir -p "$REPO/website/.well-known"
+git -C "$REPO" init -q
+echo "[]" >"$REPO/website/.well-known/assetlinks.json"
+git -C "$REPO" add -A
+git -C "$REPO" -c user.name=t -c user.email=t@example.com commit -qm empty
+assetlinks_json "$FP" >"$WORK/live.json"
+check "refused while the committed file is empty" \
+    bash -c "! (ANDROID_RELEASE_LIB=1 source '$SCRIPT'; REPO='$REPO'; require_published_fingerprint '$FP' 'file://$WORK/live.json' 2>/dev/null)"
+assetlinks_json "$FP" >"$REPO/website/.well-known/assetlinks.json"
+git -C "$REPO" -c user.name=t -c user.email=t@example.com commit -qam key
+echo "[]" >"$WORK/stale.json"
+check "refused while the deployed file lacks the key" \
+    bash -c "! (ANDROID_RELEASE_LIB=1 source '$SCRIPT'; REPO='$REPO'; require_published_fingerprint '$FP' 'file://$WORK/stale.json' 2>/dev/null)"
+check "refused when the website cannot be fetched" \
+    bash -c "! (ANDROID_RELEASE_LIB=1 source '$SCRIPT'; REPO='$REPO'; require_published_fingerprint '$FP' 'file://$WORK/missing.json' 2>/dev/null)"
+check "accepted once both name the key" require_published_fingerprint "$FP" "file://$WORK/live.json"
+check "--write-assetlinks only with --snapshot" \
+    bash -c "! bash '$SCRIPT' --write-assetlinks 2>/dev/null"
+
 rm -rf "$WORK/home2"
 printf 'short\nshort\n' | HOME="$WORK/home2" bash "$SCRIPT" --new-key >/dev/null 2>&1
 check "a short password is refused" test $? != 0 -a ! -e "$WORK/home2/.chaotic/android-release.jks"

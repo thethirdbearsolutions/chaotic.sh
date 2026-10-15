@@ -21,33 +21,38 @@ client sends: a CIMD document or a dynamic registration may copy the
 app's name or redirect and still gets an agent.
 
 The redirect is an https URL on chaotic.sh,
-``https://chaotic.sh/app/oauth2redirect``, verified for the app through
-Android App Links (CHT-1649): ``https://chaotic.sh/.well-known/assetlinks.json``
+``https://chaotic.sh/app/oauth2redirect``, meant to be verified for the
+app through Android App Links (CHT-1649): once
+``https://chaotic.sh/.well-known/assetlinks.json``
 (``website/.well-known/assetlinks.json``) names the package and the
-release signing key's certificate fingerprint, so Android hands the
-redirect only to the genuinely signed app. Another app on the phone can
-still start a sign-in with this ``client_id``, but the code goes to the
-real app, which has no matching request and drops it. The URI is the
+release signing key's certificate fingerprint, Android hands the
+redirect only to the app signed with that key. Another app on the phone
+can still start a sign-in with this ``client_id``, but the code goes to
+the real app, which has no matching request and drops it. The URI is the
 same for every server, so a self-hosted one needs nothing on its own
 domain. The client is public (``token_endpoint_auth_method`` ``none``):
 PKCE S256 is its proof, as for every client here, and refresh tokens
 rotate with reuse detection as for every connection
 (``TokenService.refresh``).
 
-The earlier RFC 8252 §7.1 private-use redirect,
-``sh.chaotic.android:/oauth2redirect``, is gone and is refused
-(PR #361 review, M1): Android does not reserve a private-use scheme for
-one app, so any installed app could register it, start this flow itself
-(PKCE protects a code from interception, not from an app that began the
-flow) and receive a session acting as the person who approved. No
-released build ever used it.
+Residual risk until that file carries the release fingerprint and is
+deployed (it ships as ``[]``; ``scripts/android-release.sh`` refuses to
+publish a release before the live file names the key): nothing is
+verified. Android 12+ then opens the redirect in the browser, on
+chaotic.sh's explanatory page, which passes the code to nothing; on
+Android 10 and 11 it offers a chooser that lists every app declaring
+the same link, so an app that started the sign-in itself could be
+picked and receive the session. Even when verified, the protection is
+per phone: a device that could not fetch the file at install falls back
+the same way. The consent page therefore still asks the person to
+continue only if they just started signing in from the app.
 
-When App Links verification has not happened on a phone (the app is a
-debug build, or Android could not fetch assetlinks.json at install), the
-browser opens the redirect page on chaotic.sh instead
-(``website/app/oauth2redirect.html``). Its button hands the code to the
-``sh.chaotic.android`` package by an explicit intent, never to whatever
-app claims the URL.
+The earlier RFC 8252 §7.1 private-use redirect,
+``sh.chaotic.android:/oauth2redirect``, is gone and is refused, and no
+other client may use the app's scheme or its ``/app/`` paths
+(``clients.reserved_redirect_problem``): Android does not reserve a
+private-use scheme for one app, so any installed app could register it
+(PR #361 review, M1). No released build ever used it.
 """
 from __future__ import annotations
 

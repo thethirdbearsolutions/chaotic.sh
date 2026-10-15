@@ -44,6 +44,7 @@ OLD_PRIVATE_USE_REDIRECT = "sh.chaotic.android:/oauth2redirect"
 VERIFIER = "dBjftJeZ4CVP-mJ92K9-cLu7_Yyz0n2KfK_Prv8yWg2xyz"
 FORM = {"Content-Type": "application/x-www-form-urlencoded"}
 CIMD_ID = "https://apps.example.org/chaotic-clone.json"
+CLONE_REDIRECT = "org.example.apps.chaoticclone:/oauth2redirect"
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -640,13 +641,13 @@ async def _register(client, **metadata):
 
 @pytest.fixture
 def cimd_clone(monkeypatch):
-    """A CIMD document that copies the app's name and its old private-use
-    redirect (a document may use one; the app's App Links redirect it may
-    not, see cimd_clone_with_the_apps_redirect)."""
+    """A CIMD document that copies the app's name. Its redirect is its own:
+    the app's App Links redirect and the app's scheme are refused to a
+    document (cimd_clone_with_the_apps_redirect; test_oauth_registration)."""
     async def fetch(url):
         return cimd.FetchedDocument(json.dumps({
             "client_id": CIMD_ID, "client_name": "Chaotic for Android",
-            "redirect_uris": [OLD_PRIVATE_USE_REDIRECT], "token_endpoint_auth_method": "none",
+            "redirect_uris": [CLONE_REDIRECT], "token_endpoint_auth_method": "none",
         }).encode(), "max-age=3600")
 
     monkeypatch.setattr(cimd, "fetch", fetch)
@@ -701,7 +702,7 @@ class TestOtherClientsStayAgents:
     async def test_cimd_clone_of_the_app_gets_an_agent(
         self, client, oauth_on, cimd_clone, web_headers, test_team, test_user,
     ):
-        request_id = await _request_id(client, CIMD_ID, redirect_uri=OLD_PRIVATE_USE_REDIRECT, resource=BASE)
+        request_id = await _request_id(client, CIMD_ID, redirect_uri=CLONE_REDIRECT, resource=BASE)
         view = (await client.get(f"/api/oauth/requests/{request_id}", headers=web_headers)).json()
         assert view["acts_as"] == "agent" and view["client"]["trust"] == "cimd"
         # Asking to be the person is not an option the endpoint has.
@@ -844,11 +845,24 @@ class TestAppLinks:
         ]
         assert json_headers == [{"key": "Content-Type", "value": "application/json"}]
 
-    def test_the_fallback_page_hands_the_code_only_to_the_app_package(self):
+    def test_the_fallback_page_passes_the_code_to_nothing(self):
+        """PR #412 review, M1: an unverified phone must not get the code
+        handed to "the app named sh.chaotic.android" (a package name is
+        not a signing key). The page only explains; with no script and a
+        CSP that allows none, nothing can read its address."""
         page = (WEBSITE / "app" / "oauth2redirect.html").read_text()
-        host_and_path = APP_REDIRECT.removeprefix("https://")
-        assert f"'intent://{host_and_path}'" in page
-        assert f"package={ANDROID_APP_ID};" in page
+        assert "<script" not in page.lower()
+        assert "intent:" not in page.lower() and "sh.chaotic.android:" not in page
         assert '<meta name="referrer" content="no-referrer">' in page
-        # Nothing loaded from elsewhere, so the code in the address goes nowhere else.
-        assert not re.search(r"<(script|link|img|iframe)[^>]+(src|href)=", page)
+        csp = re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]+)">', page)
+        assert csp and "default-src 'none'" in csp.group(1) and "script-src" not in csp.group(1)
+        # Nothing loaded from elsewhere.
+        assert not re.search(r"<(link|img|iframe|object|embed)\b", page)
+        config = json.loads((WEBSITE / "vercel.json").read_text())
+        headers = {
+            h["key"]: h["value"] for rule in config["headers"] if rule["source"] == urlsplit(APP_REDIRECT).path
+            for h in rule["headers"]
+        }
+        assert headers["Content-Security-Policy"].startswith("default-src 'none';")
+        assert "script-src" not in headers["Content-Security-Policy"]
+        assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]

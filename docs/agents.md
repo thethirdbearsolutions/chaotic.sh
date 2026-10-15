@@ -716,11 +716,15 @@ published document can change the redirects it accepts. Its redirect is
 fixed, `https://chaotic.sh/app/oauth2redirect`, with PKCE S256,
 `offline_access` and rotating refresh tokens like every connection.
 
-That redirect is a verified Android App Link (CHT-1649): Android hands
-it only to the genuine, release-signed app, so another app on the phone
-that starts a sign-in cannot receive the result. Still approve the
-sign-in page only when you have just tapped "Sign in" in the Chaotic app
-yourself. How to install the app: [android.md](android.md).
+That redirect is an Android App Link (CHT-1649): once chaotic.sh
+publishes the app's release key, Android hands it only to the genuine,
+release-signed app, so another app on the phone that starts a sign-in
+cannot receive the result. Until then, and on a phone that could not
+verify the link when the app was installed, that protection is missing
+(see "Residual risk" in [self-hosting-security.md](self-hosting-security.md)).
+Either way, approve the sign-in page only when you have just tapped
+"Sign in" in the Chaotic app yourself. How to install the app:
+[android.md](android.md).
 
 Signing in shows "Sign in to Chaotic for Android as you?" with nothing
 to choose: no team, agent or projects. The sign-in is account-wide. The

@@ -5,10 +5,11 @@
 #
 #   scripts/android-release.sh --new-key           # once, ever: make the release key
 #   scripts/android-release.sh                     # build, verify, stage a GitHub Release
-#   scripts/android-release.sh --write-assetlinks  # same, and put the key's fingerprint
-#                                                  # in website/.well-known/assetlinks.json
 #   scripts/android-release.sh --snapshot          # build and verify only: any commit,
 #                                                  # dirty tree allowed, nothing staged
+#   scripts/android-release.sh --snapshot --write-assetlinks
+#                                                  # and put the key's fingerprint in
+#                                                  # website/.well-known/assetlinks.json
 #
 # The key and its passwords live only in ~/.chaotic (see docs/android.md):
 #   ~/.chaotic/android-release.jks
@@ -17,7 +18,10 @@
 # script: CI builds the release unsigned (CHT-1661).
 #
 # The GitHub Release is staged, not created: the script prints the `gh release
-# create` command and runs it only if you answer "y" at the prompt.
+# create` command and runs it only if you answer "y" at the prompt. It stages
+# nothing until https://chaotic.sh/.well-known/assetlinks.json (deployed from
+# the committed website/.well-known/assetlinks.json) names the release key:
+# without it, sign-in has no App Links protection (CHT-1649).
 #
 # Written for the bash 3.2 that macOS ships.
 set -euo pipefail
@@ -28,6 +32,7 @@ KEY_ALIAS="chaotic"
 KEY_DNAME="CN=Chaotic for Android, O=Third Bear Solutions"
 KEY_VALIDITY_DAYS=10000 # about 27 years; the key can never change for installed users
 MIN_PASSWORD_LENGTH=12
+ASSETLINKS_URL="https://chaotic.sh/.well-known/assetlinks.json"
 
 signing_dir() { echo "${HOME}/.chaotic"; }
 signing_props() { echo "$(signing_dir)/android-signing.properties"; }
@@ -71,10 +76,21 @@ prop() {
     printf '%s' "$value" | sed 's/\\\\/\\/g'
 }
 
+# The keystore the properties file names. A relative path is relative to the
+# properties file's directory, as android/app/build.gradle.kts resolves it.
+store_file() {
+    local path
+    path=$(prop storeFile)
+    case "$path" in
+        /*) echo "$path" ;;
+        *) echo "$(signing_dir)/$path" ;;
+    esac
+}
+
 # The SHA-256 fingerprint of the release key's certificate, from the keystore.
 keystore_fingerprint() {
     local store pass
-    store=$(prop storeFile)
+    store=$(store_file)
     pass=$(prop storePassword)
     CHAOTIC_KS_PASS="$pass" keytool -list -v -keystore "$store" -alias "$(prop keyAlias)" \
         -storepass:env CHAOTIC_KS_PASS |
@@ -116,6 +132,21 @@ write_assetlinks() {
     fi
     assetlinks_json "$fingerprint" >"$file"
     say "Wrote $file. Commit it and deploy the website BEFORE publishing the release."
+}
+
+# Refuse to stage a release before the key's fingerprint is committed in
+# website/.well-known/assetlinks.json at the release commit and served at
+# $2 (the deployed website). Android checks it when the app is installed.
+require_published_fingerprint() {
+    local fingerprint="$1" url="$2" committed live
+    committed=$(git -C "$REPO" show HEAD:website/.well-known/assetlinks.json)
+    grep -q "\"${fingerprint}\"" <<<"$committed" ||
+        die "website/.well-known/assetlinks.json at HEAD does not name the release key $fingerprint.
+Run  scripts/android-release.sh --snapshot --write-assetlinks , merge that, deploy the website, then release."
+    live=$(curl -fsS --max-time 20 "$url") || die "could not fetch $url"
+    grep -q "\"${fingerprint}\"" <<<"$live" ||
+        die "$url does not name the release key $fingerprint yet: deploy the website first."
+    say "$url names the release key."
 }
 
 read_password() {
@@ -214,13 +245,15 @@ release() {
     props=$(signing_props)
     [ -f "$props" ] || die "$props not found. Run  scripts/android-release.sh --new-key  once, or restore it from your backup."
     require_private "$props"
-    [ -f "$(prop storeFile)" ] || die "the keystore $(prop storeFile) named in $props does not exist"
-    require_private "$(prop storeFile)"
+    [ -f "$(store_file)" ] || die "the keystore $(store_file) named in $props does not exist"
+    require_private "$(store_file)"
 
     head=$(git -C "$REPO" rev-parse HEAD)
     if [ "$snapshot" = 0 ]; then
-        [ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ] ||
-            die "the working tree has uncommitted changes: a release is built from a commit (or use --snapshot)"
+        # Tracked changes anywhere, and untracked files under android/ (they
+        # would be compiled in), but not files .gitignore excludes (build/).
+        [ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)$(git -C "$REPO" status --porcelain --untracked-files=all -- android)" ] ||
+            die "the working tree has uncommitted or untracked changes: a release is built from a commit (or use --snapshot)"
         git -C "$REPO" fetch --quiet origin main
         git -C "$REPO" merge-base --is-ancestor "$head" origin/main ||
             die "HEAD ($head) is not on origin/main: release from a merged commit (or use --snapshot)"
@@ -232,7 +265,9 @@ release() {
     tools=$(find_build_tools)
 
     say "Building Chaotic for Android $version (versionCode $code), foss flavor, at $head"
-    (cd "$ANDROID_DIR" && ./gradlew --quiet :app:clean :app:assembleFossRelease)
+    # No configuration cache: it would store the signing passwords (encrypted)
+    # under android/.gradle (docs/android.md).
+    (cd "$ANDROID_DIR" && ./gradlew --quiet --no-configuration-cache :app:clean :app:assembleFossRelease)
 
     apk="$ANDROID_DIR/app/build/outputs/apk/foss/release/app-foss-release.apk"
     if [ ! -f "$apk" ]; then
@@ -252,7 +287,8 @@ $certs"
     expected=$(keystore_fingerprint)
     [ "$fingerprint" = "$expected" ] || die "the APK is signed by $fingerprint, not the release key $expected"
     if [ -x "$tools/aapt2" ]; then
-        "$tools/aapt2" dump badging "$apk" | head -n 1
+        # sed reads to the end, so aapt2 never gets SIGPIPE under pipefail.
+        "$tools/aapt2" dump badging "$apk" | sed -n 1p
     fi
     sum=$(sha256_of "$apk")
 
@@ -276,6 +312,7 @@ $certs"
         say "Snapshot build at $apk (nothing staged)."
         return 0
     }
+    require_published_fingerprint "$fingerprint" "$ASSETLINKS_URL"
 
     tag="android-v$version"
     name="chaotic-android-$version.apk"
@@ -321,7 +358,7 @@ EOF
 }
 
 usage() {
-    sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+    awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
 }
 
 main() {
@@ -339,6 +376,9 @@ main() {
         esac
         shift
     done
+    # Writing assetlinks.json changes the tree, and the website has to be
+    # deployed before a release, so it never goes with staging one.
+    [ "$assetlinks" = 1 ] && [ "$snapshot" = 0 ] && die "--write-assetlinks goes with --snapshot (see --help)"
     REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
     ANDROID_DIR="$REPO/android"
     if [ "$mode" = new_key ]; then
