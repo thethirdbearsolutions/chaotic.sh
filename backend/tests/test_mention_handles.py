@@ -16,7 +16,9 @@ from app.oxyde_models.user import OxydeUser
 from app.schemas.issue import IssueCommentCreate
 from app.services.inbox_service import InboxService
 from app.services.issue_service import IssueService
-from app.services.mention_handles import MentionDirectory, candidates, slugify
+from app.services.mention_handles import (
+    MentionDirectory, agent_name_handles, candidates, handle_words, named_candidates, slugify,
+)
 from app.utils.security import get_password_hash
 
 
@@ -229,6 +231,78 @@ class TestDirectory:
                 for i in d.claimants(token):
                     assert d.resolve(d.handle_for(i)) == i, (x.name, token)
 
+    def test_a_person_named_by_one_word_keeps_it_beside_agents_sharing_it(self):
+        """CHT-1744: a person named "Claude" claims `claude` as a first
+        word, as Claude Shannon does, so "Claude Code" (whose first word
+        it also is) no longer makes '@claude' reach nobody."""
+        person, code = _user("Claude"), _agent("Claude Code")
+        session = _session("Claude Code (cloud) · 3f9a1c2b")
+        d = MentionDirectory([person, code, session])
+        assert d.resolve("claude") == person.id and not d.ambiguous("claude")
+        assert d.handle_for(person.id) == "claude"
+        assert d.handle_for(code.id) == "claude-code"
+        assert d.handle_for(session.id) == "claude-3f9a1c2b"
+        # Two people still share it: nobody, as with any shared word.
+        d = MentionDirectory([person, code, _user("Claude Shannon")])
+        assert d.resolve("claude") is None
+
+    def test_a_person_and_an_agent_both_named_by_the_word_reach_nobody_by_it(self):
+        """CHT-1744: an agent named exactly "Claude" claims `claude` as its
+        whole name, which stays strong, so beside a person "Claude" the
+        token names both and reaches nobody; each falls back to its id
+        handle. Naming refuses that agent while the person is a member
+        (TestNamingAgreesWithResolution); this is the order naming cannot
+        see, a person who joins or renames after the agent."""
+        person, agent = _user("Claude"), _agent("Claude")
+        d = MentionDirectory([person, agent])
+        assert d.resolve("claude") is None and d.ambiguous("claude")
+        assert d.claimants("claude") == {person.id, agent.id}
+        for x in (person, agent):
+            h = d.handle_for(x.id)
+            assert h == f"claude.{x.id.replace('-', '')[:8]}"
+            assert d.resolve(h) == x.id
+
+    def test_hostile_people_take_no_agents_strong_handle(self):
+        """CHT-1744 property, with people built to collide: one-word people
+        named after every handle the agents have (whole name, first word,
+        session tail, id handle, shown handle; upper-cased and with a
+        trailing '.'). No agent's shown strong handle comes to name a
+        person alone, every id handle stays its owner's, and
+        resolve(handle_for(x)) == x holds for everyone."""
+        agents = [
+            _agent("Claude MCP", id="28b1c019-5770-425e-bc02-8898f982de3c"), _agent("Claude Code"),
+            _agent("Claude"), _agent("Ethan"), _agent("Ethan Bot"), _agent("Ada"),
+            _session("Claude Code (cloud) · 3f9a1c2b"), _session("Ethan Bot · smith"),
+        ]
+        alone = MentionDirectory(agents)
+        shown = {a.id: alone.handle_for(a.id) for a in agents}
+        names = set()
+        for a in agents:
+            names.update(candidates(a))
+            names.add(shown[a.id])
+        names |= {f"{n}." for n in names} | {n.upper() for n in names}
+        people = [_user(n) for n in sorted(names)] + [_user("Claude Shannon"), _user("Ethan Smith")]
+        d = MentionDirectory(agents + people)
+        person_ids = {p.id for p in people}
+        checked = 0
+        for a in agents:
+            strong = {h for h, weak in named_candidates(a) if not weak}
+            if shown[a.id] in strong:
+                checked += 1
+                assert a.id in d.claimants(shown[a.id]), (a.name, shown[a.id])
+                assert d.resolve(shown[a.id]) not in person_ids, (a.name, shown[a.id])
+            assert d.resolve(f"x.{a.id.replace('-', '')[:8]}") == a.id
+        # "Claude" and "Ethan" share their whole name with another agent's
+        # first word, so they show an id handle even alone; the other six
+        # show a strong one.
+        assert checked == 6
+        everyone = agents + people
+        for x in everyone:
+            h = d.handle_for(x.id)
+            assert d.resolve(h) == x.id, (x.name, h)
+            assert d.resolve(h.upper() + ".") == x.id, (x.name, h)
+        assert len({d.handle_for(x.id) for x in everyone}) == len(everyone)
+
     def test_two_people_sharing_a_word_reach_nobody_by_it(self):
         a, b = _user("Ethan Smith"), _user("Ethan Jones")
         d = MentionDirectory([a, b])
@@ -261,6 +335,47 @@ class TestDirectory:
         assert d.can_reach(scoped.id, "p1")
         assert not d.can_reach(scoped.id, "p2")
         assert not d.can_reach(scoped.id, None)
+
+
+class TestNamingAgreesWithResolution:
+    """CHT-1744: naming (registration rule 8, `member_named`) refuses an
+    agent exactly when one of the strong handles it would claim is one of
+    a person's handles, weak or strong. Making a person's one-word name a
+    weak claim changes resolution only, so the two still agree: an agent
+    naming may refuse makes the shared token ambiguous, and one it allows
+    leaves the person's word theirs."""
+
+    def test_handles_of_a_person_named_by_one_word(self):
+        person = _user("Claude")
+        assert named_candidates(person) == (("claude", True),)
+        assert handle_words(person) == {"claude"}
+        assert agent_name_handles("Claude") & handle_words(person)  # refused
+        assert not agent_name_handles("Claude Code") & handle_words(person)  # allowed
+
+    @pytest.mark.parametrize("agent_name", ["Claude", "claude", "Claude Code", "Claude MCP", "Claude · x · 3f9a1c"])
+    def test_refused_exactly_when_resolution_would_be_ambiguous(self, agent_name):
+        person = _user("Claude")
+        refused = bool(agent_name_handles(agent_name) & handle_words(person))
+        agent = _agent(agent_name, kind=AgentKind.SESSION)
+        d = MentionDirectory([person, agent])
+        assert d.resolve("claude") == (None if refused else person.id)
+        assert refused == (agent_name.lower() == "claude")
+
+    async def test_member_named_refuses_the_word_and_allows_the_longer_name(self, db, test_team):
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.services.registration_service import member_named
+
+        claude = await OxydeUser.objects.create(
+            email="claude@example.com", hashed_password=get_password_hash("pw-12345678"), name="Claude",
+        )
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=claude.id, role=TeamRole.MEMBER)
+        assert await member_named(test_team.id, "Claude")
+        assert not await member_named(test_team.id, "Claude Code")
+        code = await _team_agent(test_team.id, "Claude Code")
+        d = await MentionDirectory.for_team(test_team.id)
+        assert d.resolve("claude") == claude.id and d.handle_for(claude.id) == "claude"
+        assert d.resolve(d.handle_for(code.id)) == code.id
 
 
 # ---------------------------------------------------------------------------
