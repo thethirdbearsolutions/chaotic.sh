@@ -303,6 +303,8 @@ jobs:
           path: android/app/build/outputs/apk/*/release/*.apk
           if-no-files-found: error
           retention-days: 1
+          # A re-run of this job uploads again under the same name.
+          overwrite: true
 
       - name: Rules R8 asked for, if the release build failed
         if: failure() && steps.release.outcome == 'failure'
