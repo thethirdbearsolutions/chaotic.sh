@@ -1,11 +1,12 @@
 """CHT-1721: completing limbo and activating the next sprint is one step.
 
 complete_limbo used to commit the old sprint as COMPLETED and only then
-activate the next one. Every caller that reaches it from an attestation
-logs and swallows an error, so a failed activation left the project
-with no ACTIVE sprint: the arrears gate and the budget charge both
-return early without one, so every close was free and unrecorded until
-something created a fresh sprint.
+activate the next one. Most callers (attest, gate completion and
+check_limbo's self-heal; approve() is the exception and propagates) log
+and swallow an error, so a failed activation left the project with no
+ACTIVE sprint: the arrears gate and the budget charge both return early
+without one, so every close was free and unrecorded until something
+created a fresh sprint.
 
 These tests make the activation fail and check that the rotation rolls
 back as a whole: the project keeps its active (limbo) sprint, the
@@ -122,10 +123,18 @@ async def test_swallowing_caller_leaves_an_active_sprint_and_the_retry_rotates(
 
 
 @pytest.mark.asyncio
-async def test_missing_planned_sprint_is_created_not_skipped(db, test_project):
+@pytest.mark.parametrize("default_budget, expected", [(25, 25), (None, 10)])
+async def test_missing_planned_sprint_is_created_not_skipped(
+    db, test_project, default_budget, expected,
+):
     """With no planned sprint (deleted while the current one sat in
     limbo), completing limbo used to complete the sprint and activate
-    nothing. It now creates the next sprint and activates it."""
+    nothing. It now creates the next sprint and activates it, at the
+    project default, or, with a null default, at the closing sprint's
+    budget (the CHT-1495 carry-forward; PR #404 review L2), never
+    unlimited."""
+    test_project.default_sprint_budget = default_budget
+    await test_project.save(update_fields={"default_sprint_budget"})
     limbo = await OxydeSprint.objects.create(
         project_id=test_project.id, name="Limbo", status=SprintStatus.ACTIVE,
         limbo=True, budget=10,
@@ -133,12 +142,99 @@ async def test_missing_planned_sprint_is_created_not_skipped(db, test_project):
 
     await SprintService().complete_limbo(limbo)
 
-    active = await _active(test_project)
-    assert len(active) == 1 and active[0].id != limbo.id
-    planned = await OxydeSprint.objects.filter(
-        project_id=test_project.id, status=SprintStatus.PLANNED,
-    ).all()
-    assert len(planned) == 1
+    sprints = await _sprints(test_project)
+    assert sprints["Limbo"].status == SprintStatus.COMPLETED
+    assert sprints["Limbo"].closed_at is not None
+    assert sprints["Sprint 1"].status == SprintStatus.ACTIVE
+    assert sprints["Sprint 1"].budget == expected
+    assert sprints["Sprint 1"].budget_explicit is False
+    assert sprints["Sprint 2"].status == SprintStatus.PLANNED
+    assert sprints["Sprint 2"].budget == expected
+    assert len(sprints) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("default_budget, expected", [(25, 25), (None, 10)])
+async def test_close_sprint_creates_missing_next_with_the_same_rule(
+    db, test_project, default_budget, expected,
+):
+    """close_sprint shares the helper: with no planned sprint and a null
+    default, the sprint it creates and activates carries the closing
+    sprint's budget instead of coming up unlimited."""
+    test_project.default_sprint_budget = default_budget
+    await test_project.save(update_fields={"default_sprint_budget"})
+    current = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Sprint 1", status=SprintStatus.ACTIVE,
+        budget=10,
+    )
+
+    await SprintService().close_sprint(current)
+
+    sprints = await _sprints(test_project)
+    assert sprints["Sprint 1"].status == SprintStatus.COMPLETED
+    assert sprints["Sprint 1"].closed_at is not None
+    assert sprints["Sprint 2"].status == SprintStatus.ACTIVE
+    assert sprints["Sprint 2"].budget == expected
+    assert sprints["Sprint 2"].budget_explicit is False
+    assert sprints["Sprint 3"].status == SprintStatus.PLANNED
+    assert sprints["Sprint 3"].budget == expected
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_reader_never_sees_the_project_without_an_active_sprint(
+    db, test_project, tmp_path, monkeypatch,
+):
+    """The race the old ordering opened (PR #404 review): between
+    complete_limbo's commit and its later activation, another connection
+    saw no ACTIVE sprint, and ensure_sprints_exist, which creates one
+    exactly when it sees none, would add a second ACTIVE sprint next to
+    the one the activation then made.
+
+    The test database has one Oxyde connection, so the other reader is a
+    plain sqlite3 connection on the same file. It looks at the committed
+    state at the moment the next sprint is being activated and must still
+    see exactly one ACTIVE sprint (the limbo one, its completion not yet
+    committed), so ensure_sprints_exist would create nothing."""
+    import sqlite3
+    from contextlib import closing
+
+    limbo, planned = await _limbo_and_next(test_project)
+    real = SprintService._activate_next_sprint
+    seen: list[list[str]] = []
+
+    async def observed(self, next_sprint):
+        uri = f"file:{tmp_path / 'test.db'}?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True, timeout=5)) as reader:
+            rows = reader.execute(
+                "SELECT id FROM sprints WHERE project_id = ? AND status = ?",
+                (test_project.id, SprintStatus.ACTIVE.name),
+            ).fetchall()
+        seen.append([r[0] for r in rows])
+        await real(self, next_sprint)
+
+    monkeypatch.setattr(SprintService, "_activate_next_sprint", observed)
+    await SprintService().complete_limbo(limbo)
+
+    assert seen == [[limbo.id]]
+    assert [s.id for s in await _active(test_project)] == [planned.id]
+
+
+@pytest.mark.asyncio
+async def test_repeated_self_heal_failures_log_one_traceback(db, test_project, monkeypatch, caplog):
+    """A stuck limbo is retried on every check_limbo; the traceback is
+    logged once per interval, repeats at DEBUG (PR #404 review L1)."""
+    limbo, _ = await _limbo_and_next(test_project)
+    _fail_after_activating(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="app.services.ritual_service"):
+        for _ in range(3):
+            in_limbo, _, _ = await RitualService().check_limbo(test_project.id)
+            assert in_limbo is True
+
+    failures = [r for r in caplog.records if "Self-heal failed" in r.getMessage()]
+    assert len(failures) == 1 and failures[0].exc_info is not None
+    heals = [r for r in caplog.records if "self-healing" in r.getMessage()]
+    assert len(heals) == 1
 
 
 @pytest.mark.asyncio
@@ -156,8 +252,29 @@ async def test_close_with_no_active_sprint_is_logged(db, test_project, test_user
     with caplog.at_level(logging.WARNING, logger="app.services.issue_service"):
         await IssueService()._deduct_from_sprint_budget(issue, test_user.id)
 
-    assert any("no active one" in r.getMessage() for r in caplog.records)
+    assert any(
+        "no active one" in r.getMessage() and "without a budget charge" in r.getMessage()
+        for r in caplog.records
+    )
     assert await OxydeBudgetTransaction.objects.filter(issue_id=issue.id).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_arrears_gate_with_no_active_sprint_is_logged(db, test_project, caplog):
+    """The arrears gate passing for want of an active sprint is the larger
+    half of the damage; it warns too (PR #404 review L4). Policy is
+    unchanged: nothing is refused."""
+    await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Done", status=SprintStatus.COMPLETED,
+        budget=5, points_spent=9,
+    )
+    with caplog.at_level(logging.WARNING, logger="app.services.issue_service"):
+        await IssueService()._check_sprint_arrears(test_project.id)
+
+    assert any(
+        "no active one" in r.getMessage() and "arrears gate is off" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -167,5 +284,6 @@ async def test_project_without_sprints_closes_quietly(db, test_project, test_use
         number=3, title="no sprints at all", estimate=1, creator_id=test_user.id,
     )
     with caplog.at_level(logging.WARNING, logger="app.services.issue_service"):
+        await IssueService()._check_sprint_arrears(test_project.id)
         await IssueService()._deduct_from_sprint_budget(issue, test_user.id)
     assert not any("no active one" in r.getMessage() for r in caplog.records)

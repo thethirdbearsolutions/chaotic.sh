@@ -146,10 +146,19 @@ class SprintService:
             project_id=project_id, status=SprintStatus.PLANNED.name
         ).order_by("created_at").first()
 
-    async def _get_or_create_next_sprint(self, project_id: str) -> OxydeSprint:
-        """The planned sprint a rotation activates, created at the project
-        default if there is none (e.g. it was deleted while the current
-        sprint sat in limbo)."""
+    async def _get_or_create_next_sprint(
+        self, project_id: str, carry_budget: int | None = None,
+    ) -> OxydeSprint:
+        """The planned sprint a rotation activates, created if there is
+        none (e.g. it was deleted while the current sprint sat in limbo).
+
+        A created sprint starts at the project default. With a null
+        ("unlimited") default it takes `carry_budget`, the closing
+        sprint's budget, instead: the CHT-1495 carry-forward rule, so a
+        rotation cannot silently switch arrears off. Like every carried
+        budget it is not marked as set by hand, so a default set later
+        still reaches it (PR #404 review L2).
+        """
         next_sprint = await self.get_next_sprint(project_id)
         if next_sprint:
             return next_sprint
@@ -159,7 +168,7 @@ class SprintService:
             project_id=project_id,
             name=f"Sprint {sprint_num}",
             status=SprintStatus.PLANNED,
-            budget=default_budget,
+            budget=default_budget if default_budget is not None else carry_budget,
         )
         await next_sprint.refresh()
         return next_sprint
@@ -239,7 +248,7 @@ class SprintService:
                 await sprint.refresh()
                 return sprint
 
-            next_sprint = await self._get_or_create_next_sprint(project_id)
+            next_sprint = await self._get_or_create_next_sprint(project_id, carry_budget=sprint.budget)
 
             # Move incomplete issues from current sprint to next sprint
             # Raw SQL: .name strings required for execute_raw params
@@ -359,6 +368,17 @@ class SprintService:
         # sprint stays in limbo with nothing pending, and the next limbo
         # check (RitualService.check_limbo's self-heal, or force-clear)
         # retries it.
+        #
+        # The trade-off (PR #404 review L1): this fails closed. While the
+        # activation keeps failing, the project stays in limbo, which
+        # blocks moves to in_progress/done/canceled, and force-clear-limbo
+        # hits the same failure, since it calls this method. The old
+        # behaviour failed open instead: work went on with no budget and
+        # no arrears. No deterministic failure is known here (sprints
+        # carry no unique constraint; a missing project only yields a
+        # None default), so a stuck limbo means a transient error
+        # (CHT-1411's BUSY) that the next check retries. check_limbo
+        # rate-limits the logging of those retries.
         async with atomic():
             result = await execute_raw(
                 "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND limbo = 1 RETURNING id",
@@ -374,7 +394,9 @@ class SprintService:
                 # every sprint and the others were never selected.
                 from app.services.ritual_service import RitualService
                 await RitualService().record_sprint_rotation(sprint.project_id, sprint.id)
-                next_sprint = await self._get_or_create_next_sprint(sprint.project_id)
+                next_sprint = await self._get_or_create_next_sprint(
+                    sprint.project_id, carry_budget=sprint.budget,
+                )
                 await self._activate_next_sprint(next_sprint)
         # A loser (another request already cleared limbo and owns the
         # activation, or the sprint wasn't in limbo) just reports the row.
