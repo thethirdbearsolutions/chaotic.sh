@@ -86,6 +86,16 @@ class NotificationTapsTest {
         store.applyInbox(InboxChange(false, listOf(entry), emptySet(), setOf(TEAM_A), "c0"))
     }
 
+    /**
+     * Run everything due, on the virtual clock. advanceUntilIdle alone
+     * stops once only background work is left, before the collector of
+     * [seen] (in backgroundScope) has taken the last events.
+     */
+    private fun TestScope.settle() {
+        advanceUntilIdle()
+        runCurrent()
+    }
+
     private fun found() = seen.filterIsInstance<Open.Found>().map { it.issue }
 
     @Test
@@ -94,7 +104,7 @@ class NotificationTapsTest {
         val taps = taps()
 
         taps.open(adas("e1"))
-        advanceUntilIdle()
+        settle()
 
         assertEquals(listOf(Open.Tapped(1), Open.Found(1, Destination.Issue("i1", TEAM_A))), seen)
         assertEquals(listOf("/api/inbox/e1/read"), store.pendingWrites().map { it.path })
@@ -107,7 +117,7 @@ class NotificationTapsTest {
         remote.syncAnswers += Remote.Ok(page(open(onIssue("e1", issueId = "i9")), teams = setOf(TEAM_A)))
 
         taps.open(adas("e1"))
-        advanceUntilIdle()
+        settle()
 
         assertEquals(listOf(Destination.Issue("i9", TEAM_A)), found())
         assertEquals(1, remote.sinceSent.size)
@@ -119,7 +129,7 @@ class NotificationTapsTest {
         val taps = taps()
 
         taps.open(adas("e1"))
-        advanceUntilIdle()
+        settle()
 
         assertEquals(emptyList(), found())
         assertEquals(1, store.pendingWrites().size)
@@ -131,7 +141,7 @@ class NotificationTapsTest {
         // No sync answer queued: the sync fails, as it would offline.
 
         val lookup = taps.open(adas("gone"))
-        advanceUntilIdle()
+        settle()
 
         assertTrue(lookup.isCompleted)
         assertEquals(1, remote.sinceSent.size)
@@ -147,7 +157,7 @@ class NotificationTapsTest {
 
         val lookup = taps.open(adas("e1"))
         advanceTimeBy(NotificationTaps.OPEN_WINDOW_MILLIS + 2)
-        advanceUntilIdle()
+        settle()
 
         assertTrue(lookup.isCompleted)
         assertEquals(emptyList(), found())
@@ -160,7 +170,7 @@ class NotificationTapsTest {
         val taps = taps()
 
         taps.open(NotificationTap("e1", ownerOf(GRACE)))
-        advanceUntilIdle()
+        settle()
 
         assertEquals(emptyList(), found())
         assertTrue(remote.sinceSent.isEmpty())
@@ -174,7 +184,7 @@ class NotificationTapsTest {
         val taps = taps()
 
         taps.open(adas("e1"))
-        advanceUntilIdle()
+        settle()
 
         assertEquals(emptyList(), found())
         assertEquals(ownerOf(ADA), store.owner())
@@ -194,7 +204,7 @@ class NotificationTapsTest {
         sessions.signOut()
         runCurrent()
         answer.complete(Unit)
-        advanceUntilIdle()
+        settle()
 
         assertTrue(lookup.isCancelled)
         assertEquals(emptyList(), found())
@@ -211,7 +221,7 @@ class NotificationTapsTest {
         val first = taps.open(adas("e1"))
         runCurrent()
         taps.open(adas("e2"))
-        advanceUntilIdle()
+        settle()
 
         assertTrue(first.isCancelled)
         assertEquals(listOf(Open.Found(2, Destination.Issue("i2", TEAM_A))), seen.filterIsInstance<Open.Found>())
