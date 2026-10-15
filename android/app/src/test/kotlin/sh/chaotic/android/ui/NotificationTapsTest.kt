@@ -1,22 +1,31 @@
 package sh.chaotic.android.ui
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Before
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import sh.chaotic.android.ADA
+import sh.chaotic.android.GRACE
 import sh.chaotic.android.di.cacheOwner
 import sh.chaotic.android.ownerOf
+import sh.chaotic.android.push.NotificationTap
 import sh.chaotic.android.testSessions
+import sh.chaotic.android.ui.NotificationTaps.Open
 import sh.chaotic.android.writes.WriteActions
+import sh.chaotic.auth.SessionManager
 import sh.chaotic.sync.CacheSession
 import sh.chaotic.sync.FakeRemote
 import sh.chaotic.sync.InMemoryCacheStore
@@ -35,88 +44,204 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** Tapping a notification opens its entry's issue, once the cache has the entry (CHT-1660). */
+/**
+ * Tapping a notification opens its entry's issue, for the person it was
+ * posted for, once the cache has the entry (CHT-1660). On a test
+ * dispatcher: every "nothing opens" is checked once the lookup has
+ * settled, on a virtual clock.
+ */
 @RunWith(RobolectricTestRunner::class)
 class NotificationTapsTest {
     private val remote = FakeRemote()
     private val store = InMemoryCacheStore()
+    private lateinit var sessions: SessionManager
+    private val seen = mutableListOf<Open>()
 
     @Before
-    fun setUp() = Dispatchers.setMain(Dispatchers.Unconfined)
+    fun setUp() = Dispatchers.setMain(StandardTestDispatcher())
 
     @After
     fun tearDown() = Dispatchers.resetMain()
 
-    private suspend fun taps(): NotificationTaps {
-        val sessions = testSessions(ADA)
+    private suspend fun TestScope.taps(): NotificationTaps {
+        sessions = testSessions(ADA)
         sessions.load()
-        // Claimed for Ada, as AppViewModel does on sign-in.
-        store.claim(ownerOf(ADA))
         val cache = CacheSession(store) { sessions.cacheOwner() }
-        return NotificationTaps(sessions, store, InboxSyncer(remote, cache), WriteActions(WriteQueue(remote, cache)) {})
+        val writes = WriteActions(WriteQueue(remote, cache)) {}
+        val taps = NotificationTaps(sessions, cache, InboxSyncer(remote, cache), writes)
+        backgroundScope.launch { taps.opens.toList(seen) }
+        runCurrent()
+        return taps
     }
+
+    private fun adas(entryId: String) = NotificationTap(entryId, ownerOf(ADA))
 
     private fun onIssue(id: String, issueId: String? = "i1"): InboxEntry {
         val read = InboxAction(InboxAction.MARK_READ, "/api/inbox/$id/read")
         return entry(id).copy(issueId = issueId, actions = listOf(read))
     }
 
-    private suspend fun cache(entry: InboxEntry) =
+    private suspend fun cache(entry: InboxEntry, owner: String = ownerOf(ADA)) {
+        store.claim(owner)
         store.applyInbox(InboxChange(false, listOf(entry), emptySet(), setOf(TEAM_A), "c0"))
-
-    private suspend fun waitFor(condition: suspend () -> Boolean) = withTimeout(WAIT_MILLIS) {
-        while (!condition()) delay(POLL_MILLIS)
     }
 
+    private fun found() = seen.filterIsInstance<Open.Found>().map { it.issue }
+
     @Test
-    fun aCachedEntryOpensItsIssueAndIsRead() = runBlocking {
-        val taps = taps()
+    fun aCachedEntryOpensItsIssueAndIsRead() = runTest {
         cache(onIssue("e1"))
+        val taps = taps()
 
-        taps.open("e1")
+        taps.open(adas("e1"))
+        advanceUntilIdle()
 
-        assertEquals(Destination.Issue("i1", TEAM_A), withTimeout(WAIT_MILLIS) { taps.issues.first() })
+        assertEquals(listOf(Open.Tapped(1), Open.Found(1, Destination.Issue("i1", TEAM_A))), seen)
         assertEquals(listOf("/api/inbox/e1/read"), store.pendingWrites().map { it.path })
         assertTrue(remote.sinceSent.isEmpty(), "no sync for an entry already cached")
     }
 
     @Test
-    fun aPushThatCameBeforeTheSyncIsFoundBySyncing() = runBlocking {
+    fun aPushThatCameBeforeTheSyncIsFoundBySyncing() = runTest {
         val taps = taps()
         remote.syncAnswers += Remote.Ok(page(open(onIssue("e1", issueId = "i9")), teams = setOf(TEAM_A)))
 
-        taps.open("e1")
+        taps.open(adas("e1"))
+        advanceUntilIdle()
 
-        assertEquals(Destination.Issue("i9", TEAM_A), withTimeout(WAIT_MILLIS) { taps.issues.first() })
+        assertEquals(listOf(Destination.Issue("i9", TEAM_A)), found())
         assertEquals(1, remote.sinceSent.size)
     }
 
     @Test
-    fun anEntryOnNoIssueIsReadAndTheInboxStays() = runBlocking {
-        val taps = taps()
+    fun anEntryOnNoIssueIsReadAndOpensNothing() = runTest {
         cache(onIssue("e1", issueId = null))
+        val taps = taps()
 
-        taps.open("e1")
+        taps.open(adas("e1"))
+        advanceUntilIdle()
 
-        waitFor { store.pendingWrites().isNotEmpty() }
-        assertNull(withTimeoutOrNull(SETTLE_MILLIS) { taps.issues.first() })
+        assertEquals(emptyList(), found())
+        assertEquals(1, store.pendingWrites().size)
     }
 
     @Test
-    fun anEntryTheCacheNeverGetsLeavesTheInbox() = runBlocking {
+    fun anEntryTheCacheNeverGetsOpensNothing() = runTest {
         val taps = taps()
         // No sync answer queued: the sync fails, as it would offline.
 
-        taps.open("gone")
+        val lookup = taps.open(adas("gone"))
+        advanceUntilIdle()
 
-        waitFor { remote.sinceSent.size == 1 }
-        assertNull(withTimeoutOrNull(SETTLE_MILLIS) { taps.issues.first() })
+        assertTrue(lookup.isCompleted)
+        assertEquals(1, remote.sinceSent.size)
+        assertEquals(emptyList(), found())
         assertTrue(store.pendingWrites().isEmpty())
     }
 
-    private companion object {
-        const val WAIT_MILLIS = 10_000L
-        const val POLL_MILLIS = 10L
-        const val SETTLE_MILLIS = 300L
+    @Test
+    fun aLookupSlowerThanTheWindowOpensNothing() = runTest {
+        val taps = taps()
+        remote.syncAnswers += Remote.Ok(page(open(onIssue("e1")), teams = setOf(TEAM_A)))
+        remote.onSync = { delay(NotificationTaps.OPEN_WINDOW_MILLIS + 1) }
+
+        val lookup = taps.open(adas("e1"))
+        advanceTimeBy(NotificationTaps.OPEN_WINDOW_MILLIS + 2)
+        advanceUntilIdle()
+
+        assertTrue(lookup.isCompleted)
+        assertEquals(emptyList(), found())
+        assertTrue(store.pendingWrites().isEmpty())
+    }
+
+    @Test
+    fun aTapPostedForSomeoneElseOpensNothing() = runTest {
+        cache(onIssue("e1"))
+        val taps = taps()
+
+        taps.open(NotificationTap("e1", ownerOf(GRACE)))
+        advanceUntilIdle()
+
+        assertEquals(emptyList(), found())
+        assertTrue(remote.sinceSent.isEmpty())
+        assertTrue(store.pendingWrites().isEmpty())
+    }
+
+    @Test
+    fun anotherPersonsCacheIsClaimedBeforeItIsRead() = runTest {
+        // Grace's cache, left behind by a process that died before her sign-out emptied it.
+        cache(onIssue("e1"), owner = ownerOf(GRACE))
+        val taps = taps()
+
+        taps.open(adas("e1"))
+        advanceUntilIdle()
+
+        assertEquals(emptyList(), found())
+        assertEquals(ownerOf(ADA), store.owner())
+        assertNull(store.inboxEntry("e1"))
+        assertTrue(store.pendingWrites().isEmpty())
+    }
+
+    @Test
+    fun signingOutDuringTheLookupDropsIt() = runTest {
+        val taps = taps()
+        val answer = CompletableDeferred<Unit>()
+        remote.syncAnswers += Remote.Ok(page(open(onIssue("e1")), teams = setOf(TEAM_A)))
+        remote.onSync = { answer.await() }
+
+        val lookup = taps.open(adas("e1"))
+        runCurrent()
+        sessions.signOut()
+        runCurrent()
+        answer.complete(Unit)
+        advanceUntilIdle()
+
+        assertTrue(lookup.isCancelled)
+        assertEquals(emptyList(), found())
+        assertTrue(store.pendingWrites().isEmpty())
+    }
+
+    @Test
+    fun aSecondTapReplacesTheFirst() = runTest {
+        cache(onIssue("e2", issueId = "i2"))
+        val taps = taps()
+        val answer = CompletableDeferred<Unit>()
+        remote.onSync = { answer.await() }
+
+        val first = taps.open(adas("e1"))
+        runCurrent()
+        taps.open(adas("e2"))
+        advanceUntilIdle()
+
+        assertTrue(first.isCancelled)
+        assertEquals(listOf(Open.Found(2, Destination.Issue("i2", TEAM_A))), seen.filterIsInstance<Open.Found>())
+    }
+}
+
+/** The navigation opens a found issue only over the screen the tap arrived on. */
+class TapRouteTest {
+    private val issue = Destination.Issue("i1", TEAM_A)
+
+    @Test
+    fun anIssueOpensOverTheScreenTheTapArrivedOn() {
+        val route = TapRoute()
+        assertNull(route.on(Open.Tapped(1), "home"))
+        assertEquals(issue, route.on(Open.Found(1, issue), "home"))
+    }
+
+    @Test
+    fun nothingOpensOnceThePersonHasMovedOn() {
+        val route = TapRoute()
+        route.on(Open.Tapped(1), "home")
+        assertNull(route.on(Open.Found(1, issue), "another-issue"))
+    }
+
+    @Test
+    fun nothingOpensForAnOlderTapOrOneThisNavigationNeverSaw() {
+        val route = TapRoute()
+        assertNull(route.on(Open.Found(1, issue), "home"))
+        route.on(Open.Tapped(1), "home")
+        route.on(Open.Tapped(2), "home")
+        assertNull(route.on(Open.Found(1, issue), "home"))
     }
 }

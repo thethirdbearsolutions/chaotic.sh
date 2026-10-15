@@ -233,15 +233,19 @@ class AndroidNotifier(private val context: Context, private val owner: () -> Str
         .build()
 
     /**
-     * Opens the app; on [entryId]'s issue when there is one (CHT-1660). A
-     * summary opens the inbox: its entries can be on different issues.
+     * Opens the app; on [entryId]'s issue when there is one, for whoever is
+     * signed in now (CHT-1660). A summary opens the inbox: its entries can
+     * be on different issues.
      */
-    private fun openApp(key: String, entryId: String?): PendingIntent = PendingIntent.getActivity(
-        context,
-        0,
-        NotificationTap.intent(context, key, entryId),
-        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-    )
+    private fun openApp(key: String, entryId: String?): PendingIntent {
+        val tap = entryId?.let { id -> owner()?.let { NotificationTap(id, it) } }
+        return PendingIntent.getActivity(
+            context,
+            0,
+            NotificationTap.intent(context, key, tap),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
 
     companion object {
         private const val ENTRY_TAG = "entry:"

@@ -26,7 +26,7 @@ import sh.chaotic.auth.AuthState
  * stack with it.
  */
 @Composable
-fun ChaoticApp(viewModel: AppViewModel = hiltViewModel()) {
+fun ChaoticApp(taps: NotificationTaps, viewModel: AppViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     when (val current = state) {
         AuthState.Loading ->
@@ -34,16 +34,26 @@ fun ChaoticApp(viewModel: AppViewModel = hiltViewModel()) {
 
         is AuthState.SignedOut -> SignInScreen(ended = current.ended)
 
-        is AuthState.SignedIn -> SignedInApp()
+        is AuthState.SignedIn -> SignedInApp(taps)
     }
 }
 
+/**
+ * [taps] is MainActivity's own instance, handed down rather than looked up
+ * again here, so a tap cannot land in a second copy nobody collects.
+ */
 @Composable
-private fun SignedInApp(taps: NotificationTaps = hiltViewModel()) {
+private fun SignedInApp(taps: NotificationTaps) {
     val navController = rememberNavController()
-    // A tapped notification's issue (CHT-1660), over the inbox so Back returns there.
+    // A tapped notification's issue (CHT-1660), over the screen shown when
+    // the tap arrived, so Back returns there; see NotificationTaps for when.
     LaunchedEffect(taps, navController) {
-        taps.issues.collect { navController.navigate(it) { launchSingleTop = true } }
+        val route = TapRoute()
+        taps.opens.collect { open ->
+            route.on(open, navController.currentBackStackEntry?.id)?.let {
+                navController.navigate(it) { launchSingleTop = true }
+            }
+        }
     }
     NavHost(navController = navController, startDestination = Destination.Home) {
         composable<Destination.Home> {

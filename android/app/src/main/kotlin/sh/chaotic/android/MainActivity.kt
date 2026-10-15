@@ -36,7 +36,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) openTapped(intent)
         setContent {
             ChaoticTheme {
-                ChaoticApp()
+                ChaoticApp(taps)
             }
         }
         // Each time the app comes on screen signed in, (re)register for push
@@ -59,6 +59,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openTapped(intent: Intent?) {
-        NotificationTap.entryId(intent)?.let(taps::open)
+        NotificationTap.from(intent)?.let(taps::open)
     }
 }

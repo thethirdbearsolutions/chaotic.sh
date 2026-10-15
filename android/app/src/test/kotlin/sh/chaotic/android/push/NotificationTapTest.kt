@@ -12,10 +12,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
-/** Only an intent started under the non-exported alias opens an entry (CHT-1660). */
+/** Only an intent started under the non-exported alias carries a tap (CHT-1660). */
 @RunWith(RobolectricTestRunner::class)
 class NotificationTapTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
+    private val tap = NotificationTap("e1", "ada@https://chaotic.test")
 
     @Test
     fun theAliasIsMainActivityAndNoOtherAppCanStartIt() {
@@ -25,25 +26,25 @@ class NotificationTapTest {
     }
 
     @Test
-    fun anEntryIdComesBackFromTheAliasIntent() {
-        val intent = NotificationTap.intent(context, "entry:e1", "e1")
+    fun aTapComesBackFromTheAliasIntent() {
+        val intent = NotificationTap.intent(context, "entry:e1", tap)
         assertEquals(context.packageName, intent.component?.packageName)
-        assertEquals("e1", NotificationTap.entryId(intent))
-        assertNull(NotificationTap.entryId(NotificationTap.intent(context, "summary:issue:i1", null)))
+        assertEquals(tap, NotificationTap.from(intent))
+        assertNull(NotificationTap.from(NotificationTap.intent(context, "summary:issue:i1", null)))
     }
 
     @Test
-    fun theSameExtraSentToTheExportedLauncherIsIgnored() {
+    fun theSameExtrasSentToTheExportedLauncherAreIgnored() {
         val forged = Intent(context, MainActivity::class.java)
-            .putExtras(NotificationTap.intent(context, "entry:e1", "e1"))
-        assertNull(NotificationTap.entryId(forged))
-        assertNull(NotificationTap.entryId(null))
+            .putExtras(NotificationTap.intent(context, "entry:e1", tap))
+        assertNull(NotificationTap.from(forged))
+        assertNull(NotificationTap.from(null))
     }
 
     @Test
     fun aTapReplayedFromRecentsOpensNothing() {
-        val replayed = NotificationTap.intent(context, "entry:e1", "e1")
+        val replayed = NotificationTap.intent(context, "entry:e1", tap)
             .addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)
-        assertNull(NotificationTap.entryId(replayed))
+        assertNull(NotificationTap.from(replayed))
     }
 }
