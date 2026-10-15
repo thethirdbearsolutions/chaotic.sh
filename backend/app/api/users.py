@@ -4,7 +4,7 @@ from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, NotAppSession
 from app.schemas.user import UserUpdate, UserResponse
 from app.services.user_service import UserDeletionRefusedError, UserService
-from app.services.team_service import TeamService
+from app.api.visibility import visible_user
 
 router = APIRouter()
 
@@ -13,19 +13,9 @@ router = APIRouter()
 @reads
 async def get_user(user_id: str, current_user: CurrentUser) -> UserResponse:
     """Get user by ID."""
-    user_service = UserService()
-    user = await user_service.get_by_id(user_id)
-
-    # Users can always look up themselves; anyone else needs a shared
-    # team. One the caller does not share a team with answers like a
-    # missing one (CHT-1785).
-    if not user or (
-        user.id != current_user.id and not await TeamService().shares_team(current_user.id, user_id)
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
+    # Yourself, or someone a team directory you are in lists (CHT-1841);
+    # anyone else answers like a missing user (CHT-1785).
+    user = await visible_user(current_user, user_id)
 
     response = UserResponse.model_validate(user)
     if user.is_agent:
@@ -33,6 +23,10 @@ async def get_user(user_id: str, current_user: CurrentUser) -> UserResponse:
 
         if not await sees_external_ref(current_user, user):
             response.external_ref = None
+            # A session identity's address is made from its external_ref
+            # (RegistrationService), so it hides with it; /agents/{id}
+            # shows no address at all (CHT-1841).
+            response.email = None
     return response
 
 

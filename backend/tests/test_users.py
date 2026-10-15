@@ -182,6 +182,84 @@ async def test_update_me_name_preserved_on_avatar_update(client, auth_headers):
     assert data["avatar_url"] == "https://example.com/new.png"
 
 
+@pytest.mark.asyncio
+async def test_get_user_shows_exactly_whom_the_team_directory_shows(
+    client, auth_headers, auth_headers2, test_user, test_user2, test_team, test_project,
+):
+    """GET /users/{id} answers 200 for exactly the people and agents the
+    caller's team directories list (/teams/{id}/members and
+    /teams/{id}/agents of every team it is in), plus itself, and the
+    missing user's 404 for everyone else (CHT-1841). Before, it read only
+    team_members rows, so no agent saw anyone and no one saw an agent."""
+    from app.enums import TeamRole
+    from app.oxyde_models.project import OxydeProject
+    from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+    from app.oxyde_models.user import OxydeUser
+    from app.schemas.agent import AgentCreate
+    from app.services.agent_service import AgentService
+
+    team_b = await OxydeTeam.objects.create(name="Team B", key="TB")
+    await OxydeTeamMember.objects.create(team_id=team_b.id, user_id=test_user2.id, role=TeamRole.OWNER)
+    sibling = await OxydeProject.objects.create(team_id=test_team.id, name="Sibling", key="SIB")
+    # A person in both teams, and a deactivated member of team A: both
+    # listed by the directory.
+    bridge = await OxydeUser.objects.create(email="bridge@example.com", hashed_password="x", name="Bridge")
+    retired = await OxydeUser.objects.create(
+        email="retired@example.com", hashed_password="x", name="Retired", is_active=False,
+    )
+    for team_id, user_id in ((test_team.id, bridge.id), (team_b.id, bridge.id), (test_team.id, retired.id)):
+        await OxydeTeamMember.objects.create(team_id=team_id, user_id=user_id, role=TeamRole.MEMBER)
+
+    agents = AgentService()
+    team_agent, team_key, _ = await agents.create(AgentCreate(name="Team Bot"), test_user, test_team.id)
+    proj_agent, proj_key, _ = await agents.create(
+        AgentCreate(name="Proj Bot"), test_user, test_team.id, project_id=test_project.id,
+    )
+    sib_agent, sib_key, _ = await agents.create(
+        AgentCreate(name="Sib Bot"), test_user, test_team.id, project_id=sibling.id,
+    )
+    b_agent, b_key, _ = await agents.create(AgentCreate(name="B Bot"), test_user2, team_b.id)
+    # An agent retired with its team (CHT-1844): no directory lists it.
+    orphan, _, _ = await agents.create(AgentCreate(name="Orphan Bot"), test_user, test_team.id)
+    await OxydeUser.objects.filter(id=orphan.id).update(agent_team_id=None)
+
+    everyone = [test_user, test_user2, bridge, retired, team_agent, proj_agent, sib_agent, b_agent, orphan]
+    viewers = {
+        test_user.id: auth_headers,
+        test_user2.id: auth_headers2,
+        team_agent.id: {"Authorization": f"Bearer {team_key}"},
+        proj_agent.id: {"Authorization": f"Bearer {proj_key}"},
+        sib_agent.id: {"Authorization": f"Bearer {sib_key}"},
+        b_agent.id: {"Authorization": f"Bearer {b_key}"},
+    }
+    missing = await client.get("/api/users/00000000-0000-0000-0000-000000000000", headers=auth_headers)
+    assert missing.status_code == 404
+
+    for viewer_id, headers in viewers.items():
+        listed = {viewer_id}
+        for team in (await client.get("/api/teams", headers=headers)).json():
+            members = await client.get(f"/api/teams/{team['id']}/members", headers=headers)
+            agents_listed = await client.get(f"/api/teams/{team['id']}/agents", headers=headers)
+            assert members.status_code == agents_listed.status_code == 200, viewer_id
+            listed |= {m["user_id"] for m in members.json()} | {a["id"] for a in agents_listed.json()}
+        for target in everyone:
+            response = await client.get(f"/api/users/{target.id}", headers=headers)
+            if target.id in listed:
+                assert response.status_code == 200, (viewer_id, target.name, response.text)
+                assert response.json()["id"] == target.id
+            else:
+                assert (response.status_code, response.json()) == (404, missing.json()), (viewer_id, target.name)
+                assert dict(response.headers) == dict(missing.headers)
+
+    # The premise: the cases above do reach across the directory's edges.
+    proj_headers = viewers[proj_agent.id]
+    assert (await client.get(f"/api/users/{sib_agent.id}", headers=proj_headers)).status_code == 200
+    assert (await client.get(f"/api/users/{test_user.id}", headers=proj_headers)).status_code == 200
+    assert (await client.get(f"/api/users/{b_agent.id}", headers=proj_headers)).status_code == 404
+    assert (await client.get(f"/api/users/{bridge.id}", headers=viewers[b_agent.id])).status_code == 200
+    assert (await client.get(f"/api/users/{orphan.id}", headers=auth_headers)).status_code == 404
+
+
 # === Service layer tests ===
 
 

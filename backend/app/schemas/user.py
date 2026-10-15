@@ -29,7 +29,10 @@ class UserResponse(BaseModel):
     """Schema for user response."""
 
     id: str
-    email: str
+    # None only for an agent seen by someone who may not see its
+    # external_ref, which a session identity's address is made from
+    # (GET /users/{id}, CHT-1841). A person's address is always shown.
+    email: str | None
     name: str
     avatar_url: str | None
     is_active: bool
