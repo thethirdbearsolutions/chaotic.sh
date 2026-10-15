@@ -146,6 +146,24 @@ class SprintService:
             project_id=project_id, status=SprintStatus.PLANNED.name
         ).order_by("created_at").first()
 
+    async def _get_or_create_next_sprint(self, project_id: str) -> OxydeSprint:
+        """The planned sprint a rotation activates, created at the project
+        default if there is none (e.g. it was deleted while the current
+        sprint sat in limbo)."""
+        next_sprint = await self.get_next_sprint(project_id)
+        if next_sprint:
+            return next_sprint
+        sprint_num = await self._get_next_sprint_number(project_id)
+        default_budget = await self._get_project_default_budget(project_id)
+        next_sprint = await OxydeSprint.objects.create(
+            project_id=project_id,
+            name=f"Sprint {sprint_num}",
+            status=SprintStatus.PLANNED,
+            budget=default_budget,
+        )
+        await next_sprint.refresh()
+        return next_sprint
+
     async def close_sprint(self, sprint: OxydeSprint) -> OxydeSprint:
         """Close the current sprint.
 
@@ -221,18 +239,7 @@ class SprintService:
                 await sprint.refresh()
                 return sprint
 
-            # Get next sprint (or create if doesn't exist)
-            next_sprint = await self.get_next_sprint(project_id)
-            if not next_sprint:
-                sprint_num = await self._get_next_sprint_number(project_id)
-                default_budget = await self._get_project_default_budget(project_id)
-                next_sprint = await OxydeSprint.objects.create(
-                    project_id=project_id,
-                    name=f"Sprint {sprint_num}",
-                    status=SprintStatus.PLANNED,
-                    budget=default_budget,
-                )
-                await next_sprint.refresh()
+            next_sprint = await self._get_or_create_next_sprint(project_id)
 
             # Move incomplete issues from current sprint to next sprint
             # Raw SQL: .name strings required for execute_raw params
@@ -283,9 +290,8 @@ class SprintService:
 
         # This is the last moment the budget follows the default: an active
         # sprint's budget only changes by hand. The write is conditional on
-        # the row, not on this copy of it: complete_limbo reaches here
-        # outside a transaction, so a PATCH that set the budget by hand
-        # after next_sprint was read must not be overwritten (PR #384
+        # the row, not on this copy of it: a PATCH that set the budget by
+        # hand after next_sprint was read must not be overwritten (PR #384
         # review M3).
         default_budget = await self._get_project_default_budget(next_sprint.project_id)
         if default_budget is not None:
@@ -343,6 +349,16 @@ class SprintService:
         # of the sprint; it closes when the rotation actually happens. The
         # stamp rides in the same transaction as the status flip so a crash
         # between them cannot leave a COMPLETED sprint with no closed_at.
+        #
+        # The next sprint is activated in the same transaction (CHT-1721),
+        # as close_sprint's no-limbo path does. It used to run after the
+        # commit, and its callers log and swallow a failure, so a failed
+        # activation left the project with no ACTIVE sprint: no arrears
+        # gate and no budget charge on any close until something created
+        # a fresh sprint. Now a failure rolls the whole rotation back, the
+        # sprint stays in limbo with nothing pending, and the next limbo
+        # check (RitualService.check_limbo's self-heal, or force-clear)
+        # retries it.
         async with atomic():
             result = await execute_raw(
                 "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND limbo = 1 RETURNING id",
@@ -358,17 +374,10 @@ class SprintService:
                 # every sprint and the others were never selected.
                 from app.services.ritual_service import RitualService
                 await RitualService().record_sprint_rotation(sprint.project_id, sprint.id)
-        if not result:
-            # Lost the race (or sprint wasn't in limbo): another request
-            # already cleared limbo and owns next-sprint activation.
-            await sprint.refresh()
-            return sprint
-
-        # Get and activate the next sprint
-        next_sprint = await self.get_next_sprint(sprint.project_id)
-        if next_sprint:
-            await self._activate_next_sprint(next_sprint)
-
+                next_sprint = await self._get_or_create_next_sprint(sprint.project_id)
+                await self._activate_next_sprint(next_sprint)
+        # A loser (another request already cleared limbo and owns the
+        # activation, or the sprint wasn't in limbo) just reports the row.
         await sprint.refresh()
         return sprint
 

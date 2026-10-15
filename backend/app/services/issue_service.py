@@ -863,6 +863,16 @@ class IssueService:
             project_id=issue.project_id, status="ACTIVE",
         ).first()
         if not current_sprint:
+            # A project that has sprints but none ACTIVE is broken (a
+            # rotation that did not finish, CHT-1721): this close is not
+            # charged and the arrears gate is off. Say so instead of
+            # passing silently.
+            if await OxydeSprint.objects.filter(project_id=issue.project_id).exists():
+                logger.warning(
+                    "Project %s has sprints but no active one; %s closed "
+                    "without a budget charge (CHT-1721)",
+                    issue.project_id, issue.identifier,
+                )
             return
 
         if issue.estimate is not None:
