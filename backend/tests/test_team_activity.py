@@ -8,6 +8,8 @@ of what it records. Team admins read it at GET /api/teams/{team}/activity.
 Before this table a removal that ended no connection left nothing in the
 database (CHT-1843).
 """
+from datetime import datetime, timedelta, timezone
+
 from app.enums import TeamActivityAction, TeamRole
 from app.oxyde_models.team import OxydeTeamActivity, OxydeTeamInvitation, OxydeTeamMember
 from app.services.team_service import TeamService
@@ -114,10 +116,13 @@ async def test_add_member_records_only_a_new_membership(test_team, test_user, te
 
 async def test_paging_is_newest_first(client, auth_headers, test_team, test_user):
     service = TeamService()
+    start = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
     for n in range(5):
-        await service.record_activity(
+        row = await service.record_activity(
             test_team.id, TeamActivityAction.INVITATION_CREATED, actor_id=test_user.id, email=f"u{n}@example.com",
         )
+        # Distinct times, so the order cannot rest on a tie.
+        await OxydeTeamActivity.objects.filter(id=row.id).update(created_at=start + timedelta(minutes=n))
     page1 = await _activity(client, test_team.id, auth_headers, limit=2)
     page2 = await _activity(client, test_team.id, auth_headers, limit=2, skip=2)
     page3 = await _activity(client, test_team.id, auth_headers, limit=2, skip=4)
