@@ -777,7 +777,7 @@ class TestNoAmbientAuthBehaviour:
         )
         assert revoked.status_code == 200, revoked.text
 
-    async def test_a_login_with_a_bad_one_changes_nothing(self, client, public_client, tokens, auth_headers):
+    async def test_a_login_or_garbage_credentials_change_nothing(self, client, public_client, tokens, auth_headers):
         """The same refresh answers the same with a login, with a garbage
         bearer and cookie, and with neither: none of them is read."""
         garbage = {"Authorization": "Bearer not-a-token", "Cookie": "chaotic_token=garbage; session=garbage"}
