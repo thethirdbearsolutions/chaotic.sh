@@ -68,6 +68,9 @@ abstract class CacheDao {
     @Query("SELECT * FROM issue ORDER BY id")
     abstract suspend fun allIssues(): List<IssueEntity>
 
+    @Query("SELECT * FROM issue WHERE id = :issueId")
+    abstract suspend fun cachedIssue(issueId: String): IssueEntity?
+
     @Query("SELECT * FROM comment ORDER BY createdAtMillis, id")
     abstract suspend fun allComments(): List<CommentEntity>
 

@@ -47,6 +47,7 @@ sealed interface RefreshOutcome {
  * last fetch unless forced (a pull to refresh): coming back to the home
  * screen, or flicking between tabs, does not repeat the requests.
  */
+@Suppress("TooManyFunctions") // one entry point per part of the cache, and the steps they share
 class CacheRefresher(
     private val remote: ChaoticRemote,
     private val session: CacheSession,
@@ -81,47 +82,97 @@ class CacheRefresher(
      * are pruned on the way.
      *
      * A write to the issue that the server takes while this fetch is out
-     * (a status change, a comment) makes the fetch older than the cache:
-     * saving it would put the old status back, or drop the new comment,
-     * until the next refresh (CHT-1668). So such a fetch is not saved but
-     * made again, up to [MAX_ISSUE_FETCHES] times in all.
+     * (a status change, a comment, a gate decision) makes the fetch older
+     * than the cache: saving it would put the old status back, or drop the
+     * new comment, until the next refresh (CHT-1668). So such a fetch is
+     * not saved but made again, up to [MAX_ISSUE_FETCHES] times in all. If
+     * writes overtake every one, the answer is [RefreshOutcome.Fresh]: the
+     * cache already holds what those writes answered, which is newer than
+     * any of the fetches.
      */
-    @Suppress("ReturnCount") // signed out, and each fetch's own ending, end the refresh early
-    suspend fun refreshIssue(issueId: String, teamId: String): RefreshOutcome {
+    suspend fun refreshIssue(issueId: String, teamId: String): RefreshOutcome =
+        refresh(issueId) { teamId to nowMillis() }
+
+    /**
+     * [refreshIssue] for an issue that is cached already, after a write to
+     * it the cache could not be brought up to date from (CHT-1668). The
+     * issue's team and when it was last opened come from the cache, so a
+     * write does not count as opening it; an issue that is not cached (it
+     * was pruned, or never opened here) is left alone, as
+     * [RefreshOutcome.Fresh].
+     */
+    suspend fun refreshCachedIssue(issueId: String): RefreshOutcome = refresh(issueId) {
+        cachedIssue(issueId)?.let { it.teamId to it.openedAtMillis }
+    }
+
+    /**
+     * [placement] gives the issue's team and when it was opened, read in
+     * the store before each fetch and again in the transaction that saves
+     * it; null means it is not to be saved (no longer cached).
+     */
+    @Suppress("ReturnCount") // signed out, not cached, and each fetch's own ending, end the refresh early
+    private suspend fun refresh(
+        issueId: String,
+        placement: suspend CacheStore.() -> Pair<String, Long>?,
+    ): RefreshOutcome {
         val ticket = session.begin() ?: return RefreshOutcome.Unauthorized
         session.write(ticket) { pruneIssues() } ?: return RefreshOutcome.Unauthorized
         repeat(MAX_ISSUE_FETCHES) {
-            val outcome = fetchIssue(ticket, issueId, teamId)
+            val writes = session.issueWrites(issueId)
+            val placed = session.write(ticket) { Placed(placement()) } ?: return RefreshOutcome.Unauthorized
+            val teamId = placed.at?.first ?: return RefreshOutcome.Fresh
+            val outcome = fetchIssue(ticket, issueId, teamId, writes, placement)
             if (outcome != null) return outcome
         }
-        // Writes kept landing: what is cached is what they answered, newer than any fetch here.
-        return RefreshOutcome.Failed()
+        return RefreshOutcome.Fresh
     }
 
-    /** One fetch of the issue for [refreshIssue]: how it ended, or null when a write overtook it. */
+    /** A nullable result through [CacheSession.write], whose null means signed out. */
+    private class Placed(val at: Pair<String, Long>?)
+
+    /** One fetch for [refresh]: how it ended, or null when a write to the issue overtook it. */
     @Suppress("ReturnCount") // a failure of any of the three calls ends the refresh
-    private suspend fun fetchIssue(ticket: Long, issueId: String, teamId: String): RefreshOutcome? {
-        val writes = session.issueWrites(issueId)
-        val now = nowMillis()
+    private suspend fun fetchIssue(
+        ticket: Long,
+        issueId: String,
+        teamId: String,
+        writes: Long,
+        placement: suspend CacheStore.() -> Pair<String, Long>?,
+    ): RefreshOutcome? {
         val issue = remote.issue(issueId, teamId)
         if (issue !is Remote.Ok) return failure(ticket, issue, teamId, issueId)
         val comments = remote.comments(issueId)
         if (comments !is Remote.Ok) return failure(ticket, comments, teamId, issueId)
         val activity = remote.activity(issueId)
         if (activity !is Remote.Ok) return failure(ticket, activity, teamId, issueId)
-        val detail = IssueDetail(
-            issue = issue.value.copy(openedAtMillis = now),
-            comments = comments.value.sortedBy { it.createdAtMillis },
-            activity = activity.value.sortedBy { it.createdAtMillis },
-        )
         val saved = session.write(ticket) {
             // Checked under the session's lock, which the write queue records its answers under too.
-            val current = session.issueWrites(issueId) == writes
-            if (current) saveIssue(detail)
-            current
+            val opened = placement()?.second
+            when {
+                session.issueWrites(issueId) != writes -> SaveResult.OVERTAKEN
+
+                opened == null -> SaveResult.UNCACHED
+
+                else -> {
+                    saveIssue(
+                        IssueDetail(
+                            issue = issue.value.copy(openedAtMillis = opened),
+                            comments = comments.value.sortedBy { it.createdAtMillis },
+                            activity = activity.value.sortedBy { it.createdAtMillis },
+                        ),
+                    )
+                    SaveResult.SAVED
+                }
+            }
         } ?: return RefreshOutcome.Unauthorized
-        return if (saved) RefreshOutcome.Refreshed else null
+        return when (saved) {
+            SaveResult.SAVED -> RefreshOutcome.Refreshed
+            SaveResult.UNCACHED -> RefreshOutcome.Fresh
+            SaveResult.OVERTAKEN -> null
+        }
     }
+
+    private enum class SaveResult { SAVED, UNCACHED, OVERTAKEN }
 
     /**
      * The current sprint card of every project in [teamId]. A project

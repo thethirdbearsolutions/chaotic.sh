@@ -120,16 +120,64 @@ class CacheRefresherTest {
         assertNull(store.owner())
     }
 
+    /** The queue as the app builds it: a stale issue is fetched again through this refresher. */
+    private fun appQueue() =
+        WriteQueue(remote, session, nowMillis = { now }, onIssueStale = refresher::refreshCachedIssue)
+
+    private fun cache(issue: Issue) = runBlocking { store.saveIssue(IssueDetail(issue, emptyList(), emptyList())) }
+
+    @Test
+    fun anIssueAWriteLeftStaleIsFetchedAgainAndKeepsWhenItWasOpened() = runTest {
+        val opened = now - TimeUnit.DAYS.toMillis(1)
+        cache(issue("i1", openedAtMillis = opened))
+        remote.issues["i1"] = Remote.Ok(issue("i1").copy(status = "done"))
+        remote.comments = Remote.Ok(listOf(comment("c1", 10)))
+        val queue = appQueue()
+        // Taken, but the answer cannot be read (FakeRemote's default).
+        queue.update(issue("i1"), IssueFields.STATUS, "done")
+
+        assertEquals(FlushOutcome.Done(null), queue.flush())
+
+        val cached = store.issue("i1")!!
+        assertEquals("done", cached.issue.status)
+        assertEquals(TEAM_A, cached.issue.teamId)
+        assertEquals(opened, cached.issue.openedAtMillis)
+        assertEquals(listOf("c1"), cached.comments.map { it.id })
+    }
+
+    @Test
+    fun anIssueThatIsNotCachedIsNotFetchedForAWrite() = runTest {
+        var calls = 0
+        remote.onIssue = { calls++ }
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Fresh, refresher.refreshCachedIssue("i1"))
+
+        assertEquals(0, calls)
+        assertNull(store.issue("i1"))
+    }
+
+    @Test
+    fun anIssueDroppedDuringItsFetchIsNotPutBack() = runTest {
+        cache(issue("i1", openedAtMillis = now))
+        remote.issues["i1"] = Remote.Ok(issue("i1"))
+        remote.onIssue = { store.deleteIssue("i1") }
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Fresh, refresher.refreshCachedIssue("i1"))
+
+        assertNull(store.issue("i1"))
+    }
+
     @Test
     fun aFetchOvertakenByATakenWriteIsMadeAgain() = runTest {
-        val queue = WriteQueue(remote, session, nowMillis = { now })
+        cache(issue("i1", openedAtMillis = now))
+        val queue = appQueue()
         val done = issue("i1").copy(status = "done")
         remote.issues["i1"] = Remote.Ok(issue("i1"))
         var calls = 0
         remote.onIssue = {
             if (calls++ == 0) {
-                // The person's status change is taken while the old issue is on its way back.
-                remote.answerWrite = { Remote.Ok(done) }
+                // The person's status change is taken while the old issue is on its way back,
+                // and its answer is unreadable, so the queue fetches the issue too.
                 queue.update(issue("i1"), IssueFields.STATUS, "done")
                 queue.flush()
             } else {
@@ -139,13 +187,13 @@ class CacheRefresherTest {
 
         assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshIssue("i1", TEAM_A))
 
-        assertEquals(2, calls)
+        assertEquals(3, calls) // the first fetch, the queue's, and this refresh's second
         assertEquals("done", store.issue("i1")!!.issue.status)
     }
 
     @Test
-    fun anIssueWhoseWritesKeepOvertakingItsFetchesIsNotSaved() = runTest {
-        store.saveIssue(IssueDetail(issue("i1", openedAtMillis = now).copy(status = "done"), emptyList(), emptyList()))
+    fun anIssueWhoseWritesKeepOvertakingItsFetchesKeepsWhatTheyAnswered() = runTest {
+        cache(issue("i1", openedAtMillis = now).copy(status = "done"))
         remote.issues["i1"] = Remote.Ok(issue("i1"))
         var calls = 0
         remote.onIssue = {
@@ -153,7 +201,8 @@ class CacheRefresherTest {
             session.write(session.begin()!!) { session.issueWritten("i1") }
         }
 
-        assertEquals<RefreshOutcome>(RefreshOutcome.Failed(), refresher.refreshIssue("i1", TEAM_A))
+        // Not a failure: what is cached is newer than every fetch.
+        assertEquals<RefreshOutcome>(RefreshOutcome.Fresh, refresher.refreshIssue("i1", TEAM_A))
 
         assertEquals(CacheRefresher.MAX_ISSUE_FETCHES, calls)
         assertEquals("done", store.issue("i1")!!.issue.status)

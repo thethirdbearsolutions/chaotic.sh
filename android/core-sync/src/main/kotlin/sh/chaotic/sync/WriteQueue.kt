@@ -1,5 +1,6 @@
 package sh.chaotic.sync
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonNull
@@ -88,10 +89,12 @@ sealed interface WriteStatus {
  *
  * - 2xx: taken. Dropped from the queue, and the answer applied to the
  *   cache in the same transaction (an approved entry leaves the inbox; an
- *   updated issue is saved as the server now has it). A comment or an
- *   issue change whose answer cannot be read changes nothing in the cache,
- *   so the issue is fetched again ([onIssueStale]) rather than showing its
- *   old state until the next refresh (CHT-1668).
+ *   updated issue is saved as the server now has it). A taken write that
+ *   changes an issue in a way the cache cannot follow from the answer (a
+ *   comment or change whose answer cannot be read, a gate or review
+ *   decided) has that issue fetched again ([onIssueStale]) once the flush
+ *   is over, rather than showing its old state until the next refresh
+ *   (CHT-1668).
  * - 401: the session ended (or someone else is signed in now); nothing
  *   more is sent.
  * - No answer, and the server does not answer a probe either
@@ -143,11 +146,15 @@ class WriteQueue(
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val newKey: () -> String = { UUID.randomUUID().toString() },
     /**
-     * The server took a write to an issue (its id, then its team) but the
-     * cache could not be brought up to date from the answer: fetch the
-     * issue again. Called during the flush, outside the session's lock.
+     * The server took writes that changed this issue, and the cache could
+     * not be brought up to date from their answers: fetch it again. Called
+     * once per issue at the end of [flush], after its lock is released (so
+     * it may flush again) and outside the session's; best effort, as a
+     * failure is passed to [onStaleRefreshError] and the flush's outcome
+     * stands.
      */
-    private val onIssueStale: suspend (issueId: String, teamId: String) -> Unit = { _, _ -> },
+    private val onIssueStale: suspend (issueId: String) -> Unit = {},
+    private val onStaleRefreshError: (Exception) -> Unit = {},
 ) {
     private val flushing = Mutex()
 
@@ -354,20 +361,48 @@ class WriteQueue(
         session.write(ticket) { dismissRefusal(key) }
     }
 
-    /** Send every write that is due, in order. See the class comment for what each answer does. */
-    suspend fun flush(): FlushOutcome = flushing.withLock {
-        val ticket = session.begin() ?: return@withLock FlushOutcome.Unauthorized
-        val owner = session.ownerOf(ticket) ?: return@withLock FlushOutcome.Unauthorized
-        session.write(ticket) { stallTooOld(nowMillis()) } ?: return@withLock FlushOutcome.Unauthorized
+    /**
+     * Send every write that is due, in order, then fetch again the issues
+     * they left stale. See the class comment for what each answer does.
+     */
+    suspend fun flush(): FlushOutcome {
+        val stale = LinkedHashSet<String>()
+        val outcome = flushing.withLock { flushDue(stale) }
+        stale.forEach { refreshStale(it) }
+        return outcome
+    }
+
+    @Suppress("ReturnCount") // signed out at each step ends the flush
+    private suspend fun flushDue(stale: MutableSet<String>): FlushOutcome {
+        val ticket = session.begin() ?: return FlushOutcome.Unauthorized
+        val owner = session.ownerOf(ticket) ?: return FlushOutcome.Unauthorized
+        session.write(ticket) { stallTooOld(nowMillis()) } ?: return FlushOutcome.Unauthorized
         val tried = HashSet<String>()
         var outcome: FlushOutcome? = null
-        while (outcome == null) outcome = flushOne(ticket, owner, tried)
-        outcome
+        while (outcome == null) outcome = flushOne(ticket, Sending(owner, tried, stale))
+        return outcome
     }
+
+    /** Best effort: a refresh that fails must not hold back the writes, nor end the flush. */
+    @Suppress("TooGenericExceptionCaught")
+    private suspend fun refreshStale(issueId: String) {
+        try {
+            onIssueStale(issueId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            onStaleRefreshError(e)
+        }
+    }
+
+    /** One flush's state: who it sends as, the writes it tried, and the issues it left stale. */
+    private class Sending(val owner: String, val tried: MutableSet<String>, val stale: MutableSet<String>)
 
     /** Send the next write that may go; null to go on, else how the flush ends. */
     @Suppress("ReturnCount") // signed out, nothing due, and an undo each end this step early
-    private suspend fun flushOne(ticket: Long, owner: String, tried: MutableSet<String>): FlushOutcome? {
+    private suspend fun flushOne(ticket: Long, flush: Sending): FlushOutcome? {
+        val owner = flush.owner
+        val tried = flush.tried
         val now = nowMillis()
         val queued = session.write(ticket) { pendingWrites() } ?: return FlushOutcome.Unauthorized
         val next = nextToSend(queued, now, tried) ?: return FlushOutcome.Done(nextDueInMillis(queued, now))
@@ -375,7 +410,7 @@ class WriteQueue(
         val picked = pick(ticket, next.key) ?: return FlushOutcome.Unauthorized
         if (!picked) return null // undone between the read and the pick
         return try {
-            send(ticket, next, WriteOrigin(next.key, owner))
+            send(ticket, next, WriteOrigin(next.key, owner), flush.stale)
         } finally {
             picking.withLock { sending = null }
         }
@@ -409,23 +444,33 @@ class WriteQueue(
     }
 
     /** Send one write and record its answer; null to go on with the next, else how the flush ends. */
-    private suspend fun send(ticket: Long, write: PendingWrite, origin: WriteOrigin): FlushOutcome? {
+    private suspend fun send(
+        ticket: Long,
+        write: PendingWrite,
+        origin: WriteOrigin,
+        stale: MutableSet<String>,
+    ): FlushOutcome? {
         val result = request(write, origin)
         val stop = stopsTheFlush(result)
         if (stop != null) return stop
         failures = 0
         val written = session.write(ticket) { record(write, result) }
-        if (written != null && result is Remote.Ok) taken(write, result.value, origin.owner)
+        if (written != null && result is Remote.Ok) taken(write, result.value, origin.owner, stale)
         return if (written == null) FlushOutcome.Unauthorized else null
     }
 
     /** The server took [write], answering [answer]; recorded in the cache already. */
-    private suspend fun taken(write: PendingWrite, answer: Any?, owner: String) {
+    private fun taken(write: PendingWrite, answer: Any?, owner: String, stale: MutableSet<String>) {
         synchronized(taken) { taken[write.key] = owner }
-        val issueId = write.issueId
-        val teamId = write.teamId
-        val stale = write.kind in ISSUE_KINDS && effect(write, answer) == null
-        if (stale && !issueId.isNullOrEmpty() && !teamId.isNullOrEmpty()) onIssueStale(issueId, teamId)
+        val issueId = write.changedIssue() ?: return
+        // A decision's effect only drops the inbox entry; the issue's new state is the server's to say.
+        val followed = write.kind in ISSUE_KINDS && effect(write, answer) != null
+        if (!followed) stale += issueId
+    }
+
+    /** The issue [this] changes on the server, if it changes one: an issue write, or a gate or review decided. */
+    private fun PendingWrite.changedIssue(): String? = issueId?.takeIf {
+        it.isNotEmpty() && (kind in ISSUE_KINDS || kind == WriteKind.APPROVE || kind == WriteKind.REJECT)
     }
 
     /**
@@ -457,7 +502,7 @@ class WriteQueue(
 
             result is Remote.Ok -> {
                 // Before the cache changes, under the same lock: a refresh of the issue fetched before this is stale.
-                if (write.kind in ISSUE_KINDS) write.issueId?.let(session::issueWritten)
+                write.changedIssue()?.let(session::issueWritten)
                 completeWrite(write.key, effect(write, result.value))
             }
 

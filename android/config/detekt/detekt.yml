@@ -23,12 +23,23 @@ style:
     ignoreAnnotated: ['Preview']
   ForbiddenImport:
     active: true
-    # The generated PATCH models (CHT-1647): every optional field is
-    # `val x: T? = null`, and kotlinx.serialization leaves out a value equal
-    # to its default, so `IssueUpdate(assigneeId = null)` sends `{}` and can
-    # never clear a field. A PATCH body is a JsonObject built by hand, with
-    # JsonNull for a field to clear (WriteQueue's UPDATE_ISSUE, sent by
-    # ApiRemote.updateIssue). core-api's ChaoticApiTest pins the behaviour.
+    # The generated partial-update models (CHT-1647): the fourteen PATCH
+    # bodies, and IssueBatchUpdate (a POST, but a partial update too: it
+    # cannot clear an estimate either). They cannot send an explicit null,
+    # for two reasons that each suffice: ChaoticApi.json, which the
+    # generated client sends with, sets `explicitNulls = false`, so every
+    # null property is left out; and each optional field is `T? = null`,
+    # which kotlinx.serialization leaves out as a default anyway. So
+    # `IssueUpdate(assigneeId = null)` sends `{}` and clears nothing. A
+    # PATCH body is a JsonObject built by hand, with JsonNull for a field
+    # to clear (WriteQueue's UPDATE_ISSUE, sent by ApiRemote.updateIssue).
+    # core-api's ChaoticApiTest pins the generated client's wire body.
+    #
+    # The rule matches each import's name, so a star import of the models
+    # package is refused too: it would bring them in unnamed. A fully
+    # qualified use still gets through; review catches that.
     forbiddenImports:
       - value: 'sh.chaotic.api.models.*Update'
-        reason: 'A generated PATCH model cannot send an explicit null (CHT-1647): send a JsonObject, as ApiRemote.updateIssue does.'
+        reason: 'A generated partial-update model cannot send an explicit null (CHT-1647): send a JsonObject, as ApiRemote.updateIssue does.'
+      - value: 'sh.chaotic.api.models'
+        reason: 'Import the generated models by name, so the partial-update ones stay refused (CHT-1647).'

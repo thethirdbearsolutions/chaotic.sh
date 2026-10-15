@@ -48,6 +48,10 @@ class CacheSession(val store: CacheStore, private val currentOwner: () -> String
      * between and the fetch may predate it.
      */
     fun issueWrites(issueId: String): Long = issueWritesTaken[issueId] ?: 0L
+    // Never cleared, not even by [end], and keyed by the bare id across
+    // people and servers, on purpose: a count only ever goes up, and all a
+    // refresh reads from it is whether it moved while the refresh was out.
+    // A count shared with another session's issue costs at most a fetch.
 
     /** The server took a write to [issueId]: call it in the [write] that records that. */
     fun issueWritten(issueId: String) {

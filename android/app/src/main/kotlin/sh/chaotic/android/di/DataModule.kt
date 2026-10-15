@@ -1,6 +1,7 @@
 package sh.chaotic.android.di
 
 import android.content.Context
+import android.util.Log
 import androidx.room.Room
 import dagger.Module
 import dagger.Provides
@@ -73,13 +74,19 @@ object DataModule {
 
     /**
      * The offline write queue (CHT-1613), in the same cache and fenced by
-     * the same session. An issue write the server took but whose answer
-     * could not be read fetches the issue again (CHT-1668).
+     * the same session. A cached issue that a taken write left stale is
+     * fetched again after the flush (CHT-1668).
      */
     @Provides
     @Singleton
     fun provideWriteQueue(remote: ChaoticRemote, session: CacheSession, refresher: CacheRefresher): WriteQueue =
-        WriteQueue(remote, session, onIssueStale = { issueId, teamId -> refresher.refreshIssue(issueId, teamId) })
+        WriteQueue(
+            remote,
+            session,
+            onIssueStale = { issueId -> refresher.refreshCachedIssue(issueId) },
+            // The class only, as the write runner logs: a message could carry what the issue says.
+            onStaleRefreshError = { e -> Log.w("ChaoticWrites", "Stale issue refresh failed: ${e.javaClass.name}") },
+        )
 
     @Provides
     @Singleton

@@ -83,6 +83,16 @@ abstract class CacheStoreContract {
     }
 
     @Test
+    fun cachedIssueReadsOneIssueById() = runTest {
+        val store = createStore()
+        val cached = issue("i1", openedAtMillis = 7).copy(status = "done")
+        store.saveIssue(IssueDetail(cached, emptyList(), emptyList()))
+
+        assertEquals(cached, store.cachedIssue("i1"))
+        assertNull(store.cachedIssue("nope"))
+    }
+
+    @Test
     fun applyInboxReplacesById() = runTest {
         val store = createStore()
         store.applyInbox(change(upserts = listOf(entry("e1", 1_000))))
