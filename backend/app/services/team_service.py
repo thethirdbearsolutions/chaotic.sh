@@ -83,7 +83,7 @@ class TeamService:
         async with revoking():
             await OxydeTeamInvitation.objects.filter(team_id=team.id).delete()
             await RevocationService().revoke_for_team(team.id, actor_id=actor_id)
-            project_ids = [p.id for p in await OxydeProject.objects.filter(team_id=team.id).all()]
+            project_ids = [r["id"] for r in await OxydeProject.objects.filter(team_id=team.id).values("id").all()]
             await AgentService().retire_for_deleted_scope(
                 team_id=team.id, project_ids=project_ids, actor_id=actor_id, reason=REASON_TEAM_DELETED,
             )

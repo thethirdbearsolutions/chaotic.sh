@@ -4,6 +4,7 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 import logging
 import uuid
+from collections.abc import Sequence
 
 from oxyde import execute_raw
 from datetime import datetime, timedelta, timezone
@@ -423,7 +424,9 @@ class AgentService:
             await self._notify_parent(current, actor, verb)
         return current, len(identities)
 
-    async def _retire_identities(self, registrar_id: str, *, actor_id: str | None = None) -> list[OxydeUser]:
+    async def _retire_identities(
+        self, registrar_id: str, *, actor_id: str | None = None, reason: str = REASON_PRINCIPAL_DEACTIVATED,
+    ) -> list[OxydeUser]:
         """Deactivate every active identity `registrar_id` registered and
         revoke their keys (CHT-1498), and end their holder sessions and
         what those keys opened or minted (CHT-1523). Call inside the
@@ -435,11 +438,11 @@ class AgentService:
         if ids:
             await OxydeAPIKey.objects.filter(principal_user_id__in=ids).update(is_active=False)
             await OxydeUser.objects.filter(id__in=ids).update(is_active=False)
-            await self.revoke_credentials_of(ids, actor_id=actor_id)
+            await self.revoke_credentials_of(ids, actor_id=actor_id, reason=reason)
         return identities
 
     async def retire_for_deleted_scope(
-        self, *, team_id: str | None = None, project_ids: list[str] = (), actor_id: str | None, reason: str,
+        self, *, team_id: str | None = None, project_ids: Sequence[str] = (), actor_id: str | None, reason: str,
     ) -> list[str]:
         """Retire every agent scoped to a team or project about to be
         deleted (CHT-1844). Call inside the ``revoking()`` transaction
@@ -476,7 +479,7 @@ class AgentService:
         await OxydeUser.objects.filter(id__in=ids).update(is_active=False, agent_team_id=None)
         await self.revoke_credentials_of(ids, actor_id=actor_id, reason=reason)
         for agent_id in ids:
-            identities = await self._retire_identities(agent_id, actor_id=actor_id)
+            identities = await self._retire_identities(agent_id, actor_id=actor_id, reason=reason)
             self._log_retired(identities, agent_id, actor_id)
         for agent in found.values():
             logger.info(

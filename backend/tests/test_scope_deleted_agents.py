@@ -7,7 +7,7 @@ a team-wide agent; a deleted team left its agents active with no team.
 """
 import pytest
 
-from app.api.deps import check_user_team_access
+from app.api.deps import check_user_project_access, check_user_team_access
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.oxyde_models.oauth import OxydeHolderSession, OxydeRevocationEvent
 from app.oxyde_models.project import OxydeProject
@@ -119,7 +119,7 @@ class TestProjectDelete:
         agent = await OxydeUser.objects.get(id=agent.id)
         assert agent.is_active and agent.agent_project_id == other.id and agent.agent_team_id == test_team.id
 
-    async def test_the_identities_it_registered_go_with_it(self, test_user, test_team, test_project):
+    async def test_the_identities_it_registered_go_with_it(self, seen, test_user, test_team, test_project):
         registrar, _key = await _agent("Registrar", test_user, test_team, test_project)
         identity = await OxydeUser.objects.create(
             email="identity@example.com", hashed_password="x", name="Identity", is_agent=True,
@@ -127,6 +127,9 @@ class TestProjectDelete:
         )
         await ProjectService().delete(test_project, actor_id=test_user.id)
         assert (await OxydeUser.objects.get(id=identity.id)).is_active is False
+        # Audited under the deletion, like its registrar (PR #447 review, 5).
+        [event] = [e for e in seen if identity.id in e.user_ids]
+        assert event.reason == REASON_PROJECT_DELETED
 
     async def test_a_failed_delete_retires_nothing(self, monkeypatch, test_user, test_team, test_project):
         agent, _key = await _agent("Project Bot", test_user, test_team, test_project)
@@ -174,3 +177,20 @@ class TestTeamDelete:
         await TeamService().delete(test_team, actor_id=test_user.id)
         agent = await OxydeUser.objects.get(id=agent.id)
         assert agent.is_active and agent.agent_team_id == other.id
+
+
+class TestTeamlessAgentFailsClosed:
+    """PR #447 review, 6: a retired agent has no team, and the team
+    checks never read None == None as access."""
+
+    async def test_no_team_reaches_no_team(self, test_user, test_team, test_project):
+        agent = await OxydeUser.objects.create(
+            email="teamless@example.com", hashed_password="x", name="Teamless", is_agent=True,
+            parent_user_id=test_user.id, agent_team_id=test_team.id,
+        )
+        agent.agent_team_id = None
+        assert not await check_user_team_access(agent, None)
+        assert not await check_user_team_access(agent, test_team.id)
+        assert not await check_user_project_access(agent, test_project)
+        test_project.team_id = None  # a malformed row must not match either
+        assert not await check_user_project_access(agent, test_project)
