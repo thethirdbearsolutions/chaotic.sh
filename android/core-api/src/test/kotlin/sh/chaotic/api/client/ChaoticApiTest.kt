@@ -101,4 +101,18 @@ class ChaoticApiTest {
 
     private fun resource(name: String): String =
         checkNotNull(javaClass.classLoader.getResource(name)) { "missing test resource $name" }.readText()
+
+    /**
+     * Why the generated PATCH models are a forbidden import (CHT-1647, in
+     * config/detekt/detekt.yml): a null meant as "clear this field" is
+     * left out, so the PATCH changes nothing. Named in full here, since the
+     * import is what the rule refuses. If the generator ever starts sending
+     * the null, this fails, and the rule can go.
+     */
+    @Test
+    fun aGeneratedUpdateModelCannotSendAnExplicitNull() {
+        val unassign = sh.chaotic.api.models.IssueUpdate(assigneeId = null)
+
+        assertEquals("{}", ChaoticApi.json.encodeToString(sh.chaotic.api.models.IssueUpdate.serializer(), unassign))
+    }
 }

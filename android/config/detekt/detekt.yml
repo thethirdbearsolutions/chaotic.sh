@@ -21,3 +21,14 @@ style:
     excludes: ['**/test/**', '**/testDebug/**', '**/testFixtures/**', '**/androidTest/**', '**/*.kts']
     # Preview data is sample numbers.
     ignoreAnnotated: ['Preview']
+  ForbiddenImport:
+    active: true
+    # The generated PATCH models (CHT-1647): every optional field is
+    # `val x: T? = null`, and kotlinx.serialization leaves out a value equal
+    # to its default, so `IssueUpdate(assigneeId = null)` sends `{}` and can
+    # never clear a field. A PATCH body is a JsonObject built by hand, with
+    # JsonNull for a field to clear (WriteQueue's UPDATE_ISSUE, sent by
+    # ApiRemote.updateIssue). core-api's ChaoticApiTest pins the behaviour.
+    forbiddenImports:
+      - value: 'sh.chaotic.api.models.*Update'
+        reason: 'A generated PATCH model cannot send an explicit null (CHT-1647): send a JsonObject, as ApiRemote.updateIssue does.'
