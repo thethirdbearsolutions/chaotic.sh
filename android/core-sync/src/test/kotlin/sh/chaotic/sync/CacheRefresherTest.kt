@@ -209,6 +209,17 @@ class CacheRefresherTest {
     }
 
     @Test
+    fun anUncachedIssueWhoseWritesOvertakeEveryFetchIsAFailure() = runTest {
+        remote.issues["i1"] = Remote.Ok(issue("i1"))
+        remote.onIssue = { session.write(session.begin()!!) { session.issueWritten("i1") } }
+
+        // Opened for the first time: nothing cached to show, so not "done".
+        assertEquals<RefreshOutcome>(RefreshOutcome.Failed(), refresher.refreshIssue("i1", TEAM_A))
+
+        assertNull(store.issue("i1"))
+    }
+
+    @Test
     fun aWriteToAnotherIssueDoesNotOutdateTheFetch() = runTest {
         remote.issues["i1"] = Remote.Ok(issue("i1"))
         var calls = 0

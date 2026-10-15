@@ -363,12 +363,16 @@ class WriteQueue(
 
     /**
      * Send every write that is due, in order, then fetch again the issues
-     * they left stale. See the class comment for what each answer does.
+     * they left stale, unless the flush ended signed out or offline (the
+     * next open of the issue fetches it then). An exception from sending
+     * skips them too. See the class comment for what each answer does.
      */
     suspend fun flush(): FlushOutcome {
         val stale = LinkedHashSet<String>()
         val outcome = flushing.withLock { flushDue(stale) }
-        stale.forEach { refreshStale(it) }
+        // Signed out, or nothing answers: a fetch now could only fail.
+        val canFetch = outcome !is FlushOutcome.Unauthorized && outcome !is FlushOutcome.Retry
+        if (canFetch) stale.forEach { refreshStale(it) }
         return outcome
     }
 

@@ -1,9 +1,12 @@
 package sh.chaotic.sync
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 
 /** What the write queue does about an issue its writes changed (CHT-1668). */
@@ -160,6 +163,46 @@ class WriteQueueStaleIssueTest {
         assertEquals(emptyList(), store.pendingWrites())
         assertEquals(listOf("i2"), stale)
         assertIs<IllegalStateException>(refreshErrors.single())
+    }
+
+    @Test
+    fun aCancelledRefreshCancelsTheFlush() = runTest {
+        refreshing.comment(issue(), "a")
+        hook = { throw CancellationException("the app is closing") }
+
+        assertFailsWith<CancellationException> { refreshing.flush() }
+
+        // The write was taken before: it is not sent again.
+        assertEquals(emptyList(), store.pendingWrites())
+        assertEquals(emptyList(), refreshErrors)
+    }
+
+    @Test
+    fun aFlushThatEndsOfflineFetchesNothing() = runTest {
+        refreshing.comment(issue(), "a")
+        refreshing.comment(issue("i2"), "b")
+        remote.answerWrite = { sent ->
+            if (sent.body.toString().contains("\"a\"")) Remote.Ok(null) else Remote.Unreachable(IOException("down"))
+        }
+
+        assertIs<FlushOutcome.Retry>(refreshing.flush())
+
+        assertEquals(1, session.issueWrites("i1"))
+        assertEquals(emptyList(), stale)
+    }
+
+    @Test
+    fun aFlushThatEndsSignedOutFetchesNothing() = runTest {
+        refreshing.comment(issue(), "a")
+        refreshing.comment(issue("i2"), "b")
+        remote.answerWrite = { sent ->
+            if (sent.body.toString().contains("\"a\"")) Remote.Ok(null) else Remote.HttpError(401)
+        }
+
+        assertEquals(FlushOutcome.Unauthorized, refreshing.flush())
+
+        assertEquals(1, session.issueWrites("i1"))
+        assertEquals(emptyList(), stale)
     }
 
     @Test

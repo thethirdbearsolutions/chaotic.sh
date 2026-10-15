@@ -12,7 +12,14 @@ import java.util.concurrent.TimeUnit
 sealed interface RefreshOutcome {
     data object Refreshed : RefreshOutcome
 
-    /** What is cached was fetched recently enough; nothing was asked of the server. */
+    /**
+     * What is cached is as current as a fetch could make it, so nothing was
+     * saved: it was fetched recently enough (nothing was asked of the
+     * server); or, for an issue, writes to it overtook every fetch and the
+     * cache holds what they answered; or, for an issue refreshed after a
+     * write ([CacheRefresher.refreshCachedIssue]), it is not cached, so
+     * there is nothing to bring up to date.
+     */
     data object Fresh : RefreshOutcome
 
     /** The server says it is gone (404): it was removed from the cache. */
@@ -86,9 +93,10 @@ class CacheRefresher(
      * than the cache: saving it would put the old status back, or drop the
      * new comment, until the next refresh (CHT-1668). So such a fetch is
      * not saved but made again, up to [MAX_ISSUE_FETCHES] times in all. If
-     * writes overtake every one, the answer is [RefreshOutcome.Fresh]: the
-     * cache already holds what those writes answered, which is newer than
-     * any of the fetches.
+     * writes overtake every one, the answer is [RefreshOutcome.Fresh] when
+     * the issue is cached (the cache holds what those writes answered,
+     * newer than any of the fetches), and [RefreshOutcome.Failed] when it
+     * is not (there is nothing to show).
      */
     suspend fun refreshIssue(issueId: String, teamId: String): RefreshOutcome =
         refresh(issueId) { teamId to nowMillis() }
@@ -124,7 +132,9 @@ class CacheRefresher(
             val outcome = fetchIssue(ticket, issueId, teamId, writes, placement)
             if (outcome != null) return outcome
         }
-        return RefreshOutcome.Fresh
+        // Overtaken every time: the cache holds the writes' answers, if it holds the issue at all.
+        val cached = session.write(ticket) { cachedIssue(issueId) != null } ?: return RefreshOutcome.Unauthorized
+        return if (cached) RefreshOutcome.Fresh else RefreshOutcome.Failed()
     }
 
     /** A nullable result through [CacheSession.write], whose null means signed out. */
