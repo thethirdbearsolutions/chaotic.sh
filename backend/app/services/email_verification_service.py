@@ -35,7 +35,8 @@ Rules:
 
 * A team admin can instead get a code for one pending invitation
   (CHT-1828, ``issue_for_invitation``) when the mail is failing. It is
-  filed under the invitation, not the address, and only lets its user
+  marked with its ``invitation_id``, which every address-keyed query
+  here excludes (``invitation_id__isnull=True``), and only lets its user
   accept that invitation (``redeem_for_invitation``): it never sets
   ``email_verified_at``, since anyone can be the admin of a team of
   their own.
@@ -194,13 +195,6 @@ def hash_email(email: str) -> str:
     return hmac.new(_key(), f"email:{fold_email(email)}".encode(), hashlib.sha256).hexdigest()
 
 
-def hash_invitation(invitation_id: str) -> str:
-    """HMAC of an invitation id: the key admin-issued codes are filed and
-    limited under instead of an address (CHT-1828). Its own prefix, so it
-    can never equal an address's ``hash_email``."""
-    return hmac.new(_key(), f"invitation:{invitation_id}".encode(), hashlib.sha256).hexdigest()
-
-
 def hash_invitation_code(user_id: str, invitation_id: str, code: str) -> str:
     """HMAC-SHA256 of an admin-issued ``code``, bound to the user and the
     invitation it lets them accept (CHT-1828)."""
@@ -295,7 +289,9 @@ class EmailVerificationService:
 
         # Over the day's failure cap a code could not be confirmed anyway:
         # say when it lapses instead of mailing a dead one.
-        history = await codes.filter(email_hash=email_hash).order_by("created_at").all()
+        history = await codes.filter(
+            email_hash=email_hash, invitation_id__isnull=True,
+        ).order_by("created_at").all()
         lapses_at = _failure_cap_lapses_at(history)
         if lapses_at is not None:
             retry = _seconds_until(lapses_at, now)
@@ -318,7 +314,7 @@ class EmailVerificationService:
             created_at=now,
         )
         recent = await codes.filter(
-            email_hash=email_hash, created_at__gt=now - HOURLY_WINDOW,
+            email_hash=email_hash, invitation_id__isnull=True, created_at__gt=now - HOURLY_WINDOW,
         ).order_by("created_at").all()
         others = [r for r in recent if r.id != row.id]
         refusal = None
@@ -353,8 +349,8 @@ class EmailVerificationService:
     async def asked_recently(user_id: str, email: str) -> bool:
         """Whether this account asked for a mailed code itself in the last
         ``FAILURE_WINDOW``, sent or not (CHT-1828). Only its own requests
-        count: admin-issued rows are keyed by invitation, not by address,
-        so issuing one never extends the window (PR #446 review 2). The
+        count: admin-issued rows (``invitation_id`` set) are excluded, so
+        issuing one never extends the window (PR #446 review 2). The
         admin-issued code is for an invitee stuck waiting on a mailed
         one: an account that never asked is not stuck, and is not
         described to anyone who invites its address.
@@ -362,7 +358,8 @@ class EmailVerificationService:
         Always one query, whatever ``user_id`` is, so a caller with no
         account to ask about can run it too (review 6)."""
         return await OxydeEmailVerificationCode.objects.filter(
-            email_hash=hash_email(email), user_id=user_id, created_at__gt=_now() - FAILURE_WINDOW,
+            email_hash=hash_email(email), invitation_id__isnull=True,
+            user_id=user_id, created_at__gt=_now() - FAILURE_WINDOW,
         ).first() is not None
 
     async def issue_for_invitation(
@@ -380,8 +377,8 @@ class EmailVerificationService:
         they could grant anyway. Every other invitation still needs the
         mailed code.
 
-        The row is keyed by the invitation (``hash_invitation``) instead
-        of the address, so nothing address-keyed sees it: it does not
+        The row carries ``invitation_id`` (migration 0037), and every
+        address-keyed query excludes such rows, so none sees it: it does not
         disarm or outrank the account's mailed codes, its wrong tries do
         not count against the address's daily failure cap, and it is not
         a request of the account's own (``asked_recently``). Stored only
@@ -398,11 +395,10 @@ class EmailVerificationService:
             raise CODE_NOT_NEEDED
 
         now = _now()
-        key = hash_invitation(invitation_id)
         codes = OxydeEmailVerificationCode.objects
         await codes.filter(created_at__lte=now - FAILURE_WINDOW).delete()
 
-        issued = await codes.filter(email_hash=key).order_by("created_at").all()
+        issued = await codes.filter(invitation_id=invitation_id).order_by("created_at").all()
         if len(issued) >= INVITATION_ISSUE_LIMIT:
             retry = _seconds_until(ensure_utc(issued[-INVITATION_ISSUE_LIMIT].created_at) + FAILURE_WINDOW, now)
             raise _rate_limited(
@@ -410,10 +406,11 @@ class EmailVerificationService:
                 f"Try again in {(retry + 3599) // 3600} h.", retry,
             )
 
-        await codes.filter(email_hash=key, used_at__isnull=True, armed=True).update(armed=False)
+        await codes.filter(invitation_id=invitation_id, used_at__isnull=True, armed=True).update(armed=False)
         code = new_code()
         row = await codes.create(
-            email_hash=key,
+            email_hash=hash_email(user.email),
+            invitation_id=invitation_id,
             user_id=user.id,
             code_hash=hash_invitation_code(user.id, invitation_id, code),
             armed=True,
@@ -436,7 +433,7 @@ class EmailVerificationService:
         now = _now()
         codes = OxydeEmailVerificationCode.objects
         latest = await codes.filter(
-            email_hash=hash_invitation(invitation_id), armed=True,
+            invitation_id=invitation_id, armed=True,
         ).order_by("-created_at").first()
         if (
             latest is None or latest.user_id != user.id or latest.used_at is not None
@@ -466,12 +463,14 @@ class EmailVerificationService:
         email_hash = hash_email(user.email)
         codes = OxydeEmailVerificationCode.objects
 
-        history = await codes.filter(email_hash=email_hash, created_at__gt=now - FAILURE_WINDOW).all()
+        history = await codes.filter(
+            email_hash=email_hash, invitation_id__isnull=True, created_at__gt=now - FAILURE_WINDOW,
+        ).all()
         if _failures(history) >= DAILY_FAILURE_LIMIT:
             raise invalid
 
         latest = await codes.filter(
-            email_hash=email_hash, user_id=user.id, armed=True,
+            email_hash=email_hash, invitation_id__isnull=True, user_id=user.id, armed=True,
         ).order_by("-created_at").first()
         if latest is None or latest.used_at is not None or ensure_utc(latest.expires_at) <= now:
             raise invalid

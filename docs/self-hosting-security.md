@@ -248,7 +248,8 @@ Rules:
   A missing, passive or verified account gets the same 409
   `no_verification_requested`, after the same lookups.
 - Codes are stored as HMACs bound to the user and the invitation, and
-  filed under the invitation rather than the address. So they don't
+  carry the invitation's id (`invitation_id`, migration 0037), which
+  every address-keyed query excludes. So they don't
   disarm the invitee's mailed codes, and their wrong tries don't count
   against the address's daily failure cap. A code lasts 15 minutes and
   allows five tries. A new one replaces the invitation's earlier one,

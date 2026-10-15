@@ -179,7 +179,7 @@ class TestIssue:
         user_id, _ = await _signup(client)
         code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
         [row] = [r for r in await _codes(user_id) if r.armed]
-        assert row.email_hash == evs.hash_invitation(inv_id) != evs.hash_email(INVITEE)
+        assert row.invitation_id == inv_id and row.email_hash == evs.hash_email(INVITEE)
         assert row.code_hash == evs.hash_invitation_code(user_id, inv_id, code)
         assert code not in row.code_hash
         assert row.expires_at - row.created_at == evs.CODE_TTL
@@ -303,8 +303,12 @@ class TestCodeRules:
             code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
             for _ in range(evs.MAX_ATTEMPTS):
                 assert (await _accept_with(client, token, invitee, _wrong(code))).status_code == 400
-        rows = await OxydeEmailVerificationCode.objects.filter(email_hash=evs.hash_email(INVITEE)).all()
-        assert evs._failures(rows) == 0
+        admin = await OxydeEmailVerificationCode.objects.filter(invitation_id=inv_id).all()
+        assert evs._failures(admin) == evs.INVITATION_ISSUE_LIMIT * evs.MAX_ATTEMPTS
+        mailed = await OxydeEmailVerificationCode.objects.filter(
+            email_hash=evs.hash_email(INVITEE), invitation_id__isnull=True,
+        ).all()
+        assert evs._failures(mailed) == 0
         assert (await client.post(REQUEST, headers=invitee)).status_code == 202
         assert (await client.post(CONFIRM, headers=invitee, json={"code": outbox.last_code()})).status_code == 200
 
