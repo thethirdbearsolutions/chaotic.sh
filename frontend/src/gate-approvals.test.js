@@ -19,6 +19,7 @@ vi.mock('./ui.js', () => ({
     showModal: vi.fn(),
     closeModal: vi.fn(),
     showToast: vi.fn(),
+    showMentionWarnings: vi.fn(),
 }));
 
 vi.mock('./utils.js', () => ({
@@ -63,7 +64,7 @@ vi.mock('dompurify', () => ({
 }));
 
 import { api } from './api.js';
-import { showModal, closeModal, showToast, showApiError } from './ui.js';
+import { showModal, closeModal, showToast, showApiError, showMentionWarnings } from './ui.js';
 import { getProjects } from './projects.js';
 import { setPendingGates, getPendingGates, getCurrentTeam, getCurrentProject } from './state.js';
 import {
@@ -212,6 +213,20 @@ describe('handleReviewApproval', () => {
 
         expect(api.createComment).toHaveBeenCalledWith('i1', 'Looks good to me');
         expect(showToast).toHaveBeenCalled();
+    });
+
+    it('shows mention warnings from the approval comment (CHT-1743)', async () => {
+        api.approveTicketRitual.mockResolvedValue({});
+        const created = { id: 'c1', warnings: ['@nobody matches nobody who can be mentioned here; nobody was notified.'] };
+        api.createComment.mockResolvedValue(created);
+        const event = { preventDefault: vi.fn() };
+
+        showReviewApprovalModal('r1', 'i1', 'Review', 'prompt', 'CHT-1', 'Title', null, null, null);
+        document.getElementById('review-approval-comment').value = 'cc @nobody';
+
+        await handleReviewApproval(event, 'r1', 'i1', 'Review');
+
+        expect(showMentionWarnings).toHaveBeenCalledWith(created);
     });
 
     it('does not post comment when empty', async () => {
