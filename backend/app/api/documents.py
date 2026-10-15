@@ -241,14 +241,18 @@ async def update_document(
                 detail="Sprint must belong to the document's project",
             )
 
-    old_project_id = document.project_id
+    # What the document's old project could read, captured before the
+    # update: a move can rename it in the same PATCH (PR #452 review).
+    old_project_id, old_title = document.project_id, document.title
     document = await document_service.update(document, document_in, current_user.id)
     response = await fill_principals(build_document_response(document))
     if old_project_id is not None and old_project_id != document.project_id:
         # Moved out of a project: the sockets confined to it drop it
-        # (CHT-1840); the "updated" below reaches its new readers.
+        # (CHT-1840); the "updated" below reaches its new readers. It
+        # carries the id and the title they already knew (for the
+        # frontend's "was deleted" toast), never anything after the edit.
         await broadcast_document_left_project(
-            document.team_id, {"id": document.id, "title": document.title}, project_id=old_project_id,
+            document.team_id, {"id": document.id, "title": old_title}, project_id=old_project_id,
         )
     await broadcast_document_event(document.team_id, "updated", response.model_dump(mode="json"), project_id=document.project_id)
     return response

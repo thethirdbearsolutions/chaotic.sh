@@ -334,3 +334,46 @@ class TestInboxGoesToItsRecipientOnly:
             r = await client.post("/api/inbox/mark-all-read", headers=auth_headers, params={"team_id": test_team.id})
         assert r.status_code == 200, r.text
         assert [(m["type"], m["recipient_user_id"]) for m in sent] == [("read-all", test_user.id)]
+
+
+@pytest.mark.usefixtures("no_recheck", "relaxed_ws_auth")
+async def test_a_move_and_rename_never_shows_the_old_project_the_new_title(
+    client, auth_headers, test_user, test_team, test_project,
+):
+    """PR #452 review: one PATCH that moves a document out of a project
+    and renames it tells the old project's sockets it is gone, with the
+    title they knew, and nothing of the new one."""
+    sibling = await OxydeProject.objects.create(team_id=test_team.id, name="Sibling", key="SIB")
+    agent = await OxydeUser.objects.create(
+        email="pbot@example.com", hashed_password="x", name="pbot", is_agent=True,
+        parent_user_id=test_user.id, agent_team_id=test_team.id, agent_project_id=test_project.id,
+    )
+    _row, agent_key = await key_for(agent, holder=test_user)
+    r = await client.post(
+        f"/api/teams/{test_team.id}/documents", headers=auth_headers,
+        json={"title": "Old title", "content": "x", "project_id": test_project.id},
+    )
+    assert r.status_code == 201, r.text
+    doc_id = r.json()["id"]
+
+    agent_ws = FakeWebSocket(headers={"Authorization": f"Bearer {agent_key}"})
+    human_ws = FakeWebSocket(headers={"Authorization": f"Bearer {jwt_for(test_user)}"})
+    tasks = [await run_endpoint(agent_ws, test_team.id), await run_endpoint(human_ws, test_team.id)]
+    try:
+        r = await client.patch(
+            f"/api/documents/{doc_id}", headers=auth_headers,
+            json={"project_id": sibling.id, "title": "Secret new title", "content": "secret body"},
+        )
+        assert r.status_code == 200, r.text
+    finally:
+        for ws in (agent_ws, human_ws):
+            await ws.close()
+        await asyncio.gather(*tasks)
+
+    heard = _sent(agent_ws)
+    assert [(m["type"], m["entity"], m["data"]) for m in heard] == [
+        ("deleted", "document", {"id": doc_id, "title": "Old title"}),
+    ]
+    assert "Secret" not in repr(heard) and "secret" not in repr(heard)
+    # The team-wide socket hears the update, not a delete.
+    assert [(m["type"], m["data"]["title"]) for m in _sent(human_ws)] == [("updated", "Secret new title")]
