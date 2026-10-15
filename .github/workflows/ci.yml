@@ -330,9 +330,11 @@ jobs:
   # The emulator sometimes stops answering mid-run (CHT-1836: twice an
   # adb install or launch of the second APK never returned, and the job sat
   # until its timeout). The script gives every adb call its own time limit
-  # and says which one ran out; a stuck device or an emulator that does not
-  # boot gets one retry on a fresh emulator. A failure of the app itself is
-  # not retried.
+  # and says which one ran out; a stuck or vanished device, or an emulator
+  # that does not boot, gets one retry on a fresh emulator, and a green job
+  # that needed it shows a warning. A failure of the app itself is not
+  # retried, and that includes a launch that never reports while the device
+  # still answers: a retry could pass by luck and hide a startup hang.
   android-release-smoke:
     needs: android
     if: needs.android.outputs.smoke == 'true'
@@ -365,15 +367,17 @@ jobs:
 
       # v2.38.0, pinned by commit: a third-party action that runs with the
       # job's token.
-      # The script creates SMOKE_NO_RETRY_MARKER on any failure that is not
-      # a stuck device, so a crash is not run twice. A boot that times out
-      # or a step that hits its timeout-minutes leaves no marker.
+      # The script creates SMOKE_NO_RETRY_MARKER only when it gives up for a
+      # reason a retry would not fix (exit 1 or 2). A stuck device (exit 3),
+      # a boot that times out and a step killed at its timeout-minutes leave
+      # no marker and get the retry. SMOKE_STUCK_LOG collects exit 3's reason.
       - name: Launch each release APK on an emulator
         id: smoke
         continue-on-error: true
         timeout-minutes: 10
         env:
           SMOKE_NO_RETRY_MARKER: ${{ github.workspace }}/smoke-no-retry
+          SMOKE_STUCK_LOG: ${{ github.workspace }}/smoke-stuck.log
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 34
@@ -384,27 +388,38 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: android/scripts/release-smoke-test.sh $(find release-apks -name '*-release-unsigned.apk' | sort)
 
-      - name: The app failed; not retrying
+      - name: Failed for a reason a retry would not fix
         if: steps.smoke.outcome != 'success' && hashFiles('smoke-no-retry') != ''
         run: |
-          echo "::error::The release smoke test failed on the app or an APK, not the emulator; see the step above."
+          echo "::error::The release smoke test failed for a reason a retry would not fix (the app, an APK, or the script's arguments), not a stuck emulator; see the step above."
           exit 1
 
       # The action starts the emulator in the background, so one whose step
-      # hit its timeout is still running. Stop it and restart adb before the
-      # retry; the retry also uses its own AVD and port, in case it lingers
-      # (the action points the script's adb at it through ANDROID_SERIAL).
+      # hit its timeout is still running, and the adb server may be the part
+      # that is wedged. Kill both outright (a polite kill-server would wait
+      # on a wedged server) and wait for qemu to go. The retry also uses its
+      # own AVD and port in case anything lingers (the action points the
+      # script's adb at it through ANDROID_SERIAL).
       - name: Stop the first emulator
         if: steps.smoke.outcome != 'success'
         run: |
           adb="$ANDROID_HOME/platform-tools/adb"
-          timeout 20 "$adb" -s emulator-5554 emu kill || true
-          pkill -f 'qemu-system' || true
-          timeout 20 "$adb" kill-server || true
+          timeout 10 "$adb" -s emulator-5554 emu kill || true
+          pkill -9 -x adb || true
+          pkill -9 -f 'qemu-system-x86_64' || true
+          pkill -9 -x emulator || true
+          for _ in $(seq 15); do
+            pgrep -f 'qemu-system-x86_64' > /dev/null || break
+            sleep 1
+          done
+          pgrep -af 'qemu-system|adb' || echo "no emulator or adb left"
 
       - name: Retry on a fresh emulator (the first one stopped answering)
+        id: retry
         if: steps.smoke.outcome != 'success'
         timeout-minutes: 10
+        env:
+          SMOKE_STUCK_LOG: ${{ github.workspace }}/smoke-stuck.log
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 34
@@ -416,3 +431,11 @@ jobs:
           emulator-port: 5556
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: android/scripts/release-smoke-test.sh $(find release-apks -name '*-release-unsigned.apk' | sort)
+
+      # A green job that needed the retry says so where it will be seen.
+      - name: Passed on the retry
+        if: steps.smoke.outcome != 'success' && steps.retry.outcome == 'success'
+        run: |
+          reason="it did not finish (the boot timed out, or the step hit its timeout)"
+          if [ -s smoke-stuck.log ]; then reason=$(head -n 1 smoke-stuck.log); fi
+          echo "::warning::The release smoke test passed only on its retry. First attempt: $reason"
