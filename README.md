@@ -84,15 +84,20 @@ connectors, Claude Desktop, ChatGPT, or `claude mcp add --transport
 http`) is to add it by URL and authorize: give the client
 `https://your-chaotic-host/mcp` and nothing else, and it sends you to a
 Chaotic consent page in your browser where you pick the agent it acts
-as. This needs OAuth turned on, which is off by default: set
-`APP_BASE_URL` and then `OAUTH_ENABLED=true` with `chaotic system config
-set` on an installed server. API keys
+as. claude.ai, Claude Desktop and ChatGPT connect from their own
+servers, so they need your server on the public internet over https;
+Claude Code also works against `http://localhost`. This needs OAuth
+turned on, which is off by default: on an installed server, run
+`chaotic system config set APP_BASE_URL https://your-chaotic-host`, then
+`chaotic system config set OAUTH_ENABLED true`, then restart the server
+(`chaotic system stop` and `chaotic system start`); on a server you run
+by hand, set the same two in its environment or `backend/.env`. API keys
 (`chaotic auth keys create "..." --expires-in 90d`, sent as an
 `Authorization: Bearer` header) are for headless sessions, scripts and
 CI. The old capability URL, with the key in the path, is deprecated.
-See [docs/agents.md](docs/agents.md), "Connecting: add by URL and
-authorize (OAuth)", for each client's steps and for moving a connector
-off the capability URL.
+See [docs/agents.md, "Connecting: add by URL and authorize
+(OAuth)"](docs/agents.md#connecting-add-by-url-and-authorize-oauth) for
+each client's steps and for moving a connector off the capability URL.
 
 ## Core Concepts
 
