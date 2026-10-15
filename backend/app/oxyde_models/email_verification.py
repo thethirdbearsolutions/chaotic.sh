@@ -27,6 +27,15 @@ for:
 * ``used_at``: when it was confirmed. ``attempts`` minus one such
   success is the failed confirmations the daily cap counts.
 
+A team admin's code for one invitation (CHT-1828) is a row here too,
+with ``email_hash`` set to an HMAC of the invitation id
+(``hash_invitation``, its own prefix) instead of the address, and
+``code_hash`` bound to the user and the invitation. Everything
+address-keyed (the mailing limits, the failure cap, the newest-code
+lookup, "has this account asked") therefore never sees it, and its own
+limit counts by the invitation. Redeeming it lets that user accept that
+invitation; it never verifies the address.
+
 Only a user's newest armed code can be confirmed, so sending a new code
 retires every older one. Rows older than a day are pruned on each
 request.

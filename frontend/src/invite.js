@@ -322,6 +322,14 @@ export function renderSignedIn(el, preview, user) {
                 <div class="invite-actions">
                     <button type="button" id="invite-send-code" class="btn btn-secondary">Send code</button>
                 </div>
+                <form id="invite-admin-code-form" class="invite-code-form">
+                    <div class="form-group">
+                        <label for="invite-admin-code">Email never arrives? Enter the code a team admin gave you</label>
+                        <input type="text" id="invite-admin-code" inputmode="numeric" autocomplete="off"
+                            pattern="[0-9]{6}" maxlength="6" required>
+                    </div>
+                    <button type="submit" id="invite-accept-with-code" class="btn btn-secondary">Accept with this code</button>
+                </form>
             </div>
             <div class="invite-actions" id="invite-accept-actions">
                 <a class="btn btn-secondary" href="/">Not now</a>
@@ -491,16 +499,24 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
     const accept = el.querySelector('#invite-accept');
     if (!accept) return;
     let busy = false;
-    const doAccept = async () => {
+    // code: one a team admin issued for this invitation (CHT-1828).
+    const doAccept = async (code) => {
         if (busy) return;
         busy = true;
         accept.disabled = true;
         let member;
         try {
-            member = await api.acceptInvitation(token);
+            member = code === undefined ? await api.acceptInvitation(token) : await api.acceptInvitation(token, code);
         } catch (e) {
             busy = false;
             accept.disabled = false;
+            const errorCode = e && e.detail && e.detail.error_code;
+            if (code !== undefined && (errorCode === 'invalid_verification_code' || (e && e.status === 429))) {
+                // A wrong or spent admin code: the invitation is still good.
+                showError(el, (e && e.message) || 'That code did not work.');
+                el.querySelector('#invite-admin-code')?.select?.();
+                return;
+            }
             if (e && e.status === 401) {
                 // The session expired on this page (review F7): sign out
                 // and show the invitation signed out, with "Sign in to
@@ -536,7 +552,12 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
             renderJoined(el, preview);
         }
     };
-    accept.addEventListener('click', doAccept);
+    accept.addEventListener('click', () => doAccept());
+    el.querySelector('#invite-admin-code-form')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const value = el.querySelector('#invite-admin-code').value.trim();
+        if (value) doAccept(value);
+    });
     wireVerification(el, {
         onVerified: () => {
             el.querySelector('#invite-verify').classList.add('hidden');

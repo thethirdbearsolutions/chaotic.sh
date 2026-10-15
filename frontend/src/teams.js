@@ -333,7 +333,7 @@ export function renderTeamInvitations() {
                     <span>Expires: ${new Date(inv.expires_at).toLocaleDateString()}</span>
                 </div>
             </div>
-            ${canManageInvitations ? `<button class="btn btn-secondary btn-small" data-action="issue-invitation-code" data-invitation-id="${escapeAttr(inv.id)}" title="For an invitee whose verification email never arrives">Verification code</button>
+            ${canManageInvitations ? `<button class="btn btn-secondary btn-small" data-action="issue-invitation-code" data-invitation-id="${escapeAttr(inv.id)}" title="For an invitee whose verification email never arrives">Code for invitee</button>
             <button class="btn btn-danger btn-small" data-action="delete-invitation" data-invitation-id="${escapeAttr(inv.id)}">Cancel</button>` : ''}
         </div>
     `
@@ -597,11 +597,9 @@ export async function copyInviteLink() {
 }
 
 /**
- * A verification code for the account at a pending invitation's address
- * (CHT-1828), for an invitee whose verification email never arrives.
- * The account is shown first, with the warning: anyone who saw the link
- * can sign up with the address, so the admin must check with the
- * invitee that the account is theirs before handing the code over.
+ * A code that lets the account at a pending invitation's address accept
+ * that invitation (CHT-1828), for an invitee whose verification email
+ * never arrives. It does not verify the address.
  * @param {string} invitationId - Pending invitation ID
  */
 export async function issueInvitationCode(invitationId) {
@@ -616,28 +614,50 @@ export async function issueInvitationCode(invitationId) {
 }
 
 /**
- * Show an issued verification code with the account it is for.
- * @param {object} issued - The server's answer: code, expires_at, account
+ * The account's signup time against the invitation's creation: an
+ * account made before the invitation went out was not made for it.
+ * @param {string} signedUp - ISO time
+ * @param {string} invited - ISO time
+ * @returns {string}
+ */
+export function signedUpRelative(signedUp, invited) {
+  const a = new Date(signedUp).getTime();
+  const b = new Date(invited).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return 'invitation time unknown';
+  const seconds = Math.abs(a - b) / 1000;
+  let span;
+  if (seconds < 3600) span = `${Math.max(1, Math.round(seconds / 60))} min`;
+  else if (seconds < 2 * 86400) span = `${Math.round(seconds / 3600)} h`;
+  else span = `${Math.round(seconds / 86400)} days`;
+  return `${span} ${a >= b ? 'after' : 'before'} the invitation was created`;
+}
+
+/**
+ * Show an issued code with the account it is for. The channel rule
+ * comes first: the name shown is chosen by whoever signed up.
+ * @param {object} issued - The server's answer
  */
 export function showInvitationCode(issued) {
   const account = issued?.account || {};
   const signedUp = account.created_at ? new Date(account.created_at).toLocaleString() : '';
+  const relative = signedUpRelative(account.created_at, issued?.invitation_created_at);
   const expires = issued?.expires_at ? new Date(issued.expires_at).toLocaleTimeString() : '';
-  document.getElementById('modal-title').textContent = 'Verification Code';
+  document.getElementById('modal-title').textContent = 'Invitation Code';
   document.getElementById('modal-content').innerHTML = `
         <div class="api-key-created">
-            <p>For the account signed up with the invited address:</p>
+            <p class="warning-text">Send this code only through a channel you already trust for the invitee, never to whoever asked you for it. Anyone who saw the link can sign up with their address and ask, and chooses the name shown below.</p>
+            <p>The account it is for:</p>
             <ul class="invitation-code-account">
                 <li>Name: <strong>${escapeHtml(account.name || '')}</strong></li>
                 <li>Email: ${escapeHtml(account.email || '')}</li>
-                <li>Signed up: ${escapeHtml(signedUp)}</li>
+                <li>Signed up: ${escapeHtml(signedUp)} (${escapeHtml(relative)})</li>
                 <li>Already in a team: ${account.member_of_any_team ? 'yes' : 'no'}</li>
             </ul>
-            <p class="warning-text">Confirm with the invitee that this account is theirs before you hand the code over. If they don't recognise it, someone else signed up with their address: don't give out the code, and cancel the invitation.</p>
+            <p class="warning-text">Check with the invitee that this account is theirs. If they don't recognise it, or it signed up long before you invited them, don't give out the code: cancel the invitation.</p>
             <div class="api-key-display">
                 <code id="invitation-code">${escapeHtml(issued?.code || '')}</code>
             </div>
-            <p class="text-muted">Expires at ${escapeHtml(expires)}. They enter it on the invitation page, or with <code>chaotic auth verify-email --code</code>, then accept. You won't be able to see it again.</p>
+            <p>Expires at ${escapeHtml(expires)}. It lets that account accept this invitation only: they enter it on the invitation page, or run <code>chaotic team accept-invite &lt;link&gt; --code &lt;code&gt;</code>. You won't be able to see it again.</p>
             <button type="button" class="btn btn-secondary" data-action="dismiss-invite-link">Done</button>
         </div>
     `;

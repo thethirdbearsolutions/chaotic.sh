@@ -23,6 +23,7 @@ import {
   removeMember,
   deleteInvitation,
   issueInvitationCode,
+  signedUpRelative,
   showCreateTeamModal,
   showEditTeamModal,
   handleCreateTeam,
@@ -1106,6 +1107,7 @@ describe('issueInvitationCode (CHT-1828)', () => {
   const ISSUED = {
     code: '123456',
     expires_at: '2026-10-15T17:00:00Z',
+    invitation_created_at: '2026-10-15T14:00:00Z',
     account: { name: 'Bob', email: 'bob@example.com', created_at: '2026-10-15T16:00:00Z', member_of_any_team: false },
   };
 
@@ -1129,8 +1131,9 @@ describe('issueInvitationCode (CHT-1828)', () => {
     expect(text).toContain('Bob');
     expect(text).toContain('bob@example.com');
     expect(text).toContain('Already in a team: no');
-    expect(text).toContain('Confirm with the invitee that this account is theirs');
-    expect(text.indexOf('Confirm with the invitee')).toBeLessThan(text.indexOf('123456'));
+    expect(text.trim().startsWith('Send this code only through a channel you already trust for the invitee, never to whoever asked you for it.')).toBe(true);
+    expect(text).toContain('2 h after the invitation was created');
+    expect(text.indexOf('Check with the invitee')).toBeLessThan(text.indexOf('123456'));
     expect(document.getElementById('invitation-code').textContent).toBe('123456');
   });
 
@@ -1171,6 +1174,18 @@ describe('issueInvitationCode (CHT-1828)', () => {
     api.issueInvitationVerificationCode.mockResolvedValue(ISSUED);
     await teamsActions['issue-invitation-code']({}, { invitationId: 'inv-9' });
     expect(api.issueInvitationVerificationCode).toHaveBeenCalledWith('team-1', 'inv-9');
+  });
+});
+
+describe('signedUpRelative (CHT-1828)', () => {
+  it('says how long after or before the invitation the account signed up', () => {
+    expect(signedUpRelative('2026-10-15T14:05:00Z', '2026-10-15T14:00:00Z')).toBe('5 min after the invitation was created');
+    expect(signedUpRelative('2026-10-10T14:00:00Z', '2026-10-15T14:00:00Z')).toBe('5 days before the invitation was created');
+    expect(signedUpRelative('2026-10-14T14:00:00Z', '2026-10-15T14:00:00Z')).toBe('24 h before the invitation was created');
+  });
+
+  it('says so when a time is missing', () => {
+    expect(signedUpRelative(undefined, '2026-10-15T14:00:00Z')).toBe('invitation time unknown');
   });
 });
 

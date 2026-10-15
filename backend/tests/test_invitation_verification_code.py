@@ -1,10 +1,12 @@
-"""A team admin issues the verification code for a pending invitation's
-account, to hand over by hand when SMTP is configured but failing (CHT-1828).
+"""A team admin issues a code that lets the account at a pending
+invitation's address accept that invitation, to hand over by hand when
+SMTP is configured but failing (CHT-1828).
 
 The threat model is CHT-1790's: the invitation token is a bearer
 credential, and signup takes any address on trust. The admin-issued
-code must not reopen that hole: it is bound to one account, so a leaked
-link plus a leaked code is useless without that account's login.
+code must not reopen that hole. It is bound to one account and one
+invitation, and it never verifies the address: anyone can be the admin
+of a team of their own (PR #446 review 1).
 """
 import logging
 from datetime import datetime, timedelta, timezone
@@ -102,6 +104,18 @@ async def _issue(client, team_id, invitation_id, headers):
     return await client.post(_url(team_id, invitation_id), headers=headers)
 
 
+async def _accept_with(client, token, headers, code):
+    return await client.post(f"/api/teams/invitations/{token}/accept", headers=headers, json={"code": code})
+
+
+async def _verified_at(user_id: str):
+    return (await OxydeUser.objects.get(id=user_id)).email_verified_at
+
+
+def _wrong(code: str) -> str:
+    return f"{(int(code) + 1) % 10 ** 6:06d}"
+
+
 @pytest.fixture
 async def pending(test_team, test_user):
     """A pending invitation to INVITEE from test_team's owner: (token, id)."""
@@ -114,8 +128,8 @@ class TestIssue:
         self, client, test_team, auth_headers, pending, outbox,
     ):
         token, inv_id = pending
-        user_id, invitee = await _signup(client)
-        # The mailed code fails, which is the bug.
+        user_id, invitee = await _signup(client, asked=False)
+        # The mailed code fails, which is the bug; the request is on record.
         outbox.fail = True
         assert (await client.post(REQUEST, headers=invitee)).status_code == 502
         assert (await _accept(client, token, invitee)).json()["detail"]["error_code"] == "email_unverified"
@@ -126,18 +140,17 @@ class TestIssue:
         assert len(body["code"]) == 6 and body["code"].isdigit()
         assert response.headers["cache-control"] == "no-store"
 
-        confirm = await client.post(CONFIRM, headers=invitee, json={"code": body["code"]})
-        assert confirm.status_code == 200, confirm.text
-        joined = await _accept(client, token, invitee)
+        joined = await _accept_with(client, token, invitee, body["code"])
         assert joined.status_code == 200, joined.text
         assert joined.json()["user_id"] == user_id
-        # Nothing was mailed for the admin code.
+        # Admitted to this invitation only: the address is not verified.
+        assert await _verified_at(user_id) is None
         assert outbox.sent == []
 
     async def test_the_answer_describes_the_account_for_the_admin_to_check(
         self, client, test_team, auth_headers, pending, outbox,
     ):
-        _, inv_id = pending
+        token, inv_id = pending
         user_id, _ = await _signup(client, name="Someone Else")
         body = (await _issue(client, test_team.id, inv_id, auth_headers)).json()
         account = body["account"]
@@ -146,7 +159,9 @@ class TestIssue:
         created = (await OxydeUser.objects.get(id=user_id)).created_at
         assert datetime.fromisoformat(account["created_at"].replace("Z", "+00:00")) == created
         assert account["member_of_any_team"] is False
-        assert "confirm with the invitee" in body["instructions"]
+        invited = (await OxydeTeamInvitation.objects.get(id=inv_id)).created_at
+        assert datetime.fromisoformat(body["invitation_created_at"].replace("Z", "+00:00")) == invited
+        assert body["instructions"].startswith("Send this code only through a channel you already trust")
         assert "id" not in account and "hashed_password" not in account
 
     async def test_an_account_already_in_a_team_says_so(self, client, test_team, auth_headers, pending, outbox):
@@ -157,14 +172,16 @@ class TestIssue:
         body = (await _issue(client, test_team.id, inv_id, auth_headers)).json()
         assert body["account"]["member_of_any_team"] is True
 
-    async def test_only_hashes_are_stored(self, client, test_team, auth_headers, pending, outbox):
+    async def test_only_hashes_bound_to_user_and_invitation_are_stored(
+        self, client, test_team, auth_headers, pending, outbox,
+    ):
         _, inv_id = pending
         user_id, _ = await _signup(client)
         code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
         [row] = [r for r in await _codes(user_id) if r.armed]
-        assert row.armed is True
+        assert row.email_hash == evs.hash_invitation(inv_id) != evs.hash_email(INVITEE)
+        assert row.code_hash == evs.hash_invitation_code(user_id, inv_id, code)
         assert code not in row.code_hash
-        assert row.code_hash == evs.hash_code(user_id, code)
         assert row.expires_at - row.created_at == evs.CODE_TTL
 
     async def test_the_log_line_has_ids_and_never_the_code(
@@ -174,105 +191,173 @@ class TestIssue:
         user_id, _ = await _signup(client)
         with caplog.at_level(logging.INFO, logger="app.api.teams"):
             code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
-        lines = [r.getMessage() for r in caplog.records if "verification code" in r.getMessage()]
+        lines = [r.getMessage() for r in caplog.records if "invitation code" in r.getMessage()]
         assert len(lines) == 1
         for value in (test_user.id, test_team.id, user_id, inv_id):
             assert value in lines[0]
         assert all(code not in r.getMessage() for r in caplog.records)
 
 
-class TestLeakedTokenAndCode:
+async def _own_team(client, headers, key) -> str:
+    response = await client.post("/api/teams", headers=headers, json={"name": key, "key": key})
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def _invite_via_api(client, headers, team_id, email) -> tuple[str, str]:
+    response = await client.post(f"/api/teams/{team_id}/invitations", headers=headers, json={"email": email})
+    assert response.status_code == 201, response.text
+    return response.json()["accept_url"].rsplit("/", 1)[1], response.json()["id"]
+
+
+class TestScope:
+    async def test_a_self_issued_code_does_not_open_another_teams_leaked_link(
+        self, client, test_team, test_user, outbox,
+    ):
+        """PR #446 review 1, the PoC: an attacker with a team of their own
+        squats the victim's address, issues themselves a code, and must
+        still not be able to accept a real team's leaked link."""
+        victim = "victim@example.com"
+        _, attacker = await _signup(client, email="attacker@example.org", name="A", asked=False)
+        squat_id, squatter = await _signup(client, email=victim, name="Victim Name", asked=False)
+        assert (await client.post(REQUEST, headers=squatter)).status_code == 202  # mailed to the victim
+        evil = await _own_team(client, attacker, "EVIL")
+        evil_token, evil_inv = await _invite_via_api(client, attacker, evil, victim)
+        issued = await _issue(client, evil, evil_inv, attacker)
+        assert issued.status_code == 201
+        code = issued.json()["code"]
+
+        legit_token = await _invite(test_team.id, test_user.id, victim)  # the link that leaks
+        # The code is no good for the other invitation...
+        refused = await _accept_with(client, legit_token, squatter, code)
+        assert refused.status_code == 400
+        # ...it gets them into the attacker's own team, which they own anyway...
+        assert (await _accept_with(client, evil_token, squatter, code)).status_code == 200
+        # ...and the address is still unverified, so the leaked link alone is refused.
+        assert await _verified_at(squat_id) is None
+        again = await _accept(client, legit_token, squatter)
+        assert again.status_code == 403
+        assert again.json()["detail"]["error_code"] == "email_unverified"
+        assert await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=squat_id).count() == 0
+
     async def test_a_leaked_link_and_code_are_useless_without_the_accounts_login(
         self, client, test_team, auth_headers, pending, outbox,
     ):
         token, inv_id = pending
         await _signup(client)
         code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
-        # The attacker has the link and the code, but their own account.
         _, attacker = await _signup(client, email="attacker@example.com", name="Attacker", asked=False)
-        confirm = await client.post(CONFIRM, headers=attacker, json={"code": code})
-        assert confirm.status_code == 400
-        assert confirm.json()["detail"]["error_code"] == "invalid_verification_code"
-        refused = await _accept(client, token, attacker)
-        assert refused.status_code == 403
+        refused = await _accept_with(client, token, attacker, code)
+        assert refused.status_code == 400
+        assert refused.json()["detail"]["error_code"] == "invalid_verification_code"
+        assert (await client.post(CONFIRM, headers=attacker, json={"code": code})).status_code == 400
         assert await OxydeTeamMember.objects.filter(team_id=test_team.id).count() == 1
 
     async def test_a_squatter_shows_up_as_a_stranger_in_the_answer(
         self, client, test_team, auth_headers, pending, outbox,
     ):
-        # Someone saw the link and signed up first: the admin is shown
-        # their account, not the invitee's, and must not hand the code over.
         _, inv_id = pending
         await _signup(client, name="Not the invitee")
         body = (await _issue(client, test_team.id, inv_id, auth_headers)).json()
         assert body["account"]["name"] == "Not the invitee"
 
+    async def test_a_mailed_code_passed_to_accept_verifies_the_address(
+        self, client, test_team, pending, outbox,
+    ):
+        # With no admin code live, a code passed to accept is a mailed one.
+        token, _ = pending
+        user_id, invitee = await _signup(client, asked=False)
+        await client.post(REQUEST, headers=invitee)
+        joined = await _accept_with(client, token, invitee, outbox.last_code())
+        assert joined.status_code == 200, joined.text
+        assert await _verified_at(user_id) is not None
+
 
 class TestCodeRules:
     async def test_a_new_admin_code_retires_the_earlier_one(self, client, test_team, auth_headers, pending, outbox):
-        _, inv_id = pending
+        token, inv_id = pending
         _, invitee = await _signup(client)
         first = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
         second = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
         if first != second:
-            assert (await client.post(CONFIRM, headers=invitee, json={"code": first})).status_code == 400
-        assert (await client.post(CONFIRM, headers=invitee, json={"code": second})).status_code == 200
+            assert (await _accept_with(client, token, invitee, first)).status_code == 400
+        assert (await _accept_with(client, token, invitee, second)).status_code == 200
 
-    async def test_an_admin_code_retires_an_earlier_mailed_code(self, client, test_team, auth_headers, pending, outbox):
+    async def test_it_leaves_the_accounts_mailed_code_alone(self, client, test_team, auth_headers, pending, outbox):
+        """Review 3: issuing must not disarm the invitee's own codes."""
         _, inv_id = pending
-        user_id, invitee = await _signup(client)
+        user_id, invitee = await _signup(client, asked=False)
         assert (await client.post(REQUEST, headers=invitee)).status_code == 202
         mailed = outbox.last_code()
-        admin = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
-        rows = await _codes(user_id)
-        assert [r.armed for r in rows] == [False, False, True]
-        if mailed != admin:  # one chance in a million they are the same
-            assert (await client.post(CONFIRM, headers=invitee, json={"code": mailed})).status_code == 400
+        await _issue(client, test_team.id, inv_id, auth_headers)
+        assert (await client.post(CONFIRM, headers=invitee, json={"code": mailed})).status_code == 200
+
+    async def test_its_wrong_tries_do_not_count_against_the_address(
+        self, client, test_team, auth_headers, pending, outbox,
+    ):
+        """Review 3: a team the invitee never heard of cannot steer them
+        into the address's daily failure cap."""
+        token, inv_id = pending
+        _, invitee = await _signup(client)
+        for _ in range(evs.INVITATION_ISSUE_LIMIT):
+            code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
+            for _ in range(evs.MAX_ATTEMPTS):
+                assert (await _accept_with(client, token, invitee, _wrong(code))).status_code == 400
+        rows = await OxydeEmailVerificationCode.objects.filter(email_hash=evs.hash_email(INVITEE)).all()
+        assert evs._failures(rows) == 0
+        assert (await client.post(REQUEST, headers=invitee)).status_code == 202
+        assert (await client.post(CONFIRM, headers=invitee, json={"code": outbox.last_code()})).status_code == 200
 
     async def test_it_expires(self, client, test_team, auth_headers, pending, outbox):
-        _, inv_id = pending
+        token, inv_id = pending
         user_id, invitee = await _signup(client)
         code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
         await _age_codes(user_id, evs.CODE_TTL + timedelta(seconds=1))
-        assert (await client.post(CONFIRM, headers=invitee, json={"code": code})).status_code == 400
+        assert (await _accept_with(client, token, invitee, code)).status_code == 400
 
     async def test_five_tries_then_dead(self, client, test_team, auth_headers, pending, outbox):
-        _, inv_id = pending
+        token, inv_id = pending
         _, invitee = await _signup(client)
         code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
-        wrong = f"{(int(code) + 1) % 10 ** 6:06d}"
         for _ in range(evs.MAX_ATTEMPTS):
-            assert (await client.post(CONFIRM, headers=invitee, json={"code": wrong})).status_code == 400
-        assert (await client.post(CONFIRM, headers=invitee, json={"code": code})).status_code == 400
+            assert (await _accept_with(client, token, invitee, _wrong(code))).status_code == 400
+        assert (await _accept_with(client, token, invitee, code)).status_code == 400
 
-    async def test_the_daily_failure_cap_holds(self, client, test_team, auth_headers, pending, outbox):
+    async def test_at_most_three_codes_per_invitation_a_day(self, client, test_team, auth_headers, pending, outbox):
         _, inv_id = pending
-        user_id, _ = await _signup(client)
-        await OxydeEmailVerificationCode.objects.create(
-            email_hash=evs.hash_email(INVITEE), user_id=user_id, code_hash="x", armed=False,
-            expires_at=datetime.now(timezone.utc), attempts=evs.DAILY_FAILURE_LIMIT,
-        )
+        await _signup(client)
+        for _ in range(evs.INVITATION_ISSUE_LIMIT):
+            assert (await _issue(client, test_team.id, inv_id, auth_headers)).status_code == 201
         response = await _issue(client, test_team.id, inv_id, auth_headers)
         assert response.status_code == 429
         assert response.json()["detail"]["error_code"] == "email_verification_rate_limited"
-        assert "retry-after" in response.headers
+        assert int(response.headers["retry-after"]) > 0
 
     async def test_the_mailing_limits_do_not_block_it(self, client, test_team, auth_headers, pending, outbox):
-        # A code was just requested (and failed): the one-a-minute limit
-        # protects the relay, and the admin code mails nothing.
         _, inv_id = pending
-        _, invitee = await _signup(client)
+        _, invitee = await _signup(client, asked=False)
         outbox.fail = True
         await client.post(REQUEST, headers=invitee)
         assert (await _issue(client, test_team.id, inv_id, auth_headers)).status_code == 201
 
-    async def test_already_verified(self, client, test_team, auth_headers, pending, outbox):
+    async def test_issuing_never_extends_the_window(self, client, test_team, auth_headers, pending, outbox):
+        """Review 2: only the account's own requests count as asking."""
         _, inv_id = pending
         user_id, _ = await _signup(client)
-        await OxydeUser.objects.filter(id=user_id).update(email_verified_at=datetime.now(timezone.utc))
+        assert (await _issue(client, test_team.id, inv_id, auth_headers)).status_code == 201
+        own = OxydeEmailVerificationCode.objects.filter(email_hash=evs.hash_email(INVITEE), user_id=user_id)
+        for row in await own.all():
+            await OxydeEmailVerificationCode.objects.filter(id=row.id).update(
+                created_at=datetime.now(timezone.utc) - evs.FAILURE_WINDOW + timedelta(minutes=1),
+            )
+        # Still inside the window: allowed. Then age it out.
+        assert (await _issue(client, test_team.id, inv_id, auth_headers)).status_code == 201
+        for row in await own.all():
+            await OxydeEmailVerificationCode.objects.filter(id=row.id).update(
+                created_at=datetime.now(timezone.utc) - evs.FAILURE_WINDOW - timedelta(minutes=1),
+            )
         response = await _issue(client, test_team.id, inv_id, auth_headers)
-        assert response.status_code == 409
-        assert response.json()["detail"]["error_code"] == "email_already_verified"
+        assert response.json()["detail"]["error_code"] == "no_verification_requested"
 
 
 class TestRefusals:
@@ -333,40 +418,40 @@ class TestRefusals:
         assert a.json() == b.json()
         assert a.json()["detail"]["error_code"] == "email_verification_unavailable"
 
-    async def test_no_account_and_a_passive_account_get_the_same_answer(
-        self, client, test_team, test_user, auth_headers, outbox,
+    @pytest.mark.parametrize("kind", ["passive", "verified", "deactivated", "asked_long_ago"])
+    async def test_every_ineligible_account_answers_like_no_account(
+        self, client, test_team, test_user, auth_headers, outbox, kind, monkeypatch,
     ):
-        """PR #446 review F1: anyone can make a team and invite any address,
-        so an account that never asked for a code is not described, and
-        not even told apart from no account."""
+        """Self-review F1 and review 5, 6: no account, a passive one, a
+        verified one, a deactivated one and one that asked over a day ago
+        get one answer, after the same number of lookups."""
+        calls = []
+        real = evs.EmailVerificationService.asked_recently
+
+        async def counting(user_id, email):
+            calls.append(user_id)
+            return await real(user_id, email)
+
+        monkeypatch.setattr(evs.EmailVerificationService, "asked_recently", staticmethod(counting))
         nobody = await _invite(test_team.id, test_user.id, "nobody@example.com")
-        passive_token = await _invite(test_team.id, test_user.id, INVITEE)
-        passive_id, _ = await _signup(client, asked=False)
+        token = await _invite(test_team.id, test_user.id, INVITEE)
+        user_id, _ = await _signup(client, name="The Invitee", asked=kind in ("verified", "deactivated"))
+        if kind == "verified":
+            await OxydeUser.objects.filter(id=user_id).update(email_verified_at=datetime.now(timezone.utc))
+        elif kind == "deactivated":
+            await OxydeUser.objects.filter(id=user_id).update(is_active=False)
+        elif kind == "asked_long_ago":
+            await _asked(user_id, INVITEE, ago=evs.FAILURE_WINDOW + timedelta(minutes=1))
         a = await _issue(client, test_team.id, await _invitation_id(nobody), auth_headers)
-        b = await _issue(client, test_team.id, await _invitation_id(passive_token), auth_headers)
+        n = len(calls)
+        b = await _issue(client, test_team.id, await _invitation_id(token), auth_headers)
         assert a.status_code == b.status_code == 409
         assert a.json() == b.json()
         assert a.json()["detail"]["error_code"] == "no_verification_requested"
         assert "The Invitee" not in b.text
-        assert await OxydeEmailVerificationCode.objects.count() == 0
-
-    async def test_asking_over_a_day_ago_does_not_count(
-        self, client, test_team, test_user, auth_headers, outbox,
-    ):
-        # Asking more than a day ago does not count: the account is not
-        # waiting on a code now.
-        token = await _invite(test_team.id, test_user.id, INVITEE)
-        user_id, _ = await _signup(client, asked=False)
-        await _asked(user_id, INVITEE, ago=evs.FAILURE_WINDOW + timedelta(minutes=1))
-        response = await _issue(client, test_team.id, await _invitation_id(token), auth_headers)
-        assert response.json()["detail"]["error_code"] == "no_verification_requested"
-
-    async def test_a_deactivated_account_counts_as_none(self, client, test_team, auth_headers, pending, outbox):
-        _, inv_id = pending
-        user_id, _ = await _signup(client)
-        await OxydeUser.objects.filter(id=user_id).update(is_active=False)
-        response = await _issue(client, test_team.id, inv_id, auth_headers)
-        assert response.json()["detail"]["error_code"] == "no_verification_requested"
+        if kind != "deactivated":  # a deactivated account is dropped before the query
+            assert len(calls) - n == n == 1
+        assert await OxydeEmailVerificationCode.objects.filter(armed=True).count() == 0
 
     async def test_two_accounts_differing_in_case_are_refused(self, client, test_team, auth_headers, pending, outbox):
         _, inv_id = pending

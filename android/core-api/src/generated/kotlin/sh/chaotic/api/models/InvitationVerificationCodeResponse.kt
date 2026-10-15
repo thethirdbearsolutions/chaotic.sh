@@ -35,10 +35,11 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * A verification code for the account at a pending invitation's address, issued to a team admin to hand over by hand when the mailed code cannot arrive (CHT-1828). Shown once; never logged or stored in the clear. It confirms only that account's address, from a session signed in as it (``chaotic auth verify-email --code``).
+ * A code for the account at a pending invitation's address, issued to a team admin to hand over by hand when the mailed verification code cannot arrive (CHT-1828). Shown once; never logged or stored in the clear. It lets that account accept this one invitation, from a session signed in as it (``chaotic team accept-invite <link> --code``); it does not verify the address.
  *
  * @param code 
  * @param expiresAt 
+ * @param invitationCreatedAt 
  * @param account 
  * @param instructions 
  */
@@ -51,6 +52,9 @@ data class InvitationVerificationCodeResponse (
 
     @SerialName(value = "expires_at")
     val expiresAt: kotlin.String,
+
+    @SerialName(value = "invitation_created_at")
+    val invitationCreatedAt: kotlin.String,
 
     @SerialName(value = "account")
     val account: InvitationCodeAccount,

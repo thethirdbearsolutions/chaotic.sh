@@ -15,6 +15,7 @@ from app.schemas.team import (
     TeamInvitationResponse,
     TeamInvitationCreatedResponse,
     InvitationPreviewResponse,
+    InvitationAccept,
     InvitationCodeAccount,
     InvitationVerificationCodeResponse,
 )
@@ -27,7 +28,7 @@ from app.services.team_service import TeamService
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
 from app.services.email_verification_service import (
-    CODE_NOT_NEEDED, EmailVerificationService, VerificationRefused,
+    CODE_NOT_NEEDED, INVALID_CODE_MESSAGE, EmailVerificationService, VerificationRefused,
 )
 from app.utils import ensure_utc
 from app.utils.email_address import same_email
@@ -471,8 +472,18 @@ async def preview_invitation(token: str, response: Response) -> InvitationPrevie
 
 @router.post("/invitations/{token}/accept", response_model=TeamMemberResponse)
 @writes
-async def accept_invitation(token: str, current_user: CurrentUser, _app_session: NotAppSession):
+async def accept_invitation(
+    token: str, current_user: CurrentUser, _app_session: NotAppSession, body: InvitationAccept | None = None,
+):
     """Accept a team invitation.
+
+    An account whose address is not verified (with SMTP configured) may
+    send ``{"code": ...}``: the code a team admin issued for this
+    invitation (CHT-1828), which lets it past the gate for this
+    invitation only and leaves the address unverified, or else a mailed
+    verification code, which verifies the address as
+    ``/auth/email-verification/confirm`` does. A wrong one gets 400
+    ``invalid_verification_code``.
 
     An unknown, expired, accepted, declined or revoked invitation gets
     the preview's one 404, checked before the email match, so whatever
@@ -494,9 +505,31 @@ async def accept_invitation(token: str, current_user: CurrentUser, _app_session:
     # the invitation link (handed over by hand) is the only delivery path,
     # so the token itself stays the credential, as before.
     if EmailService().is_configured() and current_user.email_verified_at is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=dict(EMAIL_UNVERIFIED), headers=INVITATION_HEADERS,
-        )
+        code = body.code if body else None
+        if not code:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail=dict(EMAIL_UNVERIFIED), headers=INVITATION_HEADERS,
+            )
+        verification = EmailVerificationService()
+        # The admin's code vouches for this invitation and this account
+        # only; nothing about the address is recorded (PR #446 review 1).
+        # While one is live, only it is checked, so a wrong try costs one
+        # of its attempts and never counts against the address's daily
+        # failure cap; with none, the code can only be a mailed one.
+        redeemed = await verification.redeem_for_invitation(current_user, invitation.id, code)
+        if redeemed is False:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error_code": "invalid_verification_code", "message": INVALID_CODE_MESSAGE},
+                headers=INVITATION_HEADERS,
+            )
+        if redeemed is None:
+            try:
+                await verification.confirm(current_user, code)
+            except VerificationRefused as refused:
+                raise HTTPException(
+                    status_code=refused.status_code, detail=refused.detail(), headers=INVITATION_HEADERS,
+                ) from refused
 
     # Ignoring case (CHT-1789): an address's case is not part of whose it is.
     if not same_email(invitation.email, current_user.email):
@@ -548,13 +581,22 @@ async def delete_invitation(
 
 
 ISSUE_CODE_INSTRUCTIONS = (
-    "Before you hand this code over, confirm with the invitee, by a channel you trust, "
-    "that this account is theirs: its name, its signup time and whether it is already "
-    "in a team. Anyone can sign up with an address they don't own, so an account you "
-    "don't recognise may be someone who saw the invitation link. Then give the code to "
-    "the invitee only. It verifies this account's address and nothing else, works only "
-    "from a session signed in as this account, and expires in 15 minutes."
+    "Send this code only through a channel you already trust for the invitee, never to "
+    "whoever asked you for it: a person who signed up with the invitee's address from a "
+    "leaked link can ask too, and chooses the name shown here. Check with the invitee "
+    "that this account is theirs; a signup long before the invitation, or that they don't "
+    "recognise, is a reason to stop. The code lets this account accept this invitation "
+    "only (it verifies nothing else), works only from a session signed in as this account, "
+    "and expires in 15 minutes."
 )
+
+NOT_WAITING = {
+    "error_code": "no_verification_requested",
+    "message": "No unverified account with the invited address has asked for a verification code "
+               "in the last 24 hours. Ask the invitee to sign up and request one (on the invitation "
+               "page, or with `chaotic auth verify-email`); if it doesn't arrive, issue the code then. "
+               "An invitee whose address is already verified can accept without one.",
+}
 
 
 @router.post(
@@ -570,34 +612,41 @@ async def issue_invitation_verification_code(
     response: Response,
     _app_session: NotAppSession,
 ) -> InvitationVerificationCodeResponse:
-    """Give a team admin a verification code for the account at a pending
-    invitation's address, to hand over by hand (CHT-1828).
+    """Give a team admin a code that lets the invitee accept this one
+    invitation without a verified address (CHT-1828).
 
     With SMTP configured, accepting an invitation needs a verified
     address (CHT-1790). When the relay fails, the mailed code fails too,
-    and the invitee is stuck. This does what the email would: the code
-    is the mailed kind (``EmailVerificationService.issue_for_admin``),
-    bound to that one account, so it confirms nothing from any other
-    session. A leaked link plus this code is still useless without the
-    account's password. The answer names the account (name, signup time,
-    whether it is in any team) so the admin can check it is the
-    invitee's and not one someone made from a leaked link.
+    and the invitee is stuck. The admin hands this code over instead,
+    and the invitee passes it when accepting
+    (``POST /api/teams/invitations/{token}/accept`` with ``{"code": ...}``).
+
+    It vouches for (this invitation, this account) and nothing more: it
+    never sets ``email_verified_at`` (PR #446 review 1). Anyone can be
+    the admin of a team of their own, so a server-wide verification
+    issued by an admin would let anyone verify an address they don't
+    own and then accept another team's leaked link. Entry to the admin's
+    own team they could grant anyway. Details:
+    ``EmailVerificationService.issue_for_invitation``.
 
     Refusals, in order, so the action tells nobody more than the
     invitation already does: 403 for a non-admin (from the team id
-    alone, like every invitation route), the delete route's 404 for an
-    invitation that is not this team's, pending and unexpired, 409
-    ``email_verification_unavailable`` without SMTP, then 409
-    ``no_verification_requested`` when no account at the invited address
-    asked for a code itself in the last day (the stuck invitee has; a
-    missing account and a passive one get this same answer, so neither
-    its existence nor its details are told), then ``ambiguous_account``
-    / ``email_already_verified``. The name, signup time and team
-    membership are shown only to an admin of a team with a pending
-    invitation to that address, and only for an account that asked.
+    alone, like every invitation route); the delete route's 404 for an
+    invitation that is not this team's, pending and unexpired; 409
+    ``email_verification_unavailable`` without SMTP, before any lookup
+    of the address; then one 409 ``no_verification_requested`` for every
+    address with no account that is active, a person's, unverified and
+    asked for a mailed code itself in the last day (the stuck invitee
+    has). A missing account, a passive one and a verified one get that
+    same answer, after the same queries, so neither existence nor
+    verification is told (review 5, 6). Then 409 ``ambiguous_account``
+    on an old database with two accounts differing in case, and 429
+    past ``INVITATION_ISSUE_LIMIT`` codes for this invitation a day.
 
-    Every earlier unconfirmed code of the account stops working. The
-    issue is logged with ids only, never the code.
+    The answer names the account (name, email, signup time, whether it
+    is in any team) and when the invitation was created, so the admin
+    can judge whether it is the invitee's. The issue is logged with ids
+    only, never the code.
     """
     team_service = TeamService()
     if not await team_service.is_team_admin(team_id, current_user.id):
@@ -617,34 +666,27 @@ async def issue_invitation_verification_code(
         )
 
     verification = EmailVerificationService()
-    # Before any lookup of the address: without SMTP the answer is the
-    # same whether or not it has an account.
     if not verification.email.is_configured():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=CODE_NOT_NEEDED.detail())
 
     # People only: an agent account has no mailbox and cannot accept.
-    # And only an account that asked for a code itself, which is what a
-    # stuck invitee has done: anyone can make a team and invite any
-    # address, so without this the answer would describe any account
-    # (name, signup time, teams) and could disarm a stranger's codes at
-    # will (PR #446 review F1). No account and a passive one get the same
-    # answer, so existence is not told either.
+    # And only an unverified account that asked for a mailed code itself,
+    # which is what a stuck invitee has done: anyone can make a team and
+    # invite any address, so without this the answer would describe any
+    # account (PR #446 self-review F1). With no account, the same query
+    # runs for nobody, so both paths do the same work (review 6).
     accounts = [
         u for u in await UserService().find_by_email_ignoring_case(invitation.email)
-        if not u.is_agent and u.is_active and await verification.asked_recently(u.id)
+        if not u.is_agent and u.is_active
     ]
-    if not accounts:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "no_verification_requested",
-                "message": "No account with the invited address has asked for a verification code "
-                           "in the last 24 hours. Ask the invitee to sign up and request one (on the "
-                           "invitation page, or with `chaotic auth verify-email`); if it doesn't "
-                           "arrive, issue the code then.",
-            },
-        )
-    if len(accounts) > 1:
+    eligible = []
+    for account in accounts or [None]:
+        asked = await verification.asked_recently(account.id if account else "", invitation.email)
+        if account is not None and asked and account.email_verified_at is None:
+            eligible.append(account)
+    if not eligible:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=dict(NOT_WAITING))
+    if len(eligible) > 1:
         # Only on a database older than case-insensitive signup (CHT-1790):
         # which one is the invitee's is for the operator to sort out.
         raise HTTPException(
@@ -655,10 +697,10 @@ async def issue_invitation_verification_code(
                            "case). Ask the server's operator to remove the one that is not the invitee's.",
             },
         )
-    account = accounts[0]
+    account = eligible[0]
 
     try:
-        code, row = await verification.issue_for_admin(account)
+        code, row = await verification.issue_for_invitation(account, invitation.id)
     except VerificationRefused as refused:
         raise HTTPException(
             status_code=refused.status_code, detail=refused.detail(), headers=refused.headers,
@@ -666,7 +708,7 @@ async def issue_invitation_verification_code(
 
     in_a_team = await OxydeTeamMember.objects.filter(user_id=account.id).first() is not None
     logger.info(
-        "email verification code %s issued by admin %s of team %s for user %s via invitation %s",
+        "invitation code %s issued by admin %s of team %s for user %s via invitation %s",
         row.id, current_user.id, team_id, account.id, invitation.id,
     )
     # A credential in a body: not to be cached.
@@ -674,6 +716,7 @@ async def issue_invitation_verification_code(
     return InvitationVerificationCodeResponse(
         code=code,
         expires_at=row.expires_at,
+        invitation_created_at=invitation.created_at,
         account=InvitationCodeAccount(
             name=account.name,
             email=account.email,

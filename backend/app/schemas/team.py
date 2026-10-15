@@ -129,6 +129,16 @@ class TeamInvitationCreatedResponse(TeamInvitationResponse):
     email_queued: bool = False
 
 
+class InvitationAccept(BaseModel):
+    """The optional body of an accept (CHT-1828): a code, either the one
+    a team admin issued for this invitation or a mailed verification
+    code, for an account whose address is not verified yet."""
+
+    # Bounded but not pattern-checked here, so a malformed code gets the
+    # same answer as a wrong one.
+    code: str | None = Field(default=None, min_length=1, max_length=32)
+
+
 class InvitationCodeAccount(BaseModel):
     """The account an admin-issued verification code is for (CHT-1828):
     what the admin needs to check with the invitee that it is theirs.
@@ -144,14 +154,17 @@ class InvitationCodeAccount(BaseModel):
 
 
 class InvitationVerificationCodeResponse(BaseModel):
-    """A verification code for the account at a pending invitation's
-    address, issued to a team admin to hand over by hand when the mailed
+    """A code for the account at a pending invitation's address, issued
+    to a team admin to hand over by hand when the mailed verification
     code cannot arrive (CHT-1828). Shown once; never logged or stored in
-    the clear. It confirms only that account's address, from a session
-    signed in as it (``chaotic auth verify-email --code``)."""
+    the clear. It lets that account accept this one invitation, from a
+    session signed in as it (``chaotic team accept-invite <link> --code``);
+    it does not verify the address."""
 
     code: str
     expires_at: DateTimeUTC
+    # To judge the account's signup time against.
+    invitation_created_at: DateTimeUTC
     account: InvitationCodeAccount
     # What to do before handing it over.
     instructions: str

@@ -148,3 +148,9 @@ def test_issue_invitation_verification_code(sent):
     Client().issue_invitation_verification_code("team-1", "inv/1")
     method, path, _ = _call(sent)
     assert (method, path) == ("POST", "/teams/team-1/invitations/inv%2F1/verification-code")
+
+
+def test_accept_invitation_with_a_code(sent):
+    """CHT-1828: the code travels in the body."""
+    Client().accept_invitation("tok", "123456")
+    assert _call(sent) == ("POST", "/teams/invitations/tok/accept", {"code": "123456"})

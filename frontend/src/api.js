@@ -197,8 +197,12 @@ export class ApiClient {
         return this.request('GET', `/teams/invitations/${encodeURIComponent(token)}`);
     }
 
-    async acceptInvitation(token) {
-        return this.request('POST', `/teams/invitations/${encodeURIComponent(token)}/accept`);
+    // code (CHT-1828): one a team admin issued for this invitation, for
+    // an account whose verification email never arrives.
+    async acceptInvitation(token, code) {
+        const path = `/teams/invitations/${encodeURIComponent(token)}/accept`;
+        if (code === undefined) return this.request('POST', path);
+        return this.request('POST', path, { code });
     }
 
     async deleteInvitation(teamId, invitationId) {

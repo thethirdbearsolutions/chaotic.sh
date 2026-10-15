@@ -887,7 +887,7 @@
           "teams"
         ],
         "summary": "Accept Invitation",
-        "description": "Accept a team invitation.\n\nAn unknown, expired, accepted, declined or revoked invitation gets\nthe preview's one 404, checked before the email match, so whatever\naccount asks, the answer does not tell those states apart (CHT-1265\nreview F10). Before CHT-1788 a used token could be accepted again\nand added a second membership row.",
+        "description": "Accept a team invitation.\n\nAn account whose address is not verified (with SMTP configured) may\nsend ``{\"code\": ...}``: the code a team admin issued for this\ninvitation (CHT-1828), which lets it past the gate for this\ninvitation only and leaves the address unverified, or else a mailed\nverification code, which verifies the address as\n``/auth/email-verification/confirm`` does. A wrong one gets 400\n``invalid_verification_code``.\n\nAn unknown, expired, accepted, declined or revoked invitation gets\nthe preview's one 404, checked before the email match, so whatever\naccount asks, the answer does not tell those states apart (CHT-1265\nreview F10). Before CHT-1788 a used token could be accepted again\nand added a second membership row.",
         "operationId": "accept_invitation_api_teams_invitations__token__accept_post",
         "security": [
           {
@@ -905,6 +905,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/InvitationAccept"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -985,7 +1002,7 @@
           "teams"
         ],
         "summary": "Issue Invitation Verification Code",
-        "description": "Give a team admin a verification code for the account at a pending\ninvitation's address, to hand over by hand (CHT-1828).\n\nWith SMTP configured, accepting an invitation needs a verified\naddress (CHT-1790). When the relay fails, the mailed code fails too,\nand the invitee is stuck. This does what the email would: the code\nis the mailed kind (``EmailVerificationService.issue_for_admin``),\nbound to that one account, so it confirms nothing from any other\nsession. A leaked link plus this code is still useless without the\naccount's password. The answer names the account (name, signup time,\nwhether it is in any team) so the admin can check it is the\ninvitee's and not one someone made from a leaked link.\n\nRefusals, in order, so the action tells nobody more than the\ninvitation already does: 403 for a non-admin (from the team id\nalone, like every invitation route), the delete route's 404 for an\ninvitation that is not this team's, pending and unexpired, 409\n``email_verification_unavailable`` without SMTP, then 409\n``no_verification_requested`` when no account at the invited address\nasked for a code itself in the last day (the stuck invitee has; a\nmissing account and a passive one get this same answer, so neither\nits existence nor its details are told), then ``ambiguous_account``\n/ ``email_already_verified``. The name, signup time and team\nmembership are shown only to an admin of a team with a pending\ninvitation to that address, and only for an account that asked.\n\nEvery earlier unconfirmed code of the account stops working. The\nissue is logged with ids only, never the code.",
+        "description": "Give a team admin a code that lets the invitee accept this one\ninvitation without a verified address (CHT-1828).\n\nWith SMTP configured, accepting an invitation needs a verified\naddress (CHT-1790). When the relay fails, the mailed code fails too,\nand the invitee is stuck. The admin hands this code over instead,\nand the invitee passes it when accepting\n(``POST /api/teams/invitations/{token}/accept`` with ``{\"code\": ...}``).\n\nIt vouches for (this invitation, this account) and nothing more: it\nnever sets ``email_verified_at`` (PR #446 review 1). Anyone can be\nthe admin of a team of their own, so a server-wide verification\nissued by an admin would let anyone verify an address they don't\nown and then accept another team's leaked link. Entry to the admin's\nown team they could grant anyway. Details:\n``EmailVerificationService.issue_for_invitation``.\n\nRefusals, in order, so the action tells nobody more than the\ninvitation already does: 403 for a non-admin (from the team id\nalone, like every invitation route); the delete route's 404 for an\ninvitation that is not this team's, pending and unexpired; 409\n``email_verification_unavailable`` without SMTP, before any lookup\nof the address; then one 409 ``no_verification_requested`` for every\naddress with no account that is active, a person's, unverified and\nasked for a mailed code itself in the last day (the stuck invitee\nhas). A missing account, a passive one and a verified one get that\nsame answer, after the same queries, so neither existence nor\nverification is told (review 5, 6). Then 409 ``ambiguous_account``\non an old database with two accounts differing in case, and 429\npast ``INVITATION_ISSUE_LIMIT`` codes for this invitation a day.\n\nThe answer names the account (name, email, signup time, whether it\nis in any team) and when the invitation was created, so the admin\ncan judge whether it is the invitee's. The issue is logged with ids\nonly, never the code.",
         "operationId": "issue_invitation_verification_code_api_teams__team_id__invitations__invitation_id__verification_code_post",
         "security": [
           {
@@ -11025,6 +11042,26 @@
         "title": "InboxSyncResponse",
         "description": "One page of GET /inbox/sync (CHT-1607). The client contract:\n\n* Store `next_cursor` and send it back as `since` next time. While\n  `has_more` is true, fetch again at once; otherwise wait for the next\n  poll or push.\n* Upsert every entry by `id`; drop it when `state` is `resolved` or\n  `archived`. The same entry can come more than once: the cursor stays\n  a few seconds behind the newest change, so recent changes are sent\n  again on the next sync.\n* When `retry_after` is set, the cursor is being held back behind\n  rows just sent: syncing again sooner than that many seconds returns\n  the same rows. Push or user action may still sync earlier.\n* When `reset` is true, the server restarted the sync (the caller's\n  teams changed since the cursor was issued): clear the cache before\n  applying this page, then page on as usual.\n* Drop any held entry whose team is not in `team_ids` (a left or\n  deleted team sends no tombstones).\n* Display fields (`issue_identifier`, `document_title`, `source_user`)\n  are resolved when sent. A document title or a person's name change\n  re-sends the open entries that show it; anything else that changes\n  them does not, so treat them as a snapshot."
       },
+      "InvitationAccept": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          }
+        },
+        "type": "object",
+        "title": "InvitationAccept",
+        "description": "The optional body of an accept (CHT-1828): a code, either the one\na team admin issued for this invitation or a mailed verification\ncode, for an account whose address is not verified yet."
+      },
       "InvitationCodeAccount": {
         "properties": {
           "name": {
@@ -11118,6 +11155,11 @@
             "format": "date-time",
             "title": "Expires At"
           },
+          "invitation_created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Invitation Created At"
+          },
           "account": {
             "$ref": "#/components/schemas/InvitationCodeAccount"
           },
@@ -11130,11 +11172,12 @@
         "required": [
           "code",
           "expires_at",
+          "invitation_created_at",
           "account",
           "instructions"
         ],
         "title": "InvitationVerificationCodeResponse",
-        "description": "A verification code for the account at a pending invitation's\naddress, issued to a team admin to hand over by hand when the mailed\ncode cannot arrive (CHT-1828). Shown once; never logged or stored in\nthe clear. It confirms only that account's address, from a session\nsigned in as it (``chaotic auth verify-email --code``)."
+        "description": "A code for the account at a pending invitation's address, issued\nto a team admin to hand over by hand when the mailed verification\ncode cannot arrive (CHT-1828). Shown once; never logged or stored in\nthe clear. It lets that account accept this one invitation, from a\nsession signed in as it (``chaotic team accept-invite <link> --code``);\nit does not verify the address."
       },
       "IssueActivityFeedResponse": {
         "properties": {

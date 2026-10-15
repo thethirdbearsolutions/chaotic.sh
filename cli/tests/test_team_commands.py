@@ -422,17 +422,18 @@ class TestTeamInvite:
 
 
 class TestTeamInvitationCode:
-    """CHT-1828: an admin gets the verification code for a stuck invitee."""
+    """CHT-1828: an admin gets a code for a stuck invitee."""
 
     ISSUED = {
         "code": "123456",
         "expires_at": "2026-10-15T17:00:00Z",
+        "invitation_created_at": "2026-10-15T14:00:00Z",
         "account": {"name": "Bob", "email": "bob@test.com",
                     "created_at": "2026-10-15T16:00:00Z", "member_of_any_team": False},
-        "instructions": "Before you hand this code over, confirm with the invitee ...",
+        "instructions": "Send this code only through a channel you already trust ...",
     }
 
-    def test_shows_the_account_the_warning_and_the_code(self, cli_runner):
+    def test_leads_with_the_channel_rule_then_the_account_then_the_code(self, cli_runner):
         from cli.main import cli, client
 
         client.issue_invitation_verification_code = MagicMock(return_value=dict(self.ISSUED))
@@ -440,27 +441,29 @@ class TestTeamInvitationCode:
         result = cli_runner.invoke(cli, ['team', 'invitation-code', 'inv-1'])
 
         assert result.exit_code == 0, result.output
-        client.issue_invitation_verification_code.assert_called_once()
         assert client.issue_invitation_verification_code.call_args.args[1] == 'inv-1'
         flat = " ".join(result.output.split())
-        assert 'Bob' in flat and 'bob@test.com' in flat and '2026-10-15T16:00:00Z' in flat
+        assert flat.startswith('Send this code only through a channel you already trust for the invitee, '
+                               'never to whoever asked you for it.')
+        assert 'Bob' in flat and 'bob@test.com' in flat
+        assert '2 h after the invitation was created' in flat
         assert 'Already in a team: no' in flat
-        assert 'Confirm with the invitee that this account is theirs' in flat
-        assert '123456' in flat
-        assert 'chaotic auth verify-email --code' in flat
-        # The warning comes before the code.
-        assert flat.index('Confirm with the invitee') < flat.index('123456')
+        assert flat.index('Check with the invitee') < flat.index('123456')
+        assert 'accept-invite <link> --code <code>' in flat
 
-    def test_says_when_the_account_is_already_in_a_team(self, cli_runner):
+    def test_a_signup_before_the_invitation_says_so(self, cli_runner):
         from cli.main import cli, client
 
         issued = dict(self.ISSUED)
-        issued["account"] = {**issued["account"], "member_of_any_team": True}
+        issued["account"] = {**issued["account"], "created_at": "2026-10-10T14:00:00Z",
+                             "member_of_any_team": True}
         client.issue_invitation_verification_code = MagicMock(return_value=issued)
 
         result = cli_runner.invoke(cli, ['team', 'invitation-code', 'inv-1'])
 
-        assert 'Already in a team: yes' in " ".join(result.output.split())
+        flat = " ".join(result.output.split())
+        assert '5 days before the invitation was created' in flat
+        assert 'Already in a team: yes' in flat
 
     def test_json(self, cli_runner):
         from cli.main import cli, client
@@ -475,7 +478,7 @@ class TestTeamInvitationCode:
     def test_a_refusal_is_reported(self, cli_runner):
         from cli.main import cli, client, APIError
 
-        msg = "No account with the invited address has asked for a verification code."
+        msg = "No unverified account with the invited address has asked for a verification code."
         client.issue_invitation_verification_code = MagicMock(
             side_effect=_api_error(APIError, msg, 409, {"error_code": "no_verification_requested", "message": msg}))
 
@@ -483,6 +486,42 @@ class TestTeamInvitationCode:
 
         assert result.exit_code == 1
         assert "has asked for a verification code" in " ".join(result.output.split())
+
+
+class TestSignedUpRelative:
+    def test_after_and_before(self):
+        from cli.commands.team import signed_up_relative
+        assert signed_up_relative("2026-10-15T14:05:00Z", "2026-10-15T14:00:00Z") == \
+            "5 min after the invitation was created"
+        assert signed_up_relative("2026-10-14T14:00:00Z", "2026-10-15T14:00:00Z") == \
+            "24 h before the invitation was created"
+
+    def test_unparseable(self):
+        from cli.commands.team import signed_up_relative
+        assert signed_up_relative("garbage", None) == "invitation time unknown"
+
+
+class TestTeamAcceptInviteCode:
+    def test_passes_the_code(self, cli_runner):
+        from cli.main import cli, client
+
+        client.accept_invitation = MagicMock(return_value={"team_id": "t"})
+
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', 't' * 43, '--code', '123456'])
+
+        assert result.exit_code == 0, result.output
+        client.accept_invitation.assert_called_once_with('t' * 43, '123456')
+
+    def test_the_unverified_hint_mentions_the_admin_code(self, cli_runner):
+        from cli.main import cli, client, APIError
+
+        detail = {"error_code": "email_unverified", "message": "Verify your email address"}
+        client.accept_invitation = MagicMock(side_effect=_api_error(APIError, "Verify", 403, detail))
+
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', 't' * 43])
+
+        assert result.exit_code == 1
+        assert '--code' in " ".join(result.output.split())
 
 
 class TestInviteLinkForDisplay:

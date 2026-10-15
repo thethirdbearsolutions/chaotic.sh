@@ -33,6 +33,13 @@ Rules:
   this purpose alone. Codes are compared with ``hmac.compare_digest``.
   A copy of the database alone does not give the codes back.
 
+* A team admin can instead get a code for one pending invitation
+  (CHT-1828, ``issue_for_invitation``) when the mail is failing. It is
+  filed under the invitation, not the address, and only lets its user
+  accept that invitation (``redeem_for_invitation``): it never sets
+  ``email_verified_at``, since anyone can be the admin of a team of
+  their own.
+
 Unlike the app's other email, the send is awaited: the person is
 waiting for this code, so a failed send is reported to them, not only
 logged. ``EmailService.send`` never raises; its False is the failure.
@@ -72,6 +79,8 @@ HOURLY_WINDOW = timedelta(hours=1)
 HOURLY_LIMIT = 5
 FAILURE_WINDOW = timedelta(hours=24)
 DAILY_FAILURE_LIMIT = 15
+# Admin-issued codes per invitation per FAILURE_WINDOW (CHT-1828).
+INVITATION_ISSUE_LIMIT = 3
 CODE_DIGITS = 6
 _KEY_PURPOSE = b"chaotic-email-verification"
 
@@ -183,6 +192,19 @@ def hash_code(user_id: str, code: str) -> str:
 def hash_email(email: str) -> str:
     """HMAC-SHA256 of the normalised address: what the limits count by."""
     return hmac.new(_key(), f"email:{fold_email(email)}".encode(), hashlib.sha256).hexdigest()
+
+
+def hash_invitation(invitation_id: str) -> str:
+    """HMAC of an invitation id: the key admin-issued codes are filed and
+    limited under instead of an address (CHT-1828). Its own prefix, so it
+    can never equal an address's ``hash_email``."""
+    return hmac.new(_key(), f"invitation:{invitation_id}".encode(), hashlib.sha256).hexdigest()
+
+
+def hash_invitation_code(user_id: str, invitation_id: str, code: str) -> str:
+    """HMAC-SHA256 of an admin-issued ``code``, bound to the user and the
+    invitation it lets them accept (CHT-1828)."""
+    return hmac.new(_key(), f"invite-code:{user_id}:{invitation_id}:{code}".encode(), hashlib.sha256).hexdigest()
 
 
 def new_code() -> str:
@@ -328,75 +350,108 @@ class EmailVerificationService:
         return row
 
     @staticmethod
-    async def asked_recently(user_id: str) -> bool:
-        """Whether this account asked for a code itself in the last
-        ``FAILURE_WINDOW``, sent or not (CHT-1828). The admin-issued code
-        is for an invitee stuck waiting on one: an account that never
-        asked is not stuck, and is not described to anyone who invites
-        its address."""
+    async def asked_recently(user_id: str, email: str) -> bool:
+        """Whether this account asked for a mailed code itself in the last
+        ``FAILURE_WINDOW``, sent or not (CHT-1828). Only its own requests
+        count: admin-issued rows are keyed by invitation, not by address,
+        so issuing one never extends the window (PR #446 review 2). The
+        admin-issued code is for an invitee stuck waiting on a mailed
+        one: an account that never asked is not stuck, and is not
+        described to anyone who invites its address.
+
+        Always one query, whatever ``user_id`` is, so a caller with no
+        account to ask about can run it too (review 6)."""
         return await OxydeEmailVerificationCode.objects.filter(
-            user_id=user_id, created_at__gt=_now() - FAILURE_WINDOW,
+            email_hash=hash_email(email), user_id=user_id, created_at__gt=_now() - FAILURE_WINDOW,
         ).first() is not None
 
-    async def issue_for_admin(self, user: OxydeUser) -> tuple[str, OxydeEmailVerificationCode]:
-        """Make a code for ``user`` and return it, with its row, instead of
-        mailing it (CHT-1828). A team admin hands it over when SMTP is
-        configured but failing, so the mailed code never arrives.
+    async def issue_for_invitation(
+        self, user: OxydeUser, invitation_id: str,
+    ) -> tuple[str, OxydeEmailVerificationCode]:
+        """Make a code that lets ``user`` accept invitation
+        ``invitation_id`` and nothing else, and return it with its row,
+        for a team admin to hand over when the mailed code cannot arrive
+        (CHT-1828).
 
-        The code is the same kind of code ``request_code`` mails: stored
-        only as an HMAC bound to ``user.id``, ``CODE_TTL`` long,
-        ``MAX_ATTEMPTS`` tries, counted against the address's daily
-        failure cap, and confirmed the same way (``confirm``), so it
-        works only from a session signed in as ``user``. Whoever reads
-        it on the way, with the invitation token too, still cannot use
-        it without that account's login.
+        It does **not** verify the address: confirming it never sets
+        ``email_verified_at`` (PR #446 review 1). Whoever issues it is a
+        team admin, and anyone can be one of their own team, so the most
+        it may vouch for is entry to that admin's own invitation, which
+        they could grant anyway. Every other invitation still needs the
+        mailed code.
 
-        Every earlier unconfirmed code of this account is disarmed
-        first, so only the newest code the admin issued works.
-        The mailing limits (one a minute, five an hour) are not applied:
-        they protect the mail relay, and nothing is mailed. The failure
-        cap is, since it is what bounds guessing.
+        The row is keyed by the invitation (``hash_invitation``) instead
+        of the address, so nothing address-keyed sees it: it does not
+        disarm or outrank the account's mailed codes, its wrong tries do
+        not count against the address's daily failure cap, and it is not
+        a request of the account's own (``asked_recently``). Stored only
+        as an HMAC bound to the user id and the invitation, ``CODE_TTL``
+        long, ``MAX_ATTEMPTS`` tries. A new one disarms this invitation's
+        earlier unconfirmed ones; at most ``INVITATION_ISSUE_LIMIT`` per
+        invitation per ``FAILURE_WINDOW`` (429 with Retry-After), which
+        bounds guessing at that many times ``MAX_ATTEMPTS`` a day.
 
-        Raises VerificationRefused: 409 when already verified or SMTP is
-        unconfigured (then no invitation needs a verified address), 429
-        while the address is over its failure cap.
+        Raises VerificationRefused: 409 without SMTP (then no invitation
+        needs a verified address), 429 over the per-invitation limit.
         """
-        if user.email_verified_at is not None:
-            raise VerificationRefused(
-                409, "email_already_verified",
-                "This account's email address is already verified: it can accept the invitation now.",
-            )
         if not self.email.is_configured():
             raise CODE_NOT_NEEDED
 
         now = _now()
-        email_hash = hash_email(user.email)
+        key = hash_invitation(invitation_id)
         codes = OxydeEmailVerificationCode.objects
         await codes.filter(created_at__lte=now - FAILURE_WINDOW).delete()
 
-        history = await codes.filter(email_hash=email_hash).order_by("created_at").all()
-        lapses_at = _failure_cap_lapses_at(history)
-        if lapses_at is not None:
-            retry = _seconds_until(lapses_at, now)
+        issued = await codes.filter(email_hash=key).order_by("created_at").all()
+        if len(issued) >= INVITATION_ISSUE_LIMIT:
+            retry = _seconds_until(ensure_utc(issued[-INVITATION_ISSUE_LIMIT].created_at) + FAILURE_WINDOW, now)
             raise _rate_limited(
-                "Too many wrong codes for this address today. "
+                f"Too many codes issued for this invitation today ({INVITATION_ISSUE_LIMIT} at most). "
                 f"Try again in {(retry + 3599) // 3600} h.", retry,
             )
 
-        # Disarmed, not marked used: a used row would count one success
-        # against its attempts, and an unused one has none to count.
-        await codes.filter(user_id=user.id, used_at__isnull=True, armed=True).update(armed=False)
+        await codes.filter(email_hash=key, used_at__isnull=True, armed=True).update(armed=False)
         code = new_code()
         row = await codes.create(
-            email_hash=email_hash,
+            email_hash=key,
             user_id=user.id,
-            code_hash=hash_code(user.id, code),
+            code_hash=hash_invitation_code(user.id, invitation_id, code),
             armed=True,
             expires_at=now + CODE_TTL,
             attempts=0,
             created_at=now,
         )
         return code, row
+
+    @staticmethod
+    async def redeem_for_invitation(user: OxydeUser, invitation_id: str, code: str) -> bool | None:
+        """Spend ``code`` against this invitation's newest admin-issued
+        code for ``user`` (CHT-1828). True on a match, which lets ``user``
+        past the verification gate for this one invitation; the address
+        stays unverified. False for a wrong code (one of its
+        ``MAX_ATTEMPTS`` spent, nothing counted against the address).
+        None when there is no live one for this user and invitation
+        (none issued, superseded, used up or expired): then the code can
+        only be a mailed one."""
+        now = _now()
+        codes = OxydeEmailVerificationCode.objects
+        latest = await codes.filter(
+            email_hash=hash_invitation(invitation_id), armed=True,
+        ).order_by("-created_at").first()
+        if (
+            latest is None or latest.user_id != user.id or latest.used_at is not None
+            or latest.attempts >= MAX_ATTEMPTS or ensure_utc(latest.expires_at) <= now
+        ):
+            return None
+        spent = await codes.filter(id=latest.id, attempts__lt=MAX_ATTEMPTS, used_at__isnull=True).update(
+            attempts=F("attempts") + 1,
+        )
+        if not spent:
+            return False
+        if not hmac.compare_digest(latest.code_hash, hash_invitation_code(user.id, invitation_id, code.strip())):
+            return False
+        await codes.filter(id=latest.id).update(used_at=now)
+        return True
 
     async def confirm(self, user: OxydeUser, code: str) -> OxydeUser:
         """Check ``code`` against the user's newest sent code; on a match

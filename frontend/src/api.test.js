@@ -1582,6 +1582,14 @@ describe('ApiClient', () => {
         await client.acceptInvitation('a/b?c');
         expect(fetchMock).toHaveBeenCalledWith('/api/teams/invitations/a%2Fb%3Fc/accept', expect.anything());
       });
+
+      it('sends a code in the body when given one (CHT-1828)', async () => {
+        await client.acceptInvitation('tok', '123456');
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/teams/invitations/tok/accept',
+          expect.objectContaining({ method: 'POST', body: JSON.stringify({ code: '123456' }) })
+        );
+      });
     });
 
     describe('getInvitation (CHT-1265)', () => {

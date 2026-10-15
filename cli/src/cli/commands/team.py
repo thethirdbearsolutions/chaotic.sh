@@ -2,6 +2,7 @@
 import re
 import sys
 import unicodedata
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 import click
@@ -159,6 +160,38 @@ def foreign_invite_host(link_host: str | None, web_url: str | None) -> str | Non
     if is_local_host(link_host) and is_local_host(here):
         return None
     return here
+
+
+def _parse_time(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def _span(seconds: float) -> str:
+    seconds = abs(seconds)
+    if seconds < 3600:
+        return f"{max(1, round(seconds / 60))} min"
+    if seconds < 2 * 86400:
+        return f"{round(seconds / 3600)} h"
+    return f"{round(seconds / 86400)} days"
+
+
+def signed_up_relative(signed_up, invited) -> str:
+    """The account's signup time against the invitation's creation
+    (CHT-1828): an account made before the invitation went out was not
+    made for it."""
+    a, b = _parse_time(signed_up), _parse_time(invited)
+    if a is None or b is None:
+        return "invitation time unknown"
+    delta = (a - b).total_seconds()
+    if delta >= 0:
+        return f"{_span(delta)} after the invitation was created"
+    return f"{_span(delta)} before the invitation was created"
 
 
 def register(cli):
@@ -333,16 +366,24 @@ def register(cli):
 
     @team.command("accept-invite")
     @click.argument("invitation", metavar="LINK_OR_TOKEN")
+    @click.option("--code", default=None,
+                  help="A code a team admin gave you for this invitation, or one emailed to you "
+                       "(when the server needs a verified address).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def team_accept_invite(invitation):
+    def team_accept_invite(invitation, code):
         """Accept a team invitation.
 
         LINK_OR_TOKEN is the invitation link you were sent
         (https://<host>/invite/<token>) or just its token. The invitation
         is accepted on the server this CLI is configured for; if the
         link names another host, a warning says so.
+
+        When the server needs a verified address and the verification
+        email never arrives, a team admin can give you a code for this
+        invitation (CHT-1828): pass it with --code. It lets you accept
+        this invitation only; it does not verify your address.
         """
         m = _main()
         token, link_host = invite_token_from_arg(invitation)
@@ -366,14 +407,17 @@ def register(cli):
                 f"configured for {shown_here}. Accepting it on {shown_here}. {advice}",
                 fg="yellow"), err=True)
         try:
-            member = _client().accept_invitation(token)
+            member = (
+                _client().accept_invitation(token, code) if code else _client().accept_invitation(token)
+            )
         except m.APIError as e:
             # CHT-1790: with SMTP configured the server requires a verified
             # address; say how to get one instead of the bare refusal.
             detail = getattr(e, "detail", None)
             if not (isinstance(detail, dict) and detail.get("error_code") == "email_unverified"):
                 raise
-            hint = "Verify your email address first: run `chaotic auth verify-email`, then accept again."
+            hint = ("Verify your email address first: run `chaotic auth verify-email`, then accept again. "
+                    "If the email never arrives, ask the team's admin for a code and pass it with --code.")
             if m.is_json_output():
                 m.output_json({"error": str(e), "error_code": "email_unverified", "hint": hint})
             else:
@@ -461,19 +505,21 @@ def register(cli):
     @_main().require_team
     @_main().handle_error
     def team_invitation_code(invitation_id):
-        """Get a verification code for an invitee whose email never arrives.
+        """Get a code for an invitee whose verification email never arrives.
 
         With SMTP configured, accepting an invitation needs a verified
         address, and when the server's mail is failing the verification
-        email fails too (CHT-1828). This gives you, a team admin, the
-        code instead, for the account that signed up with the invited
-        address. INVITATION_ID is from `chaotic team invitations`.
+        email fails too (CHT-1828). This gives you, a team admin, a code
+        that lets the account signed up with the invited address accept
+        this invitation (and nothing else). INVITATION_ID is from
+        `chaotic team invitations`.
 
-        Before handing it over, confirm with the invitee that the account
-        shown is theirs: anyone who saw the link can sign up with that
-        address. They enter it with `chaotic auth verify-email --code`,
-        then accept the invitation. Shown only now; it expires in 15
-        minutes, and a new one replaces it.
+        Send it only through a channel you already trust for the
+        invitee, never to whoever asked for it: anyone who saw the link
+        can sign up with that address and ask. They pass it with
+        `chaotic team accept-invite <link> --code <code>`, or on the
+        invitation page. Shown only now; it expires in 15 minutes, and a
+        new one replaces it (three a day per invitation).
         """
         m = _main()
         issued = _client().issue_invitation_verification_code(m.get_current_team(), invitation_id)
@@ -481,24 +527,35 @@ def register(cli):
             m.output_json(issued)
             return
         account = issued.get("account") or {}
-        console.print("[bold]Verification code for this account:[/bold]")
+        console.print(
+            "[yellow]Send this code only through a channel you already trust for the invitee, "
+            "never to whoever asked you for it. Anyone who saw the link can sign up with their "
+            "address and ask, and chooses the name shown below.[/yellow]"
+        )
+        console.print("[bold]The account it is for:[/bold]")
         console.print(f"  Name:      {esc(str(account.get('name', '')))}")
         console.print(f"  Email:     {esc(str(account.get('email', '')))}")
-        console.print(f"  Signed up: {esc(str(account.get('created_at', '')))}")
+        console.print(
+            f"  Signed up: {esc(str(account.get('created_at', '')))} "
+            f"({esc(signed_up_relative(account.get('created_at'), issued.get('invitation_created_at')))})"
+        )
         if account.get("member_of_any_team"):
             console.print("  Already in a team: yes")
         else:
             console.print("  Already in a team: no")
         console.print(
-            "[yellow]Confirm with the invitee that this account is theirs before you hand "
-            "the code over. If they don't recognise it, someone else signed up with their "
-            "address: don't give out the code, and cancel the invitation.[/yellow]"
+            "[yellow]Check with the invitee that this account is theirs. If they don't recognise "
+            "it, or it signed up long before you invited them, don't give out the code: cancel "
+            "the invitation.[/yellow]"
         )
         console.print(
             f"Code (expires {esc(str(issued.get('expires_at', '')))}): "
             f"[bold]{esc(str(issued.get('code', '')))}[/bold]",
             highlight=False,
         )
-        console.print("[dim]They enter it with: chaotic auth verify-email --code <code>, then accept the invitation.[/dim]")
+        console.print(
+            "[dim]It lets that account accept this invitation only. They pass it with: "
+            "chaotic team accept-invite <link> --code <code>, or on the invitation page.[/dim]"
+        )
 
     return team
