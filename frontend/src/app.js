@@ -6,7 +6,7 @@ import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
 import { closeModal, isModalOpen, showToast, closeInlineDropdownsFromEscape, isModalDirty, focusModalFirstField } from './ui.js';
 import { showAuthScreen, logout, initAuth } from './auth.js';
-import { initApp } from './init.js';
+import { initApp, showSignedOut } from './init.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal, showEditDocumentModal, setDocViewMode, enterSelectionMode, filterDocuments, debounceDocSearch } from './documents.js';
 import { loadAgents, showCreateAgentModal } from './agents.js';
 import { showCreateIssueModal } from './issue-creation.js';
@@ -528,7 +528,9 @@ registerActions({
  */
 async function bootApp() {
     if (!api.getToken()) {
-        showAuthScreen();
+        // An /invite/ link opens on the invitation, not the sign-in form
+        // (CHT-1265).
+        await showSignedOut();
         return;
     }
     try {
@@ -538,7 +540,7 @@ async function bootApp() {
     } catch (e) {
         if (e?.status === 401 || e?.status === 403) {
             api.logout();
-            showAuthScreen();
+            await showSignedOut();
             return;
         }
         console.error('Failed to load current user on boot:', e);

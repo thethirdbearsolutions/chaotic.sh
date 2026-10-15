@@ -49,7 +49,10 @@ class TestSecretFormat:
         ("app/services/token_service.py", "token_hex"): "mint_secret itself",
         ("app/services/oauth_client_service.py", "token_hex"): "DCR client_id: public, not a secret",
         ("app/services/oauth_consent_service.py", "token_urlsafe"): "consent request id, needs a signed-in human",
-        ("app/services/team_service.py", "token_urlsafe"): "team invitation token, CHT-1601",
+        ("app/services/team_service.py", "token_urlsafe"): (
+            "team invitation token: a minted prefix would be scrubbed from the routed path, "
+            "so log_redaction.INVITATION_PATH redacts it by position (CHT-1601)"
+        ),
         ("app/oxyde_models/*.py", "uuid4"): "row primary keys: public ids",
         ("app/oxyde_db.py", "uuid4"): "primary-key default for a str pk column",
         ("app/services/agent_service.py", "uuid4"): "placeholder agent email, not a credential",

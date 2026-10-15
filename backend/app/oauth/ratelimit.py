@@ -68,3 +68,5 @@ class SlidingWindowLimiter:
 # Shared by the service and the endpoints; tests clear them.
 cimd_fetches = SlidingWindowLimiter(3600)
 authorize_requests = SlidingWindowLimiter(60)
+# The unauthenticated invitation preview behind /invite/<token> (CHT-1265).
+invitation_lookups = SlidingWindowLimiter(60)

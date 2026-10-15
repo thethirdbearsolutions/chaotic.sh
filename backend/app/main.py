@@ -246,7 +246,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     case. Registering this handler makes every non-2xx response at least
     valid JSON with a `detail` key, matching every other error path.
     """
-    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    # An invitation token is a path segment (CHT-1265): redact it here
+    # too, not only in uvicorn's access log.
+    logger.exception(
+        "Unhandled exception on %s %s",
+        request.method, log_redaction.redact_request_target(request.url.path),
+    )
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 # API routes

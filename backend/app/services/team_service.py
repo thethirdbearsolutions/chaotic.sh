@@ -10,6 +10,7 @@ from app.enums import TeamRole, InvitationStatus
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInvitationCreate
 from oxyde import execute_raw
 from app.db.transactions import atomic
+from app.utils import ensure_utc
 from app.services.credential_events import revoking
 
 # Type aliases for API compatibility
@@ -146,6 +147,8 @@ class TeamService:
             team_id=team.id,
             email=invitation_in.email,
             role=invitation_in.role,
+            # Travels as a URL path segment; app.log_redaction scrubs
+            # it from request logs by that position (CHT-1601).
             token=secrets.token_urlsafe(32),
             invited_by_id=invited_by.id,
             expires_at=datetime.now(timezone.utc) + timedelta(days=7),
@@ -167,19 +170,43 @@ class TeamService:
             team_id=team_id, status=InvitationStatus.PENDING
         ).all()
 
+    async def get_valid_invitation_by_token(
+        self, token: str
+    ) -> OxydeTeamInvitation | None:
+        """The invitation behind ``token`` if it can still be accepted:
+        pending and not expired. None for an unknown, expired, accepted,
+        declined or revoked (deleted) one alike (CHT-1265)."""
+        invitation = await self.get_invitation_by_token(token)
+        if invitation is None or invitation.status != InvitationStatus.PENDING:
+            return None
+        if ensure_utc(invitation.expires_at) < datetime.now(timezone.utc):
+            return None
+        return invitation
+
     async def accept_invitation(
         self, invitation: OxydeTeamInvitation, user: OxydeUser
-    ) -> OxydeTeamMember:
-        """Accept a team invitation."""
-        async with atomic():
-            invitation.status = InvitationStatus.ACCEPTED
-            await invitation.save(update_fields={"status"})
+    ) -> OxydeTeamMember | None:
+        """Accept a team invitation; None if it was no longer pending.
 
-            member = await OxydeTeamMember.objects.create(
-                team_id=invitation.team_id,
-                user_id=user.id,
-                role=invitation.role,
-            )
+        The invitation is claimed with a conditional UPDATE, so two
+        accepts of one token cannot both add a member and a used one
+        cannot be replayed (CHT-1788). A user who is already a member
+        keeps the membership they have: the invitation is used up and
+        that membership returned, never a second row.
+        """
+        async with atomic():
+            claimed = await OxydeTeamInvitation.objects.filter(
+                id=invitation.id, status=InvitationStatus.PENDING
+            ).update(status=InvitationStatus.ACCEPTED)
+            if claimed != 1:
+                return None
+            member = await self.get_member(invitation.team_id, user.id)
+            if member is None:
+                member = await OxydeTeamMember.objects.create(
+                    team_id=invitation.team_id,
+                    user_id=user.id,
+                    role=invitation.role,
+                )
         await member.refresh()
         return member
 

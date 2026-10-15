@@ -1524,6 +1524,22 @@ describe('ApiClient', () => {
           })
         );
       });
+
+      it('keeps an odd token inside its path segment', async () => {
+        await client.acceptInvitation('a/b?c');
+        expect(fetchMock).toHaveBeenCalledWith('/api/teams/invitations/a%2Fb%3Fc/accept', expect.anything());
+      });
+    });
+
+    describe('getInvitation (CHT-1265)', () => {
+      it('GETs the public preview by token, in the path only', async () => {
+        await client.getInvitation('abc123token');
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/teams/invitations/abc123token',
+          expect.objectContaining({ method: 'GET' }),
+        );
+        expect(fetchMock.mock.calls[0][1].body).toBeUndefined();
+      });
     });
 
     describe('deleteInvitation', () => {
