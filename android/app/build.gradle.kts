@@ -154,6 +154,11 @@ room {
 val roomSchemas = "$projectDir/schemas"
 tasks.withType<Test>().configureEach {
     systemProperty("chaotic.roomSchemas", roomSchemas)
+    // ScreenshotsTest's PNGs (CHT-1730), one directory per test task, and
+    // declared as its output so a cached test run restores them.
+    val screenshots = layout.buildDirectory.dir("screenshots/$name")
+    systemProperty("chaotic.screenshotDir", screenshots.get().asFile.absolutePath)
+    outputs.dir(screenshots)
 }
 
 dependencies {
