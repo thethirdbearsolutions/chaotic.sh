@@ -155,9 +155,25 @@ class SprintService:
         A created sprint starts at the project default. With a null
         ("unlimited") default it takes `carry_budget`, the closing
         sprint's budget, instead: the CHT-1495 carry-forward rule, so a
-        rotation cannot silently switch arrears off. Like every carried
-        budget it is not marked as set by hand, so a default set later
-        still reaches it (PR #404 review L2).
+        rotation cannot silently switch arrears off (PR #404 review L2).
+        Like every carried budget it is not marked as set by hand. Both
+        rotation paths activate it in the same transaction, though, and
+        activation fixes an active sprint's budget, so a default set later
+        reaches only the planned sprint created after it (or this one when
+        it was created at limbo entry and is still planned).
+
+        A null default does not tell "unlimited by choice" from "never
+        set", so the carry applies to both (CHT-1724). Hence one edge: an
+        owner who clears the default to unlimited has the planned sprint
+        cleared too (adopt_default_budget) but not the active one; if the
+        planned sprint is then deleted before the close, the sprint
+        created here carries the active sprint's budget, where the
+        planned one would have opened unlimited. That is kept on purpose:
+        it needs a deletion, it errs toward arrears staying on (a hard
+        stop by design), and the owner can clear it by hand. Clearing the
+        new sprint is not enough on its own: activating it has already
+        copied the carried budget into the next planned sprint, so the
+        owner clears that planned sprint too (PR #407 review L1).
         """
         next_sprint = await self.get_next_sprint(project_id)
         if next_sprint:
@@ -244,8 +260,13 @@ class SprintService:
                     "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND status = ? AND limbo = 0 RETURNING id",
                     [SprintStatus.COMPLETED.name, sprint.id, SprintStatus.ACTIVE.name],
                 )
+            # Winner or loser, re-read the row: the loser reports it as the
+            # winner left it, and the winner carries the budget the row has
+            # now, not the one on its caller's copy, which a PATCH may have
+            # changed since it was read (CHT-1724; complete_limbo also
+            # refreshes before carrying).
+            await sprint.refresh()
             if not won:
-                await sprint.refresh()
                 return sprint
 
             next_sprint = await self._get_or_create_next_sprint(project_id, carry_budget=sprint.budget)
@@ -268,7 +289,6 @@ class SprintService:
                 # closed_at rides in the same transaction as the status
                 # flip (CHT-1366), saved through the ORM so the datetime
                 # is stored the way every other path stores it.
-                await sprint.refresh()
                 sprint.closed_at = datetime.now(timezone.utc)
                 await sprint.save(update_fields={"closed_at"})
                 # The sprint rotated: round-robin groups move on (CHT-1280).

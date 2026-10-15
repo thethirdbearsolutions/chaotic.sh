@@ -259,7 +259,9 @@ class Settings(BaseSettings):
     @classmethod
     def _check_legacy_retire_date(cls, value) -> str:
         """A YYYY-MM-DD date, or empty. Anything else is logged and
-        treated as unset (the notice then gives no date). Never raises."""
+        treated as unset (the notice then gives no date). Never raises.
+        A value with a ``_`` in it is not echoed: like a key-ids entry, it
+        is most likely an API key pasted into the wrong setting (CHT-1725)."""
         if not isinstance(value, str):
             logger.error("MCP_LEGACY_RETIRE_DATE is not text; ignored.")
             return ""
@@ -271,7 +273,11 @@ class Settings(BaseSettings):
                 raise ValueError(value)
             return date.fromisoformat(value).isoformat()
         except ValueError:
-            logger.error("MCP_LEGACY_RETIRE_DATE=%r is not a date (YYYY-MM-DD); ignored.", value)
+            if "_" in value:
+                logger.error("MCP_LEGACY_RETIRE_DATE looks like an API key, not a date (YYYY-MM-DD); "
+                             "ignored, and not logged.")
+            else:
+                logger.error("MCP_LEGACY_RETIRE_DATE=%r is not a date (YYYY-MM-DD); ignored.", value)
             return ""
 
     @property

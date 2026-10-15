@@ -48,17 +48,26 @@ _INSTRUCTION_METHODS = frozenset({"initialize", "server/discover"})
 def _oauth_reachable(settings) -> bool:
     """Can a chat client be told to add this server by URL and sign in
     with OAuth? Only when OAuth is on and the issuer is an https origin
-    that is not this machine (a chat client runs elsewhere)."""
+    a chat client elsewhere on the internet could reach: not this
+    machine, and not an address that only routes on a private network
+    (``10.x``, ``192.168.x``, link-local, ``0.0.0.0``, ``[::]``; checked
+    with ``is_global``, CHT-1725). A host name is taken as reachable: a
+    name that resolves only on the LAN cannot be told apart without a
+    lookup. The fully-qualified form's trailing dot (``localhost.``) is
+    the same host, so it is dropped before comparing."""
     if not settings.oauth_enabled:
         return False
     parts = urlsplit(settings.oauth_issuer)
-    host = (parts.hostname or "").lower()
+    host = (parts.hostname or "").lower().rstrip(".")
     if parts.scheme != "https" or not host or host == "localhost" or host.endswith(".localhost"):
         return False
     try:
-        return not ipaddress.ip_address(host).is_loopback
+        address = ipaddress.ip_address(host)
     except ValueError:
         return True  # a host name
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return address.is_global
 
 
 def notice_for(principal) -> str | None:
