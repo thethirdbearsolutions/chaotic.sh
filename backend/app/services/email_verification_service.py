@@ -495,8 +495,10 @@ class EmailVerificationService:
             raise invalid
         # Spend an attempt before comparing, conditionally, so concurrent
         # guesses cannot get past the cap between a read and a write.
-        # Not yet expired, either: an address change expires the
-        # account's codes (CHT-1827), possibly since `latest` was read.
+        # Not expired since `latest` was read, either. (This is not what
+        # stops an address change racing this confirm: change_email
+        # expires codes at its own, later, time. The conditional write
+        # at the end is that guard.)
         spent = await codes.filter(
             id=latest.id, attempts__lt=MAX_ATTEMPTS, used_at__isnull=True, expires_at__gt=now,
         ).update(attempts=F("attempts") + 1)

@@ -240,9 +240,11 @@ class TestRaces:
         self, client, auth_headers, test_user, outbox, monkeypatch, during,
     ):
         """The change lands while confirm is between its reads and its
-        last write: during the spent-attempt update (the code is then
-        expired) or during the used_at update (the account's address has
-        then moved). Either way the new address stays unverified."""
+        last write: during the spent-attempt update or during the used_at
+        update. Either way the new address stays unverified, because
+        confirm's last write requires the account to still have the
+        address the code was mailed to (change_email's expiry of the
+        codes comes later than confirm's `now`, so it does not stop it)."""
         from app.services.email_verification_service import EmailVerificationService, VerificationRefused
 
         assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
@@ -266,6 +268,37 @@ class TestRaces:
         user = await _fresh(test_user)
         assert user.email == "victim@corp.example"
         assert user.email_verified_at is None
+
+    async def test_a_code_that_expires_after_it_is_read_spends_no_attempt(
+        self, client, auth_headers, test_user, outbox, monkeypatch,
+    ):
+        """The spent-attempt update requires the code to be unexpired: a
+        code that expires between confirm's read of it and the spend is
+        refused, and no attempt is counted."""
+        from datetime import timedelta
+
+        from app.services.email_verification_service import EmailVerificationService, VerificationRefused
+
+        assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
+        code = outbox.last_code()
+        queryset = type(OxydeEmailVerificationCode.objects.filter(id="x"))
+        real_first = queryset.first
+
+        async def first(self, *args, **kwargs):
+            row = await real_first(self, *args, **kwargs)
+            if isinstance(row, OxydeEmailVerificationCode):
+                await OxydeEmailVerificationCode.objects.filter(id=row.id).update(
+                    expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+                )
+            return row
+        monkeypatch.setattr(queryset, "first", first)
+
+        with pytest.raises(VerificationRefused) as refused:
+            await EmailVerificationService().confirm(await _fresh(test_user), code)
+        assert refused.value.error_code == "invalid_verification_code"
+        [row] = await OxydeEmailVerificationCode.objects.filter(user_id=test_user.id).all()
+        assert row.attempts == 0
+        assert (await _fresh(test_user)).email_verified_at is None
 
     async def test_parallel_changes_get_at_most_the_daily_number(self, db, test_user, no_smtp):
         import asyncio
