@@ -11,7 +11,7 @@ from app.schemas.user import (
     UserResponse,
 )
 from app.services.email_verification_service import EmailVerificationService, VerificationRefused
-from app.services.user_service import UserService
+from app.services.user_service import EmailTakenError, UserService
 from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
 
 router = APIRouter()
@@ -25,16 +25,22 @@ async def signup(user_in: UserCreate):
 
     # Ignoring case (CHT-1790): addresses differing only in case would
     # share one email-verification limit, so one could lock the other out.
-    # Not enforced by the database: an index on lower(email) cannot be
-    # declared in the model, and older databases may already hold such
-    # pairs. Two signups racing each other could still both pass.
+    # The database enforces it too (users.email_folded is unique, CHT-1804):
+    # of two signups racing for one address, the second fails its INSERT
+    # and gets the same answer here.
     if await user_service.find_by_email_ignoring_case(user_in.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
         )
 
-    user = await user_service.create(user_in)
+    try:
+        user = await user_service.create(user_in)
+    except EmailTakenError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        ) from None
     return user
 
 

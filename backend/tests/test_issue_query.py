@@ -386,6 +386,27 @@ async def test_unknown_people_and_things_are_400(client, auth_headers, test_proj
 
 
 @pytest.mark.asyncio
+async def test_addresses_differing_in_a_non_ascii_capital_are_two_people(
+    client, auth_headers, test_project, test_user,
+):
+    """Only ASCII case is ignored, as everywhere else (CHT-1804): with
+    'Ärger@' and 'ärger@' both on the team, each names one person."""
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.oxyde_models.user import OxydeUser
+
+    upper = await OxydeUser.objects.create(email="\u00c4rger@example.com", hashed_password="x", name="Upper")
+    lower = await OxydeUser.objects.create(email="\u00e4rger@example.com", hashed_password="x", name="Lower")
+    for user in (upper, lower):
+        await OxydeTeamMember.objects.create(team_id=test_project.team_id, user_id=user.id, role=TeamRole.MEMBER)
+    await _issue(test_project, test_user, title="upper's", assignee_id=upper.id)
+    await _issue(test_project, test_user, title="lower's", assignee_id=lower.id)
+
+    t = lambda w: _titles(client, auth_headers, test_project, w)  # noqa: E731
+    assert await t("assignee=\u00c4RGER@EXAMPLE.COM") == {"upper's"}
+    assert await t("assignee=\u00e4rger@Example.com") == {"lower's"}
+
+
+@pytest.mark.asyncio
 async def test_a_user_outside_the_team_does_not_resolve(client, auth_headers, test_project, test_user, test_user2):
     """Names resolve among the team's people only: a query cannot confirm
     that an outsider's email exists."""

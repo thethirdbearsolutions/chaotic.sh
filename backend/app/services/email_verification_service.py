@@ -48,6 +48,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import math
 import secrets
 from urllib.parse import urlsplit
 from datetime import datetime, timedelta, timezone
@@ -207,7 +208,12 @@ def render_code_email(code: str) -> tuple[str, str]:
 
 
 def _seconds_until(moment: datetime, now: datetime) -> int:
-    return max(1, int((moment - now).total_seconds() + 0.999))
+    """Whole seconds until ``moment``, rounded up, so a client that waits
+    its Retry-After arrives at or after ``moment``. Every window below is
+    strict (a row created exactly a window ago is out of it), so arriving
+    exactly at ``moment`` is enough (CHT-1804: the old +0.999 rounding
+    could land a fraction short, and a retry got one more 429)."""
+    return max(1, math.ceil((moment - now).total_seconds()))
 
 
 def _rate_limited(message: str, retry: int) -> VerificationRefused:
@@ -257,7 +263,7 @@ class EmailVerificationService:
         now = _now()
         email_hash = hash_email(user.email)
         codes = OxydeEmailVerificationCode.objects
-        await codes.filter(created_at__lt=now - FAILURE_WINDOW).delete()
+        await codes.filter(created_at__lte=now - FAILURE_WINDOW).delete()
 
         # Over the day's failure cap a code could not be confirmed anyway:
         # say when it lapses instead of mailing a dead one.
@@ -284,7 +290,7 @@ class EmailVerificationService:
             created_at=now,
         )
         recent = await codes.filter(
-            email_hash=email_hash, created_at__gte=now - HOURLY_WINDOW,
+            email_hash=email_hash, created_at__gt=now - HOURLY_WINDOW,
         ).order_by("created_at").all()
         others = [r for r in recent if r.id != row.id]
         refusal = None
@@ -328,7 +334,7 @@ class EmailVerificationService:
         email_hash = hash_email(user.email)
         codes = OxydeEmailVerificationCode.objects
 
-        history = await codes.filter(email_hash=email_hash, created_at__gte=now - FAILURE_WINDOW).all()
+        history = await codes.filter(email_hash=email_hash, created_at__gt=now - FAILURE_WINDOW).all()
         if _failures(history) >= DAILY_FAILURE_LIMIT:
             raise invalid
 

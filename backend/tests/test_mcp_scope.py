@@ -216,7 +216,45 @@ class TestResolveAssignee:
         assert await resolve_assignee(test_user, test_team.id, test_user2.id) == test_user2.id
 
     async def test_by_email(self, test_user, test_team, test_user2):
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         assert await resolve_assignee(test_user, test_team.id, test_user2.email) == test_user2.id
+
+    async def test_by_email_in_another_case(self, test_user, test_team, test_user2):
+        # CHT-1804: the same case-insensitive comparison as login.
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+        assert await resolve_assignee(test_user, test_team.id, test_user2.email.upper()) == test_user2.id
+
+    async def test_by_email_finds_the_teams_agents(self, test_user, test_team):
+        agent = await OxydeUser.objects.create(
+            email="bot-1@agent.local", hashed_password="", name="Bot", is_agent=True,
+            parent_user_id=test_user.id, agent_team_id=test_team.id,
+        )
+        assert await resolve_assignee(test_user, test_team.id, "BOT-1@agent.local") == agent.id
+
+    async def test_an_address_off_the_team_looks_like_no_account(self, test_user, test_team, test_user2):
+        """An account on another team, a deactivated account on no team,
+        a deactivated member, and no account at all: one error, the same
+        text, naming nobody (CHT-1804 review of PR #437)."""
+        other_team = await OxydeTeam.objects.create(name="Other", key="OTH")
+        await OxydeTeamMember.objects.create(team_id=other_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+        await OxydeUser.objects.create(
+            email="Outsider@Elsewhere.com", hashed_password=get_password_hash("x" * 12),
+            name="Secret Outsider", is_active=False,
+        )
+        retired = await OxydeUser.objects.create(
+            email="retired@example.com", hashed_password=get_password_hash("x" * 12),
+            name="Secret Retired", is_active=False,
+        )
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=retired.id, role=TeamRole.MEMBER)
+        messages = []
+        for address in (test_user2.email.upper(), "OUTSIDER@elsewhere.com", "RETIRED@example.com",
+                        "nobody@elsewhere.com"):
+            with pytest.raises(ToolContextError) as caught:
+                await resolve_assignee(test_user, test_team.id, address)
+            messages.append(str(caught.value).replace(address, "<address>"))
+        assert len(set(messages)) == 1, messages
+        assert "Secret" not in messages[0]
+        assert "Could not resolve assignee" in messages[0]
 
     async def test_by_name_among_team_members(self, test_user, test_team, test_user2):
         await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
