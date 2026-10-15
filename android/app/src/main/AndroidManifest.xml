@@ -22,6 +22,13 @@
             </intent-filter>
         </activity>
 
+        <!-- What a notification opens (CHT-1660): MainActivity under a name only this
+             app can start, so MainActivity trusts the entry id that comes with it. -->
+        <activity-alias
+            android:name=".NotificationTapActivity"
+            android:exported="false"
+            android:targetActivity=".MainActivity" />
+
         <!-- UnifiedPush events, forwarded by the connector library's own receiver (CHT-1612). -->
         <service
             android:name=".push.ChaoticPushService"

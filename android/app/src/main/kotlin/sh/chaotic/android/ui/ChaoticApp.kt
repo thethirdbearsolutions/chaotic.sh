@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,7 +26,7 @@ import sh.chaotic.auth.AuthState
  * stack with it.
  */
 @Composable
-fun ChaoticApp(viewModel: AppViewModel = hiltViewModel()) {
+fun ChaoticApp(taps: NotificationTaps, viewModel: AppViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     when (val current = state) {
         AuthState.Loading ->
@@ -33,13 +34,27 @@ fun ChaoticApp(viewModel: AppViewModel = hiltViewModel()) {
 
         is AuthState.SignedOut -> SignInScreen(ended = current.ended)
 
-        is AuthState.SignedIn -> SignedInApp()
+        is AuthState.SignedIn -> SignedInApp(taps)
     }
 }
 
+/**
+ * [taps] is MainActivity's own instance, handed down rather than looked up
+ * again here, so a tap cannot land in a second copy nobody collects.
+ */
 @Composable
-private fun SignedInApp() {
+private fun SignedInApp(taps: NotificationTaps) {
     val navController = rememberNavController()
+    // A tapped notification's issue (CHT-1660), over the screen shown when
+    // the tap arrived, so Back returns there; see NotificationTaps for when.
+    LaunchedEffect(taps, navController) {
+        val route = TapRoute()
+        taps.opens.collect { open ->
+            route.on(open, navController.currentBackStackEntry?.id)?.let {
+                navController.navigate(it) { launchSingleTop = true }
+            }
+        }
+    }
     NavHost(navController = navController, startDestination = Destination.Home) {
         composable<Destination.Home> {
             HomeScreen(onOpenIssue = { issueId, teamId -> navController.navigate(Destination.Issue(issueId, teamId)) })

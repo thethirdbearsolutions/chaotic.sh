@@ -15,6 +15,7 @@ import sh.chaotic.sync.push.PushPayload
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @RunWith(RobolectricTestRunner::class)
@@ -57,6 +58,36 @@ class AndroidNotifierTest {
             .joinToString(" ") { public.getCharSequence(it).toString() }
         assertFalse("secret" in publicText)
         assertFalse("CHT-7" in publicText)
+    }
+
+    @Test
+    fun tappingAnEntryOpensItForItsOwnerAndASummaryOpensTheInbox() {
+        val owner = "ada@https://chaotic.test"
+        val owned = AndroidNotifier(context) { owner }
+        owned.apply(NotificationPlanner.onEntry(entry("e1"), owned.shown()))
+        owned.apply(NotificationPlanner.onEntry(entry("e2", kind = "mention"), owned.shown()))
+        owned.showDecision("e1", DecisionNotice("Approving", "Approving CHT-7", "Approving", expires = false))
+        val tapped = manager.activeNotifications.associate { posted ->
+            posted.tag to shadowOf(posted.notification.contentIntent).savedIntent
+        }
+
+        // CHT-1660: each entry's own id and its owner, under the alias only this app can start.
+        assertEquals(NotificationTap("e1", owner), NotificationTap.from(tapped["entry:e1"]))
+        assertEquals(NotificationTap("e2", owner), NotificationTap.from(tapped["entry:e2"]))
+        assertEquals(NotificationTap.ALIAS, tapped["entry:e1"]?.component?.className)
+        assertEquals(NotificationTap("e1", owner), NotificationTap.from(tapped["decision:e1"]))
+        assertTrue("summary:issue:i1" in tapped)
+        assertNull(NotificationTap.from(tapped["summary:issue:i1"]))
+        // Distinct intents, so no notification's PendingIntent can take another's extras.
+        assertFalse(tapped.getValue("entry:e1").filterEquals(tapped.getValue("entry:e2")))
+        assertFalse(tapped.getValue("entry:e1").filterEquals(tapped.getValue("decision:e1")))
+    }
+
+    @Test
+    fun withNobodySignedInATapOpensJustTheApp() {
+        notifier.apply(NotificationPlanner.onEntry(entry("e1"), notifier.shown()))
+        val intent = shadowOf(manager.activeNotifications.single().notification.contentIntent).savedIntent
+        assertNull(NotificationTap.from(intent))
     }
 
     @Test
