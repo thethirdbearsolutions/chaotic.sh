@@ -112,17 +112,19 @@ async def create_team_agent(
     # Visible (else 404, as if missing), then membership (403) (CHT-1785).
     await visible_team(current_user, team_id)
 
-    # Check if user is a member of the team
-    member = await team_service.get_member(team_id, current_user.id)
-    if not member:
-        raise team_hidden()
-
+    # The caller can see the team, so the refusal names the action: an
+    # agent is refused as an agent, not as an outsider (CHT-1842).
     # Only humans can create agents
     if current_user.is_agent:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Agents cannot create other agents",
         )
+
+    # Check if user is a member of the team
+    member = await team_service.get_member(team_id, current_user.id)
+    if not member:
+        raise team_hidden()
 
     await _refuse_member_name(team_id, agent_in.name)
     agent_service = AgentService()
@@ -164,18 +166,20 @@ async def create_project_agent(
     # Visible (else 404, as if missing), then membership (403) (CHT-1785).
     project = await visible_project(current_user, project_id)
 
-    # Check if user is a member of the project's team
-    team_service = TeamService()
-    member = await team_service.get_member(project.team_id, current_user.id)
-    if not member:
-        raise team_hidden()
-
+    # The caller can see the project, so the refusal names the action
+    # (CHT-1842).
     # Only humans can create agents
     if current_user.is_agent:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Agents cannot create other agents",
         )
+
+    # Check if user is a member of the project's team
+    team_service = TeamService()
+    member = await team_service.get_member(project.team_id, current_user.id)
+    if not member:
+        raise team_hidden()
 
     await _refuse_member_name(project.team_id, agent_in.name)
     agent_service = AgentService()

@@ -193,8 +193,13 @@ new route gets wrong:
   project's issues, feeds, team documents, templates) and refuses a
   project-scoped agent even in its own team. `is_in_team_directory` is the
   team row, members, agents and labels, which that agent needs (CHT-1780).
-- **A team the caller may not read answers `team_hidden()`**, one 403 text
-  for every route. A `project_id` beside a URL team goes through
+- **Teams have two answers; pick by what the route does.** A route that
+  *loads the team row* (`GET`/`PATCH`/`DELETE /teams/{id}`,
+  `/teams/{id}/agents`) uses `visible_team`, which answers 404 "Team not
+  found" exactly like a missing team; never turn that into a 403. A route
+  that only *keys on* `team_id` for team-wide data or the directory, and
+  never loads the row, answers `team_hidden()`: one 403, one text, which
+  a missing team gets too. A `project_id` beside a URL team goes through
   `visible_project_in_team` (body) or `project_filter_in_team[_or_none]`
   (query filter), which pin it to that team (CHT-1807).
 - **Pass confinement to services.** A team-wide query a project-scoped

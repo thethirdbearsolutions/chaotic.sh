@@ -8,7 +8,6 @@ from app.api.idempotency import IdempotentRoute, idempotent
 from app.api.deps import (
     CurrentUser, can_access_document, can_read_team_data,
     confined_project_id, is_eligible_project_member,
-    is_project_scoped_agent,
 )
 from app.api.visibility import (
     can_see_label, can_see_project, not_found, project_filter_in_team, team_hidden, visible_issue,
@@ -774,7 +773,7 @@ async def list_issues(
     elif assignee_id:
         # Assignee-only query: scope to user's accessible teams, and a
         # project-scoped agent to its own project (CHT-1780).
-        confine_to = current_user.agent_project_id if is_project_scoped_agent(current_user) else None
+        confine_to = confined_project_id(current_user)
         if current_user.is_agent:
             # Every agent carries its team, a project-scoped one its
             # project's (CHT-1837).

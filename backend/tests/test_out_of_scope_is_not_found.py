@@ -34,6 +34,7 @@ from fastapi.routing import APIWebSocketRoute, iter_route_contexts
 from pydantic import BaseModel
 from starlette.routing import Mount, WebSocketRoute, compile_path
 
+from app.api.visibility import TEAM_HIDDEN_DETAIL
 from app.enums import ApprovalMode, RitualArtifact, RitualTrigger, TeamRole
 from app.mcp_server import tools
 from app.oxyde_models.document import OxydeDocument, OxydeDocumentComment
@@ -870,6 +871,9 @@ async def test_websocket_team_answers_like_a_missing_one(world, principal_header
             answers.append((refused.value.code, refused.value.reason))
         assert answers[0] == answers[1], principal
         assert answers[0][0] == ws_auth.CLOSE_FORBIDDEN, principal
+        if principal not in AGENT_PRINCIPALS:
+            # One team refusal text everywhere, the socket included (CHT-1842).
+            assert answers[0][1] == TEAM_HIDDEN_DETAIL, principal
 
 
 async def test_known_oracles_still_leak(client, world, principal_headers):

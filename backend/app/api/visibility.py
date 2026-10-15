@@ -53,11 +53,17 @@ TEAM_HIDDEN_DETAIL = "Not authorized to access this team"
 
 
 def team_hidden() -> HTTPException:
-    """The answer for a team the caller may not read, or may not read
-    this part of: one 403 with one text for every team-keyed route
-    (CHT-1842), where there used to be four. A team is not a row that
-    can be hidden like an issue: its id is in the caller's own URL, so
-    the answer is a 403, not a 404. A project filter beside a team
+    """The answer of a route that only *keys on* ``team_id`` (team-wide
+    data, the team directory) for a team the caller may not read, or
+    may not read this part of: one 403 with one text (CHT-1842), where
+    there used to be four. The check is a membership query that a
+    missing team fails the same way, so it leaks nothing.
+
+    A route that *loads the team row* (``GET``/``PATCH``/``DELETE
+    /teams/{id}``, ``/teams/{id}/agents``) uses ``visible_team`` instead,
+    which answers 404 "Team not found" exactly like a missing team. Do
+    not swap one for the other: a 403 for a hidden team row beside a
+    404 for a missing one is an existence oracle. A project filter beside a team
     (``project_filter_in_team``) answers the same when the project is
     missing or invisible, so the filter cannot be used as an oracle."""
     return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=TEAM_HIDDEN_DETAIL)
@@ -134,7 +140,7 @@ async def visible_project_in_team(
     return project
 
 
-async def project_filter_in_team(user, project_id: str | None, team_id: str, *, elsewhere_detail: str):
+async def project_filter_in_team(user, project_id: str, team_id: str, *, elsewhere_detail: str):
     """A ``project_id`` *filter* on a team-keyed route: the project, or
     ``team_hidden()`` when it is missing or hidden (the answer the route
     gives for a team the caller may not read). A visible project of
@@ -147,7 +153,7 @@ async def project_filter_in_team(user, project_id: str | None, team_id: str, *, 
     return project
 
 
-async def project_filter_in_team_or_none(user, project_id: str | None, team_id: str):
+async def project_filter_in_team_or_none(user, project_id: str, team_id: str):
     """``project_filter_in_team`` for a listing that answers a visible
     project of another team with nothing: the project, None for that
     case, ``team_hidden()`` when it is missing or hidden."""
