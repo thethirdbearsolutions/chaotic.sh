@@ -203,6 +203,11 @@ async def test_a_concurrent_reader_never_sees_the_project_without_an_active_spri
     seen: list[list[str]] = []
 
     async def observed(self, next_sprint):
+        # The writer's own view already holds the flip (CHT-1724): without
+        # this, activating *before* completing the limbo sprint, outside
+        # one transaction, would also show the reader one ACTIVE sprint.
+        own = await OxydeSprint.objects.get(id=limbo.id)
+        assert own.status == SprintStatus.COMPLETED and own.limbo is False
         uri = f"file:{tmp_path / 'test.db'}?mode=ro"
         with closing(sqlite3.connect(uri, uri=True, timeout=5)) as reader:
             rows = reader.execute(
@@ -235,6 +240,91 @@ async def test_repeated_self_heal_failures_log_one_traceback(db, test_project, m
     assert len(failures) == 1 and failures[0].exc_info is not None
     heals = [r for r in caplog.records if "self-healing" in r.getMessage()]
     assert len(heals) == 1
+
+
+@pytest.mark.asyncio
+async def test_self_heal_failure_entry_is_dropped_however_limbo_clears(
+    db, test_project, monkeypatch, caplog,
+):
+    """CHT-1724: the rate-limit entry used to be dropped only by a
+    successful self-heal, so a limbo cleared another way (attest,
+    approve, force-clear) left it behind for the life of the process,
+    and a later failure of the same project was logged at DEBUG only."""
+    from app.services import ritual_service
+
+    limbo, planned = await _limbo_and_next(test_project)
+    real = _fail_after_activating(monkeypatch)
+    await RitualService().check_limbo(test_project.id)
+    assert ritual_service._self_heal_failure_logged_at[test_project.id][0] == limbo.id
+
+    # Cleared by another path than check_limbo's self-heal.
+    monkeypatch.setattr(SprintService, "_activate_next_sprint", real)
+    await SprintService().complete_limbo(await OxydeSprint.objects.get(id=limbo.id))
+    in_limbo, _, _ = await RitualService().check_limbo(test_project.id)
+    assert in_limbo is False
+    assert test_project.id not in ritual_service._self_heal_failure_logged_at
+    assert limbo.id not in ritual_service._self_heal_failure_logged_at
+
+    # A later stuck limbo of the same project gets its traceback at once,
+    # not after the earlier sprint's interval.
+    planned.limbo = True
+    await planned.save(update_fields={"limbo"})
+    _fail_after_activating(monkeypatch)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="app.services.ritual_service"):
+        in_limbo, _, _ = await RitualService().check_limbo(test_project.id)
+    assert in_limbo is True
+    failures = [r for r in caplog.records if "Self-heal failed" in r.getMessage()]
+    assert len(failures) == 1 and failures[0].exc_info is not None
+    assert ritual_service._self_heal_failure_logged_at[test_project.id][0] == planned.id
+
+
+@pytest.mark.asyncio
+async def test_close_sprint_carries_the_rows_budget_not_a_stale_copy(db, test_project):
+    """CHT-1724 (PR #404 review L-b): a budget PATCH that lands between
+    the caller's read and the close is what gets carried forward."""
+    test_project.default_sprint_budget = None
+    await test_project.save(update_fields={"default_sprint_budget"})
+    stale = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Sprint 1", status=SprintStatus.ACTIVE, budget=10,
+    )
+    fresh = await OxydeSprint.objects.get(id=stale.id)
+    fresh.budget = 15
+    await fresh.save(update_fields={"budget"})
+
+    closed = await SprintService().close_sprint(stale)
+
+    assert closed.status == SprintStatus.COMPLETED and closed.budget == 15
+    sprints = await _sprints(test_project)
+    assert sprints["Sprint 2"].status == SprintStatus.ACTIVE
+    assert sprints["Sprint 2"].budget == 15
+
+
+@pytest.mark.asyncio
+async def test_unlimited_default_then_deleted_planned_sprint_carries_the_budget(db, test_project):
+    """CHT-1724 (PR #404 review L-a), kept on purpose and documented in
+    _get_or_create_next_sprint: clearing the default to unlimited clears
+    the planned sprint but not the active one, and a planned sprint
+    deleted before the close is recreated with the active one's budget,
+    erring toward arrears staying on."""
+    current = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Sprint 1", status=SprintStatus.ACTIVE, budget=25,
+    )
+    planned = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Sprint 2", status=SprintStatus.PLANNED, budget=25,
+    )
+    test_project.default_sprint_budget = None
+    await test_project.save(update_fields={"default_sprint_budget"})
+    await SprintService().adopt_default_budget(test_project.id)
+    assert (await OxydeSprint.objects.get(id=planned.id)).budget is None
+    await planned.delete()
+
+    await SprintService().close_sprint(current)
+
+    sprints = await _sprints(test_project)
+    assert sprints["Sprint 2"].id != planned.id
+    assert sprints["Sprint 2"].status == SprintStatus.ACTIVE
+    assert sprints["Sprint 2"].budget == 25
 
 
 @pytest.mark.asyncio

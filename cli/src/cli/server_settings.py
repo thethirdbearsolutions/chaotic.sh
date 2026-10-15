@@ -358,6 +358,10 @@ def normalize(name: str, value: str) -> tuple[str, str | None]:
     elif kind == "date":
         value = value.strip()
         if value and not _date_ok(value):
+            # Not echoed when it has a "_": then it is most likely an API
+            # key pasted into the wrong setting, as for "keyids" above.
+            if "_" in value:
+                return value, f"{name} looks like an API key, not a date; it must be written YYYY-MM-DD"
             return value, f"{name} must be a date written YYYY-MM-DD, not {shown}"
     elif kind == "port":
         digits = value.strip()

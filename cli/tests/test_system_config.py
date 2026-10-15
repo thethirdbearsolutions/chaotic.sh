@@ -1304,6 +1304,16 @@ class TestLegacySharedKeySettings:
         for bad in ("2026-13-01", "15/11/2026", "20261115", "2026-W46-7", "soon"):
             assert "YYYY-MM-DD" in ss.normalize("MCP_LEGACY_RETIRE_DATE", bad)[1], bad
 
+    @pytest.mark.parametrize("pasted", ["ck_" + "a1" * 32, "cat_" + "b2" * 32])
+    def test_a_key_pasted_as_the_date_is_never_echoed(self, server, pasted):
+        """CHT-1725: the same "looks like a key" check as the ids."""
+        _value, problem = ss.normalize("MCP_LEGACY_RETIRE_DATE", pasted)
+        assert "looks like an API key" in problem and "YYYY-MM-DD" in problem
+        assert pasted not in problem and pasted[:12] not in problem
+        result = server.invoke("set", "MCP_LEGACY_RETIRE_DATE", pasted)
+        assert result.exit_code != 0
+        assert pasted not in result.output and pasted[:12] not in result.output
+
     def test_a_date_without_ids_is_a_warning(self):
         errors, warnings = ss.check({"settings": {"MCP_LEGACY_RETIRE_DATE": "2026-11-15"}})
         assert errors == [] and any("no retirement notice" in w for w in warnings)

@@ -7,23 +7,6 @@ from datetime import datetime, timezone
 from oxyde import IntegrityError
 from app.db.transactions import atomic
 
-logger = logging.getLogger(__name__)
-
-# check_limbo's self-heal retries a failed limbo completion on every read
-# (CHT-1721), and every ritual endpoint reads it. A persistent failure
-# would otherwise write a stack trace per request, so a sprint's failure
-# is logged in full at most once per interval; repeats go to DEBUG.
-SELF_HEAL_LOG_INTERVAL = 60.0
-_self_heal_failure_logged_at: dict[str, float] = {}
-
-
-def _self_heal_failure_should_log(sprint_id: str) -> bool:
-    now = time.monotonic()
-    last = _self_heal_failure_logged_at.get(sprint_id)
-    if last is not None and now - last < SELF_HEAL_LOG_INTERVAL:
-        return False
-    _self_heal_failure_logged_at[sprint_id] = now
-    return True
 from app.enums import (
     InboxEntryKind,
     RitualArtifact,
@@ -50,6 +33,42 @@ from app.oxyde_models.ritual import (
 )
 from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
 from app.oxyde_models.user import OxydeUser
+
+logger = logging.getLogger(__name__)
+
+# check_limbo's self-heal retries a failed limbo completion on every read
+# (CHT-1721), and every ritual endpoint reads it. A persistent failure
+# would otherwise write a stack trace per request, so a sprint's failure
+# is logged in full at most once per interval; repeats go to DEBUG.
+# Keyed by project, holding (limbo sprint id, when its traceback was last
+# logged): a project has at most one limbo sprint, so check_limbo drops
+# the entry as soon as it finds the project out of that limbo, however
+# the limbo cleared (self-heal, attest, approve, force-clear, a deleted
+# sprint), not only after a successful self-heal (CHT-1724).
+SELF_HEAL_LOG_INTERVAL = 60.0
+_self_heal_failure_logged_at: dict[str, tuple[str, float]] = {}
+
+
+def _self_heal_failure_should_log(project_id: str, sprint_id: str) -> bool:
+    now = time.monotonic()
+    entry = _self_heal_failure_logged_at.get(project_id)
+    if entry is not None and entry[0] == sprint_id and now - entry[1] < SELF_HEAL_LOG_INTERVAL:
+        return False
+    _self_heal_failure_logged_at[project_id] = (sprint_id, now)
+    return True
+
+
+def _self_heal_failure_is_retry(project_id: str, sprint_id: str) -> bool:
+    entry = _self_heal_failure_logged_at.get(project_id)
+    return entry is not None and entry[0] == sprint_id
+
+
+def _forget_self_heal_failure(project_id: str, sprint_id: str | None) -> None:
+    """Drop the project's entry unless it is for ``sprint_id``, the
+    sprint still in limbo (None: no sprint is)."""
+    entry = _self_heal_failure_logged_at.get(project_id)
+    if entry is not None and entry[0] != sprint_id:
+        del _self_heal_failure_logged_at[project_id]
 
 
 class RitualAlreadyResolvedError(Exception):
@@ -2241,13 +2260,14 @@ class RitualService:
         limbo_sprint = await OxydeSprint.objects.filter(
             project_id=project_id, limbo=True,
         ).first()
+        _forget_self_heal_failure(project_id, limbo_sprint.id if limbo_sprint else None)
 
         if not limbo_sprint:
             return False, None, []
 
         pending = await self.get_pending_rituals(project_id, limbo_sprint.id)
         if not pending:
-            retrying = limbo_sprint.id in _self_heal_failure_logged_at
+            retrying = _self_heal_failure_is_retry(project_id, limbo_sprint.id)
             (logger.debug if retrying else logger.warning)(
                 "Sprint %s (project %s) was in limbo with zero pending "
                 "sprint rituals; self-healing by completing limbo "
@@ -2256,7 +2276,7 @@ class RitualService:
             )
             try:
                 await self._maybe_clear_limbo(limbo_sprint.id)
-                _self_heal_failure_logged_at.pop(limbo_sprint.id, None)
+                _forget_self_heal_failure(project_id, None)
             except Exception:
                 # Same wrap as the attest/gate-complete callers. If the
                 # heal itself fails, report the real limbo state instead
@@ -2267,7 +2287,7 @@ class RitualService:
                 # the very mutation that's failing (PR #223 review).
                 # Rate-limited (PR #404 review L1): a stuck limbo is
                 # retried on every read, see SELF_HEAL_LOG_INTERVAL.
-                if _self_heal_failure_should_log(limbo_sprint.id):
+                if _self_heal_failure_should_log(project_id, limbo_sprint.id):
                     logger.exception(
                         "Self-heal failed for limbo sprint=%s (project %s); "
                         "reporting limbo as-is so force-clear-limbo can still "

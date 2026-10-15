@@ -136,6 +136,16 @@ class TestSettings:
             assert Settings().mcp_legacy_retire_date == ""
         assert any("MCP_LEGACY_RETIRE_DATE" in r.getMessage() for r in caplog.records)
 
+    @pytest.mark.parametrize("pasted", ["ck_" + "a1" * 32, "cat_" + "b2" * 32])
+    def test_a_key_pasted_as_the_date_is_never_logged(self, monkeypatch, caplog, pasted):
+        """CHT-1725: the same "looks like a key" check as the ids."""
+        monkeypatch.setenv("MCP_LEGACY_RETIRE_DATE", pasted)
+        with caplog.at_level(logging.DEBUG):
+            assert Settings().mcp_legacy_retire_date == ""
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("MCP_LEGACY_RETIRE_DATE looks like an API key" in m for m in messages)
+        assert not any(pasted in m or pasted[:12] in m for m in messages)
+
 
 # --- the notice text ------------------------------------------------------------
 
@@ -175,6 +185,22 @@ class TestNoticeFor:
         ("https://127.0.0.1", False),
         ("https://[::1]", False),
         ("https://app.localhost", False),
+        # CHT-1725: the fully-qualified trailing dot is the same host.
+        ("https://localhost.", False),
+        ("https://app.localhost.", False),
+        ("https://tracker.example.com.", True),
+        # CHT-1725: addresses no chat client elsewhere can route to.
+        ("https://0.0.0.0", False),
+        ("https://[::]", False),
+        ("https://[fe80::1]", False),
+        ("https://10.0.0.5", False),
+        ("https://192.168.1.20", False),
+        ("https://172.16.0.1", False),
+        ("https://169.254.1.1", False),
+        ("https://100.64.0.1", False),
+        ("https://[fd00::1]", False),
+        ("https://8.8.8.8", True),
+        ("https://[2606:4700:4700::1111]", True),
     ])
     def test_the_oauth_line_needs_a_reachable_https_issuer(self, legacy_settings, monkeypatch, test_user,
                                                            base, offered):
@@ -184,6 +210,19 @@ class TestNoticeFor:
         notice = legacy.notice_for(_principal(test_user))
         assert (f"add the server again by URL ({base}/mcp) and sign in with OAuth" in notice) is offered
         assert ("ask your user to reconnect" in notice) is not offered
+
+    @pytest.mark.parametrize("issuer,offered", [
+        ("https://127.0.0.1.", False),
+        ("https://[::ffff:127.0.0.1]", False),
+        ("https://[::ffff:192.168.1.20]", False),
+        ("https://[::ffff:8.8.8.8]", True),
+        ("https://[fe80::1%25eth0]", False),
+    ])
+    def test_reachability_of_issuers_settings_refuses_anyway(self, issuer, offered):
+        """Forms APP_BASE_URL validation already refuses at startup,
+        checked on the gate itself so it does not rely on that."""
+        settings = SimpleNamespace(oauth_enabled=True, oauth_issuer=issuer)
+        assert legacy._oauth_reachable(settings) is offered
 
     def test_no_date_says_so(self, legacy_settings, test_user):
         legacy_settings(ids=KEY_ID)
