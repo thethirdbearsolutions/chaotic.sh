@@ -75,6 +75,15 @@ android {
         unitTests.isIncludeAndroidResources = true
     }
 
+    // MigrationTestHelper reads each committed schema as an asset
+    // (<database class>/<version>.json). The Room plugin only wires them into
+    // instrumented tests, so the Robolectric migration test gets them here (CHT-1666).
+    sourceSets {
+        getByName("test") {
+            assets.srcDir("$projectDir/schemas")
+        }
+    }
+
     lint {
         warningsAsErrors = false
         abortOnError = true
