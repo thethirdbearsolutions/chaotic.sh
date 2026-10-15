@@ -72,8 +72,11 @@ fail() {
     crash_log >&2
     echo "--- logcat for $PACKAGE (last 200 lines)" >&2
     adb logcat -d 2> /dev/null | grep -E "AndroidRuntime|$PACKAGE|R8|ClassNotFound|NoSuchMethod" | tail -n 200 >&2 || true
-    echo "--- screen" >&2
-    screen_xml >&2
+    # The screen only says something when the app did not crash.
+    if [ "${3:-}" = with-screen ]; then
+        echo "--- screen" >&2
+        screen_xml >&2
+    fi
     exit 1
 }
 
@@ -112,7 +115,7 @@ for apk in "$@"; do
         fi
         sleep 1
     done
-    [ -n "$seen" ] || fail "$name" "\"$EXPECTED_TEXT\" did not appear within ${WAIT_SECONDS}s"
+    [ -n "$seen" ] || fail "$name" "\"$EXPECTED_TEXT\" did not appear within ${WAIT_SECONDS}s" with-screen
 
     # And it is still up a few seconds later: a crash in work started after
     # the first frame (the write runner, push setup) lands here.

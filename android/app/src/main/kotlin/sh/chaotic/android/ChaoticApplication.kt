@@ -14,8 +14,6 @@ class ChaoticApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // TEMPORARY canary (CHT-1723): reached only by reflection, so R8 strips it.
-        Class.forName(listOf("sh.chaotic.android.R8", "Canary").joinToString("")).getDeclaredConstructor().newInstance()
         // Channels, sign-out cleanup and withdrawing notifications must work
         // whatever started the process: a push, a worker, or the launcher.
         push.start()
@@ -23,6 +21,3 @@ class ChaoticApplication : Application() {
         writes.start()
     }
 }
-
-/** TEMPORARY (CHT-1723): proves the release smoke test catches a stripped class. */
-internal class R8Canary
