@@ -28,7 +28,7 @@ Two facts combined into a trap:
    tool, no inbox item (the admin `force-clear-ticket-limbo` endpoint
    existed but had no client surface).
 
-Net effect (hit live on AIO-114/AIO-115): one failed API close made a
+Net effect (hit live on two tickets in a dogfooding project): one failed API close made a
 ticket permanently unclosable from automation, by anyone. With
 agent-driven ticket hygiene as a primary usage mode, the close path was
 a one-shot trap.

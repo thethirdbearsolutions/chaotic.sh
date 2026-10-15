@@ -1,0 +1,26 @@
+# Known gitleaks findings that are not secrets (CHT-1733). Every one is a
+# test fixture: RFC 8291 Web Push test vectors, placeholder ck_ keys,
+# made-up UUIDs and literal "s3cr3t"/"nope" strings. Fingerprint format:
+# <commit>:<file>:<rule>:<line>. A new finding fails the secret-scan job;
+# if it is a fixture, add its fingerprint here or mark the line
+# with a trailing `gitleaks:allow` comment.
+0afae4fda07da845152b368bd8aefbfc97e7a34e:backend/tests/test_mcp_legacy_notice.py:generic-api-key:128
+0afae4fda07da845152b368bd8aefbfc97e7a34e:backend/tests/test_mcp_legacy_notice.py:generic-api-key:139
+40b994db334a40ef8d46f2f9d8ab9009d3d4e85f:backend/tests/test_api_keys.py:generic-api-key:63
+47959d0120063310a87f1df16326ea4f5c871da9:cli/tests/test_profile.py:generic-api-key:453
+55bfbda95af5076047b8f55052b762dcd256f5bd:docs/agents.md:curl-auth-header:393
+55eaf93b605cf74cdcab7a5209582e5dc76a48ab:backend/tests/test_mcp_legacy_notice.py:generic-api-key:243
+55eaf93b605cf74cdcab7a5209582e5dc76a48ab:backend/tests/test_mcp_legacy_notice.py:generic-api-key:30
+6c4b594887481633364bad32951a92e16f56a23c:cli/tests/test_profile.py:generic-api-key:612
+6c4b594887481633364bad32951a92e16f56a23c:cli/tests/test_profile.py:generic-api-key:630
+77ae10afb42daa029fb4c58721e7fef4b1ba5834:backend/tests/test_push.py:private-key:469
+86e6b1e104d2c412c72df319d44cd718c3f1d705:cli/tests/test_system_config.py:generic-api-key:32
+aaae3e042df406571f097cc48e772897d8980bc1:android/testdata/web-push-vectors.json:generic-api-key:17
+aaae3e042df406571f097cc48e772897d8980bc1:android/testdata/web-push-vectors.json:generic-api-key:26
+aaae3e042df406571f097cc48e772897d8980bc1:android/testdata/web-push-vectors.json:generic-api-key:35
+aaae3e042df406571f097cc48e772897d8980bc1:android/testdata/web-push-vectors.json:generic-api-key:44
+aaae3e042df406571f097cc48e772897d8980bc1:android/testdata/web-push-vectors.json:generic-api-key:53
+aaae3e042df406571f097cc48e772897d8980bc1:android/testdata/web-push-vectors.json:generic-api-key:62
+aaae3e042df406571f097cc48e772897d8980bc1:android/testdata/web-push-vectors.json:generic-api-key:8
+aaae3e042df406571f097cc48e772897d8980bc1:backend/tests/test_push_vectors.py:generic-api-key:69
+d5996583288017a5766b395d072a9fd61e3f9e43:cli/tests/test_service_file_reconcile.py:generic-api-key:24

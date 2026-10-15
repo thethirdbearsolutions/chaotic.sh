@@ -10,3 +10,9 @@ captures/
 *.keystore
 *.jks
 app/foss-canary/
+# Release artifacts and signing material never belong in the repo
+*.apk
+*.aab
+*.p12
+keystore.properties
+google-services.json
