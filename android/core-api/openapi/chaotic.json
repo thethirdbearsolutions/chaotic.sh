@@ -5178,7 +5178,7 @@
           "labels"
         ],
         "summary": "Get Label",
-        "description": "Get label by ID.",
+        "description": "Get label by ID. Another team's label answers like a missing one\n(CHT-1785).",
         "operationId": "get_label_api_labels__label_id__get",
         "security": [
           {
@@ -6208,7 +6208,7 @@
           "templates"
         ],
         "summary": "Get Template",
-        "description": "Get a template by ID.",
+        "description": "Get a template by ID. One the caller cannot see answers like a\nmissing one (CHT-1785).",
         "operationId": "get_template_api_templates__template_id__get",
         "security": [
           {
