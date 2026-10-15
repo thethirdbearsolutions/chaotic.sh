@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_team_access
-from app.api.visibility import can_see_project, visible_template
+from app.api.visibility import can_see_project, not_found, visible_project_in_team, visible_template
 from app.schemas.template import (
     TemplateApplyReport,
     TemplateApplyRequest,
@@ -84,12 +84,14 @@ async def create_template_from_project(
     """Create a template by snapshotting a project's rituals + settings."""
     await _require_team_admin(team_id, current_user)
 
-    project = await _visible_project_or_404(current_user, snapshot_in.project_id)
-    if project.team_id != team_id:
-        raise HTTPException(
+    project = await visible_project_in_team(
+        current_user, snapshot_in.project_id, team_id,
+        hidden=not_found("Project not found"),
+        elsewhere=HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Project belongs to a different team",
-        )
+        ),
+    )
 
     service = TemplateService()
     template_in = await service.snapshot_project(

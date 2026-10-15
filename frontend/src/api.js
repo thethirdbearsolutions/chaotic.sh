@@ -246,6 +246,30 @@ export class ApiClient {
         return this.request('GET', `/issues?${queryParams.toString()}`);
     }
 
+    /**
+     * Run an issue query (CHT-1718, used by the /query page, CHT-1810).
+     * Exactly one of projectId/teamId picks the scope. `where` is the text
+     * form, `filter` the structure (an object, sent as JSON); the server
+     * ANDs them. Returns {query, where, order, total, skip, limit, issues}.
+     */
+    async queryIssues({ projectId = null, teamId = null, where = null, filter = null, order = null, skip = 0, limit = 100 } = {}) {
+        let path;
+        if (projectId) {
+            path = `/projects/${encodeURIComponent(projectId)}/issues/query`;
+        } else if (teamId) {
+            path = `/teams/${encodeURIComponent(teamId)}/issues/query`;
+        } else {
+            throw new Error('queryIssues needs a projectId or a teamId');
+        }
+        const params = new URLSearchParams();
+        if (where !== null && where !== undefined && where !== '') params.set('where', where);
+        if (filter) params.set('filter', typeof filter === 'string' ? filter : JSON.stringify(filter));
+        if (order) params.set('order', order);
+        params.set('skip', String(skip));
+        params.set('limit', String(limit));
+        return this.request('GET', `${path}?${params.toString()}`);
+    }
+
     async searchIssues(teamId, query, projectId = null, skip = 0, limit = 50) {
         let url = `/issues/search?team_id=${teamId}&q=${encodeURIComponent(query)}&skip=${skip}&limit=${limit}`;
         if (projectId) {
