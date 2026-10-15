@@ -757,7 +757,6 @@ async def _uvicorn_access_log():
     server = uvicorn.Server(uvicorn.Config(
         app, host="127.0.0.1", port=0, lifespan="off", log_config=None, access_log=True,
     ))
-    server.install_signal_handlers = lambda: None  # uvicorn < 0.29
     task = asyncio.create_task(server.serve())
     try:
         for _ in range(500):
