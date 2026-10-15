@@ -85,6 +85,13 @@ def is_project_scoped_agent(user: User) -> bool:
     return bool(user.is_agent and user.agent_project_id)
 
 
+def confined_project_id(user: User) -> str | None:
+    """The one project a project-scoped agent may see, else None. For
+    team-wide queries that must narrow to it rather than refuse: the
+    relations of an issue, cross-reference targets (CHT-1780)."""
+    return user.agent_project_id if is_project_scoped_agent(user) else None
+
+
 async def check_user_team_access(user: User, team_id: str) -> bool:
     """May ``user`` read and write ``team_id``'s team-wide data: every
     project's issues, the team activity and comment feeds, team-level
@@ -120,6 +127,29 @@ async def agent_home_team_id(user: User) -> str | None:
     return None
 
 
+async def can_access_document(user: User, document) -> bool:
+    """The read rule for one document: project access for a project's
+    document, team access for a team-level one. ``GET /documents/{id}``
+    applies it, and so must every route that returns documents some other
+    way, such as the documents linked to an issue (CHT-1780)."""
+    if document.project_id:
+        return await check_user_project_access(user, document.project_id, document.team_id)
+    return await check_user_team_access(user, document.team_id)
+
+
+async def accessible_project_ids(user: User, project_ids) -> set[str]:
+    """Of ``project_ids``, those ``user`` may read: one access check per
+    distinct project, for filtering a mixed list of issues (CHT-1780)."""
+    from app.services.project_service import ProjectService
+
+    allowed = set()
+    for project_id in set(project_ids):
+        project = await ProjectService().get_by_id(project_id)
+        if project and await check_user_project_access(user, project_id, project.team_id):
+            allowed.add(project_id)
+    return allowed
+
+
 async def check_user_in_team(user: User, team_id: str) -> bool:
     """Is ``user`` part of ``team_id`` at all -- a member, or an agent of
     that team at either scope? This is the bar for the team's *directory*,
@@ -128,6 +158,8 @@ async def check_user_in_team(user: User, team_id: str) -> bool:
     mention), and its labels (to label its issues). Never use it for
     team-wide *data*; that is ``check_user_team_access`` (CHT-1780).
     """
+    if not team_id:
+        return False
     if user.is_agent:
         return await agent_home_team_id(user) == team_id
     return await check_user_team_access(user, team_id)

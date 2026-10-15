@@ -254,3 +254,145 @@ class TestMcp:
             team_id=test_team.id, project_id=test_project.id, author_id=as_agent.id, title="Plan",
         )
         assert (await tools.doc_view("Plan"))["id"] == mine.id
+
+
+class TestReviewFindings:
+    """Regression tests for the PR #420 security review (F1-F7)."""
+
+    async def test_f1_cross_references_skip_sibling_issues(self, client, proj_agent, test_project, sibling, test_user):
+        agent, headers = proj_agent
+        own = await _issue(test_project, 1, test_user.id)
+        other_own = await _issue(test_project, 2, test_user.id)
+        sib1 = await _issue(sibling, 1, test_user.id)
+        await _issue(sibling, 7, test_user.id)
+        r = await client.patch(
+            f"/api/issues/{own.id}", json={"description": "see SIB-1 SIB-2 PROJ-2"}, headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        r = await client.post(f"/api/issues/{own.id}/comments", json={"content": "ref SIB-7"}, headers=headers)
+        assert r.status_code in (200, 201), r.text
+        rel = await client.get(f"/api/issues/{own.id}/relations", headers=headers)
+        assert [x["related_issue_id"] for x in rel.json()] == [other_own.id]
+        # No edge was written into the sibling issue either.
+        from app.oxyde_models.issue import OxydeIssueRelation
+        assert not await OxydeIssueRelation.objects.filter(related_issue_id=sib1.id).all()
+        assert not await OxydeIssueRelation.objects.filter(issue_id=sib1.id).all()
+
+    async def test_f1_relations_filtered_by_viewer(self, client, auth_headers, proj_agent, test_project, sibling, test_user):
+        # A human links the agent's issue to a sibling issue: legitimate,
+        # and the human sees it. The agent sees only its own project's side.
+        _, headers = proj_agent
+        own = await _issue(test_project, 1, test_user.id)
+        sib = await _issue(sibling, 1, test_user.id)
+        r = await client.patch(f"/api/issues/{own.id}", json={"description": "see SIB-1"}, headers=auth_headers)
+        assert r.status_code == 200
+        human = await client.get(f"/api/issues/{own.id}/relations", headers=auth_headers)
+        assert [x["related_issue_id"] for x in human.json()] == [sib.id]
+        agent_view = await client.get(f"/api/issues/{own.id}/relations", headers=headers)
+        assert agent_view.status_code == 200 and agent_view.json() == []
+
+    async def test_f2_issue_documents_filtered(self, client, auth_headers, proj_agent, test_team, test_project, sibling, test_user):
+        from app.services.document_service import DocumentService
+
+        _, headers = proj_agent
+        own = await _issue(test_project, 1, test_user.id)
+        gdoc = await OxydeDocument.objects.create(team_id=test_team.id, author_id=test_user.id, title="Global", content="T")
+        sdoc = await OxydeDocument.objects.create(
+            team_id=test_team.id, project_id=sibling.id, author_id=test_user.id, title="Sib", content="S",
+        )
+        mine = await OxydeDocument.objects.create(
+            team_id=test_team.id, project_id=test_project.id, author_id=test_user.id, title="Mine", content="M",
+        )
+        for doc in (gdoc, sdoc, mine):
+            await DocumentService().link_issue(doc.id, own.id)
+        agent_view = await client.get(f"/api/issues/{own.id}/documents", headers=headers)
+        assert [d["id"] for d in agent_view.json()] == [mine.id]
+        human = await client.get(f"/api/issues/{own.id}/documents", headers=auth_headers)
+        assert {d["id"] for d in human.json()} == {gdoc.id, sdoc.id, mine.id}
+
+    async def test_f3_document_issues_filtered(self, client, auth_headers, proj_agent, test_team, test_project, sibling, test_user):
+        from app.services.document_service import DocumentService
+
+        _, headers = proj_agent
+        own = await _issue(test_project, 1, test_user.id)
+        sib = await _issue(sibling, 1, test_user.id, description="SIB BODY")
+        doc = await OxydeDocument.objects.create(
+            team_id=test_team.id, project_id=test_project.id, author_id=test_user.id, title="Mine",
+        )
+        await DocumentService().link_issue(doc.id, sib.id)
+        await DocumentService().link_issue(doc.id, own.id)
+        agent_view = await client.get(f"/api/documents/{doc.id}/issues", headers=headers)
+        assert [i["id"] for i in agent_view.json()] == [own.id]
+        human = await client.get(f"/api/documents/{doc.id}/issues", headers=auth_headers)
+        assert {i["id"] for i in human.json()} == {own.id, sib.id}
+
+    @pytest.mark.parametrize("value", ["", None])
+    async def test_f4_agent_cannot_make_its_document_team_level(self, client, proj_agent, test_team, test_project, value):
+        agent, headers = proj_agent
+        doc = await OxydeDocument.objects.create(
+            team_id=test_team.id, project_id=test_project.id, author_id=agent.id, title="Mine",
+        )
+        r = await client.patch(f"/api/documents/{doc.id}", json={"project_id": value}, headers=headers)
+        assert r.status_code == 403, r.text
+        assert (await OxydeDocument.objects.get(id=doc.id)).project_id == test_project.id
+
+    @pytest.mark.parametrize("value", ["", None])
+    async def test_f4_member_can_make_a_document_team_level(self, client, auth_headers, test_team, test_project, test_user, value):
+        doc = await OxydeDocument.objects.create(
+            team_id=test_team.id, project_id=test_project.id, author_id=test_user.id, title="Mine",
+        )
+        r = await client.patch(f"/api/documents/{doc.id}", json={"project_id": value}, headers=auth_headers)
+        assert r.status_code == 200, r.text
+        assert (await OxydeDocument.objects.get(id=doc.id)).project_id is None
+
+    async def test_f4_unknown_or_foreign_target_project_is_400(self, client, auth_headers, test_team, test_project, test_user):
+        doc = await OxydeDocument.objects.create(
+            team_id=test_team.id, project_id=test_project.id, author_id=test_user.id, title="Mine",
+        )
+        other = await OxydeTeam.objects.create(name="Other", key="OTH")
+        foreign = await OxydeProject.objects.create(team_id=other.id, name="F", key="FOR")
+        for target in ("no-such-project", foreign.id):
+            r = await client.patch(f"/api/documents/{doc.id}", json={"project_id": target}, headers=auth_headers)
+            assert r.status_code == 400, (target, r.text)
+
+    async def test_f6_project_scoped_agent_not_assignable_elsewhere(self, client, auth_headers, proj_agent, test_project, sibling, test_user):
+        agent, _ = proj_agent
+        sib = await _issue(sibling, 1, test_user.id)
+        r = await client.patch(f"/api/issues/{sib.id}", json={"assignee_id": agent.id}, headers=auth_headers)
+        assert r.status_code == 400, r.text
+        r = await client.post(
+            f"/api/projects/{sibling.id}/issues", json={"title": "x", "assignee_id": agent.id},
+            headers={**auth_headers, "X-Chaotic-Interactive": "1"},
+        )
+        assert r.status_code == 400, r.text
+        own = await _issue(test_project, 1, test_user.id)
+        r = await client.patch(f"/api/issues/{own.id}", json={"assignee_id": agent.id}, headers=auth_headers)
+        assert r.status_code == 200, r.text
+
+    async def test_f6_mention_from_sibling_does_not_reach_agent(self, client, auth_headers, proj_agent, test_project, sibling, test_user):
+        agent, headers = proj_agent
+        sib = await _issue(sibling, 1, test_user.id)
+        r = await client.post(
+            f"/api/issues/{sib.id}/comments", json={"content": "@proj-bot PRIVATE DETAIL"}, headers=auth_headers,
+        )
+        assert r.status_code in (200, 201), r.text
+        inbox = await client.get("/api/inbox", headers=headers)
+        assert inbox.status_code == 200 and inbox.json() == []
+        # The same handle from its own project does reach it, so the
+        # check above is not vacuous.
+        own = await _issue(test_project, 1, test_user.id)
+        await client.post(f"/api/issues/{own.id}/comments", json={"content": "@proj-bot hi"}, headers=auth_headers)
+        inbox = await client.get("/api/inbox", headers=headers)
+        assert [e["issue_id"] for e in inbox.json()] == [own.id]
+
+    async def test_f7_in_team_refuses_a_missing_team(self, proj_agent, test_user):
+        from app.api.deps import check_user_in_team
+        from app.oxyde_models.user import OxydeUser
+
+        agent, _ = proj_agent
+        legacy = await OxydeUser.objects.create(
+            email="legacy-orphan@example.com", hashed_password="", name="Orphan", is_agent=True,
+        )
+        for user in (agent, legacy, test_user):
+            assert await check_user_in_team(user, None) is False
+            assert await check_user_in_team(user, "") is False
