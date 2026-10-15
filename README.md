@@ -77,11 +77,22 @@ running this on a box you plan to reach over a network, read
 `chaotic mcp` gives any local MCP-speaking harness (Claude Code, etc.)
 native chaotic tools over stdio. If your chaotic instance is reachable
 over the network (deployed somewhere, tunneled, whatever), it also
-speaks MCP directly over Streamable HTTP at `/mcp` -- point claude.ai's
-custom connectors, Claude Code web, or `claude mcp add --transport http`
-at it with an API key (`chaotic auth keys create "..." --expires-in 90d`). See
-[docs/agents.md](docs/agents.md) for both, including the capability-URL
-option for connector UIs that can't set custom headers.
+speaks MCP directly over Streamable HTTP at `/mcp`.
+
+The recommended way to connect a hosted client (claude.ai custom
+connectors, Claude Desktop, ChatGPT, or `claude mcp add --transport
+http`) is to add it by URL and authorize: give the client
+`https://your-chaotic-host/mcp` and nothing else, and it sends you to a
+Chaotic consent page in your browser where you pick the agent it acts
+as. This needs OAuth turned on, which is off by default: set
+`APP_BASE_URL` and then `OAUTH_ENABLED=true` with `chaotic system config
+set` on an installed server. API keys
+(`chaotic auth keys create "..." --expires-in 90d`, sent as an
+`Authorization: Bearer` header) are for headless sessions, scripts and
+CI. The old capability URL, with the key in the path, is deprecated.
+See [docs/agents.md](docs/agents.md), "Connecting: add by URL and
+authorize (OAuth)", for each client's steps and for moving a connector
+off the capability URL.
 
 ## Core Concepts
 
