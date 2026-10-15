@@ -1,7 +1,10 @@
 """Project API routes."""
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, check_user_team_access, check_user_project_access
+from app.api.deps import (
+    CurrentUser, check_user_in_team, check_user_project_access, check_user_team_access,
+    is_project_scoped_agent,
+)
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
@@ -58,6 +61,19 @@ async def list_projects(
     path-nested ``GET /teams/{team_id}/projects`` in nested.py.
     """
     project_service = ProjectService()
+
+    if is_project_scoped_agent(current_user):
+        # A project-scoped agent sees its team's project list confined to
+        # its own project, so a key or name resolves the way it does for
+        # everyone else (CHT-1780).
+        if not await check_user_in_team(current_user, team_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not a member of this team",
+            )
+        own = await project_service.get_by_id(current_user.agent_project_id)
+        confined = [own] if own and own.team_id == team_id else []
+        return [ProjectResponse.model_validate(project) for project in confined[skip:skip + limit]]
 
     if not await check_user_team_access(current_user, team_id):
         raise HTTPException(

@@ -58,7 +58,7 @@ _key_projects: dict[tuple[str, str], dict | None] = {}
 # could not help it.
 PROJECT_SCOPED_TEAM_WIDE = (
     "This API key is scoped to a single project, not a team -- "
-    "team-wide tools (activity_recent, project_list, "
+    "team-wide reads (activity_recent without `project`, "
     "all_projects=true) aren't available for it. Pass `project` "
     "instead, or use a team-scoped or human API key."
 )
@@ -185,6 +185,11 @@ class RestBackend:
     async def resolve_team(self, team: str | None) -> str:
         # `team` is the HTTP-only disambiguator (registry.bind drops it
         # here); the profile's team, or the key's only one, is the scope.
+        return await self._require_team()
+
+    async def resolve_member_team(self, team: str | None) -> str:
+        # The profile has one team, a project-scoped key's included; the
+        # server confines what such a key reads there (CHT-1780).
         return await self._require_team()
 
     async def resolve_project(self, project: str | None, team: str | None) -> tuple[str, str]:

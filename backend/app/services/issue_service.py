@@ -2166,10 +2166,16 @@ class IssueService:
         statuses=None, priorities=None, issue_type=None,
         team_ids: list[str] | None = None,
         sort_by: str | None = None, order: str | None = None,
+        project_id: str | None = None,
     ) -> list[OxydeIssue]:
-        """List issues assigned to a user, optionally scoped to specific teams."""
+        """List issues assigned to a user, optionally scoped to specific
+        teams and/or one project (a project-scoped agent's, CHT-1780)."""
         conditions = ["i.assignee_id = ?"]
         params = [user_id]
+
+        if project_id:
+            conditions.append("i.project_id = ?")
+            params.append(project_id)
 
         if team_ids:
             placeholders = ",".join("?" for _ in team_ids)

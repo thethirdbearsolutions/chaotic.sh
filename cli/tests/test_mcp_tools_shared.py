@@ -89,6 +89,10 @@ class FakeBackend:
         self._rec("resolve_team", team)
         return "team-1"
 
+    async def resolve_member_team(self, team):
+        self._rec("resolve_member_team", team)
+        return "team-1"
+
     async def resolve_project(self, project, team):
         self._rec("resolve_project", project, team)
         if project:
@@ -408,13 +412,13 @@ async def test_team_kwarg_is_dropped_when_not_advertised(fake):
     tools = _tools(fake)
     result = await tools["label_list"](team="ignored")
     assert result == {"labels": fake.labels}
-    assert fake.calls_to("resolve_team") == [((None,), {})]
+    assert fake.calls_to("resolve_member_team") == [((None,), {})]
 
 
 async def test_team_kwarg_is_forwarded_when_advertised():
     fake = FakeBackend(team_param=True)
     await _tools(fake)["label_list"](team="t-explicit")
-    assert fake.calls_to("resolve_team") == [(("t-explicit",), {})]
+    assert fake.calls_to("resolve_member_team") == [(("t-explicit",), {})]
 
 
 async def test_positional_calls_work(fake):
@@ -852,12 +856,12 @@ class TestInboxTools:
         }
         assert "body" not in result["entries"][0]
         assert fake.calls_to("list_inbox") == [((None,), {"unread": False, "limit": 21})]
-        assert fake.calls_to("resolve_team") == []
+        assert fake.calls_to("resolve_member_team") == []
 
     async def test_explicit_team_is_resolved(self):
         fake = FakeBackend(team_param=True)
         await _tools(fake)["inbox_list"](team="team-1")
-        assert fake.calls_to("resolve_team") == [(("team-1",), {})]
+        assert fake.calls_to("resolve_member_team") == [(("team-1",), {})]
         assert fake.calls_to("list_inbox") == [(("team-1",), {"unread": False, "limit": 21})]
         assert (await _tools(fake)["inbox_mark_all_read"](team="team-1"))["marked_count"] == 1
         assert fake.calls_to("mark_all_inbox_read")[-1] == (("team-1",), {})

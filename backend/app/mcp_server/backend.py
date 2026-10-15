@@ -149,10 +149,17 @@ async def _resolve_document_id(user, document_id: str) -> str:
     else:
         team_ids = [t.id for t in await TeamService().get_user_teams(user.id)]
 
+    # A project-scoped agent matches only its own project's documents: a
+    # match elsewhere would only be refused by the read, and meanwhile says
+    # that a title exists in a project it cannot see (CHT-1780).
+    confined_to = user.agent_project_id if user.is_agent else None
+
     candidates = []
     lowered = document_id.lower()
     for team_id in team_ids:
         for doc in await doc_service.list_by_team(team_id, limit=1000):
+            if confined_to and doc.project_id != confined_to:
+                continue
             if doc.id.startswith(document_id) or doc.title.lower() == lowered:
                 candidates.append(doc)
 
@@ -180,6 +187,10 @@ class InProcessBackend:
     @_translated(Access.READ)
     async def resolve_team(self, team: str | None) -> str:
         return await scope.resolve_team(self._user, team)
+
+    @_translated(Access.READ)
+    async def resolve_member_team(self, team: str | None) -> str:
+        return await scope.resolve_member_team(self._user, team)
 
     @_translated(Access.READ)
     async def resolve_project(self, project: str | None, team: str | None) -> tuple[str, str]:

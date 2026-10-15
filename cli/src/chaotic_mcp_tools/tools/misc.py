@@ -23,7 +23,7 @@ async def project_list(
     current team (`chaotic status`); the HTTP transport adds a `team`
     parameter for API keys that can see more than one.
     """
-    team_id = await backend.resolve_team(team)
+    team_id = await backend.resolve_member_team(team)
     # limit=1001 (page of 1000 + the truncation probe): the API default of
     # 100 would make a real project silently unresolvable (CHT-1351).
     projects = await backend.list_projects(team_id, 1001)

@@ -315,7 +315,7 @@ async def _project_for_new_issue(
     if project is None:
         # `team` only picks the project, which the parent already did; one
         # that does not own it is refused like a mismatched `project`.
-        if team is not None and await backend.resolve_team(team) != await backend.team_for_project(parent_project):
+        if team is not None and await backend.resolve_member_team(team) != await backend.team_for_project(parent_project):
             raise ToolInputError(
                 f"Parent {parent} is in project {parent_key}, which is not in team {team}: a sub-issue is "
                 "created in its parent's project. Omit `team`, or pass the team that owns it."
@@ -774,7 +774,7 @@ async def label_list(
     it a caller has to already know the taxonomy to filter by it, or
     guess. Also the source of the names issue_label accepts.
     """
-    team_id = await backend.resolve_team(team)
+    team_id = await backend.resolve_member_team(team)
     return {"labels": list(await backend.list_labels(team_id, 1000) or [])}
 
 

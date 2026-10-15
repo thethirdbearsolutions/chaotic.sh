@@ -522,7 +522,7 @@ class TestRegisterOnly:
         from app.mcp_server.backend import InProcessBackend
 
         resolvers = {
-            "resolve_team", "resolve_project", "optional_project", "team_for_project",
+            "resolve_team", "resolve_member_team", "resolve_project", "optional_project", "team_for_project",
             "resolve_assignee", "resolve_sprint", "resolve_document", "me_id",
         }
         writes, reads = set(), set()

@@ -5,7 +5,9 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, status, Query, Header
 from app.auth.access import reads, writes
 from app.api.idempotency import IdempotentRoute, idempotent
-from app.api.deps import CurrentUser, check_user_project_access, check_user_team_access
+from app.api.deps import (
+    CurrentUser, check_user_project_access, check_user_team_access, is_project_scoped_agent,
+)
 from app.utils import ensure_utc
 
 logger = logging.getLogger(__name__)
@@ -726,8 +728,13 @@ async def list_issues(
             sprint_id, skip, limit, issue_type=issue_type, sort_by=sort_by, order=order
         )
     elif assignee_id:
-        # Assignee-only query: scope to user's accessible teams
-        if current_user.is_agent:
+        # Assignee-only query: scope to user's accessible teams, and a
+        # project-scoped agent to its own project (CHT-1780).
+        confine_to = current_user.agent_project_id if is_project_scoped_agent(current_user) else None
+        if confine_to:
+            project = await project_service.get_by_id(confine_to)
+            team_ids = [project.team_id] if project else []
+        elif current_user.is_agent:
             team_ids = [current_user.agent_team_id] if current_user.agent_team_id else []
         else:
             user_teams = await team_service.get_user_teams(current_user.id)
@@ -739,12 +746,15 @@ async def list_issues(
             # `issue mine` queries by assignee alone -- an agent checking
             # its own claims must not see a phantom still-mine issue
             # whose lease already lapsed server-side.
-            for tid in team_ids:
-                await issue_service.release_expired_leases(team_id=tid)
+            if confine_to:
+                await issue_service.release_expired_leases(project_id=confine_to)
+            else:
+                for tid in team_ids:
+                    await issue_service.release_expired_leases(team_id=tid)
             issues = await issue_service.list_by_assignee(
                 assignee_id, skip, limit,
                 statuses=statuses, priorities=priorities, issue_type=issue_type, team_ids=team_ids,
-                sort_by=sort_by, order=order,
+                sort_by=sort_by, order=order, project_id=confine_to,
             )
     else:
         raise HTTPException(
@@ -774,14 +784,22 @@ async def search_issues(
     issue_service = IssueService()
     project_service = ProjectService()
 
-    has_access = await check_user_team_access(current_user, team_id)
+    # With project_id this is a project search, which project access
+    # covers (a project-scoped agent's own, CHT-1780); without one it is
+    # team-wide.
+    if project_id:
+        has_access = await check_user_project_access(current_user, project_id, team_id)
+    else:
+        has_access = await check_user_team_access(current_user, team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this team",
         )
 
-    # If project_id provided, verify it belongs to this team
+    # The project must be in this team. For a project-scoped agent this is
+    # the check that pins its project to the team in the URL: its project
+    # access above does not look at team_id.
     if project_id:
         project = await project_service.get_by_id(project_id)
         if not project or project.team_id != team_id:
@@ -886,13 +904,20 @@ async def list_team_activities(
     sprint_service = SprintService()
     document_service = DocumentService()
 
-    has_access = await check_user_team_access(current_user, team_id)
+    # As in search_issues: project access for one project's feed (what a
+    # project-scoped agent's `chaotic await` polls), team access for the
+    # team's (CHT-1780).
+    if project_id:
+        has_access = await check_user_project_access(current_user, project_id, team_id)
+    else:
+        has_access = await check_user_team_access(current_user, team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this team",
         )
 
+    # Pins the project to the URL's team (see search_issues).
     if project_id:
         project = await ProjectService().get_by_id(project_id)
         if not project or project.team_id != team_id:

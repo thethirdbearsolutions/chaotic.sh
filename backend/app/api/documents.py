@@ -80,9 +80,8 @@ async def create_document(
     document_service = DocumentService()
 
     # Authorize at the project level when the doc is project-scoped, so a
-    # project-scoped agent (agent_project_id set, agent_team_id None) can create
-    # docs in its own project — check_user_team_access only matches agent_team_id
-    # and would always reject such agents (CHT-1273).
+    # project-scoped agent can create docs in its own project —
+    # check_user_team_access always rejects such agents (CHT-1273, CHT-1780).
     #
     # check_user_project_access's agent branch matches agent_project_id==project_id
     # with NO relation to team_id, and project_id is a request-body field, so we
@@ -155,19 +154,22 @@ async def list_documents(
     limit = min(limit, 10000)
     document_service = DocumentService()
 
-    if not await check_user_team_access(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
-
-    # Check project access if filtering by project
+    # A project filter is the project-confined path: project access is
+    # enough (list_filtered also pins team_id, so a project of another
+    # team lists nothing). Without one the listing is team-wide, which a
+    # project-scoped agent may not read (CHT-1780). A sprint filter alone
+    # does not confine: a team-level document may carry any sprint.
     if project_id:
         if not await check_user_project_access(current_user, project_id, team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this project",
             )
+    elif not await check_user_team_access(current_user, team_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this team",
+        )
 
     # Check sprint access if filtering by sprint
     if sprint_id:
@@ -303,8 +305,12 @@ async def delete_document(document_id: str, current_user: CurrentUser):
             detail="Document not found",
         )
 
-    # Verify user is a member of the document's team
-    has_access = await check_user_team_access(current_user, document.team_id)
+    # Same access rule as reading it: project access for a project's
+    # document, team access for a team-level one (CHT-1780).
+    if document.project_id:
+        has_access = await check_user_project_access(current_user, document.project_id, document.team_id)
+    else:
+        has_access = await check_user_team_access(current_user, document.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
