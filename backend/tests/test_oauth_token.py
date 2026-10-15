@@ -5,11 +5,16 @@ by registered method, revocation, no-store, form bodies only and no
 secrets in the URL (CHT-1570), no ambient auth (CHT-1564), and the
 OAUTH_ENABLED gate.
 """
+import asyncio
 import base64
+import contextlib
 import hashlib
+import logging
+import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 
 from app.config import get_settings
@@ -526,6 +531,22 @@ class TestRequestShape:
         _assert_error(response, 400, "invalid_request")
         assert (await _token(client, _refresh(public_client, tokens["refresh_token"]))).status_code == 200
 
+    @pytest.mark.parametrize("path, name", [
+        ("/oauth/token", "code"), ("/oauth/token", "refresh_token"), ("/oauth/token", "client_secret"),
+        ("/oauth/token", "code_verifier"), ("/oauth/revoke", "token"), ("/oauth/revoke", "client_secret"),
+    ])
+    async def test_query_string_refusal_does_not_echo_the_value(self, client, public_client, tokens, path, name):
+        """CHT-1570: the refusal says where parameters go and nothing
+        about what was sent; a refused secret is not reflected back."""
+        secret = tokens["refresh_token"]
+        response = await client.post(f"{path}?{name}={secret}", data={"client_id": public_client}, headers=FORM)
+        _assert_error(response, 400, "invalid_request")
+        assert secret not in response.text
+        assert secret[:12] not in response.text
+        # One fixed description, whatever was sent.
+        assert response.json() == {"error": "invalid_request",
+                                   "error_description": "parameters go in the form-encoded body, never the URL"}
+
     async def test_repeated_parameter(self, client, public_client):
         response = await client.post(
             "/oauth/token", content=f"grant_type=refresh_token&client_id={public_client}&client_id=x",
@@ -701,6 +722,99 @@ class TestRevoke:
                                         headers=FORM), 400, "invalid_request")
         _assert_error(await client.post("/oauth/revoke", json={"token": "x", "client_id": public_client}),
                       400, "invalid_request")
+
+
+# --- CHT-1570: the access log of a real uvicorn ------------------------------------
+
+# A minted OAuth secret as it would appear in a log line: its prefix
+# followed directly by hex. The redacted short form (``crt_...19a0``)
+# does not match.
+_LOGGED_SECRET = re.compile(r"(?:cac_|cat_|crt_|cct_)[0-9a-f]")
+
+
+@contextlib.asynccontextmanager
+async def _uvicorn_access_log():
+    """Serve ``app.main:app`` on a real uvicorn (ephemeral port, this
+    event loop, so this test's database) and capture every formatted
+    ``uvicorn.access`` line. Yields ``(base_url, lines)``."""
+    import uvicorn
+
+    from app import log_redaction
+    from app.main import app
+
+    log_redaction.install()
+    lines: list[str] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            lines.append(record.getMessage())
+
+    access = logging.getLogger("uvicorn.access")
+    saved_level, handler = access.level, Capture(level=logging.INFO)
+    access.addHandler(handler)
+    access.setLevel(logging.INFO)
+    # lifespan off: the db fixture already initialised Oxyde.
+    server = uvicorn.Server(uvicorn.Config(
+        app, host="127.0.0.1", port=0, lifespan="off", log_config=None, access_log=True,
+    ))
+    server.install_signal_handlers = lambda: None  # uvicorn < 0.29
+    task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(500):
+            if server.started or task.done():
+                break
+            await asyncio.sleep(0.01)
+        assert server.started, "uvicorn did not start"
+        port = server.servers[0].sockets[0].getsockname()[1]
+        yield f"http://127.0.0.1:{port}", lines
+    finally:
+        server.should_exit = True
+        await asyncio.wait_for(task, 10)
+        access.removeHandler(handler)
+        access.setLevel(saved_level)
+
+
+class TestAccessLog:
+    async def test_token_requests_log_no_secret(self, client, public_client, auth_headers, test_team):
+        """The acceptance test of CHT-1570, against uvicorn's real access
+        log: a code exchange, a refresh and a revocation, each with its
+        secrets in the body, and the same secrets attempted in the query
+        string (refused, and scrubbed from the line). No logged line
+        holds a cac_/cat_/crt_/cct_ prefix followed by hex."""
+        code = await _code(client, public_client, auth_headers, test_team.id)
+        async with _uvicorn_access_log() as (base, lines):
+            async with httpx.AsyncClient(base_url=base, timeout=10) as http:
+                async def post(path, data, query=None):
+                    return await http.post(path, data=data, params=query, headers=FORM)
+
+                # Secrets in the URL: refused, never read.
+                for query in ({"code": code}, {"code_verifier": VERIFIER}):
+                    _assert_error(await post("/oauth/token", {"grant_type": "authorization_code",
+                                                              "client_id": public_client}, query),
+                                  400, "invalid_request")
+                exchanged = await post("/oauth/token", _exchange(public_client, code))
+                assert exchanged.status_code == 200, exchanged.text
+                issued = exchanged.json()
+                _assert_error(await post("/oauth/token", {"grant_type": "refresh_token", "client_id": public_client},
+                                         {"refresh_token": issued["refresh_token"]}), 400, "invalid_request")
+                refreshed = await post("/oauth/token", _refresh(public_client, issued["refresh_token"]))
+                assert refreshed.status_code == 200, refreshed.text
+                current = refreshed.json()
+                _assert_error(await post("/oauth/revoke", {"client_id": public_client},
+                                         {"token": current["access_token"]}), 400, "invalid_request")
+                revoked = await post("/oauth/revoke", {"token": current["refresh_token"], "client_id": public_client})
+                assert revoked.status_code == 200, revoked.text
+
+        oauth_lines = [line for line in lines if '"POST /oauth/' in line]
+        assert len(oauth_lines) == 7, lines
+        assert sum(" 200" in line for line in oauth_lines) == 3, oauth_lines
+        assert sum("=[redacted]" in line and " 400" in line for line in oauth_lines) == 4, oauth_lines
+        secrets = [code, VERIFIER, issued["access_token"], issued["refresh_token"],
+                   current["access_token"], current["refresh_token"]]
+        for line in lines:
+            assert not _LOGGED_SECRET.search(line), line
+            for secret in secrets:
+                assert secret not in line, line
 
 
 # --- CHT-1564 guard: the whole OAuth route inventory ------------------------------
