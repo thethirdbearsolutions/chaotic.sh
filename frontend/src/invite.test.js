@@ -101,6 +101,16 @@ describe('rendering', () => {
         expect(el.textContent).toContain('Sent to r***@example.com');
     });
 
+    it('says when it expires, and copes with a bad date', () => {
+        const el = document.createElement('div');
+        renderSignedOut(el, preview({ expires_at: '2026-10-22T12:00:00Z' }));
+        expect(el.textContent).toContain('expires');
+        expect(el.textContent).toContain('2026');
+
+        renderSignedOut(el, preview({ expires_at: 'not a date' }));
+        expect(el.textContent).not.toContain('expires');
+    });
+
     it('copes with an inviter who is gone', () => {
         const el = document.createElement('div');
         renderSignedOut(el, preview({ invited_by_name: null }));

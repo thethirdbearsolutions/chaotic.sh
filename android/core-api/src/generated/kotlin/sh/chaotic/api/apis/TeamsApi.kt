@@ -24,6 +24,7 @@
 package sh.chaotic.api.apis
 
 import sh.chaotic.api.models.HTTPValidationError
+import sh.chaotic.api.models.InvitationPreviewResponse
 import sh.chaotic.api.models.TeamCreate
 import sh.chaotic.api.models.TeamInvitationCreate
 import sh.chaotic.api.models.TeamInvitationResponse
@@ -51,7 +52,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * POST /api/teams/invitations/{token}/accept
         * Accept Invitation
-        * Accept a team invitation.
+        * Accept a team invitation.  An accepted or declined invitation is answered like an unknown one (CHT-1788): before, a used token could be accepted again and added a second membership row.
          * @param token  
          * @return TeamMemberResponse
         */
@@ -350,6 +351,40 @@ import io.ktor.http.ParametersBuilder
             query = localVariableQuery,
             headers = localVariableHeaders,
             requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * GET /api/teams/invitations/{token}
+        * Preview Invitation
+        * The public preview the /invite/&lt;token&gt; page shows (CHT-1265).  Unauthenticated: the emailed link is opened before anyone signs in. Holding the token is the only credential, so this tells its holder no more than the page needs (team name, role, inviter, a masked address, expiry), and answers an unknown, expired, accepted, declined or revoked token with the same 404, so a lookup cannot tell them apart. The token is redacted from the request log (app.log_redaction).
+         * @param token  
+         * @return InvitationPreviewResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun previewInvitationApiTeamsInvitationsTokenGet(token: kotlin.String): HttpResponse<InvitationPreviewResponse> {
+
+            val localVariableAuthNames = listOf<String>()
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/api/teams/invitations/{token}".replace("{" + "token" + "}", "$token"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = false,
             )
 
             return request(

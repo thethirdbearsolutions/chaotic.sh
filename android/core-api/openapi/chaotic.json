@@ -764,13 +764,56 @@
         }
       }
     },
+    "/api/teams/invitations/{token}": {
+      "get": {
+        "tags": [
+          "teams"
+        ],
+        "summary": "Preview Invitation",
+        "description": "The public preview the /invite/<token> page shows (CHT-1265).\n\nUnauthenticated: the emailed link is opened before anyone signs in.\nHolding the token is the only credential, so this tells its holder\nno more than the page needs (team name, role, inviter, a masked\naddress, expiry), and answers an unknown, expired, accepted,\ndeclined or revoked token with the same 404, so a lookup cannot\ntell them apart. The token is redacted from the request log\n(app.log_redaction).",
+        "operationId": "preview_invitation_api_teams_invitations__token__get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationPreviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/teams/invitations/{token}/accept": {
       "post": {
         "tags": [
           "teams"
         ],
         "summary": "Accept Invitation",
-        "description": "Accept a team invitation.",
+        "description": "Accept a team invitation.\n\nAn accepted or declined invitation is answered like an unknown one\n(CHT-1788): before, a used token could be accepted again and added\na second membership row.",
         "operationId": "accept_invitation_api_teams_invitations__token__accept_post",
         "security": [
           {
@@ -10787,6 +10830,47 @@
         ],
         "title": "InboxSyncResponse",
         "description": "One page of GET /inbox/sync (CHT-1607). The client contract:\n\n* Store `next_cursor` and send it back as `since` next time. While\n  `has_more` is true, fetch again at once; otherwise wait for the next\n  poll or push.\n* Upsert every entry by `id`; drop it when `state` is `resolved` or\n  `archived`. The same entry can come more than once: the cursor stays\n  a few seconds behind the newest change, so recent changes are sent\n  again on the next sync.\n* When `retry_after` is set, the cursor is being held back behind\n  rows just sent: syncing again sooner than that many seconds returns\n  the same rows. Push or user action may still sync earlier.\n* When `reset` is true, the server restarted the sync (the caller's\n  teams changed since the cursor was issued): clear the cache before\n  applying this page, then page on as usual.\n* Drop any held entry whose team is not in `team_ids` (a left or\n  deleted team sends no tombstones).\n* Display fields (`issue_identifier`, `document_title`, `source_user`)\n  are resolved when sent. A document title or a person's name change\n  re-sends the open entries that show it; anything else that changes\n  them does not, so treat them as a snapshot."
+      },
+      "InvitationPreviewResponse": {
+        "properties": {
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/TeamRole"
+          },
+          "invited_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invited By Name"
+          },
+          "email_hint": {
+            "type": "string",
+            "title": "Email Hint"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_name",
+          "role",
+          "invited_by_name",
+          "email_hint",
+          "expires_at"
+        ],
+        "title": "InvitationPreviewResponse",
+        "description": "What the public /invite/<token> page shows before anyone signs in\n(CHT-1265). Only what the page needs: no ids, no token, no status\n(a preview exists only for a valid invitation), and the invited\naddress only masked, enough to say which account to sign in with."
       },
       "InvitationStatus": {
         "type": "string",

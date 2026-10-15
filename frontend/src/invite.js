@@ -96,7 +96,14 @@ function summary(preview) {
         <p class="invite-lead">${inviter}</p>
         <h1 class="invite-team">${escapeHtml(preview.team_name)}</h1>
         <p>on Chaotic, as ${role}.</p>
-        <p class="invite-muted">Sent to <strong>${escapeHtml(preview.email_hint)}</strong></p>`;
+        <p class="invite-muted">Sent to <strong>${escapeHtml(preview.email_hint)}</strong>${expiry(preview)}</p>`;
+}
+
+function expiry(preview) {
+    const when = new Date(preview.expires_at);
+    if (Number.isNaN(when.getTime())) return '';
+    const date = when.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+    return ` · expires ${escapeHtml(date)}`;
 }
 
 /**
