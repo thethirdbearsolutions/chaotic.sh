@@ -8,10 +8,10 @@ takes what REST takes (API keys, session JWTs, and OAuth access tokens
 issued for the whole server, ``<base>``), with one more rule: an agent
 with a valid credential is refused (4003). /ws is the live feed of the
 people's own clients (the web app, the native app's human session,
-CHT-1602), and that feed is broader than REST gives an agent: every
-project's events in the team, and inbox events for every recipient
-(filtered by the client, CHT-1250), where a project-scoped agent reads
-one project and an agent only its own inbox on REST. Of OAuth tokens,
+CHT-1602), and that feed is broader than REST gives a project-scoped
+agent: every project's events in the team. Each socket is also filtered
+by its owner (CHT-1840): it gets its own principal's inbox events only,
+and a socket confined to one project only that project's events. Of OAuth tokens,
 only a built-in app's session (the Android app, CHT-1602) acts as a
 person, and /ws takes it like a web login; every other OAuth session
 acts as an agent and is refused (4003), and a connector token (issued
@@ -609,6 +609,11 @@ async def authenticate(token: str | None, team_id: str) -> Principal:
     except CredentialError as exc:
         code = CLOSE_FORBIDDEN if exc.failure is CredentialFailure.INACTIVE else CLOSE_UNAUTHENTICATED
         raise WsRefused(code, exc.detail) from None
+    # Not the only guard: each socket also records its owner and reach,
+    # and gets only the broadcasts it may read (its own inbox events, its
+    # project's events; ``app.websocket.ConnectionManager._may_receive``,
+    # CHT-1840), so relaxing this does not leak sibling projects or other
+    # people's inboxes.
     if principal.user.is_agent:
         raise WsRefused(CLOSE_FORBIDDEN, "Agents cannot subscribe to the live feed")
     try:

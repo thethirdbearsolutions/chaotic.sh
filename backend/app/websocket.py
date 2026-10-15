@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, Set
+from typing import TYPE_CHECKING, Callable, Dict, Sequence, Set
 
 from fastapi import WebSocket
 
@@ -22,19 +22,44 @@ CLOSE_FORBIDDEN = 4003
 @dataclass(frozen=True)
 class SocketOwner:
     """Who a socket was authenticated as (CHT-1616), so it can be closed
-    the moment that credential ends."""
+    the moment that credential ends, and what it may receive (CHT-1840).
+
+    ``project_id`` is the socket's reach: the one project its principal
+    is confined to (``app.api.deps.confined_project_id``), or None for a
+    principal that reads all of ``team_id``'s data. It has no default, so
+    nothing builds an owner without saying which; ``of`` derives it from
+    the principal. A confined socket receives only the broadcasts tagged
+    with its own project (``ConnectionManager._may_receive``).
+    """
 
     team_id: str
     user_id: str  # the principal
+    project_id: str | None  # the reach; None is team-wide (CHT-1840)
     holder_user_id: str | None = None
     credential_id: str | None = None  # an API key's id
     holder_session_id: str | None = None  # an OAuth token's session
 
     @classmethod
     def of(cls, team_id: str, principal: Principal) -> SocketOwner:
+        # Imported here, like the close codes above: this module stays
+        # out of the auth stack's import graph.
+        from app.api.deps import confined_project_id
+
+        user = principal.user
+        project_id = confined_project_id(user)
+        # Defensive while /ws refuses agents (``app.ws_auth.authenticate``):
+        # should that change, an agent's reach is still recorded here. A
+        # project-scoped one gets its project above, a team-scoped one the
+        # whole team, and either only on its own team (a project-scoped
+        # agent carries its project's team, CHT-1837). An agent on any
+        # other team is refused, not given a socket that hears nothing or
+        # one with team-wide fan-out (CHT-1840).
+        if user.is_agent and (not team_id or user.agent_team_id != team_id):
+            raise ValueError(f"agent {user.id} has no recorded reach on team {team_id}")
         return cls(
             team_id=team_id,
-            user_id=principal.user.id,
+            user_id=user.id,
+            project_id=project_id,
             holder_user_id=principal.holder_user_id,
             credential_id=principal.credential_id,
             holder_session_id=principal.holder_session_id,
@@ -47,22 +72,25 @@ class ConnectionManager:
     def __init__(self):
         # Map of team_id -> set of WebSocket connections
         self.active_connections: Dict[str, Set[WebSocket]] = {}
-        # Who each socket is, for close_for (CHT-1616). A socket connected
-        # without one is only ever closed by its own watcher.
+        # Who each socket is, for close_for (CHT-1616) and for what it may
+        # receive (CHT-1840). Every connected socket has one.
         self.owners: Dict[WebSocket, SocketOwner] = {}
 
     async def connect(
-        self, websocket: WebSocket, team_id: str, subprotocol: str | None = None,
-        owner: SocketOwner | None = None,
+        self, websocket: WebSocket, team_id: str, *, owner: SocketOwner,
+        subprotocol: str | None = None,
     ):
         """Accept a new WebSocket connection, selecting ``subprotocol``
-        (``chaotic`` when the client offered it, CHT-1603)."""
+        (``chaotic`` when the client offered it, CHT-1603). ``owner`` is
+        required and must be for ``team_id``: it records the socket's
+        reach, which every broadcast is filtered by (CHT-1840)."""
+        if not isinstance(owner, SocketOwner) or owner.team_id != team_id:
+            raise ValueError(f"a socket on team {team_id} needs a SocketOwner for that team, got {owner!r}")
         await websocket.accept(subprotocol=subprotocol)
         if team_id not in self.active_connections:
             self.active_connections[team_id] = set()
         self.active_connections[team_id].add(websocket)
-        if owner is not None:
-            self.owners[websocket] = owner
+        self.owners[websocket] = owner
 
     def disconnect(self, websocket: WebSocket, team_id: str) -> bool:
         """Remove a WebSocket connection. True if it was connected."""
@@ -108,8 +136,35 @@ class ConnectionManager:
             lambda o: o.user_id == user_id and (team_id is None or o.team_id == team_id), code,
         )
 
+    def _may_receive(self, connection: WebSocket, message: dict) -> bool:
+        """May ``connection`` be sent ``message``? Decided per socket from
+        its recorded owner, not left to /ws refusing every principal that
+        could not read the whole team, nor to the client (CHT-1840):
+
+        * a message for one recipient (the envelope's
+          ``recipient_user_id``: inbox events) reaches only that
+          recipient's sockets;
+        * a socket confined to one project receives a message only if
+          every project it names is that project (``project_ids``, else
+          ``project_id``); one naming another project, or none
+          (team-level: team documents), never reaches it;
+        * a ``confined_only`` message (a document leaving a project)
+          reaches confined sockets only: team-wide ones still see it;
+        * a socket with no recorded owner receives nothing.
+        """
+        owner = self.owners.get(connection)
+        if owner is None:
+            return False
+        if "recipient_user_id" in message and message["recipient_user_id"] != owner.user_id:
+            return False
+        if owner.project_id is None:
+            return not message.get("confined_only", False)
+        named = message.get("project_ids", [message.get("project_id")])
+        return bool(named) and all(p == owner.project_id for p in named)
+
     async def broadcast_to_team(self, team_id: str, message: dict):
-        """Broadcast a message to all connections in a team: now, or,
+        """Broadcast a message to the team's connections that may receive
+        it (``_may_receive``): now, or,
         inside a transaction (``app.db.transactions.atomic``), once it
         has committed, and not at all if it rolls back. A client that
         refetches on the event must find what it announces; a keyed
@@ -136,6 +191,8 @@ class ConnectionManager:
             # Closed since the snapshot (a revocation, PR #356 review, 4):
             # skip it. A send already in flight cannot be recalled.
             if connection not in self.active_connections.get(team_id, ()):
+                continue
+            if not self._may_receive(connection, message):
                 continue
             try:
                 await connection.send_json(message)
@@ -175,100 +232,110 @@ async def on_credentials_ended(event: CredentialsEnded) -> None:
         )
     if event.removed_member is not None:
         # /ws refuses agents, so the member is the socket's principal.
+        # Should agents be let in (CHT-1840), a socket held through an
+        # agent the removed member answers for would need closing by
+        # holder_user_id here too; until then this is all it can be.
         team_id, user_id = event.removed_member
         await manager.close_for(user_id=user_id, team_id=team_id, code=CLOSE_FORBIDDEN)
     if event.deleted_team_id is not None:
         await manager.close_matching(lambda o: o.team_id == event.deleted_team_id, CLOSE_FORBIDDEN)
 
 
-async def broadcast_issue_event(team_id: str, event_type: str, issue_data: dict):
-    """Broadcast an issue event to all team members."""
-    await manager.broadcast_to_team(team_id, {
-        "type": event_type,
-        "entity": "issue",
-        "data": issue_data
-    })
+def _envelope(event_type: str, entity: str, data: dict, project_id: str | None, **extra) -> dict:
+    """The wire message. ``project_id`` is the project the event belongs
+    to, or None for a team-level one; the manager filters on it per
+    socket (CHT-1840), and on ``extra`` routing keys (``project_ids``,
+    ``recipient_user_id``, ``confined_only``) where one is given. A
+    client that does not know a field ignores it."""
+    return {"type": event_type, "entity": entity, "data": data, "project_id": project_id, **extra}
 
 
-async def broadcast_project_event(team_id: str, event_type: str, project_data: dict):
-    """Broadcast a project event to all team members."""
-    await manager.broadcast_to_team(team_id, {
-        "type": event_type,
-        "entity": "project",
-        "data": project_data
-    })
+# Each broadcast takes the event's ``project_id`` as a required keyword
+# (None: team-level), so every call site says where its event belongs: a
+# socket confined to a project receives only that project's events
+# (CHT-1840). ``tests/test_ws_broadcast_tags.py`` checks the tags.
 
 
-async def broadcast_comment_event(team_id: str, event_type: str, comment_data: dict):
-    """Broadcast a comment event to all team members."""
-    await manager.broadcast_to_team(team_id, {
-        "type": event_type,
-        "entity": "comment",
-        "data": comment_data
-    })
+async def broadcast_issue_event(team_id: str, event_type: str, issue_data: dict, *, project_id: str | None):
+    """Broadcast an issue event to the team."""
+    await manager.broadcast_to_team(team_id, _envelope(event_type, "issue", issue_data, project_id))
 
 
-async def broadcast_document_event(team_id: str, event_type: str, document_data: dict):
-    """Broadcast a document event to all team members (CHT-1213).
+async def broadcast_project_event(team_id: str, event_type: str, project_data: dict, *, project_id: str | None):
+    """Broadcast a project event to the team."""
+    await manager.broadcast_to_team(team_id, _envelope(event_type, "project", project_data, project_id))
+
+
+async def broadcast_comment_event(team_id: str, event_type: str, comment_data: dict, *, project_id: str | None):
+    """Broadcast a comment event to the team: an issue's (its project) or
+    a document's (the document's project, None for a team document)."""
+    await manager.broadcast_to_team(team_id, _envelope(event_type, "comment", comment_data, project_id))
+
+
+async def broadcast_document_event(team_id: str, event_type: str, document_data: dict, *, project_id: str | None):
+    """Broadcast a document event to the team (CHT-1213).
 
     Documents previously broadcast nothing on create/update/delete — every
     other entity (issue, project, sprint, comment) does. Document *comments*
     already broadcast via broadcast_comment_event above; this covers the
     document itself.
     """
-    await manager.broadcast_to_team(team_id, {
-        "type": event_type,
-        "entity": "document",
-        "data": document_data
-    })
+    await manager.broadcast_to_team(team_id, _envelope(event_type, "document", document_data, project_id))
 
 
-async def broadcast_activity_event(team_id: str, event_type: str, activity_data: dict):
-    """Broadcast an activity event to all team members (CHT-359)."""
-    await manager.broadcast_to_team(team_id, {
-        "type": event_type,
-        "entity": "activity",
-        "data": activity_data
-    })
+async def broadcast_document_left_project(team_id: str, document_data: dict, *, project_id: str):
+    """A document moved out of ``project_id`` (CHT-1840): a ``deleted``
+    for the sockets confined to that project, which can no longer read
+    it. Team-wide sockets do not get it (``confined_only``): they still
+    can, and hear the move as the ``updated`` tagged with its new home."""
+    await manager.broadcast_to_team(
+        team_id, _envelope("deleted", "document", document_data, project_id, confined_only=True),
+    )
 
 
-async def broadcast_relation_event(team_id: str, event_type: str, relation_data: dict):
-    """Broadcast a relation event to all team members (CHT-875)."""
-    await manager.broadcast_to_team(team_id, {
-        "type": event_type,
-        "entity": "relation",
-        "data": relation_data
-    })
+async def broadcast_activity_event(team_id: str, event_type: str, activity_data: dict, *, project_id: str | None):
+    """Broadcast an activity event to the team (CHT-359)."""
+    await manager.broadcast_to_team(team_id, _envelope(event_type, "activity", activity_data, project_id))
 
 
-async def broadcast_sprint_event(team_id: str, event_type: str, sprint_data: dict):
-    """Broadcast a sprint event to all team members (CHT-877)."""
-    await manager.broadcast_to_team(team_id, {
-        "type": event_type,
-        "entity": "sprint",
-        "data": sprint_data
-    })
+async def broadcast_relation_event(
+    team_id: str, event_type: str, relation_data: dict, *, project_ids: Sequence[str | None],
+):
+    """Broadcast a relation event to the team (CHT-875), naming the
+    projects of both its issues (CHT-1840): a socket confined to one
+    project hears it only when both issues are in that project, since
+    the payload names both. ``project_id`` is that one project, or None
+    for a relation across projects."""
+    named = list(project_ids)
+    single = named[0] if named and all(p == named[0] for p in named) else None
+    await manager.broadcast_to_team(
+        team_id, _envelope(event_type, "relation", relation_data, single, project_ids=named),
+    )
 
 
-async def broadcast_attestation_event(team_id: str, event_type: str, attestation_data: dict):
-    """Broadcast an attestation event to all team members (CHT-881)."""
-    await manager.broadcast_to_team(team_id, {
-        "type": event_type,
-        "entity": "attestation",
-        "data": attestation_data
-    })
+async def broadcast_sprint_event(team_id: str, event_type: str, sprint_data: dict, *, project_id: str | None):
+    """Broadcast a sprint event to the team (CHT-877)."""
+    await manager.broadcast_to_team(team_id, _envelope(event_type, "sprint", sprint_data, project_id))
 
 
-async def broadcast_inbox_event(team_id: str, event_type: str, inbox_data: dict):
-    """Broadcast an inbox event to all team members (CHT-1250).
+async def broadcast_attestation_event(
+    team_id: str, event_type: str, attestation_data: dict, *, project_id: str | None,
+):
+    """Broadcast an attestation event to the team (CHT-881)."""
+    await manager.broadcast_to_team(team_id, _envelope(event_type, "attestation", attestation_data, project_id))
 
-    Like every other broadcast_*_event, this fans out to the whole team's
-    connections, not just the entry's recipient -- the payload carries
-    `recipient_user_id` so each client can filter for itself (mirrors how
-    issue events carry `assignee_id` for the same client-side filtering).
+
+async def broadcast_inbox_event(team_id: str, event_type: str, inbox_data: dict, *, recipient_user_id: str):
+    """Send an inbox event to its recipient's sockets on the team, and no
+    one else's (CHT-1250, CHT-1840).
+
+    Until CHT-1840 it went to every socket in the team and the client
+    filtered on ``recipient_user_id``, so any member could read every
+    other member's inbox traffic off the socket. The envelope now carries
+    the recipient, and the manager sends it to that principal's sockets
+    only. It is team-level (``project_id`` None), so a socket confined to
+    one project does not get it either.
     """
-    await manager.broadcast_to_team(team_id, {
-        "type": event_type,
-        "entity": "inbox",
-        "data": inbox_data
-    })
+    await manager.broadcast_to_team(
+        team_id, _envelope(event_type, "inbox", inbox_data, None, recipient_user_id=recipient_user_id),
+    )

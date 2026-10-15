@@ -644,7 +644,7 @@ class TestMentionWarnings:
 
         broadcast = []
 
-        async def capture(team_id, action, payload):
+        async def capture(team_id, action, payload, *, project_id):
             broadcast.append(payload)
 
         monkeypatch.setattr(issues_api, "broadcast_comment_event", capture)

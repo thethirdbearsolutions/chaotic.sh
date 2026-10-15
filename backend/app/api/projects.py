@@ -69,7 +69,7 @@ async def create_project(
 
     project = await project_service.create(project_in, team_id)
     response = ProjectResponse.model_validate(project, from_attributes=True)
-    await broadcast_project_event(team_id, "created", response.model_dump(mode="json"))
+    await broadcast_project_event(team_id, "created", response.model_dump(mode="json"), project_id=project.id)
     return response
 
 
@@ -131,7 +131,7 @@ async def update_project(
 
     project = await project_service.update(project, project_in)
     response = ProjectResponse.model_validate(project, from_attributes=True)
-    await broadcast_project_event(project.team_id, "updated", response.model_dump(mode="json"))
+    await broadcast_project_event(project.team_id, "updated", response.model_dump(mode="json"), project_id=project.id)
     return response
 
 
@@ -154,4 +154,4 @@ async def delete_project(project_id: str, current_user: CurrentUser):
     team_id = project.team_id
     project_data = {"id": project.id, "name": project.name, "key": project.key}
     await project_service.delete(project, actor_id=current_user.id)
-    await broadcast_project_event(team_id, "deleted", project_data)
+    await broadcast_project_event(team_id, "deleted", project_data, project_id=project.id)

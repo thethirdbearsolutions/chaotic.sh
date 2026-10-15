@@ -25,7 +25,7 @@ from app.schemas.document import (
 from app.schemas.issue import IssueResponse, LabelResponse
 from app.services.document_service import DocumentService
 from app.services.principals import fill_principals
-from app.websocket import broadcast_comment_event, broadcast_document_event
+from app.websocket import broadcast_comment_event, broadcast_document_event, broadcast_document_left_project
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
 from app.services.project_service import ProjectService
@@ -129,7 +129,7 @@ async def create_document(
 
     document = await document_service.create(document_in, team_id, current_user.id)
     response = await fill_principals(build_document_response(document, author_name=current_user.name))
-    await broadcast_document_event(team_id, "created", response.model_dump(mode="json"))
+    await broadcast_document_event(team_id, "created", response.model_dump(mode="json"), project_id=document.project_id)
     return response
 
 
@@ -241,9 +241,20 @@ async def update_document(
                 detail="Sprint must belong to the document's project",
             )
 
+    # What the document's old project could read, captured before the
+    # update: a move can rename it in the same PATCH (PR #452 review).
+    old_project_id, old_title = document.project_id, document.title
     document = await document_service.update(document, document_in, current_user.id)
     response = await fill_principals(build_document_response(document))
-    await broadcast_document_event(document.team_id, "updated", response.model_dump(mode="json"))
+    if old_project_id is not None and old_project_id != document.project_id:
+        # Moved out of a project: the sockets confined to it drop it
+        # (CHT-1840); the "updated" below reaches its new readers. It
+        # carries the id and the title they already knew (for the
+        # frontend's "was deleted" toast), never anything after the edit.
+        await broadcast_document_left_project(
+            document.team_id, {"id": document.id, "title": old_title}, project_id=old_project_id,
+        )
+    await broadcast_document_event(document.team_id, "updated", response.model_dump(mode="json"), project_id=document.project_id)
     return response
 
 
@@ -270,7 +281,7 @@ async def delete_document(document_id: str, current_user: CurrentUser):
     team_id = document.team_id
     document_data = {"id": document.id, "title": document.title}
     await document_service.delete(document, current_user.id)
-    await broadcast_document_event(team_id, "deleted", document_data)
+    await broadcast_document_event(team_id, "deleted", document_data, project_id=document.project_id)
 
 
 @router.get("/{document_id}/issues", response_model=list[IssueResponse])
@@ -518,6 +529,7 @@ async def create_comment(
     # Broadcast real-time update (the warnings are the author's alone)
     await broadcast_comment_event(
         document.team_id, "created", response.model_dump(mode="json", exclude={"warnings"}),
+        project_id=document.project_id,
     )
 
     return response
@@ -573,7 +585,7 @@ async def update_comment(
     response = await fill_principals(build_comment_response(comment))
 
     # Broadcast real-time update
-    await broadcast_comment_event(document.team_id, "updated", response.model_dump(mode="json"))
+    await broadcast_comment_event(document.team_id, "updated", response.model_dump(mode="json"), project_id=document.project_id)
 
     return response
 
@@ -611,5 +623,6 @@ async def delete_comment(
     await broadcast_comment_event(
         document.team_id,
         "deleted",
-        {"id": comment.id, "document_id": document_id}
+        {"id": comment.id, "document_id": document_id},
+        project_id=document.project_id,
     )

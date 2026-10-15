@@ -297,7 +297,7 @@ async def mark_inbox_read(
     try:
         await broadcast_inbox_event(entry.team_id, "read", {
             "id": entry.id, "recipient_user_id": entry.recipient_user_id,
-        })
+        }, recipient_user_id=entry.recipient_user_id)
     except Exception:
         pass
     return await _build_response(entry, current_user, principal)
@@ -329,7 +329,7 @@ async def archive_inbox_entry(
     try:
         await broadcast_inbox_event(entry.team_id, "archived", {
             "id": entry.id, "recipient_user_id": entry.recipient_user_id,
-        })
+        }, recipient_user_id=entry.recipient_user_id)
     except Exception:
         pass
     return await _build_response(entry, current_user, principal)
@@ -344,7 +344,7 @@ async def mark_all_inbox_read(current_user: CurrentUser, team_id: str | None = N
         try:
             await broadcast_inbox_event(team_id, "read-all", {
                 "recipient_user_id": current_user.id, "marked_count": marked,
-            })
+            }, recipient_user_id=current_user.id)
         except Exception:
             pass
     return MarkAllReadResponse(marked_count=marked)

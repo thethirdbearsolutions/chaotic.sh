@@ -703,7 +703,7 @@ class TestImmediateClose:
         a, b = FakeWebSocket(), FakeWebSocket()
         owners = {a: "user-a", b: "user-b"}
         for ws, user_id in owners.items():
-            await manager.connect(ws, test_team.id, owner=SocketOwner(team_id=test_team.id, user_id=user_id))
+            await manager.connect(ws, test_team.id, owner=SocketOwner(team_id=test_team.id, user_id=user_id, project_id=None))
         first, second = list(manager.active_connections[test_team.id])  # the broadcast's order
 
         async def closes_the_other(message):
@@ -718,10 +718,10 @@ class TestImmediateClose:
 
     async def test_the_watcher_after_a_hook_close_does_nothing(self, test_user, test_team):
         """Both paths go through ConnectionManager.close, which closes once."""
-        from app.websocket import manager
+        from app.websocket import SocketOwner, manager
 
         ws = FakeWebSocket()
-        await manager.connect(ws, test_team.id)
+        await manager.connect(ws, test_team.id, owner=SocketOwner(team_id=test_team.id, user_id=test_user.id, project_id=None))
         assert await manager.close(ws, test_team.id, 4001)
         assert not await manager.close(ws, test_team.id, 4003)
         ws.close.assert_awaited_once_with(code=4001)
@@ -730,9 +730,9 @@ class TestImmediateClose:
         from app.websocket import SocketOwner, manager
 
         mine, theirs, elsewhere = FakeWebSocket(), FakeWebSocket(), FakeWebSocket()
-        await manager.connect(mine, test_team.id, owner=SocketOwner(team_id=test_team.id, user_id=test_user.id))
-        await manager.connect(theirs, test_team.id, owner=SocketOwner(team_id=test_team.id, user_id=test_user2.id))
-        await manager.connect(elsewhere, "t2", owner=SocketOwner(team_id="t2", user_id=test_user.id))
+        await manager.connect(mine, test_team.id, owner=SocketOwner(team_id=test_team.id, user_id=test_user.id, project_id=None))
+        await manager.connect(theirs, test_team.id, owner=SocketOwner(team_id=test_team.id, user_id=test_user2.id, project_id=None))
+        await manager.connect(elsewhere, "t2", owner=SocketOwner(team_id="t2", user_id=test_user.id, project_id=None))
         assert await manager.close_for(user_id=test_user.id, team_id=test_team.id, code=4003) == 1
         mine.close.assert_awaited_once_with(code=4003)
         theirs.close.assert_not_awaited()

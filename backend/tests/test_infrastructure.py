@@ -3,7 +3,19 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from fastapi import WebSocket
 
-from app.websocket import ConnectionManager, broadcast_issue_event, broadcast_project_event, broadcast_comment_event
+from app.websocket import ConnectionManager, SocketOwner, broadcast_issue_event, broadcast_project_event, broadcast_comment_event
+
+
+def _owner(team_id):
+    """A socket owner with team-wide reach (CHT-1840)."""
+    return SocketOwner(team_id=team_id, user_id="user-1", project_id=None)
+
+
+def _seat(manager, team_id, *sockets):
+    """Register already-accepted sockets, owners and all, as connect does."""
+    manager.active_connections.setdefault(team_id, set()).update(sockets)
+    for ws in sockets:
+        manager.owners[ws] = _owner(team_id)
 
 
 class TestHealthEndpoint:
@@ -324,7 +336,7 @@ class TestConnectionManager:
         manager = ConnectionManager()
         websocket = AsyncMock(spec=WebSocket)
 
-        await manager.connect(websocket, "team-1")
+        await manager.connect(websocket, "team-1", owner=_owner("team-1"))
 
         websocket.accept.assert_called_once()
         assert "team-1" in manager.active_connections
@@ -337,8 +349,8 @@ class TestConnectionManager:
         ws1 = AsyncMock(spec=WebSocket)
         ws2 = AsyncMock(spec=WebSocket)
 
-        await manager.connect(ws1, "team-1")
-        await manager.connect(ws2, "team-1")
+        await manager.connect(ws1, "team-1", owner=_owner("team-1"))
+        await manager.connect(ws2, "team-1", owner=_owner("team-1"))
 
         assert len(manager.active_connections["team-1"]) == 2
         assert ws1 in manager.active_connections["team-1"]
@@ -351,7 +363,7 @@ class TestConnectionManager:
         ws2 = MagicMock(spec=WebSocket)
 
         # Manually set up connections (bypass async connect)
-        manager.active_connections["team-1"] = {ws1, ws2}
+        _seat(manager, "team-1", ws1, ws2)
 
         manager.disconnect(ws1, "team-1")
 
@@ -363,7 +375,7 @@ class TestConnectionManager:
         manager = ConnectionManager()
         ws = MagicMock(spec=WebSocket)
 
-        manager.active_connections["team-1"] = {ws}
+        _seat(manager, "team-1", ws)
 
         manager.disconnect(ws, "team-1")
 
@@ -384,7 +396,7 @@ class TestConnectionManager:
         ws1 = AsyncMock(spec=WebSocket)
         ws2 = AsyncMock(spec=WebSocket)
 
-        manager.active_connections["team-1"] = {ws1, ws2}
+        _seat(manager, "team-1", ws1, ws2)
         message = {"type": "test", "data": "hello"}
 
         await manager.broadcast_to_team("team-1", message)
@@ -408,7 +420,7 @@ class TestConnectionManager:
         ws_dead = AsyncMock(spec=WebSocket)
         ws_dead.send_json.side_effect = Exception("Connection closed")
 
-        manager.active_connections["team-1"] = {ws_alive, ws_dead}
+        _seat(manager, "team-1", ws_alive, ws_dead)
 
         await manager.broadcast_to_team("team-1", {"data": "test"})
 
@@ -431,11 +443,11 @@ class TestBroadcastHelpers:
         websocket.manager = mock_manager
 
         try:
-            await broadcast_issue_event("team-1", "created", {"id": "issue-1"})
+            await broadcast_issue_event("team-1", "created", {"id": "issue-1"}, project_id="p1")
 
             mock_manager.broadcast_to_team.assert_called_once_with(
                 "team-1",
-                {"type": "created", "entity": "issue", "data": {"id": "issue-1"}}
+                {"type": "created", "entity": "issue", "data": {"id": "issue-1"}, "project_id": "p1"}
             )
         finally:
             websocket.manager = original_manager
@@ -450,11 +462,11 @@ class TestBroadcastHelpers:
         websocket.manager = mock_manager
 
         try:
-            await broadcast_project_event("team-1", "updated", {"id": "proj-1"})
+            await broadcast_project_event("team-1", "updated", {"id": "proj-1"}, project_id="p1")
 
             mock_manager.broadcast_to_team.assert_called_once_with(
                 "team-1",
-                {"type": "updated", "entity": "project", "data": {"id": "proj-1"}}
+                {"type": "updated", "entity": "project", "data": {"id": "proj-1"}, "project_id": "p1"}
             )
         finally:
             websocket.manager = original_manager
@@ -469,11 +481,11 @@ class TestBroadcastHelpers:
         websocket.manager = mock_manager
 
         try:
-            await broadcast_comment_event("team-1", "created", {"id": "comment-1"})
+            await broadcast_comment_event("team-1", "created", {"id": "comment-1"}, project_id="p1")
 
             mock_manager.broadcast_to_team.assert_called_once_with(
                 "team-1",
-                {"type": "created", "entity": "comment", "data": {"id": "comment-1"}}
+                {"type": "created", "entity": "comment", "data": {"id": "comment-1"}, "project_id": "p1"}
             )
         finally:
             websocket.manager = original_manager

@@ -433,6 +433,14 @@ async def websocket_endpoint(
             raise ws_auth.WsRefused(ws_auth.CLOSE_FORBIDDEN, "No team_id")
         presented = ws_auth.presented_credential(websocket, token)
         principal = await ws_auth.authenticate(presented.token, team_id)
+        # What the socket may receive (CHT-1840): a principal whose reach
+        # cannot be recorded is refused, never given team-wide fan-out.
+        # Defensive while ``authenticate`` refuses agents: only an agent
+        # can fail it, so this is unreachable until that refusal goes.
+        try:
+            owner = SocketOwner.of(team_id, principal)
+        except ValueError:
+            raise ws_auth.WsRefused(ws_auth.CLOSE_FORBIDDEN, "No recorded reach on this team") from None
     except ws_auth.WsRefused as exc:
         await ws_auth.refuse(websocket, exc.code, exc.reason, team_id)
         return
@@ -442,10 +450,9 @@ async def websocket_endpoint(
         return
 
     # Recorded with its principal, so a revocation in this process closes
-    # it at once (CHT-1616, ``app.websocket.on_credentials_ended``).
-    await manager.connect(
-        websocket, team_id, subprotocol=presented.subprotocol, owner=SocketOwner.of(team_id, principal),
-    )
+    # it at once (CHT-1616, ``app.websocket.on_credentials_ended``), and
+    # with its reach, which every broadcast is filtered by (CHT-1840).
+    await manager.connect(websocket, team_id, subprotocol=presented.subprotocol, owner=owner)
     if credential_events.generation() != generation:
         # Something was revoked meanwhile: check again now that the socket
         # is registered (a revocation after this point closes it itself).
