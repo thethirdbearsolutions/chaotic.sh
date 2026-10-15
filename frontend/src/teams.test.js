@@ -18,7 +18,7 @@ import {
   showInviteLink,
   copyInviteLink,
   inviteLinkForDisplay,
-  isLoopbackHost,
+  isLocalHost,
   removeMember,
   deleteInvitation,
   showCreateTeamModal,
@@ -29,6 +29,7 @@ import {
 import { api } from './api.js';
 import { showApiError, showModal, closeModal, showToast, isModalOpen } from './ui.js';
 import { registerActions } from './event-delegation.js';
+import localHosts from '../../testdata/local-hosts.json';
 
 // Mock the api module
 vi.mock('./api.js', () => ({
@@ -894,17 +895,28 @@ describe('inviteLinkForDisplay (CHT-1822)', () => {
   it('defaults to this page\'s origin', () => {
     // jsdom serves the test page from a loopback origin.
     const url = `http://localhost:24267/invite/${tok}`;
-    expect(isLoopbackHost(new URL(window.location.origin).hostname)).toBe(true);
+    expect(isLocalHost(new URL(window.location.origin).hostname)).toBe(true);
     expect(inviteLinkForDisplay(url)).toBe(url);
   });
 
-  it.each([
-    ['localhost', true], ['LOCALHOST', true], ['app.localhost', true], ['localhost.', true],
-    ['127.0.0.1', true], ['127.1.2.3', true], ['[::1]', true],
-    ['localhost.example.com', false], ['127.0.0.1.nip.io', false], ['10.0.0.1', false],
-    ['0.0.0.0', false], ['chaotic.example.com', false], ['', false],
-  ])('isLoopbackHost(%j) is %s', (host, expected) => {
-    expect(isLoopbackHost(host)).toBe(expected);
+  it('also rewrites links on the other local-only host forms', () => {
+    for (const host of ['0.0.0.0', '[::]', '127.1', '[::ffff:127.0.0.1]']) {
+      expect(inviteLinkForDisplay(`http://${host}:24267/invite/${tok}`, 'https://chaotic.example.com'))
+        .toBe(`https://chaotic.example.com/invite/${tok}`);
+    }
+  });
+
+  // The table the backend and CLI twins are tested against too.
+  it.each(localHosts.local)('isLocalHost(%j) is true', (host) => {
+    expect(isLocalHost(host)).toBe(true);
+  });
+  it.each(localHosts.not_local)('isLocalHost(%j) is false', (host) => {
+    expect(isLocalHost(host)).toBe(false);
+  });
+  it('is false for what is not a bare host', () => {
+    for (const host of [null, undefined, 'localhost:24267', 'evil.com/x', 'u@localhost', 'fe80::1%eth0']) {
+      expect(isLocalHost(host)).toBe(false);
+    }
   });
 });
 

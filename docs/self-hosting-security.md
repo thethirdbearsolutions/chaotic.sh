@@ -229,18 +229,28 @@ invitee reads, and revoke an invitation that may have leaked
 multi-user server where that is not good enough, configure SMTP.
 
 **Where the link points.** Invitation links are
-`<APP_BASE_URL>/invite/<token>`, emailed or (without SMTP) shown once to
-the inviting admin. `APP_BASE_URL` defaults to `http://localhost:24267`,
-so set it to the address people reach the server at
-(`chaotic system config set APP_BASE_URL https://your-chaotic-host`,
-then restart). The server never takes the host from a request's `Host`
-header, which a client controls. While SMTP is unset and `APP_BASE_URL`
-is still the default, the server logs a warning at startup saying so.
-Until it is set, the web UI's Invite dialog and `chaotic team invite`
-correct a link that names a loopback host (`localhost`, `127.0.0.0/8`,
-`::1`) when they reached the server at some other address: they show
-that address (the page's origin, or the CLI profile's server URL) with
-only the link's `/invite/<token>` path. An emailed link is not corrected.
+`<APP_BASE_URL>/invite/<token>`. With SMTP they are emailed; without it
+they are shown once to the inviting admin. Ritual-gate emails link to
+`<APP_BASE_URL>/issue/<id>`. `APP_BASE_URL` defaults to
+`http://localhost:24267`, so set it to the address people reach the
+server at (`chaotic system config set APP_BASE_URL
+https://your-chaotic-host`, then restart). The server never takes the
+host from a request's `Host` header, because a client controls that
+header.
+
+While `APP_BASE_URL` names a host that only this machine can reach, the
+server logs a warning at startup. Such hosts are `localhost` and
+`*.localhost`, `127.0.0.0/8`, `::1` and `::ffff:127.x.y.z`, and the bind
+addresses `0.0.0.0` and `::`. The warning has two forms. With SMTP, it
+says emailed links are broken. Nothing corrects those. Without SMTP, it
+says the invitation links are wrong.
+
+Until the setting is fixed, two clients correct an invitation link on
+such a host: the web UI's Invite dialog and `chaotic team invite`. They
+do this only when they reached the server at some other address. They
+show that address (the page's origin, or the CLI profile's server URL)
+followed by the link's `/invite/<token>` path, and take nothing else
+from the link.
 
 ## Hardening, in priority order
 

@@ -1,9 +1,9 @@
 """Team management commands."""
-import ipaddress
 import sys
 from urllib.parse import urlsplit
 
 import click
+from ..local_host import is_local_host
 from ..markup import Table, esc
 from rich.panel import Panel
 
@@ -15,40 +15,32 @@ def _main():
     return sys.modules['cli.main']
 
 
-def _is_loopback_host(host: str | None) -> bool:
-    """localhost (and *.localhost), 127.0.0.0/8 or ::1."""
-    h = (host or "").lower().rstrip(".")
-    if h == "localhost" or h.endswith(".localhost"):
-        return True
-    try:
-        return ipaddress.ip_address(h).is_loopback
-    except ValueError:
-        return False
-
-
 def invite_link_for_display(accept_url: str, web_url: str | None) -> str:
     """The accept link to print (CHT-1822).
 
-    The server builds it from APP_BASE_URL, whose default is
-    http://localhost:24267, so a server that never set it hands out a link
-    no remote invitee can open. When the link names a loopback host and
-    the server this profile talks to is not on one, rebuild the link on
-    that server's URL, keeping only the path (/invite/<token>) from the
-    server's link. Anything else is printed as the server sent it."""
+    The server builds the link from APP_BASE_URL, whose default is
+    http://localhost:24267. A server that never set it hands out a link
+    no remote invitee can open. When the link names a local-only host
+    (is_local_host: loopback or 0.0.0.0/::) and the server this profile
+    talks to is not on one, rebuild the link on that server's URL. Only
+    the path (/invite/<token>) is kept from the server's link. Anything
+    else is printed as the server sent it."""
     try:
         link = urlsplit(accept_url)
         here = urlsplit(web_url or "")
-        link_host, here_host = link.hostname, here.hostname
+        link_host, here_host, here_port = link.hostname, here.hostname, here.port
     except ValueError:
         return accept_url
     if here.scheme not in ("http", "https") or not here_host:
         return accept_url
-    if not _is_loopback_host(link_host) or _is_loopback_host(here_host):
+    if not is_local_host(link_host) or is_local_host(here_host):
         return accept_url
-    # Only the profile's scheme and host[:port] (no credentials, no path):
-    # the web UI and /invite/ are served at the root.
-    origin = f"{here.scheme}://{here.netloc.rpartition('@')[2]}"
-    return origin + link.path
+    # Only the profile's scheme, host and port, rebuilt from their parsed
+    # values (no credentials, no path); the web UI and /invite/ are served
+    # at the root.
+    host = f"[{here_host}]" if ":" in here_host else here_host
+    port = f":{here_port}" if here_port is not None else ""
+    return f"{here.scheme}://{host}{port}{link.path}"
 
 
 def register(cli):

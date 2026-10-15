@@ -86,8 +86,8 @@ class Settings(BaseSettings):
     # Public base URL, used to build absolute links: invitation accept
     # links, emailed or (without SMTP) shown to the inviting admin. No
     # scheme/host detection from requests -- explicit env var, same as
-    # everything else here. Left at this default with no SMTP, startup
-    # warns (CHT-1822).
+    # everything else here. Startup warns while it names a host only this
+    # machine can reach, as this default does (CHT-1822).
     app_base_url: str = "http://localhost:24267"
 
     # OAuth 2.1 for remote MCP clients (CHT-1368; design doc "MCP OAuth

@@ -49,14 +49,16 @@ import hashlib
 import hmac
 import logging
 import secrets
+from urllib.parse import urlsplit
 from datetime import datetime, timedelta, timezone
 
 from oxyde import F
 
-from app.config import Settings, get_settings
+from app.config import get_settings
 from app.oxyde_models.email_verification import OxydeEmailVerificationCode
 from app.oxyde_models.user import OxydeUser
 from app.services.email_service import EmailService
+from app.utils.local_host import is_local_host
 from app.utils.datetimes import ensure_utc
 from app.utils.email_address import fold_email
 
@@ -89,31 +91,46 @@ def log_invitation_gate() -> None:
         )
 
 
-def warn_if_invite_links_point_at_localhost() -> None:
-    """Warn once, at startup, when this server would hand out invitation
-    links on localhost (CHT-1822).
+def warn_if_app_base_url_is_local() -> None:
+    """Warn once at startup when APP_BASE_URL names a local-only host
+    (CHT-1822). That means loopback, or 0.0.0.0/:: copied from a bind
+    address. The default, http://localhost:24267, is such a host.
 
-    Accept links are ``<APP_BASE_URL>/invite/<token>``. Without SMTP the
-    link is shown to the inviting admin to pass on by hand, and a server
-    that never configured email has quite likely never set APP_BASE_URL
-    either, so the link names http://localhost:24267. The web UI and the
-    CLI rebuild such a link on the address they reached; anything else
-    that reads ``accept_url`` gets the localhost one. The host is never
-    taken from the request (Host-header link poisoning), so the fix is
-    the setting. Nothing here names a token or a secret."""
+    Every absolute link the server builds starts with APP_BASE_URL:
+    invitation accept links, and the issue link in a ritual-gate email.
+    On such a host nobody on another machine can open them. The host is
+    never taken from the request (that would allow Host-header link
+    poisoning), so setting APP_BASE_URL is the fix. The wording depends
+    on SMTP:
+
+    - With SMTP, those links go out by email as they are, and nothing
+      can correct them.
+    - Without SMTP, the invitation link is shown to the admin, and the
+      web UI and the CLI rebuild it on the address they reached.
+
+    The message names only the host, never a token or a secret."""
     settings = get_settings()
-    default = Settings.model_fields["app_base_url"].default
+    try:
+        host = urlsplit(settings.app_base_url).hostname
+    except ValueError:
+        return
+    if not is_local_host(host):
+        return
+    fix = "Set APP_BASE_URL to this server's public URL (chaotic system config set APP_BASE_URL https://your-chaotic-host)."
     if EmailService().is_configured():
-        return
-    if settings.app_base_url.rstrip("/") != default.rstrip("/"):
-        return
-    logger.warning(
-        "APP_BASE_URL is not set (default %s) and SMTP is not configured: invitation links "
-        "this server builds point at localhost, which an invitee on another machine cannot open. "
-        "Set APP_BASE_URL to this server's public URL "
-        "(chaotic system config set APP_BASE_URL https://your-chaotic-host).",
-        default,
-    )
+        logger.warning(
+            "APP_BASE_URL names %s, a host only this machine can reach, and SMTP is configured: "
+            "emailed links (team invitations, ritual-gate notifications) point there and cannot be "
+            "opened from another machine. %s",
+            host, fix,
+        )
+    else:
+        logger.warning(
+            "APP_BASE_URL names %s, a host only this machine can reach, and SMTP is not configured: "
+            "invitation links this server builds point there. The web UI and the CLI correct them "
+            "when they reached the server at another address; anything else does not. %s",
+            host, fix,
+        )
 
 
 class VerificationRefused(Exception):

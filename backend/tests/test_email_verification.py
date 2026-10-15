@@ -674,8 +674,8 @@ class TestEmailAndStartup:
 
 
 class TestInviteLinkBaseWarning:
-    """CHT-1822: one startup warning when, with no SMTP, invitation links
-    would be built on the APP_BASE_URL default (localhost)."""
+    """CHT-1822: one startup warning when APP_BASE_URL names a host only
+    this machine can reach, worded by whether SMTP is configured."""
 
     LOGGER = "app.services.email_verification_service"
 
@@ -690,33 +690,54 @@ class TestInviteLinkBaseWarning:
         yield set_
         get_settings.cache_clear()
 
+    @pytest.fixture
+    def smtp(self, monkeypatch):
+        monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+        monkeypatch.setenv("SMTP_PASSWORD", "hunter2-secret")
+        get_settings.cache_clear()
+
     def _warnings(self, caplog):
         return [r for r in caplog.records if r.name == self.LOGGER and r.levelno == logging.WARNING]
 
-    @pytest.mark.parametrize("value", [None, "http://localhost:24267", "http://localhost:24267/"])
-    def test_warns_without_smtp_on_the_default(self, no_smtp, base, caplog, value):
-        base(value)
+    def _warn(self, caplog):
         caplog.set_level(logging.INFO, logger=self.LOGGER)
-        evs.warn_if_invite_links_point_at_localhost()
-        (record,) = self._warnings(caplog)
-        message = record.getMessage()
-        assert "APP_BASE_URL is not set" in message and "http://localhost:24267" in message
+        evs.warn_if_app_base_url_is_local()
+        return [r.getMessage() for r in self._warnings(caplog)]
+
+    @pytest.mark.parametrize("value,host", [
+        (None, "localhost"), ("http://localhost:24267/", "localhost"), ("http://127.0.0.1:8000", "127.0.0.1"),
+        ("http://[::1]:24267", "::1"), ("http://0.0.0.0:24267", "0.0.0.0"), ("http://[::]:24267", "::"),
+        ("https://chaotic.localhost", "chaotic.localhost"),
+    ])
+    def test_warns_without_smtp_on_a_local_host(self, no_smtp, base, caplog, value, host):
+        base(value)
+        (message,) = self._warn(caplog)
+        assert f"APP_BASE_URL names {host}," in message and "SMTP is not configured" in message
+        assert "The web UI and the CLI correct them" in message
         assert "chaotic system config set APP_BASE_URL" in message
         assert "/invite/" not in message
 
-    def test_silent_when_app_base_url_is_set(self, no_smtp, base, caplog):
-        base("https://chaotic.example.com")
-        caplog.set_level(logging.INFO, logger=self.LOGGER)
-        evs.warn_if_invite_links_point_at_localhost()
-        assert self._warnings(caplog) == []
+    @pytest.mark.parametrize("value", [None, "http://127.0.0.1:24267"])
+    def test_warns_with_smtp_that_emailed_links_are_broken(self, smtp, base, caplog, value):
+        base(value)
+        (message,) = self._warn(caplog)
+        assert "SMTP is configured" in message and "emailed links" in message
+        assert "ritual-gate" in message and "team invitations" in message
+        assert "hunter2" not in message and "smtp.example.com" not in message
 
-    def test_silent_when_smtp_is_configured(self, monkeypatch, base, caplog):
-        monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
-        monkeypatch.setenv("SMTP_PASSWORD", "hunter2-secret")
-        base(None)
-        caplog.set_level(logging.INFO, logger=self.LOGGER)
-        evs.warn_if_invite_links_point_at_localhost()
-        assert self._warnings(caplog) == []
+    @pytest.mark.parametrize("value", ["https://chaotic.example.com", "http://10.0.0.5:24267", "http://[x"])
+    def test_silent_on_a_reachable_or_unparseable_base(self, no_smtp, base, caplog, value):
+        base(value)
+        assert self._warn(caplog) == []
+
+    def test_silent_with_smtp_on_a_reachable_base(self, smtp, base, caplog):
+        base("https://chaotic.example.com")
+        assert self._warn(caplog) == []
+
+    def test_never_logs_credentials_in_the_base_url(self, no_smtp, base, caplog):
+        base("http://admin:s3cret@localhost:24267")
+        (message,) = self._warn(caplog)
+        assert "s3cret" not in message and "admin" not in message
 
     @pytest.mark.parametrize("app_base_url,warns", [(None, True), ("https://chaotic.example.com", False)])
     async def test_the_lifespan_warns_once(self, no_smtp, base, caplog, monkeypatch, app_base_url, warns):
@@ -743,6 +764,26 @@ class TestInviteLinkBaseWarning:
         async with main.lifespan(main.app):
             pass
         assert len([r for r in self._warnings(caplog) if "APP_BASE_URL" in r.getMessage()]) == (1 if warns else 0)
+
+
+class TestLocalHostTable:
+    """The table the CLI twin and the web client's isLocalHost are tested
+    against too (testdata/local-hosts.json)."""
+
+    import json as _json
+    from pathlib import Path as _Path
+
+    TABLE = _json.loads((_Path(__file__).resolve().parents[2] / "testdata" / "local-hosts.json").read_text())
+
+    @pytest.mark.parametrize("host", TABLE["local"])
+    def test_local(self, host):
+        from app.utils.local_host import is_local_host
+        assert is_local_host(host) is True
+
+    @pytest.mark.parametrize("host", TABLE["not_local"] + [None])
+    def test_not_local(self, host):
+        from app.utils.local_host import is_local_host
+        assert is_local_host(host) is False
 
 
 # ---------------------------------------------------------------------------

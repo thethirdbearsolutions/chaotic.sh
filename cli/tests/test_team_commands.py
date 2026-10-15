@@ -3,6 +3,7 @@
 Tests cover: team list, create, use, show, members, invite, accept-invite.
 """
 import json
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -343,14 +344,56 @@ class TestInviteLinkForDisplay:
         from cli.commands.team import invite_link_for_display
         assert invite_link_for_display(accept_url.format(t=self.TOK), web_url) == expected.format(t=self.TOK)
 
-    @pytest.mark.parametrize("host,expected", [
-        ("localhost", True), ("LOCALHOST", True), ("app.localhost", True), ("localhost.", True),
-        ("127.0.0.1", True), ("127.9.9.9", True), ("::1", True),
-        ("localhost.example.com", False), ("10.0.0.1", False), ("0.0.0.0", False), ("", False), (None, False),
+    @pytest.mark.parametrize("host", ["0.0.0.0", "[::]", "127.1", "[::ffff:127.0.0.1]"])
+    def test_other_local_only_link_hosts_are_rewritten(self, host):
+        from cli.commands.team import invite_link_for_display
+        url = f"http://{host}:24267/invite/{self.TOK}"
+        assert invite_link_for_display(url, "https://h.example") == f"https://h.example/invite/{self.TOK}"
+
+    @pytest.mark.parametrize("web_url", ["http://0.0.0.0:24267/api", "http://[::ffff:127.0.0.1]:24267", "http://127.1"])
+    def test_a_local_only_profile_keeps_the_link(self, web_url):
+        from cli.commands.team import invite_link_for_display
+        url = f"http://localhost:24267/invite/{self.TOK}"
+        assert invite_link_for_display(url, web_url) == url
+
+    @pytest.mark.parametrize("web_url,origin", [
+        ("https://H.Example:8443/api", "https://h.example:8443"),
+        ("http://[2001:DB8::1]:24267/api", "http://[2001:db8::1]:24267"),
+        ("http://[2001:db8::1]/api", "http://[2001:db8::1]"),
     ])
-    def test_is_loopback_host(self, host, expected):
-        from cli.commands.team import _is_loopback_host
-        assert _is_loopback_host(host) is expected
+    def test_the_origin_is_rebuilt_from_parsed_parts(self, web_url, origin):
+        from cli.commands.team import invite_link_for_display
+        url = f"http://localhost:24267/invite/{self.TOK}"
+        assert invite_link_for_display(url, web_url) == f"{origin}/invite/{self.TOK}"
+
+    @pytest.mark.parametrize("web_url", ["http://host:abc/api", "http://host:99999/api"])
+    def test_a_profile_url_with_a_bad_port_leaves_the_link_alone(self, web_url):
+        from cli.commands.team import invite_link_for_display
+        url = f"http://localhost:24267/invite/{self.TOK}"
+        assert invite_link_for_display(url, web_url) == url
+
+
+_REPO = Path(__file__).resolve().parents[2]
+_LOCAL_HOSTS = json.loads((_REPO / "testdata" / "local-hosts.json").read_text())
+
+
+class TestIsLocalHost:
+    """CHT-1822: the same table the backend twin and the web client's
+    isLocalHost are tested against."""
+
+    @pytest.mark.parametrize("host", _LOCAL_HOSTS["local"])
+    def test_local(self, host):
+        from cli.local_host import is_local_host
+        assert is_local_host(host) is True
+
+    @pytest.mark.parametrize("host", _LOCAL_HOSTS["not_local"] + [None])
+    def test_not_local(self, host):
+        from cli.local_host import is_local_host
+        assert is_local_host(host) is False
+
+    def test_identical_to_the_backend_twin(self):
+        import cli.local_host as twin
+        assert Path(twin.__file__).read_text() == (_REPO / "backend" / "app" / "utils" / "local_host.py").read_text()
 
 
 class TestTeamAcceptInvite:
