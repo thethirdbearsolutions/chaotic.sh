@@ -398,6 +398,20 @@ class TestRefresh:
                       400, "invalid_target")
         assert (await _token(client, _refresh(public_client, tokens["refresh_token"], resource=BASE))).status_code == 200
 
+    @pytest.mark.parametrize("resource", [MCP, MCP + "/", BASE, BASE + "/"])
+    async def test_both_resource_values_are_accepted(self, client, public_client, tokens, resource):
+        """CHT-1564: a refresh may name either published identifier, with
+        or without the trailing slash; all mean /mcp, the token's own."""
+        response = await _token(client, _refresh(public_client, tokens["refresh_token"], resource=resource))
+        assert response.status_code == 200, (resource, response.text)
+        await TokenService().validate_access(response.json()["access_token"], resource=MCP)
+
+    @pytest.mark.parametrize("resource", [BASE + "//", MCP + "//", BASE + "/api", "http://tracker.example.com/mcp"])
+    async def test_near_miss_resource_values_are_refused(self, client, public_client, tokens, resource):
+        """CHT-1564: one trailing slash is tolerated, nothing more."""
+        _assert_error(await _token(client, _refresh(public_client, tokens["refresh_token"], resource=resource)),
+                      400, "invalid_target")
+
     async def test_resource_mismatch_with_the_token(self, client, public_client, tokens):
         await OxydeAuthToken.objects.filter(kind=TokenKind.REFRESH).update(resource=BASE)
         _assert_error(await _token(client, _refresh(public_client, tokens["refresh_token"], resource=MCP)),
@@ -694,3 +708,103 @@ def test_token_and_revoke_are_public_oauth_posts():
         if isinstance(rc.original_route, APIRoute) and "POST" in rc.original_route.methods
     }
     assert {"/oauth/token", "/oauth/revoke"} <= routed
+
+
+def test_every_oauth_post_route_is_under_the_guard():
+    """The no-ambient-auth guards walk ``PUBLIC_OAUTH_METHODS``. A POST
+    route added under /oauth/ without being listed there would escape
+    them, so every one must be listed (CHT-1564). The consent API under
+    /api/oauth is a logged-in SPA API and is not public."""
+    from fastapi.routing import APIRoute, iter_route_contexts
+
+    from app.main import app
+    from app.oauth.cors import PUBLIC_OAUTH_METHODS
+
+    listed = {path for path, methods in PUBLIC_OAUTH_METHODS.items() if "POST" in methods}
+    oauth_posts = {
+        rc.path for rc in iter_route_contexts(app.routes)
+        if isinstance(rc.original_route, APIRoute) and "POST" in rc.original_route.methods
+        and rc.path.startswith("/oauth/")
+    }
+    assert oauth_posts == listed == {"/oauth/token", "/oauth/register", "/oauth/revoke"}
+
+
+# --- CHT-1564: behavioural no-ambient-auth checks on token and revoke --------------
+
+
+def _login_headers(auth_headers):
+    """A real web login, as a bearer and as cookies under the names a
+    browser session might use."""
+    jwt = auth_headers["Authorization"][7:]
+    return {**auth_headers, "Cookie": f"chaotic_token={jwt}; session={jwt}; access_token={jwt}"}
+
+
+class TestNoAmbientAuthBehaviour:
+    @pytest.fixture
+    def tripwire(self, monkeypatch):
+        """Every way the app resolves a login raises once armed."""
+        import app.auth.credentials as credentials
+        from app.services.api_key_service import APIKeyService
+
+        def arm():
+            def trip(*args, **kwargs):
+                raise AssertionError("a public OAuth endpoint consulted a credential")
+
+            async def async_trip(*args, **kwargs):
+                trip()
+
+            monkeypatch.setattr(credentials, "decode_token", trip)
+            monkeypatch.setattr(credentials.CredentialResolver, "resolve", async_trip)
+            monkeypatch.setattr(APIKeyService, "validate_key", async_trip)
+            monkeypatch.setattr(APIKeyService, "find_by_key", async_trip)
+        return arm
+
+    async def test_token_and_revoke_never_consult_a_credential(
+        self, client, public_client, auth_headers, test_team, tripwire,
+    ):
+        """With a valid login attached, the code exchange, a refresh and a
+        revocation all succeed without any credential check running."""
+        code = await _code(client, public_client, auth_headers, test_team.id)
+        headers = _login_headers(auth_headers)
+        tripwire()
+        exchanged = await _token(client, _exchange(public_client, code), headers=headers)
+        assert exchanged.status_code == 200, exchanged.text
+        refreshed = await _token(client, _refresh(public_client, exchanged.json()["refresh_token"]), headers=headers)
+        assert refreshed.status_code == 200, refreshed.text
+        revoked = await client.post(
+            "/oauth/revoke", data={"token": refreshed.json()["refresh_token"], "client_id": public_client},
+            headers={**FORM, **headers},
+        )
+        assert revoked.status_code == 200, revoked.text
+
+    async def test_a_login_with_a_bad_one_changes_nothing(self, client, public_client, tokens, auth_headers):
+        """The same refresh answers the same with a login, with a garbage
+        bearer and cookie, and with neither: none of them is read."""
+        garbage = {"Authorization": "Bearer not-a-token", "Cookie": "chaotic_token=garbage; session=garbage"}
+        first = await _token(client, _refresh(public_client, tokens["refresh_token"]), headers=garbage)
+        assert first.status_code == 200, first.text
+        second = await _token(client, _refresh(public_client, first.json()["refresh_token"]),
+                              headers=_login_headers(auth_headers))
+        assert second.status_code == 200, second.text
+        assert second.json()["chaotic"] == tokens["chaotic"] == first.json()["chaotic"]
+
+    async def test_a_login_session_is_not_client_authentication_at_revoke(
+        self, client, confidential_client, auth_headers, test_team,
+    ):
+        """A confidential client's token is not revoked on the strength of
+        a login: the client secret is required, the bearer and cookie
+        count for nothing."""
+        cid, secret = confidential_client
+        code = await _code(client, cid, auth_headers, test_team.id)
+        body = (await _token(client, _exchange(cid, code, client_secret=secret))).json()
+        for data in ({"token": body["refresh_token"], "client_id": cid}, {"token": body["refresh_token"]}):
+            response = await client.post("/oauth/revoke", data=data, headers={**FORM, **_login_headers(auth_headers)})
+            _assert_error(response, 401, "invalid_client")
+        assert (await OxydeHolderSession.objects.get(id=body["chaotic"]["holder_session_id"])).revoked_at is None
+
+    async def test_a_login_does_not_name_the_client_at_token(self, client, public_client, tokens, auth_headers):
+        """Without a client_id in the body, a login does not stand in for
+        one: the refresh is refused and the token is not spent."""
+        data = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]}
+        _assert_error(await _token(client, data, headers=_login_headers(auth_headers)), 401, "invalid_client")
+        assert (await _token(client, _refresh(public_client, tokens["refresh_token"]))).status_code == 200

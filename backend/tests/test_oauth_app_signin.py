@@ -305,6 +305,31 @@ class TestAppSession:
         response = await _exchange(client, code, resource=MCP)
         assert response.status_code == 400 and response.json()["error"] == "invalid_target"
 
+    @pytest.mark.parametrize("resource", [None, BASE, BASE + "/"])
+    async def test_the_base_resource_with_or_without_slash_at_the_token_endpoint(
+        self, client, oauth_on, no_fetch, web_headers, test_team, resource,
+    ):
+        """CHT-1564 for the built-in app: ``<base>``, with or without one
+        trailing slash, or nothing, both on the exchange and the refresh."""
+        code = await _app_code(client, web_headers)
+        exchanged = await _exchange(client, code, resource=resource)
+        assert exchanged.status_code == 200, (resource, exchanged.text)
+        session = await OxydeHolderSession.objects.get(id=exchanged.json()["chaotic"]["holder_session_id"])
+        assert session.resource == BASE
+        data = {"grant_type": "refresh_token", "client_id": APP_ID, "refresh_token": exchanged.json()["refresh_token"]}
+        if resource is not None:
+            data["resource"] = resource
+        refreshed = await client.post("/oauth/token", data=data, headers=FORM)
+        assert refreshed.status_code == 200, (resource, refreshed.text)
+
+    @pytest.mark.parametrize("resource", [BASE + "//", MCP + "/"])
+    async def test_near_miss_base_resources_are_refused_at_the_token_endpoint(
+        self, client, oauth_on, no_fetch, web_headers, test_team, resource,
+    ):
+        code = await _app_code(client, web_headers)
+        response = await _exchange(client, code, resource=resource)
+        assert response.status_code == 400 and response.json()["error"] == "invalid_target"
+
     async def test_device_name_is_cleaned_and_optional(self, client, oauth_on, no_fetch, web_headers, test_team):
         code = await _app_code(client, web_headers)
         body = (await _exchange(client, code, device_name="  Pixel\x00 8\n\n" + "x" * 200)).json()
