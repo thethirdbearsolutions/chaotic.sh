@@ -469,3 +469,117 @@ class TestTeamAcceptInvite:
 
         assert result.exit_code == 0, result.output
         assert json.loads(result.stdout) == {"team_id": "t-1", "role": "member"}
+
+
+class TestTeamAcceptInviteLink:
+    """CHT-1823: accept-invite takes the whole /invite/<token> link."""
+
+    TOKEN = "Zk3-q_9xTOKENsecret"
+
+    @pytest.fixture
+    def web_url(self, monkeypatch):
+        import cli.main as main_mod
+
+        def set_url(url):
+            monkeypatch.setattr(main_mod, "get_web_url", lambda: url)
+        set_url("https://chaotic.example.com")
+        return set_url
+
+    def _accept(self, cli_runner, arg, *extra):
+        from cli.main import cli, client
+        client.accept_invitation = MagicMock(return_value={"team_id": "t-1"})
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', arg, *extra])
+        return result, client.accept_invitation
+
+    @pytest.mark.parametrize("arg", [
+        "https://chaotic.example.com/invite/{t}",
+        "https://chaotic.example.com/invite/{t}/",
+        "https://chaotic.example.com/invite/{t}?utm=x#frag",
+        "  https://CHAOTIC.example.com./invite/{t}\n",
+        "https://chaotic.example.com:8443/invite/{t}",
+        "https://chaotic.example.com/sub/path/invite/{t}",
+        "chaotic.example.com/invite/{t}",
+        "/invite/{t}",
+        "{t}",
+        "  {t}  ",
+    ])
+    def test_takes_the_token_and_does_not_warn(self, cli_runner, web_url, arg):
+        result, accept = self._accept(cli_runner, arg.format(t=self.TOKEN))
+        assert result.exit_code == 0, result.output
+        accept.assert_called_once_with(self.TOKEN)
+        assert "Warning" not in result.output
+        assert "Joined team" in result.output
+
+    def test_warns_when_the_link_names_another_host(self, cli_runner, web_url):
+        result, accept = self._accept(cli_runner, f"https://other.example.org/invite/{self.TOKEN}")
+        assert result.exit_code == 0, result.output
+        accept.assert_called_once_with(self.TOKEN)
+        assert "Warning" in result.stderr
+        assert "other.example.org" in result.stderr
+        assert "chaotic.example.com" in result.stderr
+        assert self.TOKEN not in result.stderr
+
+    def test_warning_keeps_json_stdout_clean(self, cli_runner, web_url):
+        import json
+        result, _ = self._accept(cli_runner, f"https://other.example.org/invite/{self.TOKEN}", "--json")
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {"team_id": "t-1"}
+        assert "Warning" in result.stderr
+
+    def test_local_link_on_a_local_server_does_not_warn(self, cli_runner, web_url):
+        web_url("http://127.0.0.1:24267")
+        result, accept = self._accept(cli_runner, f"http://localhost:24267/invite/{self.TOKEN}")
+        assert result.exit_code == 0, result.output
+        accept.assert_called_once_with(self.TOKEN)
+        assert "Warning" not in result.output
+
+    def test_local_link_on_a_remote_server_warns(self, cli_runner, web_url):
+        result, _ = self._accept(cli_runner, f"http://localhost:24267/invite/{self.TOKEN}")
+        assert result.exit_code == 0, result.output
+        assert "Warning" in result.stderr
+        assert self.TOKEN not in result.stderr
+
+    @pytest.mark.parametrize("arg", [
+        "https://chaotic.example.com/invite/",
+        "https://chaotic.example.com/",
+        "https://chaotic.example.com/issue/{t}",
+        "{t}/extra",
+        "https://[::1/invite/{t}",
+    ])
+    def test_a_link_without_a_token_fails_without_echoing_it(self, cli_runner, web_url, arg):
+        result, accept = self._accept(cli_runner, arg.format(t=self.TOKEN))
+        assert result.exit_code == 2
+        accept.assert_not_called()
+        assert "no invitation token" in result.output
+        assert self.TOKEN not in result.output
+
+    def test_help_mentions_the_link(self, cli_runner):
+        from cli.main import cli
+        result = cli_runner.invoke(cli, ['team', 'accept-invite', '--help'])
+        assert result.exit_code == 0
+        assert "/invite/<token>" in result.output
+        assert "LINK_OR_TOKEN" in result.output
+
+
+class TestInviteTokenFromArg:
+    def test_bare_token_has_no_host(self):
+        from cli.commands.team import invite_token_from_arg
+        assert invite_token_from_arg("abc") == ("abc", None)
+
+    def test_link_host(self):
+        from cli.commands.team import invite_token_from_arg
+        assert invite_token_from_arg("https://h.example/invite/abc") == ("abc", "h.example")
+
+    @pytest.mark.parametrize("link_host,web_url,expected", [
+        (None, "https://a.example", None),
+        ("a.example", "https://A.example.", None),
+        ("a.example", "http://a.example:24267", None),
+        ("b.example", "https://a.example", "a.example"),
+        ("127.0.0.1", "http://localhost:24267", None),
+        ("localhost", "https://a.example", "a.example"),
+        ("a.example", "", None),
+        ("a.example", "https://[bad", None),
+    ])
+    def test_foreign_invite_host(self, link_host, web_url, expected):
+        from cli.commands.team import foreign_invite_host
+        assert foreign_invite_host(link_host, web_url) == expected

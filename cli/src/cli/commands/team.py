@@ -43,6 +43,59 @@ def invite_link_for_display(accept_url: str, web_url: str | None) -> str:
     return f"{here.scheme}://{host}{port}{link.path}"
 
 
+def invite_token_from_arg(value: str) -> tuple[str, str | None]:
+    """The token in ``chaotic team accept-invite``'s argument (CHT-1823),
+    and the host of the link it came from (None when there is none).
+
+    The argument is the bare token or the link an admin hands out,
+    ``https://host/invite/<token>``; the token is the link's last path
+    segment, and the segment before it must be ``invite``. A link
+    without a scheme (``host/invite/<token>``) is read as a path, so it
+    has no host. Raises click.UsageError for a link with no token. The
+    message never repeats the argument: it is a credential."""
+    text = value.strip()
+    if "/" not in text:
+        return text, None
+    bad = click.UsageError(
+        "That link has no invitation token in it. Pass the whole link "
+        "(https://<host>/invite/<token>) or just the token."
+    )
+    try:
+        parts = urlsplit(text)
+        host = parts.hostname if parts.scheme else None
+    except ValueError:
+        raise bad from None
+    segments = [s for s in parts.path.split("/") if s]
+    if len(segments) < 2 or segments[-2] != "invite":
+        raise bad
+    return segments[-1], host
+
+
+def foreign_invite_host(link_host: str | None, web_url: str | None) -> str | None:
+    """The configured server's host when an invitation link names another
+    host, else None (CHT-1823).
+
+    Hostnames are compared without case or a trailing dot, and ports are
+    ignored (a server behind a proxy is reached on another port than its
+    own). A link on a local-only host (is_local_host) is not foreign when
+    the configured server is local-only too: both are this machine."""
+    if not link_host:
+        return None
+    try:
+        here = urlsplit(web_url or "").hostname
+    except ValueError:
+        here = None
+    if not here:
+        return None
+    def norm(h):
+        return h.lower().rstrip(".")
+    if norm(link_host) == norm(here):
+        return None
+    if is_local_host(link_host) and is_local_host(here):
+        return None
+    return here
+
+
 def register(cli):
     """Register team commands on the CLI group."""
 
@@ -182,13 +235,27 @@ def register(cli):
         console.print(esc(link), soft_wrap=True, highlight=False)
 
     @team.command("accept-invite")
-    @click.argument("token")
+    @click.argument("invitation", metavar="LINK_OR_TOKEN")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def team_accept_invite(token):
-        """Accept a team invitation."""
+    def team_accept_invite(invitation):
+        """Accept a team invitation.
+
+        LINK_OR_TOKEN is the invitation link you were sent
+        (https://<host>/invite/<token>) or just its token. The invitation
+        is accepted on the server this CLI is configured for; if the
+        link names another host, a warning says so.
+        """
         m = _main()
+        token, link_host = invite_token_from_arg(invitation)
+        here = foreign_invite_host(link_host, m.get_web_url())
+        if here:
+            click.echo(click.style(
+                f"Warning: this invitation link is for {link_host}, but the CLI is "
+                f"configured for {here}. Accepting it on {here}; if that fails, rerun "
+                "with --profile set to a profile for the link's server.",
+                fg="yellow"), err=True)
         try:
             member = _client().accept_invitation(token)
         except m.APIError as e:
