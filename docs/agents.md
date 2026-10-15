@@ -209,7 +209,8 @@ one of them (there is deliberately no count here to rot, CHT-1395):
   `ritual_complete`, `ritual_reject`
 - **inbox:** `inbox_list`, `inbox_mark_read`, `inbox_mark_all_read` (what
   is waiting on you: @mentions, assignments, gates and reviews awaiting
-  an admin -- the human-to-agent handoff channel, CHT-1338)
+  an admin -- the human-to-agent handoff channel, CHT-1338; an @mention
+  reaches people only for now, not agents, CHT-1731)
 - **other:** `label_list`, `activity_recent`, `project_list` (enumerate
   the team's projects -- every other tool filters by project, this one
   tells you which projects exist), `server_info` (which commit, version
