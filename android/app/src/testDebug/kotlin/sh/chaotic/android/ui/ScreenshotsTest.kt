@@ -50,7 +50,8 @@ import kotlin.test.assertTrue
  * screen at a phone's size (411x891dp at xxhdpi, about 1080x2340 pixels)
  * and the PNGs go to app/build/screenshots, which CI uploads as an
  * artifact. Nothing compares them against a stored copy; each test only
- * checks that something was drawn. Every name and address here is made up.
+ * checks that something was drawn. Every team, project, person and
+ * address here is made up: never put real data from a server in these.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -69,7 +70,7 @@ class ScreenshotsTest {
 
     private val gate = InboxEntry(
         id = "e1", teamId = "t1", kind = "gate_pending", title = "Gate: human review before close",
-        issueId = "i1", issueIdentifier = "CHT-482", source = agent,
+        issueId = "i1", issueIdentifier = "LP-482", source = agent,
         createdAtMillis = now - 4 * minute, updatedAtMicros = 6,
         actions = listOf(
             InboxAction(InboxAction.APPROVE, "/api/rituals/r1/complete-issue/i1", "optional"),
@@ -80,56 +81,56 @@ class ScreenshotsTest {
     private val inbox = listOf(
         gate,
         InboxEntry(
-            id = "e2", teamId = "t1", kind = "review_requested", title = "Review: offline write queue",
-            issueId = "i2", issueIdentifier = "CHT-475", source = marcus,
+            id = "e2", teamId = "t1", kind = "review_requested", title = "Review: countdown hold logic",
+            issueId = "i2", issueIdentifier = "LP-475", source = marcus,
             createdAtMillis = now - 38 * minute, updatedAtMicros = 5,
         ),
         InboxEntry(
-            id = "e3", teamId = "t1", kind = "gate_rejected", title = "Rejected: needs a migration test",
-            issueId = "i3", issueIdentifier = "CHT-469", source = priya,
+            id = "e3", teamId = "t1", kind = "gate_rejected", title = "Rejected: needs a fuel-load test",
+            issueId = "i3", issueIdentifier = "LP-469", source = priya,
             createdAtMillis = now - 2 * hour, updatedAtMicros = 4,
         ),
         InboxEntry(
-            id = "e4", teamId = "t1", kind = "assignment", title = "Sprint budget chart on the web",
-            issueId = "i4", issueIdentifier = "CHT-488", source = priya,
+            id = "e4", teamId = "t1", kind = "assignment", title = "Pad camera feed on the dashboard",
+            issueId = "i4", issueIdentifier = "LP-488", source = priya,
             createdAtMillis = now - 3 * hour, updatedAtMicros = 3,
             actions = listOf(InboxAction(InboxAction.MARK_READ, "/api/inbox/e4/read")),
         ),
         InboxEntry(
             id = "e5", teamId = "t1", kind = "mention", title = "Mentioned you", documentId = "d1",
-            documentTitle = "Release checklist", source = marcus,
+            documentTitle = "Launch checklist", source = marcus,
             createdAtMillis = now - 26 * hour, updatedAtMicros = 2, read = true,
         ),
         InboxEntry(
-            id = "e6", teamId = "t1", kind = "agent_status", title = "Finished: rename sprint fields",
-            issueId = "i6", issueIdentifier = "CHT-461", source = agent,
+            id = "e6", teamId = "t1", kind = "agent_status", title = "Finished: rename telemetry fields",
+            issueId = "i6", issueIdentifier = "LP-461", source = agent,
             createdAtMillis = now - 3 * 24 * hour, updatedAtMicros = 1, read = true,
         ),
     )
 
-    private val teams = listOf(Team("t1", "Third Bear", "TB"), Team("t2", "Side projects", "SP"))
+    private val teams = listOf(Team("t1", "Acme Rocketry", "ACME"), Team("t2", "Moonbase Ops", "MOON"))
 
     private val sprintCards = listOf(
-        SprintCard("p1", "t1", "Chaotic", "CHT", "s1", "Sprint 42", budget = 20, pointsSpent = 13, limbo = false),
-        SprintCard("p2", "t1", "Website", "WEB", "s2", "Sprint 7", budget = 8, pointsSpent = 10, limbo = false),
+        SprintCard("p1", "t1", "Launchpad", "LP", "s1", "Sprint 42", budget = 20, pointsSpent = 13, limbo = false),
+        SprintCard("p2", "t1", "Telemetry", "TEL", "s2", "Sprint 7", budget = 8, pointsSpent = 10, limbo = false),
         SprintCard(
-            "p3", "t1", "Docs", "DOC", "s3", "Sprint 12", budget = 10, pointsSpent = 10, limbo = true,
+            "p3", "t1", "Field Guide", "FG", "s3", "Sprint 12", budget = 10, pointsSpent = 10, limbo = true,
             pendingRituals = listOf("retro", "changelog"),
         ),
-        SprintCard("p4", "t2", "Mobile", "MOB", "s4", "Sprint 3", budget = null, pointsSpent = 5, limbo = false),
+        SprintCard("p4", "t2", "Rover", "ROV", "s4", "Sprint 3", budget = null, pointsSpent = 5, limbo = false),
     )
 
     private val issue = Issue(
-        id = "i1", teamId = "t1", projectId = "p1", identifier = "CHT-482",
-        title = "Approve and reject gates from the inbox",
+        id = "i1", teamId = "t1", projectId = "p1", identifier = "LP-482",
+        title = "Abort the countdown from the pad console",
         description = """
             ## Goal
 
-            A gate waiting on a person can be **approved or rejected** without opening the web app.
+            The pad crew can **abort the countdown** without walking back to mission control.
 
-            - Swipe right to approve
-            - Swipe left to reject, with a reason
-            - Undo for five seconds after either
+            - One button, with a confirm step
+            - The abort reason goes into the launch log
+            - Works while the pad network is down
         """.trimIndent(),
         status = "in_review", priority = "high", estimate = 5, assignee = agent,
         updatedAtMillis = now - 4 * minute, openedAtMillis = now,
@@ -142,14 +143,14 @@ class ScreenshotsTest {
                 id = "c1",
                 issueId = "i1",
                 author = marcus,
-                content = "Swipe feels good. Can the reason box keep what I typed if I rotate?",
+                content = "Tried it on the test stand. Can the confirm step time out after ten seconds?",
                 createdAtMillis = now - 2 * hour,
             ),
             Comment(
                 id = "c2",
                 issueId = "i1",
                 author = agent,
-                content = "Done: the draft survives rotation now, and there is a test for it.",
+                content = "Done: it times out after ten seconds now, and there is a test for it.",
                 createdAtMillis = now - 30 * minute,
             ),
         ),
@@ -215,7 +216,7 @@ class ScreenshotsTest {
         then = {
             compose.onNodeWithText(GATE_ROW).performTouchInput { swipeLeft() }
             compose.onNodeWithText("Why (required: the requester reads this)")
-                .performTextInput("The migration needs a downgrade test first.")
+                .performTextInput("Needs a dry run on the test stand first.")
         },
     ) { Home(HomeState(teams = teams, inbox = InboxSections.of(inbox))) }
 
@@ -235,8 +236,8 @@ class ScreenshotsTest {
             key = "k1",
             kind = WriteKind.COMMENT,
             issueId = "i2",
-            value = "Looks right to me; shipping after the release.",
-            label = "CHT-475",
+            value = "Looks right to me; flying it on the next test.",
+            label = "LP-475",
             createdAtMillis = now - hour,
             notBeforeMillis = now,
             attempts = WriteQueue.MAX_ATTEMPTS,
@@ -248,7 +249,7 @@ class ScreenshotsTest {
                     inbox = InboxSections.of(inbox.drop(1)),
                     problem = SyncProblem.Offline,
                     stalled = listOf(stalled),
-                    undo = UndoOffer("k2", WriteKind.APPROVE, "CHT-482"),
+                    undo = UndoOffer("k2", WriteKind.APPROVE, "LP-482"),
                 ),
             )
         }
@@ -281,6 +282,6 @@ class ScreenshotsTest {
     }
 
     private companion object {
-        const val GATE_ROW = "CHT-482  Gate: human review before close"
+        const val GATE_ROW = "LP-482  Gate: human review before close"
     }
 }
