@@ -27,6 +27,7 @@ import sh.chaotic.api.models.DocumentCreate
 import sh.chaotic.api.models.DocumentResponse
 import sh.chaotic.api.models.HTTPValidationError
 import sh.chaotic.api.models.IssueCreate
+import sh.chaotic.api.models.IssueQueryResponse
 import sh.chaotic.api.models.IssueResponse
 import sh.chaotic.api.models.LabelCreate
 import sh.chaotic.api.models.LabelResponse
@@ -528,6 +529,94 @@ import io.ktor.http.ParametersBuilder
             val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.GET,
             "/api/teams/{team_id}/issues/ready".replace("{" + "team_id" + "}", "$teamId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * GET /api/projects/{project_id}/issues/query
+        * Query Project Issues
+        * Run an issue query in one project (CHT-1718; docs/issue-query.md).
+         * @param projectId  
+         * @param `where`  (optional)
+         * @param filter  (optional)
+         * @param order  (optional)
+         * @param skip  (optional, default to 0)
+         * @param limit  (optional, default to 100)
+         * @return IssueQueryResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun queryProjectIssuesApiProjectsProjectIdIssuesQueryGet(projectId: kotlin.String, `where`: kotlin.String? = null, filter: kotlin.String? = null, order: kotlin.String? = null, skip: kotlin.Int? = 0, limit: kotlin.Int? = 100): HttpResponse<IssueQueryResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+            `where`?.apply { localVariableQuery["where"] = listOf("$`where`") }
+            filter?.apply { localVariableQuery["filter"] = listOf("$filter") }
+            order?.apply { localVariableQuery["order"] = listOf("$order") }
+            skip?.apply { localVariableQuery["skip"] = listOf("$skip") }
+            limit?.apply { localVariableQuery["limit"] = listOf("$limit") }
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/api/projects/{project_id}/issues/query".replace("{" + "project_id" + "}", "$projectId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * GET /api/teams/{team_id}/issues/query
+        * Query Team Issues
+        * Run an issue query across every project of a team (CHT-1718).
+         * @param teamId  
+         * @param `where`  (optional)
+         * @param filter  (optional)
+         * @param order  (optional)
+         * @param skip  (optional, default to 0)
+         * @param limit  (optional, default to 100)
+         * @return IssueQueryResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun queryTeamIssuesApiTeamsTeamIdIssuesQueryGet(teamId: kotlin.String, `where`: kotlin.String? = null, filter: kotlin.String? = null, order: kotlin.String? = null, skip: kotlin.Int? = 0, limit: kotlin.Int? = 100): HttpResponse<IssueQueryResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+            `where`?.apply { localVariableQuery["where"] = listOf("$`where`") }
+            filter?.apply { localVariableQuery["filter"] = listOf("$filter") }
+            order?.apply { localVariableQuery["order"] = listOf("$order") }
+            skip?.apply { localVariableQuery["skip"] = listOf("$skip") }
+            limit?.apply { localVariableQuery["limit"] = listOf("$limit") }
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/api/teams/{team_id}/issues/query".replace("{" + "team_id" + "}", "$teamId"),
             query = localVariableQuery,
             headers = localVariableHeaders,
             requiresAuthentication = true,

@@ -1,6 +1,7 @@
 """Issue and label tools."""
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
 from pydantic import Field
@@ -15,7 +16,9 @@ from ..constants import (
     SORT_ORDER,
     STATUS_VALUES,
     TEAM_FIELD_DESC,
+    WHERE_DESC,
 )
+from ..query import simple_filter_rows
 from ..errors import BackendError, ToolInputError
 from ..estimates import off_scale_warning
 from ..shapes import (
@@ -146,6 +149,10 @@ async def issue_list(
         str | None,
         Field(description="Free-text search over title, description, and identifier.")
     ] = None,
+    where: Annotated[
+        str | None,
+        Field(description=WHERE_DESC)
+    ] = None,
     sprint: Annotated[
         str | None,
         Field(description="Filter by sprint: a sprint name, 'current', 'next', or a sprint id.")
@@ -174,7 +181,9 @@ async def issue_list(
 
     Returns compact rows plus `count` and `truncated`; truncated=true means
     `limit` cut the list -- narrow the filter rather than assume you saw
-    everything. Pass detail=true for full rows.
+    everything. Pass detail=true for full rows. With `where`, the result
+    also carries `total` (every match) and `where` (the query as the
+    server read it).
     """
     project_id = None
     # Explicit `project` wins over all_projects -- same precedence as
@@ -203,6 +212,27 @@ async def issue_list(
     sprint_id = None
     if sprint and project_id:
         sprint_id = await backend.resolve_sprint(sprint, project_id)
+
+    if where is not None and where.strip():
+        # The query endpoint (CHT-1718). The plain filters become rows
+        # ANDed with `where`, so both kinds of argument keep their meaning.
+        rows = simple_filter_rows(
+            statuses=status, priorities=priority, assignee_id=assignee_id,
+            label=label, search=search, sprint_id=sprint_id, parent_id=parent_id,
+        )
+        result = await backend.query_issues(
+            project_id=project_id,
+            team_id=team_id if not project_id else None,
+            where=where,
+            filter_json=json.dumps({"match": "all", "rows": rows}) if rows else None,
+            order=("-" if order == "desc" else "") + sort_by,
+            limit=limit,
+        )
+        out = listing("issues", result["issues"], limit, COMPACT_ISSUE_FIELDS, detail)
+        out["truncated"] = result["total"] > len(result["issues"])
+        out["total"] = result["total"]
+        out["where"] = result["where"]
+        return out
 
     filters = dict(
         project_id=project_id,

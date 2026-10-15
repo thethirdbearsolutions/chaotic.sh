@@ -130,6 +130,7 @@ READS_WITH_BOOKKEEPING: dict[str, str] = {
     "app.api.issues.list_issues": _LEASE,
     "app.api.issues.list_team_activities": _LEASE,
     "app.api.issues.list_ready_issues": _LEASE,
+    "app.api.issues.query_issues": _LEASE,
     "app.api.nested.list_project_ready_issues": _LEASE,
     "app.api.nested.list_team_ready_issues": _LEASE,
     "app.api.rituals.get_limbo_status": "limbo self-heal (CHT-1278)",

@@ -548,6 +548,7 @@ class TestRegisterOnly:
             "list_document_issues", "list_document_revisions", "list_documents", "list_inbox",
             "list_issue_description_revisions", "list_issues", "list_labels", "list_projects",
             "list_ready_issues", "list_relations", "list_rituals", "list_sprints", "list_sub_issues",
+            "query_issues",
             "list_transactions", "server_info",
         }
 
