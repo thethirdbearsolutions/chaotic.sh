@@ -9,7 +9,9 @@ Each principal has candidate handles, most readable first. Some are
 *weak*: a first word, which others may well share.
 
 - a person: the first word of their name (what ``@ethan`` has always
-  meant; weak), then their whole name (``@ethan-smith``);
+  meant; weak), then their whole name (``@ethan-smith``). A one-word
+  name is only a first word, so a person named "Claude" claims
+  ``claude`` weakly, like Claude Shannon does (CHT-1744);
 - a session identity whose name has the default ``<registrar> · … ·
   <tail>`` shape: ``<first word>-<tail>``, e.g. ``claude-3f9a1c``;
 - every agent: its whole name, e.g. ``claude-mcp``, then its first word
@@ -143,7 +145,11 @@ def named_candidates(user) -> tuple[tuple[str, bool], ...]:
         legacy = legacy_first_word_handle(user.name, user.email)
         if HANDLE_RE.fullmatch(legacy):
             out.append((legacy, True))
-        out += [(word, True), (full, False)]
+        # A whole name that is its first word ("Claude") is a first-word
+        # claim, or it would make a word "Claude …" agents share
+        # ambiguous instead of the person's (CHT-1744). An agent's whole
+        # name stays strong, so it still names both.
+        out += [(word, True), (full, full == word)]
     else:
         if user.kind == AgentKind.SESSION and SESSION_NAME_SEP in name:
             tail = slugify(name.rsplit(SESSION_NAME_SEP, 1)[1])
