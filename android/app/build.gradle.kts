@@ -75,15 +75,6 @@ android {
         unitTests.isIncludeAndroidResources = true
     }
 
-    // MigrationTestHelper reads each committed schema as an asset
-    // (<database class>/<version>.json). The Room plugin only wires them into
-    // instrumented tests, so the Robolectric migration test gets them here (CHT-1666).
-    sourceSets {
-        getByName("test") {
-            assets.srcDir("$projectDir/schemas")
-        }
-    }
-
     lint {
         warningsAsErrors = false
         abortOnError = true
@@ -138,8 +129,6 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.tink)
     testImplementation(libs.androidx.test.core)
-    // MigrationTestHelper: each committed schema migrates to the current one (CHT-1666).
-    testImplementation(libs.androidx.room.testing)
     // CacheStoreContract, which the Room store must pass like the in-memory one.
     testImplementation(testFixtures(project(":core-sync")))
     testImplementation(platform(libs.compose.bom))
