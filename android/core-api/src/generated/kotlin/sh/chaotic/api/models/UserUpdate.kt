@@ -34,7 +34,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * Schema for updating a user.  No ``email`` on purpose: a change of address would have to clear ``email_verified_at`` too (CHT-1790; see app.services.email_verification_service).
+ * Schema for updating a user.  No ``email`` on purpose: a change of address takes the password and clears ``email_verified_at`` (``POST /api/auth/email``, UserService.change_email, CHT-1827).
  *
  * @param name 
  * @param avatarUrl 

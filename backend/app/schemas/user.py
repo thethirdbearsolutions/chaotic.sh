@@ -16,9 +16,9 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     """Schema for updating a user.
 
-    No ``email`` on purpose: a change of address would have to clear
-    ``email_verified_at`` too (CHT-1790; see
-    app.services.email_verification_service).
+    No ``email`` on purpose: a change of address takes the password and
+    clears ``email_verified_at`` (``POST /api/auth/email``,
+    UserService.change_email, CHT-1827).
     """
 
     name: str | None = None
@@ -74,6 +74,13 @@ class EmailVerificationConfirm(BaseModel):
     # Six digits as mailed. Bounded but not pattern-checked here, so a
     # malformed code gets the same answer as a wrong one.
     code: str = Field(min_length=1, max_length=32)
+
+
+class EmailChange(BaseModel):
+    """A person's new address, confirmed with their password (CHT-1827)."""
+
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=1024)
 
 
 class UserLogin(BaseModel):

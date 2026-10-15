@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, NotAppSession
 from app.schemas.user import (
+    EmailChange,
     EmailVerificationConfirm,
     EmailVerificationSent,
     Token,
@@ -11,7 +12,7 @@ from app.schemas.user import (
     UserResponse,
 )
 from app.services.email_verification_service import EmailVerificationService, VerificationRefused
-from app.services.user_service import EmailTakenError, UserService
+from app.services.user_service import EmailChangeRefused, EmailTakenError, UserService
 from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
 
 router = APIRouter()
@@ -137,6 +138,35 @@ async def request_email_verification(
     except VerificationRefused as refused:
         raise _refusal(refused) from refused
     return EmailVerificationSent(email=current_user.email, expires_at=row.expires_at)
+
+
+@router.post("/email", response_model=UserResponse)
+@writes
+async def change_email(
+    body: EmailChange, current_user: CurrentUser, _app_session: NotAppSession,
+) -> UserResponse:
+    """Change the signed-in person's own address (CHT-1827), confirmed
+    with their password, and return the account.
+
+    The address is then unverified (``email_verified_at`` null): verify
+    the new one with ``POST /api/auth/email-verification``. Codes sent
+    for the old address stop working, and with SMTP configured a notice
+    goes to the old address. Sessions and API keys stay valid.
+
+    400 ``email_change_refused`` for a wrong password and for an address
+    another account holds, ignoring case: one answer for both. 400
+    ``email_unchanged`` when it is the account's address already. 429
+    ``email_change_rate_limited`` past five tries an hour or three
+    changes a day. People with a password only: an agent gets 403
+    ``human_required``.
+    """
+    try:
+        user = await UserService().change_email(current_user, body.email, body.password)
+    except EmailChangeRefused as refused:
+        raise HTTPException(
+            status_code=refused.status_code, detail=refused.detail(), headers=refused.headers,
+        ) from refused
+    return UserResponse.model_validate(user)
 
 
 @router.post("/email-verification/confirm", response_model=UserResponse)

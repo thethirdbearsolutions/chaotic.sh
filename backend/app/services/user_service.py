@@ -11,6 +11,9 @@ from app.utils.email_address import fold_email
 from app.utils.security import get_password_hash, verify_password
 from app.oxyde_models.team import OxydeTeamMember
 from app.oxyde_models.api_key import OxydeAPIKey
+from app.oxyde_models.email_verification import OxydeEmailVerificationCode
+from app.oauth.ratelimit import SlidingWindowLimiter
+from app.services.email_service import EmailService, fire_and_forget
 from app.services.agent_service import AgentService, describe_counts
 from app.services.credential_events import revoking
 from app.services.revocation_service import REASON_PRINCIPAL_DELETED, RevocationService
@@ -22,21 +25,81 @@ User = OxydeUser
 logger = logging.getLogger(__name__)
 
 
+async def give_free_addresses_to_legacy_accounts() -> list[str]:
+    """Set ``email_folded`` on each account migration 0034 left without
+    one whose address no account holds any more (CHT-1827), oldest
+    first, and return their ids.
+
+    An account is left NULL because an older account held its address,
+    ignoring case. Once that account is deleted, or changes its own
+    address, the address is free, and the next oldest account at it
+    takes it, so the unique index covers it and the startup warning
+    stops counting it. Called after an account is deleted or changes its
+    address, and at startup (which also covers a row deleted by hand).
+
+    Never changes ``email``. An address that cannot be folded (not text,
+    or with a NUL character, as 0034 skips) is left alone. A concurrent
+    writer that takes the address first wins: the unique index refuses
+    this row's UPDATE, and it stays NULL."""
+    rows = await execute_raw(
+        "SELECT id, email FROM users WHERE email_folded IS NULL AND typeof(email) = 'text' "
+        "ORDER BY created_at, id", [],
+    )
+    claimed: list[str] = []
+    for row in rows:
+        email = row["email"]
+        if "\x00" in email:
+            continue
+        folded = fold_email(email)
+        if not folded or await OxydeUser.objects.filter(email_folded=folded).first() is not None:
+            continue
+        try:
+            updated = await OxydeUser.objects.filter(
+                id=row["id"], email_folded__isnull=True,
+            ).update(email_folded=folded)
+        except (IntegrityError, RuntimeError) as error:  # QuerySet.update raises the latter
+            if not _is_address_collision(error):
+                raise
+            continue
+        if updated:
+            claimed.append(row["id"])
+    if claimed:
+        logger.info(
+            "account(s) %s now hold their email address: the older account at it is gone (CHT-1827)",
+            ", ".join(claimed),
+        )
+    return claimed
+
+
+async def _give_free_addresses_safely() -> None:
+    """``give_free_addresses_to_legacy_accounts`` after a write that freed
+    an address; a failure is logged, not raised (the write stands, and
+    the next startup tries again)."""
+    try:
+        await give_free_addresses_to_legacy_accounts()
+    except Exception:
+        logger.exception("could not give freed email addresses to the accounts that share them")
+
+
 async def warn_if_accounts_share_an_address() -> int:
-    """Log a warning naming how many accounts have no ``email_folded``
-    (CHT-1804), and return that count. Migration 0034 leaves it NULL on
-    every account whose address differs only in case from an older
-    account's; such accounts still share one email-verification rate
-    limit with it. They are listed by id in 0034's output; to find them
-    again: ``SELECT id FROM users WHERE email_folded IS NULL``.
+    """At startup: give each account without ``email_folded`` its address
+    if it is free now (``give_free_addresses_to_legacy_accounts``), then
+    log a warning naming how many still have none (CHT-1804), and return
+    that count. Migration 0034 leaves it NULL on every account whose
+    address differs only in case from an older account's; such accounts
+    still share one email-verification rate limit with it.
+    ``chaotic system audit shared-addresses`` lists them by id.
     """
+    # Fail-soft: the warning below must still be logged (PR #450 review, 5).
+    await _give_free_addresses_safely()
     count = await OxydeUser.objects.filter(email_folded__isnull=True).count()
     if count:
         logger.warning(
             "%d account(s) share an email address, ignoring case, with an older account "
-            "(users.email_folded is NULL; migration 0034 listed them by id). They keep "
-            "working, but share the older account's email-verification limits. There is "
-            "no command to resolve them yet (CHT-1827).",
+            "(users.email_folded is NULL). They keep working, but share the older account's "
+            "email-verification limits. `chaotic system audit shared-addresses` on the server "
+            "lists them by id; ask each one's owner to change its address with "
+            "`chaotic auth change-email` (CHT-1827).",
             count,
         )
     return count
@@ -104,6 +167,62 @@ class EmailTakenError(Exception):
     (CHT-1790). Raised by UserService.create when the database's unique
     indexes refuse the row, which is how a signup that raced another one
     for the same address ends (CHT-1804)."""
+
+
+class EmailChangeRefused(Exception):
+    """A change of address refused (CHT-1827). ``status_code`` and
+    ``error_code`` say how; ``email_change_refused`` is the one answer to
+    both a wrong password and an address another account holds, so the
+    route is no oracle for which addresses have accounts."""
+
+    def __init__(self, status_code: int, error_code: str, message: str, headers: dict | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_code = error_code
+        self.message = message
+        self.headers = headers
+
+    def detail(self) -> dict:
+        return {"error_code": self.error_code, "message": self.message}
+
+
+# Tries per account per hour, wrong passwords included: the password
+# check here must not be a faster guess than login.
+EMAIL_CHANGE_ATTEMPTS_PER_HOUR = 5
+# Changes per account per day: each one mails a notice to the address
+# left, so this bounds the mail one account can send to addresses it
+# names.
+EMAIL_CHANGES_PER_DAY = 3
+# In-process, like app.oauth.ratelimit's: a server run as several workers
+# allows each its own budget, still a bound. Tests clear them.
+email_change_attempts = SlidingWindowLimiter(3600)
+email_changes = SlidingWindowLimiter(86400)
+
+
+def _email_change_refused() -> EmailChangeRefused:
+    return EmailChangeRefused(
+        400, "email_change_refused",
+        "The address was not changed: the password is wrong, or the address cannot be used.",
+    )
+
+
+def render_email_changed_notice() -> tuple[str, str]:
+    """(subject, body) of the notice mailed to the address an account
+    left (CHT-1827). It names neither the account nor the new address:
+    whoever reads the old mailbox may not be the account's owner."""
+    subject = "[Chaotic] Your account's email address was changed"
+    body = (
+        "The Chaotic account that used this email address now uses a different one.\n"
+        "Mail for the account no longer comes here, and this address no longer signs in to it.\n"
+        "\n"
+        "If you made this change, there is nothing to do.\n"
+        "\n"
+        "If you did not, someone who knows the account's password changed it:\n"
+        "contact the operator of your Chaotic server.\n"
+        "\n"
+        "— Chaotic"
+    )
+    return subject, body
 
 
 class UserService:
@@ -216,6 +335,95 @@ class UserService:
         await user.refresh()
         return user
 
+    async def change_email(self, user: OxydeUser, new_email: str, password: str) -> OxydeUser:
+        """Change ``user``'s own address to ``new_email`` (CHT-1827), after
+        checking ``password``. Raises EmailChangeRefused:
+
+        * 403 ``human_required``: an agent, or an account with no
+          password to confirm with.
+        * 429 ``email_change_rate_limited``: over
+          ``EMAIL_CHANGE_ATTEMPTS_PER_HOUR`` tries or
+          ``EMAIL_CHANGES_PER_DAY`` changes (checked before the password,
+          so it says nothing about the address).
+        * 400 ``email_change_refused``: a wrong password, or an address
+          another account holds ignoring case (one answer for both).
+        * 400 ``email_unchanged``: ``new_email`` is the account's address
+          already, exactly.
+
+        In one write: ``email``, ``email_folded``, and
+        ``email_verified_at`` cleared (a verification of the old address
+        must not vouch for the new one). Then every code still live for
+        the account is expired, so none sent to the old address can be
+        confirmed later; the notice is mailed to the old address when
+        SMTP is configured; and an account 0034 left without an address
+        at the old one takes it. Sessions and keys are untouched. Logged
+        by account id only.
+        """
+        if user.is_agent or not user.hashed_password:
+            raise EmailChangeRefused(
+                403, "human_required",
+                "Only a person's account with a password can change its address.",
+            )
+        # Both slots are taken before the first await (no await between
+        # the checks and the allows), so requests in parallel cannot all
+        # pass the check before any records: five at once give at most
+        # EMAIL_CHANGES_PER_DAY changes (PR #450 review, 2). The change
+        # slot is given back when no change is made; the try is not.
+        retry = max(
+            email_change_attempts.retry_after(user.id, EMAIL_CHANGE_ATTEMPTS_PER_HOUR),
+            email_changes.retry_after(user.id, EMAIL_CHANGES_PER_DAY),
+        )
+        if retry:
+            raise EmailChangeRefused(
+                429, "email_change_rate_limited",
+                f"Too many address changes: at most {EMAIL_CHANGE_ATTEMPTS_PER_HOUR} tries an hour "
+                f"and {EMAIL_CHANGES_PER_DAY} changes a day. Try again in "
+                f"{(retry + 59) // 60} min.",
+                headers={"Retry-After": str(retry)},
+            )
+        email_change_attempts.allow(user.id, EMAIL_CHANGE_ATTEMPTS_PER_HOUR)
+        email_changes.allow(user.id, EMAIL_CHANGES_PER_DAY)
+        changed = False
+        try:
+            old_email = user.email
+            now = datetime.now(timezone.utc)
+            password_ok = verify_password(password, user.hashed_password)
+            held_elsewhere = any(
+                other.id != user.id for other in await self.find_by_email_ignoring_case(new_email)
+            )
+            if not password_ok or held_elsewhere:
+                raise _email_change_refused()
+            if new_email == user.email:
+                raise EmailChangeRefused(400, "email_unchanged", "That is already your account's address.")
+            try:
+                await OxydeUser.objects.filter(id=user.id).update(
+                    email=new_email, email_folded=fold_email(new_email),
+                    email_verified_at=None, updated_at=now,
+                )
+            except (IntegrityError, RuntimeError) as error:  # QuerySet.update raises the latter
+                # Another account took the address since the check above.
+                if not _is_address_collision(error):
+                    raise
+                raise _email_change_refused() from error
+            changed = True
+        finally:
+            if not changed:
+                email_changes.give_back(user.id)
+        # Mailed codes are bound to the old address's hash and stop
+        # matching on their own; expire every live one (an admin-issued
+        # invitation code included) so none outlives the change.
+        await OxydeEmailVerificationCode.objects.filter(
+            user_id=user.id, used_at__isnull=True, expires_at__gt=now,
+        ).update(expires_at=now)
+        logger.info("account %s changed its email address (CHT-1827)", user.id)
+        email_service = EmailService()
+        if email_service.is_configured():
+            subject, body = render_email_changed_notice()
+            fire_and_forget(email_service.send(old_email, subject, body))
+        await _give_free_addresses_safely()
+        await user.refresh()
+        return user
+
     async def delete(self, user: OxydeUser) -> None:
         """Delete a user, their agents and their memberships and API keys
         -- only if neither they nor any of their agents authored anything.
@@ -280,6 +488,10 @@ class UserService:
             await OxydeAPIKey.objects.filter(principal_user_id=user.id).delete()
             await OxydeAPIKey.objects.filter(holder_user_id=user.id).delete()
             await user.delete()
+        # Their address is free now: an account 0034 left without one,
+        # at the same address ignoring case, takes it (CHT-1827).
+        # Fail-soft: the delete has happened; startup retries.
+        await _give_free_addresses_safely()
 
     async def list_users(self, skip: int = 0, limit: int = 100) -> list[OxydeUser]:
         """List all users."""

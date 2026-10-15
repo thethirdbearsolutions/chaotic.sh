@@ -4016,6 +4016,142 @@ def system_audit_removed_members(db_path, log_file, as_json):
     raise SystemExit(status)
 
 
+# --- accounts sharing an address (CHT-1827) --------------------------------
+
+_ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def _fold_email(email: str) -> str:
+    """The server's app.utils.email_address.fold_email: stripped,
+    ASCII-lowercased (backend/tests/test_email_change.py pins the two together)."""
+    return (email or "").strip().translate(_ASCII_FOLD)
+
+
+def audit_shared_addresses(db_path: Path) -> dict:
+    """Accounts with no users.email_folded (CHT-1827). Reads only.
+
+    Migration 0034 (CHT-1804) gives each folded address to the oldest
+    account at it; the others keep NULL. They keep working, but share
+    the older account's email-verification limits. Each finding has the
+    account's id and created_at, its address (only for --show-emails),
+    and why it is NULL:
+
+    * ``shared``: ``holder_id`` holds the address (a case variant).
+    * ``free``: no account holds the address any more; the server gives
+      it to the oldest such account at its next start.
+    * ``unreadable``: the address is not text, or has a NUL character.
+    """
+    if not db_path.is_file():
+        raise AuditError(f"no database file at {db_path}")
+    try:
+        conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=10)
+    except sqlite3.Error as e:
+        raise AuditError(f"cannot open {db_path} read-only: {e}") from e
+    try:
+        conn.row_factory = sqlite3.Row
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+        if not columns:
+            raise AuditError(f"{db_path} has no users table; it is not a Chaotic database")
+        if "email_folded" not in columns:
+            raise AuditError(f"{db_path} has no users.email_folded: migration 0034 has not run "
+                             "(chaotic system upgrade runs it)")
+        rows = conn.execute(
+            "SELECT id, email, created_at FROM users WHERE email_folded IS NULL ORDER BY created_at, id"
+        ).fetchall()
+        holders = {}
+        for row in rows:
+            email = row["email"]
+            if isinstance(email, str) and "\x00" not in email:
+                folded = _fold_email(email)
+                if folded not in holders:
+                    held = conn.execute("SELECT id FROM users WHERE email_folded = ?", (folded,)).fetchone()
+                    holders[folded] = held[0] if held else None
+    except sqlite3.Error as e:
+        raise AuditError(f"cannot read {db_path}: {e}") from e
+    finally:
+        conn.close()
+
+    findings = []
+    for row in rows:
+        email = row["email"]
+        readable = isinstance(email, str) and "\x00" not in email
+        holder = holders.get(_fold_email(email)) if readable else None
+        findings.append({
+            "user_id": row["id"],
+            "created_at": row["created_at"],
+            "email": email if isinstance(email, str) else None,
+            "status": "unreadable" if not readable else ("shared" if holder else "free"),
+            "holder_id": holder,
+        })
+    return {"database": str(db_path), "findings": findings}
+
+
+@system_audit.command("shared-addresses")
+@click.option("--db", "db_path", type=click.Path(dir_okay=False, path_type=Path), default=None,
+              help="Database file to audit (default: the installed server's).")
+@click.option("--show-emails", is_flag=True, help="Print each account's address too.")
+@click.option("--json", "as_json", is_flag=True, help="Output the report as JSON.")
+def system_audit_shared_addresses(db_path, show_emails, as_json):
+    """List accounts that share an email address with an older one (CHT-1827).
+
+    Before CHT-1790 two accounts could hold addresses that differ only in
+    case. The upgrade (migration 0034) gave each address to the oldest
+    account at it; the others keep working and keep their address, but
+    share the older account's email-verification limits, and the server
+    warns about them at every start. This lists them by id, with the id
+    of the account that holds the address. Addresses are printed only
+    with --show-emails.
+
+    To resolve one, ask its owner to change their address while signed in
+    as that account: `chaotic auth change-email NEW_ADDRESS`. When the
+    older account is deleted or changes its address, the next oldest
+    takes the address on its own.
+
+    The database is opened read-only and no data is written.
+
+    Exit status: 0 none found, 1 accounts reported, 2 the audit could not run.
+    """
+    if db_path is None:
+        if not is_server_installed():
+            _audit_fail(as_json, "the Chaotic server is not installed; pass --db PATH to audit a database file")
+        db_path = DATABASE_PATH
+    try:
+        report = audit_shared_addresses(db_path)
+    except AuditError as e:
+        _audit_fail(as_json, str(e))
+    findings = report["findings"]
+    if not show_emails:
+        for finding in findings:
+            del finding["email"]
+    status = AUDIT_FINDINGS if findings else AUDIT_CLEAN
+    if as_json:
+        click.echo(json.dumps(report, indent=2))
+        raise SystemExit(status)
+    if not findings:
+        console.print("[green]Every account holds its own email address.[/green]")
+        raise SystemExit(status)
+    console.print(f"[yellow]{esc(len(findings))} account(s) do not hold their email address:[/yellow]")
+    for finding in findings:
+        if finding["status"] == "shared":
+            note = f"shares it with older user {finding['holder_id']}"
+        elif finding["status"] == "free":
+            note = "address now free (at its next start the server gives it to the oldest account listed at it)"
+        else:
+            note = "address unreadable (not text, or has a NUL character)"
+        if show_emails and finding.get("email") is not None:
+            note += f"  <{finding['email']}>"
+        console.print(
+            f"  user {esc(finding['user_id'])}  created {esc(finding['created_at'])}  {esc(note)}",
+            highlight=False,
+        )
+    console.print(
+        "To resolve one, ask its owner to change their address, signed in as that account: "
+        "chaotic auth change-email NEW_ADDRESS"
+    )
+    console.print("No data was written.")
+    raise SystemExit(status)
+
+
 @system.group("config")
 def system_config():
     """Show and change server settings such as OAUTH_ENABLED and APP_BASE_URL.
