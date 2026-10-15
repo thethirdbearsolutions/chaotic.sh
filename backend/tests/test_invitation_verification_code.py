@@ -18,20 +18,50 @@ from app.oxyde_models.user import OxydeUser
 from app.services import email_verification_service as evs
 from app.utils.security import create_access_token
 
-from .test_email_verification import (  # noqa: F401 -- fixtures
+from app.config import get_settings
+from app.services.email_service import EmailService
+
+from .test_email_verification import (
     CONFIRM,
     REQUEST,
+    Outbox,
     _accept,
     _age_codes,
     _codes,
-    _fresh_settings,
     _invite,
     _make_legacy_variant,
-    no_smtp,
-    outbox,
 )
 
 INVITEE = "invitee@example.com"
+
+
+# The fixtures of test_email_verification, defined here rather than
+# imported (an imported fixture is an unused name that a test argument
+# redefines, F811).
+@pytest.fixture(autouse=True)
+def _fresh_settings():
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def no_smtp(monkeypatch):
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def outbox(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    get_settings.cache_clear()
+    box = Outbox()
+
+    async def send(self, to, subject, body):
+        return await box.send(self, to, subject, body)
+
+    monkeypatch.setattr(EmailService, "send", send)
+    return box
 
 
 def _headers(user_id: str) -> dict:
