@@ -190,6 +190,14 @@ def is_date_value(value: str) -> bool:
     return True
 
 
+def normalise_date_value(value: str) -> str:
+    """The T form of an ISO datetime written with a space; any other
+    date value unchanged. Call it on a value ``is_date_value`` accepted."""
+    if _ISO_DATETIME.match(value) and value[10] == " ":
+        return value[:10] + "T" + value[11:]
+    return value
+
+
 def _check_value(field: str, spec: FieldSpec, value: str) -> None:
     if spec.kind == "enum":
         allowed = [m.value for m in spec.enum]
@@ -247,6 +255,11 @@ class QueryRow(BaseModel):
             raise ValueError(f"{self.field} {self.op} takes {want} value(s), got {n}")
         for v in self.values:
             _check_value(self.field, spec, v)
+        if spec.kind == "date":
+            # `2026-10-01 10:00` is accepted, but the canonical text puts
+            # a range's sides in separate quotes (`"..."..`), which does
+            # not parse back. The T form needs no quotes (CHT-1787).
+            self.values = [normalise_date_value(v) for v in self.values]
         return self
 
 

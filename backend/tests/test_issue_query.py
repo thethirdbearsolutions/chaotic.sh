@@ -866,6 +866,56 @@ def test_documented_date_forms_parse(value):
     assert parse_where(f'created="{value}"') is not None
 
 
+_DATETIME_PAIRS = [
+    # (as written, its T form)
+    ("2026-10-01 10:00", "2026-10-01T10:00"),
+    ("2026-10-01T10:00", "2026-10-01T10:00"),
+    ("2026-10-01 10:00:30.5Z", "2026-10-01T10:00:30.5Z"),
+    ("2026-10-01T10:00:30+02:00", "2026-10-01T10:00:30+02:00"),
+]
+
+
+@pytest.mark.parametrize("field", ["created", "due"])
+@pytest.mark.parametrize("op,count", [("after", 1), ("before", 1), ("between", 2), ("between", "same")])
+@pytest.mark.parametrize("written,t_form", _DATETIME_PAIRS)
+def test_datetimes_round_trip_in_every_form(field, op, count, written, t_form):
+    """CHT-1787: a space-separated datetime rendered as
+    `created="2026-10-01 10:00"..`, which does not parse back. Validation
+    now reads it as the T form, so structure -> text -> structure holds."""
+    if count == "same":
+        values, want = [written, written], [t_form, t_form]
+    elif count == 2:
+        values, want = [written, "2026-12-31 23:59"], [t_form, "2026-12-31T23:59"]
+    else:
+        values, want = [written], [t_form]
+    group = IssueQuery.model_validate(
+        {"filter": {"rows": [{"field": field, "op": op, "values": values}]}}
+    ).filter
+    assert group.rows[0].values == want
+    text = render_where(group)
+    assert " " not in text and '"' not in text
+    assert parse_where(text) == group
+    assert render_where(parse_where(text)) == text
+
+
+@pytest.mark.parametrize("text,values", [
+    ('created="2026-10-01 10:00.."', ["2026-10-01T10:00"]),
+    ('created="..2026-10-01 10:00"', ["2026-10-01T10:00"]),
+    ('created="2026-10-01 10:00..2026-10-02 08:00Z"', ["2026-10-01T10:00", "2026-10-02T08:00Z"]),
+    ('created="2026-10-01 10:00"', ["2026-10-01T10:00", "2026-10-01T10:00"]),
+])
+def test_space_datetimes_in_text_read_as_the_t_form(text, values):
+    """In text the whole range is one quoted value (docs/issue-query.md)."""
+    group = parse_where(text)
+    assert group.rows[0].values == values
+    assert parse_where(render_where(group)) == group
+
+
+def test_dates_that_are_not_datetimes_are_left_alone():
+    group = parse_where("created=2026-10-01..today due=-7d..")
+    assert [r.values for r in group.rows] == [["2026-10-01", "today"], ["-7d"]]
+
+
 @pytest.mark.asyncio
 async def test_redundant_parentheses_do_not_count_toward_depth(client, auth_headers, test_project, test_user):
     """Finding 7: every parenthesis counted as a level, so

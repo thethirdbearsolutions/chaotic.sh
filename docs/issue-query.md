@@ -79,7 +79,10 @@ whole day, so `due=2026-11-01` matches anything due that day and
 offset back from now (`-12h`, `-7d`, `-2w`) is an instant. A day is
 written `YYYY-MM-DD` and nothing else (not `20261001`, not `2026-W40-1`);
 a datetime is `YYYY-MM-DDTHH:MM`, with optional `:SS`, fraction, and `Z`
-or `+HH:MM`. `..9999-12-31` means "with no upper end"; a datetime whose
+or `+HH:MM`. A space in place of the `T` is also accepted; in the text, quote
+the whole value, range and all (`created="2026-10-01 09:00.."`). It is
+read as the `T` form, so the canonical text and the echoed structure
+spell it with `T`. `..9999-12-31` means "with no upper end"; a datetime whose
 offset puts it outside the years 1 to 9999 in UTC is a 400.
 
 A name that matches nothing is an error, not an empty result. This
