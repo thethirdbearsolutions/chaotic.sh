@@ -231,3 +231,114 @@ class TestUpdateIssueValidation:
         """GET /issues/{id} returns 401 without auth headers."""
         response = await client.get(f"/api/issues/{test_issue.id}")
         assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+class TestAssigneeCompareAndSet:
+    """An update that writes assignee_id is conditional on the assignee it
+    read (CHT-1832). The API validates the new assignee, or exempts the
+    current one re-sent unchanged, against that read; a write that is not
+    conditional on it lets a stale client put back an assignee another
+    request has just changed or removed."""
+
+    async def _activities(self, issue_id):
+        from app.oxyde_models.issue import OxydeIssueActivity
+        return await OxydeIssueActivity.objects.filter(issue_id=issue_id).all()
+
+    async def test_stale_resend_of_a_removed_assignee_is_refused(
+        self, db, test_issue, test_user,
+    ):
+        from app.schemas.issue import IssueUpdate
+        from app.services.issue_service import IssueService, AssigneeChangedError
+
+        service = IssueService()
+        await service.update(
+            await service.get_by_id(test_issue.id), IssueUpdate(assignee_id=test_user.id),
+            user_id=test_user.id,
+        )
+        # The stale request has read the issue with test_user assigned...
+        stale = await service.get_by_id(test_issue.id)
+        # ...then an admin unassigns it before the stale write lands.
+        await service.update(
+            await service.get_by_id(test_issue.id), IssueUpdate(assignee_id=None),
+            user_id=test_user.id,
+        )
+        before = len(await self._activities(test_issue.id))
+
+        with pytest.raises(AssigneeChangedError) as exc_info:
+            await service.update(
+                stale, IssueUpdate(title="Renamed", assignee_id=test_user.id),
+                user_id=test_user.id,
+            )
+        assert exc_info.value.assignee_id is None
+
+        final = await service.get_by_id(test_issue.id)
+        assert final.assignee_id is None
+        # The whole update rolled back, not just the assignee.
+        assert final.title == test_issue.title
+        assert len(await self._activities(test_issue.id)) == before
+
+    async def test_stale_unassign_does_not_undo_a_reassignment(
+        self, db, test_issue, test_user,
+    ):
+        from app.schemas.issue import IssueUpdate
+        from app.services.issue_service import IssueService, AssigneeChangedError
+
+        service = IssueService()
+        stale = await service.get_by_id(test_issue.id)
+        assert stale.assignee_id != test_user.id
+        await service.update(
+            await service.get_by_id(test_issue.id), IssueUpdate(assignee_id=test_user.id),
+            user_id=test_user.id,
+        )
+        with pytest.raises(AssigneeChangedError) as exc_info:
+            await service.update(stale, IssueUpdate(assignee_id=None), user_id=test_user.id)
+        assert exc_info.value.assignee_id == test_user.id
+        assert (await service.get_by_id(test_issue.id)).assignee_id == test_user.id
+
+    async def test_api_answers_a_lost_race_with_409(
+        self, client, auth_headers, test_issue, test_user, monkeypatch,
+    ):
+        """The whole row re-sent with the current assignee, while another
+        request removes that assignee between the read and the write."""
+        from app.api import issues as issues_api
+        from app.oxyde_models.issue import OxydeIssue
+
+        await OxydeIssue.objects.filter(id=test_issue.id).update(assignee_id=test_user.id)
+        real_validate = issues_api._validate_assignee
+
+        async def validate_then_race(*args, **kwargs):
+            await real_validate(*args, **kwargs)
+            await OxydeIssue.objects.filter(id=test_issue.id).update(assignee_id=None)
+
+        monkeypatch.setattr(issues_api, "_validate_assignee", validate_then_race)
+
+        response = await client.patch(
+            f"/api/issues/{test_issue.id}",
+            headers=auth_headers,
+            json={"title": "Renamed", "assignee_id": test_user.id},
+        )
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "assignee_changed"
+        assert detail["issue_id"] == test_issue.id
+        assert detail["assignee_id"] is None
+
+        final = await OxydeIssue.objects.get(id=test_issue.id)
+        assert final.assignee_id is None
+        assert final.title == test_issue.title
+
+    async def test_resend_without_a_race_still_succeeds(
+        self, client, auth_headers, test_issue, test_user,
+    ):
+        from app.oxyde_models.issue import OxydeIssue
+
+        await OxydeIssue.objects.filter(id=test_issue.id).update(assignee_id=test_user.id)
+        response = await client.patch(
+            f"/api/issues/{test_issue.id}",
+            headers=auth_headers,
+            json={"title": "Renamed", "assignee_id": test_user.id},
+        )
+        assert response.status_code == 200
+        assert response.json()["assignee_id"] == test_user.id
+        assert response.json()["title"] == "Renamed"

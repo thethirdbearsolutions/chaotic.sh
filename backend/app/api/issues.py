@@ -52,6 +52,7 @@ from app.services.issue_service import (
     IntentInFlightError,
     EstimateRequiredError,
     IssueAlreadyClaimedError,
+    AssigneeChangedError,
 )
 from app.services.principals import fill_principals, load_principals
 from app.services.project_service import ProjectService
@@ -104,7 +105,11 @@ async def _validate_assignee(
     500). Re-sending an issue's existing assignee
     (``current_assignee_id``) is not a new assignment, so an update that
     touches other fields of an issue held by someone since retired or
-    moved still goes through.
+    moved still goes through. Both this check and that exemption judge
+    the assignee read at the start of the request, so the service's
+    assignee write is conditional on that value (CHT-1832): if another
+    request has changed it since, the update is refused with a 409
+    ``assignee_changed`` rather than writing the stale value back.
     """
     if assignee_id is None or (current_assignee_id is not None and assignee_id == current_assignee_id):
         return
@@ -1230,6 +1235,19 @@ async def update_issue(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "error_code": "already_claimed",
+                "message": str(e),
+                "issue_id": e.issue_id,
+                "assignee_id": e.assignee_id,
+            },
+        )
+    except AssigneeChangedError as e:
+        # Another request changed the assignee between our read and our
+        # write (CHT-1832); same body as already_claimed, naming the
+        # assignee the issue has now.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "assignee_changed",
                 "message": str(e),
                 "issue_id": e.issue_id,
                 "assignee_id": e.assignee_id,
