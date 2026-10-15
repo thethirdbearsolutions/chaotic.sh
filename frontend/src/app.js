@@ -36,6 +36,7 @@ import {
     showIssuesLoadingSkeleton,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
+import { loadQueryView } from './query-view.js';
 import { loadInbox, toggleInboxEntryElementExpand, collapseInboxExpand, archiveInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
@@ -244,6 +245,9 @@ registerViews({
             }
             loadIssues();
         });
+    },
+    'query': () => {
+        loadQueryView();
     },
     'epics': () => {
         loadEpics();

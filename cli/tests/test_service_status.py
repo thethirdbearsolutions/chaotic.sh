@@ -18,9 +18,9 @@ from unittest.mock import patch, MagicMock
 
 
 RUNNING_LAUNCHCTL_STDOUT = """{
-\t"StandardOutPath" = "/Users/ethanjucovy/.chaotic/logs/server.log";
+\t"StandardOutPath" = "/Users/alice/.chaotic/logs/server.log";
 \t"LimitLoadToSessionType" = "Aqua";
-\t"StandardErrorPath" = "/Users/ethanjucovy/.chaotic/logs/server.log";
+\t"StandardErrorPath" = "/Users/alice/.chaotic/logs/server.log";
 \t"Label" = "com.chaotic.server";
 \t"OnDemand" = false;
 \t"LastExitStatus" = 0;
@@ -36,9 +36,9 @@ RUNNING_LAUNCHCTL_STDOUT = """{
 
 # Same plist with the PID line removed: agent is loaded but not running.
 LOADED_NOT_RUNNING_LAUNCHCTL_STDOUT = """{
-\t"StandardOutPath" = "/Users/ethanjucovy/.chaotic/logs/server.log";
+\t"StandardOutPath" = "/Users/alice/.chaotic/logs/server.log";
 \t"LimitLoadToSessionType" = "Aqua";
-\t"StandardErrorPath" = "/Users/ethanjucovy/.chaotic/logs/server.log";
+\t"StandardErrorPath" = "/Users/alice/.chaotic/logs/server.log";
 \t"Label" = "com.chaotic.server";
 \t"OnDemand" = false;
 \t"LastExitStatus" = 35072;

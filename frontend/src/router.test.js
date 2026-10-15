@@ -182,6 +182,7 @@ describe('router', () => {
             ['documents', '/documents?project=proj-789'],
             ['rituals', '/rituals?project=proj-789'],
             ['approvals', '/approvals?project=proj-789'],
+            ['query', '/query?project=proj-789'], // CHT-1810
         ])('includes project param for %s view', (view, expectedUrl) => {
             getProjectFromUrl.mockReturnValue('proj-789');
             registerViews({ [view]: vi.fn() });

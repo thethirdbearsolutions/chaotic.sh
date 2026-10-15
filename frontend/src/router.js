@@ -78,7 +78,7 @@ export function getValidViews() {
 // maintained rather than derived from the DOM's `${view}-project-filter`
 // elements because the ids aren't consistently named (`project-filter`,
 // `sprint-project-filter`, `doc-project-filter`, ...).
-const viewsWithProject = ['issues', 'board', 'sprints', 'epics', 'documents', 'rituals', 'approvals', 'my-issues'];
+const viewsWithProject = ['issues', 'query', 'board', 'sprints', 'epics', 'documents', 'rituals', 'approvals', 'my-issues'];
 
 // The sidebar section each detail route belongs to, keyed by the first URL
 // segment (CHT-1752). Used only when a detail page is the first page loaded:
