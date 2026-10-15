@@ -211,7 +211,7 @@ def _check_value(field: str, spec: FieldSpec, value: str) -> None:
     elif spec.kind == "date":
         if not is_date_value(value):
             raise ValueError(
-                f"'{value}' is not a date. Use YYYY-MM-DD, YYYY-MM-DDTHH:MM[:SS][Z|+HH:MM], "
+                f"'{value}' is not a date. Use YYYY-MM-DD, YYYY-MM-DD[T ]HH:MM[:SS][Z|+HH:MM], "
                 "today, yesterday, or an offset like -7d, -2w, -12h"
             )
 
