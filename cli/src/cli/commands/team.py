@@ -1,6 +1,7 @@
 """Team management commands."""
 import re
 import sys
+import unicodedata
 from urllib.parse import urlsplit
 
 import click
@@ -104,11 +105,38 @@ def invite_token_from_arg(value: str) -> tuple[str, str | None]:
     return text, host
 
 
+def _host_key(host: str) -> str:
+    """A hostname in the form foreign_invite_host compares: without case or
+    a trailing dot, and with each punycode (``xn--``) label decoded, so an
+    IDN host and its ASCII form compare equal (CHT-1826).
+
+    Decoding rather than encoding: Python's ``idna`` codec is IDNA 2003,
+    whose nameprep maps ``ß`` to ``ss``, so encoding would call
+    ``faß.de`` and ``fass.de`` the same host and hide a real mismatch.
+    A label that does not decode, or is not the canonical encoding of a
+    non-ASCII label, stays as written: it is still compared, never fatal.
+    """
+    labels = []
+    for label in host.rstrip(".").split("."):
+        label = label.lower()
+        if label.startswith("xn--"):
+            try:
+                decoded = label[4:].encode("ascii").decode("punycode")
+            except (UnicodeError, ValueError):
+                decoded = None
+            if decoded and not decoded.isascii() \
+                    and decoded.encode("punycode").decode("ascii") == label[4:]:
+                label = decoded
+        labels.append(unicodedata.normalize("NFC", label).lower())
+    return ".".join(labels)
+
+
 def foreign_invite_host(link_host: str | None, web_url: str | None) -> str | None:
     """The configured server's host when an invitation link names another
     host, else None (CHT-1823).
 
-    Hostnames are compared without case or a trailing dot, and ports are
+    Hostnames are compared without case or a trailing dot, with punycode
+    labels decoded (_host_key: an IDN matches its xn-- form), and ports are
     ignored (a server behind a proxy is reached on another port than its
     own). A link on a local-only host (is_local_host) is not foreign when
     the configured server is local-only too: both are this machine."""
@@ -120,9 +148,7 @@ def foreign_invite_host(link_host: str | None, web_url: str | None) -> str | Non
         here = None
     if not here:
         return None
-    def norm(h):
-        return h.lower().rstrip(".")
-    if norm(link_host) == norm(here):
+    if _host_key(link_host) == _host_key(here):
         return None
     if is_local_host(link_host) and is_local_host(here):
         return None

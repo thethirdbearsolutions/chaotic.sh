@@ -55,9 +55,31 @@ def mock_client_module():
 
 @pytest.fixture
 def patched_client(mock_client_module):
-    """Patch sys.modules with mock client module."""
+    """Patch sys.modules with mock client module.
+
+    On exit ``patch.dict`` drops every module imported during the test
+    (``cli.main`` among them) from ``sys.modules``, but the import also set
+    it as an attribute of its parent package, and that attribute survives.
+    On Python 3.10, ``mock.patch('cli.main.get_token')`` resolves its target
+    through those attributes, so the next test's ``patched_auth`` patched
+    the stale ``cli.main`` while the test's own ``from cli.main import cli``
+    re-imported a fresh, unpatched one: "Not authenticated" for every test
+    after a file's first, unless an earlier file had imported ``cli.main``
+    for good (CHT-1825). 3.11+ resolves through ``sys.modules`` and never
+    saw it. Unbind what ``patch.dict`` removed so both agree again.
+    """
+    import sys
+
     with patch.dict('sys.modules', {'cli.client': mock_client_module}):
+        before = set(sys.modules)
         yield mock_client_module
+        added = {name: sys.modules[name] for name in set(sys.modules) - before}
+    for name, module in added.items():
+        parent_name, _, child = name.rpartition('.')
+        parent = sys.modules.get(parent_name)
+        if parent is not None and name not in sys.modules \
+                and getattr(parent, child, None) is module:
+            delattr(parent, child)
 
 
 @pytest.fixture

@@ -21,19 +21,26 @@ class _FakeAPIError(Exception):
     pass
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def mock_client_module():
-    """Mock the client module with a real exception class for APIError.
+    """The client module mock, with this file's APIError class (overrides
+    conftest's, so conftest's patched_client installs this one)."""
+    mock_mod = MagicMock()
+    mock_mod.APIError = _FakeAPIError
+    return mock_mod
+
+
+@pytest.fixture(autouse=True)
+def _client_module_patched(patched_client):
+    """Install the mock through conftest's patched_client, whose teardown
+    keeps a lone run of this file from patching a stale cli.main (CHT-1825).
 
     Also patches cli.main.APIError so that handle_error's except clause
     catches _FakeAPIError even when cli.main was already imported by earlier
     test files (which bind the real APIError at import time).
     """
-    mock_mod = MagicMock()
-    mock_mod.APIError = _FakeAPIError
-    with patch.dict('sys.modules', {'cli.client': mock_mod}), \
-         patch('cli.main.APIError', _FakeAPIError):
-        yield mock_mod
+    with patch('cli.main.APIError', _FakeAPIError):
+        yield patched_client
 
 
 class TestRequireAuth:

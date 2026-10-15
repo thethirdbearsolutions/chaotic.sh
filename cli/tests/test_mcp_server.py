@@ -229,7 +229,11 @@ class TestErrorBoundary:
         assert "No team selected" in result["error"]["message"]
 
     async def test_no_project_selected(self, mcp_mod, monkeypatch):
+        from cli.main import client
         monkeypatch.setattr("cli.main.get_current_project", lambda: None)
+        # Not a project-scoped key (CHT-1690). Unmocked, get_me went to the
+        # network unless an earlier file had left a mock client (CHT-1825).
+        client.get_me = MagicMock(return_value={"id": "user-1"})
         result = await mcp_mod.issue_list()
         assert "No project selected" in result["error"]["message"]
 
@@ -574,7 +578,9 @@ class TestIssueCreate:
         assert "error" in result
 
     async def test_create_no_project_selected(self, mcp_mod, monkeypatch):
+        from cli.main import client
         monkeypatch.setattr("cli.main.get_current_project", lambda: None)
+        client.get_me = MagicMock(return_value={"id": "user-1"})  # see test_no_project_selected
         result = await mcp_mod.issue_create(title="X")
         assert "No project selected" in result["error"]["message"]
 
