@@ -4,7 +4,7 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 import logging
 from datetime import datetime, timezone
-from oxyde import IntegrityError
+from oxyde import IntegrityError, execute_raw
 from app.oxyde_models.user import OxydeUser
 from app.schemas.user import UserCreate, UserUpdate
 from app.utils.email_address import fold_email
@@ -169,7 +169,16 @@ class UserService:
         if not folded:
             return []
         rows = await OxydeUser.objects.filter(email_folded=folded).all()
-        rows += await OxydeUser.objects.filter(email_folded__isnull=True).all()
+        # The NULL rows are matched on (id, email) first and only the
+        # matches loaded as models: a row 0034 could not read (a BLOB
+        # address) would fail model validation and must not break every
+        # lookup.
+        legacy = await execute_raw(
+            "SELECT id, email FROM users WHERE email_folded IS NULL AND typeof(email) = 'text'", [],
+        )
+        legacy_ids = [row["id"] for row in legacy if fold_email(row["email"]) == folded]
+        if legacy_ids:
+            rows += await OxydeUser.objects.filter(id__in=legacy_ids).all()
         matches = [user for user in rows if fold_email(user.email) == folded]
         return sorted(matches, key=lambda user: (user.created_at, user.id))
 

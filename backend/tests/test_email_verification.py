@@ -1140,3 +1140,21 @@ class TestRetryAfterBoundary:
         assert retry == 40
         clock["now"] += timedelta(seconds=retry)
         assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
+
+
+async def test_an_unreadable_legacy_address_does_not_break_lookups(client, test_user):
+    """A row 0034 left NULL because its address is a BLOB must not fail
+    every signup and login that looks at the NULL rows."""
+    from oxyde import execute_raw
+
+    await execute_raw(
+        "INSERT INTO users (id, email, hashed_password, name, created_at, updated_at, is_agent, is_active, "
+        "is_superuser, can_register) VALUES ('blob', X'fffe40', 'x', 'B', '2026-01-01', '2026-01-01', 0, 1, 0, 0)",
+        [],
+    )
+    login = await client.post("/api/auth/login", json={"email": "TEST@example.com", "password": "testpassword123"})
+    assert login.status_code == 200, login.text
+    signup = await client.post("/api/auth/signup", json={
+        "email": "fresh@example.com", "password": "password123", "name": "Fresh",
+    })
+    assert signup.status_code == 201, signup.text

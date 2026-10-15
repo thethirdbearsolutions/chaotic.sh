@@ -75,28 +75,50 @@ FALLBACK_BACKFILL_SQL = (
 
 
 def sql_literal(value: str) -> str:
-    """``value`` as an SQLite string literal."""
+    """``value`` as an SQLite string literal. A NUL cannot be written as
+    one; plan_backfill never hands this an address that has one, so only
+    an id can, and that stops the migration, saying which id."""
     if "\x00" in value:
-        raise ValueError("an address or id contains a NUL character; refusing to migrate")
+        raise ValueError(
+            f"[0034] users.id {value!r} contains a NUL character, which cannot be written "
+            "in the backfill's SQL; fix that row's id, then migrate again"
+        )
     return "'" + value.replace("'", "''") + "'"
 
 
-def plan_backfill(accounts: list[dict]) -> tuple[dict[str, str], dict[str, str]]:
-    """From ``accounts`` (dicts with id and email, oldest first): the
-    folded address each holder gets ({id: folded}), and the accounts left
-    NULL, each with the id of the account that holds its address
-    ({id: holder id})."""
+def plan_backfill(
+    accounts: list[dict],
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """From ``accounts`` (dicts with id and email, oldest first):
+
+    - the folded address each holder gets ({id: folded});
+    - the accounts left NULL because an older account holds their
+      address ({id: holder id});
+    - the accounts left NULL because their address cannot be folded
+      ({id: why}): not text (a BLOB the driver hands back as bytes, or
+      anything else), or text with a NUL character. They take no part
+      in the grouping, so they are never reported as duplicates and
+      never hold an address.
+    """
     holders: dict[str, str] = {}
     folded_by_id: dict[str, str] = {}
     excluded: dict[str, str] = {}
+    unreadable: dict[str, str] = {}
     for row in accounts:
-        folded = fold_email(row["email"])
+        email = row["email"]
+        if not isinstance(email, str):
+            unreadable[row["id"]] = "email unreadable"
+            continue
+        if "\x00" in email:
+            unreadable[row["id"]] = "email contains a NUL character"
+            continue
+        folded = fold_email(email)
         if folded in holders:
             excluded[row["id"]] = holders[folded]
         else:
             holders[folded] = row["id"]
             folded_by_id[row["id"]] = folded
-    return folded_by_id, excluded
+    return folded_by_id, excluded, unreadable
 
 
 def _read_through_oxyde(database, sql: str, params: list) -> list[dict]:
@@ -139,8 +161,8 @@ def _recording(ctx) -> bool:
 
 def backfill(ctx, echo=print) -> int | None:
     """Queue the UPDATEs that fill email_folded, and print one line per
-    account left NULL (ids only) and a total. Returns how many were left
-    NULL, or None when there was no connection to read through (the SQL
+    account left NULL (ids only) and a total of the duplicates. Returns
+    how many were left NULL (duplicates and unreadable addresses), or None when there was no connection to read through (the SQL
     fallback is queued instead). Nothing in the replay, which has no
     rows (CHT-1402).
     """
@@ -161,11 +183,13 @@ def backfill(ctx, echo=print) -> int | None:
         ctx.execute(FALLBACK_BACKFILL_SQL)
         return None
     accounts = _read_through_oxyde(database, ACCOUNTS_SQL, [])
-    folded_by_id, excluded = plan_backfill(accounts)
+    folded_by_id, excluded, unreadable = plan_backfill(accounts)
     for user_id, folded in folded_by_id.items():
         ctx.execute(
             f"UPDATE users SET email_folded = {sql_literal(folded)} WHERE id = {sql_literal(user_id)}"
         )
+    for user_id, why in unreadable.items():
+        echo(f"[0034] account {user_id!s} {why}; email_folded left NULL")
     for user_id, holder_id in excluded.items():
         echo(
             f"[0034] account {user_id} shares its address (ignoring case) with older account "
@@ -176,7 +200,7 @@ def backfill(ctx, echo=print) -> int | None:
             f"[0034] {len(excluded)} account(s) left without email_folded; they keep their "
             "address and can still log in with it exactly"
         )
-    return len(excluded)
+    return len(excluded) + len(unreadable)
 
 
 def upgrade(ctx):

@@ -211,11 +211,9 @@ def test_the_migration_folds_exactly_as_the_app_does(email):
     assert _migration_module().fold_email(email) == fold_email(email)
 
 
-def test_literals_quote_and_refuse_nul():
+def test_literals_quote():
     module = _migration_module()
     assert module.sql_literal("o'brien") == "'o''brien'"
-    with pytest.raises(ValueError):
-        module.sql_literal("a\x00b")
 
 
 class _NoConnection:
@@ -236,3 +234,56 @@ def test_without_a_connection_it_falls_back_to_sql_and_says_so():
     assert module.backfill(ctx, echo=lines.append) is None
     assert ctx.executed == [module.FALLBACK_BACKFILL_SQL]
     assert len(lines) == 1 and "trims spaces only" in lines[0]
+
+
+def test_unreadable_and_nul_addresses_are_left_null_and_reported(at_previous):
+    """A BLOB address or one with a NUL is not folded, not grouped with
+    anything, and does not stop the migration (review of PR #437)."""
+    _seed(at_previous, {"u-ok": ("ok@example.com", "2026-01-01T00:00:00+00:00")})
+    with closing(sqlite3.connect(at_previous)) as c:
+        for user_id, email in (("u-blob", b"\xff\xfe@x"), ("u-empty-blob", b""), ("u-nul", "nul\x00@example.com")):
+            c.execute(
+                "INSERT INTO users (id, email, hashed_password, name, created_at, updated_at, is_agent, "
+                "is_active) VALUES (?, ?, 'x', 'N', '2026-01-01', '2026-01-01', 0, 1)",
+                (user_id, email),
+            )
+        # An empty address that is text: it folds to '' and holds it, so
+        # the empty BLOB must not be reported as its duplicate.
+        c.execute(
+            "INSERT INTO users (id, email, hashed_password, name, created_at, updated_at, is_agent, "
+            "is_active) VALUES ('u-empty', '', 'x', 'N', '2026-01-02', '2026-01-02', 0, 1)"
+        )
+        c.commit()
+    before = _rows(at_previous)
+
+    output = _migrate_capturing(at_previous, THIS)
+
+    assert _rows(at_previous) == before
+    assert _folded(at_previous) == {
+        "u-ok": "ok@example.com", "u-empty": "", "u-blob": None, "u-empty-blob": None, "u-nul": None,
+    }
+    assert "[0034] account u-blob email unreadable; email_folded left NULL" in output
+    assert "[0034] account u-empty-blob email unreadable; email_folded left NULL" in output
+    assert "[0034] account u-nul email contains a NUL character; email_folded left NULL" in output
+    assert "shares its address" not in output
+    assert "@" not in output
+
+
+def test_plan_backfill_sets_unreadable_addresses_aside():
+    module = _migration_module()
+    folded, excluded, unreadable = module.plan_backfill([
+        {"id": "a", "email": "A@x.com"},
+        {"id": "b", "email": None},
+        {"id": "c", "email": b"a@x.com"},
+        {"id": "d", "email": "a@x.com"},
+        {"id": "e", "email": "e\x00@x.com"},
+    ])
+    assert folded == {"a": "a@x.com"}
+    assert excluded == {"d": "a"}
+    assert unreadable == {"b": "email unreadable", "c": "email unreadable", "e": "email contains a NUL character"}
+
+
+def test_an_id_with_a_nul_stops_the_migration_and_says_why():
+    module = _migration_module()
+    with pytest.raises(ValueError, match=r"users.id 'u\\x00' contains a NUL character"):
+        module.sql_literal("u\x00")
