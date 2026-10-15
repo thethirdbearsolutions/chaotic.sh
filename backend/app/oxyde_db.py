@@ -137,6 +137,16 @@ def _patch_objects_create_to_apply_default_factory() -> None:
 
         return False, None
 
+    def _derive(model_cls, data: dict) -> dict:
+        """Columns a model derives from others on INSERT: its
+        ``derive_on_create(data)`` classmethod, if it has one, fills them
+        in ``data`` (OxydeUser.email_folded, CHT-1804). Only rows being
+        created pass through here, never rows read back."""
+        derive = getattr(model_cls, "derive_on_create", None)
+        if callable(derive):
+            derive(data)
+        return data
+
     def _fill_defaults(model_cls, data: dict) -> dict:
         for name, info in model_cls.model_fields.items():
             if name in data:
@@ -144,13 +154,13 @@ def _patch_objects_create_to_apply_default_factory() -> None:
             have, value = _default_for_field(name, info)
             if have:
                 data[name] = value
-        return data
+        return _derive(model_cls, data)
 
     def _revalidate_full(model_cls, instance):
         """Rebuild an instance from a full dump so every field counts as
         \"set\" — oxyde 0.7 serializes INSERTs with exclude_unset, which
         would otherwise drop Pydantic defaults from the row."""
-        return model_cls.model_validate(instance.model_dump())
+        return model_cls.model_validate(_derive(model_cls, instance.model_dump()))
 
     async def _create_with_default_factory(self, **kwargs):
         model_cls = _model_for_manager(self)

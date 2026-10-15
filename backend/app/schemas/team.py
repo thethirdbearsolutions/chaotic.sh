@@ -1,5 +1,5 @@
 """Team schemas."""
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from app.enums import TeamRole, InvitationStatus
 from app.utils import DateTimeUTC
 
@@ -82,7 +82,10 @@ class TeamMemberResponse(BaseModel):
 class TeamInvitationCreate(BaseModel):
     """Schema for creating a team invitation."""
 
-    email: str
+    # EmailStr, as on signup (CHT-1804): an invitation's address is
+    # validated and normalised (domain lowercased, IDN domains encoded)
+    # the same way as an account's, so the two compare equal.
+    email: EmailStr
     role: TeamRole = TeamRole.MEMBER
 
 

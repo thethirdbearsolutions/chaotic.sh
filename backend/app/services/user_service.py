@@ -2,7 +2,9 @@
 
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
+import logging
 from datetime import datetime, timezone
+from oxyde import IntegrityError
 from app.oxyde_models.user import OxydeUser
 from app.schemas.user import UserCreate, UserUpdate
 from app.utils.email_address import fold_email
@@ -15,6 +17,28 @@ from app.services.revocation_service import REASON_PRINCIPAL_DELETED, Revocation
 
 # Type alias: callers still see "User" but it's now an Oxyde model
 User = OxydeUser
+
+logger = logging.getLogger(__name__)
+
+
+async def warn_if_accounts_share_an_address() -> int:
+    """Log a warning naming how many accounts have no ``email_folded``
+    (CHT-1804), and return that count. Migration 0034 leaves it NULL on
+    every account whose address differs only in case from an older
+    account's; such accounts still share one email-verification rate
+    limit with it. They are listed by id in 0034's output; to find them
+    again: ``SELECT id FROM users WHERE email_folded IS NULL``.
+    """
+    count = await OxydeUser.objects.filter(email_folded__isnull=True).count()
+    if count:
+        logger.warning(
+            "%d account(s) share an email address, ignoring case, with an older account "
+            "(users.email_folded is NULL; migration 0034 listed them by id). They keep "
+            "working, but share the older account's email-verification limits; an operator "
+            "should merge or remove them, or change their address.",
+            count,
+        )
+    return count
 
 
 def _label(user: OxydeUser) -> str:
@@ -64,6 +88,13 @@ class UserDeletionRefusedError(Exception):
         super().__init__(f"User {_label(user)} cannot be deleted: {detail}.{tail}")
 
 
+class EmailTakenError(Exception):
+    """The address already belongs to an account, ignoring (ASCII) case
+    (CHT-1790). Raised by UserService.create when the database's unique
+    indexes refuse the row, which is how a signup that raced another one
+    for the same address ends (CHT-1804)."""
+
+
 class UserService:
     """Service for user operations."""
 
@@ -73,19 +104,31 @@ class UserService:
         pass
 
     async def create(self, user_in: UserCreate) -> OxydeUser:
-        """Create a new user."""
+        """Create a new user.
+
+        EmailTakenError if an account already has this address, ignoring
+        case: `users.email_folded` is unique (migration 0034, CHT-1804),
+        so two signups racing for `bob@x` and `Bob@x` cannot both land.
+        """
         # Pass timestamps explicitly: the installed Oxyde version doesn't
         # apply `default_factory` defaults on objects.create(), so the
         # NOT NULL constraints on users.created_at / users.updated_at
         # blow up the INSERT otherwise.
         now = datetime.now(timezone.utc)
-        user = await OxydeUser.objects.create(
-            email=user_in.email,
-            hashed_password=get_password_hash(user_in.password),
-            name=user_in.name,
-            created_at=now,
-            updated_at=now,
-        )
+        try:
+            user = await OxydeUser.objects.create(
+                email=user_in.email,
+                email_folded=fold_email(user_in.email),
+                hashed_password=get_password_hash(user_in.password),
+                name=user_in.name,
+                created_at=now,
+                updated_at=now,
+            )
+        except IntegrityError as error:
+            # The only unique columns a new row can collide on are email
+            # and email_folded (the id is a fresh uuid; an account with
+            # no external_ref never collides on users_team_external_ref_uq).
+            raise EmailTakenError(user_in.email) from error
         await user.refresh()
         return user
 
@@ -99,19 +142,24 @@ class UserService:
 
     async def find_by_email_ignoring_case(self, email: str) -> list[OxydeUser]:
         """Every account whose address equals ``email`` ignoring (ASCII)
-        case (CHT-1790). Normally none or one; more only for accounts
-        made before signup refused case variants.
+        case (CHT-1790), oldest first. Normally none or one; more only for
+        accounts made before signup refused case variants.
 
-        ``iexact`` narrows it in the database (Oxyde escapes ``%``, ``_``
-        and ``\\`` in it, so they match only themselves); the Python
-        comparison then decides, so a LIKE quirk can only miss a row,
-        never let a different address through.
+        Looked up by ``email_folded`` (CHT-1804), an exact match on a
+        unique index, plus the accounts migration 0034 left without one
+        (normally none). Not ``email__iexact``: Oxyde lowercases its
+        argument with Python's Unicode ``lower()`` but SQLite's
+        ``LOWER()`` folds ASCII only, so an address with a non-ASCII
+        capital (``Ärger@x``) never matched itself. The Python
+        comparison decides in every case.
         """
         folded = fold_email(email)
         if not folded:
             return []
-        rows = await OxydeUser.objects.filter(email__iexact=email.strip()).order_by("created_at").all()
-        return [user for user in rows if fold_email(user.email) == folded]
+        rows = await OxydeUser.objects.filter(email_folded=folded).all()
+        rows += await OxydeUser.objects.filter(email_folded__isnull=True).all()
+        matches = [user for user in rows if fold_email(user.email) == folded]
+        return sorted(matches, key=lambda user: (user.created_at, user.id))
 
     async def get_by_email_ignoring_case(self, email: str) -> OxydeUser | None:
         """The account at ``email``: an exact match first, else the one

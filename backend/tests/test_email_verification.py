@@ -798,6 +798,20 @@ async def _make_user(email: str) -> OxydeUser:
     )
 
 
+async def _make_legacy_variant(email: str) -> OxydeUser:
+    """An account that predates the signup check and shares its address,
+    ignoring case, with an older one: as migration 0034 leaves it, with
+    no email_folded (CHT-1804). The database refuses to create one now,
+    so it is made under a placeholder and cleared."""
+    from app.utils.security import get_password_hash
+    user = await OxydeUser.objects.create(
+        email=email, email_folded=f"placeholder:{secrets.token_hex(8)}",
+        hashed_password=get_password_hash("password123"), name=email,
+    )
+    await OxydeUser.objects.filter(id=user.id).update(email_folded=None)
+    return await OxydeUser.objects.get(id=user.id)
+
+
 class TestCaseInsensitiveAddresses:
     @pytest.mark.parametrize("variant", ["TEST@example.com", "Test@Example.com", " test@EXAMPLE.COM"])
     async def test_a_case_variant_signup_is_refused(self, client, test_user, variant):
@@ -826,7 +840,7 @@ class TestCaseInsensitiveAddresses:
     async def test_login_prefers_the_exact_address(self, client, db):
         # Two accounts that predate the signup check.
         exact = await _make_user("Pair@example.com")
-        await _make_user("pair@example.com")
+        await _make_legacy_variant("pair@example.com")
         response = await client.post("/api/auth/login", json={"email": "Pair@example.com", "password": "password123"})
         assert response.status_code == 200
         me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {response.json()['access_token']}"})
@@ -834,7 +848,7 @@ class TestCaseInsensitiveAddresses:
 
     async def test_an_ambiguous_case_insensitive_login_is_refused(self, client, db):
         await _make_user("Pair@example.com")
-        await _make_user("pair@example.com")
+        await _make_legacy_variant("pair@example.com")
         response = await client.post("/api/auth/login", json={"email": "PAIR@example.com", "password": "password123"})
         assert response.status_code == 401
 
@@ -900,3 +914,204 @@ class TestCaseInsensitiveAddresses:
         # SQLite's LIKE folds ASCII only; so does the comparison.
         assert not same_email("\u00c4@x.com", "\u00e4@x.com")
         assert evs.hash_email("Alice@Corp.com") == evs.hash_email("alice@corp.com")
+
+
+class TestOneAccountPerAddress:
+    """The database holds the rule (CHT-1804): users.email_folded is unique."""
+
+    async def test_every_way_of_making_an_account_sets_the_folded_address(
+        self, client, test_user, test_team,
+    ):
+        from app.schemas.agent import AgentCreate
+        from app.services.agent_service import AgentService
+        from app.utils.email_address import fold_email
+
+        signup = await client.post("/api/auth/signup", json={
+            "email": "New.Person@Example.com", "password": "password123", "name": "New",
+        })
+        assert signup.status_code == 201, signup.text
+        agent, _key, _key_id = await AgentService().create(AgentCreate(name="Bot"), test_user, test_team.id)
+        users = await OxydeUser.objects.all()
+        assert {test_user.id, agent.id, signup.json()["id"]} <= {u.id for u in users}
+        for user in users:
+            assert user.email_folded == fold_email(user.email), user.email
+        made = await OxydeUser.objects.get(id=signup.json()["id"])
+        assert made.email == "New.Person@example.com"
+        assert made.email_folded == "new.person@example.com"
+
+    async def test_the_database_refuses_a_case_variant(self, test_user):
+        from oxyde import IntegrityError
+        with pytest.raises(IntegrityError):
+            await _make_user("TEST@Example.COM")
+        assert await OxydeUser.objects.count() == 1
+
+    async def test_a_signup_that_raced_past_the_check_gets_the_same_400(self, client, test_user):
+        """Two signups for one address racing: both pass the lookup before
+        either inserts. The second INSERT fails on the unique index and
+        gets the answer the lookup would have given."""
+        from app.services.user_service import UserService
+
+        async def nobody_yet(self, email):
+            return []
+
+        with patch.object(UserService, "find_by_email_ignoring_case", nobody_yet):
+            response = await client.post("/api/auth/signup", json={
+                "email": "Test@Example.com", "password": "password123", "name": "Racer",
+            })
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Email already registered"
+        assert await OxydeUser.objects.count() == 1
+
+    async def test_a_local_address_is_refused_at_signup(self, client, db):
+        response = await client.post("/api/auth/signup", json={
+            "email": "bob@host.local", "password": "password123", "name": "Local",
+        })
+        assert response.status_code == 422
+        assert await OxydeUser.objects.count() == 0
+
+    async def test_fold_email_matches_sqlite_for_a_non_ascii_address(self, db):
+        """The migration folds in SQL (lower(trim(email))), the app in
+        Python; they must agree, non-ASCII letters included: SQLite's
+        built-in lower() and fold_email both leave them alone."""
+        from oxyde import execute_raw
+        from app.services.user_service import UserService
+        from app.utils.email_address import fold_email
+
+        stored = ["Ärger@Example.COM", "Jörg@Bücher.example", "Plain@Example.com"]
+        for email in stored:
+            await _make_user(email)
+        rows = await execute_raw("SELECT email, lower(trim(email)) AS folded, email_folded FROM users", [])
+        assert len(rows) == len(stored)
+        for row in rows:
+            assert row["folded"] == fold_email(row["email"]) == row["email_folded"]
+        assert fold_email("Ärger@Example.COM") == "Ärger@example.com"
+
+        service = UserService()
+        found = await service.find_by_email_ignoring_case("ÄRGER@example.com")
+        assert [u.email for u in found] == ["Ärger@Example.COM"]
+        # A non-ASCII letter in the other case is another address.
+        assert await service.find_by_email_ignoring_case("ärger@example.com") == []
+
+    async def test_a_legacy_variant_keeps_working(self, client, db):
+        """An account 0034 left without email_folded logs in by its exact
+        address, and a third account at the address is still refused."""
+        await _make_user("Pair@example.com")
+        variant = await _make_legacy_variant("pair@example.com")
+        response = await client.post("/api/auth/login", json={"email": "pair@example.com", "password": "password123"})
+        assert response.status_code == 200
+        me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {response.json()['access_token']}"})
+        assert me.json()["id"] == variant.id
+        signup = await client.post("/api/auth/signup", json={
+            "email": "PAIR@example.com", "password": "password123", "name": "Third",
+        })
+        assert signup.status_code == 400
+
+    async def test_startup_warns_about_accounts_without_a_folded_address(self, db, caplog):
+        from app.services.user_service import warn_if_accounts_share_an_address
+
+        await _make_user("Solo@example.com")
+        with caplog.at_level(logging.WARNING, logger="app.services.user_service"):
+            assert await warn_if_accounts_share_an_address() == 0
+        assert not caplog.records
+
+        await _make_user("Pair@example.com")
+        await _make_legacy_variant("pair@example.com")
+        await _make_legacy_variant("PAIR@example.com")
+        with caplog.at_level(logging.WARNING, logger="app.services.user_service"):
+            assert await warn_if_accounts_share_an_address() == 2
+        assert "2 account(s) share an email address" in caplog.text
+        # By count only: no address in the log.
+        assert "pair@" not in caplog.text.lower()
+
+
+class TestInvitationAddresses:
+    """Invitations treat addresses as accounts do (CHT-1804)."""
+
+    async def test_a_second_invitation_in_another_case_is_refused(
+        self, client, auth_headers, test_team, no_smtp,
+    ):
+        url = f"/api/teams/{test_team.id}/invitations"
+        assert (await client.post(url, headers=auth_headers, json={"email": "bob@example.com"})).status_code == 201
+        response = await client.post(url, headers=auth_headers, json={"email": "Bob@EXAMPLE.com"})
+        assert response.status_code == 409
+        assert await OxydeTeamInvitation.objects.filter(team_id=test_team.id).count() == 1
+
+    async def test_get_live_invitation_ignores_case_but_not_lookalikes(self, test_team, test_user):
+        from app.services.team_service import TeamService
+        await _invite(test_team.id, test_user.id, "a_b@example.com")
+        service = TeamService()
+        assert await service.get_live_invitation(test_team.id, "A_B@Example.com") is not None
+        assert await service.get_live_invitation(test_team.id, "aXb@example.com") is None
+        assert await service.get_live_invitation(test_team.id, "  ") is None
+        # A non-ASCII capital: email__iexact never matched this on SQLite.
+        await _invite(test_team.id, test_user.id, "\u00c4rger@example.com")
+        assert await service.get_live_invitation(test_team.id, "\u00c4RGER@Example.com") is not None
+        assert await service.get_live_invitation(test_team.id, "\u00e4rger@example.com") is None
+
+    async def test_an_invitation_address_is_validated_and_normalised(
+        self, client, auth_headers, test_team, no_smtp,
+    ):
+        url = f"/api/teams/{test_team.id}/invitations"
+        assert (await client.post(url, headers=auth_headers, json={"email": "not an address"})).status_code == 422
+        assert (await client.post(url, headers=auth_headers, json={"email": "bob@host.local"})).status_code == 422
+        # The domain is normalised as on signup: lowercased, and an IDN
+        # domain given in punycode is stored in the form signup stores.
+        response = await client.post(url, headers=auth_headers, json={"email": "Bob@xn--bcher-kva.example"})
+        assert response.status_code == 201, response.text
+        assert response.json()["email"] == "Bob@bücher.example"
+
+    async def test_inviting_a_legacy_pair_is_refused_if_either_is_a_member(
+        self, client, auth_headers, test_team, test_user,
+    ):
+        """test@example.com is a member; TEST@example.com is a second,
+        older-database account at the same address that is not. The
+        address is already on the team (before: the lookup saw two
+        accounts, returned neither, and the invitation went out)."""
+        await _make_legacy_variant("TEST@example.com")
+        response = await client.post(
+            f"/api/teams/{test_team.id}/invitations", headers=auth_headers, json={"email": "Test@example.com"},
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "User is already a team member"
+
+
+class TestRetryAfterBoundary:
+    """A client that waits exactly its Retry-After is let through (CHT-1804)."""
+
+    def test_seconds_round_up(self):
+        now = datetime(2026, 10, 15, tzinfo=timezone.utc)
+        assert evs._seconds_until(now + timedelta(seconds=5, microseconds=500), now) == 6
+        assert evs._seconds_until(now + timedelta(seconds=5), now) == 5
+        assert evs._seconds_until(now + timedelta(microseconds=1), now) == 1
+
+    async def test_the_hourly_limit_lapses_exactly_at_retry_after(
+        self, client, auth_headers, test_user, outbox, monkeypatch,
+    ):
+        start = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+        clock = {"now": start}
+        monkeypatch.setattr(evs, "_now", lambda: clock["now"])
+        for i in range(evs.HOURLY_LIMIT):
+            clock["now"] = start + timedelta(minutes=2 * i)
+            assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
+        clock["now"] = start + timedelta(minutes=10)
+        refused = await client.post(REQUEST, headers=auth_headers)
+        assert refused.status_code == 429
+        retry = int(refused.headers["Retry-After"])
+        assert retry == 50 * 60
+        clock["now"] += timedelta(seconds=retry)
+        assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
+
+    async def test_the_resend_interval_lapses_exactly_at_retry_after(
+        self, client, auth_headers, test_user, outbox, monkeypatch,
+    ):
+        start = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+        clock = {"now": start}
+        monkeypatch.setattr(evs, "_now", lambda: clock["now"])
+        assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
+        clock["now"] = start + timedelta(seconds=20, microseconds=300)
+        refused = await client.post(REQUEST, headers=auth_headers)
+        assert refused.status_code == 429
+        retry = int(refused.headers["Retry-After"])
+        assert retry == 40
+        clock["now"] += timedelta(seconds=retry)
+        assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202

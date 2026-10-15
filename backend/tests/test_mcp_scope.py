@@ -218,6 +218,10 @@ class TestResolveAssignee:
     async def test_by_email(self, test_user, test_team, test_user2):
         assert await resolve_assignee(test_user, test_team.id, test_user2.email) == test_user2.id
 
+    async def test_by_email_in_another_case(self, test_user, test_team, test_user2):
+        # CHT-1804: the same case-insensitive lookup as login.
+        assert await resolve_assignee(test_user, test_team.id, test_user2.email.upper()) == test_user2.id
+
     async def test_by_name_among_team_members(self, test_user, test_team, test_user2):
         await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         assert await resolve_assignee(test_user, test_team.id, test_user2.name.upper()) == test_user2.id

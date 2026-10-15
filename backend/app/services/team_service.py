@@ -5,6 +5,7 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 from datetime import datetime, timedelta, timezone
 import secrets
 from app.oxyde_models.user import OxydeUser
+from app.utils.email_address import fold_email, same_email
 from app.oxyde_models.team import OxydeTeam, OxydeTeamMember, OxydeTeamInvitation
 from app.enums import TeamRole, InvitationStatus
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInvitationCreate
@@ -198,12 +199,23 @@ class TeamService:
     ) -> OxydeTeamInvitation | None:
         """A pending, unexpired invitation to ``email`` for this team, if
         there is one. An expired one does not count: it can't be accepted,
-        so a new invitation may replace it."""
+        so a new invitation may replace it.
+
+        ``email`` matches ignoring (ASCII) case, as accounts do (CHT-1804):
+        ``bob@x`` and ``Bob@x`` are one address, so one invitation. Compared
+        in Python (``same_email``) over the team's pending invitations, not
+        with ``email__iexact``, whose Unicode-lowercased argument never
+        matches an address with a non-ASCII capital on SQLite."""
         now = datetime.now(timezone.utc)
+        if not fold_email(email):
+            return None
         pending = await OxydeTeamInvitation.objects.filter(
-            team_id=team_id, email=email, status=InvitationStatus.PENDING
+            team_id=team_id, status=InvitationStatus.PENDING
         ).all()
-        return next((i for i in pending if ensure_utc(i.expires_at) >= now), None)
+        return next(
+            (i for i in pending if same_email(i.email, email) and ensure_utc(i.expires_at) >= now),
+            None,
+        )
 
     async def accept_invitation(
         self, invitation: OxydeTeamInvitation, user: OxydeUser

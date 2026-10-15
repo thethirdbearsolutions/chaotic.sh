@@ -104,8 +104,10 @@ def _users(path: str) -> dict[str, dict]:
 
 NEW = {"kind", "external_ref", "registered_by_id", "can_register"}
 # Added to users by later migrations on the way to head, unrelated to
-# 0023: email_verified_at (0032, CHT-1790), never backfilled.
-LATER = {"email_verified_at"}
+# 0023: email_verified_at (0032, CHT-1790), never backfilled, and
+# email_folded with its unique index (0034, CHT-1804), backfilled.
+LATER = {"email_verified_at", "email_folded"}
+LATER_INDEXES = {"ux_users_email_folded"}
 
 
 def _indexes_and_fks(path: str):
@@ -128,13 +130,14 @@ def test_agents_become_assistants_and_nothing_else_changes(at_before):
     after = _users(at_before)
     indexes_after, fks_after = _indexes_and_fks(at_before)
     assert fks_after == fks_before and len(fks_after) == 3
-    new_indexes = {"users_team_external_ref_uq", "ix_users_registered_by_id"}
+    new_indexes = {"users_team_external_ref_uq", "ix_users_registered_by_id"} | LATER_INDEXES
     assert {k: v for k, v in indexes_after.items() if k not in new_indexes} == indexes_before
     assert new_indexes <= set(indexes_after)
     assert set(after) == set(before) == set(USERS)
     for user_id, row in after.items():
         assert {k: v for k, v in row.items() if k not in NEW | LATER} == before[user_id], user_id
         assert row["email_verified_at"] is None, user_id
+        assert row["email_folded"] == row["email"].lower(), user_id
         assert row["kind"] == ("ASSISTANT" if USERS[user_id][0] else None), user_id
         assert row["external_ref"] is None and row["registered_by_id"] is None
         assert row["can_register"] == 0

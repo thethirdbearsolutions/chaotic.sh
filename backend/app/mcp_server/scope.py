@@ -238,7 +238,8 @@ async def resolve_assignee(user: User, team_id: str, assignee: str) -> str | Non
         return candidate.id
 
     if "@" in assignee:
-        candidate = await UserService().get_by_email(assignee)
+        # Any case, like login (CHT-1804).
+        candidate = await UserService().get_by_email_ignoring_case(assignee)
         if candidate:
             return candidate.id
 

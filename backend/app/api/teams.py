@@ -292,12 +292,13 @@ async def create_invitation(
             detail="Team not found",
         )
 
-    # Check if user already a member
+    # Already a member? Every account at the address, ignoring case: an
+    # older database can hold two that differ only in case (left without
+    # email_folded by migration 0034), and the address is a member if
+    # either account is (CHT-1804).
     user_service = UserService()
-    existing_user = await user_service.get_by_email_ignoring_case(invitation_in.email)
-    if existing_user:
-        existing_member = await team_service.get_member(team_id, existing_user.id)
-        if existing_member:
+    for existing_user in await user_service.find_by_email_ignoring_case(invitation_in.email):
+        if await team_service.get_member(team_id, existing_user.id):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="User is already a team member",

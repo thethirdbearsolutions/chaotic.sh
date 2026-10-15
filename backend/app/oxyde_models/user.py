@@ -25,6 +25,13 @@ class OxydeUser(Model):
     # configured, accepting a team invitation requires it. Always NULL
     # for an agent.
     email_verified_at: DateTimeUTC | None = Field(default=None)
+    # `email` as `app.utils.email_address.fold_email` folds it (CHT-1804,
+    # migration 0034): what makes one account per address, ignoring
+    # case, a database rule (`ux_users_email_folded` below). Every code
+    # path that creates an account sets it. NULL only on an account that
+    # 0034 found sharing a folded address with an older one: it keeps its
+    # email and its login, and the oldest account holds the address.
+    email_folded: str | None = Field(default=None)
 
     # Agent-specific fields
     is_agent: bool = Field(default=False)
@@ -53,6 +60,16 @@ class OxydeUser(Model):
     # which the agent may do nothing else that writes.
     can_register: bool = Field(default=False)
 
+    @classmethod
+    def derive_on_create(cls, data: dict) -> None:
+        """Fill ``email_folded`` from ``email`` on every INSERT that does
+        not set it (CHT-1804); app.oxyde_db's create patch calls this, so
+        no code path that makes an account can forget it. Never applied
+        to rows read back: an account 0034 left NULL stays NULL."""
+        if data.get("email_folded") is None and data.get("email") is not None:
+            from app.utils.email_address import fold_email
+            data["email_folded"] = fold_email(data["email"])
+
     class Meta:
         is_table = True
         table_name = "users"
@@ -63,4 +80,8 @@ class OxydeUser(Model):
             Index(("agent_team_id", "external_ref"), name="users_team_external_ref_uq", unique=True),
             # A registrar's identities: its two caps count by this (CHT-1498).
             Index(("registered_by_id",), name="ix_users_registered_by_id"),
+            # One account per address regardless of case (CHT-1804). NULLs
+            # are distinct, so the accounts 0034 left NULL do not collide.
+            # Created by migration 0034.
+            Index(("email_folded",), name="ux_users_email_folded", unique=True),
         ]

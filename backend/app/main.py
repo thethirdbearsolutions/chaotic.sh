@@ -20,6 +20,7 @@ from app.websocket import SocketOwner, manager
 from app.services import credential_events, email_service, push_sender
 from app.services.email_verification_service import log_invitation_gate, warn_if_app_base_url_is_local
 from app.services.push_service import PushService
+from app.services.user_service import warn_if_accounts_share_an_address
 from app import ws_auth
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
 from app.mcp_server.auth import warn_if_capability_url_enabled
@@ -83,6 +84,12 @@ async def lifespan(app: FastAPI):
     # rather than 500 at runtime on the first query of a not-yet-added
     # column (the CHT-1317 incident). No-op on a non-migration-managed DB.
     await verify_migrations_current()
+    # CHT-1804: accounts migration 0034 could not give a folded address.
+    # Fail-soft: a failure here must not stop the server.
+    try:
+        await warn_if_accounts_share_an_address()
+    except Exception:
+        logger.exception("could not check users for addresses that differ only in case")
     # CHT-1625: a push device whose credential was revoked is deleted by a
     # hook after the revocation commits; this catches a process that died
     # in between. Fail-soft: a failure here must not stop the server.

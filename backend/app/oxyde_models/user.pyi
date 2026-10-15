@@ -30,6 +30,7 @@ class OxydeUser(Model):
     created_at: datetime
     updated_at: datetime
     email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None
+    email_folded: str | None
     is_agent: bool
     parent_user: OxydeUser | None
     agent_team_id: str | None
@@ -39,6 +40,9 @@ class OxydeUser(Model):
     registered_by_id: str | None
     can_register: bool
     parent_user_id: str | None
+    @classmethod
+    def derive_on_create(cls, data: dict) -> None:
+        ...
     objects: ClassVar["OxydeUserManager"]
 
 
@@ -105,6 +109,16 @@ class OxydeUserQuery(Query[OxydeUser]):
         email__iexact: str | None = None,
         email__in: list[str] | None = None,
         email__isnull: bool | None = None,
+        email_folded: str | None = None,
+        email_folded__contains: str | None = None,
+        email_folded__icontains: str | None = None,
+        email_folded__startswith: str | None = None,
+        email_folded__istartswith: str | None = None,
+        email_folded__endswith: str | None = None,
+        email_folded__iendswith: str | None = None,
+        email_folded__iexact: str | None = None,
+        email_folded__in: list[str] | None = None,
+        email_folded__isnull: bool | None = None,
         email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None = None,
         email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)]] | None = None,
         email_verified_at__isnull: bool | None = None,
@@ -257,6 +271,16 @@ class OxydeUserQuery(Query[OxydeUser]):
         email__iexact: str | None = None,
         email__in: list[str] | None = None,
         email__isnull: bool | None = None,
+        email_folded: str | None = None,
+        email_folded__contains: str | None = None,
+        email_folded__icontains: str | None = None,
+        email_folded__startswith: str | None = None,
+        email_folded__istartswith: str | None = None,
+        email_folded__endswith: str | None = None,
+        email_folded__iendswith: str | None = None,
+        email_folded__iexact: str | None = None,
+        email_folded__in: list[str] | None = None,
+        email_folded__isnull: bool | None = None,
         email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None = None,
         email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)]] | None = None,
         email_verified_at__isnull: bool | None = None,
@@ -351,7 +375,7 @@ class OxydeUserQuery(Query[OxydeUser]):
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["agent_project_id", "-agent_project_id", "agent_team_id", "-agent_team_id", "avatar_url", "-avatar_url", "can_register", "-can_register", "created_at", "-created_at", "email", "-email", "email_verified_at", "-email_verified_at", "external_ref", "-external_ref", "hashed_password", "-hashed_password", "id", "-id", "is_active", "-is_active", "is_agent", "-is_agent", "is_superuser", "-is_superuser", "kind", "-kind", "name", "-name", "parent_user", "-parent_user", "parent_user_id", "-parent_user_id", "registered_by_id", "-registered_by_id", "updated_at", "-updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["agent_project_id", "-agent_project_id", "agent_team_id", "-agent_team_id", "avatar_url", "-avatar_url", "can_register", "-can_register", "created_at", "-created_at", "email", "-email", "email_folded", "-email_folded", "email_verified_at", "-email_verified_at", "external_ref", "-external_ref", "hashed_password", "-hashed_password", "id", "-id", "is_active", "-is_active", "is_agent", "-is_agent", "is_superuser", "-is_superuser", "kind", "-kind", "name", "-name", "parent_user", "-parent_user", "parent_user_id", "-parent_user_id", "registered_by_id", "-registered_by_id", "updated_at", "-updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -367,7 +391,7 @@ class OxydeUserQuery(Query[OxydeUser]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -391,7 +415,7 @@ class OxydeUserQuery(Query[OxydeUser]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -399,11 +423,11 @@ class OxydeUserQuery(Query[OxydeUser]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"], flat: bool = False) -> "OxydeUserQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"], flat: bool = False) -> "OxydeUserQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -582,6 +606,16 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         email__iexact: str | None = None,
         email__in: list[str] | None = None,
         email__isnull: bool | None = None,
+        email_folded: str | None = None,
+        email_folded__contains: str | None = None,
+        email_folded__icontains: str | None = None,
+        email_folded__startswith: str | None = None,
+        email_folded__istartswith: str | None = None,
+        email_folded__endswith: str | None = None,
+        email_folded__iendswith: str | None = None,
+        email_folded__iexact: str | None = None,
+        email_folded__in: list[str] | None = None,
+        email_folded__isnull: bool | None = None,
         email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None = None,
         email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)]] | None = None,
         email_verified_at__isnull: bool | None = None,
@@ -734,6 +768,16 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         email__iexact: str | None = None,
         email__in: list[str] | None = None,
         email__isnull: bool | None = None,
+        email_folded: str | None = None,
+        email_folded__contains: str | None = None,
+        email_folded__icontains: str | None = None,
+        email_folded__startswith: str | None = None,
+        email_folded__istartswith: str | None = None,
+        email_folded__endswith: str | None = None,
+        email_folded__iendswith: str | None = None,
+        email_folded__iexact: str | None = None,
+        email_folded__in: list[str] | None = None,
+        email_folded__isnull: bool | None = None,
         email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None = None,
         email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)]] | None = None,
         email_verified_at__isnull: bool | None = None,
@@ -828,11 +872,11 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> OxydeUserQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> OxydeUserQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"], flat: bool = False) -> OxydeUserQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"], flat: bool = False) -> OxydeUserQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -989,6 +1033,7 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         can_register: bool | None = None,
         created_at: datetime | None = None,
         email: str | None = None,
+        email_folded: str | None = None,
         email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None = None,
         external_ref: str | None = None,
         hashed_password: str | None = None,
