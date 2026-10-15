@@ -153,7 +153,7 @@ class TestDocumentBranchCoverage:
         doc = await OxydeDocument.objects.create(team_id=test_team.id, author_id=test_user.id, title="Team Doc", content="No project")
 
         response = await client.post(f"/api/documents/{doc.id}/issues/{test_issue.id}", headers=auth_headers2)
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_update_document_move_project(self, client, auth_headers, db, test_team, test_user, test_project):
         """Update doc moving to project covers lines 219-225."""

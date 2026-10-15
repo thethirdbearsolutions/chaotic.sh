@@ -98,125 +98,125 @@ class TestDocumentProjectAccessControl:
     async def test_get_project_document_unauthorized(
         self, client, other_auth_headers, project_document
     ):
-        """GET /documents/{id} returns 403 for non-member on project-scoped doc."""
+        """GET /documents/{id} returns 404 for non-member on project-scoped doc."""
         response = await client.get(
             f"/api/documents/{project_document.id}",
             headers=other_auth_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_update_project_document_unauthorized(
         self, client, other_auth_headers, project_document
     ):
-        """PATCH /documents/{id} returns 403 for non-member."""
+        """PATCH /documents/{id} returns 404 for non-member."""
         response = await client.patch(
             f"/api/documents/{project_document.id}",
             headers=other_auth_headers,
             json={"title": "Hacked"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_get_document_issues_unauthorized(
         self, client, other_auth_headers, project_document
     ):
-        """GET /documents/{id}/issues returns 403 for non-member."""
+        """GET /documents/{id}/issues returns 404 for non-member."""
         response = await client.get(
             f"/api/documents/{project_document.id}/issues",
             headers=other_auth_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_link_document_to_issue_unauthorized(
         self, client, other_auth_headers, project_document, project_issue
     ):
-        """POST /documents/{id}/issues/{issue_id} returns 403 for non-member."""
+        """POST /documents/{id}/issues/{issue_id} returns 404 for non-member."""
         response = await client.post(
             f"/api/documents/{project_document.id}/issues/{project_issue.id}",
             headers=other_auth_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_unlink_document_from_issue_unauthorized(
         self, client, other_auth_headers, project_document, project_issue
     ):
-        """DELETE /documents/{id}/issues/{issue_id} returns 403 for non-member."""
+        """DELETE /documents/{id}/issues/{issue_id} returns 404 for non-member."""
         response = await client.delete(
             f"/api/documents/{project_document.id}/issues/{project_issue.id}",
             headers=other_auth_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_get_document_labels_unauthorized(
         self, client, other_auth_headers, project_document
     ):
-        """GET /documents/{id}/labels returns 403 for non-member."""
+        """GET /documents/{id}/labels returns 404 for non-member."""
         response = await client.get(
             f"/api/documents/{project_document.id}/labels",
             headers=other_auth_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_add_label_to_document_unauthorized(
         self, client, other_auth_headers, project_document, project_label
     ):
-        """POST /documents/{id}/labels/{label_id} returns 403 for non-member."""
+        """POST /documents/{id}/labels/{label_id} returns 404 for non-member."""
         response = await client.post(
             f"/api/documents/{project_document.id}/labels/{project_label.id}",
             headers=other_auth_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_remove_label_from_document_unauthorized(
         self, client, other_auth_headers, project_document, project_label
     ):
-        """DELETE /documents/{id}/labels/{label_id} returns 403 for non-member."""
+        """DELETE /documents/{id}/labels/{label_id} returns 404 for non-member."""
         response = await client.delete(
             f"/api/documents/{project_document.id}/labels/{project_label.id}",
             headers=other_auth_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_create_comment_unauthorized(
         self, client, other_auth_headers, project_document
     ):
-        """POST /documents/{id}/comments returns 403 for non-member."""
+        """POST /documents/{id}/comments returns 404 for non-member."""
         response = await client.post(
             f"/api/documents/{project_document.id}/comments",
             headers=other_auth_headers,
             json={"content": "Unauthorized comment"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_list_comments_unauthorized(
         self, client, other_auth_headers, project_document
     ):
-        """GET /documents/{id}/comments returns 403 for non-member."""
+        """GET /documents/{id}/comments returns 404 for non-member."""
         response = await client.get(
             f"/api/documents/{project_document.id}/comments",
             headers=other_auth_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_update_comment_unauthorized(
         self, client, other_auth_headers, project_document, project_document_comment
     ):
-        """PATCH /documents/{id}/comments/{comment_id} returns 403 for non-member."""
+        """PATCH /documents/{id}/comments/{comment_id} returns 404 for non-member."""
         response = await client.patch(
             f"/api/documents/{project_document.id}/comments/{project_document_comment.id}",
             headers=other_auth_headers,
             json={"content": "Hacked comment"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_delete_comment_unauthorized(
         self, client, other_auth_headers, project_document, project_document_comment
     ):
-        """DELETE /documents/{id}/comments/{comment_id} returns 403 for non-member."""
+        """DELETE /documents/{id}/comments/{comment_id} returns 404 for non-member."""
         response = await client.delete(
             f"/api/documents/{project_document.id}/comments/{project_document_comment.id}",
             headers=other_auth_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_delete_document_unauthorized(
         self, client, other_auth_headers, project_document

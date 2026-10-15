@@ -60,12 +60,14 @@ class TestQueryEndpoint:
         # token getter, so a second Client would not be a second user.
         from conftest import TEST_BASE_URL
 
-        for path in (f"projects/{test_project['id']}", f"teams/{test_team['id']}"):
+        # A project the caller cannot see answers like a missing one
+        # (CHT-1785); a team-wide scope is refused before any lookup.
+        for path, refused in ((f"projects/{test_project['id']}", 404), (f"teams/{test_team['id']}", 403)):
             resp = httpx.get(
                 f"{TEST_BASE_URL}/{path}/issues/query",
                 headers={"Authorization": f"Bearer {auth_token2}"},
             )
-            assert resp.status_code == 403, (path, resp.text)
+            assert resp.status_code == refused, (path, resp.text)
 
     def test_the_get_url_is_the_state(self, auth_token, test_project, seeded):
         """A plain GET with the text in the query string: what a web page

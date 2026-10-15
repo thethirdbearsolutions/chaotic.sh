@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_in_team, check_user_team_access
+from app.api.visibility import visible_label
 from app.schemas.issue import LabelCreate, LabelUpdate, LabelResponse
 from app.services.issue_service import IssueService
 from app.services.team_service import TeamService
@@ -63,22 +64,9 @@ async def list_labels(
 @router.get("/{label_id}", response_model=LabelResponse)
 @reads
 async def get_label(label_id: str, current_user: CurrentUser) -> LabelResponse:
-    """Get label by ID."""
-    issue_service = IssueService()
-
-    label = await issue_service.get_label_by_id(label_id)
-    if not label:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Label not found",
-        )
-
-    if not await check_user_in_team(current_user, label.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this team",
-        )
-
+    """Get label by ID. Another team's label answers like a missing one
+    (CHT-1785)."""
+    label = await visible_label(current_user, label_id)
     return LabelResponse.model_validate(label)
 
 
@@ -92,12 +80,7 @@ async def update_label(
     """Update a label."""
     issue_service = IssueService()
 
-    label = await issue_service.get_label_by_id(label_id)
-    if not label:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Label not found",
-        )
+    label = await visible_label(current_user, label_id)
 
     # Team-wide, not the directory check: a rename or recolour changes the
     # label on every project's issues, so a project-scoped agent may not
@@ -125,12 +108,9 @@ async def delete_label(label_id: str, current_user: CurrentUser) -> None:
 
     issue_service = IssueService()
 
-    label = await issue_service.get_label_by_id(label_id)
-    if not label:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Label not found",
-        )
+    # Out of the caller's teams: 404, as if missing; in them but not an
+    # admin: 403 (CHT-1785).
+    label = await visible_label(current_user, label_id)
 
     team_service = TeamService()
     if not await team_service.is_team_admin(label.team_id, current_user.id):

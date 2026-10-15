@@ -79,7 +79,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * GET /api/labels/{label_id}
         * Get Label
-        * Get label by ID.
+        * Get label by ID. Another team&#39;s label answers like a missing one (CHT-1785).
          * @param labelId  
          * @return LabelResponse
         */

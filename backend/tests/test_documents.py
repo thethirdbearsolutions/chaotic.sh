@@ -241,7 +241,7 @@ class TestDocumentCRUD:
             f"/api/documents/{test_document.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_update_document(self, client, auth_headers, test_document):
         """Test updating a document."""
@@ -271,7 +271,7 @@ class TestDocumentCRUD:
             headers=auth_headers2,
             json={"title": "Unauthorized Update"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_update_document_add_sprint(self, client, auth_headers, test_document, test_project, test_sprint):
         """Test adding sprint to document."""
@@ -365,7 +365,7 @@ class TestDocumentIssueLinks:
             f"/api/documents/{test_document.id}/issues",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_link_document_to_issue(self, client, auth_headers, test_document, test_issue):
         """Test linking document to issue."""
@@ -405,7 +405,7 @@ class TestDocumentIssueLinks:
             f"/api/documents/{test_document.id}/issues/{test_issue.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_unlink_document_from_issue(self, client, auth_headers, test_document, test_issue):
         """Test unlinking document from issue."""
@@ -503,7 +503,7 @@ class TestDocumentLabels:
             f"/api/documents/{test_document.id}/labels",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_add_label_to_document(self, client, auth_headers, test_document, test_label):
         """Test adding a label to a document."""
@@ -538,7 +538,7 @@ class TestDocumentLabels:
             f"/api/documents/{test_document.id}/labels/{test_label.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_add_label_cross_team(
         self, client, auth_headers, test_document, db, test_user
@@ -593,7 +593,7 @@ class TestDocumentLabels:
             f"/api/documents/{test_document.id}/labels/{test_label.id}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -628,7 +628,7 @@ class TestDocumentComments:
             headers=auth_headers2,
             json={"content": "Unauthorized comment"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_list_comments(self, client, auth_headers, test_document, db, test_user):
         """Test listing comments on a document."""
@@ -661,7 +661,7 @@ class TestDocumentComments:
             f"/api/documents/{test_document.id}/comments",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_update_comment(self, client, auth_headers, test_document, db, test_user):
         """Test updating a comment."""
@@ -852,80 +852,80 @@ class TestProjectDocumentAccessControl:
     async def test_get_project_document_cross_team_denied(
         self, client, cross_team_headers, project_document
     ):
-        """GET /documents/{id} returns 403 for cross-team user on project doc."""
+        """GET /documents/{id} returns 404 for cross-team user on project doc."""
         response = await client.get(
             f"/api/documents/{project_document.id}",
             headers=cross_team_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_update_project_document_cross_team_denied(
         self, client, cross_team_headers, project_document
     ):
-        """PATCH /documents/{id} returns 403 for cross-team user on project doc."""
+        """PATCH /documents/{id} returns 404 for cross-team user on project doc."""
         response = await client.patch(
             f"/api/documents/{project_document.id}",
             headers=cross_team_headers,
             json={"title": "Hacked"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_delete_project_document_cross_team_denied(
         self, client, cross_team_headers, project_document
     ):
-        """DELETE /documents/{id} returns 403 for cross-team user (team membership check)."""
+        """DELETE /documents/{id} returns 404 for cross-team user (team membership check)."""
         response = await client.delete(
             f"/api/documents/{project_document.id}",
             headers=cross_team_headers,
         )
-        assert response.status_code == 403
-        assert "not a member" in response.json()["detail"].lower()
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Document not found"
 
     async def test_get_project_document_issues_cross_team_denied(
         self, client, cross_team_headers, project_document
     ):
-        """GET /documents/{id}/issues returns 403 for cross-team user."""
+        """GET /documents/{id}/issues returns 404 for cross-team user."""
         response = await client.get(
             f"/api/documents/{project_document.id}/issues",
             headers=cross_team_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_get_project_document_labels_cross_team_denied(
         self, client, cross_team_headers, project_document
     ):
-        """GET /documents/{id}/labels returns 403 for cross-team user."""
+        """GET /documents/{id}/labels returns 404 for cross-team user."""
         response = await client.get(
             f"/api/documents/{project_document.id}/labels",
             headers=cross_team_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_get_project_document_comments_cross_team_denied(
         self, client, cross_team_headers, project_document
     ):
-        """GET /documents/{id}/comments returns 403 for cross-team user."""
+        """GET /documents/{id}/comments returns 404 for cross-team user."""
         response = await client.get(
             f"/api/documents/{project_document.id}/comments",
             headers=cross_team_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_create_comment_on_project_document_cross_team_denied(
         self, client, cross_team_headers, project_document
     ):
-        """POST /documents/{id}/comments returns 403 for cross-team user."""
+        """POST /documents/{id}/comments returns 404 for cross-team user."""
         response = await client.post(
             f"/api/documents/{project_document.id}/comments",
             headers=cross_team_headers,
             json={"content": "Unauthorized comment"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_delete_comment_on_project_document_cross_team_denied(
         self, client, auth_headers, cross_team_headers, project_document, db, test_user
     ):
-        """DELETE /documents/{id}/comments/{id} returns 403 for cross-team user."""
+        """DELETE /documents/{id}/comments/{id} returns 404 for cross-team user."""
         # Create a comment first
         comment = await OxydeDocumentComment.objects.create(
             document_id=project_document.id,
@@ -937,7 +937,7 @@ class TestProjectDocumentAccessControl:
             f"/api/documents/{project_document.id}/comments/{comment.id}",
             headers=cross_team_headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     async def test_agent_must_include_icon(
         self, client, agent_headers_for_docs, test_team
@@ -1141,7 +1141,7 @@ class TestDocumentRevisions:
         resp = await client.get(
             f"/api/documents/{doc_id}/revisions", headers=auth_headers2,
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
     async def test_revisions_cascade_on_document_delete(
         self, client, auth_headers, test_team, db,

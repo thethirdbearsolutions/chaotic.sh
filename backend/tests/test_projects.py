@@ -85,7 +85,7 @@ async def test_get_project_not_member(client, auth_headers2, test_project):
         f"/api/projects/{test_project.id}",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -217,7 +217,7 @@ async def test_update_project_not_member(client, auth_headers2, test_project):
         headers=auth_headers2,
         json={"name": "Unauthorized Update"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio

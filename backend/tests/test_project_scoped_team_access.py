@@ -80,9 +80,12 @@ class TestRefused:
             f"/api/issues/search?team_id={test_team.id}&q=x&project_id={sibling.id}",
             f"/api/issues/activities?team_id={test_team.id}&project_id={sibling.id}",
             f"/api/teams/{test_team.id}/documents?project_id={sibling.id}",
-            f"/api/issues?project_id={sibling.id}",
         ):
             assert (await client.get(path, headers=headers)).status_code == 403, path
+        # Keyed by the project alone, the sibling answers like a missing
+        # project (CHT-1785).
+        listed = await client.get(f"/api/issues?project_id={sibling.id}", headers=headers)
+        assert listed.status_code == 404 and listed.json() == {"detail": "Project not found"}
 
     async def test_own_project_under_another_team(self, client, proj_agent, test_project):
         # Project access alone ignores the team, so the URL's team must be
@@ -100,8 +103,9 @@ class TestRefused:
 
     async def test_team_level_document(self, client, proj_agent, test_document):
         _, headers = proj_agent
-        assert (await client.get(f"/api/documents/{test_document.id}", headers=headers)).status_code == 403
-        assert (await client.delete(f"/api/documents/{test_document.id}", headers=headers)).status_code == 403
+        # Out of scope answers like a missing document (CHT-1785).
+        assert (await client.get(f"/api/documents/{test_document.id}", headers=headers)).status_code == 404
+        assert (await client.delete(f"/api/documents/{test_document.id}", headers=headers)).status_code == 404
 
     async def test_create_project(self, client, proj_agent, test_team):
         _, headers = proj_agent

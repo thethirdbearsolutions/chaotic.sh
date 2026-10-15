@@ -123,7 +123,7 @@ async def test_create_issue_not_member(client, auth_headers2, test_project):
         headers=auth_headers2,
         json={"title": "Unauthorized Issue"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2555,7 +2555,7 @@ async def test_add_label_not_authorized(client, auth_headers2, test_issue, test_
         headers=auth_headers2,
         json={"label_id": test_label.id},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2565,7 +2565,7 @@ async def test_remove_label_not_authorized(client, auth_headers2, test_issue, te
         f"/api/issues/{test_issue.id}/labels/{test_label.id}",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2575,7 +2575,7 @@ async def test_list_sub_issues_not_authorized(client, auth_headers2, test_issue)
         f"/api/issues/{test_issue.id}/sub-issues",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2589,7 +2589,7 @@ async def test_create_relation_not_authorized(client, auth_headers2, test_issue)
             "relation_type": "relates_to",
         },
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2599,7 +2599,7 @@ async def test_list_relations_not_authorized(client, auth_headers2, test_issue):
         f"/api/issues/{test_issue.id}/relations",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2609,7 +2609,7 @@ async def test_delete_relation_not_authorized(client, auth_headers2, test_issue)
         f"/api/issues/{test_issue.id}/relations/00000000-0000-0000-0000-0000000000e1",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2619,7 +2619,7 @@ async def test_get_issue_documents_not_authorized(client, auth_headers2, test_is
         f"/api/issues/{test_issue.id}/documents",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2629,7 +2629,7 @@ async def test_list_issue_activities_not_authorized(client, auth_headers2, test_
         f"/api/issues/{test_issue.id}/activities",
         headers=auth_headers2,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 # ============================================================================
@@ -3144,74 +3144,74 @@ async def cross_team_headers_issues(cross_team_user_issues):
 async def test_get_issue_cross_team_denied(
     client, cross_team_headers_issues, test_issue
 ):
-    """GET /issues/{id} returns 403 for cross-team user."""
+    """GET /issues/{id} returns 404 for cross-team user."""
     response = await client.get(
         f"/api/issues/{test_issue.id}",
         headers=cross_team_headers_issues,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_update_issue_cross_team_denied(
     client, cross_team_headers_issues, test_issue
 ):
-    """PATCH /issues/{id} returns 403 for cross-team user."""
+    """PATCH /issues/{id} returns 404 for cross-team user."""
     response = await client.patch(
         f"/api/issues/{test_issue.id}",
         headers=cross_team_headers_issues,
         json={"title": "Hacked"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_delete_issue_cross_team_denied(
     client, cross_team_headers_issues, test_issue
 ):
-    """DELETE /issues/{id} returns 403 for cross-team user."""
+    """DELETE /issues/{id} returns 404 for cross-team user."""
     response = await client.delete(
         f"/api/issues/{test_issue.id}",
         headers=cross_team_headers_issues,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_list_activities_cross_team_denied(
     client, cross_team_headers_issues, test_issue
 ):
-    """GET /issues/{id}/activities returns 403 for cross-team user."""
+    """GET /issues/{id}/activities returns 404 for cross-team user."""
     response = await client.get(
         f"/api/issues/{test_issue.id}/activities",
         headers=cross_team_headers_issues,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_create_comment_cross_team_denied(
     client, cross_team_headers_issues, test_issue
 ):
-    """POST /issues/{id}/comments returns 403 for cross-team user."""
+    """POST /issues/{id}/comments returns 404 for cross-team user."""
     response = await client.post(
         f"/api/issues/{test_issue.id}/comments",
         headers=cross_team_headers_issues,
         json={"content": "Unauthorized comment"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_list_comments_cross_team_denied(
     client, cross_team_headers_issues, test_issue
 ):
-    """GET /issues/{id}/comments returns 403 for cross-team user."""
+    """GET /issues/{id}/comments returns 404 for cross-team user."""
     response = await client.get(
         f"/api/issues/{test_issue.id}/comments",
         headers=cross_team_headers_issues,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -3262,15 +3262,17 @@ async def test_remove_label_cross_team(
         f"/api/issues/{test_issue.id}/labels/{other_label.id}",
         headers=auth_headers,
     )
-    assert response.status_code == 400
-    assert "does not belong" in response.json()["detail"]
+    # A team the caller is not in: its label answers like a missing one
+    # (CHT-1785).
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Label not found"}
 
 
 @pytest.mark.asyncio
 async def test_create_relation_cross_team_denied(
     client, cross_team_headers_issues, test_issue, test_project, db, test_user
 ):
-    """POST /issues/{id}/relations returns 403 for cross-team user."""
+    """POST /issues/{id}/relations returns 404 for cross-team user."""
     from app.oxyde_models.issue import OxydeIssue
     from app.oxyde_models.project import OxydeProject
     from oxyde import execute_raw
@@ -3296,19 +3298,19 @@ async def test_create_relation_cross_team_denied(
         headers=cross_team_headers_issues,
         json={"related_issue_id": issue2.id, "relation_type": "blocks"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_list_relations_cross_team_denied(
     client, cross_team_headers_issues, test_issue
 ):
-    """GET /issues/{id}/relations returns 403 for cross-team user."""
+    """GET /issues/{id}/relations returns 404 for cross-team user."""
     response = await client.get(
         f"/api/issues/{test_issue.id}/relations",
         headers=cross_team_headers_issues,
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 # --- Additional batch update edge case tests (CHT-942) ---
@@ -3397,13 +3399,13 @@ async def test_batch_update_empty_fields(client, auth_headers, test_project, tes
 async def test_batch_update_cross_team_denied(
     client, cross_team_headers_issues, test_issue
 ):
-    """POST /issues/batch-update returns 403 for cross-team user."""
+    """POST /issues/batch-update returns 404 for cross-team user."""
     response = await client.post(
         "/api/issues/batch-update",
         headers=cross_team_headers_issues,
         json={"issue_ids": [test_issue.id], "priority": "high"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -3928,7 +3930,7 @@ async def test_description_revisions_require_project_access(
         f"/api/issues/{issue_id}/description-revisions",
         headers=auth_headers2,
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

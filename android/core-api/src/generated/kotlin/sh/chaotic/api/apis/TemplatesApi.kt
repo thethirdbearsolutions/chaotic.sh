@@ -184,7 +184,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * GET /api/templates/{template_id}
         * Get Template
-        * Get a template by ID.
+        * Get a template by ID. One the caller cannot see answers like a missing one (CHT-1785).
          * @param templateId  
          * @return TemplateResponse
         */

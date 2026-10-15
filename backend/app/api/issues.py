@@ -10,6 +10,10 @@ from app.api.deps import (
     confined_project_id,
     is_project_scoped_agent,
 )
+from app.api.visibility import (
+    can_see_label, can_see_project, not_found, visible_issue, visible_issue_by_identifier,
+    visible_project, visible_sprint,
+)
 from app.utils import ensure_utc
 
 logger = logging.getLogger(__name__)
@@ -133,17 +137,15 @@ async def _validate_assignee(
             )
 
 
-async def _validate_sprint(sprint_id: str | None, project_id: str) -> None:
-    """Validate that sprint exists and belongs to the project (CHT-294)."""
+async def _validate_sprint(current_user, sprint_id: str | None, project_id: str) -> None:
+    """Validate that sprint exists and belongs to the project (CHT-294).
+    A sprint in a project the caller cannot see is "not found" (CHT-1785)."""
     if not sprint_id:
         return
-    sprint_service = SprintService()
-    sprint = await sprint_service.get_by_id(sprint_id)
-    if not sprint:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Sprint not found",
-        )
+    sprint = await SprintService().get_by_id(sprint_id)
+    sprint_project = await ProjectService().get_by_id(sprint.project_id) if sprint else None
+    if not await can_see_project(current_user, sprint_project):
+        raise not_found("Sprint not found", status.HTTP_400_BAD_REQUEST)
     if sprint.project_id != project_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -151,11 +153,19 @@ async def _validate_sprint(sprint_id: str | None, project_id: str) -> None:
         )
 
 
-async def _validate_labels(label_ids: list[str], team_id: str) -> None:
-    """Validate that all labels exist and belong to the team (CHT-296)."""
+async def _validate_labels(current_user, label_ids: list[str], team_id: str) -> None:
+    """Validate that all labels exist and belong to the team (CHT-296).
+    A label of a team the caller is not in counts as missing (CHT-1785)."""
     if not label_ids:
         return
-    labels = await OxydeLabel.objects.filter(id__in=label_ids).all()
+    # One membership check per team, not per label.
+    seen_by_team: dict[str, bool] = {}
+    labels = []
+    for label in await OxydeLabel.objects.filter(id__in=label_ids).all():
+        if label.team_id not in seen_by_team:
+            seen_by_team[label.team_id] = await can_see_label(current_user, label)
+        if seen_by_team[label.team_id]:
+            labels.append(label)
     if len(labels) != len(label_ids):
         found = {l.id for l in labels}
         missing = set(label_ids) - found
@@ -171,8 +181,11 @@ async def _validate_labels(label_ids: list[str], team_id: str) -> None:
             )
 
 
-async def _validate_parent(parent_id: str | None, project_id: str, issue_id: str | None = None) -> None:
-    """Validate that parent issue exists and belongs to the project (CHT-295)."""
+async def _validate_parent(
+    current_user, parent_id: str | None, project_id: str, issue_id: str | None = None,
+) -> None:
+    """Validate that parent issue exists and belongs to the project (CHT-295).
+    A parent in a project the caller cannot see is "not found" (CHT-1785)."""
     if not parent_id:
         return
     if issue_id and parent_id == issue_id:
@@ -182,11 +195,9 @@ async def _validate_parent(parent_id: str | None, project_id: str, issue_id: str
         )
     issue_service = IssueService()
     parent = await issue_service.get_by_id(parent_id)
-    if not parent:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Parent issue not found",
-        )
+    parent_project = await ProjectService().get_by_id(parent.project_id) if parent else None
+    if not await can_see_project(current_user, parent_project):
+        raise not_found("Parent issue not found", status.HTTP_400_BAD_REQUEST)
     if parent.project_id != project_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -452,29 +463,17 @@ async def create_issue(
     sprint_id/assignee_id as alternative query-based scope filters --
     no path-nested list alias, see nested.py's module docstring.
     """
-    project_service = ProjectService()
     issue_service = IssueService()
 
-    project = await project_service.get_by_id(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    # Check access (team membership for humans, agent scope for agents)
-    has_access = await check_user_project_access(current_user, project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    # Team membership for humans, agent scope for agents; a project the
+    # caller cannot see answers like a missing one (CHT-1785).
+    project = await visible_project(current_user, project_id)
 
     # Validate assignee, sprint, labels, and parent (CHT-293, CHT-294, CHT-296, CHT-295)
     await _validate_assignee(issue_in.assignee_id, project.team_id, project_id=project.id)
-    await _validate_sprint(issue_in.sprint_id, project_id)
-    await _validate_labels(issue_in.label_ids, project.team_id)
-    await _validate_parent(issue_in.parent_id, project_id)
+    await _validate_sprint(current_user, issue_in.sprint_id, project_id)
+    await _validate_labels(current_user, issue_in.label_ids, project.team_id)
+    await _validate_parent(current_user, issue_in.parent_id, project_id)
 
     # Ritual/estimate exemption requires BOTH a human account AND an
     # interactive (TTY) caller (CHT-1302, hybrid gate). The interactive
@@ -582,14 +581,9 @@ async def list_ready_issues(
         )
 
     issue_service = IssueService()
-    project_service = ProjectService()
 
     if project_id:
-        project = await project_service.get_by_id(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        if not await check_user_project_access(current_user, project_id, project.team_id):
-            raise HTTPException(status_code=403, detail="Not authorized to access this project")
+        await visible_project(current_user, project_id)
     elif team_id:
         if not await check_user_team_access(current_user, team_id):
             raise HTTPException(status_code=403, detail="Not authorized to access this team")
@@ -617,12 +611,7 @@ async def _check_list_scope(
     the scope's team id. ``list_issues`` and ``query_issues`` (CHT-1718)
     both go through here, so a query sees exactly what a list would."""
     if project_id:
-        project = await ProjectService().get_by_id(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        if not await check_user_project_access(current_user, project_id, project.team_id):
-            raise HTTPException(status_code=403, detail="Not authorized to access this project")
-        return project.team_id
+        return (await visible_project(current_user, project_id)).team_id
     if team_id:
         if not await check_user_team_access(current_user, team_id):
             raise HTTPException(status_code=403, detail="Not authorized to access this team")
@@ -796,16 +785,7 @@ async def list_issues(
         )
     elif sprint_id:
         # Sprint-only query: check access via sprint -> project -> team
-        sprint_service = SprintService()
-        sprint = await sprint_service.get_by_id(sprint_id)
-        if not sprint:
-            raise HTTPException(status_code=404, detail="Sprint not found")
-        project = await project_service.get_by_id(sprint.project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        has_access = await check_user_project_access(current_user, project.id, project.team_id)
-        if not has_access:
-            raise HTTPException(status_code=403, detail="Not authorized to access this sprint")
+        sprint, _project = await visible_sprint(current_user, sprint_id)
         # Lazy lease sweep (CHT-1246, PR #217 review finding 3): the web
         # UI's sprint board queries by sprint_id alone, so without this a
         # stale claim could sit on the board indefinitely.
@@ -914,9 +894,15 @@ async def batch_update_issues(
     # Deduplicate issue IDs
     unique_ids = list(dict.fromkeys(batch_in.issue_ids))
 
-    # Bulk fetch all issues
+    # Bulk fetch all issues, and the projects they are in
     issue_list = await Issue.objects.filter(id__in=unique_ids).join("creator").all()
-    issues = {iss.id: iss for iss in issue_list}
+    project_ids = list({iss.project_id for iss in issue_list})
+    project_list = await OxydeProject.objects.filter(id__in=project_ids).all()
+    # Access per distinct project (not per issue). An issue the caller
+    # cannot see is reported as missing, with the missing ones, so the
+    # answer does not say which ids exist elsewhere (CHT-1785).
+    projects = {p.id: p for p in project_list if await can_see_project(current_user, p)}
+    issues = {iss.id: iss for iss in issue_list if iss.project_id in projects}
 
     if len(issues) != len(unique_ids):
         missing = set(unique_ids) - set(issues.keys())
@@ -924,11 +910,6 @@ async def batch_update_issues(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Issues not found: {missing}",
         )
-
-    # Bulk fetch all referenced projects
-    project_ids = list({iss.project_id for iss in issues.values()})
-    project_list = await OxydeProject.objects.filter(id__in=project_ids).all()
-    projects = {p.id: p for p in project_list}
 
     # All issues must belong to the same team for label validation
     team_ids = {p.team_id for p in projects.values()}
@@ -939,13 +920,11 @@ async def batch_update_issues(
         )
     team_id = team_ids.pop()
 
-    # Check access per distinct project (not per issue)
-    for project_id, project in projects.items():
-        if not await check_user_project_access(current_user, project_id, project.team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to access one or more issues",
-            )
+    # Label ids the caller cannot see answer like missing ones (CHT-1785),
+    # before the service gets a chance to say anything about them.
+    for ids in (batch_in.label_ids, batch_in.add_label_ids):
+        if ids:
+            await _validate_labels(current_user, list(dict.fromkeys(ids)), team_id)
 
     # Build update dict from safe fields only
     update_data = {}
@@ -1167,24 +1146,10 @@ async def get_issue_by_identifier(
 ) -> IssueResponse:
     """Get issue by identifier (e.g., PRJ-123)."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_identifier(identifier)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        # Return 404 (not 403) to prevent identifier oracle — don't reveal
-        # whether an identifier exists in another team (CHT-809).
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
+    # Out of scope answers like missing: no identifier oracle (CHT-809,
+    # CHT-1785).
+    issue, _project = await visible_issue_by_identifier(current_user, identifier)
 
     # Lazy auto-release of an expired claim lease (CHT-1246): an issue
     # read is one of the surfaces that must never keep surfacing a
@@ -1199,22 +1164,8 @@ async def get_issue_by_identifier(
 async def get_issue(issue_id: str, current_user: CurrentUser) -> IssueResponse:
     """Get issue by ID."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     # Lazy auto-release of an expired claim lease (CHT-1246).
     issue = await issue_service.release_lease_if_expired(issue)
@@ -1233,22 +1184,8 @@ async def update_issue(
 ) -> IssueResponse:
     """Update an issue."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     # Validate assignee, sprint, labels, parent if provided (CHT-293, CHT-294, CHT-296, CHT-295)
     if issue_in.assignee_id is not None:
@@ -1256,11 +1193,11 @@ async def update_issue(
             issue_in.assignee_id, project.team_id, issue.assignee_id, project_id=project.id,
         )
     if issue_in.sprint_id is not None:
-        await _validate_sprint(issue_in.sprint_id, issue.project_id)
+        await _validate_sprint(current_user, issue_in.sprint_id, issue.project_id)
     if issue_in.label_ids is not None:
-        await _validate_labels(issue_in.label_ids, project.team_id)
+        await _validate_labels(current_user, issue_in.label_ids, project.team_id)
     if issue_in.parent_id is not None:
-        await _validate_parent(issue_in.parent_id, issue.project_id, issue_id=issue_id)
+        await _validate_parent(current_user, issue_in.parent_id, issue.project_id, issue_id=issue_id)
 
     # Ritual/estimate exemption requires BOTH a human account AND an
     # interactive (TTY) caller (CHT-1302, hybrid gate). Human users can use
@@ -1349,22 +1286,8 @@ async def update_issue(
 async def delete_issue(issue_id: str, current_user: CurrentUser):
     """Delete an issue."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     # Broadcast before deleting (need the ID)
     await broadcast_issue_event(project.team_id, "deleted", {"id": issue.id, "identifier": issue.identifier})
@@ -1382,28 +1305,13 @@ async def add_label_to_issue(
 ) -> IssueResponse:
     """Add a label to an issue."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
-    project = await project_service.get_by_id(issue.project_id)
-    if not await check_user_project_access(current_user, issue.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
-
+    # Another team's label answers like a missing one (CHT-1785).
     label = await issue_service.get_label_by_id(body.label_id)
-    if not label:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Label not found",
-        )
+    if not await can_see_label(current_user, label):
+        raise not_found("Label not found")
 
     if label.team_id != project.team_id:
         raise HTTPException(
@@ -1426,28 +1334,13 @@ async def remove_label_from_issue(
 ) -> IssueResponse:
     """Remove a label from an issue."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
-    project = await project_service.get_by_id(issue.project_id)
-    if not await check_user_project_access(current_user, issue.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
-
+    # Another team's label answers like a missing one (CHT-1785).
     label = await issue_service.get_label_by_id(label_id)
-    if not label:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Label not found",
-        )
+    if not await can_see_label(current_user, label):
+        raise not_found("Label not found")
 
     if label.team_id != project.team_id:
         raise HTTPException(
@@ -1471,23 +1364,9 @@ async def list_activities(
 ):
     """List activities for an issue."""
     issue_service = IssueService()
-    project_service = ProjectService()
     sprint_service = SprintService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     activities = await issue_service.list_activities(issue_id, skip, limit)
 
@@ -1540,23 +1419,8 @@ def _description_revision_author_name(rev) -> str | None:
 
 
 async def _get_issue_checked(issue_id: str, current_user) -> "Issue":
-    """Load an issue and 404/403 like the other issue-scoped GETs."""
-    issue_service = IssueService()
-    project_service = ProjectService()
-
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    if not await check_user_project_access(current_user, issue.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    """Load an issue the caller may see, else 404 (CHT-1785)."""
+    issue, _project = await visible_issue(current_user, issue_id)
     return issue
 
 
@@ -1631,22 +1495,8 @@ async def list_sub_issues(
 ) -> list[IssueResponse]:
     """List sub-issues for an issue."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     sub_issues = await issue_service.list_sub_issues(issue_id, skip, limit)
     return await issues_to_responses(sub_issues)
@@ -1668,22 +1518,8 @@ async def create_comment(
     """Create a comment on an issue. `warnings` names each @handle that
     reached nobody (CHT-1735)."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     warnings: list[str] = []
     comment = await issue_service.create_comment(issue_id, comment_in, current_user.id, warnings=warnings)
@@ -1725,22 +1561,8 @@ async def list_comments(
 ) -> list[IssueCommentResponse]:
     """List comments for an issue."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     comments = await issue_service.list_comments(issue_id, skip, limit)
     return await fill_principals([
@@ -1769,20 +1591,7 @@ async def update_comment(
     issue_service = IssueService()
     project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     comment = await issue_service.get_comment_by_id(comment_id)
     if not comment or comment.issue_id != issue_id:
@@ -1832,22 +1641,8 @@ async def delete_comment(
 ):
     """Delete a comment."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     comment = await issue_service.get_comment_by_id(comment_id)
     if not comment or comment.issue_id != issue_id:
@@ -1885,39 +1680,13 @@ async def create_relation(
 ) -> IssueRelationResponse:
     """Create a relation between two issues."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    # Check that both issues exist and user has access
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    related_issue = await issue_service.get_by_id(relation_in.related_issue_id)
-    if not related_issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Related issue not found",
-        )
-
-    # Check user has access to both issues' projects
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
-
-    related_project = await project_service.get_by_id(related_issue.project_id)
-    has_related_access = await check_user_project_access(current_user, related_issue.project_id, related_project.team_id)
-    if not has_related_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access the related issue's project",
-        )
+    # Both issues must exist and be visible to the caller; one it cannot
+    # see answers like a missing one (CHT-1785).
+    issue, project = await visible_issue(current_user, issue_id)
+    related_issue, related_project = await visible_issue(
+        current_user, relation_in.related_issue_id, detail="Related issue not found",
+    )
 
     # Prevent cross-team relations
     if project.team_id != related_project.team_id:
@@ -1971,22 +1740,8 @@ async def list_relations(
 ) -> list[IssueRelationResponse]:
     """List all relations for an issue."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     relations = await issue_service.list_relations(
         issue_id, team_id=project.team_id, project_id=confined_project_id(current_user),
@@ -2005,22 +1760,8 @@ async def delete_relation(
 ) -> None:
     """Delete a relation."""
     issue_service = IssueService()
-    project_service = ProjectService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    issue, project = await visible_issue(current_user, issue_id)
 
     relation = await issue_service.get_relation_by_id(relation_id)
     if not relation:
@@ -2033,7 +1774,7 @@ async def delete_relation(
     if relation.issue_id != issue_id and relation.related_issue_id != issue_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Relation not found for this issue",
+            detail="Relation not found",
         )
 
     relation_data = {"source_issue_id": relation.issue_id, "target_issue_id": relation.related_issue_id}
@@ -2045,24 +1786,9 @@ async def delete_relation(
 @reads
 async def get_issue_documents(issue_id: str, current_user: CurrentUser):
     """Get documents linked to an issue."""
-    issue_service = IssueService()
-    project_service = ProjectService()
     document_service = DocumentService()
 
-    issue = await issue_service.get_by_id(issue_id)
-    if not issue:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Issue not found",
-        )
-
-    # Check project access
-    project = await project_service.get_by_id(issue.project_id)
-    if not await check_user_project_access(current_user, issue.project_id, project.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
-        )
+    await visible_issue(current_user, issue_id)
 
     # A link does not grant access: only the documents this caller could
     # open by id (CHT-1780).

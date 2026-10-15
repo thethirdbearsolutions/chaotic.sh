@@ -308,7 +308,7 @@ class TestIssueAccessControl954:
             },
         )
         # auth_headers2 can't access either project
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 # === api/issues.py: Activity feed sprint name resolution (lines 529-543, 892-906) ===

@@ -533,7 +533,7 @@ class TestAppSession:
         session = await OxydeHolderSession.objects.get(id=app_tokens["chaotic"]["holder_session_id"])
         assert session.revoked_at is None
 
-        assert (await client.get(f"/api/teams/{test_team.id}", headers=headers)).status_code == 403
+        assert (await client.get(f"/api/teams/{test_team.id}", headers=headers)).status_code == 404
         assert (await client.get(f"/api/projects/{test_project.id}", headers=headers)).status_code in (403, 404)
         listed = (await client.get("/api/teams", headers=headers)).json()
         assert [t["id"] for t in listed] == [other.id]

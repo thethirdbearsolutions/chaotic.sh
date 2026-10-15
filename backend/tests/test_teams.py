@@ -79,7 +79,7 @@ async def test_get_team_not_member(client, auth_headers2, test_team):
     response = await client.get(
         f"/api/teams/{test_team.id}", headers=auth_headers2
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
