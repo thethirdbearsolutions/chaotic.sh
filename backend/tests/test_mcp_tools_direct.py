@@ -1758,13 +1758,11 @@ class TestProjectList:
         finally:
             context.current_mcp_principal.reset(token)
 
-    @pytest.mark.parametrize("with_team_id", [False, True])
-    async def test_project_scoped_agent_sees_only_its_project(self, db, test_team, test_project, with_team_id):
+    async def test_project_scoped_agent_sees_only_its_project(self, db, test_team, test_project):
         # project_list is the team's directory: a project-scoped agent gets
         # its team's list confined to its own project, so a key or name
         # resolves; its sibling projects stay invisible (CHT-1780). Before,
-        # one created without agent_team_id was refused outright and one
-        # with it (the shape agent_service creates) saw every project.
+        # it (the shape agent_service creates) saw every project.
         from app.oxyde_models.project import OxydeProject
         from app.oxyde_models.user import OxydeUser
         from app.utils.security import get_password_hash
@@ -1776,7 +1774,7 @@ class TestProjectList:
             name="Project Agent",
             is_agent=True,
             agent_project_id=test_project.id,
-            agent_team_id=test_team.id if with_team_id else None,
+            agent_team_id=test_team.id,
         )
         token = context.current_mcp_principal.set(api_key_principal(agent))
         try:
@@ -1868,6 +1866,7 @@ class TestResolveDocumentIdAgentBranches:
             name="Project Agent",
             is_agent=True,
             agent_project_id=test_project.id,
+            agent_team_id=test_project.team_id,
         )
         # Created directly via the service, not the doc_create tool:
         # app.api.documents.create_document gates on check_user_team_access,

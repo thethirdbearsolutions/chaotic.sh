@@ -154,7 +154,7 @@ def _patch_objects_create_to_apply_default_factory() -> None:
             have, value = _default_for_field(name, info)
             if have:
                 data[name] = value
-        return _derive(model_cls, data)
+        return data
 
     def _revalidate_full(model_cls, instance):
         """Rebuild an instance from a full dump so every field counts as
@@ -176,6 +176,10 @@ def _patch_objects_create_to_apply_default_factory() -> None:
             except Exception:
                 # Defensive: never block a create if introspection fails.
                 pass
+            # Outside the guard above: a derive hook may refuse the row
+            # (an agent without a team, CHT-1837), and that must not be
+            # swallowed.
+            _derive(model_cls, kwargs)
         return await _original_create(self, **kwargs)
 
     _original_bulk_create = QueryManager.bulk_create
@@ -186,7 +190,7 @@ def _patch_objects_create_to_apply_default_factory() -> None:
         model_cls = _model_for_manager(self)
         if model_cls is not None:
             objects = [
-                _fill_defaults(model_cls, dict(obj)) if isinstance(obj, dict)
+                _derive(model_cls, _fill_defaults(model_cls, dict(obj))) if isinstance(obj, dict)
                 else _revalidate_full(model_cls, obj) if isinstance(obj, model_cls)
                 else obj
                 for obj in objects

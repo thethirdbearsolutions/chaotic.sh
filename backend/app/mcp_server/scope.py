@@ -34,9 +34,7 @@ profile; this is new, backend-only plumbing, not duplicated logic.
 from __future__ import annotations
 
 from chaotic_mcp_tools import ToolInputError
-from oxyde import execute_raw
 
-from app.api.deps import agent_home_team_id
 from app.oxyde_models.user import OxydeUser as User
 from app.utils.email_address import same_email
 from app.services.project_service import ProjectService
@@ -114,8 +112,12 @@ async def resolve_member_team(user: User, team: str | None) -> str:
     filter) a tool reads. As ``resolve_team``, except that a
     project-scoped agent resolves to its own project's team."""
     if user.is_agent and user.agent_project_id:
-        team_id = await agent_home_team_id(user)
+        team_id = user.agent_team_id
         if not team_id:
+            # An agent with no team: one migration 0036 could not place
+            # (its project or that project's team was already gone,
+            # CHT-1837), or one retired when its project or team was
+            # deleted (CHT-1844). Its keys are dead anyway; fail closed.
             raise ToolContextError("This API key's scoped project no longer exists.")
         if team:
             this_team = await TeamService().get_by_id(team_id)
@@ -225,21 +227,11 @@ async def resolve_sprint(project_id: str, sprint: str) -> str:
 
 
 async def _team_agents(team_id: str) -> list[User]:
-    """The team's agents at either scope: those carrying its id, and the
-    project-scoped agents of its projects created without one. Who of
-    them may hold an issue is ``is_eligible_project_member``'s call when
-    the API sees the id (CHT-1830); this lookup only has to find them.
-    A fixed number of queries however many projects the team has."""
-    agents = await User.objects.filter(is_agent=True, agent_team_id=team_id).all()
-    rows = await execute_raw(
-        "SELECT u.id AS id FROM users AS u JOIN projects AS p ON p.id = u.agent_project_id "
-        "WHERE p.team_id = ? AND u.is_agent AND u.agent_team_id IS NULL",
-        [team_id],
-    )
-    teamless = [row["id"] for row in rows]
-    if teamless:
-        agents += await User.objects.filter(id__in=teamless).all()
-    return agents
+    """The team's agents at either scope: every agent carries its team
+    (CHT-1837). Who of them may hold an issue is
+    ``is_eligible_project_member``'s call when the API sees the id
+    (CHT-1830); this lookup only has to find them."""
+    return await User.objects.filter(is_agent=True, agent_team_id=team_id).all()
 
 
 async def resolve_assignee(user: User, team_id: str, assignee: str) -> str | None:

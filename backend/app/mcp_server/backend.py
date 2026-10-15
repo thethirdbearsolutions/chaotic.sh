@@ -149,10 +149,9 @@ async def _resolve_document_id(user, document_id: str) -> str:
         return exact.id
 
     if user.is_agent:
+        # Every agent carries its team, a project-scoped one its
+        # project's (CHT-1837).
         team_ids = [user.agent_team_id] if user.agent_team_id else []
-        if not team_ids and user.agent_project_id:
-            team_id = await _team_id_for_project(user, user.agent_project_id)
-            team_ids = [team_id]
     else:
         team_ids = [t.id for t in await TeamService().get_user_teams(user.id)]
 

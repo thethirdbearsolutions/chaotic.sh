@@ -700,7 +700,6 @@ async def list_issues(
     All filter parameters work consistently whether querying by project_id or team_id.
     """
     issue_service = IssueService()
-    project_service = ProjectService()
     team_service = TeamService()
 
     # Validate access and determine scope
@@ -776,10 +775,9 @@ async def list_issues(
         # Assignee-only query: scope to user's accessible teams, and a
         # project-scoped agent to its own project (CHT-1780).
         confine_to = current_user.agent_project_id if is_project_scoped_agent(current_user) else None
-        if confine_to:
-            project = await project_service.get_by_id(confine_to)
-            team_ids = [project.team_id] if project else []
-        elif current_user.is_agent:
+        if current_user.is_agent:
+            # Every agent carries its team, a project-scoped one its
+            # project's (CHT-1837).
             team_ids = [current_user.agent_team_id] if current_user.agent_team_id else []
         else:
             user_teams = await team_service.get_user_teams(current_user.id)
