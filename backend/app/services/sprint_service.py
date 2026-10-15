@@ -170,8 +170,10 @@ class SprintService:
         created here carries the active sprint's budget, where the
         planned one would have opened unlimited. That is kept on purpose:
         it needs a deletion, it errs toward arrears staying on (a hard
-        stop by design), and the owner can clear the new sprint's budget
-        by hand, which no later rotation undoes.
+        stop by design), and the owner can clear it by hand. Clearing the
+        new sprint is not enough on its own: activating it has already
+        copied the carried budget into the next planned sprint, so the
+        owner clears that planned sprint too (PR #407 review L1).
         """
         next_sprint = await self.get_next_sprint(project_id)
         if next_sprint:
