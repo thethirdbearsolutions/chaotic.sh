@@ -1235,14 +1235,17 @@ class TestDocumentRevisions:
 
 @pytest.mark.asyncio
 class TestCreateDocumentProjectScopedAgent:
-    """CHT-1273: a project-scoped agent (agent_project_id set, agent_team_id
-    None) must be able to create docs in its own project. create_document
+    """CHT-1273: a project-scoped agent (agent_project_id set) must be able
+    to create docs in its own project. create_document
     previously gated on check_user_team_access, which such agents always fail."""
 
     async def _project_agent(self, project_id, email="pagent@agent.local"):
+        from app.oxyde_models.project import OxydeProject
+
+        team_id = (await OxydeProject.objects.get(id=project_id)).team_id
         agent = await OxydeUser.objects.create(
             email=email, hashed_password="", name="PAgent",
-            is_agent=True, agent_project_id=project_id,
+            is_agent=True, agent_project_id=project_id, agent_team_id=team_id,
         )
         headers = {"Authorization": f"Bearer {create_access_token(data={'sub': agent.id})}"}
         return agent, headers

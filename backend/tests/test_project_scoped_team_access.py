@@ -394,9 +394,14 @@ class TestReviewFindings:
         from app.oxyde_models.user import OxydeUser
 
         agent, _ = proj_agent
+        # An agent migration 0036 could not place (its project was gone):
+        # no team. It cannot be created that way any more (CHT-1837).
         legacy = await OxydeUser.objects.create(
             email="legacy-orphan@example.com", hashed_password="", name="Orphan", is_agent=True,
+            agent_team_id=agent.agent_team_id,
         )
+        await OxydeUser.objects.filter(id=legacy.id).update(agent_team_id=None)
+        legacy = await OxydeUser.objects.get(id=legacy.id)
         for user in (agent, legacy, test_user):
             assert await check_user_in_team(user, None) is False
             assert await check_user_in_team(user, "") is False

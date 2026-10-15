@@ -38,6 +38,12 @@ class OxydeUser(Model):
     # RESTRICT, not CASCADE: UserService.delete removes a human's agents
     # itself, behind the authored-content guard (CHT-1467, migration 0020).
     parent_user: "OxydeUser | None" = Field(default=None, db_on_delete="RESTRICT")
+    # Every agent has a team (CHT-1837): a team-scoped agent's own, a
+    # project-scoped agent's project's team. `derive_on_create` refuses
+    # to insert an agent without one, and migration 0036 backfilled the
+    # project agents made before that. NULL for a human, and for an agent
+    # 0036 could not place (its project was already deleted), which can
+    # reach nothing.
     agent_team_id: str | None = Field(default=None)
     agent_project_id: str | None = Field(default=None)
 
@@ -65,7 +71,15 @@ class OxydeUser(Model):
         """Fill ``email_folded`` from ``email`` on every INSERT that does
         not set it (CHT-1804); app.oxyde_db's create patch calls this, so
         no code path that makes an account can forget it. Never applied
-        to rows read back: an account 0034 left NULL stays NULL."""
+        to rows read back: an account 0034 left NULL stays NULL.
+
+        It also refuses an agent without a team (CHT-1837), the rule a
+        database CHECK cannot hold on SQLite here (see migration 0036)."""
+        if data.get("is_agent") and not data.get("agent_team_id"):
+            raise ValueError(
+                "an agent must have a team: set agent_team_id (a project-scoped "
+                "agent's is its project's team) (CHT-1837)"
+            )
         if data.get("email_folded") is None and data.get("email") is not None:
             from app.utils.email_address import fold_email
             data["email_folded"] = fold_email(data["email"])

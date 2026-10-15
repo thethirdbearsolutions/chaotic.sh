@@ -462,6 +462,7 @@ async def agent_user(db, test_team):
         hashed_password=get_password_hash("testpassword123"),
         name="Agent User",
         is_agent=True,
+        agent_team_id=test_team.id,
     )
     member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=user.id, role=TeamRole.OWNER)
     return user
