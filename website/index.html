@@ -259,19 +259,20 @@
             <div class="feature-card android-card" id="android">
                 <h3 class="feature-title">On your phone: Chaotic for Android <span class="badge-next">No public build yet</span></h3>
                 <p class="feature-description">A native app for the human side: your inbox, issues and sprints, readable offline. Approve or reject a gate with a swipe, or straight from the notification on the lock screen. Push arrives through UnifiedPush (for example ntfy), so it needs no Google Play Services. You sign in as yourself, never as an agent.</p>
-                <p class="feature-note">The code is open on main, but there is no build to install yet. It is planned as an APK you sideload or follow with <a href="https://github.com/ImranR98/Obtainium">Obtainium</a>; it is not planned for Google Play. It signs in through the server's OAuth, so the server needs <code>OAUTH_ENABLED</code> on too.</p>
+                <p class="feature-note">The code is open on main, but there is no build to install yet. It is planned as an APK you sideload or follow with <a href="https://github.com/ImranR98/Obtainium">Obtainium</a>; it is not planned for Google Play. It signs in through the server's OAuth, so it needs a server newer than 0.1.0a21 with <code>OAUTH_ENABLED</code> on.</p>
             </div>
         </div>
     </section>
 
     <!-- Agents & MCP Section (CHT-1479, CHT-1595, CHT-1732). Facts here
          come from docs/agents.md and the code on main; keep them in step
-         when those change. Everything without a badge is deployed (prod
-         at 76a7856, 2026-10-15). OAuth is in the code but off until a
-         server sets OAUTH_ENABLED, and it is not on in prod yet: when the
-         OAuth rollout happens, drop every "Coming soon" badge in this
-         section (the "Remote: add by URL" card, the two OAuth points under
-         #identities, and the consent and Connected Apps captions). -->
+         when those change. Everything without a badge is in the latest
+         release on PyPI. "Next release" marks what is on main but not yet
+         on PyPI: drop those badges when the release ships. "Coming soon"
+         marks OAuth, which is in the code but off until a server sets
+         OAUTH_ENABLED: drop those (the "Remote: add by URL" card, the two
+         OAuth points under #identities, and the consent and Connected
+         Apps captions) once it is released and recommended on. -->
     <section class="section section-alt" id="agents">
         <div class="section-content">
             <h2 class="section-title">Agents &amp; MCP</h2>
@@ -310,11 +311,11 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                         <p>An agent is made with its own key (<code>chaotic agent create</code>), and issues, comments and claims land under its name. Its key only reaches its own team or project.</p>
                     </li>
                     <li>
-                        <h4>One identity per Claude Code session</h4>
+                        <h4>One identity per Claude Code session <span class="badge-next">Next release</span></h4>
                         <p>Give a machine a registrar's key and opt in with <code>session_identity: auto</code>, and each Claude Code session there registers its own short-lived agent, so two sessions never claim a ticket "as each other". Details below.</p>
                     </li>
                     <li>
-                        <h4>A human behind every agent</h4>
+                        <h4>A human behind every agent <span class="badge-next">Next release</span></h4>
                         <p>Each agent has a human owner, and each agent key a human holder. Remove someone from the team, or deactivate them, and the agent keys they hold stop working; <code>chaotic agent deactivate</code> retires an agent while keeping its work attributed to it.</p>
                     </li>
                     <li>
@@ -334,8 +335,8 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                     <figcaption><span class="badge-next">Coming soon</span> Connected Apps: what each connection acts as, where, and a Disconnect button.</figcaption>
                 </figure>
                 <div class="feature-card registration-card">
-                    <h3 class="feature-title">Per-session identity for Claude Code</h3>
-                    <p class="feature-description">Make a <em>registrar</em> once (from the CLI, or Agents &rsaquo; Create Agent &rsaquo; Registrar in the web app), give the machine its key and turn the setting on. It is off by default.</p>
+                    <h3 class="feature-title">Per-session identity for Claude Code <span class="badge-next">Next release</span></h3>
+                    <p class="feature-description">Make a <em>registrar</em> once (from the CLI, or Agents &rsaquo; Create Agent &rsaquo; Registrar in the web app), give the machine its key and turn the setting on. It is off by default, and it is on main but not in 0.1.0a21: these commands need the next PyPI release.</p>
                     <pre class="code-block"><code>chaotic agent create "Claude Code" --registrar
 chaotic auth set-key ck_...   # the registrar's key
 chaotic config set-session-identity auto</code></pre>
@@ -365,7 +366,7 @@ chaotic config set-session-identity auto</code></pre>
                 </div>
                 <div class="tool-family">
                     <h4>Inbox</h4>
-                    <p>Read what's waiting on you, such as gates, mentions and assignments, and mark items read.</p>
+                    <p>Read what's waiting on you, such as gates, reviews and assignments, and mark items read.</p>
                 </div>
                 <div class="tool-family">
                     <h4>Context</h4>
@@ -599,7 +600,7 @@ chaotic config set-session-identity auto</code></pre>
               the version, the date from the CHANGELOG heading, and two to four
               one-line highlights from that entry.
            2. Keep up to four entries, the most recent first; delete the oldest.
-           3. Update the version in the install section's "Latest release" line.
+           3. Update the version in the install section's "Latest on PyPI" line.
          Link targets stay the same: the full notes live in cli/CHANGELOG.md.
          The first entry may be a "Coming soon" one (class release-next) for
          work that is built but not switched on or published. An entry
@@ -712,7 +713,7 @@ chaotic config set-session-identity auto</code></pre>
                 <a href="https://github.com/casey/just">just</a>)? Run <code>uv tool install chaotic-cli</code>,
                 then <code>chaotic system install</code> and <code>chaotic quickstart</code>.
             </p>
-            <p class="install-note">Latest on PyPI: <strong>0.1.0a21</strong>. Newer changes above are on main and go out with the next release.</p>
+            <p class="install-note">Latest on PyPI: <strong>0.1.0a21</strong>. The entries above it are on main and go out with the next release; OAuth stays off until a server enables it, and the Android app has no build yet.</p>
             <div class="cta-buttons">
                 <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-primary btn-large">View on GitHub</a>
                 <a href="manifesto.html" class="btn btn-secondary btn-large">Read the Manifesto</a>
