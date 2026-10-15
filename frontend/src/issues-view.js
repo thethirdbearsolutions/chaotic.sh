@@ -39,6 +39,7 @@ import {
     getSelectedLabels,
     getExcludedLabels,
     getGroupByValue,
+    getStatusPreset,
     syncFiltersToUrl,
     loadFiltersFromUrl as _loadFiltersFromUrl,
     updateStatusFilterLabel,
@@ -228,6 +229,24 @@ function resolveLabelNames(labelIds, dropdownId) {
 // newer data with stale data (CHT-1211 item 7).
 let loadIssuesRequestId = 0;
 
+// Search under the Open default (CHT-1755 review M1): a search for a done
+// or canceled issue would otherwise come back empty with no hint why. The
+// list stays as filtered (the "Status: Open" chip must stay true), and a
+// line above it counts the closed matches the filter hides, with a button
+// that drops the status filter.
+function setHiddenClosedHint(count) {
+    const hint = document.getElementById('issues-hidden-closed-hint');
+    if (!hint) return;
+    if (!count) {
+        hint.classList.add('hidden');
+        hint.innerHTML = '';
+        return;
+    }
+    hint.innerHTML = `<span>${count} closed match${count === 1 ? '' : 'es'} hidden by the Open filter</span>`
+        + ' · <button type="button" class="btn-link" data-action="show-all-statuses">Show all statuses</button>';
+    hint.classList.remove('hidden');
+}
+
 export async function loadIssues() {
     setSelectedIssueIndex(-1);
     const requestId = ++loadIssuesRequestId;
@@ -250,6 +269,7 @@ export async function loadIssues() {
     }
 
     showIssuesLoadingSkeleton();
+    setHiddenClosedHint(0);
 
     const params = { limit: 1000 };
 
@@ -332,13 +352,21 @@ export async function loadIssues() {
             params.exclude_label = excludedLabelNames;
         }
 
-        let issues;
-        if (projectId) {
-            params.project_id = projectId;
-            issues = await api.getIssues(params);
-        } else if (getProjects().length > 0) {
-            issues = await api.getTeamIssues(getCurrentTeam().id, params);
-        }
+        if (projectId) params.project_id = projectId;
+        const fetchIssues = (p) => {
+            if (projectId) return api.getIssues(p);
+            if (getProjects().length > 0) return api.getTeamIssues(getCurrentTeam().id, p);
+            return Promise.resolve(undefined);
+        };
+
+        // Count closed matches in parallel; a failure here only loses the hint
+        const closedCountPromise = (params.search && getStatusPreset(statuses) === 'open')
+            ? fetchIssues({ ...params, status: CLOSED_STATUSES })
+                .then(closed => (Array.isArray(closed) ? closed.length : 0))
+                .catch(e => { console.error('Failed to count closed search matches:', e); return 0; })
+            : Promise.resolve(0);
+
+        const issues = await fetchIssues(params);
 
         if (requestId !== loadIssuesRequestId) return; // a newer loadIssues() has since started — drop this stale response
 
@@ -359,6 +387,10 @@ export async function loadIssues() {
         if (requestId !== loadIssuesRequestId) return; // guard again — a newer request may have resolved during the await above
 
         renderIssues();
+
+        const hiddenClosed = await closedCountPromise;
+        if (requestId !== loadIssuesRequestId) return;
+        setHiddenClosedHint(hiddenClosed);
     } catch (e) {
         if (requestId !== loadIssuesRequestId) return;
         // CHT-1224: the skeleton from showIssuesLoadingSkeleton() above must
@@ -422,7 +454,9 @@ export function clearProjectFilter() {
 }
 
 export function setStatusPreset(preset) {
-    const statusValues = preset === 'open' ? OPEN_STATUSES : CLOSED_STATUSES;
+    const statusValues = preset === 'open' ? OPEN_STATUSES
+        : preset === 'closed' ? CLOSED_STATUSES
+        : [];  // 'all' (CHT-1755): no status filter
     const dropdown = document.getElementById('status-filter-dropdown');
     if (!dropdown) return;
 
@@ -638,6 +672,7 @@ registerActions({
     'clear-project-filter': () => clearProjectFilter(),
     'clear-status-filter-new': () => clearStatusFilterNew(),
     'set-status-preset': (_event, dataset) => setStatusPreset(dataset.value),
+    'show-all-statuses': () => clearStatusFilter(),
     'toggle-status-option': (event, dataset) => toggleStatusOption(dataset.filterValue, event),
     'clear-priority-filter-new': () => clearPriorityFilterNew(),
     'toggle-priority-option': (event, dataset) => togglePriorityOption(dataset.filterValue, event),
