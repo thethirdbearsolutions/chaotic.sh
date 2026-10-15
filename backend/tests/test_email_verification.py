@@ -406,7 +406,13 @@ class TestAccountDeleteKeepsInvitations:
     """Signup never proves the address, so deleting the account must not
     take the address's invitations with it (CHT-1796)."""
 
-    @pytest.mark.parametrize("signup_email", ["victim@example.com", "Victim@Example.COM"])
+    # Only the exact-case run fails on main: the removed filter matched
+    # case-sensitively, so the folded-case run passes there too and just
+    # pins the behaviour for every spelling.
+    @pytest.mark.parametrize(
+        "signup_email", ["victim@example.com", "Victim@Example.COM"],
+        ids=["exact-case (the CHT-1796 regression)", "folded-case (pin)"],
+    )
     async def test_an_unverified_signup_deleting_itself_leaves_every_pending_invite(
         self, client, test_team, test_user, outbox, signup_email,
     ):
@@ -431,6 +437,20 @@ class TestAccountDeleteKeepsInvitations:
             assert invitation.status == InvitationStatus.PENDING
         # And the real invitee can still open the link.
         assert (await client.get(f"/api/teams/invitations/{tokens[1]}")).status_code == 200
+
+    async def test_an_inviter_deleting_itself_takes_its_sent_invitations_only(
+        self, client, test_team, test_user, test_user2, auth_headers2, outbox,
+    ):
+        """What the comment in UserService.delete relies on: invitations
+        the account *sent* go through invited_by's ON DELETE CASCADE,
+        while ones addressed to it stay."""
+        sent = await _invite(test_team.id, test_user2.id, "newhire@example.com")
+        to_them = await _invite(test_team.id, test_user.id, test_user2.email)
+
+        assert (await client.delete("/api/users/me", headers=auth_headers2)).status_code == 204
+
+        assert await OxydeTeamInvitation.objects.filter(token=sent).count() == 0
+        assert (await OxydeTeamInvitation.objects.get(token=to_them)).status == InvitationStatus.PENDING
 
 
 class TestUserResponse:
