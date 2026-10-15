@@ -34,6 +34,7 @@ profile; this is new, backend-only plumbing, not duplicated logic.
 from __future__ import annotations
 
 from chaotic_mcp_tools import ToolInputError
+from oxyde import execute_raw
 
 from app.api.deps import agent_home_team_id
 from app.oxyde_models.user import OxydeUser as User
@@ -223,6 +224,24 @@ async def resolve_sprint(project_id: str, sprint: str) -> str:
     )
 
 
+async def _team_agents(team_id: str) -> list[User]:
+    """The team's agents at either scope: those carrying its id, and the
+    project-scoped agents of its projects created without one. Who of
+    them may hold an issue is ``is_eligible_project_member``'s call when
+    the API sees the id (CHT-1830); this lookup only has to find them.
+    A fixed number of queries however many projects the team has."""
+    agents = await User.objects.filter(is_agent=True, agent_team_id=team_id).all()
+    rows = await execute_raw(
+        "SELECT u.id AS id FROM users AS u JOIN projects AS p ON p.id = u.agent_project_id "
+        "WHERE p.team_id = ? AND u.is_agent AND u.agent_team_id IS NULL",
+        [team_id],
+    )
+    teamless = [row["id"] for row in rows]
+    if teamless:
+        agents += await User.objects.filter(id__in=teamless).all()
+    return agents
+
+
 async def resolve_assignee(user: User, team_id: str, assignee: str) -> str | None:
     """Resolve an assignee reference: 'me', 'unassigned' (-> None), a raw
     user/agent id, an email, or a team member's display name
@@ -244,8 +263,7 @@ async def resolve_assignee(user: User, team_id: str, assignee: str) -> str | Non
         # an address on another team, a deactivated account and no account
         # at all get the same not-found error below, so the lookup cannot
         # tell a caller which addresses have accounts on this server.
-        agents = await User.objects.filter(agent_team_id=team_id).all()
-        people = [m.user for m in members if m.user] + agents
+        people = [m.user for m in members if m.user] + await _team_agents(team_id)
         matches = [p for p in people if p.is_active and same_email(p.email or "", assignee)]
         exact = [p for p in matches if p.email == assignee.strip()]
         if len(exact) == 1:

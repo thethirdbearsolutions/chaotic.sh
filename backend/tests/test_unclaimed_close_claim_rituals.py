@@ -326,6 +326,35 @@ class TestRefusedCloseIntentClears:
         assert issue.lease_expires_at is None
 
 
+    @pytest.mark.parametrize("gone", ["deactivated", "left the team"])
+    async def test_a_requester_who_can_no_longer_hold_it_is_not_assigned(
+        self, db, test_issue, test_user, test_user2, test_team, make_ritual, gone,
+    ):
+        """The requester lost eligibility while the intent waited for
+        review (CHT-1830): the cleared gate still moves the ticket, but
+        it is not handed to an account the API would refuse as assignee."""
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.oxyde_models.user import OxydeUser
+
+        ritual = await make_ritual(
+            name="design-review", trigger=RitualTrigger.TICKET_CLAIM,
+            approval_mode=ApprovalMode.REVIEW,
+        )
+        with pytest.raises(UnclaimedCloseRitualsError):
+            await _close(test_issue, test_user.id)
+        attestation = await RitualService().attest_for_issue(ritual, test_issue.id, test_user.id, note="design")
+        if gone == "deactivated":
+            await OxydeUser.objects.filter(id=test_user.id).update(is_active=False)
+        else:
+            await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=test_user.id).delete()
+        await RitualService().approve_for_issue(attestation, test_user2.id)
+
+        issue = await _issue(test_issue.id)
+        assert issue.status == IssueStatus.IN_PROGRESS
+        assert issue.assignee_id is None
+        assert issue.lease_expires_at is None
+
+
 @pytest.mark.asyncio
 class TestNotGated:
     async def test_cancel_from_backlog_is_not_gated(

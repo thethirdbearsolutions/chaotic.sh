@@ -390,14 +390,13 @@ class TestDeactivatedAgentCannotBeAssigned:
             json={"title": "for the retired bot", "assignee_id": agent.id},
             headers=auth_headers,
         )
-        assert created.status_code == 400, created.text
-        assert "deactivated" in created.json()["detail"]
+        # Answered like a missing account, naming nobody (CHT-1830).
+        assert (created.status_code, created.json()) == (400, {"detail": "Assignee not found"}), created.text
 
         patched = await client.patch(
             f"/api/issues/{test_issue.id}", json={"assignee_id": agent.id}, headers=auth_headers,
         )
-        assert patched.status_code == 400, patched.text
-        assert "deactivated" in patched.json()["detail"]
+        assert (patched.status_code, patched.json()) == (400, {"detail": "Assignee not found"}), patched.text
 
     async def test_an_issue_it_already_holds_can_still_be_edited(
         self, client, auth_headers, test_user, test_team, test_project, test_issue,

@@ -168,6 +168,32 @@ async def check_user_in_team(user: User, team_id: str) -> bool:
     return await check_user_team_access(user, team_id)
 
 
+async def is_eligible_project_member(user: User | None, team_id: str, project_id: str | None) -> bool:
+    """May ``user`` be named on work in a project of ``team_id``: an
+    issue's assignee, a project's lead? One rule for both (CHT-1830):
+
+    * an active human member of the team;
+    * an active team-scoped agent of the team;
+    * an active project-scoped agent of *this* project (``project_id``),
+      whether or not it was created with a team id. A project-scoped
+      agent cannot open any other project, so it is never eligible for
+      one, nor for a project that does not exist yet (``project_id`` None).
+
+    A deactivated account can never sign in to do the work (CHT-1494).
+    Callers answer every refusal with one "not found" that names nobody,
+    so the reply never says whether an account exists elsewhere or has
+    been retired (CHT-1785, CHT-1819). Re-sending the value a row
+    already holds is not a new choice; callers skip this check for it.
+    """
+    if user is None or not user.is_active or not team_id:
+        return False
+    if user.is_agent:
+        if user.agent_project_id:
+            return user.agent_project_id == project_id and await agent_home_team_id(user) == team_id
+        return user.agent_team_id == team_id
+    return await TeamService().get_member(team_id, user.id) is not None
+
+
 async def can_manage_agent(user: User, agent: User) -> bool:
     """May `user` manage `agent`? See ``AgentService.can_manage``: team
     admins, and the agent's creator while still in the agent's team
