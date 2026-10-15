@@ -595,6 +595,11 @@ class _Compiler:
         self._sprints = None
         self._labels = None
         self._universe_ids = None
+        # A project-scoped agent's names resolve only in its own project,
+        # so a query cannot tell it whether a sibling project's key or
+        # issue exists: the 200/400 split would answer that (CHT-1780).
+        user = scope.user
+        self._confined_to = user.agent_project_id if user.is_agent and user.agent_project_id else None
 
     async def group(self, group: QueryGroup) -> Q:
         parts = [await self.node(child) for child in group.rows]
@@ -685,6 +690,10 @@ class _Compiler:
             ]
             users = await OxydeUser.objects.filter(id__in=member_ids).all() if member_ids else []
             agents = await OxydeUser.objects.filter(agent_team_id=self.scope.team_id).all()
+            if self._confined_to:
+                # Agents scoped to a sibling project are not part of this
+                # caller's world (as for @mentions, ``can_reach``).
+                agents = [a for a in agents if a.agent_project_id in (None, self._confined_to)]
             seen = {}
             for u in [*users, *agents]:
                 seen[u.id] = u
@@ -703,8 +712,13 @@ class _Compiler:
         raise QueryError(f"no one on this team is '{value}'{hint}")
 
     async def _team_projects(self) -> list[OxydeProject]:
+        """The team's projects this caller can name: all of them, or for a
+        project-scoped agent its own one."""
         if self._projects is None:
-            self._projects = await OxydeProject.objects.filter(team_id=self.scope.team_id).all()
+            projects = await OxydeProject.objects.filter(team_id=self.scope.team_id).all()
+            if self._confined_to:
+                projects = [p for p in projects if p.id == self._confined_to]
+            self._projects = projects
         return self._projects
 
     async def _project(self, value: str) -> str:
@@ -733,7 +747,9 @@ class _Compiler:
 
     async def _issues(self, values: list[str]) -> list[str]:
         """Parent references: identifiers (CHT-12) or ids, looked up in the
-        team's projects only, so a query cannot probe other teams."""
+        projects the caller can name (``_team_projects``) only, so a query
+        cannot probe other teams, or a project-scoped agent its sibling
+        projects."""
         project_ids = [p.id for p in await self._team_projects()]
         idents = [v.upper() for v in values]
         found = await OxydeIssue.objects.filter(
