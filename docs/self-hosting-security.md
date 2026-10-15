@@ -210,9 +210,15 @@ a day, also after the account is deleted. Because the limits are per
 address, an address is one account whatever its case: signup refuses
 an address that differs from an existing one only in case (ASCII
 letters), login accepts any case, and an invitation matches its
-account ignoring case. The database does not enforce this (there is no
-unique index on the case-folded address), and accounts made before this
-check that differ only in case keep working, sharing one set of limits. Only HMACs of the codes and the
+account ignoring case. The database enforces it too (`users.email_folded`
+is unique, migration 0034). Accounts made before this check that differ
+only in case keep working, sharing one set of limits: 0034 gave the
+address to the oldest one, the server warns about the others at every
+start, and `chaotic system audit shared-addresses` lists them by id
+(read-only). Each is resolved by its owner changing its address
+(`POST /api/auth/email`, `chaotic auth change-email`); when the older
+account is deleted or changes its address, the next oldest takes the
+address on its own (CHT-1827). Only HMACs of the codes and the
 addresses are stored, under a key derived from `SECRET_KEY`. A failed
 send is reported to the person (502 `email_send_failed`) rather than
 only logged. At startup the server logs whether this gate is active

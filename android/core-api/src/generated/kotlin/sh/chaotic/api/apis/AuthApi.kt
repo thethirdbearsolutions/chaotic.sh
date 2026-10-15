@@ -23,6 +23,7 @@
 
 package sh.chaotic.api.apis
 
+import sh.chaotic.api.models.EmailChange
 import sh.chaotic.api.models.EmailVerificationConfirm
 import sh.chaotic.api.models.EmailVerificationSent
 import sh.chaotic.api.models.HTTPValidationError
@@ -46,6 +47,39 @@ import io.ktor.http.ParametersBuilder
         httpClientEngine,
         httpClientConfig,
     ) {
+
+        /**
+        * POST /api/auth/email
+        * Change Email
+        * Change the signed-in person&#39;s own address (CHT-1827), confirmed with their password, and return the account.  The address is then unverified (&#x60;&#x60;email_verified_at&#x60;&#x60; null): verify the new one with &#x60;&#x60;POST /api/auth/email-verification&#x60;&#x60;. Codes sent for the old address stop working, and with SMTP configured a notice goes to the old address. Sessions and API keys stay valid.  400 &#x60;&#x60;email_change_refused&#x60;&#x60; for a wrong password and for an address another account holds, ignoring case: one answer for both. 400 &#x60;&#x60;email_unchanged&#x60;&#x60; when it is the account&#39;s address already. 429 &#x60;&#x60;email_change_rate_limited&#x60;&#x60; past five tries an hour or three changes a day. People with a password only: an agent gets 403 &#x60;&#x60;human_required&#x60;&#x60;.
+         * @param emailChange  
+         * @return UserResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun changeEmailApiAuthEmailPost(emailChange: EmailChange): HttpResponse<UserResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = emailChange
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.POST,
+            "/api/auth/email",
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return jsonRequest(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
 
         /**
         * POST /api/auth/email-verification/confirm

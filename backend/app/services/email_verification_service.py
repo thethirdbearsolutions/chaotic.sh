@@ -45,11 +45,11 @@ Unlike the app's other email, the send is awaited: the person is
 waiting for this code, so a failed send is reported to them, not only
 logged. ``EmailService.send`` never raises; its False is the failure.
 
-Nothing changes an account's address today (``UserUpdate`` has no
-``email``). Whatever ever does must set ``email_verified_at`` back to
-NULL in the same write, or a verification of the old address would
-vouch for the new one; the old codes are bound to the old address's
-hash and stop matching on their own.
+Only ``UserService.change_email`` changes an account's address
+(CHT-1827). It sets ``email_verified_at`` back to NULL in the same
+write, or a verification of the old address would vouch for the new
+one, and expires every code still live for the account (mailed codes
+are bound to the old address's hash and would stop matching anyway).
 """
 from __future__ import annotations
 
@@ -495,17 +495,28 @@ class EmailVerificationService:
             raise invalid
         # Spend an attempt before comparing, conditionally, so concurrent
         # guesses cannot get past the cap between a read and a write.
-        spent = await codes.filter(id=latest.id, attempts__lt=MAX_ATTEMPTS, used_at__isnull=True).update(
-            attempts=F("attempts") + 1,
-        )
+        # Not expired since `latest` was read, either. (This is not what
+        # stops an address change racing this confirm: change_email
+        # expires codes at its own, later, time. The conditional write
+        # at the end is that guard.)
+        spent = await codes.filter(
+            id=latest.id, attempts__lt=MAX_ATTEMPTS, used_at__isnull=True, expires_at__gt=now,
+        ).update(attempts=F("attempts") + 1)
         if not spent:
             raise invalid
         if not hmac.compare_digest(latest.code_hash, hash_code(user.id, code.strip())):
             raise invalid
 
         await codes.filter(id=latest.id).update(used_at=now)
-        user.email_verified_at = now
-        user.updated_at = now
-        await user.save(update_fields={"email_verified_at", "updated_at"})
+        # Only if the account still has the address the code was mailed
+        # to: an address change racing this confirm must not end with
+        # the new address verified by the old one's code (PR #450
+        # review, 1). Nothing written means it moved: the code is no
+        # longer good for it.
+        verified = await OxydeUser.objects.filter(
+            id=user.id, email=user.email, email_verified_at__isnull=True,
+        ).update(email_verified_at=now, updated_at=now)
+        if not verified:
+            raise invalid
         await user.refresh()
         return user

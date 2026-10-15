@@ -46,6 +46,17 @@ work as before. With `--json`, or when not run in a terminal, `verify-email`
 without `--code` only requests a code and prints `{email, expires_at}`; confirm
 it afterwards with `--code`.
 
+### Change your email address
+```bash
+chaotic auth change-email new@example.com   # prompts for your password
+```
+
+The new address starts unverified (verify it with `verify-email`), codes sent to
+the old address stop working, and if the server sends email a notice goes to the
+old address. Sessions and API keys keep working. An address another account
+holds, ignoring case, is refused with the same answer as a wrong password. At
+most five tries an hour and three changes a day.
+
 ### API Keys (for scripts/automation)
 ```bash
 chaotic auth keys list

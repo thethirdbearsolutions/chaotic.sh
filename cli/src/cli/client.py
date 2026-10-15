@@ -358,6 +358,9 @@ class Client:
     def confirm_email_verification(self, code: str) -> dict:
         return self._request("POST", "/auth/email-verification/confirm", {"code": code})
 
+    def change_email(self, email: str, password: str) -> dict:
+        return self._request("POST", "/auth/email", {"email": email, "password": password})
+
     # Users (CHT-1383)
     def get_user(self, user_id: str) -> dict:
         return self._request("GET", f"/users/{user_id}")

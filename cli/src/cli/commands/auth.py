@@ -194,6 +194,30 @@ def register(cli):
             return
         console.print(f"[green]Email address {escape(user['email'])} verified.[/green]")
 
+    @auth.command("change-email")
+    @click.argument("new_email")
+    @click.option("--password", prompt=True, hide_input=True,
+                  help="Your account's password (prompted for when not given).")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    def auth_change_email(new_email, password):
+        """Change your account's email address to NEW_EMAIL.
+
+        Asks for your password. The new address starts unverified: verify
+        it with `chaotic auth verify-email`. If the server sends email, a
+        notice goes to the old address. Your sessions and API keys keep
+        working. The server refuses an address another account holds,
+        with the same answer as a wrong password.
+        """
+        m = _main()
+        user = _client().change_email(new_email, password)
+        if m.is_json_output():
+            m.output_json(user)
+            return
+        console.print(f"[green]Your email address is now {escape(user['email'])}.[/green]")
+        console.print("It is not verified yet: chaotic auth verify-email")
+
     @auth.group("keys")
     def auth_keys():
         """API key management commands."""
