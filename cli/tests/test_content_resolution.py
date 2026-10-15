@@ -4,7 +4,7 @@ Covers the helper in isolation (unit tests) and the wiring on a representative
 sample of commands (integration tests).
 """
 import io
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import click
 import pytest
@@ -19,7 +19,9 @@ import pytest
 # ORPHANED module object, while the test's own `from cli.main import cli`
 # re-imports a fresh, unpatched one -> spurious "Not authenticated"
 # failures that never reproduce in a full-suite run (where another file
-# has already imported cli.main outside a patch window).
+# has already imported cli.main outside a patch window). The integration
+# fixture below now builds on conftest's patched_client, whose teardown
+# also prevents that (CHT-1825); this import stays as a second guard.
 import cli.main  # noqa: F401  (see comment above)
 
 
@@ -117,27 +119,15 @@ def test_literal_value_starting_with_hyphen(resolver):
 
 
 @pytest.fixture
-def _FakeAPIError():
-    class APIError(Exception):
-        pass
-    return APIError
+def patched_for_integration(patched_client, patched_auth, patched_project):
+    """Minimal patches to invoke a command end-to-end without a real backend.
 
-
-@pytest.fixture
-def patched_for_integration(_FakeAPIError):
-    """Minimal patches to invoke a command end-to-end without a real backend."""
+    Built on conftest's patched_client rather than a bare
+    patch.dict('sys.modules'), so it shares that fixture's teardown of the
+    package attributes patch.dict leaves stale (CHT-1825)."""
     from click.testing import CliRunner
     runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
-
-    mock_client_module = MagicMock()
-    mock_client_module.APIError = _FakeAPIError
-
-    with patch.dict('sys.modules', {'cli.client': mock_client_module}), \
-         patch('cli.main.get_token', return_value='fake-token'), \
-         patch('cli.main.get_current_team', return_value='test-team-123'), \
-         patch('cli.main.get_api_key', return_value=None), \
-         patch('cli.main.get_current_project', return_value='test-project-123'):
-        yield runner, mock_client_module
+    yield runner, patched_client
 
 
 def test_team_create_reads_description_from_file(patched_for_integration, tmp_path):

@@ -113,18 +113,24 @@ def _host_key(host: str) -> str:
     Decoding rather than encoding: Python's ``idna`` codec is IDNA 2003,
     whose nameprep maps ``ß`` to ``ss``, so encoding would call
     ``faß.de`` and ``fass.de`` the same host and hide a real mismatch.
-    A label that does not decode, or is not the canonical encoding of a
-    non-ASCII label, stays as written: it is still compared, never fatal.
+    An ``xn--`` label is decoded only when the result is non-ASCII, already
+    NFC and lowercase, and re-encodes to the same label: two ACE labels are
+    different DNS names, so one that would only match another host after
+    normalising (U+212A KELVIN SIGN + "anban" vs ``kanban``, a decomposed
+    or uppercase ``ü``) must not compare equal to it. Any other ``xn--``
+    label, and one longer than DNS's 63 octets (punycode decoding is
+    quadratic), stays as written: still compared, never fatal.
     """
     labels = []
     for label in host.rstrip(".").split("."):
         label = label.lower()
-        if label.startswith("xn--"):
+        if label.startswith("xn--") and len(label) <= 63:
             try:
                 decoded = label[4:].encode("ascii").decode("punycode")
             except (UnicodeError, ValueError):
                 decoded = None
             if decoded and not decoded.isascii() \
+                    and unicodedata.normalize("NFC", decoded).lower() == decoded \
                     and decoded.encode("punycode").decode("ascii") == label[4:]:
                 label = decoded
         labels.append(unicodedata.normalize("NFC", label).lower())

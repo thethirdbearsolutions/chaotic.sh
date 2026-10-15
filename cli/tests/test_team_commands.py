@@ -761,6 +761,18 @@ class TestInviteTokenFromArg:
         ("xn--zzzzzzzzzzzzzzz.de", "https://a.example", "a.example"),
         ("xn--.de", "https://a.example", "a.example"),
         ("xn--abc-.de", "https://abc.de", "abc.de"),
+        # ACE labels that only match another host after normalising are
+        # different DNS names and must warn (PR #441 review).
+        ("xn--anban-r74b.example.com", "https://kanban.example.com", "kanban.example.com"),
+        ("xn--bucher-xyd.de", "https://xn--bcher-kva.de", "xn--bcher-kva.de"),
+        ("xn--wca.de", "https://xn--tda.de", "xn--tda.de"),
+        ("xn--72g.de", "https://xn--5ca.de", "xn--5ca.de"),
+        # Over DNS's 63 octets: not decoded, compared as written.
+        ("xn--" + "a" * 60 + "-kva.de", "https://a.example", "a.example"),
+        # IPv6 literals: same host (any port) is fine, another one warns.
+        ("::1", "http://[::1]:8000", None),
+        ("2001:db8::1", "https://[2001:DB8::1]", None),
+        ("2001:db8::1", "https://[2001:db8::2]", "2001:db8::2"),
     ])
     def test_foreign_invite_host(self, link_host, web_url, expected):
         from cli.commands.team import foreign_invite_host
