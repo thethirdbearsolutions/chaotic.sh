@@ -882,6 +882,22 @@ class TestReviewFollowUps:
             renamed = await client.patch(f"/api/agents/{agent_id}", json={"name": "TEST USER"}, headers=auth_headers)
             assert renamed.status_code == 422 and _code(renamed) == "name_matches_member"
 
+    @pytest.mark.parametrize("name", ["Test", "test · user", "Test-User", "TEST_USER"])
+    async def test_a_persons_mention_handle_is_refused(self, client, auth_headers, registrar, test_team, name):
+        """CHT-1731 re-review L3: an agent named by one of a person's
+        @handles ("Test" or "test-user" beside "Test User") would make that
+        handle ambiguous, so it is refused like the name itself."""
+        _, key = registrar
+        response = await _register(client, key, name=name)
+        assert response.status_code == 422 and _code(response) == "name_matches_member"
+        created = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": name}, headers=auth_headers)
+        assert created.status_code == 422 and _code(created) == "name_matches_member"
+
+    async def test_a_name_that_only_starts_like_a_person_is_allowed(self, client, auth_headers, test_team):
+        for name in ("Test Bot", "Tester", "🤖"):
+            created = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": name}, headers=auth_headers)
+            assert created.status_code == 201, (name, created.text)
+
     async def test_external_ref_is_shown_only_to_the_identity_its_owner_and_admins(
         self, client, auth_headers, registrar, test_user2, auth_headers2, test_team,
     ):

@@ -508,6 +508,12 @@ without letting anyone take another's handle:
   A non-session agent whose keys are all revoked is still mentionable;
   its mentions wait in its inbox.
 
+An agent may not be named with a person's @handle ("Ethan" or
+"Ethan · smith" beside a person "Ethan Smith"), just as it may not take
+their name; creating, renaming or registering one is refused with
+`name_matches_member`. A trailing `.`, `-` or `_` after a handle is
+sentence punctuation and is ignored.
+
 A project-scoped agent is reached only from its own project, and the web
 autocomplete offers it only there. One comment notifies at most 25
 principals; later handles are ignored. Handles follow names, so renaming

@@ -85,6 +85,12 @@ def legacy_first_word_handle(name: str | None, email: str | None) -> str:
 ID_HANDLE_RE = re.compile(r"[a-z0-9-]+\.([0-9a-f]{32}|[0-9a-f]{8})")
 
 
+def _strip_trailing(token: str) -> str:
+    """A token without the trailing '.', '-' or '_' that sentence
+    punctuation leaves after a handle. No handle ends in one."""
+    return token.rstrip("._-")
+
+
 def _hex(user_id: str) -> str:
     return user_id.replace("-", "").lower()
 
@@ -99,6 +105,12 @@ def _first_word(user) -> tuple[str, str, str]:
     full = slugify(name)
     word = (slugify(name.split()[0]) if name else "") or full.split("-")[0]
     return name, full, word
+
+
+def handle_words(user) -> frozenset[str]:
+    """The name-derived handles of a principal (not its id handle): what
+    an agent's whole name may not equal (registration rule 8, by handle)."""
+    return frozenset(h for h, _ in named_candidates(user))
 
 
 def named_candidates(user) -> tuple[tuple[str, bool], ...]:
@@ -121,8 +133,13 @@ def named_candidates(user) -> tuple[tuple[str, bool], ...]:
         out += [(full, False), (word, True)]
     strongest: dict[str, bool] = {}
     for handle, weak in out:
+        # A typed token loses trailing punctuation (``@claude-mcp.`` ends
+        # a sentence), so a candidate does too, or a person named
+        # "claude-mcp. X" would own the token "claude-mcp." (CHT-1731
+        # re-review). Then: an id handle can only be an id's.
+        handle = _strip_trailing(handle)
         if not handle or ID_HANDLE_RE.fullmatch(handle):
-            continue  # an id handle can only be an id's
+            continue
         strongest[handle] = strongest.get(handle, True) and weak
     return tuple(strongest.items())
 
@@ -217,13 +234,9 @@ class MentionDirectory:
         return set(claims)
 
     def _token_claimants(self, token: str) -> set[str]:
-        """`_claimants` of a typed token. A trailing '.', '-' or '_'
-        (sentence punctuation after the handle) is dropped when the token
-        itself is no handle."""
-        token = token.lower()
-        if token not in self._claims and not ID_HANDLE_RE.fullmatch(token):
-            token = token.rstrip("._-")
-        return self._claimants(token)
+        """`_claimants` of a typed token, lowercased and without trailing
+        '.', '-' or '_' (no candidate keeps one, see named_candidates)."""
+        return self._claimants(_strip_trailing(token.lower()))
 
     def handle_for(self, user_id: str) -> str | None:
         """The handle to show for `user_id`: its first candidate that names

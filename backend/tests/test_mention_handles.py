@@ -148,6 +148,23 @@ class TestDirectory:
         assert d.resolve(d.handle_for(thief.id)) == thief.id
         assert "claude.28b1c019" not in candidates(thief)[:-1]
 
+    def test_a_punctuated_name_takes_no_handle(self):
+        """CHT-1731 re-review M1: a trailing '.' kept on a person's first
+        word let "claude-mcp. X" own '@claude-mcp.' and "claude.60342e24.
+        Jones" own the agent's id handle with a sentence-final period."""
+        mcp = _agent("Claude MCP")
+        agent = _agent("Claude", id="60342e24-0000-0000-0000-000000000000")
+        thieves = [_user("claude-mcp. X"), _user("claude.60342e24. Jones"), _user("Claude_ Smith")]
+        d = MentionDirectory([mcp, agent, *thieves])
+        assert d.resolve("claude.60342e24.") == agent.id
+        assert d.resolve("claude.60342e24") == agent.id
+        assert d.resolve("claude-mcp.") is None and d.resolve("claude-mcp") is None
+        for x in (mcp, agent, *thieves):
+            h = d.handle_for(x.id)
+            assert not h.endswith((".", "-", "_")), h
+            for typed in (h, h + ".", h + "...", h + "-", h.upper() + "."):
+                assert d.resolve(typed) == x.id, (x.name, typed)
+
     def test_id_handle_survives_a_rename_and_takes_32_hex_on_a_clash(self):
         a = _agent("Claude", id="28b1c019-0000-0000-0000-00000000000a")
         b = _agent("Claude", id="28b1c019-0000-0000-0000-00000000000b")
@@ -181,6 +198,8 @@ class TestDirectory:
             _user("claude-mcp"), _user("claude.28b1c019"), _user("Claude-3f9a1c2b"),
             _user("José Núñez"), _user("O'Brien"), _user("", email="test.user@example.com"),
             _user("🤖"), _user("Ethan"), _user("ada.deadbeef"),
+            # Punctuated claimants (CHT-1731 re-review M1).
+            _user("claude-mcp. X"), _user("claude.28b1c019. Jones"), _user("ethan. Q"), _user("Bob_ Ross"),
         ]
         agents = [
             mcp, _agent("Claude"), _agent("Claude"), _agent("Ethan"), _agent("Ethan-Smith"),
@@ -197,6 +216,7 @@ class TestDirectory:
             assert d.resolve(h) == x.id, (x.name, h)
             assert d.resolve(h.upper()) == x.id
             assert d.resolve(h + ".") == x.id, (x.name, h)
+            assert d.resolve(h + "..") == x.id, (x.name, h)
             handles[x.id] = h
         assert len(set(handles.values())) == len(everyone)
 
