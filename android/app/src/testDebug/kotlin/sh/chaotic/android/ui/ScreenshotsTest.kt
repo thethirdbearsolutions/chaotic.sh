@@ -139,12 +139,18 @@ class ScreenshotsTest {
         issue = issue,
         comments = listOf(
             Comment(
-                "c1", "i1", marcus, "Swipe feels good. Can the reason box keep what I typed if I rotate?",
-                now - 2 * hour,
+                id = "c1",
+                issueId = "i1",
+                author = marcus,
+                content = "Swipe feels good. Can the reason box keep what I typed if I rotate?",
+                createdAtMillis = now - 2 * hour,
             ),
             Comment(
-                "c2", "i1", agent, "Done: the draft survives rotation now, and there is a test for it.",
-                now - 30 * minute,
+                id = "c2",
+                issueId = "i1",
+                author = agent,
+                content = "Done: the draft survives rotation now, and there is a test for it.",
+                createdAtMillis = now - 30 * minute,
             ),
         ),
         activity = listOf(
@@ -154,12 +160,7 @@ class ScreenshotsTest {
     )
 
     /** Draws [content], runs [then] (a gesture, typing), and saves what is on screen as [name].png. */
-    private fun shoot(
-        name: String,
-        dark: Boolean = false,
-        then: () -> Unit = {},
-        content: @Composable () -> Unit,
-    ) {
+    private fun shoot(name: String, dark: Boolean = false, then: () -> Unit = {}, content: @Composable () -> Unit) {
         compose.setContent { ChaoticTheme(darkTheme = dark, dynamicColor = false) { content() } }
         then()
         compose.waitForIdle()
@@ -231,9 +232,14 @@ class ScreenshotsTest {
     @Test
     fun offlineWithQueuedWrites() {
         val stalled = PendingWrite(
-            key = "k1", kind = WriteKind.COMMENT, issueId = "i2",
-            value = "Looks right to me; shipping after the release.", label = "CHT-475",
-            createdAtMillis = now - hour, notBeforeMillis = now, attempts = WriteQueue.MAX_ATTEMPTS,
+            key = "k1",
+            kind = WriteKind.COMMENT,
+            issueId = "i2",
+            value = "Looks right to me; shipping after the release.",
+            label = "CHT-475",
+            createdAtMillis = now - hour,
+            notBeforeMillis = now,
+            attempts = WriteQueue.MAX_ATTEMPTS,
         )
         shoot("07-offline-queued-writes") {
             Home(
