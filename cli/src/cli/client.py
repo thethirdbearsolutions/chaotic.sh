@@ -430,6 +430,11 @@ class Client:
     def delete_invitation(self, team_id: str, invitation_id: str):
         return self._request("DELETE", f"/teams/{team_id}/invitations/{invitation_id}")
 
+    def issue_invitation_verification_code(self, team_id: str, invitation_id: str) -> dict:
+        return self._request(
+            "POST", f"/teams/{team_id}/invitations/{quote(invitation_id, safe='')}/verification-code",
+        )
+
     # Projects
     def create_project(self, team_id: str, name: str, key: str, **kwargs) -> dict:
         # CHT-1223: team_id moved from a query param to the URL path.

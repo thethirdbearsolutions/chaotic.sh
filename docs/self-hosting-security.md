@@ -220,6 +220,30 @@ only logged. At startup the server logs whether this gate is active
 existed before this change start unverified; existing team members are
 not affected, only accepting a new invitation is.
 
+**When SMTP is configured but failing**, the verification email fails
+as well, and an invitee holding a link they were given by hand still
+cannot accept it (CHT-1828). A team admin can then get the code
+instead: `POST /api/teams/{team_id}/invitations/{id}/verification-code`
+(`chaotic team invitation-code <id>`), for a pending invitation of
+their own team. It makes the same kind of code the email carries (same
+HMAC storage, 15 minutes, five tries, the address's daily failure cap)
+for the one account signed up with the invited address, returns it to
+the admin once instead of mailing it, and disarms that account's
+earlier unconfirmed codes. The mailing limits (one a minute, five an
+hour) do not apply, since nothing is mailed. The code can be confirmed
+only from a session signed in as that account, so a leaked link plus a
+leaked code is still useless without the account's password. Marking
+the invitation as hand-delivered instead would have made the link alone
+enough again. The danger that remains is an account someone else made
+from a leaked link. The answer shows the account's name, signup time
+and whether it is already in a team, and the admin must confirm with
+the invitee that it is theirs before handing the code over. Refusals: 403 for
+a non-admin, 404 for an invitation that is not pending, then 409
+`email_verification_unavailable` (no SMTP, answered before the address
+is looked up), `no_account`, `ambiguous_account` or
+`email_already_verified`. Each issue is logged with ids only, never
+the code. There is no team-level activity table yet.
+
 **Without SMTP**, nothing can verify an address (the request answers 409
 `email_verification_unavailable`) and accepting works as before: the
 admin hands the invitation link over by hand, and the link is the

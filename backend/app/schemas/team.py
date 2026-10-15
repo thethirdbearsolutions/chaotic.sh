@@ -129,6 +129,34 @@ class TeamInvitationCreatedResponse(TeamInvitationResponse):
     email_queued: bool = False
 
 
+class InvitationCodeAccount(BaseModel):
+    """The account an admin-issued verification code is for (CHT-1828):
+    what the admin needs to check with the invitee that it is theirs.
+    An account someone else made with the invited address (from a
+    leaked link) shows up here as a name, signup time or other team the
+    invitee does not recognise."""
+
+    name: str
+    email: str
+    created_at: DateTimeUTC
+    # In any team at all: a brand-new invitee is normally in none.
+    member_of_any_team: bool
+
+
+class InvitationVerificationCodeResponse(BaseModel):
+    """A verification code for the account at a pending invitation's
+    address, issued to a team admin to hand over by hand when the mailed
+    code cannot arrive (CHT-1828). Shown once; never logged or stored in
+    the clear. It confirms only that account's address, from a session
+    signed in as it (``chaotic auth verify-email --code``)."""
+
+    code: str
+    expires_at: DateTimeUTC
+    account: InvitationCodeAccount
+    # What to do before handing it over.
+    instructions: str
+
+
 class InvitationPreviewResponse(BaseModel):
     """What the public /invite/<token> page shows before anyone signs in
     (CHT-1265). Only what the page needs: no ids, no token, no status

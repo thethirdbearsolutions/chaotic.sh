@@ -1606,6 +1606,16 @@ describe('ApiClient', () => {
         );
       });
     });
+
+    describe('issueInvitationVerificationCode (CHT-1828)', () => {
+      it('sends POST with the invitation id as one path segment', async () => {
+        await client.issueInvitationVerificationCode('t1', 'inv/1');
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/teams/t1/invitations/inv%2F1/verification-code',
+          expect.objectContaining({ method: 'POST' })
+        );
+      });
+    });
   });
 
   describe('User Endpoints', () => {

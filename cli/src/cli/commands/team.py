@@ -455,4 +455,50 @@ def register(cli):
         _client().delete_invitation(m.get_current_team(), invitation_id)
         console.print(f"[green]Invitation cancelled.[/green]")
 
+    @team.command("invitation-code")
+    @click.argument("invitation_id")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def team_invitation_code(invitation_id):
+        """Get a verification code for an invitee whose email never arrives.
+
+        With SMTP configured, accepting an invitation needs a verified
+        address, and when the server's mail is failing the verification
+        email fails too (CHT-1828). This gives you, a team admin, the
+        code instead, for the account that signed up with the invited
+        address. INVITATION_ID is from `chaotic team invitations`.
+
+        Before handing it over, confirm with the invitee that the account
+        shown is theirs: anyone who saw the link can sign up with that
+        address. They enter it with `chaotic auth verify-email --code`,
+        then accept the invitation. Shown only now; it expires in 15
+        minutes, and a new one replaces it.
+        """
+        m = _main()
+        issued = _client().issue_invitation_verification_code(m.get_current_team(), invitation_id)
+        if m.is_json_output():
+            m.output_json(issued)
+            return
+        account = issued.get("account") or {}
+        console.print("[bold]Verification code for this account:[/bold]")
+        console.print(f"  Name:      {esc(str(account.get('name', '')))}")
+        console.print(f"  Email:     {esc(str(account.get('email', '')))}")
+        console.print(f"  Signed up: {esc(str(account.get('created_at', '')))}")
+        if account.get("member_of_any_team"):
+            console.print("  Already in a team: yes")
+        else:
+            console.print("  Already in a team: no")
+        console.print(
+            "[yellow]Confirm with the invitee that this account is theirs before you hand "
+            "the code over. If they don't recognise it, someone else signed up with their "
+            "address: don't give out the code, and cancel the invitation.[/yellow]"
+        )
+        console.print(
+            f"Code (expires {esc(str(issued.get('expires_at', '')))}): "
+            f"[bold]{esc(str(issued.get('code', '')))}[/bold]",
+            highlight=False,
+        )
+        console.print("[dim]They enter it with: chaotic auth verify-email --code <code>, then accept the invitation.[/dim]")
+
     return team

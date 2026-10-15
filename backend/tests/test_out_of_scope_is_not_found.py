@@ -351,9 +351,11 @@ ROUTES = [
     ("GET", "/api/teams/{team}/invitations", None, "team"),
     ("POST", "/api/teams/{team}/invitations", {"email": "new@example.com"}, "team"),
     ("DELETE", "/api/teams/{team}/invitations/{invitation}", None, "team"),
+    ("POST", "/api/teams/{team}/invitations/{invitation}/verification-code", None, "team"),
     ("PATCH", "/api/teams/{own_team}/members/{user}", {"role": "member"}, "user"),
     ("DELETE", "/api/teams/{own_team}/members/{user}", None, "user"),
     ("DELETE", "/api/teams/{own_team}/invitations/{invitation}", None, "invitation"),
+    ("POST", "/api/teams/{own_team}/invitations/{invitation}/verification-code", None, "invitation"),
     ("GET", "/api/teams/{team}/projects", None, "team"),
     ("POST", "/api/teams/{team}/projects", {"name": "x", "key": "ZZZ"}, "team"),
     ("GET", "/api/teams/{team}/labels", None, "team"),
@@ -416,6 +418,8 @@ REFUSED_ALIKE = {
         AGENT_PRINCIPALS, "Only admins can remove other members"),
     ("DELETE", "/api/teams/{own_team}/invitations/{invitation}", "invitation"): _alike(
         AGENT_PRINCIPALS, "Only admins can delete invitations"),
+    ("POST", "/api/teams/{own_team}/invitations/{invitation}/verification-code", "invitation"): _alike(
+        AGENT_PRINCIPALS, "Only admins can issue verification codes"),
     ("PATCH", "/api/rituals/{own_ritual}", "group"): _alike(AGENT_PRINCIPALS, "Only admins can update rituals"),
     ("POST", "/api/projects/{own_project}/rituals", "group"): _alike(
         AGENT_PRINCIPALS, "Only admins can create rituals"),
@@ -453,6 +457,8 @@ REFUSED_ALIKE = {
             ("GET", "/api/teams/{team}/invitations", "Only admins can view invitations"),
             ("POST", "/api/teams/{team}/invitations", "Only admins can invite members"),
             ("DELETE", "/api/teams/{team}/invitations/{invitation}", "Only admins can delete invitations"),
+            ("POST", "/api/teams/{team}/invitations/{invitation}/verification-code",
+             "Only admins can issue verification codes"),
             ("GET", "/api/teams/{team}/projects", "Not a member of this team"),
             ("POST", "/api/teams/{team}/projects", "Not a member of this team"),
             ("GET", "/api/teams/{team}/labels", "Not authorized to access this team"),

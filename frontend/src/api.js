@@ -205,6 +205,15 @@ export class ApiClient {
         return this.request('DELETE', `/teams/${teamId}/invitations/${invitationId}`);
     }
 
+    // CHT-1828: a verification code for the invited address's account,
+    // for an admin to hand over when the server's mail is failing.
+    async issueInvitationVerificationCode(teamId, invitationId) {
+        return this.request(
+            'POST',
+            `/teams/${teamId}/invitations/${encodeURIComponent(invitationId)}/verification-code`,
+        );
+    }
+
     // Projects
     async createProject(teamId, data) {
         // CHT-1223: team_id moved from a query param to the URL path.

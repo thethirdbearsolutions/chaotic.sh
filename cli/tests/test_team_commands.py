@@ -421,6 +421,70 @@ class TestTeamInvite:
         assert url in result.output.splitlines()
 
 
+class TestTeamInvitationCode:
+    """CHT-1828: an admin gets the verification code for a stuck invitee."""
+
+    ISSUED = {
+        "code": "123456",
+        "expires_at": "2026-10-15T17:00:00Z",
+        "account": {"name": "Bob", "email": "bob@test.com",
+                    "created_at": "2026-10-15T16:00:00Z", "member_of_any_team": False},
+        "instructions": "Before you hand this code over, confirm with the invitee ...",
+    }
+
+    def test_shows_the_account_the_warning_and_the_code(self, cli_runner):
+        from cli.main import cli, client
+
+        client.issue_invitation_verification_code = MagicMock(return_value=dict(self.ISSUED))
+
+        result = cli_runner.invoke(cli, ['team', 'invitation-code', 'inv-1'])
+
+        assert result.exit_code == 0, result.output
+        client.issue_invitation_verification_code.assert_called_once()
+        assert client.issue_invitation_verification_code.call_args.args[1] == 'inv-1'
+        flat = " ".join(result.output.split())
+        assert 'Bob' in flat and 'bob@test.com' in flat and '2026-10-15T16:00:00Z' in flat
+        assert 'Already in a team: no' in flat
+        assert 'Confirm with the invitee that this account is theirs' in flat
+        assert '123456' in flat
+        assert 'chaotic auth verify-email --code' in flat
+        # The warning comes before the code.
+        assert flat.index('Confirm with the invitee') < flat.index('123456')
+
+    def test_says_when_the_account_is_already_in_a_team(self, cli_runner):
+        from cli.main import cli, client
+
+        issued = dict(self.ISSUED)
+        issued["account"] = {**issued["account"], "member_of_any_team": True}
+        client.issue_invitation_verification_code = MagicMock(return_value=issued)
+
+        result = cli_runner.invoke(cli, ['team', 'invitation-code', 'inv-1'])
+
+        assert 'Already in a team: yes' in " ".join(result.output.split())
+
+    def test_json(self, cli_runner):
+        from cli.main import cli, client
+
+        client.issue_invitation_verification_code = MagicMock(return_value=dict(self.ISSUED))
+
+        result = cli_runner.invoke(cli, ['team', 'invitation-code', 'inv-1', '--json'])
+
+        assert result.exit_code == 0
+        assert json.loads(result.output) == self.ISSUED
+
+    def test_a_refusal_is_reported(self, cli_runner):
+        from cli.main import cli, client, APIError
+
+        msg = "Nobody has signed up with the invited address yet."
+        client.issue_invitation_verification_code = MagicMock(
+            side_effect=_api_error(APIError, msg, 409, {"error_code": "no_account", "message": msg}))
+
+        result = cli_runner.invoke(cli, ['team', 'invitation-code', 'inv-1'])
+
+        assert result.exit_code == 1
+        assert 'Nobody has signed up' in " ".join(result.output.split())
+
+
 class TestInviteLinkForDisplay:
     """CHT-1822: only a loopback link on a non-loopback profile is rebuilt,
     and only the path is taken from the server's link."""

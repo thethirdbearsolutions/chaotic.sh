@@ -22,6 +22,7 @@ import {
   isLocalHost,
   removeMember,
   deleteInvitation,
+  issueInvitationCode,
   showCreateTeamModal,
   showEditTeamModal,
   handleCreateTeam,
@@ -43,6 +44,7 @@ vi.mock('./api.js', () => ({
     createInvitation: vi.fn(),
     removeMember: vi.fn(),
     deleteInvitation: vi.fn(),
+    issueInvitationVerificationCode: vi.fn(),
     createTeam: vi.fn(),
     updateTeam: vi.fn(),
   },
@@ -652,6 +654,7 @@ describe('loadTeamInvitations', () => {
     await loadTeamInvitations();
     const list = document.getElementById('team-invitations-list');
     expect(list.innerHTML).toContain('data-action="delete-invitation"');
+    expect(list.innerHTML).toContain('data-action="issue-invitation-code"');
     setMembers([]);
     setCurrentUser(null);
   });
@@ -666,6 +669,7 @@ describe('loadTeamInvitations', () => {
     const list = document.getElementById('team-invitations-list');
     expect(list.innerHTML).toContain('test@example.com');
     expect(list.innerHTML).not.toContain('data-action="delete-invitation"');
+    expect(list.innerHTML).not.toContain('data-action="issue-invitation-code"');
     setMembers([]);
     setCurrentUser(null);
   });
@@ -1095,6 +1099,78 @@ describe('deleteInvitation', () => {
     api.getTeamInvitations.mockResolvedValue([]);
     await deleteInvitation('inv-1');
     expect(api.deleteInvitation).toHaveBeenCalledWith('team-1', 'inv-1');
+  });
+});
+
+describe('issueInvitationCode (CHT-1828)', () => {
+  const ISSUED = {
+    code: '123456',
+    expires_at: '2026-10-15T17:00:00Z',
+    account: { name: 'Bob', email: 'bob@example.com', created_at: '2026-10-15T16:00:00Z', member_of_any_team: false },
+  };
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="modal-overlay"><div id="modal-title"></div><div id="modal-content"></div></div>';
+    vi.clearAllMocks();
+    isModalOpen.mockReturnValue(false);
+    setCurrentTeam({ id: 'team-1' });
+  });
+
+  afterEach(() => {
+    setCurrentTeam(null);
+  });
+
+  it('asks for the code and shows the account and the warning before it', async () => {
+    api.issueInvitationVerificationCode.mockResolvedValue(ISSUED);
+    await issueInvitationCode('inv-1');
+    expect(api.issueInvitationVerificationCode).toHaveBeenCalledWith('team-1', 'inv-1');
+    expect(showModal).toHaveBeenCalled();
+    const text = document.getElementById('modal-content').textContent;
+    expect(text).toContain('Bob');
+    expect(text).toContain('bob@example.com');
+    expect(text).toContain('Already in a team: no');
+    expect(text).toContain('Confirm with the invitee that this account is theirs');
+    expect(text.indexOf('Confirm with the invitee')).toBeLessThan(text.indexOf('123456'));
+    expect(document.getElementById('invitation-code').textContent).toBe('123456');
+  });
+
+  it('says when the account is already in a team', async () => {
+    api.issueInvitationVerificationCode.mockResolvedValue({
+      ...ISSUED, account: { ...ISSUED.account, member_of_any_team: true },
+    });
+    await issueInvitationCode('inv-1');
+    expect(document.getElementById('modal-content').textContent).toContain('Already in a team: yes');
+  });
+
+  it('escapes what the server sent', async () => {
+    api.issueInvitationVerificationCode.mockResolvedValue({
+      ...ISSUED, account: { ...ISSUED.account, name: '<b>x</b>' },
+    });
+    await issueInvitationCode('inv-1');
+    expect(document.getElementById('modal-content').querySelector('b')).toBeNull();
+  });
+
+  it('takes the code out of the DOM when the modal closes', async () => {
+    api.issueInvitationVerificationCode.mockResolvedValue(ISSUED);
+    await issueInvitationCode('inv-1');
+    document.getElementById('modal-overlay').classList.add('hidden');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.getElementById('invitation-code')).toBeNull();
+    expect(document.getElementById('modal-content').textContent).not.toContain('123456');
+  });
+
+  it('reports a refusal and opens nothing', async () => {
+    const error = new Error('Nobody has signed up with the invited address yet.');
+    api.issueInvitationVerificationCode.mockRejectedValue(error);
+    await issueInvitationCode('inv-1');
+    expect(showApiError).toHaveBeenCalledWith('get a verification code', error);
+    expect(showModal).not.toHaveBeenCalled();
+  });
+
+  it('is wired to its action', async () => {
+    api.issueInvitationVerificationCode.mockResolvedValue(ISSUED);
+    await teamsActions['issue-invitation-code']({}, { invitationId: 'inv-9' });
+    expect(api.issueInvitationVerificationCode).toHaveBeenCalledWith('team-1', 'inv-9');
   });
 });
 

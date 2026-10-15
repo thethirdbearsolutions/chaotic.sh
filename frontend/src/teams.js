@@ -333,7 +333,8 @@ export function renderTeamInvitations() {
                     <span>Expires: ${new Date(inv.expires_at).toLocaleDateString()}</span>
                 </div>
             </div>
-            ${canManageInvitations ? `<button class="btn btn-danger btn-small" data-action="delete-invitation" data-invitation-id="${escapeAttr(inv.id)}">Cancel</button>` : ''}
+            ${canManageInvitations ? `<button class="btn btn-secondary btn-small" data-action="issue-invitation-code" data-invitation-id="${escapeAttr(inv.id)}" title="For an invitee whose verification email never arrives">Verification code</button>
+            <button class="btn btn-danger btn-small" data-action="delete-invitation" data-invitation-id="${escapeAttr(inv.id)}">Cancel</button>` : ''}
         </div>
     `
     )
@@ -563,14 +564,14 @@ export function showInviteLink(email, acceptUrl, emailQueued = false) {
  * Take the link out of the DOM once the modal closes, by any path (Done,
  * Escape, the overlay): it is a credential, shown once.
  */
-function forgetInviteLinkOnClose() {
+function forgetInviteLinkOnClose(elementId = 'invite-link') {
   const overlay = document.getElementById('modal-overlay');
   if (!overlay || typeof MutationObserver === 'undefined') return;
   const observer = new MutationObserver(() => {
     if (!overlay.classList.contains('hidden')) return;
     observer.disconnect();
-    const link = document.getElementById('invite-link');
-    if (link) document.getElementById('modal-content').innerHTML = '';
+    const secret = document.getElementById(elementId);
+    if (secret) document.getElementById('modal-content').innerHTML = '';
   });
   observer.observe(overlay, { attributes: true, attributeFilter: ['class'] });
 }
@@ -593,6 +594,55 @@ export async function copyInviteLink() {
     selection.addRange(range);
     showToast('Could not copy: the link is selected, copy it by hand', 'error');
   }
+}
+
+/**
+ * A verification code for the account at a pending invitation's address
+ * (CHT-1828), for an invitee whose verification email never arrives.
+ * The account is shown first, with the warning: anyone who saw the link
+ * can sign up with the address, so the admin must check with the
+ * invitee that the account is theirs before handing the code over.
+ * @param {string} invitationId - Pending invitation ID
+ */
+export async function issueInvitationCode(invitationId) {
+  let issued;
+  try {
+    issued = await api.issueInvitationVerificationCode(getCurrentTeam().id, invitationId);
+  } catch (e) {
+    showApiError('get a verification code', e);
+    return;
+  }
+  showInvitationCode(issued);
+}
+
+/**
+ * Show an issued verification code with the account it is for.
+ * @param {object} issued - The server's answer: code, expires_at, account
+ */
+export function showInvitationCode(issued) {
+  const account = issued?.account || {};
+  const signedUp = account.created_at ? new Date(account.created_at).toLocaleString() : '';
+  const expires = issued?.expires_at ? new Date(issued.expires_at).toLocaleTimeString() : '';
+  document.getElementById('modal-title').textContent = 'Verification Code';
+  document.getElementById('modal-content').innerHTML = `
+        <div class="api-key-created">
+            <p>For the account signed up with the invited address:</p>
+            <ul class="invitation-code-account">
+                <li>Name: <strong>${escapeHtml(account.name || '')}</strong></li>
+                <li>Email: ${escapeHtml(account.email || '')}</li>
+                <li>Signed up: ${escapeHtml(signedUp)}</li>
+                <li>Already in a team: ${account.member_of_any_team ? 'yes' : 'no'}</li>
+            </ul>
+            <p class="warning-text">Confirm with the invitee that this account is theirs before you hand the code over. If they don't recognise it, someone else signed up with their address: don't give out the code, and cancel the invitation.</p>
+            <div class="api-key-display">
+                <code id="invitation-code">${escapeHtml(issued?.code || '')}</code>
+            </div>
+            <p class="text-muted">Expires at ${escapeHtml(expires)}. They enter it on the invitation page, or with <code>chaotic auth verify-email --code</code>, then accept. You won't be able to see it again.</p>
+            <button type="button" class="btn btn-secondary" data-action="dismiss-invite-link">Done</button>
+        </div>
+    `;
+  if (!isModalOpen()) showModal();
+  forgetInviteLinkOnClose('invitation-code');
 }
 
 /**
@@ -783,6 +833,9 @@ registerActions({
   },
   'delete-invitation': (event, dataset) => {
     deleteInvitation(dataset.invitationId);
+  },
+  'issue-invitation-code': (event, dataset) => {
+    issueInvitationCode(dataset.invitationId);
   },
   'retry-load-team-invitations': () => {
     loadTeamInvitations();

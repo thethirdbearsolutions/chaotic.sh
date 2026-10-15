@@ -153,6 +153,12 @@ UNAVAILABLE = VerificationRefused(
     409, "email_verification_unavailable",
     "Email verification is unavailable: this server has no SMTP configured, so it cannot send a code.",
 )
+# The admin-issued code (CHT-1828) without SMTP: nothing to verify for.
+CODE_NOT_NEEDED = VerificationRefused(
+    409, "email_verification_unavailable",
+    "This server has no SMTP configured, so accepting an invitation does not "
+    "require a verified address and no code is needed.",
+)
 INVALID_CODE_MESSAGE = (
     "That code is wrong, has expired or has been used up. "
     "Check the latest email, or request a new code."
@@ -320,6 +326,66 @@ class EmailVerificationService:
             )
         await codes.filter(id=row.id).update(armed=True)
         return row
+
+    async def issue_for_admin(self, user: OxydeUser) -> tuple[str, OxydeEmailVerificationCode]:
+        """Make a code for ``user`` and return it, with its row, instead of
+        mailing it (CHT-1828). A team admin hands it over when SMTP is
+        configured but failing, so the mailed code never arrives.
+
+        The code is the same kind of code ``request_code`` mails: stored
+        only as an HMAC bound to ``user.id``, ``CODE_TTL`` long,
+        ``MAX_ATTEMPTS`` tries, counted against the address's daily
+        failure cap, and confirmed the same way (``confirm``), so it
+        works only from a session signed in as ``user``. Whoever reads
+        it on the way, with the invitation token too, still cannot use
+        it without that account's login.
+
+        Every earlier unconfirmed code of this account is disarmed
+        first, so only the newest code the admin issued works.
+        The mailing limits (one a minute, five an hour) are not applied:
+        they protect the mail relay, and nothing is mailed. The failure
+        cap is, since it is what bounds guessing.
+
+        Raises VerificationRefused: 409 when already verified or SMTP is
+        unconfigured (then no invitation needs a verified address), 429
+        while the address is over its failure cap.
+        """
+        if user.email_verified_at is not None:
+            raise VerificationRefused(
+                409, "email_already_verified",
+                "This account's email address is already verified: it can accept the invitation now.",
+            )
+        if not self.email.is_configured():
+            raise CODE_NOT_NEEDED
+
+        now = _now()
+        email_hash = hash_email(user.email)
+        codes = OxydeEmailVerificationCode.objects
+        await codes.filter(created_at__lte=now - FAILURE_WINDOW).delete()
+
+        history = await codes.filter(email_hash=email_hash).order_by("created_at").all()
+        lapses_at = _failure_cap_lapses_at(history)
+        if lapses_at is not None:
+            retry = _seconds_until(lapses_at, now)
+            raise _rate_limited(
+                "Too many wrong codes for this address today. "
+                f"Try again in {(retry + 3599) // 3600} h.", retry,
+            )
+
+        # Disarmed, not marked used: a used row would count one success
+        # against its attempts, and an unused one has none to count.
+        await codes.filter(user_id=user.id, used_at__isnull=True, armed=True).update(armed=False)
+        code = new_code()
+        row = await codes.create(
+            email_hash=email_hash,
+            user_id=user.id,
+            code_hash=hash_code(user.id, code),
+            armed=True,
+            expires_at=now + CODE_TTL,
+            attempts=0,
+            created_at=now,
+        )
+        return code, row
 
     async def confirm(self, user: OxydeUser, code: str) -> OxydeUser:
         """Check ``code`` against the user's newest sent code; on a match

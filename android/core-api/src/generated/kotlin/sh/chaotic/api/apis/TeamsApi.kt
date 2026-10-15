@@ -25,6 +25,7 @@ package sh.chaotic.api.apis
 
 import sh.chaotic.api.models.HTTPValidationError
 import sh.chaotic.api.models.InvitationPreviewResponse
+import sh.chaotic.api.models.InvitationVerificationCodeResponse
 import sh.chaotic.api.models.TeamCreate
 import sh.chaotic.api.models.TeamInvitationCreate
 import sh.chaotic.api.models.TeamInvitationCreatedResponse
@@ -240,6 +241,41 @@ import io.ktor.http.ParametersBuilder
             val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.GET,
             "/api/teams/{team_id}".replace("{" + "team_id" + "}", "$teamId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * POST /api/teams/{team_id}/invitations/{invitation_id}/verification-code
+        * Issue Invitation Verification Code
+        * Give a team admin a verification code for the account at a pending invitation&#39;s address, to hand over by hand (CHT-1828).  With SMTP configured, accepting an invitation needs a verified address (CHT-1790). When the relay fails, the mailed code fails too, and the invitee is stuck. This does what the email would: the code is the mailed kind (&#x60;&#x60;EmailVerificationService.issue_for_admin&#x60;&#x60;), bound to that one account, so it confirms nothing from any other session. A leaked link plus this code is still useless without the account&#39;s password. The answer names the account (name, signup time, whether it is in any team) so the admin can check it is the invitee&#39;s and not one someone made from a leaked link.  Refusals, in order, so the action tells nobody more than the invitation already does: 403 for a non-admin (from the team id alone, like every invitation route), the delete route&#39;s 404 for an invitation that is not this team&#39;s, pending and unexpired, 409 &#x60;&#x60;email_verification_unavailable&#x60;&#x60; without SMTP, then 409 &#x60;&#x60;no_account&#x60;&#x60; / &#x60;&#x60;ambiguous_account&#x60;&#x60; / &#x60;&#x60;email_already_verified&#x60;&#x60; about the invited address&#39;s account. Account existence is already public (signup says \&quot;Email already registered\&quot;); the name, signup time and team membership are shown only to an admin of a team with a pending invitation to that address.  Every earlier unconfirmed code of the account stops working. The issue is logged with ids only, never the code.
+         * @param teamId  
+         * @param invitationId  
+         * @return InvitationVerificationCodeResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun issueInvitationVerificationCodeApiTeamsTeamIdInvitationsInvitationIdVerificationCodePost(teamId: kotlin.String, invitationId: kotlin.String): HttpResponse<InvitationVerificationCodeResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.POST,
+            "/api/teams/{team_id}/invitations/{invitation_id}/verification-code".replace("{" + "team_id" + "}", "$teamId").replace("{" + "invitation_id" + "}", "$invitationId"),
             query = localVariableQuery,
             headers = localVariableHeaders,
             requiresAuthentication = true,

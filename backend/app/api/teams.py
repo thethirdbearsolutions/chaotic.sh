@@ -1,5 +1,6 @@
 """Team API routes."""
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Response, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, NotAppSession, check_user_in_team
@@ -14,6 +15,8 @@ from app.schemas.team import (
     TeamInvitationResponse,
     TeamInvitationCreatedResponse,
     InvitationPreviewResponse,
+    InvitationCodeAccount,
+    InvitationVerificationCodeResponse,
 )
 from app.config import get_settings
 from app.oxyde_models.team import OxydeTeamMember
@@ -23,6 +26,10 @@ from app.services.mention_handles import MentionDirectory
 from app.services.team_service import TeamService
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
+from app.services.email_verification_service import (
+    CODE_NOT_NEEDED, EmailVerificationService, VerificationRefused,
+)
+from app.utils import ensure_utc
 from app.utils.email_address import same_email
 from app.enums import TeamRole
 
@@ -538,3 +545,130 @@ async def delete_invitation(
         )
 
     await team_service.delete_invitation(invitation)
+
+
+ISSUE_CODE_INSTRUCTIONS = (
+    "Before you hand this code over, confirm with the invitee, by a channel you trust, "
+    "that this account is theirs: its name, its signup time and whether it is already "
+    "in a team. Anyone can sign up with an address they don't own, so an account you "
+    "don't recognise may be someone who saw the invitation link. Then give the code to "
+    "the invitee only. It verifies this account's address and nothing else, works only "
+    "from a session signed in as this account, and expires in 15 minutes."
+)
+
+
+@router.post(
+    "/{team_id}/invitations/{invitation_id}/verification-code",
+    response_model=InvitationVerificationCodeResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@writes
+async def issue_invitation_verification_code(
+    team_id: str,
+    invitation_id: str,
+    current_user: CurrentUser,
+    response: Response,
+    _app_session: NotAppSession,
+) -> InvitationVerificationCodeResponse:
+    """Give a team admin a verification code for the account at a pending
+    invitation's address, to hand over by hand (CHT-1828).
+
+    With SMTP configured, accepting an invitation needs a verified
+    address (CHT-1790). When the relay fails, the mailed code fails too,
+    and the invitee is stuck. This does what the email would: the code
+    is the mailed kind (``EmailVerificationService.issue_for_admin``),
+    bound to that one account, so it confirms nothing from any other
+    session. A leaked link plus this code is still useless without the
+    account's password. The answer names the account (name, signup time,
+    whether it is in any team) so the admin can check it is the
+    invitee's and not one someone made from a leaked link.
+
+    Refusals, in order, so the action tells nobody more than the
+    invitation already does: 403 for a non-admin (from the team id
+    alone, like every invitation route), the delete route's 404 for an
+    invitation that is not this team's, pending and unexpired, 409
+    ``email_verification_unavailable`` without SMTP, then 409
+    ``no_account`` / ``ambiguous_account`` / ``email_already_verified``
+    about the invited address's account. Account existence is already
+    public (signup says "Email already registered"); the name, signup
+    time and team membership are shown only to an admin of a team with
+    a pending invitation to that address.
+
+    Every earlier unconfirmed code of the account stops working. The
+    issue is logged with ids only, never the code.
+    """
+    team_service = TeamService()
+    if not await team_service.is_team_admin(team_id, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can issue verification codes",
+        )
+
+    invitation = next(
+        (i for i in await team_service.get_team_invitations(team_id) if i.id == invitation_id),
+        None,
+    )
+    if invitation is None or ensure_utc(invitation.expires_at) < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invitation not found",
+        )
+
+    verification = EmailVerificationService()
+    # Before any lookup of the address: without SMTP the answer is the
+    # same whether or not it has an account.
+    if not verification.email.is_configured():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=CODE_NOT_NEEDED.detail())
+
+    # People only: an agent account has no mailbox and cannot accept.
+    accounts = [
+        u for u in await UserService().find_by_email_ignoring_case(invitation.email)
+        if not u.is_agent and u.is_active
+    ]
+    if not accounts:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "no_account",
+                "message": "Nobody has signed up with the invited address yet. Ask the invitee "
+                           "to create their account first, then issue the code.",
+            },
+        )
+    if len(accounts) > 1:
+        # Only on a database older than case-insensitive signup (CHT-1790):
+        # which one is the invitee's is for the operator to sort out.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "ambiguous_account",
+                "message": "More than one account has the invited address (differing only in "
+                           "case). Ask the server's operator to remove the one that is not the invitee's.",
+            },
+        )
+    account = accounts[0]
+
+    try:
+        code, row = await verification.issue_for_admin(account)
+    except VerificationRefused as refused:
+        raise HTTPException(
+            status_code=refused.status_code, detail=refused.detail(), headers=refused.headers,
+        ) from refused
+
+    in_a_team = await OxydeTeamMember.objects.filter(user_id=account.id).first() is not None
+    logger.info(
+        "email verification code %s issued by admin %s of team %s for user %s via invitation %s",
+        row.id, current_user.id, team_id, account.id, invitation.id,
+    )
+    # A credential in a body: not to be cached.
+    response.headers.update(INVITATION_HEADERS)
+    return InvitationVerificationCodeResponse(
+        code=code,
+        expires_at=row.expires_at,
+        account=InvitationCodeAccount(
+            name=account.name,
+            email=account.email,
+            created_at=account.created_at,
+            member_of_any_team=in_a_team,
+        ),
+        instructions=ISSUE_CODE_INSTRUCTIONS,
+    )
