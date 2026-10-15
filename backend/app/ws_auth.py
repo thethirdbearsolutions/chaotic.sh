@@ -6,15 +6,16 @@ check REST makes applies here too: a revoked or expired key or token, a
 deactivated user, an agent key whose holder left the agent's team. It
 takes what REST takes (API keys, session JWTs, and OAuth access tokens
 issued for the whole server, ``<base>``), with one more rule: an agent
-is refused, whatever its credential (4003). /ws is the live feed of the
+with a valid credential is refused (4003). /ws is the live feed of the
 people's own clients (the web app, the native app's human session,
 CHT-1602), and that feed is broader than REST gives an agent: every
 project's events in the team, and inbox events for every recipient
 (filtered by the client, CHT-1250), where a project-scoped agent reads
-one project and an agent only its own inbox on REST. Today every OAuth
-session acts as an agent, so in practice /ws refuses every OAuth token
-until CHT-1602 adds human sessions; a connector token (issued for
-``<base>/mcp``) is refused by its audience either way (4001).
+one project and an agent only its own inbox on REST. Of OAuth tokens,
+only a built-in app's session (the Android app, CHT-1602) acts as a
+person, and /ws takes it like a web login; every other OAuth session
+acts as an agent and is refused (4003), and a connector token (issued
+for ``<base>/mcp``) is refused by its audience (4001).
 
 Where the credential comes from, in this order (``presented_credential``):
 
@@ -70,6 +71,10 @@ a refused handshake opens before it closes, a client should not take
 ``onopen`` as "the credential was good": the web app counts a socket as
 up (clearing its backoff) only once it has stayed open a moment or a
 message has arrived (``WS_OPEN_SETTLE_MS``, ``frontend/src/ws.js``).
+
+The outcomes above are a client contract, written down for client
+authors in ``docs/ws-client-contract.md`` (CHT-1646): change what a
+refusal looks like on the wire only together with that page.
 """
 from __future__ import annotations
 

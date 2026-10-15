@@ -83,9 +83,8 @@ class Settings(BaseSettings):
     app_base_url: str = "http://localhost:24267"
 
     # OAuth 2.1 for remote MCP clients (CHT-1368; design doc "MCP OAuth
-    # and token service: design" §2). Off by default: until the
-    # authorize/token/revoke/register endpoints land (CHT-1518..1520),
-    # turning it on would advertise endpoints that 404. When on, the
+    # and token service: design" §2). Off by default; an operator turns
+    # it on with APP_BASE_URL (docs/agents.md, "Turning OAuth on"). When on, the
     # RFC 9728 / RFC 8414 discovery documents are served and a 401 on
     # /mcp points at them; the issuer is exactly APP_BASE_URL (never the
     # request Host), so APP_BASE_URL must then be an https origin, or a
