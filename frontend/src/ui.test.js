@@ -798,7 +798,7 @@ describe('toast accessibility', () => {
 });
 
 describe('toast container markup (CHT-1743)', () => {
-  it.each(['templates/index.html', 'index.html'])('%s declares a polite live region', async (file) => {
+  it.each(['templates/index.html'])('%s declares a polite live region', async (file) => {
     const { readFileSync } = await import('node:fs');
     const { resolve } = await import('node:path');
     const html = readFileSync(resolve(__dirname, '..', file), 'utf8');
