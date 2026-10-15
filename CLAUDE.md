@@ -178,6 +178,33 @@ name↔value translation at some boundary — stop. That is how this bug class
 survived from CHT-974 to CHT-1333; the fix belongs at the serializer or the
 schema, not at a seventh boundary. Background: CHT-1345.
 
+## Access Control (read this before adding or changing a route)
+
+The rules live in docstrings (`backend/app/api/visibility.py`, `deps.py`
+`can_read_team_data` onwards, `mcp_server/scope.py`); these are the ones a
+new route gets wrong:
+
+- **Visibility before permission.** Load the row with a `visible_*` loader
+  from `visibility.py` first; check the action (admin, author) second. A 403
+  is only for a caller who can see the row but may not do the thing.
+- **An invisible row answers exactly like a missing one**: same status,
+  body and headers (CHT-1785). Use the loader; do not hand-roll the 404.
+- **Data vs directory.** `can_read_team_data` is team-wide data (every
+  project's issues, feeds, team documents, templates) and refuses a
+  project-scoped agent even in its own team. `is_in_team_directory` is the
+  team row, members, agents and labels, which that agent needs (CHT-1780).
+- **A team the caller may not read answers `team_hidden()`**, one 403 text
+  for every route. A `project_id` beside a URL team goes through
+  `visible_project_in_team` (body) or `project_filter_in_team[_or_none]`
+  (query filter), which pin it to that team (CHT-1807).
+- **Pass confinement to services.** A team-wide query a project-scoped
+  agent may make narrows to `confined_project_id(user)`; never branch on
+  `user.agent_project_id` inline.
+- **A new route needs a `ROUTES` entry** in
+  `backend/tests/test_out_of_scope_is_not_found.py` for each row it takes
+  by id (or a `NOT_ROW_KEYED` listing); the guard test fails until then.
+  Passing it with a hand-rolled 404 works but drifts: prefer a loader.
+
 ## Running the backend tests
 
 ```bash

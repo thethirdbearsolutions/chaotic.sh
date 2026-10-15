@@ -660,7 +660,7 @@ class TestAgentAPIEndpoints:
 
         # Agent is rejected because get_member doesn't find a TeamMember record for agents
         assert response.status_code == 403
-        assert "Not a member" in response.json()["detail"]
+        assert response.json()["detail"] == "Not authorized to access this team"
 
     async def test_agent_with_membership_cannot_create_team_agent(self, client, test_team, db, test_user):
         """POST /teams/{team_id}/agents returns 403 for agent even with TeamMember record.
@@ -708,7 +708,7 @@ class TestAgentAPIEndpoints:
 
         # Agent is rejected because get_member doesn't find a TeamMember record for agents
         assert response.status_code == 403
-        assert "Not a member" in response.json()["detail"]
+        assert response.json()["detail"] == "Not authorized to access this team"
 
     async def test_agent_with_membership_cannot_create_project_agent(
         self, client, test_team, test_project, db, test_user

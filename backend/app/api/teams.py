@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Response, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, NotAppSession, is_in_team_directory
-from app.api.visibility import visible_team
+from app.api.visibility import team_hidden, visible_team
 from app.schemas.team import (
     TeamCreate,
     TeamUpdate,
@@ -134,10 +134,7 @@ async def list_team_members(
     # Team directory: members and agents of the team at either scope,
     # project-scoped agents included (CHT-732, CHT-1780).
     if not await is_in_team_directory(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+        raise team_hidden()
 
     all_members = await team_service.get_members(team_id)
     members = all_members[skip:skip + limit]

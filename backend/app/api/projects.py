@@ -5,7 +5,7 @@ from app.api.deps import (
     CurrentUser, is_in_team_directory, can_read_team_data,
     is_eligible_project_member, is_project_scoped_agent,
 )
-from app.api.visibility import visible_project
+from app.api.visibility import team_hidden, visible_project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
@@ -57,10 +57,7 @@ async def create_project(
     project_service = ProjectService()
 
     if not await can_read_team_data(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+        raise team_hidden()
 
     existing_project = await project_service.get_by_key(team_id, project_in.key)
     if existing_project:
@@ -95,19 +92,13 @@ async def list_projects(
         # its own project, so a key or name resolves the way it does for
         # everyone else (CHT-1780).
         if not await is_in_team_directory(current_user, team_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not a member of this team",
-            )
+            raise team_hidden()
         own = await project_service.get_by_id(current_user.agent_project_id)
         confined = [own] if own and own.team_id == team_id else []
         return [ProjectResponse.model_validate(project) for project in confined[skip:skip + limit]]
 
     if not await can_read_team_data(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+        raise team_hidden()
 
     projects = await project_service.list_by_team(team_id, skip, limit)
     return [ProjectResponse.model_validate(project) for project in projects]

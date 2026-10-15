@@ -7,7 +7,7 @@ from app.api.deps import (
     CurrentPrincipal, CurrentUser, NotAppSession, can_manage_agent, check_not_app_session,
     get_api_key_record,
 )
-from app.api.visibility import visible_agent, visible_project, visible_team
+from app.api.visibility import team_hidden, visible_agent, visible_project, visible_team
 from app.enums import AgentKind
 from app.schemas.agent import (
     AgentCreate, AgentRegister, AgentRegistered, AgentUpdate, AgentResponse, AgentCreated,
@@ -115,10 +115,7 @@ async def create_team_agent(
     # Check if user is a member of the team
     member = await team_service.get_member(team_id, current_user.id)
     if not member:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+        raise team_hidden()
 
     # Only humans can create agents
     if current_user.is_agent:
@@ -171,10 +168,7 @@ async def create_project_agent(
     team_service = TeamService()
     member = await team_service.get_member(project.team_id, current_user.id)
     if not member:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this project's team",
-        )
+        raise team_hidden()
 
     # Only humans can create agents
     if current_user.is_agent:

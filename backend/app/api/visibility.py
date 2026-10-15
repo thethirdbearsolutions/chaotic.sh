@@ -19,9 +19,9 @@ What "see" means per row is the matching read rule in ``app.api.deps``:
 
 * issue, sprint, project, ritual, ritual group: ``check_user_project_access``
   on the row's project. It takes the project row and reads the team off
-  it; a ``project_id`` filter named beside a URL ``team_id`` goes through
-  ``visible_project_in_team``, which also pins the project to that team
-  (CHT-1807).
+  it; a project named beside a URL ``team_id`` goes through
+  ``visible_project_in_team`` (in a body) or ``project_filter_in_team``
+  (a query filter), which also pin the project to that team (CHT-1807).
 * document: ``can_access_document`` (project access for a project's
   document, team access for a team-level one).
 * label, team, agent: ``is_in_team_directory`` (the team directory, which a
@@ -49,6 +49,20 @@ def not_found(detail: str, status_code: int = status.HTTP_404_NOT_FOUND) -> HTTP
     return HTTPException(status_code=status_code, detail=detail)
 
 
+TEAM_HIDDEN_DETAIL = "Not authorized to access this team"
+
+
+def team_hidden() -> HTTPException:
+    """The answer for a team the caller may not read, or may not read
+    this part of: one 403 with one text for every team-keyed route
+    (CHT-1842), where there used to be four. A team is not a row that
+    can be hidden like an issue: its id is in the caller's own URL, so
+    the answer is a 403, not a 404. A project filter beside a team
+    (``project_filter_in_team``) answers the same when the project is
+    missing or invisible, so the filter cannot be used as an oracle."""
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=TEAM_HIDDEN_DETAIL)
+
+
 async def can_see_project(user, project) -> bool:
     """``project`` (a row or None) exists and ``user`` may read it."""
     return project is not None and await check_user_project_access(user, project)
@@ -64,45 +78,83 @@ async def visible_project(user, project_id: str | None, detail: str = "Project n
     return project
 
 
-async def visible_project_in_team(
-    user,
-    project_id: str,
-    team_id: str,
-    *,
-    hidden: HTTPException,
-    elsewhere: HTTPException | None,
-):
-    """The project ``project_id`` named next to ``team_id`` (a query or
-    body filter beside a URL team), loaded, checked and pinned to that
-    team in one step (CHT-1807).
+async def _project_in_team(user, project_id: str | None, team_id: str):
+    """``(project, here)`` for the project ``project_id`` named next to
+    ``team_id`` (a query or body filter beside a URL team), loaded,
+    checked and pinned to that team in one step (CHT-1807). The two
+    public variants below decide only what each outcome answers.
 
     * Missing, or one ``user`` may not see (its team read off the row):
-      raises ``hidden``. The two are always answered alike (CHT-1785).
-    * One ``user`` can see, but of another team: raises ``elsewhere``,
-      or returns None when ``elsewhere`` is None, for a listing that
-      answers such a filter with nothing. Never the project itself: a
-      project-scoped agent sees its own project whichever team the URL
-      names, so without this pin it could read or write another team
-      through its own project's id (CHT-1273 review CRITICAL).
+      ``(None, False)``. The two are always answered alike (CHT-1785).
+    * One ``user`` can see, but of another team: ``(project, False)``.
+      Never handed on as the project: a project-scoped agent sees its
+      own project whichever team the URL names, so without this pin it
+      could read or write another team through its own project's id
+      (CHT-1273 review CRITICAL).
 
-      A caller who is not in the URL's team at all gets ``hidden``
+      A caller who is not in the URL's team at all gets ``(None, False)``
       instead, as it did before the pin moved here: the answer for a
       team you are not in does not depend on the project you name. The
       exception is a project-scoped agent naming its own project, which
-      it already knows; it gets ``elsewhere``.
+      it already knows.
+    * Otherwise ``(project, True)``.
     """
     from app.services.project_service import ProjectService
 
     project = await ProjectService().get_by_id(project_id) if project_id else None
     if not await can_see_project(user, project):
-        raise hidden
+        return None, False
     if project.team_id != team_id:
         if not (is_project_scoped_agent(user) or await is_in_team_directory(user, team_id)):
-            raise hidden
-        if elsewhere is None:
-            return None
-        raise elsewhere
+            return None, False
+        return project, False
+    return project, True
+
+
+async def visible_project_in_team(
+    user,
+    project_id: str | None,
+    team_id: str,
+    *,
+    detail: str = "Project not found",
+    status_code: int = status.HTTP_404_NOT_FOUND,
+    elsewhere: HTTPException | None = None,
+):
+    """A project named in a request *body* beside a URL team: the
+    project, or ``not_found(detail, status_code)`` when it is missing
+    or hidden. A visible project of another team raises ``elsewhere``,
+    which defaults to that same not-found; pass one only where the
+    route has always told a caller who can see the project that it is
+    in the wrong team (a template snapshot's 400)."""
+    project, here = await _project_in_team(user, project_id, team_id)
+    if project is None:
+        raise not_found(detail, status_code)
+    if not here:
+        raise elsewhere if elsewhere is not None else not_found(detail, status_code)
     return project
+
+
+async def project_filter_in_team(user, project_id: str | None, team_id: str, *, elsewhere_detail: str):
+    """A ``project_id`` *filter* on a team-keyed route: the project, or
+    ``team_hidden()`` when it is missing or hidden (the answer the route
+    gives for a team the caller may not read). A visible project of
+    another team answers ``not_found(elsewhere_detail)``."""
+    project, here = await _project_in_team(user, project_id, team_id)
+    if project is None:
+        raise team_hidden()
+    if not here:
+        raise not_found(elsewhere_detail)
+    return project
+
+
+async def project_filter_in_team_or_none(user, project_id: str | None, team_id: str):
+    """``project_filter_in_team`` for a listing that answers a visible
+    project of another team with nothing: the project, None for that
+    case, ``team_hidden()`` when it is missing or hidden."""
+    project, here = await _project_in_team(user, project_id, team_id)
+    if project is None:
+        raise team_hidden()
+    return project if here else None
 
 
 async def _project_of(row):

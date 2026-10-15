@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, is_in_team_directory, can_read_team_data
-from app.api.visibility import visible_label
+from app.api.visibility import team_hidden, visible_label
 from app.schemas.issue import LabelCreate, LabelUpdate, LabelResponse
 from app.services.issue_service import IssueService
 from app.services.team_service import TeamService
@@ -26,10 +26,7 @@ async def create_label(
     # The team's label vocabulary: a project-scoped agent labels issues
     # in its project with it, so it may read and add to it (CHT-1780).
     if not await is_in_team_directory(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this team",
-        )
+        raise team_hidden()
 
     label = await issue_service.create_label(label_in, team_id)
     return LabelResponse.model_validate(label)
@@ -52,10 +49,7 @@ async def list_labels(
     # The team's label vocabulary: a project-scoped agent labels issues
     # in its project with it, so it may read and add to it (CHT-1780).
     if not await is_in_team_directory(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this team",
-        )
+        raise team_hidden()
 
     labels = await issue_service.list_labels(team_id, skip, limit)
     return [LabelResponse.model_validate(label) for label in labels]
@@ -86,10 +80,7 @@ async def update_label(
     # label on every project's issues, so a project-scoped agent may not
     # (CHT-1780).
     if not await can_read_team_data(current_user, label.team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this team",
-        )
+        raise team_hidden()
 
     label = await issue_service.update_label(label, label_in)
     return LabelResponse.model_validate(label)
