@@ -238,7 +238,7 @@ class TestTeamInvite:
         result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
 
         assert result.exit_code == 0
-        assert 'Invitation sent' in result.output
+        assert 'Invitation created for' in result.output
         assert 'bob@test.com' in result.output
 
     def test_team_invite_admin_role(self, cli_runner):
@@ -272,8 +272,27 @@ class TestTeamInvite:
         # One unbroken line, though longer than the console is wide.
         assert url in result.output.splitlines()
 
-    def test_team_invite_with_smtp_prints_no_link(self, cli_runner):
-        """CHT-1794: with email configured, accept_url is null: nothing to print."""
+    def test_team_invite_with_smtp_prints_link_and_says_queued(self, cli_runner):
+        """CHT-1824: with email configured the link comes too, and the
+        output says the email was queued, not that it was delivered."""
+        from cli.main import cli, client
+
+        url = "https://chaotic.example.com/invite/" + "t" * 64
+        client.invite_member = MagicMock(return_value={
+            "id": "inv-1", "email": "bob@test.com", "accept_url": url, "email_queued": True})
+
+        result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
+
+        assert result.exit_code == 0
+        assert 'Invitation created for bob@test.com' in result.output
+        assert 'Invitation sent' not in result.output
+        assert 'email was queued' in result.output
+        assert "isn't confirmed" in result.output
+        assert 'does not send email' not in result.output
+        assert url in result.output.splitlines()
+
+    def test_team_invite_old_server_with_smtp_does_not_claim_delivery(self, cli_runner):
+        """A server before CHT-1824 sends no link when it has SMTP."""
         from cli.main import cli, client
 
         client.invite_member = MagicMock(return_value={"id": "inv-1", "email": "bob@test.com", "accept_url": None})
@@ -281,9 +300,46 @@ class TestTeamInvite:
         result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
 
         assert result.exit_code == 0
-        assert 'Invitation sent to bob@test.com' in result.output
+        assert 'Invitation created for bob@test.com' in result.output
+        assert 'Invitation sent' not in result.output
+        assert "isn't confirmed" in result.output
         assert '/invite/' not in result.output
 
+    def test_team_invite_pending_409_names_the_cancel_command(self, cli_runner):
+        """CHT-1824: the refusal for a live invitation says how to send a new one."""
+        from cli.main import cli, client, APIError
+
+        detail = {"error_code": "invitation_pending", "message": "A pending invitation exists.",
+                  "invitation_id": "inv-9"}
+        client.invite_member = MagicMock(side_effect=APIError("A pending invitation exists.", 409, detail))
+
+        result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
+
+        assert result.exit_code == 1
+        assert 'A pending invitation exists.' in result.output
+        assert 'chaotic team cancel-invite inv-9' in " ".join(result.output.split())
+
+    def test_team_invite_pending_409_from_an_old_server(self, cli_runner):
+        from cli.main import cli, client, APIError
+
+        msg = "A pending invitation for this email already exists; revoke it to send a new one"
+        client.invite_member = MagicMock(side_effect=APIError(msg, 409, msg))
+
+        result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
+
+        assert result.exit_code == 1
+        assert 'chaotic team invitations' in " ".join(result.output.split())
+
+    def test_team_invite_other_errors_are_unchanged(self, cli_runner):
+        from cli.main import cli, client, APIError
+
+        client.invite_member = MagicMock(side_effect=APIError("User is already a team member", 400,
+                                                              "User is already a team member"))
+
+        result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
+
+        assert result.exit_code == 1
+        assert 'cancel-invite' not in result.output
 
     def test_team_invite_rebuilds_a_loopback_link_on_the_profile_server(self, cli_runner, monkeypatch):
         """CHT-1822: a server that never set APP_BASE_URL builds the link on

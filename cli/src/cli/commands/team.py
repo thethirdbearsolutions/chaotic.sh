@@ -16,6 +16,25 @@ def _main():
     return sys.modules['cli.main']
 
 
+def _with_cancel_hint(m, error):
+    """The 409 for an address with a pending invitation, with the command
+    that cancels it (CHT-1824). Anything else is returned as it was."""
+    if getattr(error, "status_code", None) != 409:
+        return error
+    detail = getattr(error, "detail", None)
+    if isinstance(detail, dict):
+        if detail.get("error_code") != "invitation_pending":
+            return error
+        inv_id = detail.get("invitation_id")
+    elif isinstance(detail, str) and "pending invitation" in detail:
+        inv_id = None  # A server older than CHT-1824 names no id.
+    else:
+        return error
+    target = inv_id if isinstance(inv_id, str) and inv_id else "<id from `chaotic team invitations`>"
+    hint = f" To send a new link: `chaotic team cancel-invite {target}`, then invite again."
+    return m.APIError(f"{error}{hint}", status_code=error.status_code, detail=detail)
+
+
 def invite_link_for_display(accept_url: str, web_url: str | None) -> str:
     """The accept link to print (CHT-1822).
 
@@ -229,19 +248,35 @@ def register(cli):
     def team_invite(email, role):
         """Invite a member to the team.
 
-        On a server that cannot send email, prints the invitation link,
-        once, for you to send them yourself (CHT-1794)."""
+        Prints the invitation link, once, for you to send them yourself
+        (CHT-1794). When the server emails it too, the email is only
+        queued: if it does not arrive, send them the link (CHT-1824)."""
         m = _main()
-        invitation = _client().invite_member(m.get_current_team(), email, role)
+        try:
+            invitation = _client().invite_member(m.get_current_team(), email, role)
+        except m.APIError as e:
+            raise _with_cancel_hint(m, e) from e
         accept_url = invitation.get("accept_url") if isinstance(invitation, dict) else None
-        if not accept_url:
-            console.print(f"[green]Invitation sent to {esc(email)}[/green]")
-            return
+        queued = isinstance(invitation, dict) and invitation.get("email_queued") is True
         console.print(f"[green]Invitation created for {esc(email)}[/green]")
-        console.print(
-            "[yellow]This server does not send email: send this link to them yourself. "
-            "It is shown only now.[/yellow]"
-        )
+        if not accept_url:
+            # A server older than CHT-1824 with SMTP: the email is the
+            # only copy of the link, and nothing confirms it arrived.
+            console.print(
+                "[yellow]The server queued an email with the link; delivery isn't confirmed. "
+                "If it does not arrive, cancel this invitation and invite again.[/yellow]"
+            )
+            return
+        if queued:
+            console.print(
+                f"[yellow]An email was queued to {esc(email)}; delivery isn't confirmed, "
+                "so you can also pass on this link. It is shown only now.[/yellow]"
+            )
+        else:
+            console.print(
+                "[yellow]This server does not send email: send this link to them yourself. "
+                "It is shown only now.[/yellow]"
+            )
         link = invite_link_for_display(accept_url, m.get_web_url())
         # Unwrapped and unstyled, so it copies as one line.
         console.print(esc(link), soft_wrap=True, highlight=False)

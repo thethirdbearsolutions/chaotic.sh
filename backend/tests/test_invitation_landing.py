@@ -308,7 +308,14 @@ class TestOneLiveInvitationPerAddress:
         second = await self._create(client, auth_headers, test_team, role="admin")
 
         assert second.status_code == 409
-        assert "revoke" in second.json()["detail"]
+        # It says what to do, with the id to cancel (CHT-1824).
+        first_id = (await OxydeTeamInvitation.objects.filter(team_id=test_team.id).all())[0].id
+        assert second.json()["detail"] == {
+            "error_code": "invitation_pending",
+            "message": "A pending invitation for this email already exists. "
+                       "If it did not reach them, cancel it and invite again for a new link.",
+            "invitation_id": first_id,
+        }
         assert len(await OxydeTeamInvitation.objects.filter(team_id=test_team.id).all()) == 1
 
     async def test_revoking_it_allows_a_new_one(self, client, auth_headers, test_team):

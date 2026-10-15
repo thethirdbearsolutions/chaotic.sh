@@ -228,11 +228,16 @@ async def test_create_invitation_without_smtp_returns_accept_url_once(client, au
 
 
 @pytest.mark.asyncio
-async def test_create_invitation_with_smtp_has_no_accept_url(client, auth_headers, test_team):
-    """CHT-1794: when the server can email the link, the answer does not
-    carry it: the invitee's inbox is the only place it goes."""
+async def test_create_invitation_with_smtp_also_returns_accept_url(client, auth_headers, test_team, caplog):
+    """CHT-1824: with SMTP the email is only queued (it is sent after the
+    answer), so the admin gets the link as well, in case delivery fails,
+    and is told the email was queued. Same handling as without SMTP:
+    not cached, not sent on as a Referer, not logged."""
+    import logging
     from unittest.mock import patch
+    from app.oxyde_models.team import OxydeTeamInvitation
 
+    caplog.set_level(logging.DEBUG)
     with patch("app.api.teams.EmailService.is_configured", return_value=True), \
             patch("app.api.teams.EmailService.send_invitation_email") as mock_send:
         response = await client.post(
@@ -241,8 +246,32 @@ async def test_create_invitation_with_smtp_has_no_accept_url(client, auth_header
             json={"email": "invited@example.com", "role": "member"},
         )
     assert response.status_code == 201, response.text
-    assert response.json()["accept_url"] is None
+    data = response.json()
+    row = await OxydeTeamInvitation.objects.get(id=data["id"])
     mock_send.assert_called_once()
+    assert data["accept_url"] == mock_send.call_args.kwargs["accept_url"]
+    assert data["accept_url"].endswith(f"/invite/{row.token}")
+    assert data["email_queued"] is True
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert not [r for r in caplog.records if row.token in r.getMessage()]
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_without_smtp_is_not_queued(client, auth_headers, test_team):
+    """CHT-1824: email_queued is false when the server has no SMTP, so a
+    client can say the link is the only way it travels."""
+    from unittest.mock import patch
+
+    with patch("app.api.teams.EmailService.is_configured", return_value=False):
+        response = await client.post(
+            f"/api/teams/{test_team.id}/invitations",
+            headers=auth_headers,
+            json={"email": "invited@example.com", "role": "member"},
+        )
+    assert response.status_code == 201, response.text
+    assert response.json()["email_queued"] is False
+    assert response.json()["accept_url"]
 
 
 @pytest.mark.asyncio
@@ -264,6 +293,9 @@ async def test_create_invitation_succeeds_even_if_email_send_raises(client, auth
             json={"email": "invited@example.com", "role": "member"},
         )
     assert response.status_code == 201
+    # Not queued, but the admin still has the link (CHT-1824).
+    assert response.json()["email_queued"] is False
+    assert response.json()["accept_url"]
 
 
 @pytest.mark.asyncio
