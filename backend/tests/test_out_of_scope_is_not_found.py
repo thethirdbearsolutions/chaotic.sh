@@ -385,6 +385,8 @@ ROUTES = [
     ("POST", "/api/teams/{team}/invitations/{invitation}/verification-code", None, "team"),
     ("PATCH", "/api/teams/{own_team}/members/{user}", {"role": "member"}, "user"),
     ("DELETE", "/api/teams/{own_team}/members/{user}", None, "user"),
+    ("POST", "/api/teams/{team}/transfer-ownership", {"user_id": "{user}"}, "team"),
+    ("POST", "/api/teams/{own_team}/transfer-ownership", {"user_id": "{user}"}, "user"),
     ("DELETE", "/api/teams/{own_team}/invitations/{invitation}", None, "invitation"),
     ("POST", "/api/teams/{own_team}/invitations/{invitation}/verification-code", None, "invitation"),
     ("GET", "/api/teams/{team}/projects", None, "team"),
@@ -449,6 +451,8 @@ REFUSED_ALIKE = {
         AGENT_PRINCIPALS, "Only admins can remove other members"),
     ("DELETE", "/api/teams/{own_team}/invitations/{invitation}", "invitation"): _alike(
         AGENT_PRINCIPALS, "Only admins can delete invitations"),
+    ("POST", "/api/teams/{own_team}/transfer-ownership", "user"): _alike(
+        AGENT_PRINCIPALS, "Only owners can transfer team ownership"),
     ("POST", "/api/teams/{own_team}/invitations/{invitation}/verification-code", "invitation"): _alike(
         AGENT_PRINCIPALS, "Only admins can issue verification codes"),
     ("PATCH", "/api/rituals/{own_ritual}", "group"): _alike(AGENT_PRINCIPALS, "Only admins can update rituals"),
@@ -487,6 +491,7 @@ REFUSED_ALIKE = {
             ("DELETE", "/api/teams/{team}/members/{user}", "Only admins can remove other members"),
             ("GET", "/api/teams/{team}/invitations", "Only admins can view invitations"),
             ("GET", "/api/teams/{team}/activity", "Not authorized to access this team"),
+            ("POST", "/api/teams/{team}/transfer-ownership", "Not authorized to access this team"),
             ("POST", "/api/teams/{team}/invitations", "Only admins can invite members"),
             ("DELETE", "/api/teams/{team}/invitations/{invitation}", "Only admins can delete invitations"),
             ("POST", "/api/teams/{team}/invitations/{invitation}/verification-code",

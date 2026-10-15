@@ -76,6 +76,23 @@ class TestTeamMembers:
         updated = api_client.update_member_role(test_team["id"], test_user2.id, "admin")
         assert updated["role"] == "admin"
 
+    def test_transfer_ownership_then_leave_via_cli_client(self, api_client, test_team, test_user, test_user2):
+        """CHT-1848: the owner hands the team on, becomes an admin, and
+        can then leave."""
+        from conftest import _run_async
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.enums import TeamRole
+
+        _run_async(OxydeTeamMember.objects.create(
+            team_id=test_team["id"], user_id=test_user2.id, role=TeamRole.MEMBER,
+        ))
+
+        member = api_client.transfer_ownership(test_team["id"], test_user2.id)
+        assert (member["user_id"], member["role"]) == (test_user2.id, "owner")
+        roles = {m["user_id"]: m["role"] for m in api_client.get_team_members(test_team["id"])}
+        assert roles == {test_user.id: "admin", test_user2.id: "owner"}
+        api_client.remove_member(test_team["id"], test_user.id)
+
 
 class TestInvitations:
     def test_invite_member(self, api_client, test_team):

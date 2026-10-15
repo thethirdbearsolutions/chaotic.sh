@@ -140,7 +140,10 @@ class TeamActivityAction(str, Enum):
 
     Who did it is ``actor_id``; whom it concerns, ``target_user_id``. A
     member leaving on their own is MEMBER_REMOVED with actor and target
-    the same user.
+    the same user. OWNERSHIP_TRANSFERRED (CHT-1848) is the transfer as a
+    whole, actor the owner who handed it on, target the new owner; the
+    two role changes it makes are logged as ROLE_CHANGED rows beside it,
+    so that ``action=role_changed`` lists every change of role.
     """
     MEMBER_ADDED = "member_added"
     MEMBER_REMOVED = "member_removed"
@@ -149,6 +152,7 @@ class TeamActivityAction(str, Enum):
     INVITATION_CANCELLED = "invitation_cancelled"
     INVITATION_ACCEPTED = "invitation_accepted"
     VERIFICATION_CODE_ISSUED = "verification_code_issued"
+    OWNERSHIP_TRANSFERRED = "ownership_transferred"
 
 
 # --- Project enums ---

@@ -36,6 +36,24 @@ def eligible_on_project_work(user, team_id: str, project_id: str | None, *, is_m
     return is_member
 
 
+# An owner of the team other than the row being changed, who can act as
+# one: a person (an agent's membership row does not count) with an
+# active account. Params: team_id, TeamRole.OWNER.name, the row's id
+# (stored enums are names, CLAUDE.md).
+_ANOTHER_OWNER = (
+    "EXISTS (SELECT 1 FROM team_members o JOIN users u ON u.id = o.user_id "
+    "WHERE o.team_id = ? AND o.role = ? AND o.id != ? AND u.is_agent = 0 AND u.is_active = 1)"
+)
+
+
+class LastOwnerError(Exception):
+    """The change would leave the team with no owner (CHT-1848)."""
+
+
+class MembershipChanged(Exception):
+    """A membership the change depends on changed since it was read."""
+
+
 class TeamService:
     """Service for team operations."""
 
@@ -215,19 +233,87 @@ class TeamService:
 
     async def update_member_role(
         self, member: OxydeTeamMember, role: TeamRole, *, actor_id: str | None,
-    ) -> OxydeTeamMember:
-        """Update a member's role; logged (ROLE_CHANGED) when it changes."""
+    ) -> OxydeTeamMember | None:
+        """Update a member's role; logged (ROLE_CHANGED) when it changes.
+        None when the membership is gone.
+
+        An owner's role changes only while another owner remains
+        (CHT-1848), and that check is part of the UPDATE itself, so two
+        owners stepping down at once leave one: SQLite runs one write
+        statement at a time, and the second sees the first's commit. The
+        write also requires the role the caller read, so the log's
+        ``old_role`` is the one replaced. Raises LastOwnerError, or
+        MembershipChanged when the role changed meanwhile.
+        """
         old_role = member.role
+        if old_role == role:
+            await member.refresh()
+            return member
+        sql = "UPDATE team_members SET role = ? WHERE id = ? AND role = ?"
+        params = [role.name, member.id, old_role.name]
+        if old_role == TeamRole.OWNER:
+            sql += f" AND {_ANOTHER_OWNER}"
+            params += [member.team_id, TeamRole.OWNER.name, member.id]
         async with atomic():
-            member.role = role
-            await member.save(update_fields={"role"})
-            if old_role != role:
-                await self.record_activity(
-                    member.team_id, TeamActivityAction.ROLE_CHANGED, actor_id=actor_id,
-                    target_user_id=member.user_id, role=role, old_role=old_role,
-                )
+            if not await execute_raw(sql + " RETURNING id", params):
+                current = await OxydeTeamMember.objects.filter(id=member.id).first()
+                if current is None:
+                    return None
+                if current.role != old_role:
+                    raise MembershipChanged()
+                raise LastOwnerError()
+            await self.record_activity(
+                member.team_id, TeamActivityAction.ROLE_CHANGED, actor_id=actor_id,
+                target_user_id=member.user_id, role=role, old_role=old_role,
+            )
         await member.refresh()
         return member
+
+    async def transfer_ownership(
+        self, target: OxydeTeamMember, *, actor_id: str,
+    ) -> OxydeTeamMember:
+        """Make ``target`` an owner and its caller, ``actor_id``, an admin,
+        in one transaction (CHT-1848). Logged as OWNERSHIP_TRANSFERRED,
+        and as a ROLE_CHANGED row for each of the two.
+
+        The promotion requires, in the same statement, that the actor is
+        still an owner and the target still holds the role the caller
+        read; the actor's step-down follows under the writer lock the
+        promotion took, with the new owner already in place, so the team
+        always has an owner. Raises MembershipChanged when either was
+        changed (or removed) meanwhile; nothing is written then.
+        """
+        old_role = target.role
+        owner, admin = TeamRole.OWNER.name, TeamRole.ADMIN.name
+        async with atomic():
+            promoted = await execute_raw(
+                "UPDATE team_members SET role = ? WHERE id = ? AND role = ? AND EXISTS ("
+                "SELECT 1 FROM team_members a WHERE a.team_id = ? AND a.user_id = ? AND a.role = ?"
+                ") RETURNING id",
+                [owner, target.id, old_role.name, target.team_id, actor_id, owner],
+            )
+            if not promoted:
+                raise MembershipChanged()
+            stepped_down = await execute_raw(
+                "UPDATE team_members SET role = ? WHERE team_id = ? AND user_id = ? AND role = ? RETURNING id",
+                [admin, target.team_id, actor_id, owner],
+            )
+            if not stepped_down:  # pragma: no cover -- the promotion's EXISTS saw it, under the lock
+                raise MembershipChanged()
+            await self.record_activity(
+                target.team_id, TeamActivityAction.OWNERSHIP_TRANSFERRED, actor_id=actor_id,
+                target_user_id=target.user_id, role=TeamRole.OWNER, old_role=old_role,
+            )
+            await self.record_activity(
+                target.team_id, TeamActivityAction.ROLE_CHANGED, actor_id=actor_id,
+                target_user_id=target.user_id, role=TeamRole.OWNER, old_role=old_role,
+            )
+            await self.record_activity(
+                target.team_id, TeamActivityAction.ROLE_CHANGED, actor_id=actor_id,
+                target_user_id=actor_id, role=TeamRole.ADMIN, old_role=TeamRole.OWNER,
+            )
+        await target.refresh()
+        return target
 
     async def remove_member(self, member: OxydeTeamMember, *, actor_id: str | None) -> bool:
         """Remove a member from a team, logged (MEMBER_REMOVED) in the
@@ -237,14 +323,24 @@ class TeamService:
         False, with nothing logged, when the row was already gone: the
         delete is conditional, so two removals of one membership (two
         admins at once, a retried request) log one row (PR #451 review 3).
+
+        An owner is removed only while another owner remains (CHT-1848),
+        checked in the DELETE itself, so two owners leaving at once leave
+        one; LastOwnerError otherwise. The role logged is the one the row
+        held when it was deleted.
         """
         async with atomic():
-            deleted = await OxydeTeamMember.objects.filter(id=member.id).delete()
-            if deleted != 1:
+            deleted = await execute_raw(
+                f"DELETE FROM team_members WHERE id = ? AND (role != ? OR {_ANOTHER_OWNER}) RETURNING role",
+                [member.id, TeamRole.OWNER.name, member.team_id, TeamRole.OWNER.name, member.id],
+            )
+            if not deleted:
+                if await OxydeTeamMember.objects.filter(id=member.id).first() is not None:
+                    raise LastOwnerError()
                 return False
             await self.record_activity(
                 member.team_id, TeamActivityAction.MEMBER_REMOVED, actor_id=actor_id,
-                target_user_id=member.user_id, role=member.role,
+                target_user_id=member.user_id, role=TeamRole[deleted[0]["role"]],
             )
         return True
 

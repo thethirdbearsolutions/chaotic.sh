@@ -211,12 +211,50 @@ class TestAuditRemovedMembers:
         db.event("e1", "t1", "u1", "2026-10-14 12:00:00")
         (finding,) = system.audit_removed_members(db.path)["findings"]
         remedy = "\n".join(finding["remedy"])
-        assert "cannot end an owner membership" in remedy
+        assert "the team's only owner" in remedy
+        assert "chaotic team transfer-ownership NEW_OWNER" in remedy
         assert "chaotic system backup" in remedy
         (delete,) = [step for step in finding["remedy"] if step.startswith("sqlite3 ")]
         assert shlex.split(delete)[2] == "DELETE FROM team_members WHERE id = 'm-own'"
-        assert "chaotic team remove-member" not in remedy
         assert "revoke the keys user u1 holds" in remedy
+
+    def test_an_owner_leftover_beside_another_owner_is_ended_through_the_api(self, db):
+        """CHT-1848: an owner removes another owner while one remains."""
+        db.member("m-own", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.member("m-other", "t1", "u2", "2026-10-01 09:00:00", role="OWNER")
+        db.event("e1", "t1", "u1", "2026-10-14 12:00:00")
+        (finding,) = system.audit_removed_members(db.path)["findings"]
+        assert finding["remedy"] == [
+            "as another owner of team t1: chaotic team use t1",
+            "chaotic team remove-member u1",
+        ]
+
+    def test_an_owner_who_cannot_act_as_one_does_not_count(self, db):
+        """With a users table, the other owner must be a person with an
+        active account, as the server requires."""
+        db.conn.executescript(
+            "CREATE TABLE users (id TEXT PRIMARY KEY, is_agent INTEGER NOT NULL, is_active INTEGER NOT NULL);"
+            "INSERT INTO users VALUES ('u1', 0, 1), ('u-agent', 1, 1), ('u-off', 0, 0), ('u-ok', 0, 1);"
+        )
+        db.member("m-own", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.member("m-agent", "t1", "u-agent", "2026-10-01 09:00:00", role="OWNER")
+        db.member("m-off", "t1", "u-off", "2026-10-01 09:00:00", role="OWNER")
+        db.event("e1", "t1", "u1", "2026-10-14 12:00:00")
+        (finding,) = system.audit_removed_members(db.path)["findings"]
+        assert any(step.startswith("sqlite3 ") for step in finding["remedy"])
+        db.member("m-ok", "t1", "u-ok", "2026-10-01 09:00:00", role="OWNER")
+        (finding,) = system.audit_removed_members(db.path)["findings"]
+        assert finding["remedy"][-1] == "chaotic team remove-member u1"
+
+    def test_two_owner_leftovers_do_not_count_each_other(self, db):
+        db.member("m-a", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.member("m-b", "t1", "u2", "2026-10-01 09:00:00", role="OWNER")
+        db.event("e1", "t1", "u1", "2026-10-14 12:00:00")
+        db.event("e2", "t1", "u2", "2026-10-14 12:00:00")
+        findings = system.audit_removed_members(db.path)["findings"]
+        assert len(findings) == 2
+        for finding in findings:
+            assert any(step.startswith("sqlite3 ") for step in finding["remedy"])
 
     def test_changes_no_data(self, db):
         db.member("m-left", "t1", "u1", "2026-10-01 09:00:00")

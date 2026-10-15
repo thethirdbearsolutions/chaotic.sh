@@ -34,6 +34,7 @@ import sh.chaotic.api.models.TeamInvitationCreate
 import sh.chaotic.api.models.TeamInvitationCreatedResponse
 import sh.chaotic.api.models.TeamInvitationResponse
 import sh.chaotic.api.models.TeamMemberResponse
+import sh.chaotic.api.models.TeamOwnershipTransfer
 import sh.chaotic.api.models.TeamResponse
 import sh.chaotic.api.models.TeamRoleUpdate
 import sh.chaotic.api.models.TeamUpdate
@@ -502,6 +503,40 @@ import io.ktor.http.ParametersBuilder
             )
 
             return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * POST /api/teams/{team_id}/transfer-ownership
+        * Transfer Ownership
+        * Hand the team on to another member (CHT-1848).  The member named becomes an owner and the caller, who must be an owner, becomes an admin, in one transaction, so the team is never without an owner. The new owner must be a current member of the team and a person with an active account, not an agent. A team with several owners keeps them all; to add an owner without stepping down, change the member&#39;s role to owner instead.  Anyone outside the team&#39;s directory gets &#x60;&#x60;team_hidden()&#x60;&#x60;; a member of it who is not an owner (an agent never is, here), 403. Answers the new owner&#39;s membership.
+         * @param teamId  
+         * @param teamOwnershipTransfer  
+         * @return TeamMemberResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun transferOwnershipApiTeamsTeamIdTransferOwnershipPost(teamId: kotlin.String, teamOwnershipTransfer: TeamOwnershipTransfer): HttpResponse<TeamMemberResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = teamOwnershipTransfer
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.POST,
+            "/api/teams/{team_id}/transfer-ownership".replace("{" + "team_id" + "}", "$teamId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return jsonRequest(
             localVariableConfig,
             localVariableBody,
             localVariableAuthNames
