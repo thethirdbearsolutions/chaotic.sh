@@ -4,7 +4,7 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 from datetime import datetime, timezone
 from oxyde import F, IntegrityError
-from app.db.transactions import atomic
+from app.services.credential_events import revoking
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
 from app.services.sprint_service import SprintService
@@ -92,11 +92,23 @@ class ProjectService:
         await project.refresh()
         return project
 
-    async def delete(self, project: OxydeProject) -> None:
-        """Delete a project and cascade to child records."""
-        from app.services.inbox_service import InboxService
+    async def delete(self, project: OxydeProject, *, actor_id: str | None = None) -> None:
+        """Delete a project and cascade to child records.
 
-        async with atomic():
+        Its project-scoped agents are retired first, in the same
+        transaction (CHT-1844): on a database built from the migration
+        chain ``users.agent_project_id`` is ``ON DELETE SET NULL``, so
+        the delete would otherwise leave each of them with only its
+        ``agent_team_id``, a team-wide agent.
+        """
+        from app.services.agent_service import AgentService
+        from app.services.inbox_service import InboxService
+        from app.services.revocation_service import REASON_PROJECT_DELETED
+
+        async with revoking():
+            await AgentService().retire_for_deleted_scope(
+                project_ids=[project.id], actor_id=actor_id, reason=REASON_PROJECT_DELETED,
+            )
             # Inbox entries about the project's issues and documents point
             # at nothing once they go (CHT-1626).
             await InboxService().resolve_for_project(project.id)

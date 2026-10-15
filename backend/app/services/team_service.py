@@ -69,12 +69,24 @@ class TeamService:
         sessions and unredeemed codes and tickets are revoked first
         (CHT-1523), so the deletion is audited and moves the revocation
         epoch rather than only cascading the rows away.
+
+        Its agents, and the agents of its projects (which the delete
+        cascades away), are retired in the same transaction (CHT-1844):
+        ``users.agent_team_id`` is ``ON DELETE SET NULL`` on a database
+        built from the migration chain, which would leave each one
+        active with no team.
         """
-        from app.services.revocation_service import RevocationService
+        from app.oxyde_models.project import OxydeProject
+        from app.services.agent_service import AgentService
+        from app.services.revocation_service import REASON_TEAM_DELETED, RevocationService
 
         async with revoking():
             await OxydeTeamInvitation.objects.filter(team_id=team.id).delete()
             await RevocationService().revoke_for_team(team.id, actor_id=actor_id)
+            project_ids = [p.id for p in await OxydeProject.objects.filter(team_id=team.id).all()]
+            await AgentService().retire_for_deleted_scope(
+                team_id=team.id, project_ids=project_ids, actor_id=actor_id, reason=REASON_TEAM_DELETED,
+            )
             await OxydeTeamMember.objects.filter(team_id=team.id).delete()
             await team.delete()
 

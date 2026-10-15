@@ -162,5 +162,5 @@ async def delete_project(project_id: str, current_user: CurrentUser):
 
     team_id = project.team_id
     project_data = {"id": project.id, "name": project.name, "key": project.key}
-    await project_service.delete(project)
+    await project_service.delete(project, actor_id=current_user.id)
     await broadcast_project_event(team_id, "deleted", project_data)
