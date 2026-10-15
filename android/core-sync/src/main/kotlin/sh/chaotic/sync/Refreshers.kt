@@ -12,7 +12,14 @@ import java.util.concurrent.TimeUnit
 sealed interface RefreshOutcome {
     data object Refreshed : RefreshOutcome
 
-    /** What is cached was fetched recently enough; nothing was asked of the server. */
+    /**
+     * What is cached is as current as a fetch could make it, so nothing was
+     * saved: it was fetched recently enough (nothing was asked of the
+     * server); or, for an issue, writes to it overtook every fetch and the
+     * cache holds what they answered; or, for an issue refreshed after a
+     * write ([CacheRefresher.refreshCachedIssue]), it is not cached, so
+     * there is nothing to bring up to date.
+     */
     data object Fresh : RefreshOutcome
 
     /** The server says it is gone (404): it was removed from the cache. */
@@ -47,6 +54,7 @@ sealed interface RefreshOutcome {
  * last fetch unless forced (a pull to refresh): coming back to the home
  * screen, or flicking between tabs, does not repeat the requests.
  */
+@Suppress("TooManyFunctions") // one entry point per part of the cache, and the steps they share
 class CacheRefresher(
     private val remote: ChaoticRemote,
     private val session: CacheSession,
@@ -79,25 +87,102 @@ class CacheRefresher(
      * Fetch [issueId] with its comments and activity, as known in [teamId],
      * and keep it as opened now. Issues not opened for [ISSUE_RETENTION_DAYS]
      * are pruned on the way.
+     *
+     * A write to the issue that the server takes while this fetch is out
+     * (a status change, a comment, a gate decision) makes the fetch older
+     * than the cache: saving it would put the old status back, or drop the
+     * new comment, until the next refresh (CHT-1668). So such a fetch is
+     * not saved but made again, up to [MAX_ISSUE_FETCHES] times in all. If
+     * writes overtake every one, the answer is [RefreshOutcome.Fresh] when
+     * the issue is cached (the cache holds what those writes answered,
+     * newer than any of the fetches), and [RefreshOutcome.Failed] when it
+     * is not (there is nothing to show).
      */
-    @Suppress("ReturnCount") // a failure of any of the three calls ends the refresh
-    suspend fun refreshIssue(issueId: String, teamId: String): RefreshOutcome {
+    suspend fun refreshIssue(issueId: String, teamId: String): RefreshOutcome =
+        refresh(issueId) { teamId to nowMillis() }
+
+    /**
+     * [refreshIssue] for an issue that is cached already, after a write to
+     * it the cache could not be brought up to date from (CHT-1668). The
+     * issue's team and when it was last opened come from the cache, so a
+     * write does not count as opening it; an issue that is not cached (it
+     * was pruned, or never opened here) is left alone, as
+     * [RefreshOutcome.Fresh].
+     */
+    suspend fun refreshCachedIssue(issueId: String): RefreshOutcome = refresh(issueId) {
+        cachedIssue(issueId)?.let { it.teamId to it.openedAtMillis }
+    }
+
+    /**
+     * [placement] gives the issue's team and when it was opened, read in
+     * the store before each fetch and again in the transaction that saves
+     * it; null means it is not to be saved (no longer cached).
+     */
+    @Suppress("ReturnCount") // signed out, not cached, and each fetch's own ending, end the refresh early
+    private suspend fun refresh(
+        issueId: String,
+        placement: suspend CacheStore.() -> Pair<String, Long>?,
+    ): RefreshOutcome {
         val ticket = session.begin() ?: return RefreshOutcome.Unauthorized
-        val now = nowMillis()
         session.write(ticket) { pruneIssues() } ?: return RefreshOutcome.Unauthorized
+        repeat(MAX_ISSUE_FETCHES) {
+            val writes = session.issueWrites(issueId)
+            val placed = session.write(ticket) { Placed(placement()) } ?: return RefreshOutcome.Unauthorized
+            val teamId = placed.at?.first ?: return RefreshOutcome.Fresh
+            val outcome = fetchIssue(ticket, issueId, teamId, writes, placement)
+            if (outcome != null) return outcome
+        }
+        // Overtaken every time: the cache holds the writes' answers, if it holds the issue at all.
+        val cached = session.write(ticket) { cachedIssue(issueId) != null } ?: return RefreshOutcome.Unauthorized
+        return if (cached) RefreshOutcome.Fresh else RefreshOutcome.Failed()
+    }
+
+    /** A nullable result through [CacheSession.write], whose null means signed out. */
+    private class Placed(val at: Pair<String, Long>?)
+
+    /** One fetch for [refresh]: how it ended, or null when a write to the issue overtook it. */
+    @Suppress("ReturnCount") // a failure of any of the three calls ends the refresh
+    private suspend fun fetchIssue(
+        ticket: Long,
+        issueId: String,
+        teamId: String,
+        writes: Long,
+        placement: suspend CacheStore.() -> Pair<String, Long>?,
+    ): RefreshOutcome? {
         val issue = remote.issue(issueId, teamId)
         if (issue !is Remote.Ok) return failure(ticket, issue, teamId, issueId)
         val comments = remote.comments(issueId)
         if (comments !is Remote.Ok) return failure(ticket, comments, teamId, issueId)
         val activity = remote.activity(issueId)
         if (activity !is Remote.Ok) return failure(ticket, activity, teamId, issueId)
-        val detail = IssueDetail(
-            issue = issue.value.copy(openedAtMillis = now),
-            comments = comments.value.sortedBy { it.createdAtMillis },
-            activity = activity.value.sortedBy { it.createdAtMillis },
-        )
-        return written(ticket, key = null) { saveIssue(detail) }
+        val saved = session.write(ticket) {
+            // Checked under the session's lock, which the write queue records its answers under too.
+            val opened = placement()?.second
+            when {
+                session.issueWrites(issueId) != writes -> SaveResult.OVERTAKEN
+
+                opened == null -> SaveResult.UNCACHED
+
+                else -> {
+                    saveIssue(
+                        IssueDetail(
+                            issue = issue.value.copy(openedAtMillis = opened),
+                            comments = comments.value.sortedBy { it.createdAtMillis },
+                            activity = activity.value.sortedBy { it.createdAtMillis },
+                        ),
+                    )
+                    SaveResult.SAVED
+                }
+            }
+        } ?: return RefreshOutcome.Unauthorized
+        return when (saved) {
+            SaveResult.SAVED -> RefreshOutcome.Refreshed
+            SaveResult.UNCACHED -> RefreshOutcome.Fresh
+            SaveResult.OVERTAKEN -> null
+        }
     }
+
+    private enum class SaveResult { SAVED, UNCACHED, OVERTAKEN }
 
     /**
      * The current sprint card of every project in [teamId]. A project
@@ -218,6 +303,9 @@ class CacheRefresher(
         /** Issues opened on this device stay cached this long after they were last opened. */
         const val ISSUE_RETENTION_DAYS = 7L
         const val DEFAULT_PARALLELISM = 4
+
+        /** Fetches of one issue a refresh makes while writes to it keep overtaking them. */
+        const val MAX_ISSUE_FETCHES = 3
 
         /** Teams change rarely, and the inbox sync's `team_ids` prunes a left team in between. */
         const val DEFAULT_TEAMS_MAX_AGE_MILLIS = 5 * 60_000L

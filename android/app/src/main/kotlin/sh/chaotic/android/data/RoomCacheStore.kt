@@ -4,6 +4,7 @@ import sh.chaotic.sync.CacheSnapshot
 import sh.chaotic.sync.CacheStore
 import sh.chaotic.sync.InboxChange
 import sh.chaotic.sync.InboxEntry
+import sh.chaotic.sync.Issue
 import sh.chaotic.sync.IssueDetail
 import sh.chaotic.sync.PendingWrite
 import sh.chaotic.sync.SprintCard
@@ -29,6 +30,8 @@ class RoomCacheStore(private val dao: CacheDao) : CacheStore {
     override suspend fun dropTeam(teamId: String) = dao.dropTeam(teamId)
 
     override suspend fun saveIssue(detail: IssueDetail) = dao.saveIssue(detail)
+
+    override suspend fun cachedIssue(issueId: String): Issue? = dao.cachedIssue(issueId)?.toIssue()
 
     override suspend fun deleteIssue(issueId: String) = dao.deleteIssue(issueId)
 

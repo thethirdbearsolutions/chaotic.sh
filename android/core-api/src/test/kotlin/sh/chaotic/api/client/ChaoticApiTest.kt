@@ -4,12 +4,14 @@ import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
 import io.ktor.util.reflect.typeInfo
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import sh.chaotic.api.apis.AuthApi
+import sh.chaotic.api.apis.IssuesApi
 import sh.chaotic.api.models.HTTPValidationError
 import sh.chaotic.api.models.IssueStatus
 import sh.chaotic.api.models.UserLogin
@@ -101,4 +103,29 @@ class ChaoticApiTest {
 
     private fun resource(name: String): String =
         checkNotNull(javaClass.classLoader.getResource(name)) { "missing test resource $name" }.readText()
+
+    /**
+     * Why the generated partial-update models are a forbidden import
+     * (CHT-1647, in config/detekt/detekt.yml): the generated client, as the
+     * app configures it, sends an unassign as an empty body, which changes
+     * nothing. This pins the request on the wire, whatever the cause
+     * (today both `explicitNulls = false` in [ChaoticApi.json] and the
+     * fields' null defaults drop it), so if it ever starts going out with
+     * the null this fails, and the rule can be reconsidered. The model is
+     * named in full because its import is what the rule refuses.
+     */
+    @Test
+    fun theGeneratedClientSendsAnUnassignAsAnEmptyBody() = runTest {
+        var body: String? = null
+        val engine =
+            MockEngine { request ->
+                body = (request.body as TextContent).text
+                respond(content = "{}", status = HttpStatusCode.UnprocessableEntity, headers = jsonHeaders)
+            }
+        val api = IssuesApi("https://chaotic.example", engine, ChaoticApi.clientConfig)
+
+        api.updateIssueApiIssuesIssueIdPatch("i1", sh.chaotic.api.models.IssueUpdate(assigneeId = null))
+
+        assertEquals("{}", body)
+    }
 }

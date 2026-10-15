@@ -60,6 +60,9 @@ interface CacheStore {
 
     suspend fun saveIssue(detail: IssueDetail)
 
+    /** The cached issue [issueId] (without its comments or activity), or null when it is not cached (CHT-1668). */
+    suspend fun cachedIssue(issueId: String): Issue?
+
     suspend fun deleteIssue(issueId: String)
 
     /** Drop issues last opened before [millis], with their comments and activity. */

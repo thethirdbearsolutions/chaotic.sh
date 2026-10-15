@@ -36,6 +36,8 @@ class InMemoryCacheStore : CacheStore {
 
     override suspend fun inboxEntry(id: String): InboxEntry? = mutex.withLock { inbox[id] }
 
+    override suspend fun cachedIssue(issueId: String): Issue? = mutex.withLock { issues[issueId]?.issue }
+
     override suspend fun applyInbox(change: InboxChange) = mutex.withLock {
         inboxWrites++
         if (change.clear) inbox.clear()
