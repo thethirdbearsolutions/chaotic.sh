@@ -7,7 +7,7 @@ from app.auth.access import authorize
 from app.config import get_settings
 from app.auth.credentials import CredentialError, CredentialKind, Principal, classify, rest_resolver
 from app.services.api_key_service import APIKeyService
-from app.services.team_service import TeamService
+from app.services.team_service import TeamService, eligible_on_project_work
 from app.utils.security import is_web_login
 
 security = HTTPBearer(auto_error=False)
@@ -179,11 +179,8 @@ async def is_eligible_project_member(user: User | None, team_id: str, project_id
     """
     if user is None or not user.is_active or not team_id:
         return False
-    if user.is_agent:
-        if user.agent_project_id:
-            return user.agent_project_id == project_id and user.agent_team_id == team_id
-        return user.agent_team_id == team_id
-    return await TeamService().get_member(team_id, user.id) is not None
+    is_member = not user.is_agent and await TeamService().get_member(team_id, user.id) is not None
+    return eligible_on_project_work(user, team_id, project_id, is_member=is_member)
 
 
 async def can_manage_agent(user: User, agent: User) -> bool:

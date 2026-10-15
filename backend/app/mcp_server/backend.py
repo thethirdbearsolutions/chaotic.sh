@@ -213,8 +213,10 @@ class InProcessBackend:
         return await _team_id_for_project(self._user, project_id)
 
     @_translated(Access.READ)
-    async def resolve_assignee(self, value: str, team_id: str) -> str:
-        return await scope.resolve_assignee(self._user, team_id, value)
+    async def resolve_assignee(
+        self, value: str, team_id: str, project_id: str | None = None, purpose: str = "assign",
+    ) -> str:
+        return await scope.resolve_assignee(self._user, team_id, value, project_id, purpose)
 
     @_translated(Access.READ)
     async def resolve_sprint(self, value: str, project_id: str) -> str:

@@ -84,8 +84,18 @@ class Backend(Protocol):
         """The team that owns a project (for label/assignee lookups keyed
         off an issue's project)."""
 
-    async def resolve_assignee(self, value: str, team_id: str) -> str:
-        """'me', a user/agent id, a name or an email -> user id."""
+    async def resolve_assignee(
+        self, value: str, team_id: str, project_id: str | None = None, purpose: str = "assign",
+    ) -> str:
+        """'me', a user/agent id, a name or an email -> user id.
+        ``project_id``: the project the person is named on, when there is
+        one. ``purpose``: "assign" to give them work, "filter" to list
+        by them. On the HTTP side an assignment resolves only principals
+        eligible for the project (a project-scoped agent only from its
+        own project, never a deactivated account), and a filter resolves
+        what the ``where`` language does, deactivated members included
+        (CHT-1839). The stdio side ignores both and leaves the rule to
+        the API."""
 
     async def resolve_sprint(self, value: str, project_id: str) -> str:
         """'current', 'next', a name, a number, an id or id prefix -> sprint id."""

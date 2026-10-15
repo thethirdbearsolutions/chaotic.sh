@@ -20,6 +20,22 @@ TeamMember = OxydeTeamMember
 TeamInvitation = OxydeTeamInvitation
 
 
+def eligible_on_project_work(user, team_id: str, project_id: str | None, *, is_member: bool) -> bool:
+    """The rule behind ``app.api.deps.is_eligible_project_member``, with the
+    one fact it must look up passed in: ``is_member``, whether ``user``
+    has a ``team_members`` row in ``team_id`` (read only for a person).
+    For a caller that already holds the team's member rows
+    (``mcp_server.scope.resolve_assignee``, CHT-1839), so the rule exists
+    once and the caller need not query per person."""
+    if user is None or not user.is_active or not team_id:
+        return False
+    if user.is_agent:
+        if user.agent_project_id:
+            return user.agent_project_id == project_id and user.agent_team_id == team_id
+        return user.agent_team_id == team_id
+    return is_member
+
+
 class TeamService:
     """Service for team operations."""
 

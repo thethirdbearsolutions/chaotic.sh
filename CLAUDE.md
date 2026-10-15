@@ -209,6 +209,14 @@ new route gets wrong:
   `backend/tests/test_out_of_scope_is_not_found.py` for each row it takes
   by id (or a `NOT_ROW_KEYED` listing); the guard test fails until then.
   Passing it with a hand-rolled 404 works but drifts: prefer a loader.
+- **So does a new MCP tool argument**: an `MCP_PROBES` entry in the same
+  file for each argument that names a row (by id, key, name, email or
+  handle), or an `MCP_NOT_ROW_KEYED` listing. The tools resolve names
+  themselves (`mcp_server/scope.py`), so each resolver is a place to
+  leak. An assignee *being assigned* resolves only among
+  `is_eligible_project_member` principals; a list *filter* resolves
+  among the `where` language's set (`issue_query.filter_principals`),
+  deactivated members included (CHT-1839).
 
 ## Running the backend tests
 

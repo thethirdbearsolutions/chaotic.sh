@@ -45,6 +45,7 @@ from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.team import OxydeTeam, OxydeTeamInvitation, OxydeTeamMember
 from app.oxyde_models.template import OxydeTemplate
+from app.oxyde_models.user import OxydeUser
 from app.schemas.agent import AgentCreate
 from app.services.agent_service import AgentService
 
@@ -83,6 +84,9 @@ async def _project_rows(project, team, author):
         "project": project.id, "issue": issue.id, "identifier": issue.identifier,
         "comment": comment.id, "relation": relation.id, "sprint": sprint.id, "ritual": ritual.id,
         "group": group.id, "document": document.id, "doc_comment": doc_comment.id,
+        # The names an MCP tool argument also accepts for these rows.
+        "project_key": project.key, "sprint_name": sprint.name, "ritual_name": ritual.name,
+        "doc_title": document.title,
     }
 
 
@@ -125,6 +129,9 @@ async def _team_rows(team, author, agent_name):
         "team": team.id, "label": label.id, "template": template.id, "team_doc": team_doc.id,
         "invitation": invitation.id,
         "agent": agent.id, "api_key": key_id, "user": author.id,
+        # The names an MCP tool argument also accepts for these rows.
+        "team_key": team.key, "label_name": label.name, "agent_name": agent.name,
+        "agent_email": agent.email, "user_name": author.name, "user_email": author.email,
         "_agent": agent, "_key": key,
     }
 
@@ -149,10 +156,32 @@ async def world(db, test_user, test_user2, test_team, test_project):
     project_agent, project_key, _ = await AgentService().create(
         AgentCreate(name="Proj Bot"), test_user, test_team.id, project_id=test_project.id,
     )
+    # SIB's own agent: no assignee for anyone here, the agent of its
+    # sibling project PROJ included (CHT-1839).
+    sib_agent, _, _ = await AgentService().create(
+        AgentCreate(name="Sib Bot"), test_user, test_team.id, project_id=sibling.id,
+    )
+    a_sib.update(sib_agent=sib_agent.id, sib_agent_name=sib_agent.name)
+    # Team A's deactivated member and agent: never an assignee, for the
+    # project agent in their own team included. A filter still names them
+    # (the `where` language's set), so only assignment probes them.
+    retired = await OxydeUser.objects.create(
+        email="retired@example.com", hashed_password="x", name="Retired Person", is_active=False,
+    )
+    await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=retired.id, role=TeamRole.MEMBER)
+    retired_agent, _, _ = await AgentService().create(AgentCreate(name="Retired Bot"), test_user, test_team.id)
+    retired_agent.is_active = False
+    await retired_agent.save(update_fields={"is_active"})
+    a_sib.update(
+        retired=retired.id, retired_email=retired.email, retired_name=retired.name,
+        retired_agent=retired_agent.id, retired_agent_name=retired_agent.name,
+    )
 
     def own(rows, team, team_rows, artifact_rituals):
         return {"own_project": rows["project"], "own_issue": rows["issue"], "own_doc": rows["document"],
-                "own_ritual": rows["ritual"], **artifact_rituals, "own_team": team.id, "own_template": team_rows["template"]}
+                "own_ritual": rows["ritual"], **artifact_rituals, "own_team": team.id, "own_template": team_rows["template"],
+                "own_identifier": rows["identifier"], "own_ritual_name": rows["ritual_name"],
+                "own_doc_review_name": f"{rows['project_key']}-own_doc_review"}
 
     # What each principal probes: rows it cannot see, plus its own rows for
     # routes that name one of each. A project agent has no template it can
@@ -903,36 +932,300 @@ async def test_known_oracles_still_leak(client, world, principal_headers):
     assert fixed == {}, "these KNOWN_ORACLES no longer leak: move them to ROUTES"
 
 
+_RETIRED = ("retired", "retired_email", "retired_name", "retired_agent", "retired_agent_name")
+
+MCP_PROBES = [
+    # (tool, arguments, the placeholder replaced by a missing row). Every
+    # other argument names the caller's own rows or is a plain value, so
+    # the call gets as far as the placeholder's lookup.
+    ("issue_view", {"identifier": "{identifier}"}, "identifier"),
+    ("issue_relations", {"identifier": "{identifier}"}, "identifier"),
+    ("issue_revisions", {"identifier": "{identifier}"}, "identifier"),
+    ("issue_revision", {"identifier": "{identifier}", "version": 1}, "identifier"),
+    ("issue_comment", {"identifier": "{identifier}", "content": "x"}, "identifier"),
+    ("issue_update", {"identifier": "{identifier}", "title": "x"}, "identifier"),
+    ("issue_update", {"identifier": "{own_identifier}", "parent": "{identifier}"}, "identifier"),
+    ("issue_start", {"identifier": "{identifier}"}, "identifier"),
+    ("issue_label", {"identifier": "{identifier}", "add": ["{label}"]}, "identifier"),
+    ("issue_label", {"identifier": "{own_identifier}", "add": ["{label}"]}, "label"),
+    ("issue_label", {"identifier": "{own_identifier}", "add": ["{label_name}"]}, "label_name"),
+    ("issue_label", {"identifier": "{own_identifier}", "remove": ["{label}"]}, "label"),
+    ("issue_label", {"identifier": "{own_identifier}", "remove": ["{label_name}"]}, "label_name"),
+    ("issue_block", {"identifier": "{identifier}", "blocked": "{own_identifier}"}, "identifier"),
+    ("issue_block", {"identifier": "{own_identifier}", "blocked": "{identifier}"}, "identifier"),
+    ("issue_unblock", {"identifier": "{identifier}", "related": "{own_identifier}"}, "identifier"),
+    ("issue_unblock", {"identifier": "{own_identifier}", "related": "{identifier}"}, "identifier"),
+    ("issue_unblock", {"identifier": "{own_identifier}", "relation_id": "{relation}"}, "relation"),
+    ("issue_create", {"title": "x", "parent": "{identifier}"}, "identifier"),
+    ("issue_create", {"title": "x", "project": "{project}"}, "project"),
+    ("issue_create", {"title": "x", "project": "{project_key}"}, "project_key"),
+    ("issue_create", {"title": "x", "team": "{team}", "parent": "NOPE-9999"}, "team"),
+    ("sprint_add", {"identifiers": ["{identifier}"]}, "identifier"),
+    ("sprint_add", {"identifiers": ["{own_identifier}"], "sprint": "{sprint}"}, "sprint"),
+    ("sprint_add", {"identifiers": ["{own_identifier}"], "sprint": "{sprint_name}"}, "sprint_name"),
+    ("sprint_add", {"identifiers": ["{own_identifier}"], "project": "{project}"}, "project"),
+    ("sprint_add", {"identifiers": ["NOPE-9999"], "team": "{team}"}, "team"),
+    ("sprint_remove", {"identifiers": ["{identifier}"]}, "identifier"),
+    ("ritual_pending", {"identifier": "{identifier}"}, "identifier"),
+    ("doc_view", {"document_id": "{document}"}, "document"),
+    ("doc_view", {"document_id": "{team_doc}"}, "team_doc"),
+    ("doc_view", {"document_id": "{doc_title}"}, "doc_title"),
+    ("doc_revisions", {"document_id": "{document}"}, "document"),
+    ("doc_revision", {"document_id": "{document}", "version": 1}, "document"),
+    ("doc_update", {"document_id": "{document}", "title": "x"}, "document"),
+    ("doc_update", {"document_id": "{own_doc}", "project": "{project}"}, "project"),
+    ("doc_update", {"document_id": "NOPE", "team": "{team}"}, "team"),
+    ("doc_link", {"document_id": "{document}", "identifier": "{own_identifier}"}, "document"),
+    ("doc_link", {"document_id": "{own_doc}", "identifier": "{identifier}"}, "identifier"),
+    ("doc_unlink", {"document_id": "{document}", "identifier": "{own_identifier}"}, "document"),
+    ("doc_unlink", {"document_id": "{own_doc}", "identifier": "{identifier}"}, "identifier"),
+    ("doc_create", {"title": "x", "project": "{project}"}, "project"),
+    ("doc_create", {"title": "x", "team": "{team}", "is_global": True}, "team"),
+    # The assignee forms (CHT-1839): id, email and display name of a
+    # person, an agent, and the sibling project's agent; and for an
+    # assignment, team A's deactivated member and agent, which a filter
+    # may name (scope.resolve_assignee).
+    *[
+        (tool, {**args, field: "{" + placeholder + "}"}, placeholder)
+        for tool, args, field, extra in [
+            ("issue_update", {"identifier": "{own_identifier}"}, "assignee", _RETIRED),
+            ("issue_comment", {"identifier": "{own_identifier}", "content": "x"}, "assign_to", _RETIRED),
+            ("issue_list", {}, "assignee", ()),
+        ]
+        for placeholder in (
+            "user", "user_email", "user_name", "agent", "agent_email", "agent_name", "sib_agent", "sib_agent_name",
+            *extra,
+        )
+    ],
+    ("issue_list", {"label": "{label_name}"}, "label_name"),
+    ("issue_list", {"sprint": "{sprint}"}, "sprint"),
+    ("issue_list", {"sprint": "{sprint_name}"}, "sprint_name"),
+    ("issue_list", {"epic": "{identifier}"}, "identifier"),
+    ("issue_list", {"where": "assignee={user}"}, "user"),
+    ("issue_list", {"where": "creator={user_email}"}, "user_email"),
+    ("issue_list", {"where": "assignee={agent}"}, "agent"),
+    ("issue_list", {"where": "assignee={sib_agent}"}, "sib_agent"),
+    ("issue_list", {"where": "project={project_key}"}, "project_key"),
+    ("issue_list", {"where": 'sprint="{sprint_name}"'}, "sprint_name"),
+    ("issue_list", {"where": "parent={identifier}"}, "identifier"),
+    ("issue_list", {"where": 'label="{label_name}"'}, "label_name"),
+    # Ritual arguments, in the caller's own project.
+    *[
+        (tool, {**args, "ritual": "{" + placeholder + "}"}, placeholder)
+        for tool, args in [
+            ("ritual_attest", {"note": "x", "identifier": "{own_identifier}"}),
+            ("ritual_complete", {"note": "x", "identifier": "{own_identifier}"}),
+            ("ritual_reject", {"note": "x", "identifier": "{own_identifier}"}),
+        ]
+        for placeholder in ("ritual", "ritual_name")
+    ],
+    ("ritual_attest", {"ritual": "{own_ritual_name}", "note": "x", "identifier": "{identifier}"}, "identifier"),
+    ("ritual_complete", {"ritual": "{own_ritual_name}", "note": "x", "identifier": "{identifier}"}, "identifier"),
+    ("ritual_reject", {"ritual": "{own_ritual_name}", "note": "x", "identifier": "{identifier}"}, "identifier"),
+    *[
+        (tool, {"ritual": "{own_doc_review_name}", "note": "x", "identifier": "{own_identifier}",
+                "document": "{" + doc + "}"}, doc)
+        for tool in ("ritual_attest", "ritual_complete")
+        for doc in ("document", "team_doc", "doc_title")
+    ],
+    ("issue_update", {"identifier": "{own_identifier}", "attest": {"{ritual_name}": "x"}}, "ritual_name"),
+    ("issue_start", {"identifier": "{own_identifier}", "attest": {"{ritual_name}": "x"}}, "ritual_name"),
+    ("sprint_close", {"sprint": "{sprint}"}, "sprint"),
+    ("sprint_close", {"sprint": "{sprint_name}"}, "sprint_name"),
+    ("sprint_transactions", {"sprint": "{sprint}"}, "sprint"),
+    ("sprint_transactions", {"sprint": "{sprint_name}"}, "sprint_name"),
+    # `project` and `team` on every tool that takes them. A write is
+    # given an argument that fails later, so nothing is written for a
+    # principal whose own project the `team` does not affect.
+    *[
+        (tool, {**args, "project": "{" + placeholder + "}"}, placeholder)
+        for tool, args in [
+            ("issue_list", {}), ("issue_ready", {}), ("doc_list", {}), ("sprint_current", {}),
+            ("sprint_list", {}), ("sprint_close", {"sprint": "NOPE"}), ("sprint_transactions", {}),
+            ("ritual_pending", {}), ("ritual_list", {}), ("activity_recent", {}),
+            ("ritual_attest", {"ritual": "NOPE"}), ("ritual_complete", {"ritual": "NOPE"}),
+            ("ritual_reject", {"ritual": "NOPE", "identifier": "NOPE-9999", "note": "x"}),
+        ]
+        for placeholder in ("project", "project_key")
+    ],
+    *[
+        (tool, {**args, "team": "{" + placeholder + "}"}, placeholder)
+        for tool, args in [
+            ("issue_list", {"all_projects": True}), ("issue_ready", {"all_projects": True}),
+            ("doc_list", {"all_projects": True}), ("sprint_current", {}), ("sprint_list", {}),
+            ("sprint_close", {"sprint": "NOPE"}), ("sprint_transactions", {}), ("ritual_pending", {}),
+            ("ritual_list", {}), ("activity_recent", {}), ("label_list", {}), ("project_list", {}),
+            ("inbox_list", {}), ("inbox_mark_all_read", {}),
+            ("ritual_attest", {"ritual": "NOPE"}), ("ritual_complete", {"ritual": "NOPE"}),
+            ("ritual_reject", {"ritual": "NOPE", "identifier": "NOPE-9999", "note": "x"}),
+        ]
+        for placeholder in ("team", "team_key")
+    ],
+]
+
+_MCP_VALUE = "a value the tool stores, filters on or reads as a setting, not a row it looks up"
+_MCP_PAGING = "shapes the answer (paging, order, detail), names no row"
+# (tool, argument) pairs MCP_PROBES does not probe, each with its reason.
+# Keyed per tool, so a new tool fails the guard until each of its
+# arguments is probed or listed here.
+MCP_NOT_ROW_KEYED = {
+    **{("issue_list", a): _MCP_VALUE for a in ("status", "priority", "search", "all_projects")},
+    **{("issue_list", a): _MCP_PAGING for a in ("limit", "sort_by", "order", "detail")},
+    **{("issue_create", a): _MCP_VALUE for a in (
+        "title", "description", "status", "priority", "issue_type", "estimate")},
+    **{("issue_update", a): _MCP_VALUE for a in (
+        "status", "priority", "estimate", "title", "description", "no_parent")},
+    ("issue_comment", "content"): _MCP_VALUE,
+    ("issue_start", "lease_seconds"): _MCP_VALUE,
+    **{("issue_ready", a): _MCP_VALUE for a in ("mine", "include_assigned", "all_projects")},
+    **{("issue_ready", a): _MCP_PAGING for a in ("limit", "detail")},
+    ("issue_block", "relation_type"): _MCP_VALUE,
+    ("issue_revisions", "limit"): _MCP_PAGING,
+    ("issue_revision", "version"): _REVISION,
+    **{("doc_list", a): _MCP_VALUE for a in ("search", "all_projects")},
+    **{("doc_list", a): _MCP_PAGING for a in ("limit", "detail")},
+    **{("doc_create", a): _MCP_VALUE for a in ("title", "content", "icon", "is_global")},
+    **{("doc_update", a): _MCP_VALUE for a in ("title", "content", "icon", "is_global")},
+    ("doc_revisions", "limit"): _MCP_PAGING,
+    ("doc_revision", "version"): _REVISION,
+    ("sprint_list", "status"): _MCP_VALUE,
+    ("ritual_list", "include_inactive"): _MCP_VALUE,
+    **{(tool, a): _MCP_VALUE for tool in ("ritual_attest", "ritual_complete") for a in ("note", "url")},
+    ("ritual_reject", "note"): _MCP_VALUE,
+    ("inbox_list", "unread"): _MCP_VALUE,
+    **{("inbox_list", a): _MCP_PAGING for a in ("limit", "detail")},
+    ("inbox_mark_read", "entry_id"): _OWN_INBOX,
+    ("activity_recent", "limit"): _MCP_PAGING,
+    ("project_list", "detail"): _MCP_PAGING,
+}
+
+# MCP_PROBES entries, keyed (tool, placeholder, argument), that succeed
+# alike for both values, and the principals they do it for. Any other
+# probe answering without refusing (an error, or the per-identifier
+# `failed` list of sprint_add and sprint_remove) fails: it reached nothing.
+MCP_SUCCEED_ALIKE = {
+    # A project-scoped key always means its own project; `team` beside it
+    # is not consulted (scope.resolve_project).
+    **{
+        (tool, placeholder, "team"): {"project_agent"}
+        for tool in ("sprint_current", "sprint_list", "sprint_transactions", "ritual_pending", "ritual_list")
+        for placeholder in ("team", "team_key")
+    },
+    # A label filter is sent by name and matches nothing, as for a label
+    # that does not exist (the REST filter, SUCCEED_ALIKE above).
+    ("issue_list", "label_name", "label"): set(PRINCIPALS),
+}
+
+
+def _refused(result):
+    """Whether a tool answer refuses: an error, or a batch tool's
+    per-identifier failures."""
+    return "error" in result or bool(result.get("failed"))
+
+
+def _tool_args(template, values):
+    """``_fill`` for tool arguments, which also carry a placeholder in a
+    dict key (``attest``) and plain non-string values."""
+    if isinstance(template, dict):
+        return {_fill(key, values): _tool_args(value, values) for key, value in template.items()}
+    if isinstance(template, list):
+        return [_tool_args(item, values) for item in template]
+    return _fill(template, values)
+
+
+def _swapped(answer, gone, existing):
+    """``answer`` with ``gone`` replaced by ``existing`` in every string
+    and key, so an answer quoting the missing value compares with one
+    quoting the existing value."""
+    if isinstance(answer, dict):
+        return {_swapped(k, gone, existing): _swapped(v, gone, existing) for k, v in answer.items()}
+    if isinstance(answer, list):
+        return [_swapped(item, gone, existing) for item in answer]
+    if isinstance(answer, str):
+        return answer.replace(gone, existing)
+    return answer
+
+
+def _argument_of(args, placeholder):
+    """The tool argument whose value (or a key or item in it) carries
+    ``{placeholder}``."""
+    marker = "{" + placeholder + "}"
+    for name, value in args.items():
+        if marker in json.dumps(value):
+            return name
+    return None
+
+
+@pytest_asyncio.fixture
+async def mcp_users(world, test_user2):
+    """Each principal as a user, for binding to the MCP context."""
+    return {
+        "project_agent": await OxydeUser.objects.get(agent_project_id=world["project_agent"][1]["own_project"]),
+        "team_b_agent": await OxydeUser.objects.get(is_agent=True, name="B Bot"),
+        "team_b_human": test_user2,
+    }
+
+
+@pytest.mark.parametrize("principal", PRINCIPALS)
+@pytest.mark.parametrize(
+    "tool_name,args,placeholder", MCP_PROBES,
+    ids=[f"{t} {json.dumps(a, sort_keys=True)} [{ph}]" for t, a, ph in MCP_PROBES],
+)
+async def test_mcp_out_of_scope_answers_like_missing(world, mcp_users, principal, tool_name, args, placeholder):
+    """Every MCP tool argument that names a row (CHT-1839): a row out of the
+    caller's scope, and a missing one, get the same answer. The tools call
+    the same API functions as the routes above, but resolve names, keys,
+    emails and handles on their own (``mcp_server/scope.py``, the shared
+    toolset's helpers), and each of those lookups is a place to leak."""
+    values = world[principal][1]
+    gone = _missing(values, placeholder)
+    tool = getattr(tools, tool_name)
+    with acting_as(mcp_users[principal]):
+        missing = await tool(**_tool_args(args, gone))
+        existing = await tool(**_tool_args(args, values))
+    # An answer may quote back the value it was sent.
+    echoed = _swapped(missing, str(gone[placeholder]), str(values[placeholder]))
+    if principal in MCP_SUCCEED_ALIKE.get((tool_name, placeholder, _argument_of(args, placeholder)), ()):
+        assert not _refused(existing), existing
+    else:
+        assert _refused(existing), existing
+    # A crash answers alike too, and proves nothing.
+    assert (existing.get("error") or {}).get("error_code") != "unexpected", existing
+    assert existing == echoed
+
+
+async def test_every_mcp_tool_argument_is_probed_or_explained():
+    """Each argument of each remote MCP tool (the registry the server
+    serves, so a new tool is covered the day it lands) is probed by an
+    MCP_PROBES entry or listed in MCP_NOT_ROW_KEYED with its reason."""
+    import inspect
+
+    served = {
+        (tool.__name__, name)
+        for tool in tools.ALL_TOOLS
+        for name in inspect.signature(tool).parameters
+    }
+    probed = {}
+    for tool_name, args, placeholder in MCP_PROBES:
+        assert hasattr(tools, tool_name), f"MCP_PROBES names {tool_name}, which the server does not serve"
+        argument = _argument_of(args, placeholder)
+        assert argument is not None, f"MCP_PROBES entry {tool_name} {args}: no argument carries {{{placeholder}}}"
+        probed[(tool_name, argument)] = (tool_name, placeholder)
+    unexplained = sorted(served - set(probed) - set(MCP_NOT_ROW_KEYED))
+    assert unexplained == [], (
+        "MCP tool arguments with no out-of-scope probe: add an MCP_PROBES entry whose placeholder is "
+        "in the argument, or list it in MCP_NOT_ROW_KEYED with the reason it names no row"
+    )
+    for entry in sorted(set(MCP_NOT_ROW_KEYED) - served):
+        pytest.fail(f"MCP_NOT_ROW_KEYED lists {entry}, which no tool takes")
+    for entry in sorted(set(MCP_NOT_ROW_KEYED) & set(probed)):
+        pytest.fail(f"MCP_NOT_ROW_KEYED lists {entry}, but MCP_PROBES probes it: drop one")
+    keys = {(t, ph, _argument_of(a, ph)) for t, a, ph in MCP_PROBES}
+    for entry in sorted(set(MCP_SUCCEED_ALIKE) - keys):
+        pytest.fail(f"MCP_SUCCEED_ALIKE lists {entry}, which is not an MCP_PROBES entry")
+
+
 class TestMcpTools:
-    """The remote MCP tools answer an out-of-scope row the way they answer
-    a missing one: they call the same API functions, and their resolvers
-    no longer tell the two apart (CHT-1785)."""
-
-    @pytest.mark.parametrize("principal", ["project_agent", "team_b_human"])
-    async def test_issue_and_document_tools(self, world, principal, test_user2):
-        from app.oxyde_models.user import OxydeUser
-
-        values = world[principal][1]
-        if principal == "project_agent":
-            user = await OxydeUser.objects.get(agent_project_id=values["own_project"])
-        else:
-            user = test_user2
-        gone_identifier = values["identifier"].split("-")[0] + "-9999"
-        gone_doc = str(uuid.uuid4())
-        with acting_as(user):
-            for tool, existing, missing in [
-                (tools.issue_view, {"identifier": values["identifier"]}, {"identifier": gone_identifier}),
-                (tools.issue_relations, {"identifier": values["identifier"]}, {"identifier": gone_identifier}),
-                (tools.issue_revisions, {"identifier": values["identifier"]}, {"identifier": gone_identifier}),
-                (tools.issue_comment, {"identifier": values["identifier"], "content": "x"},
-                 {"identifier": gone_identifier, "content": "x"}),
-                (tools.doc_view, {"document_id": values["document"]}, {"document_id": gone_doc}),
-                (tools.doc_revisions, {"document_id": values["document"]}, {"document_id": gone_doc}),
-            ]:
-                seen = await tool(**existing)
-                assert "error" in seen, (tool.__name__, seen)
-                assert seen == _rename(await tool(**missing), gone_doc, values["document"]), tool.__name__
-
     async def test_team_for_project(self, world, test_user2):
         values = world["team_b_human"][1]
         with pytest.raises(tools.ToolContextError) as existing:
@@ -940,16 +1233,6 @@ class TestMcpTools:
         with pytest.raises(tools.ToolContextError) as missing:
             await tools._team_id_for_project(test_user2, str(uuid.uuid4()))
         assert str(existing.value) == str(missing.value) == "Project not found."
-
-
-def _rename(result, gone, existing):
-    """An error message that quotes the id it was given, with the missing
-    id swapped for the existing one, so the two can be compared."""
-    error = result.get("error") if isinstance(result, dict) else None
-    if error and isinstance(error.get("message"), str):
-        error = {**error, "message": error["message"].replace(gone, existing)}
-        return {**result, "error": error}
-    return result
 
 
 class TestVisibleButForbidden:
