@@ -1268,3 +1268,66 @@ class TestReviewFindings:
             result = server.invoke("check")
         assert result.exit_code == 1
         assert "server.json says HOST 127.0.0.1 but the service file says 0.0.0.0" in result.output
+
+
+class TestLegacySharedKeySettings:
+    """MCP_LEGACY_SHARED_KEY_IDS / MCP_LEGACY_RETIRE_DATE (CHT-1720):
+    refused here where the server would log and drop them."""
+
+    ID = "0b7e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d"
+
+    def test_ids_are_normalised(self):
+        raw = f" {self.ID.upper()} ,,{self.ID}, 1b7e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d"
+        assert ss.normalize("MCP_LEGACY_SHARED_KEY_IDS", raw) == (
+            f"{self.ID},1b7e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d", None)
+        assert ss.normalize("MCP_LEGACY_SHARED_KEY_IDS", "") == ("", None)
+        assert not ss.is_secret("MCP_LEGACY_SHARED_KEY_IDS")
+
+    @pytest.mark.parametrize("entry", ["0b7e2a3c", "*", "{" + ID + "}", ID.replace("-", ""), "urn:uuid:" + ID])
+    def test_a_non_id_is_refused_by_position(self, entry):
+        _value, problem = ss.normalize("MCP_LEGACY_SHARED_KEY_IDS", f"{self.ID},{entry}")
+        assert problem and "entry 2 is not an API key id" in problem
+        assert entry not in problem
+
+    @pytest.mark.parametrize("pasted", ["ck_" + "a1" * 32, "cat_" + "b2" * 32])
+    def test_a_pasted_key_is_recognised_and_never_echoed(self, server, pasted):
+        _value, problem = ss.normalize("MCP_LEGACY_SHARED_KEY_IDS", pasted)
+        assert "entry 1 looks like an API key, not its id" in problem
+        assert pasted not in problem and pasted[:12] not in problem
+        result = server.invoke("set", "MCP_LEGACY_SHARED_KEY_IDS", pasted)
+        assert result.exit_code != 0
+        assert pasted not in result.output and pasted[:12] not in result.output
+
+    def test_dates(self):
+        assert ss.normalize("MCP_LEGACY_RETIRE_DATE", " 2026-11-15 ") == ("2026-11-15", None)
+        assert ss.normalize("MCP_LEGACY_RETIRE_DATE", "") == ("", None)
+        for bad in ("2026-13-01", "15/11/2026", "20261115", "2026-W46-7", "soon"):
+            assert "YYYY-MM-DD" in ss.normalize("MCP_LEGACY_RETIRE_DATE", bad)[1], bad
+
+    def test_a_date_without_ids_is_a_warning(self):
+        errors, warnings = ss.check({"settings": {"MCP_LEGACY_RETIRE_DATE": "2026-11-15"}})
+        assert errors == [] and any("no retirement notice" in w for w in warnings)
+        assert ss.check({"settings": {**OAUTH, "MCP_CAPABILITY_URL_ENABLED": "false",
+                                      "MCP_LEGACY_RETIRE_DATE": "2099-11-15",
+                                      "MCP_LEGACY_SHARED_KEY_IDS": self.ID}}) == ([], [])
+
+    def test_ids_without_oauth_are_a_warning(self):
+        """The notice can only offer chat clients OAuth when it is on."""
+        errors, warnings = ss.check({"settings": {"MCP_LEGACY_SHARED_KEY_IDS": self.ID}})
+        assert errors == [] and any("OAUTH_ENABLED is not" in w for w in warnings)
+
+    def test_a_past_date_is_a_warning(self):
+        errors, warnings = ss.check({"settings": {**OAUTH, "MCP_CAPABILITY_URL_ENABLED": "false",
+                                                  "MCP_LEGACY_SHARED_KEY_IDS": self.ID,
+                                                  "MCP_LEGACY_RETIRE_DATE": "2020-01-01"}})
+        assert errors == [] and len(warnings) == 1 and "2020-01-01 has passed" in warnings[0]
+
+    def test_set_writes_them_to_the_unit(self, server):
+        assert server.invoke("set", "MCP_LEGACY_SHARED_KEY_IDS", self.ID.upper()).exit_code == 0
+        assert server.invoke("set", "MCP_LEGACY_RETIRE_DATE", "2026-11-15").exit_code == 0
+        assert server.info()["settings"] == {
+            "MCP_LEGACY_SHARED_KEY_IDS": self.ID, "MCP_LEGACY_RETIRE_DATE": "2026-11-15"}
+        unit = server.unit.read_text()
+        assert f"Environment=MCP_LEGACY_SHARED_KEY_IDS={self.ID}\n" in unit
+        assert "Environment=MCP_LEGACY_RETIRE_DATE=2026-11-15\n" in unit
+        assert server.invoke("set", "MCP_LEGACY_SHARED_KEY_IDS", "ck_nope").exit_code != 0

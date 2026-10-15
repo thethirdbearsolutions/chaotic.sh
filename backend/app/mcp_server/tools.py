@@ -46,6 +46,7 @@ from chaotic_mcp_tools import (  # noqa: F401 - re-exported for tests
     with_budget_state as _with_budget_state,
 )
 
+from app.mcp_server.legacy import LegacyNoticeMiddleware, with_notice
 from app.mcp_server.backend import (  # noqa: F401 - re-exported for tests
     InProcessBackend,
     _resolve_document_id,
@@ -59,8 +60,10 @@ ToolContextError = ToolInputError
 BACKEND = InProcessBackend()
 
 # Bound once at import: the backend is stateless per instance (it reads the
-# per-request user from the contextvar on every call).
-ALL_TOOLS = tuple(bind_all(BACKEND))
+# per-request user from the contextvar on every call). Each result carries
+# a retirement `notice` when the caller's key is a listed legacy shared
+# key (legacy.py, CHT-1720); otherwise it is the body's result unchanged.
+ALL_TOOLS = tuple(with_notice(tool) for tool in bind_all(BACKEND))
 
 for _tool in ALL_TOOLS:
     globals()[_tool.__name__] = _tool
@@ -143,6 +146,7 @@ def build_server() -> MCPServer:
                 '"error_code": "..."}} rather than a protocol error -- switch on '
                 'error_code, read message.'
             ),
+            middleware=[LegacyNoticeMiddleware()],
         )
     add_tools(mcp, ALL_TOOLS)
     return mcp

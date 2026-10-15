@@ -2,6 +2,8 @@
 import logging
 import os
 import ipaddress
+import re
+from datetime import date
 from urllib.parse import urlsplit
 
 from pydantic import AnyHttpUrl, Field, ValidationError, field_validator, model_validator
@@ -12,6 +14,10 @@ from functools import lru_cache
 logger = logging.getLogger(__name__)
 
 DEFAULT_FORWARDED_ALLOW_IPS = "127.0.0.1,::1"
+
+_ISO_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+# An API key id as stored and listed: a dashed UUID (CHT-1720).
+_KEY_ID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 # Default DB lives next to the backend package so `just serve` from any cwd
 # resolves to the same file. Production installs override via DATABASE_URL.
@@ -185,6 +191,19 @@ class Settings(BaseSettings):
     agent_session_key_ttl_seconds: int = Field(7 * 24 * 3600, ge=60)
     registrar_max_active_identities: int = Field(200, ge=1)
     registrar_max_registrations_per_hour: int = Field(60, ge=1)
+    # Retiring a shared MCP identity (CHT-1720, step 2): the ids of the
+    # API keys every session on the old shared connector authenticates
+    # with, comma-separated, as `chaotic auth keys list` shows them. A
+    # /mcp request authenticated with one of them gets a retirement
+    # notice in the server's `instructions` and a `notice` field on every
+    # tool result (app.mcp_server.legacy); nothing else changes. Ids, not
+    # key prefixes: an id names exactly one key and is not secret, where a
+    # prefix could match a later key too. Empty (the default): no notice
+    # anywhere. An entry that is not a key id is logged and ignored, and
+    # MCP_LEGACY_RETIRE_DATE (YYYY-MM-DD, optional) that is not a date is
+    # logged and treated as unset: neither ever stops the server.
+    mcp_legacy_shared_key_ids: str = ""
+    mcp_legacy_retire_date: str = ""
 
     model_config = SettingsConfigDict(env_file=".env")
 
@@ -209,6 +228,56 @@ class Settings(BaseSettings):
             value, "; ".join(f"{entry!r} ({why})" for entry, why in dropped), outcome, result,
         )
         return result
+
+    @field_validator("mcp_legacy_shared_key_ids", mode="before")
+    @classmethod
+    def _check_legacy_key_ids(cls, value) -> str:
+        """Keep each entry that is an API key id as `chaotic auth keys
+        list` shows it (a dashed UUID, any case), lower-cased; log and drop
+        anything else (CHT-1720). The same forms `chaotic system config`
+        accepts: no braces, ``urn:uuid:`` or undashed hex. A dropped entry
+        is named by its position, never its value: the likely mistake is
+        pasting the key itself, and that must not reach the log. Never
+        raises: a typo here must not take the server down."""
+        if not isinstance(value, str):
+            logger.error("MCP_LEGACY_SHARED_KEY_IDS is not text; ignored, no retirement notice is shown.")
+            return ""
+        kept = []
+        for position, entry in enumerate((e.strip() for e in value.split(",")), start=1):
+            if not entry:
+                continue
+            if _KEY_ID.match(entry):
+                kept.append(entry.lower())
+            elif "_" in entry:
+                logger.error("MCP_LEGACY_SHARED_KEY_IDS entry %d looks like an API key, not its id "
+                             "(see 'chaotic auth keys list'); ignored, and not logged.", position)
+            else:
+                logger.error("MCP_LEGACY_SHARED_KEY_IDS entry %d is not an API key id; ignored.", position)
+        return ",".join(dict.fromkeys(kept))
+
+    @field_validator("mcp_legacy_retire_date", mode="before")
+    @classmethod
+    def _check_legacy_retire_date(cls, value) -> str:
+        """A YYYY-MM-DD date, or empty. Anything else is logged and
+        treated as unset (the notice then gives no date). Never raises."""
+        if not isinstance(value, str):
+            logger.error("MCP_LEGACY_RETIRE_DATE is not text; ignored.")
+            return ""
+        value = value.strip()
+        if not value:
+            return ""
+        try:
+            if not _ISO_DATE.match(value):
+                raise ValueError(value)
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            logger.error("MCP_LEGACY_RETIRE_DATE=%r is not a date (YYYY-MM-DD); ignored.", value)
+            return ""
+
+    @property
+    def mcp_legacy_shared_key_id_set(self) -> frozenset[str]:
+        """MCP_LEGACY_SHARED_KEY_IDS as a set of canonical key ids."""
+        return frozenset(e for e in self.mcp_legacy_shared_key_ids.split(",") if e)
 
     @property
     def trusted_proxies(self) -> list[str]:

@@ -253,8 +253,10 @@ A change takes effect when the server restarts (`chaotic system stop`
 then `chaotic system start`); `set` says so. The names it knows are
 `OAUTH_ENABLED`, `APP_BASE_URL`, `FORWARDED_ALLOW_IPS`,
 `MCP_CAPABILITY_URL_ENABLED`, `OAUTH_DCR_ENABLED`, `CORS_ORIGINS`,
-`SMTP_HOST`/`PORT`/`USER`/`PASSWORD`/`FROM`, `PUSH_ALLOW_PRIVATE_ENDPOINTS`
-and `VAPID_PRIVATE_KEY` (see "Push notifications" below). Each value is checked by the
+`SMTP_HOST`/`PORT`/`USER`/`PASSWORD`/`FROM`, `PUSH_ALLOW_PRIVATE_ENDPOINTS`,
+`VAPID_PRIVATE_KEY` (see "Push notifications" below), and
+`MCP_LEGACY_SHARED_KEY_IDS`/`MCP_LEGACY_RETIRE_DATE` (see "Retiring a
+shared MCP identity" below). Each value is checked by the
 rules the server applies (for `APP_BASE_URL`, only values its OAuth
 issuer check accepts; a backend test pins that), so a typo fails at
 `set`, not at the next start. Any other name needs `--force`; `SECRET_KEY`, `HOST`, `PORT`,
@@ -530,6 +532,43 @@ The default becomes `false` in the release that ships OAuth for MCP,
 and the route is removed two releases after that. Moving a connector
 off it: add it again by URL and authorize, then revoke the old key
 (`chaotic auth keys revoke <key-id>`).
+
+## Retiring a shared MCP identity: `MCP_LEGACY_SHARED_KEY_IDS`
+
+When many sessions share one MCP identity (one agent, one API key), the
+server cannot address them one at a time. To move them to identities of
+their own, list that identity's API key ids (from `chaotic auth keys
+list`) and, optionally, the date the key will stop working:
+
+```bash
+chaotic system config set MCP_LEGACY_SHARED_KEY_IDS <key-id>[,<key-id>...]
+chaotic system config set MCP_LEGACY_RETIRE_DATE 2026-11-15
+```
+
+Every /mcp request authenticated with a listed key (header or
+capability URL) then gets a retirement notice: after the server's MCP
+`instructions` (added by an MCP server middleware on `initialize` and
+`server/discover`), and as a `notice` string on every tool result,
+errors included. The notice gives the date, and how to switch:
+`chaotic mcp` with `session_identity: auto` in Claude Code; in a chat
+client, adding the server by URL and signing in with OAuth, but only
+when `OAUTH_ENABLED` is on and `APP_BASE_URL` is an https origin other
+than this machine (otherwise it asks the session to have its user
+reconnect it). It asks each session to re-claim only the tickets it
+started in that conversation, and to leave the rest and tell its user if
+it cannot tell: the sessions share one identity, so none may take them
+all. Other keys see nothing different, and tool schemas do not change.
+
+Both settings are empty by default (no notice anywhere). An entry that
+is not a key id as `chaotic auth keys list` shows it (a dashed UUID), or
+a date not written `YYYY-MM-DD`, is logged as an error at startup and
+ignored; it never stops the server. A bad entry is named by its
+position, never its value, and one that looks like a pasted API key is
+reported as such, so the key does not land in the log or on the
+terminal. `config set` refuses the same values, and `config check` warns
+when the ids are set without OAuth, when a date is set without ids, and
+when the date has passed. When the date arrives, deactivate the key
+itself; these settings only announce it.
 
 ## OAuth tokens
 
