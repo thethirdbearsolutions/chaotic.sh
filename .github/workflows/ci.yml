@@ -131,6 +131,17 @@ jobs:
       - name: Rolling backup rotation
         run: bash scripts/sqlite-backup.test.sh
 
+      # keytool, for the Android release script's --new-key (CHT-1729).
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # A throwaway key in a temporary HOME: CI never holds the real one.
+      - name: Android release script
+        run: bash scripts/android-release.test.sh
+
   # The Android app's generated API client must match the backend's current
   # OpenAPI schema (CHT-1609). A PR that changes a route or schema fails here
   # until it also commits the output of `just android-client`.

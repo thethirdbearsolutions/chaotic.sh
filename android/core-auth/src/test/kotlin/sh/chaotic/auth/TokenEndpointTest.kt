@@ -18,7 +18,7 @@ class TokenEndpointTest {
     private lateinit var config: ServerConfig
     private val now = 1_000_000L
     private val endpoint = TokenEndpoint(OkHttpClient(), clock = { now })
-    private val redirect = "sh.chaotic.android:/oauth2redirect"
+    private val redirect = "https://chaotic.sh/app/oauth2redirect"
 
     @Before
     fun startServer() {

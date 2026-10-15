@@ -31,6 +31,9 @@ concurrency:
 
 jobs:
   test-backend:
+    # Only a CLI release (a v* tag). The Android app's releases are tagged
+    # android-v* (scripts/android-release.sh, CHT-1729) and publish nothing here.
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -54,6 +57,8 @@ jobs:
         run: uv run pytest -v
 
   test-cli:
+    # Only a CLI release: see test-backend.
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -77,6 +82,8 @@ jobs:
         run: uv run pytest -v
 
   test-frontend:
+    # Only a CLI release: see test-backend.
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -99,6 +106,8 @@ jobs:
         run: npm test
 
   build:
+    # Skipped with the test jobs on an Android release (their `if`), so a
+    # release tagged android-v* never reaches the tag check below.
     needs: [test-backend, test-cli, test-frontend]
     runs-on: ubuntu-latest
     defaults:

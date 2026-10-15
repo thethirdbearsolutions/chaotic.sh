@@ -4,6 +4,8 @@ import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedComponentResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+import java.net.URI
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -15,12 +17,38 @@ plugins {
 }
 
 // The OAuth redirect URI, defined here and nowhere else in the app (CHT-1610).
-// BuildConfig.OAUTH_REDIRECT_URI and the manifest's redirect intent filter
-// (AppAuth's RedirectUriReceiverActivity, via appAuthRedirectScheme) both
-// come from it. The server must list it too: ANDROID_REDIRECT_URIS in
-// backend/app/oauth/builtin.py, which a backend test checks against this
-// line, so keep it one literal. CHT-1649 moves it to an App Links https URL.
-val oauthRedirectUri = "sh.chaotic.android:/oauth2redirect"
+// BuildConfig.OAUTH_REDIRECT_URI and the manifest's App Links intent filter
+// for AppAuth's RedirectUriReceiverActivity both come from it. The server
+// must list it too: ANDROID_REDIRECT_URIS in backend/app/oauth/builtin.py,
+// which a backend test checks against this line, so keep it one literal.
+// An https URL verified through Android App Links (CHT-1649):
+// website/.well-known/assetlinks.json, served at chaotic.sh, names this
+// package and the release key, so only the genuinely signed app receives
+// the redirect. The private-use scheme it replaces could be claimed by any app.
+val oauthRedirectUri = "https://chaotic.sh/app/oauth2redirect"
+val oauthRedirect = URI(oauthRedirectUri)
+
+// Release signing (CHT-1729): the APK published on GitHub Releases is signed
+// on the owner's machine, with a key that exists only there. The keystore
+// path and passwords come from one properties file outside the repository,
+// written by scripts/android-release.sh:
+//
+//     ~/.chaotic/android-signing.properties
+//     storeFile=/absolute/path/to/chaotic-release.jks
+//     storePassword=...
+//     keyAlias=chaotic
+//     keyPassword=...
+//
+// Nothing is read from an environment variable or a Gradle property, so a CI
+// job can never pick up a key by accident: without that file (as in CI,
+// CHT-1661) the release build stays unsigned. With the file present, any
+// missing entry fails the build rather than producing an unsigned APK.
+val releaseSigningFile = File(providers.systemProperty("user.home").get(), ".chaotic/android-signing.properties")
+val releaseSigning: Properties? =
+    providers
+        .fileContents(objects.fileProperty().fileValue(releaseSigningFile))
+        .asText.orNull
+        ?.let { text -> Properties().apply { load(text.reader()) } }
 
 android {
     namespace = "sh.chaotic.android"
@@ -34,7 +62,29 @@ android {
         versionName = "0.1.0"
 
         buildConfigField("String", "OAUTH_REDIRECT_URI", "\"$oauthRedirectUri\"")
-        manifestPlaceholders["appAuthRedirectScheme"] = oauthRedirectUri.substringBefore(':')
+        manifestPlaceholders["oauthRedirectHost"] = oauthRedirect.host
+        manifestPlaceholders["oauthRedirectPath"] = oauthRedirect.path
+        // AppAuth's own manifest declares RedirectUriReceiverActivity with a
+        // filter on this scheme. The app's manifest replaces that declaration
+        // (tools:node="replace") with the App Links filter, so the value is
+        // never registered; AppAuth only requires it to be defined.
+        manifestPlaceholders["appAuthRedirectScheme"] = "sh.chaotic.android.unused"
+    }
+
+    signingConfigs {
+        val signing = releaseSigning
+        if (signing != null) {
+            create("release") {
+                fun entry(name: String): String =
+                    signing.getProperty(name)?.takeIf { it.isNotBlank() }
+                        ?: throw GradleException("$releaseSigningFile has no $name")
+                // A relative storeFile is relative to the properties file.
+                storeFile = releaseSigningFile.parentFile.resolve(entry("storeFile"))
+                storePassword = entry("storePassword")
+                keyAlias = entry("keyAlias")
+                keyPassword = entry("keyPassword")
+            }
+        }
     }
 
     // `foss` ships on F-Droid and must stay free of Google Play Services and
@@ -55,11 +105,15 @@ android {
 
     buildTypes {
         // CI builds this unsigned to check R8 (CHT-1661). Signing must never
-        // be picked up quietly from an environment variable or property:
-        // add it in a separate job that is given its secrets explicitly.
+        // be picked up quietly from an environment variable or property: it
+        // comes only from the release machine's properties file (above), and
+        // a CI job that ever signs must be given its secrets explicitly.
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (releaseSigning != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

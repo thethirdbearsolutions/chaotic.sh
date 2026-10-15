@@ -440,18 +440,42 @@ One client is neither: the **Chaotic Android app** is built into the
 server (CHT-1602, `backend/app/oauth/builtin.py`). Its `client_id`,
 `builtin:sh.chaotic.android`, is not a URL, so nothing is fetched for it
 and no outbound access is needed; its redirect,
-`sh.chaotic.android:/oauth2redirect`, comes from the code, not from
+`https://chaotic.sh/app/oauth2redirect`, comes from the code, not from
 anything stored or published. The same metadata is published at
 `https://chaotic.sh/oauth/android-client.json` for reference only; the
 server never reads it.
 
-Residual risk: that redirect is a private-use URI scheme, which any
-Android app on the same phone can also register. A malicious app could
-start the sign-in itself and, if the person approves the page, receive a
-session acting as them. The consent page does not claim the request
-comes from the official app, and tells the person to continue only if
-they just started signing in from it. Moving to a verified https
-redirect (Android App Links) closes this and is planned before release.
+That redirect is an Android App Link (CHT-1649). Once chaotic.sh's
+`/.well-known/assetlinks.json` names the app's release signing key,
+Android hands the redirect only to the app signed with that key. Another
+app on the phone can still start a sign-in with the app's `client_id`,
+but the code then goes to the real Chaotic app, which did not start it
+and drops it. The redirect is the same for every server, so a
+self-hosted one needs nothing on its own domain. No other client may
+register a redirect under `https://chaotic.sh/app/` or on the app's
+`sh.chaotic.android:` scheme; the app's earlier private-use redirect,
+`sh.chaotic.android:/oauth2redirect`, which any app could claim, is
+refused.
+
+Residual risk: that protection exists only once `assetlinks.json` carries
+the release key's fingerprint and the website is deployed (it ships
+empty until the key exists; the release script refuses to publish an
+app release before the live file names the key), and only on phones
+that verified the link when the app was installed. Without verification,
+Android 12 and newer open the redirect in the browser, on a chaotic.sh
+page that explains what happened and passes the code to nothing; Android
+10 and 11 offer a chooser listing every app that declares the same link,
+where an app that started the sign-in itself could be picked and receive
+a session acting as the person. So the consent page still tells the
+person to continue only if they just started signing in from the app.
+
+What reaches chaotic.sh: nothing, when the link is verified on the
+phone. When it is not, the browser loads the redirect page on chaotic.sh,
+and the website host's request logs record its address: a one-time
+authorization code (useless without the app's PKCE verifier, and
+expiring within minutes), `state`, and `iss`, which is your server's
+`APP_BASE_URL`. Returning the response in the URL fragment instead,
+which never reaches a server, is a follow-up (CHT-1737).
 
 An admin can disable the app by setting `is_active` to false on its
 `oauth_clients` row. That blocks new sign-ins and refreshes at once, but

@@ -10,3 +10,5 @@ captures/
 *.keystore
 *.jks
 app/foss-canary/
+# Release signing (CHT-1729) lives in ~/.chaotic, never here.
+*signing.properties

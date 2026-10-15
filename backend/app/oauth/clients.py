@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from app.oauth.builtin import ANDROID_APP_ID, ANDROID_APP_LINKS_HOST
+
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]"})
 
 # DCR limits (design §2.2).
@@ -163,11 +165,50 @@ def redirect_uri_problem(uri: object, *, allow_private_use: bool = False) -> str
     return "a redirect_uri must be https, or http on a loopback host"
 
 
+def reserved_redirect_problem(uri: str) -> str | None:
+    """Why a client other than a built-in one may not use ``uri``: what
+    belongs to the Android app (CHT-1649). That is its App Links paths,
+    ``https://chaotic.sh/app/...``, and its application id as a URI
+    scheme (``sh.chaotic.android:``, its pre-App-Links redirect, and any
+    ``sh.chaotic.android.*`` scheme). A registration naming either is a
+    mistake or an impersonation, and is refused as such.
+
+    On chaotic.sh, a path a browser or Android could read as another path
+    is refused too, rather than normalised: dot segments (``/x/../app``),
+    percent-encoding (``/%61pp``, ``/app%2F...``), empty segments
+    (``//app``) and ``;`` parameters (PR #412 review, L2). Expects a URI
+    that passed ``redirect_uri_problem`` (lower-case scheme and host)."""
+    try:
+        parts = urlsplit(uri)
+    except ValueError:
+        return None
+    if parts.scheme == ANDROID_APP_ID or parts.scheme.startswith(ANDROID_APP_ID + "."):
+        return f"the {ANDROID_APP_ID}: scheme is reserved for the Chaotic app"
+    if parts.scheme != "https" or parts.hostname != ANDROID_APP_LINKS_HOST:
+        return None
+    path = parts.path
+    segments = path.split("/")[1:]
+    if (
+        "%" in path
+        or ";" in path
+        or "//" in path
+        or any(segment in (".", "..") for segment in segments)
+    ):
+        return (
+            f"a redirect_uri on {ANDROID_APP_LINKS_HOST} must not use dot segments, "
+            "percent-encoding, empty segments or ';' in its path"
+        )
+    if path == "/app" or path.startswith("/app/"):
+        return f"a redirect_uri under https://{ANDROID_APP_LINKS_HOST}/app/ is reserved for the Chaotic app"
+    return None
+
+
 def dcr_redirect_uri_problem(uri: object) -> str | None:
     """The rule for a dynamically registered redirect URI: ``https`` or
-    loopback ``http`` only (``redirect_uri_problem``). A DCR client is
+    loopback ``http`` only (``redirect_uri_problem``), and none of the
+    built-in app's (``reserved_redirect_problem``). A DCR client is
     unproven, so it gets no private-use schemes."""
-    return redirect_uri_problem(uri)
+    return redirect_uri_problem(uri) or reserved_redirect_problem(uri)
 
 
 def redirect_host(uri: str) -> str:
