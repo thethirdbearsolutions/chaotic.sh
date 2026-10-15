@@ -45,11 +45,11 @@ Unlike the app's other email, the send is awaited: the person is
 waiting for this code, so a failed send is reported to them, not only
 logged. ``EmailService.send`` never raises; its False is the failure.
 
-Nothing changes an account's address today (``UserUpdate`` has no
-``email``). Whatever ever does must set ``email_verified_at`` back to
-NULL in the same write, or a verification of the old address would
-vouch for the new one; the old codes are bound to the old address's
-hash and stop matching on their own.
+Only ``UserService.change_email`` changes an account's address
+(CHT-1827). It sets ``email_verified_at`` back to NULL in the same
+write, or a verification of the old address would vouch for the new
+one, and expires every code still live for the account (mailed codes
+are bound to the old address's hash and would stop matching anyway).
 """
 from __future__ import annotations
 

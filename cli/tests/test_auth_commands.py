@@ -620,3 +620,51 @@ class TestAuthVerifyEmail:
 
         assert _local_time("not a time") == "not a time"
         assert len(_local_time("2026-01-01T00:15:00")) == 5
+
+
+class TestAuthChangeEmail:
+    """auth change-email (CHT-1827)."""
+
+    def test_changes_the_address_with_the_password_given(self, cli_runner):
+        from cli.main import cli, client
+
+        client.change_email = MagicMock(return_value={"email": "new@test.com", "email_verified_at": None})
+        result = cli_runner.invoke(cli, ['auth', 'change-email', 'new@test.com', '--password', 'pw'])
+
+        assert result.exit_code == 0, result.output
+        client.change_email.assert_called_once_with('new@test.com', 'pw')
+        assert 'new@test.com' in result.output
+        assert 'verify-email' in result.output
+
+    def test_prompts_for_the_password_without_echoing_it(self, cli_runner):
+        from cli.main import cli, client
+
+        client.change_email = MagicMock(return_value={"email": "new@test.com", "email_verified_at": None})
+        result = cli_runner.invoke(cli, ['auth', 'change-email', 'new@test.com'], input="s3cret\n")
+
+        assert result.exit_code == 0, result.output
+        client.change_email.assert_called_once_with('new@test.com', 's3cret')
+        assert 's3cret' not in result.output
+
+    def test_json_prints_the_account(self, cli_runner):
+        import json
+        from cli.main import cli, client
+
+        client.change_email = MagicMock(return_value={"email": "new@test.com", "email_verified_at": None})
+        result = cli_runner.invoke(cli, ['auth', 'change-email', 'new@test.com', '--password', 'pw', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["email"] == "new@test.com"
+
+    def test_a_refusal_is_reported(self, cli_runner):
+        from cli.main import cli, client
+        from cli.main import APIError
+
+        client.change_email = MagicMock(side_effect=_api_error(
+            APIError, "The address was not changed: the password is wrong, or the address cannot be used.", 400,
+            {"error_code": "email_change_refused", "message": "..."},
+        ))
+        result = cli_runner.invoke(cli, ['auth', 'change-email', 'new@test.com', '--password', 'pw'])
+
+        assert result.exit_code == 1
+        assert 'not changed' in result.output

@@ -144,6 +144,53 @@
         ]
       }
     },
+    "/api/auth/email": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Change Email",
+        "description": "Change the signed-in person's own address (CHT-1827), confirmed\nwith their password, and return the account.\n\nThe address is then unverified (``email_verified_at`` null): verify\nthe new one with ``POST /api/auth/email-verification``. Codes sent\nfor the old address stop working, and with SMTP configured a notice\ngoes to the old address. Sessions and API keys stay valid.\n\n400 ``email_change_refused`` for a wrong password and for an address\nanother account holds, ignoring case: one answer for both. 400\n``email_unchanged`` when it is the account's address already. 429\n``email_change_rate_limited`` past five tries an hour or three\nchanges a day. People with a password only: an agent gets 403\n``human_required``.",
+        "operationId": "change_email_api_auth_email_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/auth/email-verification/confirm": {
       "post": {
         "tags": [
@@ -10650,6 +10697,28 @@
         "title": "DocumentUpdate",
         "description": "Schema for updating a document."
       },
+      "EmailChange": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "EmailChange",
+        "description": "A person's new address, confirmed with their password (CHT-1827)."
+      },
       "EmailVerificationConfirm": {
         "properties": {
           "code": {
@@ -16574,7 +16643,7 @@
         },
         "type": "object",
         "title": "UserUpdate",
-        "description": "Schema for updating a user.\n\nNo ``email`` on purpose: a change of address would have to clear\n``email_verified_at`` too (CHT-1790; see\napp.services.email_verification_service)."
+        "description": "Schema for updating a user.\n\nNo ``email`` on purpose: a change of address takes the password and\nclears ``email_verified_at`` (``POST /api/auth/email``,\nUserService.change_email, CHT-1827)."
       },
       "ValidationError": {
         "description": "One request-validation error: where it is (`loc`) and what is wrong (`msg`).",

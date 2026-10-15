@@ -61,6 +61,16 @@ class SlidingWindowLimiter:
         hits.append(now)
         return True
 
+    def is_full(self, key: str, limit: int, *, now: float | None = None) -> bool:
+        """Would ``allow`` refuse ``key`` now? Records nothing, so a caller
+        can refuse before doing work and record only once it succeeded."""
+        now = time.monotonic() if now is None else now
+        hits = self._hits.get(key)
+        if not hits:
+            return False
+        cutoff = now - self.window_seconds
+        return sum(1 for hit in hits if hit > cutoff) >= limit
+
     def clear(self) -> None:
         self._hits.clear()
 
