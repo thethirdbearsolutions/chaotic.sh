@@ -25,7 +25,7 @@ import {
   handleUpdateTeam,
 } from './teams.js';
 import { api } from './api.js';
-import { showApiError, showModal, closeModal, showToast } from './ui.js';
+import { showApiError, showModal, closeModal, showToast, isModalOpen } from './ui.js';
 import { registerActions } from './event-delegation.js';
 
 // Mock the api module
@@ -50,6 +50,7 @@ vi.mock('./ui.js', () => ({
   showModal: vi.fn(),
   closeModal: vi.fn(),
   showToast: vi.fn(),
+  isModalOpen: vi.fn(() => false),
 }));
 
 vi.mock('./event-delegation.js', () => ({
@@ -857,8 +858,42 @@ describe('handleInvite', () => {
 
 describe('showInviteLink / copyInviteLink (CHT-1794)', () => {
   beforeEach(() => {
-    document.body.innerHTML = '<div id="modal-title"></div><div id="modal-content"></div>';
+    document.body.innerHTML = '<div id="modal-overlay"><div id="modal-title"></div><div id="modal-content"></div></div>';
     vi.clearAllMocks();
+    isModalOpen.mockReturnValue(false);
+  });
+
+  it('replaces the open invite form in place, keeping its opener, and focuses Copy', () => {
+    isModalOpen.mockReturnValue(true);
+    showInviteLink('a@example.com', 'https://h/invite/tok');
+    expect(showModal).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.querySelector('[data-action="copy-invite-link"]'));
+  });
+
+  it('opens the modal when none is open', () => {
+    showInviteLink('a@example.com', 'https://h/invite/tok');
+    expect(showModal).toHaveBeenCalled();
+  });
+
+  it('takes the link out of the DOM when the modal closes, however it closes', async () => {
+    showInviteLink('a@example.com', 'https://h/invite/tok');
+    expect(document.getElementById('invite-link')).not.toBeNull();
+    document.getElementById('modal-overlay').classList.add('hidden');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.getElementById('invite-link')).toBeNull();
+    expect(document.getElementById('modal-content').textContent).not.toContain('/invite/');
+  });
+
+  it('leaves a later modal alone once the link is gone', async () => {
+    showInviteLink('a@example.com', 'https://h/invite/tok');
+    const overlay = document.getElementById('modal-overlay');
+    overlay.classList.add('hidden');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    document.getElementById('modal-content').innerHTML = '<p id="other">other modal</p>';
+    overlay.classList.remove('hidden');
+    overlay.classList.add('hidden');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.getElementById('other')).not.toBeNull();
   });
 
   afterEach(() => {

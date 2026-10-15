@@ -193,6 +193,7 @@ async def test_create_invitation_without_smtp_returns_accept_url_once(client, au
     from unittest.mock import patch
     from app.config import get_settings
     from app.oxyde_models.team import OxydeTeamInvitation
+    from app.services.email_service import drain
 
     caplog.set_level(logging.DEBUG)
     with patch("app.api.teams.EmailService.is_configured", return_value=False):
@@ -202,9 +203,13 @@ async def test_create_invitation_without_smtp_returns_accept_url_once(client, au
             json={"email": "invited@example.com", "role": "member"},
         )
     assert response.status_code == 201, response.text
+    # The skipped email logs from a background task: let it run first,
+    # and check it did, so the no-token assertion cannot go vacuous.
+    await drain()
     created_log = [r.getMessage() for r in caplog.records]
     data = response.json()
     row = await OxydeTeamInvitation.objects.get(id=data["id"])
+    assert any("SMTP not configured; skipping email" in line for line in created_log), created_log
     # Nothing the create logged (the skipped email included) holds it.
     assert not [line for line in created_log if row.token in line]
     base = get_settings().app_base_url.rstrip("/")

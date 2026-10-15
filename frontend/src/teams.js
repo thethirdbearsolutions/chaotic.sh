@@ -5,7 +5,7 @@
 
 import { api } from './api.js';
 import { escapeHtml, escapeAttr } from './utils.js';
-import { showModal, closeModal, showToast, showApiError } from './ui.js';
+import { showModal, closeModal, showToast, showApiError, isModalOpen } from './ui.js';
 import { getCurrentTeam, setCurrentTeam, getCurrentView, getCurrentUser, setLabels } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { navigateTo, handleRoute } from './router.js';
@@ -473,7 +473,28 @@ export function showInviteLink(email, acceptUrl) {
             <button type="button" class="btn btn-secondary" data-action="dismiss-invite-link">Done</button>
         </div>
     `;
-  showModal();
+  // Replacing the invite form in place keeps the modal's opener (the
+  // Invite button) as where focus returns on close; showModal() again
+  // would record the submit button just removed.
+  if (!isModalOpen()) showModal();
+  document.querySelector('[data-action="copy-invite-link"]')?.focus();
+  forgetInviteLinkOnClose();
+}
+
+/**
+ * Take the link out of the DOM once the modal closes, by any path (Done,
+ * Escape, the overlay): it is a credential, shown once.
+ */
+function forgetInviteLinkOnClose() {
+  const overlay = document.getElementById('modal-overlay');
+  if (!overlay || typeof MutationObserver === 'undefined') return;
+  const observer = new MutationObserver(() => {
+    if (!overlay.classList.contains('hidden')) return;
+    observer.disconnect();
+    const link = document.getElementById('invite-link');
+    if (link) document.getElementById('modal-content').innerHTML = '';
+  });
+  observer.observe(overlay, { attributes: true, attributeFilter: ['class'] });
 }
 
 /**

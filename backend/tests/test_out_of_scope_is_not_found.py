@@ -390,6 +390,7 @@ async def test_out_of_scope_answers_like_missing(
     if pre_lookup is not None:
         assert existing.status_code == missing.status_code == 403, existing.text
         assert existing.json() == missing.json() == {"detail": pre_lookup}
+        assert dict(existing.headers) == dict(missing.headers)
         return
     assert existing.status_code not in (200, 201, 204, 403, 422), existing.text
     # An answer may quote back the id it was sent (batch-update lists the

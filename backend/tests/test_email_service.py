@@ -92,6 +92,11 @@ class TestIsConfigured:
         get_settings.cache_clear()
         assert EmailService().is_configured() is False
 
+    def test_false_when_smtp_host_whitespace(self, monkeypatch):
+        monkeypatch.setenv("SMTP_HOST", "   ")
+        get_settings.cache_clear()
+        assert EmailService().is_configured() is False
+
     def test_true_when_smtp_host_set(self, monkeypatch):
         monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
         get_settings.cache_clear()
