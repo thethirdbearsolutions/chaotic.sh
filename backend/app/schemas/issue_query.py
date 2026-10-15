@@ -114,11 +114,12 @@ class QueryFieldKind(StrEnum):
 # these, and the vocabulary endpoint serves them (CHT-1783).
 ME = "me"
 CURRENT_SPRINT = "current"
-DATE_KEYWORDS = ("today", "yesterday")
+# A date keyword names a whole day: this many days before today (UTC).
+DATE_KEYWORDS: dict[str, int] = {"today": 0, "yesterday": 1}
 KIND_KEYWORDS: dict[str, tuple[str, ...]] = {
     "user": (ME,),
     "sprint": (CURRENT_SPRINT,),
-    "date": DATE_KEYWORDS,
+    "date": tuple(DATE_KEYWORDS),
 }
 
 
@@ -189,6 +190,9 @@ ORDER_FIELDS = tuple(f.value for f in OrderField)
 assert set(FIELDS) == {f.value for f in QueryField}
 assert set(OP_ARITY) == {o.value for o in QueryOp}
 assert {spec.kind for spec in FIELDS.values()} <= {k.value for k in QueryFieldKind}
+# Every operator is taken by some field (the vocabulary renders each
+# one's text form from such a field).
+assert set().union(*(spec.ops for spec in FIELDS.values())) == set(OP_ARITY)
 
 # A date value: an ISO date or datetime, `today`, `yesterday`, or a
 # relative offset back from now such as -7d, -2w, -12h.

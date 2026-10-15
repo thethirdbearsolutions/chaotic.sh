@@ -44,6 +44,7 @@ from app.oxyde_models.team import OxydeTeamMember
 from app.oxyde_models.user import OxydeUser
 from app.schemas.issue_query import (
     CURRENT_SPRINT,
+    DATE_KEYWORDS,
     FIELDS,
     KIND_KEYWORDS,
     MAX_DEPTH,
@@ -630,8 +631,8 @@ def _date_bound(value: str, now: datetime, upper: bool) -> tuple[datetime, bool]
             n, unit = int(m.group(1)), m.group(2)
             delta = {"h": timedelta(hours=n), "d": timedelta(days=n), "w": timedelta(weeks=n)}[unit]
             return now - delta, True
-        if value in ("today", "yesterday"):
-            day = now.date() - timedelta(days=0 if value == "today" else 1)
+        if value in DATE_KEYWORDS:
+            day = now.date() - timedelta(days=DATE_KEYWORDS[value])
         elif re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", value):
             day = date.fromisoformat(value)
         else:
