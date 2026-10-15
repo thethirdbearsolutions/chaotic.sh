@@ -37,9 +37,9 @@ from chaotic_mcp_tools import ToolInputError
 
 from app.oxyde_models.user import OxydeUser as User
 from app.utils.email_address import same_email
+from app.services.mention_handles import HANDLE_RE, MentionDirectory, team_principals
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
-from app.services.user_service import UserService
 
 
 class ToolContextError(ToolInputError):
@@ -226,18 +226,30 @@ async def resolve_sprint(project_id: str, sprint: str) -> str:
     )
 
 
-async def _team_agents(team_id: str) -> list[User]:
-    """The team's agents at either scope: every agent carries its team
-    (CHT-1837). Who of them may hold an issue is
-    ``is_eligible_project_member``'s call when the API sees the id
-    (CHT-1830); this lookup only has to find them."""
-    return await User.objects.filter(is_agent=True, agent_team_id=team_id).all()
+async def resolve_assignee(
+    user: User, team_id: str, assignee: str, project_id: str | None = None,
+) -> str | None:
+    """Resolve an assignee reference: 'me', 'unassigned' (-> None), or one
+    of the principals who may be named on work here, by id, email,
+    display name or @handle (CHT-1839).
 
+    Who may be named is ``is_eligible_project_member``'s rule, the one
+    the API applies to the id it is sent (CHT-1830): the team's active
+    people and team-scoped agents, and a project-scoped agent only in
+    its own project. With no ``project_id`` (a team-wide list filter), a
+    project-scoped agent counts in its own project. The candidates are
+    the team's ``MentionDirectory`` principals filtered by that rule, and
+    every form of reference is looked up among those alone. So a
+    deactivated account, someone on another team, an agent of a sibling
+    project and no account at all all get the one not-found error below,
+    which names nobody: the lookup cannot tell a caller which ids,
+    addresses or names exist on this server (CHT-1802, CHT-1804).
 
-async def resolve_assignee(user: User, team_id: str, assignee: str) -> str | None:
-    """Resolve an assignee reference: 'me', 'unassigned' (-> None), a raw
-    user/agent id, an email, or a team member's display name
-    (case-insensitive).
+    Agents are named like people (CHT-1831): "Claude MCP" or
+    ``@claude-mcp`` reaches the agent. A display name or handle that
+    names more than one candidate (a person and an agent both called
+    "Ethan") is refused with the handles that tell them apart; it never
+    picks one.
     """
     lowered = assignee.strip().lower()
     if lowered == "me":
@@ -245,26 +257,42 @@ async def resolve_assignee(user: User, team_id: str, assignee: str) -> str | Non
     if lowered == "unassigned":
         return None
 
-    candidate = await UserService().get_by_id(assignee)
-    if candidate:
-        return candidate.id
+    from app.api.deps import is_eligible_project_member
 
-    members = await TeamService().get_members(team_id)
-    if "@" in assignee:
-        # Only the team's active members and agents, in any case (CHT-1804):
-        # an address on another team, a deactivated account and no account
-        # at all get the same not-found error below, so the lookup cannot
-        # tell a caller which addresses have accounts on this server.
-        people = [m.user for m in members if m.user] + await _team_agents(team_id)
-        matches = [p for p in people if p.is_active and same_email(p.email or "", assignee)]
-        exact = [p for p in matches if p.email == assignee.strip()]
-        if len(exact) == 1:
-            return exact[0].id
-        if len({p.id for p in matches}) == 1:
-            return matches[0].id
+    users, idle = await team_principals(team_id)
+    eligible = [
+        u for u in users
+        if await is_eligible_project_member(
+            u, team_id, project_id if project_id is not None else u.agent_project_id,
+        )
+    ]
+    directory = MentionDirectory(eligible, idle)
+    value = assignee.strip()
 
-    for member in members:
-        if member.user and member.user.name.lower() == lowered:
-            return member.user_id
+    def one(matches, kind):
+        ids = list(dict.fromkeys(u.id for u in matches))
+        if len(ids) > 1:
+            handles = ", ".join(f"@{directory.handle_for(i)}" for i in ids)
+            raise ToolContextError(
+                f"Assignee {kind} '{assignee}' names more than one person on this team "
+                f"({handles}); pass one of those handles, or an id or email."
+            )
+        return ids[0] if ids else None
+
+    if (hit := one([u for u in eligible if u.id == value], "id")):
+        return hit
+    if "@" in value and not value.startswith("@"):
+        # Any case (CHT-1804); an exact spelling wins over a folded one.
+        matches = [u for u in eligible if same_email(u.email or "", value)]
+        exact = [u for u in matches if u.email == value]
+        if (hit := one(exact or matches, "email")):
+            return hit
+    if (hit := one([u for u in eligible if (u.name or "").strip().lower() == lowered], "name")):
+        return hit
+    token = value.removeprefix("@")
+    if token and HANDLE_RE.fullmatch(token):
+        claimants = directory.claimants(token)
+        if (hit := one([u for u in eligible if u.id in claimants], "handle")):
+            return hit
 
     raise ToolContextError(f"Could not resolve assignee '{assignee}' to a user on this team.")

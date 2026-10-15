@@ -229,7 +229,7 @@ class RestBackend:
         # server can see.
         return await self._require_team()
 
-    async def resolve_assignee(self, value: str, team_id: str) -> str:
+    async def resolve_assignee(self, value: str, team_id: str, project_id: str | None = None) -> str:
         return await self._call(_main().resolve_assignee_id, value)
 
     async def resolve_sprint(self, value: str, project_id: str) -> str:

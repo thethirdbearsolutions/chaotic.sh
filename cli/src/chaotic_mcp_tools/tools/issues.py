@@ -203,7 +203,9 @@ async def issue_list(
     else:
         project_id, team_id = await backend.resolve_project(project, team)
 
-    assignee_id = await backend.resolve_assignee(assignee, team_id) if assignee else None
+    assignee_id = (
+        await backend.resolve_assignee(assignee, team_id, project_id=project_id) if assignee else None
+    )
 
     parent_id = None
     if epic:
@@ -522,7 +524,9 @@ async def issue_update(
             fields["assignee_id"] = None
         else:
             team_id = await backend.team_for_project(iss.get("project_id"))
-            fields["assignee_id"] = await backend.resolve_assignee(assignee, team_id)
+            fields["assignee_id"] = await backend.resolve_assignee(
+                assignee, team_id, project_id=iss.get("project_id"),
+            )
     if parent_id is not None:
         fields["parent_id"] = parent_id
     if no_parent:
@@ -554,12 +558,17 @@ async def issue_comment(
     with the unique handles to use instead (absent otherwise).
     """
     iss = await backend.get_issue(identifier)
+    # Resolve the assignee before posting, so a name that resolves to
+    # nobody fails the whole call instead of leaving the comment behind
+    # (CHT-1839).
+    assignee_id = None
+    if assign_to:
+        team_id = await backend.team_for_project(iss.get("project_id"))
+        assignee_id = await backend.resolve_assignee(assign_to, team_id, project_id=iss.get("project_id"))
     comment = await backend.create_comment(iss["id"], content)
     if "warnings" in comment and not comment["warnings"]:
         comment = {k: v for k, v in comment.items() if k != "warnings"}
     if assign_to:
-        team_id = await backend.team_for_project(iss.get("project_id"))
-        assignee_id = await backend.resolve_assignee(assign_to, team_id)
         await backend.update_issue(iss["id"], assignee_id=assignee_id)
     return comment
 

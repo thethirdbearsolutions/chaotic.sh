@@ -232,18 +232,8 @@ class MentionDirectory:
         """Every member of the team, then its active agents (the ones
         scoped to one of its projects included). `members`: the team's
         ``TeamService.get_members`` rows, when the caller already has them."""
-        from app.oxyde_models.user import OxydeUser
-        from app.services.agent_service import AgentService, is_idle
-        from app.services.team_service import TeamService
-
-        if members is None:
-            members = await TeamService().get_members(team_id)
-        agents = await OxydeUser.objects.filter(
-            is_agent=True, agent_team_id=team_id, is_active=True,
-        ).order_by("created_at").all()
-        last_used = await AgentService.session_last_used(agents)
-        idle = frozenset(i for i, used in last_used.items() if is_idle(used))
-        return cls([m.user for m in members] + list(agents), idle)
+        users, idle = await team_principals(team_id, members=members)
+        return cls(users, idle)
 
     def _claimants(self, handle: str) -> set[str]:
         """Who a token names (see the module docstring)."""
@@ -296,3 +286,24 @@ class MentionDirectory:
         if person is None:
             return False
         return person.agent_project_id is None or person.agent_project_id == project_id
+
+
+async def team_principals(team_id: str, *, members=None) -> tuple[list, frozenset[str]]:
+    """The users a team's ``MentionDirectory`` is built from: every member
+    (deactivated people included; the directory keeps them), then the
+    team's active agents at either scope, oldest first; and the ids of
+    the idle session identities among them. For a caller that must filter
+    the principals before building a directory of its own
+    (``mcp_server.scope.resolve_assignee``, CHT-1839)."""
+    from app.oxyde_models.user import OxydeUser
+    from app.services.agent_service import AgentService, is_idle
+    from app.services.team_service import TeamService
+
+    if members is None:
+        members = await TeamService().get_members(team_id)
+    agents = await OxydeUser.objects.filter(
+        is_agent=True, agent_team_id=team_id, is_active=True,
+    ).order_by("created_at").all()
+    last_used = await AgentService.session_last_used(agents)
+    idle = frozenset(i for i, used in last_used.items() if is_idle(used))
+    return [m.user for m in members if m.user] + list(agents), idle

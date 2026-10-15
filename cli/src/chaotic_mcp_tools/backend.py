@@ -84,8 +84,11 @@ class Backend(Protocol):
         """The team that owns a project (for label/assignee lookups keyed
         off an issue's project)."""
 
-    async def resolve_assignee(self, value: str, team_id: str) -> str:
-        """'me', a user/agent id, a name or an email -> user id."""
+    async def resolve_assignee(self, value: str, team_id: str, project_id: str | None = None) -> str:
+        """'me', a user/agent id, a name or an email -> user id.
+        ``project_id``: the project the person is named on, when there is
+        one; the HTTP side resolves only principals eligible for it (a
+        project-scoped agent only from its own project, CHT-1839)."""
 
     async def resolve_sprint(self, value: str, project_id: str) -> str:
         """'current', 'next', a name, a number, an id or id prefix -> sprint id."""

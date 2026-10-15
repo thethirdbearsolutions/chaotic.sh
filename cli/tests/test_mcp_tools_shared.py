@@ -113,8 +113,8 @@ class FakeBackend:
         self._rec("team_for_project", project_id)
         return "team-1"
 
-    async def resolve_assignee(self, value, team_id):
-        self._rec("resolve_assignee", value, team_id)
+    async def resolve_assignee(self, value, team_id, project_id=None):
+        self._rec("resolve_assignee", value, team_id, project_id=project_id)
         return "user-me" if value == "me" else f"user-{value}"
 
     async def resolve_sprint(self, value, project_id):
@@ -670,6 +670,25 @@ class TestIssueViewBody:
         assert result["sub_issues"] == [] and result["sub_issue_count"] == 0
 
 
+class TestIssueCommentBody:
+    async def test_an_unresolvable_assignee_posts_nothing(self, fake):
+        """The assignee is resolved before the comment is posted, so a
+        refused one fails the whole call (CHT-1839)."""
+        async def refuse(value, team_id, project_id=None):
+            raise chaotic_mcp_tools.ToolInputError(f"Could not resolve assignee '{value}'.")
+
+        fake.resolve_assignee = refuse
+        result = await _tools(fake)["issue_comment"]("CHT-1", "hi", assign_to="nobody")
+        assert result["error"]["error_code"] == "tool_input"
+        assert fake.calls_to("create_comment") == []
+        assert fake.calls_to("update_issue") == []
+
+    async def test_assignee_resolved_in_the_issues_project(self, fake):
+        await _tools(fake)["issue_comment"]("CHT-1", "hi", assign_to="me")
+        assert fake.calls_to("resolve_assignee") == [(("me", "team-1"), {"project_id": "proj-1"})]
+        assert len(fake.calls_to("create_comment")) == 1
+
+
 class TestIssueUpdateBody:
     async def test_no_fields_is_an_input_error(self, fake):
         result = await _tools(fake)["issue_update"]("CHT-1")
@@ -689,7 +708,7 @@ class TestIssueUpdateBody:
     async def test_assignee_resolved_in_the_issues_team(self, fake):
         await _tools(fake)["issue_update"]("CHT-1", assignee="me")
         assert fake.calls_to("team_for_project") == [(("proj-1",), {})]
-        assert fake.calls_to("resolve_assignee") == [(("me", "team-1"), {})]
+        assert fake.calls_to("resolve_assignee") == [(("me", "team-1"), {"project_id": "proj-1"})]
 
     async def test_attest_only_refetches(self, fake):
         fake.pending_issue_rituals = {"pending_rituals": [
