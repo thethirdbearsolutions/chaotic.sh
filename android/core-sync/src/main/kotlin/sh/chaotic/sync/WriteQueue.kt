@@ -88,7 +88,10 @@ sealed interface WriteStatus {
  *
  * - 2xx: taken. Dropped from the queue, and the answer applied to the
  *   cache in the same transaction (an approved entry leaves the inbox; an
- *   updated issue is saved as the server now has it).
+ *   updated issue is saved as the server now has it). A comment or an
+ *   issue change whose answer cannot be read changes nothing in the cache,
+ *   so the issue is fetched again ([onIssueStale]) rather than showing its
+ *   old state until the next refresh (CHT-1668).
  * - 401: the session ended (or someone else is signed in now); nothing
  *   more is sent.
  * - No answer, and the server does not answer a probe either
@@ -139,6 +142,12 @@ class WriteQueue(
     private val session: CacheSession,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val newKey: () -> String = { UUID.randomUUID().toString() },
+    /**
+     * The server took a write to an issue (its id, then its team) but the
+     * cache could not be brought up to date from the answer: fetch the
+     * issue again. Called during the flush, outside the session's lock.
+     */
+    private val onIssueStale: suspend (issueId: String, teamId: String) -> Unit = { _, _ -> },
 ) {
     private val flushing = Mutex()
 
@@ -406,8 +415,17 @@ class WriteQueue(
         if (stop != null) return stop
         failures = 0
         val written = session.write(ticket) { record(write, result) }
-        if (written != null && result is Remote.Ok) synchronized(taken) { taken[write.key] = origin.owner }
+        if (written != null && result is Remote.Ok) taken(write, result.value, origin.owner)
         return if (written == null) FlushOutcome.Unauthorized else null
+    }
+
+    /** The server took [write], answering [answer]; recorded in the cache already. */
+    private suspend fun taken(write: PendingWrite, answer: Any?, owner: String) {
+        synchronized(taken) { taken[write.key] = owner }
+        val issueId = write.issueId
+        val teamId = write.teamId
+        val stale = write.kind in ISSUE_KINDS && effect(write, answer) == null
+        if (stale && !issueId.isNullOrEmpty() && !teamId.isNullOrEmpty()) onIssueStale(issueId, teamId)
     }
 
     /**
@@ -437,7 +455,11 @@ class WriteQueue(
                 rescheduleWrite(write.key, write.attempts, nowMillis() + hint.coerceAtMost(MAX_RETRY_MILLIS))
             }
 
-            result is Remote.Ok -> completeWrite(write.key, effect(write, result.value))
+            result is Remote.Ok -> {
+                // Before the cache changes, under the same lock: a refresh of the issue fetched before this is stale.
+                if (write.kind in ISSUE_KINDS) write.issueId?.let(session::issueWritten)
+                completeWrite(write.key, effect(write, result.value))
+            }
 
             result is Remote.HttpError && !result.isTransient() ->
                 if (result.isQuietDrop(write)) {
@@ -658,6 +680,9 @@ class WriteQueue(
         private const val HTTP_UNAVAILABLE = 503
 
         private val DECISIONS = setOf(WriteKind.APPROVE, WriteKind.REJECT, WriteKind.ARCHIVE)
+
+        /** The writes that change an issue, and so outdate a fetch of it. */
+        private val ISSUE_KINDS = setOf(WriteKind.COMMENT, WriteKind.UPDATE_ISSUE)
 
         private fun Remote.HttpError.isBusyHint() =
             (status == HTTP_CONFLICT && errorCode == IN_FLIGHT) || (status == HTTP_UNAVAILABLE && errorCode == BUSY)

@@ -3,6 +3,7 @@ package sh.chaotic.sync
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import sh.chaotic.auth.SessionManager
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Whose cache this is, and the one gate every write to it goes through.
@@ -29,11 +30,29 @@ import sh.chaotic.auth.SessionManager
  *   sign-out whose [end] never ran (the process died first).
  *
  * The lock is held only around store calls, never across a network call.
+ *
+ * It also counts the writes to each issue the server has taken
+ * ([issueWrites]), so a refresh of an issue that began before one of them
+ * can tell that what it fetched is older than the cache (CHT-1668).
  */
 class CacheSession(val store: CacheStore, private val currentOwner: () -> String?) {
     private val lock = Mutex()
     private var generation = 0L
     private var owner: String? = null
+    private val issueWritesTaken = ConcurrentHashMap<String, Long>()
+
+    /**
+     * How many writes to [issueId] the server has taken while this process
+     * ran. A refresh reads it before it fetches, and again in the [write]
+     * that would save what it fetched: if it moved, a write landed in
+     * between and the fetch may predate it.
+     */
+    fun issueWrites(issueId: String): Long = issueWritesTaken[issueId] ?: 0L
+
+    /** The server took a write to [issueId]: call it in the [write] that records that. */
+    fun issueWritten(issueId: String) {
+        issueWritesTaken.merge(issueId, 1L, Long::plus)
+    }
 
     /** The generation to [write] under, or null when nobody is signed in. Claims the store first. */
     suspend fun begin(): Long? = lock.withLock {

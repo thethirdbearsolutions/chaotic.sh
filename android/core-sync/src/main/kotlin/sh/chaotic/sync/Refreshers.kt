@@ -79,12 +79,30 @@ class CacheRefresher(
      * Fetch [issueId] with its comments and activity, as known in [teamId],
      * and keep it as opened now. Issues not opened for [ISSUE_RETENTION_DAYS]
      * are pruned on the way.
+     *
+     * A write to the issue that the server takes while this fetch is out
+     * (a status change, a comment) makes the fetch older than the cache:
+     * saving it would put the old status back, or drop the new comment,
+     * until the next refresh (CHT-1668). So such a fetch is not saved but
+     * made again, up to [MAX_ISSUE_FETCHES] times in all.
      */
-    @Suppress("ReturnCount") // a failure of any of the three calls ends the refresh
+    @Suppress("ReturnCount") // signed out, and each fetch's own ending, end the refresh early
     suspend fun refreshIssue(issueId: String, teamId: String): RefreshOutcome {
         val ticket = session.begin() ?: return RefreshOutcome.Unauthorized
-        val now = nowMillis()
         session.write(ticket) { pruneIssues() } ?: return RefreshOutcome.Unauthorized
+        repeat(MAX_ISSUE_FETCHES) {
+            val outcome = fetchIssue(ticket, issueId, teamId)
+            if (outcome != null) return outcome
+        }
+        // Writes kept landing: what is cached is what they answered, newer than any fetch here.
+        return RefreshOutcome.Failed()
+    }
+
+    /** One fetch of the issue for [refreshIssue]: how it ended, or null when a write overtook it. */
+    @Suppress("ReturnCount") // a failure of any of the three calls ends the refresh
+    private suspend fun fetchIssue(ticket: Long, issueId: String, teamId: String): RefreshOutcome? {
+        val writes = session.issueWrites(issueId)
+        val now = nowMillis()
         val issue = remote.issue(issueId, teamId)
         if (issue !is Remote.Ok) return failure(ticket, issue, teamId, issueId)
         val comments = remote.comments(issueId)
@@ -96,7 +114,13 @@ class CacheRefresher(
             comments = comments.value.sortedBy { it.createdAtMillis },
             activity = activity.value.sortedBy { it.createdAtMillis },
         )
-        return written(ticket, key = null) { saveIssue(detail) }
+        val saved = session.write(ticket) {
+            // Checked under the session's lock, which the write queue records its answers under too.
+            val current = session.issueWrites(issueId) == writes
+            if (current) saveIssue(detail)
+            current
+        } ?: return RefreshOutcome.Unauthorized
+        return if (saved) RefreshOutcome.Refreshed else null
     }
 
     /**
@@ -218,6 +242,9 @@ class CacheRefresher(
         /** Issues opened on this device stay cached this long after they were last opened. */
         const val ISSUE_RETENTION_DAYS = 7L
         const val DEFAULT_PARALLELISM = 4
+
+        /** Fetches of one issue a refresh makes while writes to it keep overtaking them. */
+        const val MAX_ISSUE_FETCHES = 3
 
         /** Teams change rarely, and the inbox sync's `team_ids` prunes a left team in between. */
         const val DEFAULT_TEAMS_MAX_AGE_MILLIS = 5 * 60_000L

@@ -121,6 +121,59 @@ class CacheRefresherTest {
     }
 
     @Test
+    fun aFetchOvertakenByATakenWriteIsMadeAgain() = runTest {
+        val queue = WriteQueue(remote, session, nowMillis = { now })
+        val done = issue("i1").copy(status = "done")
+        remote.issues["i1"] = Remote.Ok(issue("i1"))
+        var calls = 0
+        remote.onIssue = {
+            if (calls++ == 0) {
+                // The person's status change is taken while the old issue is on its way back.
+                remote.answerWrite = { Remote.Ok(done) }
+                queue.update(issue("i1"), IssueFields.STATUS, "done")
+                queue.flush()
+            } else {
+                remote.issues["i1"] = Remote.Ok(done)
+            }
+        }
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshIssue("i1", TEAM_A))
+
+        assertEquals(2, calls)
+        assertEquals("done", store.issue("i1")!!.issue.status)
+    }
+
+    @Test
+    fun anIssueWhoseWritesKeepOvertakingItsFetchesIsNotSaved() = runTest {
+        store.saveIssue(IssueDetail(issue("i1", openedAtMillis = now).copy(status = "done"), emptyList(), emptyList()))
+        remote.issues["i1"] = Remote.Ok(issue("i1"))
+        var calls = 0
+        remote.onIssue = {
+            calls++
+            session.write(session.begin()!!) { session.issueWritten("i1") }
+        }
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Failed(), refresher.refreshIssue("i1", TEAM_A))
+
+        assertEquals(CacheRefresher.MAX_ISSUE_FETCHES, calls)
+        assertEquals("done", store.issue("i1")!!.issue.status)
+    }
+
+    @Test
+    fun aWriteToAnotherIssueDoesNotOutdateTheFetch() = runTest {
+        remote.issues["i1"] = Remote.Ok(issue("i1"))
+        var calls = 0
+        remote.onIssue = {
+            calls++
+            session.write(session.begin()!!) { session.issueWritten("i2") }
+        }
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Refreshed, refresher.refreshIssue("i1", TEAM_A))
+
+        assertEquals(1, calls)
+    }
+
+    @Test
     fun aRefreshWhileSignedOutDoesNothing() = runTest {
         signedIn = null
 

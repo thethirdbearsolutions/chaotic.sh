@@ -577,6 +577,71 @@ class WriteQueueTest {
         assertEquals(listOf(stored), assertNotNull(store.issue("i1")).comments)
     }
 
+    /** A queue that records each issue it asks to have fetched again (CHT-1668). */
+    private val stale = mutableListOf<Pair<String, String>>()
+    private val refreshing =
+        WriteQueue(remote, session, nowMillis = { now }, newKey = { "s${++keys}" }) { id, team -> stale += id to team }
+
+    @Test
+    fun aTakenCommentWhoseAnswerCannotBeReadFetchesTheIssueAgain() = runTest {
+        // FakeRemote's default answer is a 2xx with nothing the app can read.
+        refreshing.comment(issue(), "hello")
+
+        assertEquals(FlushOutcome.Done(null), refreshing.flush())
+
+        assertEquals(emptyList(), store.pendingWrites())
+        assertEquals(listOf("i1" to TEAM_A), stale)
+    }
+
+    @Test
+    fun aTakenUpdateWhoseAnswerCannotBeReadFetchesTheIssueAgain() = runTest {
+        refreshing.update(issue(), IssueFields.STATUS, "done")
+
+        refreshing.flush()
+
+        assertEquals(listOf("i1" to TEAM_A), stale)
+    }
+
+    @Test
+    fun aReadableAnswerOrARefusalFetchesNothing() = runTest {
+        val stored = Comment("c9", "i1", Principal("ada", "Ada"), "hello", 5)
+        val updated = issue().copy(status = "done")
+        remote.answerWrite = { sent -> Remote.Ok(if (sent.method == "POST") stored else updated) }
+        refreshing.comment(issue(), "hello")
+        refreshing.update(issue(), IssueFields.STATUS, "done")
+        refreshing.flush()
+
+        remote.answerWrite = { Remote.HttpError(409, "sprint_in_limbo") }
+        refreshing.update(issue(), IssueFields.PRIORITY, "low")
+        refreshing.flush()
+
+        assertEquals(emptyList(), stale)
+        assertEquals(1, store.refusals().size)
+    }
+
+    @Test
+    fun anInboxActionFetchesNoIssue() = runTest {
+        refreshing.approve(gate, undoMillis = 0)
+
+        refreshing.flush()
+
+        assertEquals(emptyList(), stale)
+    }
+
+    @Test
+    fun onlyTakenIssueWritesOutdateAFetch() = runTest {
+        remote.answerWrite = { Remote.HttpError(422) }
+        queue.update(issue(), IssueFields.STATUS, "done")
+        queue.approve(gate, undoMillis = 0)
+        queue.flush()
+        assertEquals(0, session.issueWrites("i1"))
+
+        remote.answerWrite = { Remote.Ok(null) }
+        queue.comment(issue(), "a")
+        queue.flush()
+        assertEquals(1, session.issueWrites("i1"))
+    }
+
     @Test
     fun aRefusedSessionStopsTheFlushAndKeepsTheQueue() = runTest {
         remote.answerWrite = { Remote.HttpError(401) }

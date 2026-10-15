@@ -71,10 +71,15 @@ object DataModule {
     @Singleton
     fun provideSyncTrigger(): SyncTrigger = SyncTrigger()
 
-    /** The offline write queue (CHT-1613), in the same cache and fenced by the same session. */
+    /**
+     * The offline write queue (CHT-1613), in the same cache and fenced by
+     * the same session. An issue write the server took but whose answer
+     * could not be read fetches the issue again (CHT-1668).
+     */
     @Provides
     @Singleton
-    fun provideWriteQueue(remote: ChaoticRemote, session: CacheSession): WriteQueue = WriteQueue(remote, session)
+    fun provideWriteQueue(remote: ChaoticRemote, session: CacheSession, refresher: CacheRefresher): WriteQueue =
+        WriteQueue(remote, session, onIssueStale = { issueId, teamId -> refresher.refreshIssue(issueId, teamId) })
 
     @Provides
     @Singleton
