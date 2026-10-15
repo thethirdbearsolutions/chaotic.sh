@@ -1,7 +1,7 @@
 """System commands for self-hosted server management.
 
 The system commands manage the lifecycle of a local Chaotic server installation:
-install, status, start, stop, reconfigure, config, logs, upgrade, backup.
+install, status, start, stop, reconfigure, config, logs, upgrade, backup, audit.
 
 There is no standalone `migrate` command -- migrations run automatically
 inside install/upgrade -- and no `uninstall` command.
@@ -24,7 +24,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -3535,6 +3535,250 @@ def _require_installed() -> dict:
                       "server's SECRET_KEY, host and port (the service file has the same values).")
         raise SystemExit(1)
     return server_info
+
+
+# --- read-only audits of the server database -------------------------------
+
+class AuditError(Exception):
+    """The audit could not run (no database, or one too old to audit)."""
+
+
+# A removal is recorded in the database only as the revocation_events row
+# RevocationService.revoke_for_member writes in the transaction that
+# deletes the membership (target_type MEMBER, target_id the user, team_id
+# the team), and only when the removal ended something: a holder session
+# or an unredeemed code or ticket (`_record` skips an empty cascade).
+# Removing a member (teams.remove_member) is its only caller. target_type
+# holds the enum's name, as every DbEnum column does.
+_REMOVED_MEMBERS_SQL = (
+    "SELECT tm.id AS member_id, tm.team_id, tm.user_id, tm.role, tm.joined_at, "
+    "re.id AS event_id, re.created_at AS removed_at "
+    "FROM team_members tm JOIN revocation_events re "
+    "ON re.target_type = 'MEMBER' AND re.target_id = tm.user_id AND re.team_id = tm.team_id "
+    "WHERE tm.user_id IS NOT NULL "
+    "ORDER BY tm.team_id, tm.user_id, re.created_at"
+)
+
+# Every removal is in the server's request log, as uvicorn's access line
+# for the one route that removes a member, which answers 204 on success:
+#   127.0.0.1:5000 - "DELETE /api/teams/<team>/members/<user> HTTP/1.1" 204
+_REMOVAL_LOG_LINE = re.compile(
+    r'"DELETE /api/teams/([^/\s?"]+)/members/([^/\s?"]+)(?:\?[^\s"]*)? HTTP/[0-9.]+" 204\b'
+)
+
+
+def removals_in_log(lines) -> set[tuple[str, str]]:
+    """The (team_id, user_id) of each successful member removal in server
+    log lines (journalctl output or ~/.chaotic/logs/server.log)."""
+    found = set()
+    for line in lines:
+        for match in _REMOVAL_LOG_LINE.finditer(line):
+            found.add((match.group(1), match.group(2)))
+    return found
+
+
+def _parse_stored_datetime(value) -> datetime | None:
+    """A stored datetime as naive UTC, or None if it does not parse.
+    Stored text is naive UTC ('2026-02-19 18:17:39.823056', migration
+    0006); older writers left offset- or 'Z'-suffixed variants."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def audit_removed_members(db_path: Path, logged_removals=()) -> dict:
+    """Membership rows that may have outlived a removal of their user from
+    their team (CHT-1820). Reads only.
+
+    Before CHT-1791 a user could hold two team_members rows for one team;
+    removing them deleted one and the other kept them a member, and
+    migration 0033's dedupe cannot see that leftover, because it is the
+    only row left.
+
+    Two sources of removals:
+
+    * the database's MEMBER revocation events, which carry a time. A row
+      is reported when one was recorded after the row's joined_at; a
+      membership created after the removal (they were let back in) is
+      not. Only removals that ended a session, code or ticket are
+      recorded, and only since migration 0024 (`recorded_since` is the
+      oldest), so this source misses most removals.
+    * `logged_removals`: (team_id, user_id) pairs taken from the server's
+      request log (`removals_in_log`), which has every removal but no
+      time this can compare. A row they match is reported with ordering
+      "unknown": a leftover, or a member who was let back in afterwards.
+
+    A row whose timestamps do not parse is also reported with ordering
+    "unknown", since it cannot be ruled out.
+
+    The file is opened read-only (mode=ro), as `system backup` does, so
+    this is safe while the server runs.
+    """
+    if not db_path.is_file():
+        raise AuditError(f"no database file at {db_path}")
+    try:
+        conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=10)
+    except sqlite3.Error as e:
+        raise AuditError(f"cannot open {db_path} read-only: {e}") from e
+    try:
+        conn.row_factory = sqlite3.Row
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "team_members" not in tables:
+            raise AuditError(f"{db_path} has no team_members table; it is not a Chaotic database")
+        has_events = "revocation_events" in tables  # migration 0024
+        recorded_since = conn.execute(
+            "SELECT MIN(created_at) FROM revocation_events WHERE target_type = 'MEMBER'"
+        ).fetchone()[0] if has_events else None
+        rows = conn.execute(_REMOVED_MEMBERS_SQL).fetchall() if has_events else []
+        members = conn.execute(
+            "SELECT id AS member_id, team_id, user_id, role, joined_at FROM team_members "
+            "WHERE user_id IS NOT NULL ORDER BY team_id, user_id"
+        ).fetchall() if logged_removals else []
+    except sqlite3.Error as e:
+        raise AuditError(f"cannot read {db_path}: {e}") from e
+    finally:
+        conn.close()
+
+    findings: dict[str, dict] = {}
+
+    def finding_for(row) -> dict:
+        return findings.setdefault(row["member_id"], {
+            "member_id": row["member_id"],
+            "team_id": row["team_id"],
+            "user_id": row["user_id"],
+            "role": row["role"],
+            "joined_at": row["joined_at"],
+            "removals": [],
+        })
+
+    for row in rows:
+        joined = _parse_stored_datetime(row["joined_at"])
+        removed = _parse_stored_datetime(row["removed_at"])
+        if joined is not None and removed is not None:
+            if removed <= joined:
+                continue  # removed before this membership began: they were let back in
+            ordering = "removed_after_joined"
+        else:
+            ordering = "unknown"
+        finding_for(row)["removals"].append({
+            "source": "revocation_event",
+            "revocation_event_id": row["event_id"],
+            "removed_at": row["removed_at"],
+            "ordering": ordering,
+        })
+    logged = set(logged_removals)
+    for row in members:
+        if (row["team_id"], row["user_id"]) in logged:
+            finding_for(row)["removals"].append({
+                "source": "request_log",
+                "revocation_event_id": None,
+                "removed_at": None,
+                "ordering": "unknown",
+            })
+    return {
+        "database": str(db_path),
+        "recorded_since": recorded_since,
+        "log_removals": len(logged),
+        "findings": sorted(findings.values(), key=lambda f: (f["team_id"], f["user_id"], f["member_id"])),
+    }
+
+
+@system.group("audit")
+def system_audit():
+    """Read-only checks of the server database.
+
+    An audit opens the database read-only, so it is safe while the server
+    runs, and changes nothing.
+    """
+
+
+@system_audit.command("removed-members")
+@click.option("--db", "db_path", type=click.Path(dir_okay=False, path_type=Path), default=None,
+              help="Database file to audit (default: the installed server's).")
+@click.option("--log", "log_file", type=click.File("r", errors="replace"), default=None,
+              help="Server log to take removals from as well ('-' for stdin).")
+@click.option("--json", "as_json", is_flag=True, help="Output the report as JSON.")
+def system_audit_removed_members(db_path, log_file, as_json):
+    """List memberships that may have outlived a removal (CHT-1820).
+
+    Before CHT-1791 a user could hold two memberships of one team.
+    Removing them deleted one, and the other kept them a member; the
+    upgrade's duplicate cleanup (migration 0033) cannot see it. This lists
+    each team_members row whose user was removed from that team after the
+    row was created, by id.
+
+    The database records a removal only when it ended a connection,
+    code or ticket, and only since migration 0024, so on its own this
+    misses most. Pass the server log with --log to check every removal
+    it still holds, for example:
+
+      journalctl --user -u chaotic --no-pager | chaotic system audit removed-members --log -
+
+    A log carries no time this compares, so a row it matches is either a
+    leftover or a member let back in afterwards; check those by hand.
+
+    Nothing is changed. To end a leftover membership, remove the user
+    again as a team admin ('chaotic team remove-member USER_ID'), which
+    deletes it and ends their keys for the team again.
+
+    Exit status: 0 nothing found, 1 memberships reported, 2 the audit
+    could not run.
+    """
+    if db_path is None:
+        if not is_server_installed():
+            console.print("[red]Chaotic server is not installed.[/red] Pass --db PATH to audit a database file.")
+            raise SystemExit(2)
+        db_path = DATABASE_PATH
+    logged = removals_in_log(log_file) if log_file is not None else set()
+    try:
+        report = audit_removed_members(db_path, logged)
+    except AuditError as e:
+        console.print(f"[red]The audit could not run: {esc(e)}[/red]")
+        raise SystemExit(2)
+
+    findings = report["findings"]
+    if as_json:
+        click.echo(json.dumps(report, indent=2))
+        raise SystemExit(1 if findings else 0)
+
+    since = report["recorded_since"]
+    if since is None:
+        console.print("The database records no member removal.")
+    else:
+        console.print(f"The database records member removals that ended a connection since {esc(since)}.")
+    if log_file is None:
+        console.print("[yellow]Most removals are not recorded there; pass the server log with --log "
+                      "to check those too (see --help).[/yellow]")
+    else:
+        console.print(f"The log holds {esc(report['log_removals'])} member removal(s).")
+    if not findings:
+        console.print("[green]No membership outlived a removal found.[/green]")
+        return
+    console.print(f"[yellow]{esc(len(findings))} membership(s) may have outlived a removal:[/yellow]")
+    for finding in findings:
+        console.print(
+            f"  member {esc(finding['member_id'])}  team {esc(finding['team_id'])}  "
+            f"user {esc(finding['user_id'])}  role {esc(finding['role'])}  joined {esc(finding['joined_at'])}"
+        )
+        for removal in finding["removals"]:
+            if removal["source"] == "request_log":
+                console.print("    removed (per the log, time unknown: a leftover, or let back in later)")
+                continue
+            unknown = removal["ordering"] != "removed_after_joined"
+            console.print(
+                f"    removed {esc(removal['removed_at'])}  "
+                f"revocation event {esc(removal['revocation_event_id'])}"
+                + (" (a timestamp does not parse; check the order by hand)" if unknown else "")
+            )
+    console.print("Nothing was changed. Check each one, then remove the user again as a team admin "
+                  "('chaotic team remove-member USER_ID') to end a leftover.")
+    raise SystemExit(1)
 
 
 @system.group("config")
