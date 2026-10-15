@@ -21,8 +21,22 @@ active (`api_keys.is_active`, the marker `APIKeyService.revoke` clears)
 that signs in as an agent this migration backfills is revoked. The
 agent's owner (or a team admin) mints a new key for it
 (`chaotic agent keys create`, or POST /api/agents/{id}/keys) when it is
-wanted again. Sessions and codes opened with those keys need nothing:
-they are checked against the key's liveness on every use.
+wanted again.
+
+This is not the whole `APIKeyService.revoke` path, which also ends the
+holder sessions and unredeemed tickets opened with the key and notifies
+push devices and sockets. None of that is needed for liveness: a
+session or push registration opened with a key checks the key's
+`is_active` on every use (`APIKeyService.is_live`), tickets these keys
+could mint have expired (they could mint none since CHT-1508), no cache
+can hold a positive validation of a key that has been refused since
+then, and an OAuth session for a teamless agent cannot exist (consent
+requires the agent's team). A session opened with one of these keys
+keeps `revoked_at` NULL: dead in practice, not marked. For the audit
+trail, one `revocation_events` row (target API_KEY, reason
+`agent_team_backfilled`, no actor, the key ids in `filter`) is written
+in the same transaction when any key is revoked; it also moves the
+revocation epoch, which is harmless.
 
 Data only, no schema change, so nothing is recorded in the replay
 (collect mode). The agents and their keys are read through the
@@ -32,11 +46,10 @@ as quoted literals (ctx.execute takes no parameters). Each users UPDATE
 also requires agent_team_id to still be NULL, so it never overwrites a
 team.
 
-What it prints, one `[0036]` line per row, ids only, is printed after
-the transaction has committed and was read back: a line saying an agent
-was given a team or a key was revoked is never printed for a write that
-was rolled back. (Where the executor gives no way to run after the
-commit, the lines say what was queued instead.)
+What it prints, one `[0036]` line per row, ids only, is printed while
+the writes are queued, under a header saying they take effect only when
+0036 commits: if the upgrade fails or is rolled back, none of them was
+made.
 
 It never fails the upgrade over an agent it cannot place. It leaves the
 agent as it is (agent_team_id NULL, keys untouched; they cannot sign in
@@ -55,9 +68,7 @@ anyway) and prints why:
 
 None of these can be reached through the product afterwards (every
 agent route 404s an agent with no team), so the line gives the SQL to
-retire it; for an agent already inactive (deactivated by hand, or
-retired when its project or team was deleted, CHT-1844) it says
-"(already inactive)" and gives only the keys step. Back up first (`chaotic system backup`), stop the server,
+retire it. Back up first (`chaotic system backup`), stop the server,
 then for each id:
 
     UPDATE users SET is_active = 0 WHERE id = '<id>';
@@ -77,6 +88,10 @@ place, the ones it will leave, and the active keys it will revoke:
 
 (an external_ref collision moves an agent from the first number to the
 second, and its keys out of the third).
+
+An agent already inactive with no team (deactivated by hand, or retired
+when its project or team was deleted, CHT-1844) gets one informational
+line "(already inactive)" and no steps: there is nothing left to do.
 
 Why no CHECK constraint (the ticket asked for one): SQLite cannot add a
 CHECK to an existing table, so it would take a rebuild, or a
@@ -122,10 +137,24 @@ TEAMLESS_KEYS_SQL = (
     "ORDER BY k.principal_user_id, k.created_at, k.id"
 )
 
+UNREACHABLE = "Nothing in the product can reach it. "
+RETIRE_STEPS = (
+    "To retire it, back up (`chaotic system backup`), stop the server, and run: "
+    "UPDATE users SET is_active = 0 WHERE id = '{id}'; "
+    "UPDATE api_keys SET is_active = 0 WHERE principal_user_id = '{id}';"
+)
+
+HEADER = (
+    "[0036] the following takes effect when 0036 commits; if the upgrade fails or is rolled back, "
+    "nothing was changed"
+)
+AUDIT_REASON = "agent_team_backfilled"
+NO_CASCADE = '{"holder_sessions": 0, "tokens": 0}'
+
 # The fallback with no connection to read through: the same backfill in
-# two statements, revoking first (the keys of exactly the agents the
-# second statement places), and skipping any agent whose external_ref
-# could collide.
+# three statements (the audit row and the revocations first, for the keys
+# of exactly the agents the last statement places), skipping any agent
+# whose external_ref could collide.
 _FALLBACK_PLACEABLE = (
     "SELECT u.id FROM users AS u JOIN projects AS p ON p.id = u.agent_project_id "
     "JOIN teams AS t ON t.id = p.team_id "
@@ -134,24 +163,22 @@ _FALLBACK_PLACEABLE = (
 FALLBACK_REVOKE_SQL = (
     f"UPDATE api_keys SET is_active = 0 WHERE is_active AND principal_user_id IN ({_FALLBACK_PLACEABLE})"
 )
+FALLBACK_AUDIT_SQL = (
+    "INSERT INTO revocation_events (id, seq, team_id, actor_id, target_type, target_id, filter, "
+    "dry_run, cascade_counts, reason, created_at) "
+    "SELECT lower(hex(randomblob(16))), (SELECT COALESCE(MAX(seq), 0) + 1 FROM revocation_events), "
+    "NULL, NULL, 'API_KEY', NULL, "
+    "json_object('migration', '0036_agents_have_a_team', 'key_ids', json_group_array(k.id)), 0, "
+    f"'{NO_CASCADE}', '{AUDIT_REASON}', strftime('%Y-%m-%d %H:%M:%S', 'now') || '.000000' "
+    f"FROM api_keys AS k WHERE k.is_active AND k.principal_user_id IN ({_FALLBACK_PLACEABLE}) "
+    "HAVING count(*) > 0"
+)
 FALLBACK_BACKFILL_SQL = (
     "UPDATE users SET agent_team_id = "
     "(SELECT p.team_id FROM projects AS p WHERE p.id = users.agent_project_id) "
     f"WHERE id IN ({_FALLBACK_PLACEABLE})"
 )
 
-RETIRE = (
-    "Nothing in the product can reach it; to retire it, back up (`chaotic system backup`), "
-    "stop the server, and run: UPDATE users SET is_active = 0 WHERE id = '{id}'; "
-    "UPDATE api_keys SET is_active = 0 WHERE principal_user_id = '{id}';"
-)
-# For an agent already deactivated (by hand, or retired when its project
-# or team was deleted, CHT-1844): only its keys could still need it.
-RETIRE_INACTIVE = (
-    "(already inactive) Nothing in the product can reach it; to make sure its keys are revoked, "
-    "back up (`chaotic system backup`), stop the server, and run: "
-    "UPDATE api_keys SET is_active = 0 WHERE principal_user_id = '{id}';"
-)
 
 
 def sql_literal(value: str) -> str:
@@ -167,45 +194,45 @@ def sql_literal(value: str) -> str:
 
 def plan_backfill(
     agents: list[dict], held: set[tuple[str, str]],
-) -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
+) -> tuple[dict[str, tuple[str, str]], dict[str, str], dict[str, str]]:
     """From ``agents`` (rows of TEAMLESS_AGENTS_SQL) and the (team,
     external_ref) pairs already ``held``:
 
     - the agents to place ({id: (team id, project id)});
-    - the agents left as they are ({id: the line explaining why}).
+    - the active agents left as they are ({id: the line explaining why,
+      with the steps to retire it});
+    - the inactive agents left as they are ({id: an informational line}).
     """
     placed: dict[str, tuple[str, str]] = {}
     left: dict[str, str] = {}
+    idle: dict[str, str] = {}
     held = set(held)
     for row in agents:
         agent_id, project_id, team_id = row["id"], row["project_id"], row["team_id"]
-        retire = (RETIRE if row.get("is_active", 1) else RETIRE_INACTIVE).format(id=agent_id)
         if project_id is None:
-            left[agent_id] = (
-                f"[0036] agent {agent_id} has neither a team nor a project; agent_team_id left NULL. "
-                + retire
-            )
+            why = f"[0036] agent {agent_id} has neither a team nor a project; agent_team_id left NULL."
         elif row["project_found"] is None:
-            left[agent_id] = (
-                f"[0036] agent {agent_id}: its project {project_id} no longer exists; agent_team_id "
-                "left NULL. " + retire
-            )
+            why = f"[0036] agent {agent_id}: its project {project_id} no longer exists; agent_team_id left NULL."
         elif team_id is None:
-            left[agent_id] = (
+            why = (
                 f"[0036] agent {agent_id}: its project {project_id}'s team {row['project_team_id']} no "
-                "longer exists; agent_team_id left NULL. " + retire
+                "longer exists; agent_team_id left NULL."
             )
         elif row["external_ref"] is not None and (team_id, row["external_ref"]) in held:
-            left[agent_id] = (
+            why = (
                 f"[0036] agent {agent_id}: team {team_id} already has an identity with its "
-                "external_ref; agent_team_id left NULL so the upgrade does not fail. Retire one "
-                f"of the two; to retire this one: " + retire
+                "external_ref; agent_team_id left NULL so the upgrade does not fail. Retire one of the two."
             )
         else:
             placed[agent_id] = (team_id, project_id)
             if row["external_ref"] is not None:
                 held.add((team_id, row["external_ref"]))
-    return placed, left
+            continue
+        if not row["is_active"]:
+            idle[agent_id] = f"{why} (already inactive)"
+        else:
+            left[agent_id] = f"{why} {UNREACHABLE}{RETIRE_STEPS.format(id=agent_id)}"
+    return placed, left, idle
 
 
 def plan_revocations(keys: list[dict], placed: dict) -> dict[str, list[str]]:
@@ -219,29 +246,47 @@ def plan_revocations(keys: list[dict], placed: dict) -> dict[str, list[str]]:
 
 
 def report_lines(
-    placed: dict, revoked: dict, left: dict, *, done: bool, inactive: frozenset = frozenset(),
+    placed: dict, revoked: dict, left: dict, idle: dict, *, inactive: frozenset = frozenset(),
 ) -> list[str]:
-    """The [0036] lines, ids only. ``done``: the writes have committed
-    (else they are only queued). ``inactive``: agents already
-    deactivated, said so on their line."""
-    did = "" if done else " (queued)"
-    lines = []
+    """The [0036] lines, ids only, under HEADER. ``inactive``: placed
+    agents already deactivated, said so on their line."""
+    if not (placed or left or idle):
+        return []
+    lines = [HEADER]
     for agent_id, (team_id, project_id) in placed.items():
         lines.append(
             f"[0036] agent {agent_id}: agent_team_id set to {team_id}, the team of its project "
-            f"{project_id}{' (already inactive)' if agent_id in inactive else ''}{did}"
+            f"{project_id}{' (already inactive)' if agent_id in inactive else ''}"
         )
     keys = [key_id for ids in revoked.values() for key_id in ids]
     if keys:
         lines.append(
-            f"[0036] revoked {len(keys)} API key(s) of the agents given a team{did}, which had not "
+            f"[0036] revoked {len(keys)} API key(s) of the agents given a team, which had not "
             "signed in since their agent lost its team; the agent's owner must mint a new key "
             f"(`chaotic agent keys create`) for any agent still in use: {', '.join(keys)}"
         )
     lines.extend(left.values())
-    if placed or left:
-        lines.append(f"[0036] {len(placed)} agent(s) given their project's team, {len(left)} left without one")
+    lines.extend(idle.values())
+    lines.append(
+        f"[0036] {len(placed)} agent(s) given their project's team, {len(left)} left without one "
+        f"to retire, {len(idle)} already inactive"
+    )
     return lines
+
+
+def audit_sql(key_ids: list[str], *, now: str, event_id: str) -> str:
+    """The one revocation_events row for the keys this migration
+    revokes (see the docstring), as a literal INSERT."""
+    import json
+
+    filter_ = json.dumps({"migration": "0036_agents_have_a_team", "key_ids": key_ids})
+    return (
+        "INSERT INTO revocation_events (id, seq, team_id, actor_id, target_type, target_id, filter, "
+        "dry_run, cascade_counts, reason, created_at) VALUES ("
+        f"{sql_literal(event_id)}, (SELECT COALESCE(MAX(seq), 0) + 1 FROM revocation_events), "
+        f"NULL, NULL, 'API_KEY', NULL, {sql_literal(filter_)}, 0, {sql_literal(NO_CASCADE)}, "
+        f"{sql_literal(AUDIT_REASON)}, {sql_literal(now)})"
+    )
 
 
 def _read_through_oxyde(database, sql: str, params: list) -> list[dict]:
@@ -282,37 +327,11 @@ def _recording(ctx) -> bool:
     return getattr(ctx, "_mode", "execute") == "collect"
 
 
-async def _written(database, placed: dict, revoked: dict) -> tuple[dict, dict]:
-    """Of the planned writes, those the database now holds."""
-    from oxyde import execute_raw
-
-    if not placed:
-        return {}, {}
-    ids = ", ".join(sql_literal(agent_id) for agent_id in placed)
-    teams = {
-        row["id"]: row["agent_team_id"]
-        for row in await execute_raw(f"SELECT id, agent_team_id FROM users WHERE id IN ({ids})", [], client=database)
-    }
-    now_placed = {a: v for a, v in placed.items() if teams.get(a) == v[0]}
-    all_keys = [k for ks in revoked.values() for k in ks]
-    inactive = set()
-    if all_keys:
-        listed = ", ".join(sql_literal(k) for k in all_keys)
-        inactive = {
-            row["id"]
-            for row in await execute_raw(
-                f"SELECT id FROM api_keys WHERE id IN ({listed}) AND NOT is_active", [], client=database,
-            )
-        }
-    now_revoked = {a: [k for k in ks if k in inactive] for a, ks in revoked.items()}
-    return now_placed, {a: ks for a, ks in now_revoked.items() if ks}
-
-
 def backfill(ctx, echo=print) -> int | None:
-    """Queue the UPDATEs and arrange for the report to print once they
-    have committed. Returns how many agents it plans to place, or None
-    when there was no connection to read through (the SQL fallback is
-    queued instead). Nothing in the replay, which has no rows."""
+    """Queue the writes and print what they will do. Returns how many
+    agents it places, or None when there was no connection to read
+    through (the SQL fallback is queued instead). Nothing in the replay,
+    which has no rows."""
     if _recording(ctx):
         return None
     database = getattr(ctx, "_db_conn", None)
@@ -323,19 +342,23 @@ def backfill(ctx, echo=print) -> int | None:
     ):
         echo(
             "[0036] cannot read users to list the agents it backfills (no SQLite connection to "
-            "read through); giving every agent whose project and team exist that team in one "
-            "statement instead, and revoking those agents' API keys (their owners must mint new "
-            "ones). Agents it cannot place are left without a team"
+            "read through); when 0036 commits, every agent whose project and team exist gets that "
+            "team in one statement instead, and those agents' API keys are revoked (their owners "
+            "must mint new ones). Agents it cannot place are left without a team"
         )
+        ctx.execute(FALLBACK_AUDIT_SQL)
         ctx.execute(FALLBACK_REVOKE_SQL)
         ctx.execute(FALLBACK_BACKFILL_SQL)
         return None
+    import uuid
+    from datetime import datetime, timezone
+
     agents = _read_through_oxyde(database, TEAMLESS_AGENTS_SQL, [])
     held = {
         (row["agent_team_id"], row["external_ref"])
         for row in _read_through_oxyde(database, HELD_REFS_SQL, [])
     }
-    placed, left = plan_backfill(agents, held)
+    placed, left, idle = plan_backfill(agents, held)
     inactive = frozenset(row["id"] for row in agents if not row["is_active"])
     revoked = plan_revocations(_read_through_oxyde(database, TEAMLESS_KEYS_SQL, []), placed)
     for agent_id, (team_id, _project_id) in placed.items():
@@ -343,30 +366,18 @@ def backfill(ctx, echo=print) -> int | None:
             f"UPDATE users SET agent_team_id = {sql_literal(team_id)} "
             f"WHERE id = {sql_literal(agent_id)} AND agent_team_id IS NULL"
         )
-    for key_ids in revoked.values():
-        for key_id in key_ids:
-            ctx.execute(f"UPDATE api_keys SET is_active = 0 WHERE id = {sql_literal(key_id)}")
-
-    commit = getattr(ctx, "_execute_collected_sql", None)
-    if not callable(commit):
-        for line in report_lines(placed, revoked, left, done=False, inactive=inactive):
-            echo(line)
-        return len(placed)
-
-    async def commit_then_report():
-        # The executor runs this after upgrade() returns: the queued
-        # statements, in one transaction. Report only what it holds once
-        # that has committed (an exception here is the migration failing,
-        # and prints nothing but the executor's error).
-        await commit()
-        now_placed, now_revoked = await _written(database, placed, revoked)
-        for line in report_lines(now_placed, now_revoked, left, done=True, inactive=inactive):
-            echo(line)
-        missing = set(placed) - set(now_placed)
-        if missing:
-            echo(f"[0036] {len(missing)} planned agent(s) not written (changed during the upgrade): {', '.join(sorted(missing))}")
-
-    ctx._execute_collected_sql = commit_then_report
+    key_ids = [key_id for ids in revoked.values() for key_id in ids]
+    for key_id in key_ids:
+        ctx.execute(f"UPDATE api_keys SET is_active = 0 WHERE id = {sql_literal(key_id)}")
+    if key_ids:
+        ctx.execute(audit_sql(
+            key_ids,
+            # The naive-UTC text Oxyde 0.7 stores (see 0006).
+            now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f"),
+            event_id=str(uuid.uuid4()),
+        ))
+    for line in report_lines(placed, revoked, left, idle, inactive=inactive):
+        echo(line)
     return len(placed)
 
 
