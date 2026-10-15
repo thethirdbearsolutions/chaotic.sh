@@ -1234,6 +1234,18 @@ textarea {
     margin-bottom: 0.25em;
 }
 
+/* GFM task lists ("- [ ] item"): marked keeps the list bullet, so the item
+   showed a bullet and a checkbox. Drop the bullet and space the box from the
+   text, in every rendered-markdown container (CHT-1753). */
+.markdown-body li:has(> input[type="checkbox"]:first-child) {
+    list-style: none;
+}
+
+.markdown-body li > input[type="checkbox"]:first-child {
+    margin: 0 0.5em 0 -1.4em;
+    vertical-align: middle;
+}
+
 .document-content.markdown-body code {
     background: var(--bg-tertiary);
     padding: 0.2em 0.4em;
@@ -3240,6 +3252,13 @@ input[type="checkbox"] {
 
 .dropdown-option span {
     flex: 1;
+    white-space: nowrap;
+}
+
+/* The shortcut hint is a span too: without this it took half the row as a
+   long grey bar and squeezed the label onto two lines (CHT-1751). */
+.dropdown-option .dropdown-shortcut {
+    flex: 0 0 auto;
 }
 
 .dropdown-shortcut {
@@ -4964,8 +4983,35 @@ input[type="checkbox"] {
         gap: 4px;
     }
 
+    /* Two-line issue rows (CHT-1748). On one line the sprint badge, estimate
+       and avatar kept their width and the title shrank to nothing, so a row
+       read "HRB-18 BUG D Dock Lights". Line 1 is now the icons, id, type and
+       a title of up to two lines; line 2 is the meta, under the identifier. */
+    .issue-row-left {
+        flex: 1 1 100%;
+        min-height: 0;
+        padding-top: 10px;
+    }
+
+    .issue-row .issue-identifier {
+        min-width: 0;
+    }
+
+    .issue-row .issue-title {
+        white-space: normal;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        line-height: 1.35;
+    }
+
     .issue-row-right {
+        flex: 1 1 100%;
+        justify-content: flex-start;
         gap: 2px;
+        /* priority + status buttons (2 x 24px) and the 8px gaps after them */
+        padding: 0 0 8px 56px;
     }
 }
 
@@ -6448,10 +6494,13 @@ input[type="checkbox"] {
 }
 
 /* Agent list in settings */
+/* Wraps so the action buttons drop to their own line when the row is narrow,
+   instead of crushing the avatar and the meta text (CHT-1749). */
 .agent-item {
     display: flex;
     align-items: center;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
     padding: 12px 16px;
     border-bottom: 1px solid var(--border-color);
 }
@@ -6460,8 +6509,13 @@ input[type="checkbox"] {
     border-bottom: none;
 }
 
+.agent-item > .agent-avatar {
+    flex-shrink: 0;
+}
+
 .agent-info {
-    flex: 1;
+    flex: 1 1 220px;
+    min-width: 0;
 }
 
 .agent-name {
@@ -6473,7 +6527,9 @@ input[type="checkbox"] {
     font-size: var(--font-sm);
     color: var(--text-tertiary);
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
     margin-top: 2px;
 }
 
@@ -6481,6 +6537,7 @@ input[type="checkbox"] {
     background: var(--bg-tertiary);
     padding: 2px 6px;
     border-radius: var(--radius-sm);
+    white-space: nowrap;
 }
 
 /* Agent badge for activity feeds */
@@ -8048,6 +8105,69 @@ input[type="checkbox"] {
     color: var(--text-muted);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+}
+
+/* Epic detail page: progress bar and sub-issue rows. epic-detail-view.js
+   rendered these classes with no styles at all, so the bar had no height and
+   the status/assignee came out as 16px body text (CHT-1750). */
+.epic-detail-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 480px;
+}
+
+.epic-detail-progress-bar {
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.epic-detail-progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: #3b82f6;
+    transition: width 0.3s ease;
+}
+
+.epic-detail-progress-fill.epic-progress-complete {
+    background: #22c55e;
+}
+
+.epic-detail-progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.sub-issue-item .sub-issue-title {
+    min-width: 0;
+}
+
+.sub-issue-status-badge {
+    flex-shrink: 0;
+    font-size: var(--font-sm);
+    white-space: nowrap;
+}
+
+.sub-issue-assignee {
+    flex-shrink: 0;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+    /* The status icon already leads the row; keep the title readable. */
+    .sub-issue-assignee {
+        display: none;
+    }
 }
 
 .epic-estimate {
