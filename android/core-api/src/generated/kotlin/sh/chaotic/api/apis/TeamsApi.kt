@@ -327,7 +327,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * GET /api/teams/{team_id}/activity
         * List Team Activity
-        * The team&#39;s administrative log, newest first (CHT-1843, CHT-1845).  Members added, removed (or leaving) and given another role, invitations created, cancelled and accepted, and invitation verification codes issued. For the team&#39;s admins: visible (else the missing team&#39;s 404), then admin (403), as &#x60;&#x60;update_team&#x60;&#x60;. Paged with &#x60;&#x60;skip&#x60;&#x60;/&#x60;&#x60;limit&#x60;&#x60;; &#x60;&#x60;action&#x60;&#x60; keeps one kind of row. Names are resolved at read time, so a deleted user&#39;s rows keep only the id.
+        * The team&#39;s administrative log, newest first (CHT-1843, CHT-1845).  Members added, removed (or leaving) and given another role, invitations created, cancelled and accepted, and invitation verification codes issued. For the team&#39;s admins only. The route keys on &#x60;&#x60;team_id&#x60;&#x60; and never loads the team row, so anyone else (a member, an outsider, the caller of a missing team) gets the one &#x60;&#x60;team_hidden()&#x60;&#x60; 403 (CLAUDE.md, CHT-1842). Paged with &#x60;&#x60;skip&#x60;&#x60;/&#x60;&#x60;limit&#x60;&#x60;; &#x60;&#x60;action&#x60;&#x60; keeps one kind of row. Names are resolved at read time, so a deleted user&#39;s rows keep only the id.
          * @param teamId  
          * @param skip  (optional, default to 0)
          * @param limit  (optional, default to 50)

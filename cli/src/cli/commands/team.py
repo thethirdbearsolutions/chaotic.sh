@@ -13,6 +13,16 @@ from rich.panel import Panel
 from .shared import _client, console, resolve_content_value
 
 
+# The server's TeamActivityAction values (backend app/enums.py), listed
+# here so --help shows them and a typo is refused before any request. The
+# CLI cannot import the backend; e2e's test_teams.py checks the two lists
+# are equal, so a new action fails there until it is added here.
+TEAM_ACTIVITY_ACTIONS = [
+    "member_added", "member_removed", "role_changed", "invitation_created",
+    "invitation_cancelled", "invitation_accepted", "verification_code_issued",
+]
+
+
 def _who(name, user_id) -> str:
     """A user as the activity log shows them: name, else id (a user since
     deleted keeps only the id), else nobody."""
@@ -496,9 +506,7 @@ def register(cli):
         console.print(table)
 
     @team.command("activity")
-    @click.option("--action", "action", default=None,
-                  type=click.Choice(["member_added", "member_removed", "role_changed", "invitation_created",
-                                     "invitation_cancelled", "invitation_accepted", "verification_code_issued"]),
+    @click.option("--action", "action", default=None, type=click.Choice(TEAM_ACTIVITY_ACTIONS),
                   help="Show only this kind of entry.")
     @click.option("--limit", default=50, show_default=True, type=click.IntRange(1, 500),
                   help="How many entries to show.")

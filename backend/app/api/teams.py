@@ -245,7 +245,12 @@ async def remove_member(
     # their own, to the team's longest-standing owner.
     agent_service = AgentService()
     async with revoking():
-        await team_service.remove_member(member, actor_id=current_user.id)
+        if not await team_service.remove_member(member, actor_id=current_user.id):
+            # Removed meanwhile (another admin, a retried request).
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Member not found",
+            )
         if user_id != current_user.id:
             new_owner_id = current_user.id
         else:
@@ -278,18 +283,16 @@ async def list_team_activity(
 
     Members added, removed (or leaving) and given another role,
     invitations created, cancelled and accepted, and invitation
-    verification codes issued. For the team's admins: visible (else the
-    missing team's 404), then admin (403), as ``update_team``. Paged
-    with ``skip``/``limit``; ``action`` keeps one kind of row. Names are
+    verification codes issued. For the team's admins only. The route
+    keys on ``team_id`` and never loads the team row, so anyone else
+    (a member, an outsider, the caller of a missing team) gets the one
+    ``team_hidden()`` 403 (CLAUDE.md, CHT-1842). Paged with
+    ``skip``/``limit``; ``action`` keeps one kind of row. Names are
     resolved at read time, so a deleted user's rows keep only the id.
     """
     team_service = TeamService()
-    await visible_team(current_user, team_id)
     if not await team_service.is_team_admin(team_id, current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admins can view team activity",
-        )
+        raise team_hidden()
 
     rows = await team_service.list_activity(team_id, action=action, skip=skip, limit=limit)
     user_ids = {uid for r in rows for uid in (r.actor_id, r.target_user_id) if uid}
@@ -645,7 +648,12 @@ async def delete_invitation(
             detail="Invitation not found",
         )
 
-    await team_service.delete_invitation(invitation, actor_id=current_user.id)
+    if not await team_service.delete_invitation(invitation, actor_id=current_user.id):
+        # Accepted or cancelled since it was read.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invitation not found",
+        )
 
 
 ISSUE_CODE_INSTRUCTIONS = (

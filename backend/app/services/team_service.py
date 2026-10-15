@@ -213,16 +213,44 @@ class TeamService:
         await member.refresh()
         return member
 
-    async def remove_member(self, member: OxydeTeamMember, *, actor_id: str | None) -> None:
+    async def remove_member(self, member: OxydeTeamMember, *, actor_id: str | None) -> bool:
         """Remove a member from a team, logged (MEMBER_REMOVED) in the
-        same transaction: every removal has a row, whether or not it
-        ended a connection (CHT-1843). Actor and target the same: they
-        left."""
+        same transaction, whether or not it ended a connection (CHT-1843).
+        Actor and target the same: they left.
+
+        False, with nothing logged, when the row was already gone: the
+        delete is conditional, so two removals of one membership (two
+        admins at once, a retried request) log one row (PR #451 review 3).
+        """
         async with atomic():
-            await member.delete()
+            deleted = await OxydeTeamMember.objects.filter(id=member.id).delete()
+            if deleted != 1:
+                return False
             await self.record_activity(
                 member.team_id, TeamActivityAction.MEMBER_REMOVED, actor_id=actor_id,
                 target_user_id=member.user_id, role=member.role,
+            )
+        return True
+
+    async def record_account_deleted(self, user_id: str) -> None:
+        """Log what deleting this account takes from each team (PR #451
+        review 1): MEMBER_REMOVED for each membership, and
+        INVITATION_CANCELLED for each pending invitation they sent (it
+        goes with the account through team_invitations.invited_by's ON
+        DELETE CASCADE). Call it inside the delete's transaction, before
+        the rows go. The actor is the account itself, the only one that
+        can delete it."""
+        for member in await OxydeTeamMember.objects.filter(user_id=user_id).all():
+            await self.record_activity(
+                member.team_id, TeamActivityAction.MEMBER_REMOVED, actor_id=user_id,
+                target_user_id=user_id, role=member.role,
+            )
+        for invitation in await OxydeTeamInvitation.objects.filter(
+            invited_by_id=user_id, status=InvitationStatus.PENDING,
+        ).all():
+            await self.record_activity(
+                invitation.team_id, TeamActivityAction.INVITATION_CANCELLED, actor_id=user_id,
+                invitation_id=invitation.id, email=invitation.email, role=invitation.role,
             )
 
     async def create_invitation(
@@ -312,7 +340,9 @@ class TeamService:
         that membership returned, never a second row.
 
         Logged as INVITATION_ACCEPTED, with the role of the membership the
-        user has afterwards (the invitation's, or the one they kept).
+        user has afterwards (the invitation's, or the one they kept), and,
+        when it created the membership, as MEMBER_ADDED too (with the
+        invitation's id), so that ``action=member_added`` lists every join.
         """
         async with atomic():
             claimed = await OxydeTeamInvitation.objects.filter(
@@ -321,6 +351,7 @@ class TeamService:
             if claimed != 1:
                 return None
             member = await self.get_member(invitation.team_id, user.id)
+            joined = False
             if member is None:
                 try:
                     member = await OxydeTeamMember.objects.create(
@@ -328,6 +359,7 @@ class TeamService:
                         user_id=user.id,
                         role=invitation.role,
                     )
+                    joined = True
                 except IntegrityError:
                     # Defence in depth for the unique index (CHT-1791).
                     # Unreachable on SQLite: the claim above already holds
@@ -342,6 +374,11 @@ class TeamService:
                 target_user_id=user.id, invitation_id=invitation.id, email=invitation.email,
                 role=member.role,
             )
+            if joined:
+                await self.record_activity(
+                    invitation.team_id, TeamActivityAction.MEMBER_ADDED, actor_id=user.id,
+                    target_user_id=user.id, invitation_id=invitation.id, role=member.role,
+                )
         await member.refresh()
         return member
 
@@ -350,14 +387,25 @@ class TeamService:
         invitation.status = InvitationStatus.DECLINED
         await invitation.save(update_fields={"status"})
 
-    async def delete_invitation(self, invitation: OxydeTeamInvitation, *, actor_id: str | None) -> None:
-        """Delete (cancel) an invitation; logged as INVITATION_CANCELLED."""
+    async def delete_invitation(self, invitation: OxydeTeamInvitation, *, actor_id: str | None) -> bool:
+        """Delete (cancel) a pending invitation; logged as INVITATION_CANCELLED.
+
+        False, with nothing deleted or logged, when it is no longer
+        pending: accepted (or cancelled) since the caller read it. The
+        delete is conditional, like accept_invitation's claim, so a cancel
+        racing an accept cannot remove the accepted invitation and log a
+        cancel after the accept (PR #451 review 3)."""
         async with atomic():
-            await invitation.delete()
+            deleted = await OxydeTeamInvitation.objects.filter(
+                id=invitation.id, status=InvitationStatus.PENDING,
+            ).delete()
+            if deleted != 1:
+                return False
             await self.record_activity(
                 invitation.team_id, TeamActivityAction.INVITATION_CANCELLED, actor_id=actor_id,
                 invitation_id=invitation.id, email=invitation.email, role=invitation.role,
             )
+        return True
 
     async def shares_team(self, user_id_a: str, user_id_b: str) -> bool:
         """Check if two users share at least one team (single query)."""

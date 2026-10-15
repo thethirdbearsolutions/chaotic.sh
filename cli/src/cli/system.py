@@ -24,6 +24,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
@@ -3549,9 +3550,11 @@ AUDIT_FINDINGS = 1
 AUDIT_FAILED = 2
 AUDIT_PARTIAL = 4  # nothing found, but only the database was checked
 
-# Since migration 0038 every removal is a team_activities row (action
+# Since migration 0038 a removal the server makes (an admin's, a member
+# leaving, an account deleted) is a team_activities row (action
 # MEMBER_REMOVED, target_user_id the user, team_id the team), written in
-# the transaction that deletes the membership (CHT-1843). action holds
+# the transaction that deletes the membership (CHT-1843); a delete made by
+# hand in the database is not, unless it writes the row as _remedy does. action holds
 # the enum's name, as every DbEnum column does. When 0038 was applied is
 # its oxyde_migrations row (SQLite's datetime('now'): UTC, whole seconds).
 _ACTIVITY_REMOVALS_SQL = (
@@ -3563,6 +3566,10 @@ _ACTIVITY_REMOVALS_SQL = (
     "ORDER BY tm.team_id, tm.user_id, ta.created_at"
 )
 _ACTIVITY_MIGRATION = "0038_team_activities"
+# A revocation event or log line this close to an activity row for the
+# same team and user is the same removal: all are written by one request
+# (the log line when it answers).
+_SAME_REMOVAL_SECONDS = 5
 
 # Before that, a removal was recorded only as the revocation_events row
 # RevocationService.revoke_for_member writes in the same transaction
@@ -3670,8 +3677,11 @@ def _ordering(joined: datetime | None, at: datetime | None, until: datetime | No
     return "removed_after_joined" if at > joined else "unknown"
 
 
-def _remedy(finding: dict, db_path: Path) -> list[str]:
-    """What ends a leftover membership, as steps for the operator."""
+def _remedy(finding: dict, db_path: Path, logged: bool = False) -> list[str]:
+    """What ends a leftover membership, as steps for the operator. With
+    `logged` (the database has team_activities), the hand-run delete also
+    writes the MEMBER_REMOVED row the server would, in one transaction,
+    so the team's log keeps every removal (PR #451 review 5)."""
     team, user = finding["team_id"], finding["user_id"]
     if finding["role"] != "OWNER":
         return [
@@ -3681,8 +3691,20 @@ def _remedy(finding: dict, db_path: Path) -> list[str]:
     # The API refuses both to remove an owner and to change an owner's
     # role (teams.remove_member, teams.update_member_role), so an owner
     # leftover can only be ended in the database.
-    member_id = str(finding["member_id"]).replace("'", "''")
-    sql = f"DELETE FROM team_members WHERE id = '{member_id}'"
+    def lit(value) -> str:
+        return "'" + str(value).replace("'", "''") + "'"
+
+    sql = f"DELETE FROM team_members WHERE id = {lit(finding['member_id'])}"
+    if logged:
+        # The row the server writes on a removal (OxydeTeamActivity), with
+        # no actor: the operator did it by hand. Stored forms: enum names,
+        # naive UTC text.
+        sql = (
+            f"BEGIN; {sql}; "
+            "INSERT INTO team_activities (id, team_id, action, actor_id, target_user_id, role, created_at) "
+            f"VALUES ({lit(uuid.uuid4())}, {lit(team)}, 'MEMBER_REMOVED', NULL, {lit(user)}, 'OWNER', "
+            "strftime('%Y-%m-%d %H:%M:%f', 'now')); COMMIT;"
+        )
     return [
         "the API cannot end an owner membership (it removes no owner and changes no owner's role); by hand:",
         "chaotic system backup",
@@ -3704,18 +3726,27 @@ def audit_removed_members(db_path: Path, logged_removals=None) -> dict:
     Three sources of removals:
 
     * the team activity log (team_activities, migration 0038), which has
-      every removal since 0038 was applied (`activity_since`). The
-      primary source (CHT-1843).
-    * for the time before it, the database's MEMBER revocation events.
-      Only removals that ended a session, code or ticket are recorded,
-      and only since migration 0024 (`recorded_since` is the oldest).
+      the removals the server made since 0038 was applied
+      (`activity_since`). The primary source (CHT-1843). Not in it: a
+      removal by an older server still running after a hand-run
+      `oxyde migrate` (until its restart), or one made by hand in the
+      database.
+    * the database's MEMBER revocation events. Only removals that ended a
+      session, code or ticket are recorded, and only since migration
+      0024 (`recorded_since` is the oldest).
     * `logged_removals` (a list from `removals_in_log`), the server's
-      request log, for history before the activity log: a timed line
-      from after `activity_since` is left to the activity log.
+      request log.
+
+    A revocation event or a timed log line within a few seconds of an
+    activity row for the same team and user is that row's removal and is
+    not listed again; every other one is, whenever it happened, so the
+    window above is still covered by the older sources.
 
     `coverage` is "complete" when every membership row was created after
-    the activity log began, so every removal that could concern it is in
-    the log. Otherwise removals before it are known only in part:
+    the activity log began, so every removal that could concern it was
+    made by a server that logs removals (bar the hand-run-migrate window
+    above, which a leftover cannot fall in: leftovers need two rows for
+    one team and user, which 0033's unique index has refused since). Otherwise removals before it are known only in part:
     "partial", or "database+log" with `logged_removals`. On a database
     older than 0038 that is always the case, and the leftovers this
     looks for all date from before 0033 (its unique index keeps a user to
@@ -3766,10 +3797,19 @@ def audit_removed_members(db_path: Path, logged_removals=None) -> dict:
     # by hand, or by a test harness) is treated as having history before it.
     since = _parse_stored_datetime(activity_since)
 
-    def before_activity(at: datetime | None) -> bool:
-        """Whether a removal at `at` predates the activity log, so that only
-        the older sources can have it. One with no time might."""
-        return since is None or at is None or at < since
+    activity_at: dict[tuple[str, str], list[datetime]] = {}
+    for row in activity_rows:
+        if (at := _parse_stored_datetime(row["removed_at"])) is not None:
+            activity_at.setdefault((row["team_id"], row["user_id"]), []).append(at)
+
+    def in_activity_log(team_id: str, user_id: str, at: datetime | None) -> bool:
+        """Whether a removal from an older source at `at` is one the
+        activity log has: a row for the same pair within a few seconds.
+        One with no time is never matched, and stays listed."""
+        return at is not None and any(
+            abs((at - logged).total_seconds()) <= _SAME_REMOVAL_SECONDS
+            for logged in activity_at.get((team_id, user_id), ())
+        )
 
     # The oldest recorded removal, by time (stored text of mixed legacy
     # forms does not sort as time does).
@@ -3801,7 +3841,7 @@ def audit_removed_members(db_path: Path, logged_removals=None) -> dict:
             })
     for row in rows:
         removed = _parse_stored_datetime(row["removed_at"])
-        if not before_activity(removed):
+        if in_activity_log(row["team_id"], row["user_id"], removed):
             continue  # the activity log has it
         ordering = _ordering(_parse_stored_datetime(row["joined_at"]), removed, removed)
         if ordering is not None:
@@ -3814,7 +3854,7 @@ def audit_removed_members(db_path: Path, logged_removals=None) -> dict:
             })
     by_pair: dict[tuple[str, str], list[LoggedRemoval]] = {}
     for removal in logged_removals or ():
-        if before_activity(removal.at):
+        if not in_activity_log(removal.team_id, removal.user_id, removal.at):
             by_pair.setdefault((removal.team_id, removal.user_id), []).append(removal)
     for row in members:
         joined = _parse_stored_datetime(row["joined_at"])
@@ -3830,7 +3870,7 @@ def audit_removed_members(db_path: Path, logged_removals=None) -> dict:
                 })
     result = sorted(findings.values(), key=lambda f: (f["team_id"], f["user_id"], f["member_id"]))
     for finding in result:
-        finding["remedy"] = _remedy(finding, db_path)
+        finding["remedy"] = _remedy(finding, db_path, logged=has_activity)
 
     # Every membership created after the activity log began can only have
     # been removed since, and every such removal is in it.
@@ -3885,7 +3925,10 @@ def system_audit_removed_members(db_path, log_file, as_json):
     row was created, by id, with the steps that end it.
 
     The team activity log (server version with migration 0038 and
-    later) records every removal; it is the main source. Before it, the
+    later) records the removals the server makes; it is the main source
+    (not in it: deletes made by hand in the database, and removals by an
+    older server still running after a hand-run migrate, until its
+    restart; their revocation events and log lines still count). Before it, the
     database recorded a removal only when it ended a connection, code or
     ticket, so for memberships older than the activity log the check is
     partial without --log. The leftovers this looks for all date from
@@ -3928,7 +3971,9 @@ def system_audit_removed_members(db_path, log_file, as_json):
 
     activity_since = report["activity_since"]
     if activity_since is not None:
-        console.print(f"The team activity log records every member removal since {esc(activity_since)}.")
+        console.print(f"The team activity log records the member removals the server made since "
+                      f"{esc(activity_since)} (not ones made by hand in the database, nor by an older "
+                      "server still running after a hand-run migrate).")
     since = report["recorded_since"]
     if since is None:
         console.print("The revocation events record no member removal.")

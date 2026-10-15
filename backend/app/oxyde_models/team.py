@@ -65,10 +65,15 @@ class OxydeTeamInvitation(Model):
 class OxydeTeamActivity(Model):
     """One administrative event of a team (CHT-1843, CHT-1845, migration 0038).
 
-    Written in the transaction of what it records: a member added,
-    removed (or leaving: actor and target the same) or given another
-    role, an invitation created, cancelled or accepted, and a team admin
-    issuing an invitation verification code (CHT-1828). Read by team
+    Written in the transaction of what it records: a member added (on
+    team creation, and on an accepted invitation that created the
+    membership, beside its INVITATION_ACCEPTED), removed (or leaving, or
+    deleting their account: actor and target the same) or given another
+    role, an invitation created, cancelled (by an admin, or by its
+    sender's account deletion) or accepted, and a team admin issuing an
+    invitation verification code (CHT-1828). Only what the server does:
+    a row deleted by hand in the database has no entry unless the hand
+    writes one (as `system audit removed-members`' remedy does). Read by team
     admins (``GET /api/teams/{team}/activity``) and by ``chaotic system
     audit removed-members``.
 

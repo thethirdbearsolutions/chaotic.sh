@@ -457,6 +457,7 @@ REFUSED_ALIKE = {
             ("PATCH", "/api/teams/{team}/members/{user}", "Only admins can update member roles"),
             ("DELETE", "/api/teams/{team}/members/{user}", "Only admins can remove other members"),
             ("GET", "/api/teams/{team}/invitations", "Only admins can view invitations"),
+            ("GET", "/api/teams/{team}/activity", "Not authorized to access this team"),
             ("POST", "/api/teams/{team}/invitations", "Only admins can invite members"),
             ("DELETE", "/api/teams/{team}/invitations/{invitation}", "Only admins can delete invitations"),
             ("POST", "/api/teams/{team}/invitations/{invitation}/verification-code",

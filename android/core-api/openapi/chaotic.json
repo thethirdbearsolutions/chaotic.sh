@@ -716,7 +716,7 @@
           "teams"
         ],
         "summary": "List Team Activity",
-        "description": "The team's administrative log, newest first (CHT-1843, CHT-1845).\n\nMembers added, removed (or leaving) and given another role,\ninvitations created, cancelled and accepted, and invitation\nverification codes issued. For the team's admins: visible (else the\nmissing team's 404), then admin (403), as ``update_team``. Paged\nwith ``skip``/``limit``; ``action`` keeps one kind of row. Names are\nresolved at read time, so a deleted user's rows keep only the id.",
+        "description": "The team's administrative log, newest first (CHT-1843, CHT-1845).\n\nMembers added, removed (or leaving) and given another role,\ninvitations created, cancelled and accepted, and invitation\nverification codes issued. For the team's admins only. The route\nkeys on ``team_id`` and never loads the team row, so anyone else\n(a member, an outsider, the caller of a missing team) gets the one\n``team_hidden()`` 403 (CLAUDE.md, CHT-1842). Paged with\n``skip``/``limit``; ``action`` keeps one kind of row. Names are\nresolved at read time, so a deleted user's rows keep only the id.",
         "operationId": "list_team_activity_api_teams__team_id__activity_get",
         "security": [
           {

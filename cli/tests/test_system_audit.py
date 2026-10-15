@@ -308,6 +308,46 @@ class TestActivitySource:
         assert db.digest() == before
 
 
+class TestActivityLogGaps:
+    """PR #451 review 5: what the activity log does not have."""
+
+    def test_a_removal_by_an_older_server_after_the_migrate_is_still_found(self, db):
+        """A hand-run migrate against a live server: until it restarts, its
+        removals write no activity row. Their revocation event and log
+        line still count."""
+        db.activity_log("2026-10-15 00:00:00")
+        db.member("m-left", "t1", "u1", "2026-10-01 09:00:00")
+        db.event("e-window", "t1", "u1", "2026-10-15 00:05:00")
+        log = f"2026-10-15T00:06:00+0000 host uv[1]: {ACCESS('t1', 'u1')}"
+        report = json.loads(run("--db", str(db.path), "--log", "-", "--json", input=log).stdout)
+        (finding,) = report["findings"]
+        assert [r["source"] for r in finding["removals"]] == ["revocation_event", "request_log"]
+
+    def test_the_owner_remedy_writes_the_log_row_too(self, db):
+        db.activity_log()
+        db.member("m-own", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.activity("a1", "t1", "u1", "2026-10-16 12:00:00")
+        (finding,) = system.audit_removed_members(db.path)["findings"]
+        (step,) = [s for s in finding["remedy"] if s.startswith("sqlite3 ")]
+        sql = shlex.split(step)[2]
+        assert sql.startswith("BEGIN; DELETE FROM team_members WHERE id = 'm-own';")
+        db.conn.executescript(sql)
+        assert db.conn.execute("SELECT count(*) FROM team_members").fetchone()[0] == 0
+        rows = db.conn.execute(
+            "SELECT team_id, action, actor_id, target_user_id, role, created_at FROM team_activities "
+            "WHERE id != 'a1'"
+        ).fetchall()
+        assert [r[:5] for r in rows] == [("t1", "MEMBER_REMOVED", None, "u1", "OWNER")]
+        assert system._parse_stored_datetime(rows[0][5]) is not None
+
+    def test_without_the_activity_table_the_owner_remedy_is_the_bare_delete(self, db):
+        db.member("m-own", "t1", "u1", "2026-10-01 09:00:00", role="OWNER")
+        db.event("e1", "t1", "u1", "2026-10-14 12:00:00")
+        (finding,) = system.audit_removed_members(db.path)["findings"]
+        (step,) = [s for s in finding["remedy"] if s.startswith("sqlite3 ")]
+        assert "team_activities" not in step
+
+
 class TestLogSource:
     def test_log_removals_are_reported_with_unknown_order(self, db, tmp_path):
         db.member("m-left", "t1", "u1", "2026-10-01 09:00:00")   # removal only in the log
