@@ -17,6 +17,8 @@ import {
   handleInvite,
   showInviteLink,
   copyInviteLink,
+  inviteLinkForDisplay,
+  isLoopbackHost,
   removeMember,
   deleteInvitation,
   showCreateTeamModal,
@@ -853,6 +855,56 @@ describe('handleInvite', () => {
     expect(document.getElementById('modal-content').textContent).toContain('send this link to new@example.com yourself');
     expect(document.querySelector('[data-action="copy-invite-link"]')).not.toBeNull();
     expect(showModal).toHaveBeenCalled();
+  });
+});
+
+describe('inviteLinkForDisplay (CHT-1822)', () => {
+  const tok = 'tok_' + 'a'.repeat(40);
+
+  it('rebuilds a loopback link on the non-loopback origin the page was loaded from', () => {
+    expect(inviteLinkForDisplay(`http://localhost:24267/invite/${tok}`, 'https://chaotic.example.com'))
+      .toBe(`https://chaotic.example.com/invite/${tok}`);
+    expect(inviteLinkForDisplay(`http://127.0.0.1:24267/invite/${tok}`, 'http://10.0.0.5:24267'))
+      .toBe(`http://10.0.0.5:24267/invite/${tok}`);
+    expect(inviteLinkForDisplay(`http://[::1]:24267/invite/${tok}`, 'https://h.example:8443'))
+      .toBe(`https://h.example:8443/invite/${tok}`);
+  });
+
+  it('keeps only the path: no query, fragment or credentials from the server link', () => {
+    expect(inviteLinkForDisplay(`http://user:pw@localhost:24267/invite/${tok}?next=https://evil.example#x`,
+      'https://chaotic.example.com')).toBe(`https://chaotic.example.com/invite/${tok}`);
+  });
+
+  it('leaves a link alone when APP_BASE_URL was set to a real host', () => {
+    const url = `https://chaotic.example.com/invite/${tok}`;
+    expect(inviteLinkForDisplay(url, 'https://other.example.org')).toBe(url);
+  });
+
+  it('leaves a loopback link alone when the page is on loopback too', () => {
+    const url = `http://localhost:24267/invite/${tok}`;
+    expect(inviteLinkForDisplay(url, 'http://127.0.0.1:24267')).toBe(url);
+    expect(inviteLinkForDisplay(url, 'http://localhost:5173')).toBe(url);
+  });
+
+  it('returns what it cannot parse unchanged', () => {
+    expect(inviteLinkForDisplay('not a url', 'https://chaotic.example.com')).toBe('not a url');
+    expect(inviteLinkForDisplay(`http://localhost/invite/${tok}`, 'null')).toBe(`http://localhost/invite/${tok}`);
+  });
+
+  it('defaults to this page\'s origin', () => {
+    // jsdom serves the test page from a loopback origin.
+    const url = `http://localhost:24267/invite/${tok}`;
+    expect(isLoopbackHost(new URL(window.location.origin).hostname)).toBe(true);
+    expect(inviteLinkForDisplay(url)).toBe(url);
+  });
+
+  it.each([
+    ['localhost', true], ['LOCALHOST', true], ['app.localhost', true], ['localhost.', true],
+    ['127.0.0.1', true], ['127.1.2.3', true], ['[::1]', true],
+    ['localhost.example.com', false], ['127.0.0.1.nip.io', false], ['10.0.0.1', false],
+    ['0.0.0.0', false], ['chaotic.example.com', false], ['', false],
+  ])('isLoopbackHost(%j) is %s', (host, expected) => {
+    expect(isLoopbackHost(host)).toBe(expected);
   });
 });
 

@@ -228,6 +228,20 @@ invitee reads, and revoke an invitation that may have leaked
 (`DELETE /api/teams/{team_id}/invitations/{id}`). If you run a
 multi-user server where that is not good enough, configure SMTP.
 
+**Where the link points.** Invitation links are
+`<APP_BASE_URL>/invite/<token>`, emailed or (without SMTP) shown once to
+the inviting admin. `APP_BASE_URL` defaults to `http://localhost:24267`,
+so set it to the address people reach the server at
+(`chaotic system config set APP_BASE_URL https://your-chaotic-host`,
+then restart). The server never takes the host from a request's `Host`
+header, which a client controls. While SMTP is unset and `APP_BASE_URL`
+is still the default, the server logs a warning at startup saying so.
+Until it is set, the web UI's Invite dialog and `chaotic team invite`
+correct a link that names a loopback host (`localhost`, `127.0.0.0/8`,
+`::1`) when they reached the server at some other address: they show
+that address (the page's origin, or the CLI profile's server URL) with
+only the link's `/invite/<token>` path. An emailed link is not corrected.
+
 ## Hardening, in priority order
 
 1. **Keep the default: bind to loopback, put a TLS-terminating reverse

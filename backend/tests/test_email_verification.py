@@ -673,6 +673,78 @@ class TestEmailAndStartup:
         assert "gate: INACTIVE" in caplog.text
 
 
+class TestInviteLinkBaseWarning:
+    """CHT-1822: one startup warning when, with no SMTP, invitation links
+    would be built on the APP_BASE_URL default (localhost)."""
+
+    LOGGER = "app.services.email_verification_service"
+
+    @pytest.fixture
+    def base(self, monkeypatch):
+        def set_(value):
+            if value is None:
+                monkeypatch.delenv("APP_BASE_URL", raising=False)
+            else:
+                monkeypatch.setenv("APP_BASE_URL", value)
+            get_settings.cache_clear()
+        yield set_
+        get_settings.cache_clear()
+
+    def _warnings(self, caplog):
+        return [r for r in caplog.records if r.name == self.LOGGER and r.levelno == logging.WARNING]
+
+    @pytest.mark.parametrize("value", [None, "http://localhost:24267", "http://localhost:24267/"])
+    def test_warns_without_smtp_on_the_default(self, no_smtp, base, caplog, value):
+        base(value)
+        caplog.set_level(logging.INFO, logger=self.LOGGER)
+        evs.warn_if_invite_links_point_at_localhost()
+        (record,) = self._warnings(caplog)
+        message = record.getMessage()
+        assert "APP_BASE_URL is not set" in message and "http://localhost:24267" in message
+        assert "chaotic system config set APP_BASE_URL" in message
+        assert "/invite/" not in message
+
+    def test_silent_when_app_base_url_is_set(self, no_smtp, base, caplog):
+        base("https://chaotic.example.com")
+        caplog.set_level(logging.INFO, logger=self.LOGGER)
+        evs.warn_if_invite_links_point_at_localhost()
+        assert self._warnings(caplog) == []
+
+    def test_silent_when_smtp_is_configured(self, monkeypatch, base, caplog):
+        monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+        monkeypatch.setenv("SMTP_PASSWORD", "hunter2-secret")
+        base(None)
+        caplog.set_level(logging.INFO, logger=self.LOGGER)
+        evs.warn_if_invite_links_point_at_localhost()
+        assert self._warnings(caplog) == []
+
+    @pytest.mark.parametrize("app_base_url,warns", [(None, True), ("https://chaotic.example.com", False)])
+    async def test_the_lifespan_warns_once(self, no_smtp, base, caplog, monkeypatch, app_base_url, warns):
+        """Drive app.main's real lifespan, with only its I/O stubbed."""
+        import contextlib
+
+        import app.main as main
+
+        async def noop(*args, **kwargs):
+            return None
+
+        @contextlib.asynccontextmanager
+        async def no_mcp():
+            yield
+
+        for name in ("init_oxyde", "close_oxyde", "bootstrap_if_empty", "verify_migrations_current",
+                     "_mcp_toolset_fingerprint"):
+            monkeypatch.setattr(main, name, noop)
+        monkeypatch.setattr(main, "get_version_info", lambda *a, **k: None)
+        monkeypatch.setattr(main, "mcp_lifespan", no_mcp)
+        monkeypatch.setattr(main.settings, "secret_key", "x" * 32)
+        base(app_base_url)
+        caplog.set_level(logging.INFO, logger=self.LOGGER)
+        async with main.lifespan(main.app):
+            pass
+        assert len([r for r in self._warnings(caplog) if "APP_BASE_URL" in r.getMessage()]) == (1 if warns else 0)
+
+
 # ---------------------------------------------------------------------------
 # Addresses are one account ignoring case (re-review R1, CHT-1789)
 # ---------------------------------------------------------------------------

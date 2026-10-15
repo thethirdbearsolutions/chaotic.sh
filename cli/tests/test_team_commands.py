@@ -283,6 +283,76 @@ class TestTeamInvite:
         assert '/invite/' not in result.output
 
 
+    def test_team_invite_rebuilds_a_loopback_link_on_the_profile_server(self, cli_runner, monkeypatch):
+        """CHT-1822: a server that never set APP_BASE_URL builds the link on
+        http://localhost:24267; print it on the server this profile reaches."""
+        import cli.main as main_mod
+        from cli.main import cli, client
+
+        token = "t" * 64
+        client.invite_member = MagicMock(return_value={
+            "id": "inv-1", "email": "bob@test.com", "accept_url": f"http://localhost:24267/invite/{token}"})
+        monkeypatch.setattr(main_mod, "get_web_url", lambda: "https://chaotic.example.com")
+
+        result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
+
+        assert result.exit_code == 0
+        assert f"https://chaotic.example.com/invite/{token}" in result.output.splitlines()
+        assert "localhost" not in result.output
+
+    def test_team_invite_keeps_a_loopback_link_for_a_loopback_profile(self, cli_runner, monkeypatch):
+        import cli.main as main_mod
+        from cli.main import cli, client
+
+        url = "http://localhost:24267/invite/" + "t" * 64
+        client.invite_member = MagicMock(return_value={"id": "inv-1", "email": "bob@test.com", "accept_url": url})
+        monkeypatch.setattr(main_mod, "get_web_url", lambda: "http://127.0.0.1:24267")
+
+        result = cli_runner.invoke(cli, ['team', 'invite', 'bob@test.com'])
+
+        assert result.exit_code == 0
+        assert url in result.output.splitlines()
+
+
+class TestInviteLinkForDisplay:
+    """CHT-1822: only a loopback link on a non-loopback profile is rebuilt,
+    and only the path is taken from the server's link."""
+
+    TOK = "tok_" + "a" * 40
+
+    @pytest.mark.parametrize("accept_url,web_url,expected", [
+        ("http://localhost:24267/invite/{t}", "https://chaotic.example.com", "https://chaotic.example.com/invite/{t}"),
+        ("http://127.0.0.1:24267/invite/{t}", "http://10.0.0.5:24267", "http://10.0.0.5:24267/invite/{t}"),
+        ("http://[::1]:24267/invite/{t}", "https://h.example:8443", "https://h.example:8443/invite/{t}"),
+        # The profile URL's own credentials and path are not carried over.
+        ("http://localhost:24267/invite/{t}", "https://u:p@h.example/sub", "https://h.example/invite/{t}"),
+        # Nothing but the path from the server's link.
+        ("http://u:p@localhost:24267/invite/{t}?next=https://evil.example#x", "https://h.example",
+         "https://h.example/invite/{t}"),
+        # Left alone: a real APP_BASE_URL, a loopback profile, unusable profile URLs.
+        ("https://chaotic.example.com/invite/{t}", "https://other.example", "https://chaotic.example.com/invite/{t}"),
+        ("http://localhost:24267/invite/{t}", "http://localhost:24267", "http://localhost:24267/invite/{t}"),
+        ("http://localhost:24267/invite/{t}", "http://app.localhost:8000", "http://localhost:24267/invite/{t}"),
+        ("http://localhost:24267/invite/{t}", "", "http://localhost:24267/invite/{t}"),
+        ("http://localhost:24267/invite/{t}", None, "http://localhost:24267/invite/{t}"),
+        ("http://localhost:24267/invite/{t}", "ftp://h.example", "http://localhost:24267/invite/{t}"),
+        ("http://localhost:24267/invite/{t}", "http://[x", "http://localhost:24267/invite/{t}"),
+        ("http://[x/invite/{t}", "https://h.example", "http://[x/invite/{t}"),
+    ])
+    def test_cases(self, accept_url, web_url, expected):
+        from cli.commands.team import invite_link_for_display
+        assert invite_link_for_display(accept_url.format(t=self.TOK), web_url) == expected.format(t=self.TOK)
+
+    @pytest.mark.parametrize("host,expected", [
+        ("localhost", True), ("LOCALHOST", True), ("app.localhost", True), ("localhost.", True),
+        ("127.0.0.1", True), ("127.9.9.9", True), ("::1", True),
+        ("localhost.example.com", False), ("10.0.0.1", False), ("0.0.0.0", False), ("", False), (None, False),
+    ])
+    def test_is_loopback_host(self, host, expected):
+        from cli.commands.team import _is_loopback_host
+        assert _is_loopback_host(host) is expected
+
+
 class TestTeamAcceptInvite:
     """Tests for team accept-invite command."""
 

@@ -444,7 +444,7 @@ export async function handleInvite(event) {
     const invitation = await api.createInvitation(getCurrentTeam().id, email, role);
     await loadTeamInvitations();
     if (invitation && invitation.accept_url) {
-      showInviteLink(email, invitation.accept_url);
+      showInviteLink(email, inviteLinkForDisplay(invitation.accept_url));
       return false;
     }
     closeModal();
@@ -453,6 +453,43 @@ export async function handleInvite(event) {
     showApiError('send invitation', e);
   }
   return false;
+}
+
+/**
+ * Whether a URL hostname names this machine: localhost (and *.localhost),
+ * 127.0.0.0/8 or ::1.
+ * @param {string} hostname - URL.hostname (IPv6 in brackets)
+ * @returns {boolean}
+ */
+export function isLoopbackHost(hostname) {
+  const h = String(hostname || '').toLowerCase().replace(/\.$/, '');
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  if (h === '[::1]' || h === '::1') return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+/**
+ * The accept link to show (CHT-1822). The server builds it from
+ * APP_BASE_URL, which defaults to http://localhost:24267; a server that
+ * never set it hands out a link no remote invitee can open. When the link
+ * names a loopback host and this page was not loaded from one, rebuild it
+ * on the origin the admin actually reached, keeping only the path
+ * (/invite/<token>) from the server's link. Anything else is left as is.
+ * @param {string} acceptUrl - accept_url from the create response
+ * @param {string} [origin] - this page's origin (window.location.origin)
+ * @returns {string}
+ */
+export function inviteLinkForDisplay(acceptUrl, origin = window.location.origin) {
+  let parsed;
+  let here;
+  try {
+    parsed = new URL(acceptUrl);
+    here = new URL(origin);
+  } catch {
+    return acceptUrl;
+  }
+  if (!isLoopbackHost(parsed.hostname) || isLoopbackHost(here.hostname)) return acceptUrl;
+  return here.origin + parsed.pathname;
 }
 
 /**

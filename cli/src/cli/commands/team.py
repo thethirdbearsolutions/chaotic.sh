@@ -1,5 +1,7 @@
 """Team management commands."""
+import ipaddress
 import sys
+from urllib.parse import urlsplit
 
 import click
 from ..markup import Table, esc
@@ -11,6 +13,42 @@ from .shared import _client, console, resolve_content_value
 def _main():
     """Late-bind to cli.main for test mock compatibility."""
     return sys.modules['cli.main']
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    """localhost (and *.localhost), 127.0.0.0/8 or ::1."""
+    h = (host or "").lower().rstrip(".")
+    if h == "localhost" or h.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def invite_link_for_display(accept_url: str, web_url: str | None) -> str:
+    """The accept link to print (CHT-1822).
+
+    The server builds it from APP_BASE_URL, whose default is
+    http://localhost:24267, so a server that never set it hands out a link
+    no remote invitee can open. When the link names a loopback host and
+    the server this profile talks to is not on one, rebuild the link on
+    that server's URL, keeping only the path (/invite/<token>) from the
+    server's link. Anything else is printed as the server sent it."""
+    try:
+        link = urlsplit(accept_url)
+        here = urlsplit(web_url or "")
+        link_host, here_host = link.hostname, here.hostname
+    except ValueError:
+        return accept_url
+    if here.scheme not in ("http", "https") or not here_host:
+        return accept_url
+    if not _is_loopback_host(link_host) or _is_loopback_host(here_host):
+        return accept_url
+    # Only the profile's scheme and host[:port] (no credentials, no path):
+    # the web UI and /invite/ are served at the root.
+    origin = f"{here.scheme}://{here.netloc.rpartition('@')[2]}"
+    return origin + link.path
 
 
 def register(cli):
@@ -147,8 +185,9 @@ def register(cli):
             "[yellow]This server does not send email: send this link to them yourself. "
             "It is shown only now.[/yellow]"
         )
+        link = invite_link_for_display(accept_url, m.get_web_url())
         # Unwrapped and unstyled, so it copies as one line.
-        console.print(esc(accept_url), soft_wrap=True, highlight=False)
+        console.print(esc(link), soft_wrap=True, highlight=False)
 
     @team.command("accept-invite")
     @click.argument("token")

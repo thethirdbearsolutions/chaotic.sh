@@ -53,7 +53,7 @@ from datetime import datetime, timedelta, timezone
 
 from oxyde import F
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.oxyde_models.email_verification import OxydeEmailVerificationCode
 from app.oxyde_models.user import OxydeUser
 from app.services.email_service import EmailService
@@ -87,6 +87,33 @@ def log_invitation_gate() -> None:
             "Invitation email-verification gate: INACTIVE (no SMTP configured); "
             "an invitation link alone is enough to accept it, so hand links over privately."
         )
+
+
+def warn_if_invite_links_point_at_localhost() -> None:
+    """Warn once, at startup, when this server would hand out invitation
+    links on localhost (CHT-1822).
+
+    Accept links are ``<APP_BASE_URL>/invite/<token>``. Without SMTP the
+    link is shown to the inviting admin to pass on by hand, and a server
+    that never configured email has quite likely never set APP_BASE_URL
+    either, so the link names http://localhost:24267. The web UI and the
+    CLI rebuild such a link on the address they reached; anything else
+    that reads ``accept_url`` gets the localhost one. The host is never
+    taken from the request (Host-header link poisoning), so the fix is
+    the setting. Nothing here names a token or a secret."""
+    settings = get_settings()
+    default = Settings.model_fields["app_base_url"].default
+    if EmailService().is_configured():
+        return
+    if settings.app_base_url.rstrip("/") != default.rstrip("/"):
+        return
+    logger.warning(
+        "APP_BASE_URL is not set (default %s) and SMTP is not configured: invitation links "
+        "this server builds point at localhost, which an invitee on another machine cannot open. "
+        "Set APP_BASE_URL to this server's public URL "
+        "(chaotic system config set APP_BASE_URL https://your-chaotic-host).",
+        default,
+    )
 
 
 class VerificationRefused(Exception):
