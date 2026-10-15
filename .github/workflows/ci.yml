@@ -43,32 +43,12 @@ jobs:
       - name: Run tests with coverage
         run: uv run pytest --cov=app --cov-report=term-missing -v
 
+  # The CLI suite on its oldest and newest supported Python, plus a run of
+  # each test file on its own (CHT-1834). It lives in cli-tests.yml so that
+  # publish-cli.yml gates releases on exactly the same jobs. The checks are
+  # named "cli / cli (3.10)" and "cli / cli (3.14)".
   cli:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: cli
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        # --locked fails when uv.lock is out of date with pyproject.toml (CHT-1201)
-        run: uv sync --locked  # the dev group is a default group (CHT-1698)
-
-      - name: Lint (pyflakes rules)
-        run: uv run ruff check .
-
-      - name: Run tests with coverage
-        run: uv run pytest --cov=cli --cov=chaotic_mcp_tools --cov-report=term-missing -v
+    uses: ./.github/workflows/cli-tests.yml
 
   e2e:
     runs-on: ubuntu-latest

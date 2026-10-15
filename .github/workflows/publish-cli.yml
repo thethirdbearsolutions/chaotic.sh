@@ -59,27 +59,9 @@ jobs:
   test-cli:
     # Only a CLI release: see test-backend.
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: cli
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: uv sync --locked  # the dev group is a default group (CHT-1698)
-
-      - name: Run tests
-        run: uv run pytest -v
+    # The same jobs as ci.yml's cli check (CHT-1834): the matrix of the oldest
+    # and newest supported Python, and each test file run on its own.
+    uses: ./.github/workflows/cli-tests.yml
 
   test-frontend:
     # Only a CLI release: see test-backend.
