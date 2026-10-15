@@ -491,10 +491,12 @@ exactly them. It is shown by the web comment box's autocomplete, by
 - when even that is shared: first word and the start of the id
   (`@claude.28b1c019`).
 
-A handle that more than one of them could mean reaches **nobody**: in a
-team of Claude sessions, `@claude` notifies none of them. It never picks
-one and never notifies them all. A project-scoped agent is reached only
-from its own project. Handles follow names, so renaming an agent changes
+People come first: a handle a person has (their first word or whole
+name) names only people, so naming an agent can never take a person's
+handle. Otherwise a handle that more than one of them could mean reaches
+**nobody**: in a team of Claude sessions, `@claude` notifies none of
+them. It never picks one and never notifies them all. A project-scoped
+agent is reached only from its own project. Handles follow names, so renaming an agent changes
 its handle.
 
 ## Remote MCP (Streamable HTTP, `/mcp`)

@@ -17,14 +17,18 @@ Each principal has a list of candidate handles, most readable first:
 - last, for everyone: ``<first word>.<first 8 of the id>``, which no
   other principal can share.
 
-A principal's handle is its first candidate that no other principal of
-the team has as *any* candidate. That is what the web autocomplete, ``agent
-list`` and ``team members`` show, and it always resolves to exactly them.
+A token names the people who have it as a candidate or, when no person
+does, the agents who do. People come first so that naming an agent can
+never take a person's handle away or make it ambiguous.
+
+A principal's handle is its first candidate that names only them. That is
+what the web autocomplete, ``agent list`` and ``team members`` show, and it
+always resolves to exactly them.
 
 Resolving a typed ``@token`` is the same rule from the other side: it
-reaches a principal only when exactly one principal has it as a candidate.
-An ambiguous token (``@claude`` in a team of Claude sessions) reaches
-nobody; it never picks one and never fans out to all of them.
+reaches a principal only when it names exactly one. An ambiguous token
+(``@claude`` in a team of Claude sessions) reaches nobody; it never picks
+one and never fans out to all of them.
 
 Handles are derived from names and ids, so nothing is stored; a rename
 changes the handle, as a person's has always changed with their name.
@@ -139,36 +143,45 @@ class MentionDirectory:
         ).order_by("created_at").all()
         return cls([m.user for m in members] + list(agents))
 
+    def _claimants(self, handle: str) -> set[str]:
+        """Who `handle` names. People come first: if any person claims it,
+        only people do, so naming an agent can never take a person's handle
+        or make it ambiguous (and ``@claude`` still reaches a person whose
+        first word it is, as it always has)."""
+        ids = self._claims.get(handle, set())
+        people = {i for i in ids if not self._people[i].is_agent}
+        return people or ids
+
+    def _token_claimants(self, token: str) -> set[str]:
+        """`_claimants` of a typed token. A trailing '.', '-' or '_'
+        (sentence punctuation after the handle) is dropped when the token
+        itself is nobody's candidate."""
+        token = token.lower()
+        if token not in self._claims:
+            token = token.rstrip("._-")
+        return self._claimants(token)
+
     def handle_for(self, user_id: str) -> str | None:
-        """The handle to show for `user_id`: its first candidate nobody
-        else claims (the id-prefixed one if all are shared). None if the
-        user is not mentionable in this team."""
+        """The handle to show for `user_id`: its first candidate that names
+        only them (the id-prefixed one if none does). None if the user is
+        not mentionable in this team."""
         cands = self._candidates.get(user_id)
         if not cands:
             return None
         for handle in cands:
-            if self._claims[handle] == {user_id}:
+            if self._claimants(handle) == {user_id}:
                 return handle
         return cands[-1]
 
     def resolve(self, token: str) -> str | None:
         """The one principal `token` names, or None when it names nobody
-        or more than one. A trailing '.', '-' or '_' (sentence punctuation
-        after the handle) is ignored when the token itself matches nothing."""
-        token = token.lower()
-        ids = self._claims.get(token)
-        if ids is None:
-            stripped = token.rstrip("._-")
-            ids = self._claims.get(stripped) if stripped != token else None
-        if ids is None or len(ids) != 1:
-            return None
-        return next(iter(ids))
+        or more than one."""
+        ids = self._token_claimants(token)
+        return next(iter(ids)) if len(ids) == 1 else None
 
     def ambiguous(self, token: str) -> bool:
-        """Whether `token` is a candidate of more than one principal."""
-        token = token.lower()
-        ids = self._claims.get(token) or self._claims.get(token.rstrip("._-")) or set()
-        return len(ids) > 1
+        """Whether `token` names more than one principal."""
+        return len(self._token_claimants(token)) > 1
 
     def can_reach(self, user_id: str, project_id: str | None) -> bool:
         """A project-scoped agent is reached only from its own project

@@ -100,12 +100,29 @@ class TestDirectory:
         assert d.resolve("claude-3f9a1c2b") == people[2].id
         assert d.handle_for(people[0].id) == f"claude.{people[0].id.replace('-', '')[:8]}"
 
-    def test_person_and_agent_sharing_a_word_both_need_a_longer_handle(self):
-        person, agent = _user("Claude Shannon"), _agent("Claude")
-        d = MentionDirectory([person, agent])
-        assert d.resolve("claude") is None
-        assert d.handle_for(person.id) == "claude-shannon"
-        assert d.handle_for(agent.id).startswith("claude.")
+    def test_a_person_keeps_a_word_an_agent_shares(self):
+        """People come first: an agent can never take a person's handle or
+        make it ambiguous, so '@claude' still reaches Claude Shannon, as it
+        did before agents could be mentioned."""
+        person, agent, mcp = _user("Claude Shannon"), _agent("Claude"), _agent("Claude MCP")
+        d = MentionDirectory([person, agent, mcp])
+        assert d.resolve("claude") == person.id
+        assert d.handle_for(person.id) == "claude"
+        assert d.handle_for(agent.id) == f"claude.{agent.id.replace('-', '')[:8]}"
+        assert d.handle_for(mcp.id) == "claude-mcp"
+
+    def test_an_agent_named_like_a_person_cannot_take_their_handle(self):
+        ethan, bot = _user("Ethan Smith"), _agent("Ethan-Smith")
+        d = MentionDirectory([ethan, bot])
+        assert d.resolve("ethan") == ethan.id
+        assert d.resolve("ethan-smith") == ethan.id
+        assert d.resolve(d.handle_for(bot.id)) == bot.id
+
+    def test_two_people_sharing_a_word_reach_nobody_by_it(self):
+        a, b = _user("Ethan Smith"), _user("Ethan Jones")
+        d = MentionDirectory([a, b])
+        assert d.resolve("ethan") is None and d.ambiguous("ethan")
+        assert (d.handle_for(a.id), d.handle_for(b.id)) == ("ethan-smith", "ethan-jones")
 
     def test_unique_first_word_still_works_for_people(self):
         ada = _user("Ada Lovelace")
