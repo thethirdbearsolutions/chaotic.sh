@@ -1,8 +1,16 @@
 """Authentication API routes."""
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser
-from app.schemas.user import UserCreate, UserLogin, UserResponse, Token
+from app.api.deps import CurrentUser, NotAppSession
+from app.schemas.user import (
+    EmailVerificationConfirm,
+    EmailVerificationSent,
+    Token,
+    UserCreate,
+    UserLogin,
+    UserResponse,
+)
+from app.services.email_verification_service import EmailVerificationService, VerificationRefused
 from app.services.user_service import UserService
 from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
 
@@ -71,6 +79,7 @@ async def get_me(current_user: CurrentUser):
         parent_user_name=parent_user_name,
         created_at=current_user.created_at,
         updated_at=current_user.updated_at,
+        email_verified_at=current_user.email_verified_at,
         kind=current_user.kind,
         external_ref=current_user.external_ref,
         registered_by_id=current_user.registered_by_id,
@@ -79,3 +88,63 @@ async def get_me(current_user: CurrentUser):
         agent_team_id=current_user.agent_team_id,
         agent_project_id=current_user.agent_project_id,
     )
+
+
+HUMAN_REQUIRED = {
+    "error_code": "human_required",
+    "message": "Email verification is for people; an agent has no mailbox to verify.",
+}
+
+
+def _refusal(refused: VerificationRefused) -> HTTPException:
+    return HTTPException(status_code=refused.status_code, detail=refused.detail(), headers=refused.headers)
+
+
+def _require_person(user) -> None:
+    if user.is_agent:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(HUMAN_REQUIRED))
+
+
+@router.post("/email-verification", response_model=EmailVerificationSent, status_code=status.HTTP_202_ACCEPTED)
+@writes
+async def request_email_verification(
+    current_user: CurrentUser, _app_session: NotAppSession,
+) -> EmailVerificationSent:
+    """Mail a six-digit code to the signed-in person's address (CHT-1790).
+
+    Confirm it with ``POST /api/auth/email-verification/confirm`` within
+    15 minutes. A new code retires any older one. At most one code a
+    minute and five an hour (429 ``email_verification_rate_limited``,
+    with Retry-After). 409 ``email_already_verified`` once verified;
+    409 ``email_verification_unavailable`` when the server has no SMTP
+    (then invitations do not require a verified address); 502
+    ``email_send_failed`` when the mail relay failed. People only: an
+    agent gets 403 ``human_required``.
+    """
+    _require_person(current_user)
+    try:
+        row = await EmailVerificationService().request_code(current_user)
+    except VerificationRefused as refused:
+        raise _refusal(refused) from refused
+    return EmailVerificationSent(email=current_user.email, expires_at=row.expires_at)
+
+
+@router.post("/email-verification/confirm", response_model=UserResponse)
+@writes
+async def confirm_email_verification(
+    body: EmailVerificationConfirm, current_user: CurrentUser, _app_session: NotAppSession,
+) -> UserResponse:
+    """Confirm the code from the verification email (CHT-1790) and
+    return the account, now with ``email_verified_at`` set.
+
+    A wrong, expired, superseded or used-up code (five tries per code)
+    all get the same 400 ``invalid_verification_code``. 409
+    ``email_already_verified`` once verified. People only: an agent gets
+    403 ``human_required``.
+    """
+    _require_person(current_user)
+    try:
+        user = await EmailVerificationService().confirm(current_user, body.code)
+    except VerificationRefused as refused:
+        raise _refusal(refused) from refused
+    return UserResponse.model_validate(user)

@@ -14,7 +14,12 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    """Schema for updating a user."""
+    """Schema for updating a user.
+
+    No ``email`` on purpose: a change of address would have to clear
+    ``email_verified_at`` too (CHT-1790; see
+    app.services.email_verification_service).
+    """
 
     name: str | None = None
     avatar_url: str | None = None
@@ -32,6 +37,10 @@ class UserResponse(BaseModel):
     parent_user_name: str | None = None
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
+    # When the person proved they receive mail at `email` (CHT-1790);
+    # None: never verified, and always None for an agent. With SMTP
+    # configured, accepting a team invitation requires it.
+    email_verified_at: DateTimeUTC | None = None
     # Agent identity (CHT-1497); all None for a human. See AgentResponse.
     kind: AgentKind | None = None
     external_ref: str | None = None
@@ -48,6 +57,23 @@ class UserResponse(BaseModel):
     agent_project_id: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class EmailVerificationSent(BaseModel):
+    """A verification code was mailed (CHT-1790)."""
+
+    # The address it went to: the account's own.
+    email: str
+    # When the code stops working. A newer code retires it sooner.
+    expires_at: DateTimeUTC
+
+
+class EmailVerificationConfirm(BaseModel):
+    """The code from the verification email (CHT-1790)."""
+
+    # Six digits as mailed. Bounded but not pattern-checked here, so a
+    # malformed code gets the same answer as a wrong one.
+    code: str = Field(min_length=1, max_length=32)
 
 
 class UserLogin(BaseModel):
