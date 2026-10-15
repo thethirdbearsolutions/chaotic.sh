@@ -109,6 +109,7 @@ describe('invitation links (CHT-1265)', () => {
         getTeams.mockReturnValue([]);
         hasCompletedOnboarding.mockReturnValue(true);
         setCurrentUser(null);
+        sessionStorage.clear();
         history.replaceState(null, '', `/invite/${TOKEN}`);
     });
 
@@ -144,7 +145,20 @@ describe('invitation links (CHT-1265)', () => {
 
         showAuth('login');
         expect(showLogin).toHaveBeenCalled();
-        expect(window.location.pathname).toBe(`/invite/${TOKEN}`);
+    });
+
+    it('moves the token out of the address bar on load, and finds it again after sign-in', async () => {
+        await showSignedOut();
+        expect(window.location.pathname).toBe('/invite');
+        expect(window.location.href).not.toContain(TOKEN);
+        expect(sessionStorage.getItem('chaotic.inviteToken')).toBe(TOKEN);
+
+        // Signing in runs initApp on /invite: the stored token brings the
+        // person back to the same invitation.
+        showInvite.mockClear();
+        setCurrentUser({ id: 'u1', email: 'r@example.com' });
+        await initApp();
+        expect(showInvite).toHaveBeenCalledWith(TOKEN, expect.objectContaining({ user: getCurrentUser() }));
     });
 
     it('accepting drops the token from the URL and boots into the joined team', async () => {

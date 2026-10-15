@@ -1,11 +1,8 @@
 """Team API routes."""
 import logging
-from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, HTTPException, Response, status
 from app.auth.access import reads, writes
-from app.oauth import ratelimit
 from app.api.deps import CurrentUser, NotAppSession, check_user_in_team
-from app.utils import ensure_utc
 from app.schemas.team import (
     TeamCreate,
     TeamUpdate,
@@ -24,7 +21,7 @@ from app.services.mention_handles import MentionDirectory
 from app.services.team_service import TeamService
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
-from app.enums import InvitationStatus, TeamRole
+from app.enums import TeamRole
 
 logger = logging.getLogger(__name__)
 
@@ -319,6 +316,15 @@ async def create_invitation(
                 detail="User is already a team member",
             )
 
+    # One live invitation per (team, address) (CHT-1265 review F5): with
+    # two, accepting used up both and silently applied whichever role
+    # the first claim carried. Revoke the old one to send another.
+    if await team_service.get_live_invitation(team_id, invitation_in.email):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A pending invitation for this email already exists; revoke it to send a new one",
+        )
+
     invitation = await team_service.create_invitation(team, invitation_in, current_user)
 
     # CHT-1251: the invitation token is otherwise undeliverable without DB
@@ -367,47 +373,59 @@ async def list_team_invitations(
 def mask_email(email: str) -> str:
     """``alice@example.com`` -> ``a***@example.com``: enough for the
     invite page to say which account to use, without handing the full
-    address to whoever holds the link (CHT-1265)."""
+    address to whoever holds the link (CHT-1265). A one-character local
+    part would be shown whole, so it is masked entirely: ``***@x.com``."""
     local, at, domain = (email or "").partition("@")
     if not at or not local or not domain:
         return "***"
+    if len(local) == 1:
+        return f"***@{domain}"
     return f"{local[0]}***@{domain}"
 
 
-# Lookups of /invite/<token> previews per source address per minute
-# (CHT-1265). A token is 256 random bits, so this is not what stops
-# guessing; it caps how fast anyone can try.
-INVITATION_LOOKUPS_PER_MINUTE = 30
 INVITATION_GONE = "This invitation is no longer valid"
+# Every answer about an invitation, error or not: never stored by a
+# cache, never sent on as a Referer.
+INVITATION_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+
+
+def _invitation_gone() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail=INVITATION_GONE, headers=INVITATION_HEADERS,
+    )
 
 
 @router.get("/invitations/{token}", response_model=InvitationPreviewResponse)
 @reads
-async def preview_invitation(token: str, request: Request, response: Response) -> InvitationPreviewResponse:
+async def preview_invitation(token: str, response: Response) -> InvitationPreviewResponse:
     """The public preview the /invite/<token> page shows (CHT-1265).
 
     Unauthenticated: the emailed link is opened before anyone signs in.
-    Holding the token is the only credential, so this tells its holder
-    no more than the page needs (team name, role, inviter, a masked
-    address, expiry), and answers an unknown, expired, accepted,
-    declined or revoked token with the same 404, so a lookup cannot
-    tell them apart. The token is redacted from the request log
-    (app.log_redaction).
+    It tells the token's holder only what the page needs (team name,
+    role, inviter, a masked address, expiry), and answers an unknown,
+    expired, accepted, declined or revoked token with the same 404, so
+    a lookup cannot tell them apart.
+
+    Threat model: the token is a bearer credential, not only a pointer
+    to an inbox. Signup does not verify email ownership (CHT-1790), so
+    while the invited address has no account, anyone holding the token
+    can sign up as that address and accept. Keep it out of every log,
+    Referer and history entry: it is redacted from the request log
+    (app.log_redaction), and the /invite/ page is served no-referrer and
+    moves it out of the address bar on load.
+
+    Not rate limited here, on purpose (CHT-1369): rate limiting is the
+    reverse proxy's job, and an in-process per-address counter behind a
+    proxy would see one address for everyone, so one client could lock
+    every invitee out. The token's 256 random bits are what make
+    guessing hopeless.
     """
-    response.headers.update({"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
-    source_ip = request.client.host if request.client else None
-    if source_ip and not ratelimit.invitation_lookups.allow(
-        ratelimit.address_bucket(source_ip), INVITATION_LOOKUPS_PER_MINUTE,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many invitation lookups from your network; wait a minute and try again.",
-        )
+    response.headers.update(INVITATION_HEADERS)
     team_service = TeamService()
     invitation = await team_service.get_valid_invitation_by_token(token)
     team = await team_service.get_by_id(invitation.team_id) if invitation else None
     if invitation is None or team is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=INVITATION_GONE)
+        raise _invitation_gone()
     inviter = (
         await UserService().get_by_id(invitation.invited_by_id)
         if invitation.invited_by_id else None
@@ -426,38 +444,29 @@ async def preview_invitation(token: str, request: Request, response: Response) -
 async def accept_invitation(token: str, current_user: CurrentUser, _app_session: NotAppSession):
     """Accept a team invitation.
 
-    An accepted or declined invitation is answered like an unknown one
-    (CHT-1788): before, a used token could be accepted again and added
-    a second membership row.
+    An unknown, expired, accepted, declined or revoked invitation gets
+    the preview's one 404, checked before the email match, so whatever
+    account asks, the answer does not tell those states apart (CHT-1265
+    review F10). Before CHT-1788 a used token could be accepted again
+    and added a second membership row.
     """
     team_service = TeamService()
-    invitation = await team_service.get_invitation_by_token(token)
+    invitation = await team_service.get_valid_invitation_by_token(token)
 
-    if not invitation or invitation.status != InvitationStatus.PENDING:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Invitation not found",
-        )
+    if invitation is None:
+        raise _invitation_gone()
 
     if invitation.email != current_user.email:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invitation is for a different email",
-        )
-
-    if ensure_utc(invitation.expires_at) < datetime.now(timezone.utc):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invitation has expired",
+            headers=INVITATION_HEADERS,
         )
 
     member = await team_service.accept_invitation(invitation, current_user)
     if member is None:
         # Accepted, declined or revoked by someone else meanwhile.
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Invitation not found",
-        )
+        raise _invitation_gone()
     return TeamMemberResponse(
         id=member.id,
         user_id=member.user_id,

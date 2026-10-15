@@ -125,16 +125,6 @@ def reset_ws_refusal_limits():
     yield
 
 
-@pytest.fixture(autouse=True)
-def reset_invitation_lookup_limit():
-    """The /invite/<token> preview limiter (CHT-1265) is process-wide and
-    every test client shares one address: start each test at zero."""
-    from app.oauth import ratelimit
-
-    ratelimit.invitation_lookups.clear()
-    yield
-
-
 @pytest_asyncio.fixture
 async def db(tmp_path, schema_template):
     """Initialize Oxyde with a fresh temp database for each test: a copy of

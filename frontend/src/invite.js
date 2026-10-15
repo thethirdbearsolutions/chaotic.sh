@@ -6,29 +6,38 @@
  * masked address) and:
  *
  *   - signed out: shows the invitation with "Sign in" and "Create an
- *     account". Both open the normal auth screen on this same URL, with a
- *     note saying what it is for; after signing in, initApp() sees the
- *     invite path and brings the person back here;
- *   - signed in as the invited address: Accept joins the team, drops the
- *     token from the address bar and boots the app into that team;
+ *     account". Both open the normal auth screen on this same URL (now
+ *     /invite), with a note saying what it is for; after signing in,
+ *     initApp() sees the invite path and brings the person back here;
+ *   - signed in as an account that could be the invited one: Accept joins
+ *     the team and boots the app into it. The page's address check is a
+ *     heuristic (two addresses can mask alike); the server's 403 is the
+ *     real one, and the page shows it;
  *   - signed in as someone else: says so, plainly, and offers to sign out.
- *     The server only lets the invited address accept (the same rule as
- *     POST /teams/invitations/<token>/accept), so Accept is not offered.
  *
  * An unknown, expired, used or revoked invitation gets one message, "This
  * invitation is no longer valid", and nothing else: the server answers
  * all of them with the same 404.
  *
- * The token is a secret. It goes only to this server's own API, never in
- * a query string, and the page's links leave no Referer elsewhere (the
- * shell is served with Referrer-Policy: same-origin).
+ * The token is a bearer credential: while the invited address has no
+ * account, whoever holds it can sign up as that address and join
+ * (CHT-1790). So on load it moves from the path into sessionStorage and
+ * the address bar becomes /invite (no history entry, no later Referer);
+ * the page is served with Referrer-Policy: no-referrer; and the token goes
+ * only to this server's own API, never in a query string.
  */
 
 import { api } from './api.js';
 import { escapeHtml } from './utils.js';
 
 const INVITE_PREFIX = '/invite/';
+const INVITE_PATH = '/invite';
+const STORAGE_KEY = 'chaotic.inviteToken';
 const NOTICE_ID = 'invite-auth-notice';
+
+// The token, if sessionStorage is unavailable (private mode, blocked
+// storage): good for this page's life, not for a reload.
+let heldToken = null;
 export const GONE_MESSAGE = 'This invitation is no longer valid.';
 
 const ROLE_LABELS = { owner: 'an owner', admin: 'an admin', member: 'a member' };
@@ -45,9 +54,55 @@ export function inviteToken(pathname) {
 }
 
 /**
+ * The invitation token this page is about, moving it out of the URL.
+ *
+ * On /invite/<token> the token is stored in sessionStorage and the
+ * address bar is rewritten to /invite, so it leaves no history entry
+ * and no later Referer (CHT-1265 review F2). On /invite it is read back
+ * from there: a reload, or the return after signing in, still works.
+ * Anywhere else, null.
+ * @returns {string|null}
+ */
+export function takeInviteToken() {
+    const { pathname } = window.location;
+    const fromPath = inviteToken(pathname);
+    if (fromPath) {
+        heldToken = fromPath;
+        try {
+            sessionStorage.setItem(STORAGE_KEY, fromPath);
+        } catch {
+            // Storage blocked: heldToken keeps it for this page's life.
+        }
+        history.replaceState(null, '', INVITE_PATH);
+        return fromPath;
+    }
+    if (pathname !== INVITE_PATH && pathname !== `${INVITE_PATH}/`) return null;
+    let stored = null;
+    try {
+        stored = sessionStorage.getItem(STORAGE_KEY);
+    } catch {
+        // Storage blocked: fall back to this page's copy.
+    }
+    const token = stored || heldToken;
+    return token && /^[A-Za-z0-9_-]{16,128}$/.test(token) ? token : null;
+}
+
+/** Forget the stored token (accepted, or no longer valid). */
+export function forgetInviteToken() {
+    heldToken = null;
+    try {
+        sessionStorage.removeItem(STORAGE_KEY);
+    } catch {
+        // Nothing stored.
+    }
+}
+
+/**
  * The server's masking of an address (app.api.teams.mask_email):
- * ``alice@example.com`` -> ``a***@example.com``. An account whose own
- * address masks differently is certainly not the invited one.
+ * ``alice@example.com`` -> ``a***@example.com``, and a one-character
+ * local part entirely (``***@x.com``). An account whose own address
+ * masks differently is certainly not the invited one; one that masks
+ * the same may still be refused by the server, which is the real check.
  * @param {string} email
  * @returns {string}
  */
@@ -57,6 +112,7 @@ export function maskEmail(email) {
     const local = at === -1 ? '' : value.slice(0, at);
     const domain = at === -1 ? '' : value.slice(at + 1);
     if (!local || !domain) return '***';
+    if (local.length === 1) return `***@${domain}`;
     return `${local[0]}***@${domain}`;
 }
 
@@ -228,6 +284,7 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
         preview = await api.getInvitation(token);
     } catch (e) {
         if (e && e.status === 404) {
+            forgetInviteToken();
             renderGone(el);
         } else if (e && e.status === 429) {
             renderGone(el, 'Too many attempts. Wait a minute and reload this page.');
@@ -257,20 +314,54 @@ export async function showInvite(token, { user = null, showAuth, enterTeam, sign
         if (busy) return;
         busy = true;
         accept.disabled = true;
+        let member;
         try {
-            const member = await api.acceptInvitation(token);
-            await enterTeam(member.team_id, preview.team_name);
+            member = await api.acceptInvitation(token);
         } catch (e) {
             busy = false;
             accept.disabled = false;
-            if (e && (e.status === 404 || e.status === 400)) {
+            if (e && e.status === 401) {
+                // The session expired on this page (review F7): sign out
+                // and show the invitation signed out, with "Sign in to
+                // accept"; the token is kept.
+                signOut();
+            } else if (e && (e.status === 404 || e.status === 400)) {
                 // Used, revoked or expired since the page loaded.
+                forgetInviteToken();
                 renderGone(el);
             } else if (e && e.status === 403) {
                 showError(el, `This invitation is for a different email address. Only ${preview.email_hint} can accept it.`);
             } else {
                 showError(el, (e && e.message) || 'Something went wrong');
             }
+            return;
+        }
+        // Joined. Never offer Accept again (review F8): the token is spent,
+        // and a retry could only answer "no longer valid".
+        forgetInviteToken();
+        renderJoined(el, preview);
+        try {
+            await enterTeam(member.team_id, preview.team_name);
+        } catch (e) {
+            // The app failed to load the team; the person has still joined.
+            console.error('Joined the team but could not open it:', e);
+            showOnly(el);
+            renderJoined(el, preview);
         }
     });
+}
+
+/**
+ * The page after a successful accept: no Accept button, just the way in.
+ * @param {HTMLElement} el
+ * @param {object} preview
+ */
+export function renderJoined(el, preview) {
+    el.innerHTML = `
+        <div class="invite-page">
+            <h1>You joined <span class="invite-team">${escapeHtml(preview.team_name)}</span></h1>
+            <div class="invite-actions">
+                <a class="btn btn-primary" href="/">Go to ${escapeHtml(preview.team_name)}</a>
+            </div>
+        </div>`;
 }

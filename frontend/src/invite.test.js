@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
     inviteToken, maskEmail, showInvite, renderSignedIn, renderSignedOut, renderGone, hideInvite, GONE_MESSAGE,
+    takeInviteToken, forgetInviteToken,
 } from './invite.js';
 import { api } from './api.js';
 
@@ -43,6 +44,8 @@ function screenEl() {
 
 beforeEach(() => {
     vi.resetAllMocks();
+    forgetInviteToken();
+    history.replaceState(null, '', '/');
     document.body.innerHTML = `
         <div id="app">
             <div id="auth-screen" class="screen hidden"><div class="auth-container"><div class="logo"></div></div></div>
@@ -68,10 +71,68 @@ describe('inviteToken', () => {
     });
 });
 
+describe('takeInviteToken (review F2)', () => {
+    it('moves the token from the path into sessionStorage and out of the URL', () => {
+        history.pushState(null, '', `/invite/${TOKEN}`);
+        const before = history.length;
+
+        expect(takeInviteToken()).toBe(TOKEN);
+
+        expect(window.location.pathname).toBe('/invite');
+        expect(window.location.href).not.toContain(TOKEN);
+        expect(history.length).toBe(before); // replaced, not pushed
+        expect(sessionStorage.getItem('chaotic.inviteToken')).toBe(TOKEN);
+    });
+
+    it('reads it back on /invite (a reload, or the return after sign-in)', () => {
+        history.replaceState(null, '', `/invite/${TOKEN}`);
+        takeInviteToken();
+
+        expect(takeInviteToken()).toBe(TOKEN);
+        history.replaceState(null, '', '/invite/');
+        expect(takeInviteToken()).toBe(TOKEN);
+    });
+
+    it('is null elsewhere, or on /invite with nothing stored', () => {
+        history.replaceState(null, '', '/issues');
+        expect(takeInviteToken()).toBeNull();
+        history.replaceState(null, '', '/invite');
+        expect(takeInviteToken()).toBeNull();
+    });
+
+    it('ignores a tampered stored value', () => {
+        sessionStorage.setItem('chaotic.inviteToken', '<script>');
+        history.replaceState(null, '', '/invite');
+        expect(takeInviteToken()).toBeNull();
+    });
+
+    it('still works for this page when storage is blocked', () => {
+        const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
+        const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+        try {
+            history.replaceState(null, '', `/invite/${TOKEN}`);
+            expect(takeInviteToken()).toBe(TOKEN);
+            expect(window.location.pathname).toBe('/invite');
+            expect(takeInviteToken()).toBe(TOKEN);
+        } finally {
+            setItem.mockRestore();
+            getItem.mockRestore();
+        }
+    });
+
+    it('forgetInviteToken clears it', () => {
+        history.replaceState(null, '', `/invite/${TOKEN}`);
+        takeInviteToken();
+        forgetInviteToken();
+        expect(takeInviteToken()).toBeNull();
+    });
+});
+
 describe('maskEmail', () => {
     it('masks like the server (app.api.teams.mask_email)', () => {
         expect(maskEmail('alice@example.com')).toBe('a***@example.com');
-        expect(maskEmail('a@example.com')).toBe('a***@example.com');
+        expect(maskEmail('a@example.com')).toBe('***@example.com');
+        expect(maskEmail('ab@example.com')).toBe('a***@example.com');
         expect(maskEmail('Bob.Smith@Mail.Example.org')).toBe('B***@Mail.Example.org');
         expect(maskEmail('no-at-sign')).toBe('***');
         expect(maskEmail('@example.com')).toBe('***');
@@ -294,6 +355,66 @@ describe('showInvite', () => {
             accept.click();
             await flush();
             expect(d.enterTeam).toHaveBeenCalledWith('team-1', 'Acme <Rockets>');
+        });
+
+        it('after joining shows a joined state, never Accept again (review F8)', async () => {
+            sessionStorage.setItem('chaotic.inviteToken', TOKEN);
+            api.getInvitation.mockResolvedValue(preview());
+            let finish;
+            api.acceptInvitation.mockResolvedValue({ team_id: 'team-1' });
+            const d = deps({ user: ROADRUNNER, enterTeam: vi.fn(() => new Promise((r) => { finish = r; })) });
+            await showInvite(TOKEN, d);
+
+            screenEl().querySelector('#invite-accept').click();
+            await flush();
+
+            expect(screenEl().querySelector('#invite-accept')).toBeNull();
+            expect(screenEl().querySelector('h1').textContent).toBe('You joined Acme <Rockets>');
+            expect(screenEl().querySelector('a.btn').getAttribute('href')).toBe('/');
+            expect(sessionStorage.getItem('chaotic.inviteToken')).toBeNull();
+            finish();
+        });
+
+        it('if opening the team fails after joining, the joined state stays (review F8)', async () => {
+            api.getInvitation.mockResolvedValue(preview());
+            api.acceptInvitation.mockResolvedValue({ team_id: 'team-1' });
+            const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const d = deps({ user: ROADRUNNER, enterTeam: vi.fn().mockRejectedValue(new Error('boom')) });
+            await showInvite(TOKEN, d);
+            screenEl().classList.add('hidden'); // as enterTeam's hideInvite would
+
+            screenEl().querySelector('#invite-accept').click();
+            await flush();
+
+            expect(screenEl().classList.contains('hidden')).toBe(false);
+            expect(screenEl().textContent).toContain('You joined');
+            expect(screenEl().querySelector('#invite-accept')).toBeNull();
+            expect(screenEl().textContent).not.toContain('boom');
+            expect(api.acceptInvitation).toHaveBeenCalledTimes(1);
+            errors.mockRestore();
+        });
+
+        it('a 401 on accept signs out and shows the invitation signed out (review F7)', async () => {
+            sessionStorage.setItem('chaotic.inviteToken', TOKEN);
+            api.getInvitation.mockResolvedValue(preview());
+            api.acceptInvitation.mockRejectedValue(Object.assign(new Error('Could not validate credentials'), {
+                status: 401,
+            }));
+            const d = deps({ user: ROADRUNNER });
+            await showInvite(TOKEN, d);
+
+            screenEl().querySelector('#invite-accept').click();
+            await flush();
+
+            expect(d.signOut).toHaveBeenCalled();
+            expect(sessionStorage.getItem('chaotic.inviteToken')).toBe(TOKEN);
+        });
+
+        it('a gone invitation forgets the stored token', async () => {
+            sessionStorage.setItem('chaotic.inviteToken', TOKEN);
+            api.getInvitation.mockRejectedValue(Object.assign(new Error('gone'), { status: 404 }));
+            await showInvite(TOKEN, deps());
+            expect(sessionStorage.getItem('chaotic.inviteToken')).toBeNull();
         });
 
         it('a different account can sign out', async () => {

@@ -523,7 +523,16 @@ async def spa_fallback(request: Request, full_path: str):
     """
     if full_path == ".well-known" or full_path.startswith(".well-known/"):
         return JSONResponse({"detail": "Not Found"}, status_code=404)
-    return _render_index(request)
+    response = _render_index(request)
+    if full_path == "invite" or full_path.startswith("invite/"):
+        # The invitation landing page (CHT-1265): its path carries the
+        # token, a bearer credential for an unregistered invitee
+        # (CHT-1790). No Referer at all, not even to this origin's own
+        # assets and API (a proxy logs Referers), and never cached. The
+        # page then moves the token out of the address bar.
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 if __name__ == "__main__":

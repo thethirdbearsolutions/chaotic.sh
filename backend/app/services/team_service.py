@@ -183,6 +183,18 @@ class TeamService:
             return None
         return invitation
 
+    async def get_live_invitation(
+        self, team_id: str, email: str
+    ) -> OxydeTeamInvitation | None:
+        """A pending, unexpired invitation to ``email`` for this team, if
+        there is one. An expired one does not count: it can't be accepted,
+        so a new invitation may replace it."""
+        now = datetime.now(timezone.utc)
+        pending = await OxydeTeamInvitation.objects.filter(
+            team_id=team_id, email=email, status=InvitationStatus.PENDING
+        ).all()
+        return next((i for i in pending if ensure_utc(i.expires_at) >= now), None)
+
     async def accept_invitation(
         self, invitation: OxydeTeamInvitation, user: OxydeUser
     ) -> OxydeTeamMember | None:

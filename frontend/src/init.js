@@ -15,7 +15,7 @@ import { showAuthScreen, showLogin, showSignup, showMainScreen, updateUserInfo }
 import { getTeams, loadTeams, selectTeam } from './teams.js';
 import { showOnboarding, hasCompletedOnboarding } from './onboarding.js';
 import { consentRequestId, showConsent } from './oauth-consent.js';
-import { hideInvite, inviteToken, showInvite } from './invite.js';
+import { hideInvite, takeInviteToken, showInvite } from './invite.js';
 import { initRouter } from './router.js';
 import { getCurrentUser, setCurrentUser, setCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
@@ -56,7 +56,7 @@ export function openInvite(token) {
  * URL, the sign-in screen everywhere else.
  */
 export async function showSignedOut() {
-    const token = inviteToken(window.location.pathname);
+    const token = takeInviteToken();
     if (token) {
         await openInvite(token);
         return;
@@ -79,8 +79,9 @@ export async function initApp({ teamId } = {}) {
         return;
     }
     // An invitation link (CHT-1265): the invitation, until it is
-    // accepted or the person leaves it.
-    const token = inviteToken(window.location.pathname);
+    // accepted or the person leaves it. The token moves out of the
+    // address bar into sessionStorage, so sign-in and reload come back.
+    const token = takeInviteToken();
     if (token) {
         await openInvite(token);
         return;

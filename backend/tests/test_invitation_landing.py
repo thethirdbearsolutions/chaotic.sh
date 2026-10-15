@@ -2,9 +2,10 @@
 hardening it needed (CHT-1788) and the token's log redaction (CHT-1601).
 
 GET /api/teams/invitations/{token} is unauthenticated: the emailed link
-is opened before anyone signs in. Holding the token is the credential,
-so the preview shows only what the page needs and answers every
-invitation that can't be accepted with the same 404.
+is opened before anyone signs in. The token is a bearer credential (for
+an unregistered invitee, enough to join: CHT-1790), so the preview shows
+only what the page needs and answers every invitation that can't be
+accepted with the same 404.
 """
 import logging
 import secrets
@@ -13,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.api.teams import INVITATION_GONE, INVITATION_LOOKUPS_PER_MINUTE, mask_email
+from app.api.teams import INVITATION_GONE, mask_email
 from app.enums import InvitationStatus, TeamRole
 from app.log_redaction import REDACTED, RequestLineRedactionFilter, redact_request_target
 from app.oxyde_models.team import OxydeTeamInvitation, OxydeTeamMember
@@ -62,13 +63,26 @@ class TestPreview:
         for secret in (token, invitation.id, test_team.id, test_user.id, "test2@example.com", test_user.email):
             assert secret not in text
 
-    async def test_is_never_cached_and_sends_no_referrer(self, client, test_team, test_user):
+    async def test_the_answer_is_never_cached_found_or_not(self, client, test_team, test_user):
+        """Review F3: the 404 carries the headers too (an HTTPException
+        used to drop the ones set on the injected Response)."""
         token, _ = await _invite(test_team, test_user)
 
-        response = await client.get(f"/api/teams/invitations/{token}")
+        found = await client.get(f"/api/teams/invitations/{token}")
+        gone = await client.get(f"/api/teams/invitations/{secrets.token_urlsafe(32)}")
 
-        assert response.headers["cache-control"] == "no-store"
-        assert response.headers["referrer-policy"] == "no-referrer"
+        assert (found.status_code, gone.status_code) == (200, 404)
+        for response in (found, gone):
+            assert response.headers["cache-control"] == "no-store"
+            assert response.headers["referrer-policy"] == "no-referrer"
+
+    async def test_lookups_are_not_rate_limited_in_process(self, client):
+        """Review F4 / CHT-1369: rate limiting is the proxy's job. Behind
+        a proxy every client shares one address, and an in-process limit
+        would let one client lock every invitee out."""
+        token = secrets.token_urlsafe(32)
+        for _ in range(60):
+            assert (await client.get(f"/api/teams/invitations/{token}")).status_code == 404
 
     async def test_a_signed_in_viewer_gets_the_same_preview(self, client, auth_headers2, test_team, test_user):
         token, _ = await _invite(test_team, test_user)
@@ -107,20 +121,31 @@ class TestPreview:
         assert response.json() == {"detail": INVITATION_GONE}
         assert "Test Team" not in response.text
 
-    async def test_lookups_are_rate_limited_per_address(self, client):
-        token = secrets.token_urlsafe(32)
-        for _ in range(INVITATION_LOOKUPS_PER_MINUTE):
-            assert (await client.get(f"/api/teams/invitations/{token}")).status_code == 404
 
-        response = await client.get(f"/api/teams/invitations/{token}")
+class TestInvitePage:
+    """Review F2: the /invite/<token> shell itself sends no Referer
+    (not even same-origin: a proxy logs Referers) and is never cached."""
 
-        assert response.status_code == 429
+    @pytest.mark.parametrize("path", ["/invite/{t}", "/invite"])
+    async def test_the_page_sends_no_referrer_and_is_not_cached(self, client, path):
+        response = await client.get(path.format(t=secrets.token_urlsafe(32)))
+
+        assert response.status_code == 200
+        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers["cache-control"] == "no-store"
+
+    async def test_other_pages_keep_their_policy(self, client):
+        response = await client.get("/issues")
+
+        assert response.headers["referrer-policy"] == "same-origin"
+        assert "no-store" not in response.headers.get("cache-control", "")
 
 
 class TestMaskEmail:
     @pytest.mark.parametrize("email, hint", [
         ("alice@example.com", "a***@example.com"),
-        ("a@example.com", "a***@example.com"),
+        ("a@example.com", "***@example.com"),  # review F6: never the whole local part
+        ("ab@example.com", "a***@example.com"),
         ("Bob.Smith@Mail.Example.org", "B***@Mail.Example.org"),
         ("no-at-sign", "***"),
         ("@example.com", "***"),
@@ -181,9 +206,9 @@ class TestAccept:
         stored = await OxydeTeamInvitation.objects.get(id=invitation.id)
         assert stored.status == InvitationStatus.ACCEPTED
 
-    async def test_a_lost_race_adds_no_member(self, test_team, test_user, test_user2):
-        """Two accepts of one token: the second claim finds it no longer
-        pending and adds nothing."""
+    async def test_a_replayed_claim_adds_no_member(self, test_team, test_user, test_user2):
+        """Accepting the same row object twice, one after the other: the
+        second claim finds it no longer pending and adds nothing."""
         from app.services.team_service import TeamService
 
         _, invitation = await _invite(test_team, test_user)
@@ -193,6 +218,66 @@ class TestAccept:
 
         assert first is not None and second is None
         assert len(await _memberships(test_team.id, test_user2.id)) == 1
+
+    @pytest.mark.parametrize("racers", [2, 5])
+    async def test_concurrent_accepts_add_one_member(self, client, auth_headers2, test_team, test_user, test_user2, racers):
+        """Truly concurrent accepts of one token through the API: exactly
+        one is answered 200 and one membership row exists."""
+        import asyncio
+
+        token, _ = await _invite(test_team, test_user)
+
+        responses = await asyncio.gather(*(
+            client.post(f"/api/teams/invitations/{token}/accept", headers=auth_headers2) for _ in range(racers)
+        ))
+
+        assert sorted(r.status_code for r in responses) == [200] + [404] * (racers - 1)
+        assert len(await _memberships(test_team.id, test_user2.id)) == 1
+
+    async def test_concurrent_claims_in_the_service_add_one_member(self, test_team, test_user, test_user2):
+        """The same race below the API: both callers loaded the row while
+        it was pending, then claim at once."""
+        import asyncio
+        from app.services.team_service import TeamService
+
+        _, invitation = await _invite(test_team, test_user)
+        row_a = await OxydeTeamInvitation.objects.get(id=invitation.id)
+        row_b = await OxydeTeamInvitation.objects.get(id=invitation.id)
+
+        results = await asyncio.gather(
+            TeamService().accept_invitation(row_a, test_user2),
+            TeamService().accept_invitation(row_b, test_user2),
+        )
+
+        assert sum(r is not None for r in results) == 1
+        assert len(await _memberships(test_team.id, test_user2.id)) == 1
+
+    @pytest.mark.parametrize("state", ["expired", "accepted", "declined", "revoked", "unknown"])
+    @pytest.mark.parametrize("who", ["invitee", "someone else"])
+    async def test_every_invalid_invitation_is_one_404_whoever_asks(
+        self, client, auth_headers, auth_headers2, test_team, test_user, state, who,
+    ):
+        """Review F10: state is checked before the email match, so neither
+        the right account nor a wrong one can tell expired, used, revoked
+        and unknown apart (before, an expired one gave the wrong account
+        403 and the right one 400)."""
+        token, invitation = await _invite(
+            test_team, test_user,
+            status={"accepted": InvitationStatus.ACCEPTED, "declined": InvitationStatus.DECLINED}.get(
+                state, InvitationStatus.PENDING),
+            expires_in=timedelta(days=-1) if state == "expired" else timedelta(days=7),
+        )
+        if state == "revoked":
+            await invitation.delete()
+        if state == "unknown":
+            token = secrets.token_urlsafe(32)
+        headers = auth_headers2 if who == "invitee" else auth_headers
+
+        response = await client.post(f"/api/teams/invitations/{token}/accept", headers=headers)
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": INVITATION_GONE}
+        assert response.headers["cache-control"] == "no-store"
 
     async def test_a_different_account_is_refused_and_leaves_it_pending(self, client, auth_headers, test_team, test_user):
         """The page tells a mismatched account to switch; the invitation
@@ -205,6 +290,54 @@ class TestAccept:
         assert "different email" in response.json()["detail"]
         assert (await OxydeTeamInvitation.objects.get(id=invitation.id)).status == InvitationStatus.PENDING
         assert (await client.get(f"/api/teams/invitations/{token}")).status_code == 200
+
+
+class TestOneLiveInvitationPerAddress:
+    """Review F5: two pending invitations to one address raced for the
+    role; a second one is now refused while the first can be accepted."""
+
+    async def _create(self, client, headers, team, email="newhire@example.com", role="member"):
+        with patch("app.api.teams.EmailService.send_invitation_email"):
+            return await client.post(
+                f"/api/teams/{team.id}/invitations", json={"email": email, "role": role}, headers=headers,
+            )
+
+    async def test_a_second_pending_invitation_is_refused(self, client, auth_headers, test_team):
+        assert (await self._create(client, auth_headers, test_team, role="member")).status_code == 201
+
+        second = await self._create(client, auth_headers, test_team, role="admin")
+
+        assert second.status_code == 409
+        assert "revoke" in second.json()["detail"]
+        assert len(await OxydeTeamInvitation.objects.filter(team_id=test_team.id).all()) == 1
+
+    async def test_revoking_it_allows_a_new_one(self, client, auth_headers, test_team):
+        first = (await self._create(client, auth_headers, test_team)).json()
+        deleted = await client.delete(f"/api/teams/{test_team.id}/invitations/{first['id']}", headers=auth_headers)
+        assert deleted.status_code == 204
+
+        assert (await self._create(client, auth_headers, test_team, role="admin")).status_code == 201
+
+    @pytest.mark.parametrize("state", ["expired", "accepted", "declined"])
+    async def test_a_dead_invitation_does_not_block_a_new_one(self, client, auth_headers, test_team, test_user, state):
+        await _invite(
+            test_team, test_user, email="newhire@example.com",
+            status={"accepted": InvitationStatus.ACCEPTED, "declined": InvitationStatus.DECLINED}.get(
+                state, InvitationStatus.PENDING),
+            expires_in=timedelta(days=-1) if state == "expired" else timedelta(days=7),
+        )
+
+        assert (await self._create(client, auth_headers, test_team)).status_code == 201
+
+    async def test_other_teams_and_addresses_are_independent(self, client, auth_headers, test_team, test_user):
+        from app.oxyde_models.team import OxydeTeam
+
+        other = await OxydeTeam.objects.create(name="Other", key="OTH")
+        await OxydeTeamMember.objects.create(team_id=other.id, user_id=test_user.id, role=TeamRole.OWNER)
+        assert (await self._create(client, auth_headers, test_team)).status_code == 201
+
+        assert (await self._create(client, auth_headers, other)).status_code == 201
+        assert (await self._create(client, auth_headers, test_team, email="other@example.com")).status_code == 201
 
 
 class TestTokenStaysOutOfLogs:

@@ -770,7 +770,7 @@
           "teams"
         ],
         "summary": "Preview Invitation",
-        "description": "The public preview the /invite/<token> page shows (CHT-1265).\n\nUnauthenticated: the emailed link is opened before anyone signs in.\nHolding the token is the only credential, so this tells its holder\nno more than the page needs (team name, role, inviter, a masked\naddress, expiry), and answers an unknown, expired, accepted,\ndeclined or revoked token with the same 404, so a lookup cannot\ntell them apart. The token is redacted from the request log\n(app.log_redaction).",
+        "description": "The public preview the /invite/<token> page shows (CHT-1265).\n\nUnauthenticated: the emailed link is opened before anyone signs in.\nIt tells the token's holder only what the page needs (team name,\nrole, inviter, a masked address, expiry), and answers an unknown,\nexpired, accepted, declined or revoked token with the same 404, so\na lookup cannot tell them apart.\n\nThreat model: the token is a bearer credential, not only a pointer\nto an inbox. Signup does not verify email ownership (CHT-1790), so\nwhile the invited address has no account, anyone holding the token\ncan sign up as that address and accept. Keep it out of every log,\nReferer and history entry: it is redacted from the request log\n(app.log_redaction), and the /invite/ page is served no-referrer and\nmoves it out of the address bar on load.\n\nNot rate limited here, on purpose (CHT-1369): rate limiting is the\nreverse proxy's job, and an in-process per-address counter behind a\nproxy would see one address for everyone, so one client could lock\nevery invitee out. The token's 256 random bits are what make\nguessing hopeless.",
         "operationId": "preview_invitation_api_teams_invitations__token__get",
         "parameters": [
           {
@@ -813,7 +813,7 @@
           "teams"
         ],
         "summary": "Accept Invitation",
-        "description": "Accept a team invitation.\n\nAn accepted or declined invitation is answered like an unknown one\n(CHT-1788): before, a used token could be accepted again and added\na second membership row.",
+        "description": "Accept a team invitation.\n\nAn unknown, expired, accepted, declined or revoked invitation gets\nthe preview's one 404, checked before the email match, so whatever\naccount asks, the answer does not tell those states apart (CHT-1265\nreview F10). Before CHT-1788 a used token could be accepted again\nand added a second membership row.",
         "operationId": "accept_invitation_api_teams_invitations__token__accept_post",
         "security": [
           {
