@@ -13,6 +13,12 @@ from rich.panel import Panel
 from .shared import _client, console, resolve_content_value
 
 
+def _who(name, user_id) -> str:
+    """A user as the activity log shows them: name, else id (a user since
+    deleted keeps only the id), else nobody."""
+    return name or user_id or ""
+
+
 def _main():
     """Late-bind to cli.main for test mock compatibility."""
     return sys.modules['cli.main']
@@ -488,6 +494,59 @@ def register(cli):
                 inv.get("created_at", ""),
             )
         console.print(table)
+
+    @team.command("activity")
+    @click.option("--action", "action", default=None,
+                  type=click.Choice(["member_added", "member_removed", "role_changed", "invitation_created",
+                                     "invitation_cancelled", "invitation_accepted", "verification_code_issued"]),
+                  help="Show only this kind of entry.")
+    @click.option("--limit", default=50, show_default=True, type=click.IntRange(1, 500),
+                  help="How many entries to show.")
+    @click.option("--skip", default=0, show_default=True, type=click.IntRange(min=0),
+                  help="Skip this many of the newest entries first.")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def team_activity(action, limit, skip):
+        """Show the team's administrative log, newest first (admins only).
+
+        Members added, removed (or leaving) and given another role,
+        invitations created, cancelled and accepted, and invitation
+        verification codes issued: who did it, to whom, and when
+        (CHT-1843). Recorded since the server version that added it;
+        `chaotic system audit removed-members` reads it too."""
+        m = _main()
+        rows = _client().get_team_activity(m.get_current_team(), skip=skip, limit=limit, action=action)
+        if m.is_json_output():
+            m.output_json(rows)
+            return
+        if not rows:
+            console.print("[yellow]No team activity recorded.[/yellow]")
+            return
+        table = Table(title="Team Activity")
+        table.add_column("When")
+        table.add_column("Action")
+        table.add_column("By")
+        table.add_column("Whom")
+        table.add_column("Details")
+        for row in rows:
+            details = []
+            if row.get("old_role"):
+                details.append(f"{row['old_role']} -> {row.get('role')}")
+            elif row.get("role"):
+                details.append(f"role {row['role']}")
+            if row.get("invitation_id"):
+                details.append(f"invitation {row['invitation_id']}")
+            table.add_row(
+                row.get("created_at") or "",
+                (row.get("action") or "").replace("_", " "),
+                _who(row.get("actor_name"), row.get("actor_id")),
+                _who(row.get("target_user_name"), row.get("target_user_id")) or (row.get("email") or ""),
+                ", ".join(details),
+            )
+        console.print(table)
+        if len(rows) == limit:
+            console.print(f"[dim]There may be older entries: --skip {esc(skip + limit)}[/dim]")
 
     @team.command("cancel-invite")
     @click.argument("invitation_id")

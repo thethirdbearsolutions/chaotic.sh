@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 import secrets
 from app.oxyde_models.user import OxydeUser
 from app.utils.email_address import fold_email, same_email
-from app.oxyde_models.team import OxydeTeam, OxydeTeamMember, OxydeTeamInvitation
-from app.enums import TeamRole, InvitationStatus
+from app.oxyde_models.team import OxydeTeam, OxydeTeamActivity, OxydeTeamMember, OxydeTeamInvitation
+from app.enums import TeamActivityAction, TeamRole, InvitationStatus
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInvitationCreate
 from oxyde import IntegrityError, execute_raw
 from app.db.transactions import atomic
@@ -40,8 +40,52 @@ class TeamService:
                 user_id=creator.id,
                 role=TeamRole.OWNER,
             )
+            await self.record_activity(
+                team.id, TeamActivityAction.MEMBER_ADDED, actor_id=creator.id,
+                target_user_id=creator.id, role=TeamRole.OWNER,
+            )
         await team.refresh()
         return team
+
+    async def record_activity(
+        self,
+        team_id: str,
+        action: TeamActivityAction,
+        *,
+        actor_id: str | None,
+        target_user_id: str | None = None,
+        invitation_id: str | None = None,
+        email: str | None = None,
+        role: TeamRole | None = None,
+        old_role: TeamRole | None = None,
+    ) -> OxydeTeamActivity:
+        """Add a row to the team's log (CHT-1843). Call it inside the
+        transaction of what it records, so the two commit together.
+        Never pass a secret: no token, code or link."""
+        return await OxydeTeamActivity.objects.create(
+            team_id=team_id,
+            action=action,
+            actor_id=actor_id,
+            target_user_id=target_user_id,
+            invitation_id=invitation_id,
+            email=email,
+            role=role,
+            old_role=old_role,
+        )
+
+    async def list_activity(
+        self,
+        team_id: str,
+        *,
+        action: TeamActivityAction | None = None,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> list[OxydeTeamActivity]:
+        """The team's log, newest first; ``action`` keeps only that one."""
+        query = OxydeTeamActivity.objects.filter(team_id=team_id)
+        if action is not None:
+            query = query.filter(action=action)
+        return await query.order_by("-created_at", "-id").offset(skip).limit(limit).all()
 
     async def get_by_id(self, team_id: str) -> OxydeTeam | None:
         """Get team by ID."""
@@ -125,20 +169,27 @@ class TeamService:
         ).first()
 
     async def add_member(
-        self, team: OxydeTeam, user: OxydeUser, role: TeamRole = TeamRole.MEMBER
+        self, team: OxydeTeam, user: OxydeUser, role: TeamRole = TeamRole.MEMBER,
+        *, actor_id: str | None = None,
     ) -> OxydeTeamMember:
         """Add a member to a team.
 
         UNIQUE(team_id, user_id) (migration 0033, CHT-1791) allows one
         membership per user per team. A user who is already a member keeps
-        the membership they have, role included, and it is returned.
+        the membership they have, role included, and it is returned. Only
+        a new membership is logged (MEMBER_ADDED).
         """
         try:
-            member = await OxydeTeamMember.objects.create(
-                team_id=team.id,
-                user_id=user.id,
-                role=role,
-            )
+            async with atomic():
+                member = await OxydeTeamMember.objects.create(
+                    team_id=team.id,
+                    user_id=user.id,
+                    role=role,
+                )
+                await self.record_activity(
+                    team.id, TeamActivityAction.MEMBER_ADDED, actor_id=actor_id,
+                    target_user_id=user.id, role=role,
+                )
         except IntegrityError:
             member = await self.get_member(team.id, user.id)
             if member is None:
@@ -147,17 +198,32 @@ class TeamService:
         return member
 
     async def update_member_role(
-        self, member: OxydeTeamMember, role: TeamRole
+        self, member: OxydeTeamMember, role: TeamRole, *, actor_id: str | None,
     ) -> OxydeTeamMember:
-        """Update a member's role."""
-        member.role = role
-        await member.save(update_fields={"role"})
+        """Update a member's role; logged (ROLE_CHANGED) when it changes."""
+        old_role = member.role
+        async with atomic():
+            member.role = role
+            await member.save(update_fields={"role"})
+            if old_role != role:
+                await self.record_activity(
+                    member.team_id, TeamActivityAction.ROLE_CHANGED, actor_id=actor_id,
+                    target_user_id=member.user_id, role=role, old_role=old_role,
+                )
         await member.refresh()
         return member
 
-    async def remove_member(self, member: OxydeTeamMember) -> None:
-        """Remove a member from a team."""
-        await member.delete()
+    async def remove_member(self, member: OxydeTeamMember, *, actor_id: str | None) -> None:
+        """Remove a member from a team, logged (MEMBER_REMOVED) in the
+        same transaction: every removal has a row, whether or not it
+        ended a connection (CHT-1843). Actor and target the same: they
+        left."""
+        async with atomic():
+            await member.delete()
+            await self.record_activity(
+                member.team_id, TeamActivityAction.MEMBER_REMOVED, actor_id=actor_id,
+                target_user_id=member.user_id, role=member.role,
+            )
 
     async def create_invitation(
         self,
@@ -165,17 +231,22 @@ class TeamService:
         invitation_in: TeamInvitationCreate,
         invited_by: OxydeUser,
     ) -> OxydeTeamInvitation:
-        """Create a team invitation."""
-        invitation = await OxydeTeamInvitation.objects.create(
-            team_id=team.id,
-            email=invitation_in.email,
-            role=invitation_in.role,
-            # Travels as a URL path segment; app.log_redaction scrubs
-            # it from request logs by that position (CHT-1601).
-            token=secrets.token_urlsafe(32),
-            invited_by_id=invited_by.id,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
-        )
+        """Create a team invitation (logged: INVITATION_CREATED, never the token)."""
+        async with atomic():
+            invitation = await OxydeTeamInvitation.objects.create(
+                team_id=team.id,
+                email=invitation_in.email,
+                role=invitation_in.role,
+                # Travels as a URL path segment; app.log_redaction scrubs
+                # it from request logs by that position (CHT-1601).
+                token=secrets.token_urlsafe(32),
+                invited_by_id=invited_by.id,
+                expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+            )
+            await self.record_activity(
+                team.id, TeamActivityAction.INVITATION_CREATED, actor_id=invited_by.id,
+                invitation_id=invitation.id, email=invitation_in.email, role=invitation_in.role,
+            )
         await invitation.refresh()
         return invitation
 
@@ -239,6 +310,9 @@ class TeamService:
         cannot be replayed (CHT-1788). A user who is already a member
         keeps the membership they have: the invitation is used up and
         that membership returned, never a second row.
+
+        Logged as INVITATION_ACCEPTED, with the role of the membership the
+        user has afterwards (the invitation's, or the one they kept).
         """
         async with atomic():
             claimed = await OxydeTeamInvitation.objects.filter(
@@ -263,6 +337,11 @@ class TeamService:
                     member = await self.get_member(invitation.team_id, user.id)
                     if member is None:
                         raise
+            await self.record_activity(
+                invitation.team_id, TeamActivityAction.INVITATION_ACCEPTED, actor_id=user.id,
+                target_user_id=user.id, invitation_id=invitation.id, email=invitation.email,
+                role=member.role,
+            )
         await member.refresh()
         return member
 
@@ -271,9 +350,14 @@ class TeamService:
         invitation.status = InvitationStatus.DECLINED
         await invitation.save(update_fields={"status"})
 
-    async def delete_invitation(self, invitation: OxydeTeamInvitation) -> None:
-        """Delete an invitation."""
-        await invitation.delete()
+    async def delete_invitation(self, invitation: OxydeTeamInvitation, *, actor_id: str | None) -> None:
+        """Delete (cancel) an invitation; logged as INVITATION_CANCELLED."""
+        async with atomic():
+            await invitation.delete()
+            await self.record_activity(
+                invitation.team_id, TeamActivityAction.INVITATION_CANCELLED, actor_id=actor_id,
+                invitation_id=invitation.id, email=invitation.email, role=invitation.role,
+            )
 
     async def shares_team(self, user_id_a: str, user_id_b: str) -> bool:
         """Check if two users share at least one team (single query)."""

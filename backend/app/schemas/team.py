@@ -1,6 +1,6 @@
 """Team schemas."""
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
-from app.enums import TeamRole, InvitationStatus
+from app.enums import TeamActivityAction, TeamRole, InvitationStatus
 from app.utils import DateTimeUTC
 
 
@@ -185,4 +185,37 @@ class InvitationPreviewResponse(BaseModel):
     @field_validator("role", mode="before")
     @classmethod
     def coerce_role(cls, v):
+        return _coerce_enum(TeamRole, v)
+
+
+class TeamActivityResponse(BaseModel):
+    """One row of a team's administrative log (CHT-1843, CHT-1845).
+
+    ``actor_*`` did it, ``target_user_*`` it concerns (the same user when
+    a member left on their own). ``email`` is the invited address on
+    invitation rows. ``role`` is the role granted (the new one on
+    role_changed, the one held on member_removed); ``old_role`` only on
+    role_changed. Names are null for a user since deleted."""
+
+    id: str
+    team_id: str
+    action: TeamActivityAction
+    actor_id: str | None = None
+    actor_name: str | None = None
+    target_user_id: str | None = None
+    target_user_name: str | None = None
+    invitation_id: str | None = None
+    email: str | None = None
+    role: TeamRole | None = None
+    old_role: TeamRole | None = None
+    created_at: DateTimeUTC
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def coerce_action(cls, v):
+        return _coerce_enum(TeamActivityAction, v)
+
+    @field_validator("role", "old_role", mode="before")
+    @classmethod
+    def coerce_roles(cls, v):
         return _coerce_enum(TeamRole, v)

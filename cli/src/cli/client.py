@@ -417,6 +417,13 @@ class Client:
     def update_member_role(self, team_id: str, user_id: str, role: str) -> dict:
         return self._request("PATCH", f"/teams/{team_id}/members/{user_id}", {"role": role})
 
+    def get_team_activity(
+        self, team_id: str, skip: int | None = None, limit: int | None = None, action: str | None = None,
+    ) -> list:
+        return self._request(
+            "GET", self._with_query(f"/teams/{team_id}/activity", skip=skip, limit=limit, action=action),
+        )
+
     # Invitations
     def invite_member(self, team_id: str, email: str, role: str = "member") -> dict:
         return self._request("POST", f"/teams/{team_id}/invitations", {"email": email, "role": role})

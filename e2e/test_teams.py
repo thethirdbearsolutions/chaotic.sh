@@ -104,6 +104,17 @@ class TestInvitations:
         assert caught.value.status_code == 409
         assert "no SMTP configured" in str(caught.value)
 
+    def test_team_activity_records_invitations(self, api_client, test_team):
+        """CHT-1843: the team's log, through the client, newest first."""
+        invite = api_client.invite_member(test_team["id"], "logged@example.com")
+        api_client.delete_invitation(test_team["id"], invite["id"])
+        rows = api_client.get_team_activity(test_team["id"], limit=2)
+        assert [r["action"] for r in rows] == ["invitation_cancelled", "invitation_created"]
+        assert all(r["invitation_id"] == invite["id"] for r in rows)
+        only = api_client.get_team_activity(test_team["id"], action="invitation_cancelled")
+        assert {r["action"] for r in only} == {"invitation_cancelled"}
+        assert invite["id"] in [r["invitation_id"] for r in only]
+
     def test_invite_response_structure(self, api_client, test_team):
         invite = api_client.invite_member(test_team["id"], "structure@example.com")
         assert "id" in invite

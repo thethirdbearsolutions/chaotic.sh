@@ -3,8 +3,8 @@
 Before CHT-1791 a user could hold two team_members rows for one team.
 Removing them deleted one, and the other kept them a member. The audit
 finds rows whose (team, user) has a removal after the row's joined_at,
-from the database's MEMBER revocation events and the server's request
-log, and writes no data.
+from the team activity log (CHT-1843), the database's MEMBER revocation
+events and the server's request log, and writes no data.
 """
 import hashlib
 import json
@@ -26,6 +26,17 @@ CREATE TABLE revocation_events (
     id TEXT PRIMARY KEY, seq INTEGER NOT NULL, team_id TEXT, actor_id TEXT,
     target_type TEXT NOT NULL, target_id TEXT, filter TEXT, dry_run INTEGER NOT NULL DEFAULT 0,
     cascade_counts TEXT, reason TEXT, created_at TEXT NOT NULL
+);
+"""
+
+ACTIVITY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS oxyde_migrations (
+    id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TIMESTAMP NOT NULL
+);
+CREATE TABLE team_activities (
+    id TEXT PRIMARY KEY, team_id TEXT NOT NULL, action TEXT NOT NULL, actor_id TEXT,
+    target_user_id TEXT, invitation_id TEXT, email TEXT, role TEXT, old_role TEXT,
+    created_at TEXT NOT NULL
 );
 """
 
@@ -51,6 +62,25 @@ class Db:
             "INSERT INTO revocation_events (id, seq, team_id, target_type, target_id, reason, created_at) "
             "VALUES (?, ?, ?, ?, ?, 'member_removed', ?)",
             (id, self.seq, team, target_type, target, at),
+        )
+        self.conn.commit()
+
+    def activity_log(self, applied_at="2026-10-15 00:00:00"):
+        """Migration 0038: the team_activities table, applied at
+        `applied_at` (None: a table with no migration record)."""
+        self.conn.executescript(ACTIVITY_SCHEMA)
+        if applied_at is not None:
+            self.conn.execute(
+                "INSERT INTO oxyde_migrations (name, applied_at) VALUES ('0038_team_activities', ?)",
+                (applied_at,),
+            )
+        self.conn.commit()
+
+    def activity(self, id, team, target, at, action="MEMBER_REMOVED"):
+        self.conn.execute(
+            "INSERT INTO team_activities (id, team_id, action, actor_id, target_user_id, created_at) "
+            "VALUES (?, ?, ?, 'admin', ?, ?)",
+            (id, team, action, target, at),
         )
         self.conn.commit()
 
@@ -142,7 +172,7 @@ class TestAuditRemovedMembers:
             "member_id": "m-left", "team_id": "t1", "user_id": "u1", "role": "MEMBER",
             "joined_at": "2026-10-01 09:00:00.000000",
             "removals": [{
-                "source": "revocation_event", "revocation_event_id": "e1",
+                "source": "revocation_event", "activity_id": None, "revocation_event_id": "e1",
                 "removed_at": "2026-10-14 12:00:00.000000", "ordering": "removed_after_joined",
             }],
             "remedy": ["as an admin of team t1: chaotic team use t1", "chaotic team remove-member u1"],
@@ -196,6 +226,88 @@ class TestAuditRemovedMembers:
         assert db.digest() == before
 
 
+class TestActivitySource:
+    """The team activity log (migration 0038) has every removal since it
+    was applied, connection or not (CHT-1843)."""
+
+    def test_a_removal_that_ended_nothing_is_found(self, db):
+        db.activity_log()
+        db.member("m-left", "t1", "u1", "2026-10-01 09:00:00")
+        db.activity("a1", "t1", "u1", "2026-10-16 12:00:00.000000")
+        db.activity("a2", "t1", "u1", "2026-10-16 13:00:00.000000", action="ROLE_CHANGED")
+        report = system.audit_removed_members(db.path)
+        assert report["activity_since"] == "2026-10-15 00:00:00"
+        (finding,) = report["findings"]
+        assert finding["removals"] == [{
+            "source": "team_activity", "activity_id": "a1", "revocation_event_id": None,
+            "removed_at": "2026-10-16 12:00:00.000000", "ordering": "removed_after_joined",
+        }]
+        result = run("--db", str(db.path))
+        assert result.exit_code == 1 and "team activity a1" in result.output
+
+    def test_a_rejoin_after_the_removal_is_not_reported(self, db):
+        db.activity_log()
+        db.activity("a1", "t1", "u1", "2026-10-16 12:00:00")
+        db.member("m-back", "t1", "u1", "2026-10-16 13:00:00")
+        report = system.audit_removed_members(db.path)
+        assert report["findings"] == [] and report["coverage"] == "complete"
+
+    def test_memberships_newer_than_the_log_make_a_clean_result_without_one(self, db):
+        db.activity_log()
+        db.member("m1", "t1", "u1", "2026-10-15 00:00:00")
+        result = run("--db", str(db.path), "--json")
+        assert result.exit_code == system.AUDIT_CLEAN
+        assert json.loads(result.stdout)["coverage"] == "complete"
+        text = " ".join(run("--db", str(db.path)).output.split())
+        assert "covers them all" in text and "No membership outlived a removal" in text
+
+    def test_an_older_membership_still_needs_the_log(self, db):
+        db.activity_log()
+        db.member("m-old", "t1", "u1", "2026-10-14 23:59:59")
+        assert run("--db", str(db.path)).exit_code == system.AUDIT_PARTIAL
+        result = run("--db", str(db.path), "--log", "-", "--json", input="")
+        assert result.exit_code == system.AUDIT_CLEAN
+        assert json.loads(result.stdout)["coverage"] == "database+log"
+
+    def test_a_table_without_a_migration_record_is_not_complete(self, db):
+        db.activity_log(applied_at=None)
+        db.member("m1", "t1", "u1", "2026-10-16 00:00:00")
+        report = system.audit_removed_members(db.path)
+        assert report["activity_since"] is None and report["coverage"] == "partial"
+
+    def test_older_sources_count_only_before_the_log(self, db):
+        """A removal after 0038 is the activity row's; the revocation event
+        and the timed log line of the same removal are not listed again.
+        Ones from before it, and an untimed line, still are."""
+        db.activity_log()
+        db.member("m1", "t1", "u1", "2026-10-01 09:00:00")
+        db.activity("a1", "t1", "u1", "2026-10-16 12:00:00")
+        db.event("e-new", "t1", "u1", "2026-10-16 12:00:00")
+        db.event("e-old", "t1", "u1", "2026-10-14 12:00:00")
+        log = "\n".join([
+            f"2026-10-16T12:00:00+0000 host uv[1]: {ACCESS('t1', 'u1')}",
+            f"2026-10-14T12:00:00+0000 host uv[1]: {ACCESS('t1', 'u1')}",
+            ACCESS("t1", "u1"),
+        ])
+        report = json.loads(run("--db", str(db.path), "--log", "-", "--json", input=log).stdout)
+        (finding,) = report["findings"]
+        assert [(r["source"], r["activity_id"] or r["revocation_event_id"] or r["removed_at"])
+                for r in finding["removals"]] == [
+            ("team_activity", "a1"),
+            ("revocation_event", "e-old"),
+            ("request_log", "2026-10-14T12:00:00+0000"),
+            ("request_log", None),
+        ]
+
+    def test_changes_no_data(self, db):
+        db.activity_log()
+        db.member("m-left", "t1", "u1", "2026-10-01 09:00:00")
+        db.activity("a1", "t1", "u1", "2026-10-16 12:00:00")
+        before = db.digest()
+        assert run("--db", str(db.path)).exit_code == 1
+        assert db.digest() == before
+
+
 class TestLogSource:
     def test_log_removals_are_reported_with_unknown_order(self, db, tmp_path):
         db.member("m-left", "t1", "u1", "2026-10-01 09:00:00")   # removal only in the log
@@ -211,7 +323,8 @@ class TestLogSource:
         by_id = {f["member_id"]: f for f in report["findings"]}
         assert set(by_id) == {"m-left", "m-both"}
         assert by_id["m-left"]["removals"] == [{
-            "source": "request_log", "revocation_event_id": None, "removed_at": None, "ordering": "unknown",
+            "source": "request_log", "activity_id": None, "revocation_event_id": None,
+            "removed_at": None, "ordering": "unknown",
         }]
         assert [r["source"] for r in by_id["m-both"]["removals"]] == ["revocation_event", "request_log"]
 
