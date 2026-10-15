@@ -36,7 +36,7 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * A field a query can be ordered by.
  *
- * Values: created,updated,priority,status,title,estimate,identifier,due,completed,unknown_default_open_api
+ * Values: created,updated,priority,status,title,estimate,identifier,due,completed,type,assignee,sprint,project,unknown_default_open_api
  */
 @Serializable(with = OrderFieldSerializer::class)
 enum class OrderField(val value: kotlin.String) {
@@ -67,6 +67,18 @@ enum class OrderField(val value: kotlin.String) {
 
     @SerialName(value = "completed")
     completed("completed"),
+
+    @SerialName(value = "type")
+    type("type"),
+
+    @SerialName(value = "assignee")
+    assignee("assignee"),
+
+    @SerialName(value = "sprint")
+    sprint("sprint"),
+
+    @SerialName(value = "project")
+    project("project"),
 
     @SerialName(value = "unknown_default_open_api")
     unknown_default_open_api("unknown_default_open_api");

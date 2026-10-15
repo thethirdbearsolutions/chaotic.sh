@@ -37,7 +37,7 @@ from oxyde import Q
 from oxyde.queries.conditions import Condition
 from pydantic import ValidationError
 
-from app.enums import SprintStatus
+from app.enums import IssueType, SprintStatus
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueLabel
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
@@ -522,6 +522,10 @@ _ORDER_COLUMN = {
     "identifier": "number",
     "due": "due_date",
     "completed": "completed_at",
+    "type": "issue_type",
+    "assignee": "assignee_id",
+    "sprint": "sprint_id",
+    "project": "project_id",
 }
 DEFAULT_ORDER = [QueryOrder(field="updated", direction="desc")]
 
@@ -943,14 +947,52 @@ def has_label(node) -> bool:
     return any(has_label(c) for c in node.rows)
 
 
-def _sort_value(field_name: str, row: dict):
+# Type orders the way the enum lists it (task, bug, feature, ...), the
+# order the vocabulary gives its values in, both stored and wire form.
+_TYPE_ORDER = {k: n for n, m in enumerate(IssueType) for k in (m.name, m.value)}
+
+
+async def _relation_keys(field_name: str, ids: set[str]) -> dict[str, tuple]:
+    """A sort key per related row id for an order term on a relation
+    column. Each key ends with the id, so two rows with the same name
+    never interleave: a group stays contiguous. An id with no row (a
+    deleted user, say) sorts with the nulls."""
+    if not ids:
+        return {}
+    ids = sorted(ids)
+    if field_name == "assignee":
+        rows = await OxydeUser.objects.filter(id__in=ids).values("id", "name").all()
+        return {r["id"]: ((r["name"] or "").lower(), r["id"]) for r in rows}
+    if field_name == "sprint":
+        sprints = await OxydeSprint.objects.filter(id__in=ids).all()
+        # Sprints that have run (active or completed) in the order they
+        # ran; planned ones after them, in the order they were made.
+        # "Planned" comes from the status, not a null activated_at:
+        # migration 0016 nulled activated_at on every sprint that ran
+        # before it, and those fall back to their creation time.
+        return {
+            s.id: (s.status == SprintStatus.PLANNED, s.activated_at or s.created_at, s.created_at, s.id)
+            for s in sprints
+        }
+    rows = await OxydeProject.objects.filter(id__in=ids).values("id", "key").all()
+    return {r["id"]: (r["key"].lower(), r["id"]) for r in rows}
+
+
+_RELATION_ORDER = {"assignee", "sprint", "project"}
+
+
+def _sort_value(field_name: str, row: dict, relations: dict[str, dict[str, tuple]]):
     v = row[_ORDER_COLUMN[field_name]]
     if v is None:
         return None
+    if field_name in _RELATION_ORDER:
+        return relations[field_name].get(v)
     if field_name == "priority":
         return _get_order(_PRIORITY_ORDER, v)
     if field_name == "status":
         return _get_order(_STATUS_ORDER, v)
+    if field_name == "type":
+        return _get_order(_TYPE_ORDER, v)
     if field_name == "title":
         return v.lower()
     if field_name == "identifier":
@@ -989,12 +1031,18 @@ async def run_query(
     if matched is not None:
         rows = [r for r in rows if r["id"] in matched]
 
+    relations = {
+        t.field: await _relation_keys(
+            t.field, {r[_ORDER_COLUMN[t.field]] for r in rows} - {None},
+        )
+        for t in order_by if t.field in _RELATION_ORDER
+    }
     rows.sort(key=lambda r: r["id"])
     rows.sort(key=lambda r: r["created_at"], reverse=True)
     for term in reversed(order_by):
-        present = [r for r in rows if _sort_value(term.field, r) is not None]
-        absent = [r for r in rows if _sort_value(term.field, r) is None]
-        present.sort(key=lambda r: _sort_value(term.field, r), reverse=term.direction == "desc")
+        present = [r for r in rows if _sort_value(term.field, r, relations) is not None]
+        absent = [r for r in rows if _sort_value(term.field, r, relations) is None]
+        present.sort(key=lambda r: _sort_value(term.field, r, relations), reverse=term.direction == "desc")
         rows = present + absent
 
     total = len(rows)

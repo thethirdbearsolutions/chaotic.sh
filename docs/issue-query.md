@@ -127,10 +127,29 @@ GET /api/teams/{team_id}/issues/query
 - `where` and `filter` are both optional. Given together, they are ANDed.
 - `order` is up to 3 comma-separated fields, `-` for descending:
   `priority,-updated`. Fields: created, updated, priority, status, title,
-  estimate, identifier, due, completed. Priority ascending puts urgent
-  first, and status ascending runs in_progress, in_review, todo,
-  backlog, done, canceled. Both match `issue list --sort ... --order asc`.
-  Empty values sort last either way. The default is `-updated`.
+  estimate, identifier, due, completed, type, assignee, sprint, project.
+  Priority ascending puts urgent first, and status ascending runs
+  in_progress, in_review, todo, backlog, done, canceled. Both match
+  `issue list --sort ... --order asc`. The rest of the fields order as
+  follows (ascending; `-` reverses):
+  - `type`: in the order the types are listed (task, bug, feature,
+    chore, docs, tech_debt, refactor, epic), the order the vocabulary
+    gives them in.
+  - `assignee`: by the assignee's name, ignoring case.
+  - `sprint`: sprints that have run (active or completed) in the order
+    they were activated, then planned sprints, oldest created first. A
+    sprint that ran before its activation time was recorded (migration
+    0016) counts from its creation time. Across projects (team scope)
+    sprints of different projects interleave by time; order by
+    `project,sprint` to keep each project's sprints together.
+  - `project`: by project key, ignoring case.
+
+  Two different assignees, sprints or projects never interleave, even
+  when they share a name, so grouping by any of these fields after
+  ordering by it keeps each group together across pages.
+  Empty values (no assignee, no sprint) sort last either way, as does
+  an assignee whose user no longer exists. Ties fall back to newest
+  created first. The default is `-updated`.
 - `limit` is 1 to 1000.
 - Access is the issue list's: the same project and team checks, and the
   same scoping.
