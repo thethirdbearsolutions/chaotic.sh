@@ -91,7 +91,8 @@ from dataclasses import dataclass
 from fastapi import HTTPException
 from starlette.responses import Response
 
-from app.api.deps import check_user_team_access
+from app.api.deps import can_read_team_data
+from app.api.visibility import TEAM_HIDDEN_DETAIL
 from app.auth.access import authorize, reads
 from app.auth.credentials import (
     CredentialError,
@@ -614,8 +615,8 @@ async def authenticate(token: str | None, team_id: str) -> Principal:
         authorize(principal, realtime_feed)
     except HTTPException:
         raise WsRefused(CLOSE_FORBIDDEN, "Credential scope does not allow reading") from None
-    if not await check_user_team_access(principal.user, team_id):
-        raise WsRefused(CLOSE_FORBIDDEN, "No access to this team")
+    if not await can_read_team_data(principal.user, team_id):
+        raise WsRefused(CLOSE_FORBIDDEN, TEAM_HIDDEN_DETAIL)
     return principal
 
 

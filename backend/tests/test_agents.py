@@ -225,20 +225,20 @@ class TestAgentAccessControl:
 
     async def test_team_scoped_agent_has_team_access(self, db, test_user, test_team):
         """Team-scoped agent should have access to the team."""
-        from app.api.deps import check_user_team_access
+        from app.api.deps import can_read_team_data
 
         service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Team Bot"), test_user, test_team.id
         )
 
-        has_access = await check_user_team_access(agent, test_team.id)
+        has_access = await can_read_team_data(agent, test_team.id)
 
         assert has_access is True
 
     async def test_team_scoped_agent_no_access_other_team(self, db, test_user, test_team, test_user2):
         """Team-scoped agent should not have access to other teams."""
-        from app.api.deps import check_user_team_access
+        from app.api.deps import can_read_team_data
         from app.oxyde_models.team import OxydeTeam
 
         service = AgentService()
@@ -249,7 +249,7 @@ class TestAgentAccessControl:
         # Create another team
         other_team = await OxydeTeam.objects.create(name="Other Team", key="OTHER")
 
-        has_access = await check_user_team_access(agent, other_team.id)
+        has_access = await can_read_team_data(agent, other_team.id)
 
         assert has_access is False
 
@@ -641,9 +641,8 @@ class TestAgentAPIEndpoints:
     async def test_agent_cannot_create_team_agent(self, client, test_team, db, test_user):
         """POST /teams/{team_id}/agents should return 403 when called by an agent.
 
-        Note: Currently agents fail the membership check first (they don't have TeamMember
-        records). The "Agents cannot create other agents" check at lines 42-46 is dead code
-        as a result. This test documents actual behavior.
+        The agent can see its team, so the refusal names the action rather than
+        claiming it cannot access the team (CHT-1842).
         """
         # Create an agent first
         service = AgentService()
@@ -658,9 +657,28 @@ class TestAgentAPIEndpoints:
             headers={"Authorization": f"Bearer {api_key}"},
         )
 
-        # Agent is rejected because get_member doesn't find a TeamMember record for agents
         assert response.status_code == 403
-        assert "Not a member" in response.json()["detail"]
+        assert response.json()["detail"] == "Agents cannot create other agents"
+
+    @pytest.mark.parametrize("route", ["team", "project"])
+    async def test_project_scoped_agent_cannot_create_agents(
+        self, client, test_team, test_project, db, test_user, route
+    ):
+        """A project-scoped agent sees its team and its project, so creating an
+        agent in either is refused as an agent, not as an outsider (CHT-1842)."""
+        service = AgentService()
+        agent, api_key, _ = await service.create(
+            AgentCreate(name="Scoped Bot"), test_user, test_team.id, project_id=test_project.id
+        )
+        if route == "team":
+            url = f"/api/teams/{test_team.id}/agents"
+        else:
+            url = f"/api/projects/{test_project.id}/agents"
+        response = await client.post(
+            url, json={"name": "Child Bot"}, headers={"Authorization": f"Bearer {api_key}"},
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Agents cannot create other agents"
 
     async def test_agent_with_membership_cannot_create_team_agent(self, client, test_team, db, test_user):
         """POST /teams/{team_id}/agents returns 403 for agent even with TeamMember record.
@@ -689,9 +707,7 @@ class TestAgentAPIEndpoints:
     async def test_agent_cannot_create_project_agent(self, client, test_team, test_project, db, test_user):
         """POST /projects/{project_id}/agents should return 403 when called by an agent.
 
-        Note: Currently agents fail the membership check first (they don't have TeamMember
-        records). The "Agents cannot create other agents" check at lines 99-103 is dead code
-        as a result. This test documents actual behavior.
+        The agent can see the project, so the refusal names the action (CHT-1842).
         """
         # Create an agent first
         service = AgentService()
@@ -706,9 +722,8 @@ class TestAgentAPIEndpoints:
             headers={"Authorization": f"Bearer {api_key}"},
         )
 
-        # Agent is rejected because get_member doesn't find a TeamMember record for agents
         assert response.status_code == 403
-        assert "Not a member" in response.json()["detail"]
+        assert response.json()["detail"] == "Agents cannot create other agents"
 
     async def test_agent_with_membership_cannot_create_project_agent(
         self, client, test_team, test_project, db, test_user

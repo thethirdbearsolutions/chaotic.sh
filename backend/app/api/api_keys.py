@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.db.transactions import atomic
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, NotAppSession, can_manage_agent, check_user_in_team, get_api_key_record
+from app.api.deps import CurrentUser, NotAppSession, can_manage_agent, is_in_team_directory, get_api_key_record
 from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated
 from app.services.agent_service import AgentService
 from app.services.api_key_service import APIKeyService
@@ -130,7 +130,7 @@ async def revoke_api_key(
     if not allowed:
         agent_service = AgentService()
         agent = await agent_service.get_by_id(api_key.principal_user_id)
-        if agent is None or not await check_user_in_team(current_user, agent.agent_team_id):
+        if agent is None or not await is_in_team_directory(current_user, agent.agent_team_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="API key not found",

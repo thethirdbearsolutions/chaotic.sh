@@ -2,11 +2,11 @@
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import (
-    CurrentUser, accessible_project_ids, check_user_team_access,
+    CurrentUser, accessible_project_ids, can_read_team_data,
 )
 from app.api.visibility import (
-    can_see_label, can_see_project, not_found, visible_document, visible_issue, visible_project_in_team,
-    visible_sprint,
+    can_see_label, can_see_project, not_found, project_filter_in_team_or_none, team_hidden,
+    visible_document, visible_issue, visible_project_in_team, visible_sprint,
 )
 from app.api.issues import ensure_utc, issues_to_responses
 from app.schemas.document import (
@@ -96,7 +96,7 @@ async def create_document(
 
     # Authorize at the project level when the doc is project-scoped, so a
     # project-scoped agent can create docs in its own project —
-    # check_user_team_access always rejects such agents (CHT-1273, CHT-1780).
+    # can_read_team_data always rejects such agents (CHT-1273, CHT-1780).
     #
     # The body's project is pinned to the URL-path team in the same step
     # (CHT-1807): a project-scoped agent sees its own project whichever
@@ -104,18 +104,12 @@ async def create_document(
     # another team (CHT-1273 review CRITICAL). A project that is missing,
     # out of sight (CHT-1785) or of another team is the same 400.
     if document_in.project_id:
-        missing = not_found("Project not found in this team", status.HTTP_400_BAD_REQUEST)
         await visible_project_in_team(
-            current_user, document_in.project_id, team_id, hidden=missing, elsewhere=missing,
+            current_user, document_in.project_id, team_id,
+            detail="Project not found in this team", status_code=status.HTTP_400_BAD_REQUEST,
         )
-        authorized = True
-    else:
-        authorized = await check_user_team_access(current_user, team_id)
-    if not authorized:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    elif not await can_read_team_data(current_user, team_id):
+        raise team_hidden()
 
     # Agents must include an emoji icon (CHT-631)
     if current_user.is_agent and not document_in.icon:
@@ -165,21 +159,11 @@ async def list_documents(
     # project-scoped agent may not read (CHT-1780). A sprint filter alone
     # does not confine: a team-level document may carry any sprint.
     if project_id:
-        project = await visible_project_in_team(
-            current_user, project_id, team_id,
-            hidden=HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized for this project",
-            ),
-            elsewhere=None,
-        )
+        project = await project_filter_in_team_or_none(current_user, project_id, team_id)
         if project is None:
             return []
-    elif not await check_user_team_access(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    elif not await can_read_team_data(current_user, team_id):
+        raise team_hidden()
 
     # Check sprint access if filtering by sprint
     # (a sprint the caller cannot see answers like a missing one, CHT-1785)
@@ -236,12 +220,11 @@ async def update_document(
             if document_in.project_id:
                 # One the caller cannot see answers like a missing one
                 # (CHT-1785).
-                missing = not_found("Project not found in this team", status.HTTP_400_BAD_REQUEST)
                 await visible_project_in_team(
                     current_user, document_in.project_id, document.team_id,
-                    hidden=missing, elsewhere=missing,
+                    detail="Project not found in this team", status_code=status.HTTP_400_BAD_REQUEST,
                 )
-            elif not await check_user_team_access(current_user, document.team_id):
+            elif not await can_read_team_data(current_user, document.team_id):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Not authorized to make this document team-level",

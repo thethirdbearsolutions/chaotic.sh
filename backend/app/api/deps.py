@@ -92,7 +92,7 @@ def confined_project_id(user: User) -> str | None:
     return user.agent_project_id if is_project_scoped_agent(user) else None
 
 
-async def check_user_team_access(user: User, team_id: str) -> bool:
+async def can_read_team_data(user: User, team_id: str) -> bool:
     """May ``user`` read and write ``team_id``'s team-wide data: every
     project's issues, the team activity and comment feeds, team-level
     (project-less) documents, templates?
@@ -102,7 +102,7 @@ async def check_user_team_access(user: User, team_id: str) -> bool:
     agent is refused even for its own team (CHT-1780): it reaches its
     project through ``check_user_project_access``, and the few team
     reads it needs (the team row, its members and agents, labels) go
-    through ``check_user_in_team``.
+    through ``is_in_team_directory``.
     """
     if user.is_agent:
         if user.agent_project_id:
@@ -129,7 +129,7 @@ async def can_access_document(user: User, document) -> bool:
 
         project = await ProjectService().get_by_id(document.project_id)
         return project is not None and await check_user_project_access(user, project)
-    return await check_user_team_access(user, document.team_id)
+    return await can_read_team_data(user, document.team_id)
 
 
 async def accessible_project_ids(user: User, project_ids) -> set[str]:
@@ -145,19 +145,19 @@ async def accessible_project_ids(user: User, project_ids) -> set[str]:
     return allowed
 
 
-async def check_user_in_team(user: User, team_id: str) -> bool:
+async def is_in_team_directory(user: User, team_id: str) -> bool:
     """Is ``user`` part of ``team_id`` at all -- a member, or an agent of
     that team at either scope? This is the bar for the team's *directory*,
     which a project-scoped agent needs for ordinary work in its project:
     the team row, its members and agents (to resolve an assignee or a
     mention), and its labels (to label its issues). Never use it for
-    team-wide *data*; that is ``check_user_team_access`` (CHT-1780).
+    team-wide *data*; that is ``can_read_team_data`` (CHT-1780).
     """
     if not team_id:
         return False
     if user.is_agent:
         return user.agent_team_id == team_id
-    return await check_user_team_access(user, team_id)
+    return await can_read_team_data(user, team_id)
 
 
 async def is_eligible_project_member(user: User | None, team_id: str, project_id: str | None) -> bool:

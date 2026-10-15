@@ -64,7 +64,7 @@ async def _legacy_project_agent(owner, project, *, name="Legacy Bot"):
 async def test_a_backfilled_legacy_agent_is_visible_mentionable_and_filterable(
     client, auth_headers, test_user, test_team, test_project,
 ):
-    from app.api.deps import check_user_in_team
+    from app.api.deps import is_in_team_directory
     from app.services.mention_handles import MentionDirectory
     from app.services.team_service import TeamService
 
@@ -80,7 +80,7 @@ async def test_a_backfilled_legacy_agent_is_visible_mentionable_and_filterable(
     assert (await MentionDirectory.for_team(test_team.id)).handle_for(agent.id) is None
     assert (await _query(client, auth_headers, f"projects/{test_project.id}", where=where)).status_code == 400
     assert await TeamService().get_user_teams(agent.id) == []
-    assert not await check_user_in_team(agent, test_team.id)
+    assert not await is_in_team_directory(agent, test_team.id)
 
     assert await _run_0036_backfill() == [agent.id]
     agent = await OxydeUser.objects.get(id=agent.id)
@@ -97,7 +97,7 @@ async def test_a_backfilled_legacy_agent_is_visible_mentionable_and_filterable(
     assert found.status_code == 200, found.text
     assert [i["id"] for i in found.json()["issues"]] == [assigned.id]
     assert [t.id for t in await TeamService().get_user_teams(agent.id)] == [test_team.id]
-    assert await check_user_in_team(agent, test_team.id)
+    assert await is_in_team_directory(agent, test_team.id)
 
     # And the agent itself, signed in, sees its own project's issues.
     headers = {"Authorization": f"Bearer {create_access_token(data={'sub': agent.id})}"}

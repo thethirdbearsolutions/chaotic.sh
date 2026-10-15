@@ -1237,7 +1237,7 @@ class TestDocumentRevisions:
 class TestCreateDocumentProjectScopedAgent:
     """CHT-1273: a project-scoped agent (agent_project_id set) must be able
     to create docs in its own project. create_document
-    previously gated on check_user_team_access, which such agents always fail."""
+    previously gated on can_read_team_data, which such agents always fail."""
 
     async def _project_agent(self, project_id, email="pagent@agent.local"):
         from app.oxyde_models.project import OxydeProject

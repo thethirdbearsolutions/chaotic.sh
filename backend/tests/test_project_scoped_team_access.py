@@ -1,7 +1,7 @@
 """A project-scoped agent has no team-wide access (CHT-1780).
 
 ``AgentService.create`` sets ``agent_team_id`` on a project-scoped agent
-too (its project's team). ``check_user_team_access`` used to compare only
+too (its project's team). ``can_read_team_data`` used to compare only
 that column, so such an agent passed every team-wide check: the team's
 issue list, search, activity and comment feeds, team-level documents,
 templates, project creation, label edits, and MCP ``resolve_team``.
@@ -390,7 +390,7 @@ class TestReviewFindings:
         assert [e["issue_id"] for e in inbox.json()] == [own.id]
 
     async def test_f7_in_team_refuses_a_missing_team(self, proj_agent, test_user):
-        from app.api.deps import check_user_in_team
+        from app.api.deps import is_in_team_directory
         from app.oxyde_models.user import OxydeUser
 
         agent, _ = proj_agent
@@ -403,5 +403,5 @@ class TestReviewFindings:
         await OxydeUser.objects.filter(id=legacy.id).update(agent_team_id=None)
         legacy = await OxydeUser.objects.get(id=legacy.id)
         for user in (agent, legacy, test_user):
-            assert await check_user_in_team(user, None) is False
-            assert await check_user_in_team(user, "") is False
+            assert await is_in_team_directory(user, None) is False
+            assert await is_in_team_directory(user, "") is False

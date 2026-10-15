@@ -12,8 +12,8 @@ is admin-only everywhere else.
 from fastapi import APIRouter, HTTPException, status
 
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, check_user_team_access
-from app.api.visibility import can_see_project, not_found, visible_project_in_team, visible_template
+from app.api.deps import CurrentUser, can_read_team_data
+from app.api.visibility import can_see_project, team_hidden, visible_project_in_team, visible_template
 from app.schemas.template import (
     TemplateApplyReport,
     TemplateApplyRequest,
@@ -86,7 +86,6 @@ async def create_template_from_project(
 
     project = await visible_project_in_team(
         current_user, snapshot_in.project_id, team_id,
-        hidden=not_found("Project not found"),
         elsewhere=HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Project belongs to a different team",
@@ -110,11 +109,8 @@ async def create_template_from_project(
 @reads
 async def list_templates(team_id: str, current_user: CurrentUser):
     """List a team's templates."""
-    if not await check_user_team_access(current_user, team_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this team",
-        )
+    if not await can_read_team_data(current_user, team_id):
+        raise team_hidden()
     return await TemplateService().list_by_team(team_id)
 
 

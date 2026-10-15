@@ -1869,7 +1869,7 @@ class TestResolveDocumentIdAgentBranches:
             agent_team_id=test_project.team_id,
         )
         # Created directly via the service, not the doc_create tool:
-        # app.api.documents.create_document gates on check_user_team_access,
+        # app.api.documents.create_document gates on can_read_team_data,
         # which a purely project-scoped agent (no agent_team_id) never
         # passes -- a separate, pre-existing REST access-check gap outside
         # CHT-1266's scope (filed as a follow-up). This test is only about
