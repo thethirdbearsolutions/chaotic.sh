@@ -36,6 +36,7 @@ from __future__ import annotations
 from chaotic_mcp_tools import ToolInputError
 
 from app.api.deps import agent_home_team_id
+from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.user import OxydeUser as User
 from app.utils.email_address import same_email
 from app.services.project_service import ProjectService
@@ -229,10 +230,13 @@ async def _team_agents(team_id: str) -> list[User]:
     them may hold an issue is ``is_eligible_project_member``'s call when
     the API sees the id (CHT-1830); this lookup only has to find them."""
     agents = await User.objects.filter(is_agent=True, agent_team_id=team_id).all()
-    teamless = await User.objects.filter(
-        is_agent=True, agent_team_id__isnull=True, agent_project_id__isnull=False,
-    ).all()
-    return agents + [a for a in teamless if await agent_home_team_id(a) == team_id]
+    project_ids = [p.id for p in await OxydeProject.objects.filter(team_id=team_id).all()]
+    # Chunked under SQLite's bound-parameter limit.
+    for i in range(0, len(project_ids), 500):
+        agents += await User.objects.filter(
+            is_agent=True, agent_team_id__isnull=True, agent_project_id__in=project_ids[i:i + 500],
+        ).all()
+    return agents
 
 
 async def resolve_assignee(user: User, team_id: str, assignee: str) -> str | None:
