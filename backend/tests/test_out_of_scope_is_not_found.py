@@ -160,6 +160,8 @@ ROUTES = [
     ("POST", "/api/issues/{issue}/labels", {"label_id": "{label}"}, "issue"),
     ("DELETE", "/api/issues/{issue}/labels/{label}", None, "issue"),
     ("POST", "/api/issues/batch-update", {"issue_ids": ["{issue}"], "priority": "high"}, "issue"),
+    ("POST", "/api/issues/batch-update", {"issue_ids": ["{own_issue}"], "label_ids": ["{label}"]}, "label"),
+    ("POST", "/api/issues/batch-update", {"issue_ids": ["{own_issue}"], "add_label_ids": ["{label}"]}, "label"),
     # Comments.
     ("GET", "/api/issues/{issue}/comments", None, "issue"),
     ("POST", "/api/issues/{issue}/comments", {"content": "x"}, "issue"),
@@ -170,6 +172,7 @@ ROUTES = [
     ("POST", "/api/issues/{issue}/relations", {"related_issue_id": "{own_issue}"}, "issue"),
     ("POST", "/api/issues/{own_issue}/relations", {"related_issue_id": "{issue}"}, "issue"),
     ("DELETE", "/api/issues/{issue}/relations/{relation}", None, "issue"),
+    ("DELETE", "/api/issues/{own_issue}/relations/{relation}", None, "relation"),
     # Rows named in an issue body.
     ("POST", "/api/projects/{own_project}/issues", {"title": "x", "sprint_id": "{sprint}"}, "sprint"),
     ("POST", "/api/projects/{own_project}/issues", {"title": "x", "parent_id": "{issue}"}, "issue"),
@@ -270,6 +273,19 @@ ROUTES = [
 ]
 
 
+# Routes an agent is refused before any row is loaded: the 403 depends only
+# on who is asking, so it cannot tell an existing id from a missing one.
+# These cases are not oracle tests for agents; the human principal still
+# reaches the loader on them. The test asserts the 403 so a later change
+# that moves the role check after the lookup fails here instead of passing
+# quietly.
+PRE_LOOKUP_403 = {
+    ("DELETE", "/api/labels/{label}"): "Agents cannot delete labels",
+    ("POST", "/api/teams/{own_team}/templates/from-project"): "Only admins can manage templates",
+}
+AGENT_PRINCIPALS = {"project_agent", "team_b_agent"}
+
+
 def _fill(template, values):
     if template is None:
         return None
@@ -314,7 +330,12 @@ async def test_out_of_scope_answers_like_missing(
     missing = await _call(client, method, _fill(path, gone), _fill(body, gone), headers)
     existing = await _call(client, method, _fill(path, values), _fill(body, values), headers)
 
-    assert existing.status_code not in (200, 201, 204, 422), existing.text
+    pre_lookup = PRE_LOOKUP_403.get((method, path)) if principal in AGENT_PRINCIPALS else None
+    if pre_lookup is not None:
+        assert existing.status_code == missing.status_code == 403, existing.text
+        assert existing.json() == missing.json() == {"detail": pre_lookup}
+        return
+    assert existing.status_code not in (200, 201, 204, 403, 422), existing.text
     # An answer may quote back the id it was sent (batch-update lists the
     # ids it did not find): compare with the missing id read as the real one.
     echoed = json.loads(missing.text.replace(str(gone[placeholder]), str(values[placeholder])))

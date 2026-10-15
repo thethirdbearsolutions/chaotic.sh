@@ -158,10 +158,14 @@ async def _validate_labels(current_user, label_ids: list[str], team_id: str) -> 
     A label of a team the caller is not in counts as missing (CHT-1785)."""
     if not label_ids:
         return
-    labels = [
-        label for label in await OxydeLabel.objects.filter(id__in=label_ids).all()
-        if await can_see_label(current_user, label)
-    ]
+    # One membership check per team, not per label.
+    seen_by_team: dict[str, bool] = {}
+    labels = []
+    for label in await OxydeLabel.objects.filter(id__in=label_ids).all():
+        if label.team_id not in seen_by_team:
+            seen_by_team[label.team_id] = await can_see_label(current_user, label)
+        if seen_by_team[label.team_id]:
+            labels.append(label)
     if len(labels) != len(label_ids):
         found = {l.id for l in labels}
         missing = set(label_ids) - found
@@ -915,6 +919,12 @@ async def batch_update_issues(
             detail="All issues in a batch must belong to the same team",
         )
     team_id = team_ids.pop()
+
+    # Label ids the caller cannot see answer like missing ones (CHT-1785),
+    # before the service gets a chance to say anything about them.
+    for ids in (batch_in.label_ids, batch_in.add_label_ids):
+        if ids:
+            await _validate_labels(current_user, list(dict.fromkeys(ids)), team_id)
 
     # Build update dict from safe fields only
     update_data = {}
@@ -1764,7 +1774,7 @@ async def delete_relation(
     if relation.issue_id != issue_id and relation.related_issue_id != issue_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Relation not found for this issue",
+            detail="Relation not found",
         )
 
     relation_data = {"source_issue_id": relation.issue_id, "target_issue_id": relation.related_issue_id}

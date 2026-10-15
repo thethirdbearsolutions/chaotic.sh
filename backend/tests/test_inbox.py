@@ -869,7 +869,10 @@ class TestInboxApi:
             team_id=test_team.id, title="not yours",
         )
         resp = await client.post(f"/api/inbox/{entry.id}/read", headers=auth_headers)
-        assert resp.status_code == 403
+        missing = await client.post("/api/inbox/does-not-exist/read", headers=auth_headers)
+        # Answers exactly like a missing entry (CHT-1785).
+        assert resp.status_code == missing.status_code == 404
+        assert resp.json() == missing.json() == {"detail": "Inbox entry not found"}
 
     async def test_mark_read_404_for_missing_entry(self, client, db, auth_headers):
         resp = await client.post("/api/inbox/does-not-exist/read", headers=auth_headers)
@@ -977,10 +980,13 @@ class TestInboxArchive:
         count = await client.get("/api/inbox/unread-count", headers=auth_headers)
         assert count.json()["unread_count"] == 0
 
-    async def test_archive_endpoint_not_owner_403(self, client, db, test_team, test_user2, auth_headers):
+    async def test_archive_endpoint_not_owner_404(self, client, db, test_team, test_user2, auth_headers):
         e = await self._entry(test_user2, test_team.id, "not mine")
         resp = await client.post(f"/api/inbox/{e.id}/archive", headers=auth_headers)
-        assert resp.status_code == 403
+        missing = await client.post("/api/inbox/does-not-exist/archive", headers=auth_headers)
+        # Answers exactly like a missing entry (CHT-1785).
+        assert resp.status_code == missing.status_code == 404
+        assert resp.json() == missing.json() == {"detail": "Inbox entry not found"}
 
     async def test_archive_endpoint_nonexistent_404(self, client, db, auth_headers):
         resp = await client.post(
