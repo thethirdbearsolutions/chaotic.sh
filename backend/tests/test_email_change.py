@@ -232,7 +232,126 @@ class TestNoticeAndCodes:
         assert response.json()["email_verified_at"] is not None
 
 
+class TestRaces:
+    """PR #450 review: confirm racing a change, and parallel changes."""
+
+    @pytest.mark.parametrize("during", ["attempts", "used_at"])
+    async def test_a_confirm_racing_a_change_does_not_verify_the_new_address(
+        self, client, auth_headers, test_user, outbox, monkeypatch, during,
+    ):
+        """The change lands while confirm is between its reads and its
+        last write: during the spent-attempt update (the code is then
+        expired) or during the used_at update (the account's address has
+        then moved). Either way the new address stays unverified."""
+        from app.services.email_verification_service import EmailVerificationService, VerificationRefused
+
+        assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
+        code = outbox.last_code()
+        confirming = await _fresh(test_user)
+        queryset = type(OxydeEmailVerificationCode.objects.filter(id="x"))
+        real_update = queryset.update
+        fired = []
+
+        async def update(self, *args, **kwargs):
+            if during in kwargs and not fired:
+                fired.append(True)
+                await UserService().change_email(await _fresh(test_user), "victim@corp.example", PASSWORD)
+            return await real_update(self, *args, **kwargs)
+        monkeypatch.setattr(queryset, "update", update)
+
+        with pytest.raises(VerificationRefused) as refused:
+            await EmailVerificationService().confirm(confirming, code)
+        assert fired
+        assert refused.value.error_code == "invalid_verification_code"
+        user = await _fresh(test_user)
+        assert user.email == "victim@corp.example"
+        assert user.email_verified_at is None
+
+    async def test_parallel_changes_get_at_most_the_daily_number(self, db, test_user, no_smtp):
+        import asyncio
+
+        user = await _fresh(test_user)
+        results = await asyncio.gather(*[
+            UserService().change_email(user, f"parallel{n}@example.com", PASSWORD) for n in range(5)
+        ], return_exceptions=True)
+        changed = [r for r in results if isinstance(r, OxydeUser)]
+        limited = [r for r in results if getattr(r, "error_code", None) == "email_change_rate_limited"]
+        assert len(changed) == user_service_module.EMAIL_CHANGES_PER_DAY
+        assert len(limited) == 5 - user_service_module.EMAIL_CHANGES_PER_DAY
+
+    async def test_retry_after_follows_the_limit_that_refused(self, client, auth_headers, test_user, no_smtp):
+        for _ in range(user_service_module.EMAIL_CHANGE_ATTEMPTS_PER_HOUR):
+            await _change(client, auth_headers, "free@example.com", password="wrong-password")
+        hourly = await _change(client, auth_headers, "free@example.com")
+        assert hourly.status_code == 429
+        assert 3500 < int(hourly.headers["Retry-After"]) <= 3600
+
+        user_service_module.email_change_attempts.clear()
+        for n in range(user_service_module.EMAIL_CHANGES_PER_DAY):
+            assert (await _change(client, auth_headers, f"move{n}@example.com")).status_code == 200
+        daily = await _change(client, auth_headers, "one-more@example.com")
+        assert daily.status_code == 429
+        assert int(daily.headers["Retry-After"]) > 86000
+
+
+class TestInvitations:
+    """PR #450 review, 3: a change and the CHT-1790/1828 invitation gate."""
+
+    async def test_a_change_expires_an_admin_issued_invitation_code(
+        self, client, test_team, test_user, auth_headers, outbox,
+    ):
+        from .test_invitation_verification_code import _accept_with, _invitation_id, _invite, _issue, _signup
+
+        token = await _invite(test_team.id, test_user.id, "invitee@example.com")
+        inv_id = await _invitation_id(token)
+        user_id, invitee = await _signup(client)
+        code = (await _issue(client, test_team.id, inv_id, auth_headers)).json()["code"]
+        # Away and back again: the address matches the invitation once more.
+        assert (await _change(client, invitee, "away@example.com", password="password123")).status_code == 200
+        assert (await _change(client, invitee, "invitee@example.com", password="password123")).status_code == 200
+        [row] = await OxydeEmailVerificationCode.objects.filter(invitation_id=inv_id).all()
+        assert row.expires_at <= datetime.now(timezone.utc)
+        response = await _accept_with(client, token, invitee, code)
+        assert response.status_code == 400
+        assert response.json()["detail"]["error_code"] == "invitation_code_expired"
+
+    async def test_accepting_after_a_change_needs_the_new_address_verified(
+        self, client, test_team, test_user, auth_headers2, test_user2, outbox,
+    ):
+        from .test_email_verification import _accept, _invite
+
+        await OxydeUser.objects.filter(id=test_user2.id).update(email_verified_at=datetime.now(timezone.utc))
+        token = await _invite(test_team.id, test_user.id, "invited@example.com")
+        assert (await _change(client, auth_headers2, "invited@example.com")).status_code == 200
+        response = await _accept(client, token, auth_headers2)
+        assert response.status_code == 403
+        assert response.json()["detail"]["error_code"] == "email_unverified"
+
+
 class TestFreedAddresses:
+    async def test_reassignment_leaves_email_and_verification_alone(self, db):
+        holder = await _make_user("Pair@example.com")
+        variant = await _make_legacy_variant("pair@example.com")
+        verified = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        await OxydeUser.objects.filter(id=variant.id).update(email_verified_at=verified)
+        await UserService().delete(holder)
+        after = await _fresh(variant)
+        assert after.email_folded == "pair@example.com"
+        assert after.email == "pair@example.com"
+        assert after.email_verified_at == verified
+
+    async def test_the_startup_warning_survives_a_failed_reassignment(self, db, monkeypatch, caplog):
+        await _make_user("Pair@example.com")
+        await _make_legacy_variant("pair@example.com")
+
+        async def broken():
+            raise RuntimeError("database is locked")
+        monkeypatch.setattr(user_service_module, "give_free_addresses_to_legacy_accounts", broken)
+        with caplog.at_level(logging.WARNING, logger="app.services.user_service"):
+            assert await warn_if_accounts_share_an_address() == 1
+        assert "could not give freed email addresses" in caplog.text
+        assert "1 account(s) share an email address" in caplog.text
+
     async def test_a_delete_gives_the_address_to_the_next_oldest_account(self, db):
         holder = await _make_user("Pair@example.com")
         first = await _make_legacy_variant("pair@example.com")
@@ -307,6 +426,19 @@ async def test_the_limiter_peek_records_nothing():
     assert limiter.is_full("k", 1, now=1)
     assert not limiter.is_full("k", 1, now=61)
     assert not limiter.is_full("k", 2, now=1)
+
+
+def test_the_limiter_gives_back_and_says_when_to_retry():
+    from app.oauth.ratelimit import SlidingWindowLimiter
+
+    limiter = SlidingWindowLimiter(60)
+    assert limiter.retry_after("k", 2, now=0) == 0
+    assert limiter.allow("k", 2, now=0)
+    assert limiter.allow("k", 2, now=10)
+    assert limiter.retry_after("k", 2, now=20) == 40  # the hit at 0 leaves at 60
+    limiter.give_back("k")
+    assert limiter.retry_after("k", 2, now=20) == 0
+    limiter.give_back("nobody")  # no events: nothing to give back
 
 
 @pytest.mark.parametrize("email", [

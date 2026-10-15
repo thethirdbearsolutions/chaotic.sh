@@ -495,17 +495,26 @@ class EmailVerificationService:
             raise invalid
         # Spend an attempt before comparing, conditionally, so concurrent
         # guesses cannot get past the cap between a read and a write.
-        spent = await codes.filter(id=latest.id, attempts__lt=MAX_ATTEMPTS, used_at__isnull=True).update(
-            attempts=F("attempts") + 1,
-        )
+        # Not yet expired, either: an address change expires the
+        # account's codes (CHT-1827), possibly since `latest` was read.
+        spent = await codes.filter(
+            id=latest.id, attempts__lt=MAX_ATTEMPTS, used_at__isnull=True, expires_at__gt=now,
+        ).update(attempts=F("attempts") + 1)
         if not spent:
             raise invalid
         if not hmac.compare_digest(latest.code_hash, hash_code(user.id, code.strip())):
             raise invalid
 
         await codes.filter(id=latest.id).update(used_at=now)
-        user.email_verified_at = now
-        user.updated_at = now
-        await user.save(update_fields={"email_verified_at", "updated_at"})
+        # Only if the account still has the address the code was mailed
+        # to: an address change racing this confirm must not end with
+        # the new address verified by the old one's code (PR #450
+        # review, 1). Nothing written means it moved: the code is no
+        # longer good for it.
+        verified = await OxydeUser.objects.filter(
+            id=user.id, email=user.email, email_verified_at__isnull=True,
+        ).update(email_verified_at=now, updated_at=now)
+        if not verified:
+            raise invalid
         await user.refresh()
         return user

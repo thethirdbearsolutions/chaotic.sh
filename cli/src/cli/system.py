@@ -4007,7 +4007,7 @@ def system_audit_shared_addresses(db_path, show_emails, as_json):
         if finding["status"] == "shared":
             note = f"shares it with older user {finding['holder_id']}"
         elif finding["status"] == "free":
-            note = "address now free (the server gives it to this account at its next start)"
+            note = "address now free (at its next start the server gives it to the oldest account listed at it)"
         else:
             note = "address unreadable (not text, or has a NUL character)"
         if show_emails and finding.get("email") is not None:

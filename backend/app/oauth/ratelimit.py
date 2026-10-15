@@ -18,6 +18,7 @@ database are what bound that attacker.
 from __future__ import annotations
 
 import ipaddress
+import math
 import time
 from collections import OrderedDict, deque
 
@@ -70,6 +71,24 @@ class SlidingWindowLimiter:
             return False
         cutoff = now - self.window_seconds
         return sum(1 for hit in hits if hit > cutoff) >= limit
+
+    def give_back(self, key: str) -> None:
+        """Forget ``key``'s newest event: a slot reserved with ``allow``
+        for work that then did not happen."""
+        hits = self._hits.get(key)
+        if hits:
+            hits.pop()
+
+    def retry_after(self, key: str, limit: int, *, now: float | None = None) -> int:
+        """Whole seconds until ``allow`` would let ``key`` in again (0 when
+        it would now)."""
+        now = time.monotonic() if now is None else now
+        cutoff = now - self.window_seconds
+        live = [hit for hit in self._hits.get(key, ()) if hit > cutoff]
+        if len(live) < limit:
+            return 0
+        frees_at = live[len(live) - limit] + self.window_seconds
+        return max(1, math.ceil(frees_at - now))
 
     def clear(self) -> None:
         self._hits.clear()

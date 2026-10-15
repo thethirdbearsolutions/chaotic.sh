@@ -89,7 +89,8 @@ async def warn_if_accounts_share_an_address() -> int:
     still share one email-verification rate limit with it.
     ``chaotic system audit shared-addresses`` lists them by id.
     """
-    await give_free_addresses_to_legacy_accounts()
+    # Fail-soft: the warning below must still be logged (PR #450 review, 5).
+    await _give_free_addresses_safely()
     count = await OxydeUser.objects.filter(email_folded__isnull=True).count()
     if count:
         logger.warning(
@@ -362,39 +363,51 @@ class UserService:
                 403, "human_required",
                 "Only a person's account with a password can change its address.",
             )
-        if (
-            email_change_attempts.is_full(user.id, EMAIL_CHANGE_ATTEMPTS_PER_HOUR)
-            or email_changes.is_full(user.id, EMAIL_CHANGES_PER_DAY)
-        ):
+        # Both slots are taken before the first await (no await between
+        # the checks and the allows), so requests in parallel cannot all
+        # pass the check before any records: five at once give at most
+        # EMAIL_CHANGES_PER_DAY changes (PR #450 review, 2). The change
+        # slot is given back when no change is made; the try is not.
+        retry = max(
+            email_change_attempts.retry_after(user.id, EMAIL_CHANGE_ATTEMPTS_PER_HOUR),
+            email_changes.retry_after(user.id, EMAIL_CHANGES_PER_DAY),
+        )
+        if retry:
             raise EmailChangeRefused(
                 429, "email_change_rate_limited",
                 f"Too many address changes: at most {EMAIL_CHANGE_ATTEMPTS_PER_HOUR} tries an hour "
-                f"and {EMAIL_CHANGES_PER_DAY} changes a day. Try again later.",
-                headers={"Retry-After": "3600"},
+                f"and {EMAIL_CHANGES_PER_DAY} changes a day. Try again in "
+                f"{(retry + 59) // 60} min.",
+                headers={"Retry-After": str(retry)},
             )
         email_change_attempts.allow(user.id, EMAIL_CHANGE_ATTEMPTS_PER_HOUR)
-        password_ok = verify_password(password, user.hashed_password)
-        held_elsewhere = any(
-            other.id != user.id for other in await self.find_by_email_ignoring_case(new_email)
-        )
-        if not password_ok or held_elsewhere:
-            raise _email_change_refused()
-        if new_email == user.email:
-            raise EmailChangeRefused(400, "email_unchanged", "That is already your account's address.")
-
-        old_email = user.email
-        now = datetime.now(timezone.utc)
-        try:
-            await OxydeUser.objects.filter(id=user.id).update(
-                email=new_email, email_folded=fold_email(new_email),
-                email_verified_at=None, updated_at=now,
-            )
-        except (IntegrityError, RuntimeError) as error:  # QuerySet.update raises the latter
-            # Another account took the address since the check above.
-            if not _is_address_collision(error):
-                raise
-            raise _email_change_refused() from error
         email_changes.allow(user.id, EMAIL_CHANGES_PER_DAY)
+        changed = False
+        try:
+            old_email = user.email
+            now = datetime.now(timezone.utc)
+            password_ok = verify_password(password, user.hashed_password)
+            held_elsewhere = any(
+                other.id != user.id for other in await self.find_by_email_ignoring_case(new_email)
+            )
+            if not password_ok or held_elsewhere:
+                raise _email_change_refused()
+            if new_email == user.email:
+                raise EmailChangeRefused(400, "email_unchanged", "That is already your account's address.")
+            try:
+                await OxydeUser.objects.filter(id=user.id).update(
+                    email=new_email, email_folded=fold_email(new_email),
+                    email_verified_at=None, updated_at=now,
+                )
+            except (IntegrityError, RuntimeError) as error:  # QuerySet.update raises the latter
+                # Another account took the address since the check above.
+                if not _is_address_collision(error):
+                    raise
+                raise _email_change_refused() from error
+            changed = True
+        finally:
+            if not changed:
+                email_changes.give_back(user.id)
         # Mailed codes are bound to the old address's hash and stop
         # matching on their own; expire every live one (an admin-issued
         # invitation code included) so none outlives the change.
