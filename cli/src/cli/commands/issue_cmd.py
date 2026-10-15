@@ -319,7 +319,8 @@ def register(cli):
         title text. People: me, a name, an email or an id. Sprints: a
         name, an id or current. Dates: YYYY-MM-DD, today, yesterday,
         -7d, -2w, -12h (UTC). label=a,b has either; label=a label=b
-        has both.
+        has both. A name that matches nothing (a label, person or
+        sprint) is an error here, where --label alone lists nothing.
         \b
         Examples:
           chaotic issue list -w 'status!=done,canceled assignee=me or assignee='

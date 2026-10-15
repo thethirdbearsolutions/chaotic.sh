@@ -164,11 +164,25 @@ assert set(OP_ARITY) == {o.value for o in QueryOp}
 # A date value: an ISO date or datetime, `today`, `yesterday`, or a
 # relative offset back from now such as -7d, -2w, -12h.
 _RELATIVE = re.compile(r"^-(\d{1,4})([hdw])$")
+# The ISO forms the docs promise, and only those: `datetime.fromisoformat`
+# alone also takes 20261001, 2026-W40-1 and other forms nobody types on
+# purpose. [0-9], not \d, which matches every Unicode digit.
+_ISO_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+_ISO_DATETIME = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,6})?)?"
+    r"(Z|[+-][0-9]{2}:[0-9]{2})?$"
+)
+# Whole numbers: ASCII digits only (int() also takes 1_000 and Unicode
+# digits), within a range an estimate could mean.
+_NUMBER = re.compile(r"^[0-9]{1,7}$")
+MAX_NUMBER = 1_000_000
 
 
 def is_date_value(value: str) -> bool:
     if value in ("today", "yesterday") or _RELATIVE.match(value):
         return True
+    if not (_ISO_DATE.match(value) or _ISO_DATETIME.match(value)):
+        return False
     try:
         datetime.fromisoformat(value)
     except ValueError:
@@ -184,14 +198,12 @@ def _check_value(field: str, spec: FieldSpec, value: str) -> None:
                 f"'{value}' is not a valid {field}. Valid values: {', '.join(allowed)}"
             )
     elif spec.kind == "number":
-        try:
-            int(value)
-        except ValueError:
-            raise ValueError(f"{field} takes whole numbers, not '{value}'") from None
+        if not _NUMBER.match(value) or int(value) > MAX_NUMBER:
+            raise ValueError(f"{field} takes whole numbers from 0 to {MAX_NUMBER}, not '{value}'")
     elif spec.kind == "date":
         if not is_date_value(value):
             raise ValueError(
-                f"'{value}' is not a date. Use YYYY-MM-DD, an ISO datetime, "
+                f"'{value}' is not a date. Use YYYY-MM-DD, YYYY-MM-DDTHH:MM[:SS][Z|+HH:MM], "
                 "today, yesterday, or an offset like -7d, -2w, -12h"
             )
 
@@ -315,9 +327,11 @@ class IssueQueryResponse(BaseModel):
 
     ``query`` is the normalized structure that ran (the ``where`` text and
     the ``filter`` JSON combined), and ``where``/``order`` are its
-    canonical text forms: parse them again and you get the same
-    ``query``. A web page can keep ``where``/``order`` in its URL and a
-    saved view can store ``query``. ``total`` counts every match, so
+    canonical text forms. Parsed again they select the same issues in
+    the same order, though not always the identical structure (nested
+    same-kind groups flatten, one-row groups and one-value ``label all``
+    simplify). A web page can keep ``where``/``order`` in its URL; a
+    saved view should store ``query``. ``total`` counts every match, so
     ``total > skip + len(issues)`` means there is another page.
     """
 

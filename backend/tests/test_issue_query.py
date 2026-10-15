@@ -121,7 +121,7 @@ class TestParseWhere:
         ("estimate=..", "needs a bound"),
         ("=todo", "expected a field name"),
         ("status=todo\"x\"", "unexpected '\"' after a value"),
-        ("((((((status=todo))))))", "nests deeper"),
+        ("(" * 33 + "status=todo" + ")" * 33, "more than 32 parentheses"),
     ])
     def test_errors_say_what_is_wrong(self, text, message):
         with pytest.raises(QueryError, match=None) as err:
@@ -652,3 +652,194 @@ async def test_an_ambiguous_name_is_400(client, auth_headers, test_project, test
     r = await _query(client, auth_headers, f"projects/{test_project.id}", where='assignee="test user"')
     assert r.status_code == 400
     assert "more than one person" in r.json()["detail"]
+
+
+# ============================================================================
+# Regressions from the review of PR #418
+# ============================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", [
+    "due=..9999-12-31",
+    "created=..9999-12-31",
+    "due=2026-01-01..9999-12-31",
+    "due=9999-12-31",
+])
+async def test_the_last_day_is_an_open_upper_end(client, auth_headers, test_project, test_user, where):
+    """Finding 1: 9999-12-31 + 1 day overflowed into a 500."""
+    await _issue(test_project, test_user, title="due", due_date=datetime(2026, 11, 1, tzinfo=timezone.utc))
+    r = await _query(client, auth_headers, f"projects/{test_project.id}", where=where)
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", [
+    "created=..9999-12-31T23:59:59-05:00",
+    "created=0001-01-01T00:00:00+05:00..",
+])
+async def test_a_datetime_out_of_range_in_utc_is_400(client, auth_headers, test_project, where):
+    """Finding 1: an offset that carries a datetime past year 1 or 9999."""
+    r = await _query(client, auth_headers, f"projects/{test_project.id}", where=where)
+    assert r.status_code == 400, r.text
+    assert "outside the range" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("value", [
+    "99999999999999999999", "1_000", "\u0661\u0662", "\uff13", "1000001", "-1", "+3",
+])
+def test_estimate_takes_bounded_ascii_whole_numbers(value):
+    """Finding 2: int() took 1_000, Unicode digits and any size."""
+    with pytest.raises(QueryError, match="whole numbers from 0 to"):
+        parse_where(f'estimate="{value}"')
+
+
+def test_estimate_bounds_are_inclusive():
+    assert parse_where("estimate=0..1000000") is not None
+
+
+@pytest.mark.asyncio
+async def test_a_huge_estimate_is_400_not_500(client, auth_headers, test_project):
+    r = await _query(client, auth_headers, f"projects/{test_project.id}", where="estimate=99999999999999999999")
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_many_label_rows_over_many_labelled_issues(
+    client, auth_headers, test_team, test_project, test_user, monkeypatch,
+):
+    """Finding 3: label rows were inlined as IN lists of every labelled
+    issue id, one bound parameter each, per row: 50 rows over a big team
+    passes SQLite's variable limit. Matched as id sets, no IN list is
+    longer than the label ids a row names."""
+    from oxyde import execute_raw
+
+    from app.oxyde_models.issue import OxydeIssueLabel
+    from app.services import issue_query
+
+    longest = []
+    real_in = issue_query._in
+
+    def spy(column, values):
+        longest.append(len(list(values)))
+        return real_in(column, values)
+
+    monkeypatch.setattr(issue_query, "_in", spy)
+
+    names = [f"l{n}" for n in range(MAX_ROWS)]
+    labels = [await _label(test_team, name) for name in names]
+    await execute_raw("UPDATE projects SET issue_count = 0 WHERE id = ?", [test_project.id])
+    values = ", ".join(
+        f"('i{n}', '{test_project.id}', 'K-{n}', {n}, 't{n}', 'BACKLOG', 'NO_PRIORITY', 'TASK', "
+        f"'{test_user.id}', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"
+        for n in range(700)
+    )
+    await execute_raw(
+        "INSERT INTO issues (id, project_id, identifier, number, title, status, priority, issue_type, "
+        f"creator_id, created_at, updated_at) VALUES {values}", [],
+    )
+    for n in range(700):
+        await OxydeIssueLabel.objects.create(issue_id=f"i{n}", label_id=labels[n % 7].id)
+    where = " ".join(f"label!={name}" for name in names)
+    r = await _query(client, auth_headers, f"projects/{test_project.id}", where=where, limit=1)
+    assert r.status_code == 200, r.text
+    assert r.json()["total"] == 0  # every issue carries one of l0..l6
+    assert max(longest) <= MAX_ROWS
+    r = await _query(client, auth_headers, f"projects/{test_project.id}",
+                     where="label=l0 or (label!=l1 status=backlog label!=l0)", limit=1)
+    assert r.json()["total"] == 700 - 100
+
+
+@pytest.mark.asyncio
+async def test_labels_differing_only_in_case(client, auth_headers, test_team, test_project, test_user):
+    """Finding 4: a name -> id dict kept one of `Bug` and `bug`, so
+    label=bug missed half, and label= counted the other half unlabelled."""
+    upper = await _issue(test_project, test_user, title="upper")
+    lower = await _issue(test_project, test_user, title="lower")
+    await _issue(test_project, test_user, title="bare")
+    await _label(test_team, "Bug", upper)
+    await _label(test_team, "bug", lower)
+    t = lambda w: _titles(client, auth_headers, test_project, w)  # noqa: E731
+    assert await t("label=bug") == {"upper", "lower"}
+    assert await t("label=BUG") == {"upper", "lower"}
+    assert await t("label!=bug") == {"bare"}
+    assert await t("label=") == {"bare"}
+    assert await t("label!=") == {"upper", "lower"}
+    assert await t("label=bug label=Bug") == {"upper", "lower"}
+
+
+@pytest.mark.parametrize("structure, text, simplified", [
+    # label all with one value is plain is
+    ({"match": "all", "rows": [{"field": "label", "op": "all", "values": ["a"]}]},
+     "label=a", None),
+    # a nested all group flattens into its parent
+    ({"match": "all", "rows": [
+        {"field": "type", "op": "is", "values": ["bug"]},
+        {"match": "all", "rows": [{"field": "status", "op": "is", "values": ["todo"]},
+                                  {"field": "priority", "op": "is", "values": ["high"]}]},
+    ]}, "type=bug (status=todo priority=high)", "type=bug status=todo priority=high"),
+    # so does a nested any group in an any group
+    ({"match": "any", "rows": [
+        {"field": "type", "op": "is", "values": ["bug"]},
+        {"match": "any", "rows": [{"field": "status", "op": "is", "values": ["todo"]},
+                                  {"field": "priority", "op": "is", "values": ["high"]}]},
+    ]}, "type=bug or (status=todo or priority=high)", "type=bug or status=todo or priority=high"),
+    # a one-row any group is just that row
+    ({"match": "any", "rows": [{"field": "type", "op": "is", "values": ["bug"]}]},
+     "type=bug", None),
+])
+def test_canonical_forms_that_do_not_round_trip_to_the_same_structure(structure, text, simplified):
+    """Finding 5: the text cannot spell every structure. These are the
+    shapes it simplifies; the simplified structure selects the same issues
+    and round-trips exactly from then on."""
+    group = IssueQuery.model_validate({"filter": structure}).filter
+    assert render_where(group) == text
+    again = parse_where(text)
+    assert again != group
+    assert render_where(again) == (simplified or text)
+    assert parse_where(render_where(again)) == again
+
+
+@pytest.mark.parametrize("value", [
+    "20261001", "2026-W40-1", "2026-274", "2026-10-01T0900", "20261001T09:00", "2026-10-1",
+])
+def test_dates_take_only_the_documented_iso_forms(value):
+    """Finding 6: fromisoformat alone took basic and week forms too."""
+    with pytest.raises(QueryError, match="is not a date"):
+        parse_where(f"created={value}..")
+
+
+@pytest.mark.parametrize("value", [
+    "2026-10-01", "2026-10-01T09:00", "2026-10-01T09:00:30", "2026-10-01T09:00:30.5",
+    "2026-10-01T09:00Z", "2026-10-01T09:00+02:00", "2026-10-01 09:00",
+])
+def test_documented_date_forms_parse(value):
+    assert parse_where(f'created="{value}"') is not None
+
+
+@pytest.mark.asyncio
+async def test_redundant_parentheses_do_not_count_toward_depth(client, auth_headers, test_project, test_user):
+    """Finding 7: every parenthesis counted as a level, so
+    ((((status=todo)))) hit the depth cap while building one row."""
+    await _issue(test_project, test_user, title="t", status=IssueStatus.TODO)
+    for where in ("((((status=todo))))", "(((((((((status=todo)))))))))",
+                  "type=task or (status=todo or (priority=high or (estimate=1 or (label=))))"):
+        r = await _query(client, auth_headers, f"projects/{test_project.id}", where=where)
+        assert r.status_code == 200, (where, r.text)
+    # real nesting still counts: any > all > any > all > any is depth 5
+    deep = "type=bug or (type=task (status=todo or (priority=high (estimate=1 or estimate=2))))"
+    with pytest.raises(QueryError, match="limit is 4"):
+        parse_where(deep)
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_label_is_400_here_but_empty_in_the_plain_list(
+    client, auth_headers, test_project, test_user,
+):
+    """Finding 9: documented in docs/issue-query.md and --help."""
+    await _issue(test_project, test_user, title="t")
+    r = await _query(client, auth_headers, f"projects/{test_project.id}", where="label=nosuch")
+    assert r.status_code == 400
+    assert "no label 'nosuch'" in r.json()["detail"]
+    plain = await client.get(f"/api/issues?project_id={test_project.id}&label=nosuch", headers=auth_headers)
+    assert plain.status_code == 200 and plain.json() == []

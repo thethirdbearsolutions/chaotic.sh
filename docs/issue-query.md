@@ -62,7 +62,7 @@ created=-7d..   due=..2026-11-01               date ranges
 | `project` | `=` `!=` | a project key, name or id in the team |
 | `sprint` | `=` `!=` empty | a sprint name, an id, or `current` (each project's active sprint) |
 | `label` | `=` (any) `!=` (none) all, empty | label names, case-insensitive |
-| `estimate` | `=` `!=` ranges, empty | whole numbers |
+| `estimate` | `=` `!=` ranges, empty | whole numbers, 0 to 1000000 |
 | `parent` | `=` `!=` empty | an identifier (CHT-12) or id |
 | `identifier` | `=` `!=` | identifiers |
 | `created`, `updated` | ranges | dates |
@@ -76,11 +76,19 @@ Aliases: `labels`, `issue_type`, `epic` (parent), `search` (text), `id`
 **Dates** are in UTC. A day (`2026-10-01`, `today`, `yesterday`) covers the
 whole day, so `due=2026-11-01` matches anything due that day and
 `due=..2026-11-01` includes it. A datetime (`2026-10-01T09:00`) or an
-offset back from now (`-12h`, `-7d`, `-2w`) is an instant.
+offset back from now (`-12h`, `-7d`, `-2w`) is an instant. A day is
+written `YYYY-MM-DD` and nothing else (not `20261001`, not `2026-W40-1`);
+a datetime is `YYYY-MM-DDTHH:MM`, with optional `:SS`, fraction, and `Z`
+or `+HH:MM`. `..9999-12-31` means "with no upper end"; a datetime whose
+offset puts it outside the years 1 to 9999 in UTC is a 400.
 
 A name that matches nothing is an error, not an empty result. This
 applies to a person, label, sprint, project or parent, and the message
-names it. Names resolve only within the team being queried.
+names it. Names resolve only within the team being queried. Note the
+difference from the plain filters: `chaotic issue list --label nosuch`
+(no `--where`) lists nothing, while `--where label=nosuch` is a 400
+saying there is no label `nosuch`. Two labels whose names differ only in
+case (`Bug` and `bug`) are both matched by either name.
 
 ## The structure
 
@@ -99,7 +107,9 @@ the `filter` parameter:
 
 A row has `field`, `op` and `values`; a group has `match` (`all` or
 `any`) and `rows`. Every field and operator is checked against an
-allow-list. Limits: groups nest at most 4 deep, a query has at most 50
+allow-list. Limits: groups nest at most 4 deep (counted on the
+structure, so redundant parentheses in the text cost nothing; the text
+may nest at most 32 parentheses), a query has at most 50
 rows, a row at most 100 values, a value at most 200 characters, the text
 form at most 4000 characters, and `filter` at most 16000.
 
@@ -135,9 +145,13 @@ The response:
 ```
 
 `query` is the normalized structure that ran, and `where`/`order` are its
-canonical text. Parse them again and you get the same `query`. A web page
-can therefore keep `where` and `order` in its own URL, short and
-editable by hand, and a saved view can store `query`. `total` counts
+canonical text. Parsing that text again selects the same issues in the
+same order, but need not give back the identical structure: the text
+form has no way to write some shapes, so it flattens a group nested in a
+group of the same kind, drops a group of one row into its parent, and
+writes `label` `all` with one value as `label=a`. A web page can
+therefore keep `where` and `order` in its own URL, short and editable by
+hand. A saved view should store `query`, which is exact. `total` counts
 every match, so `total > skip + len(issues)` means there is another page.
 
 A query that does not parse, fails validation, or names something that

@@ -11665,7 +11665,7 @@
           "issues"
         ],
         "title": "IssueQueryResponse",
-        "description": "What the query endpoint returns.\n\n``query`` is the normalized structure that ran (the ``where`` text and\nthe ``filter`` JSON combined), and ``where``/``order`` are its\ncanonical text forms: parse them again and you get the same\n``query``. A web page can keep ``where``/``order`` in its URL and a\nsaved view can store ``query``. ``total`` counts every match, so\n``total > skip + len(issues)`` means there is another page."
+        "description": "What the query endpoint returns.\n\n``query`` is the normalized structure that ran (the ``where`` text and\nthe ``filter`` JSON combined), and ``where``/``order`` are its\ncanonical text forms. Parsed again they select the same issues in\nthe same order, though not always the identical structure (nested\nsame-kind groups flatten, one-row groups and one-value ``label all``\nsimplify). A web page can keep ``where``/``order`` in its URL; a\nsaved view should store ``query``. ``total`` counts every match, so\n``total > skip + len(issues)`` means there is another page."
       },
       "IssueRelationCreate": {
         "properties": {

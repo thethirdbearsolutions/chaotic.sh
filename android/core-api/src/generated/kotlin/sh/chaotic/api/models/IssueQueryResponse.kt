@@ -36,7 +36,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * What the query endpoint returns.  ``query`` is the normalized structure that ran (the ``where`` text and the ``filter`` JSON combined), and ``where``/``order`` are its canonical text forms: parse them again and you get the same ``query``. A web page can keep ``where``/``order`` in its URL and a saved view can store ``query``. ``total`` counts every match, so ``total > skip + len(issues)`` means there is another page.
+ * What the query endpoint returns.  ``query`` is the normalized structure that ran (the ``where`` text and the ``filter`` JSON combined), and ``where``/``order`` are its canonical text forms. Parsed again they select the same issues in the same order, though not always the identical structure (nested same-kind groups flatten, one-row groups and one-value ``label all`` simplify). A web page can keep ``where``/``order`` in its URL; a saved view should store ``query``. ``total`` counts every match, so ``total > skip + len(issues)`` means there is another page.
  *
  * @param query 
  * @param `where` 

@@ -8,7 +8,8 @@ Two halves:
   the ordering. The server owns the only parser, so the CLI, MCP and a
   web URL all mean the same thing by the same text.
 * **Running.** ``run_query`` compiles a validated structure into Oxyde
-  ``Q`` expressions and runs it inside a scope (one project, or every
+  ``Q`` expressions (a tree with a label row is matched as id sets, see
+  ``_Compiler.match_ids``) and runs it inside a scope (one project, or every
   project of a team) that the API layer has already access-checked.
   Every value reaches the database as a bound parameter through the ORM;
   no SQL text is built here.
@@ -54,6 +55,10 @@ from app.schemas.issue_query import (
 from app.services.issue_service import _PRIORITY_ORDER, _STATUS_ORDER, _get_order
 
 MAX_WHERE_LENGTH = 4000
+# Parentheses the parser follows before giving up. Only a guard on its
+# recursion: redundant parentheses build no group, so the depth cap
+# (MAX_DEPTH) is checked on the tree they produce, not here.
+MAX_PARENS = 32
 
 
 class QueryError(ValueError):
@@ -194,15 +199,21 @@ class _Parser:
         return node if "rows" in node else {"match": "all", "rows": [node]}
 
     def expr(self, depth: int) -> dict:
-        if depth > MAX_DEPTH:
-            raise QueryError(f"the where text nests deeper than {MAX_DEPTH} groups")
+        if depth > MAX_PARENS:
+            raise QueryError(f"the where text nests more than {MAX_PARENS} parentheses deep")
         alts = [self.conj(depth)]
         while (tok := self.peek()) is not None and tok[0] == "or":
             self.i += 1
             alts.append(self.conj(depth))
         if len(alts) == 1:
             return alts[0]
-        return {"match": "any", "rows": alts}
+        rows = []
+        for a in alts:  # flatten nested ORs: a or (b or c) is one group
+            if a.get("match") == "any":
+                rows.extend(a["rows"])
+            else:
+                rows.append(a)
+        return {"match": "any", "rows": rows}
 
     def conj(self, depth: int) -> dict:
         terms = [self.term(depth)]
@@ -380,7 +391,8 @@ def _render_node(node, parent: str | None) -> str:
 
 def render_where(group: QueryGroup | None) -> str:
     """Canonical text for a group. ``parse_where(render_where(g))``
-    selects the same issues as ``g``."""
+    selects the same issues as ``g``; it is not always ``g`` itself
+    (see ``IssueQueryResponse``), and tests pin the forms that differ."""
     if group is None:
         return ""
     return _render_node(group, None)
@@ -534,25 +546,35 @@ def _null(column: str, is_null: bool) -> Q:
 def _date_bound(value: str, now: datetime, upper: bool) -> tuple[datetime, bool]:
     """``(instant, inclusive)``. A day (``2026-10-01``, ``today``) covers
     the whole UTC day, so as an upper bound it means "before the next
-    day". A datetime or an offset (``-7d``) is an instant."""
-    m = re.match(r"^-(\d{1,4})([hdw])$", value)
-    if m:
-        n, unit = int(m.group(1)), m.group(2)
-        delta = {"h": timedelta(hours=n), "d": timedelta(days=n), "w": timedelta(weeks=n)}[unit]
-        return now - delta, True
-    if value in ("today", "yesterday"):
-        day = now.date() - timedelta(days=0 if value == "today" else 1)
-    elif re.match(r"^\d{4}-\d{2}-\d{2}$", value):
-        day = date.fromisoformat(value)
-    else:
-        dt = datetime.fromisoformat(value)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc), True
-    start = datetime.combine(day, time.min, tzinfo=timezone.utc)
-    if upper:
-        return start + timedelta(days=1), False
-    return start, True
+    day". A datetime or an offset (``-7d``) is an instant.
+
+    The last day there is, 9999-12-31, has no next day: as an upper bound
+    it means "up to the end of time", inclusive. A datetime whose offset
+    carries it past the representable range in UTC is a QueryError (a
+    400), never an OverflowError (a 500)."""
+    m = re.match(r"^-([0-9]{1,4})([hdw])$", value)
+    try:
+        if m:
+            n, unit = int(m.group(1)), m.group(2)
+            delta = {"h": timedelta(hours=n), "d": timedelta(days=n), "w": timedelta(weeks=n)}[unit]
+            return now - delta, True
+        if value in ("today", "yesterday"):
+            day = now.date() - timedelta(days=0 if value == "today" else 1)
+        elif re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", value):
+            day = date.fromisoformat(value)
+        else:
+            dt = datetime.fromisoformat(value)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc), True
+        start = datetime.combine(day, time.min, tzinfo=timezone.utc)
+        if upper:
+            if day == date.max:
+                return datetime.max.replace(tzinfo=timezone.utc), True
+            return start + timedelta(days=1), False
+        return start, True
+    except OverflowError:
+        raise QueryError(f"'{value}' is outside the range of dates a query can use") from None
 
 
 @dataclass
@@ -572,6 +594,7 @@ class _Compiler:
         self._projects = None
         self._sprints = None
         self._labels = None
+        self._universe_ids = None
 
     async def group(self, group: QueryGroup) -> Q:
         parts = [await self.node(child) for child in group.rows]
@@ -594,8 +617,8 @@ class _Compiler:
 
         if kind == "text":
             return self._text(row.field, op, vals)
-        if kind == "label":
-            return await self._label(op, vals)
+        if kind == "label":  # pragma: no cover - match_ids takes label rows
+            raise AssertionError("label rows are matched by match_ids, not in SQL")
         if kind == "date":
             return self._date(column, op, vals)
         if kind == "number":
@@ -722,29 +745,92 @@ class _Compiler:
             raise QueryError(f"no issue {', '.join(missing)} in this team")
         return [r["id"] for r in found]
 
-    async def _label(self, op: str, vals: list[str]) -> Q:
+    # -- labels -------------------------------------------------------------
+    #
+    # Oxyde has no subquery or EXISTS in a filter, and cannot follow the
+    # issue->labels many-to-many, so a label row cannot be one SQL
+    # condition. Rather than inline the labelled ids as an IN list (one
+    # bound parameter per issue, per row: enough label rows on a big team
+    # pass SQLite's variable limit), a tree with a label row is matched
+    # as id sets: each label-free part of a group is one scoped query,
+    # each label row one junction query, combined here. No query binds
+    # more than the scope's project ids, a row's values and label ids.
+
+    async def _universe(self) -> set[str]:
+        if self._universe_ids is None:
+            rows = await OxydeIssue.objects.filter(
+                project_id__in=self.scope.project_ids
+            ).values("id").all()
+            self._universe_ids = {r["id"] for r in rows}
+        return self._universe_ids
+
+    async def _labels_by_name(self) -> dict[str, list[str]]:
+        """Lowercased name -> ids. Label names are compared without case,
+        and a team can hold `Bug` and `bug` both; a row naming either
+        means both."""
         if self._labels is None:
             self._labels = await OxydeLabel.objects.filter(team_id=self.scope.team_id).all()
-        by_name = {label.name.lower(): label.id for label in self._labels}
+        by_name: dict[str, list[str]] = {}
+        for label in self._labels:
+            by_name.setdefault(label.name.lower(), []).append(label.id)
+        return by_name
 
-        async def issue_ids(label_ids: list[str]) -> list[str]:
-            if not label_ids:
-                return []
-            rows = await OxydeIssueLabel.objects.filter(label_id__in=label_ids).values("issue_id").all()
-            return list({r["issue_id"] for r in rows})
+    async def _labelled(self, label_ids: list[str]) -> dict[str, set[str]]:
+        """label id -> ids of the in-scope issues carrying it."""
+        if not label_ids:
+            return {}
+        rows = await OxydeIssueLabel.objects.filter(label_id__in=label_ids).values(
+            "issue_id", "label_id"
+        ).all()
+        universe = await self._universe()
+        out: dict[str, set[str]] = {}
+        for r in rows:
+            if r["issue_id"] in universe:
+                out.setdefault(r["label_id"], set()).add(r["issue_id"])
+        return out
 
+    async def _label_ids(self, op: str, vals: list[str]) -> set[str]:
+        by_name = await self._labels_by_name()
         if op in ("empty", "not_empty"):
-            labelled = await issue_ids(list(by_name.values()))
-            return ~_in("id", labelled) if op == "empty" else _in("id", labelled)
+            every = [i for ids in by_name.values() for i in ids]
+            labelled = set().union(*(await self._labelled(every)).values())
+            return (await self._universe()) - labelled if op == "empty" else labelled
         missing = [v for v in vals if v.lower() not in by_name]
         if missing:
             raise QueryError(f"no label {', '.join(repr(m) for m in missing)} in this team")
-        ids = [by_name[v.lower()] for v in vals]
+        per_label = await self._labelled([i for v in vals for i in by_name[v.lower()]])
+
+        def carrying(name: str) -> set[str]:
+            return set().union(*(per_label.get(i, set()) for i in by_name[name.lower()]))
+
         if op == "all":
-            sets = [set(await issue_ids([i])) for i in ids]
-            return _in("id", set.intersection(*sets))
-        hits = await issue_ids(ids)
-        return _in("id", hits) if op == "is" else ~_in("id", hits)
+            return set.intersection(*(carrying(v) for v in vals))
+        hits = set().union(*(carrying(v) for v in vals))
+        return hits if op == "is" else (await self._universe()) - hits
+
+    async def match_ids(self, node) -> set[str]:
+        """The in-scope ids matching ``node``, for a tree with a label row."""
+        if isinstance(node, QueryRow):
+            return await self._label_ids(node.op, node.values)
+        plain = [await self.node(c) for c in node.rows if not has_label(c)]
+        sets = []
+        if plain:
+            q = _all(plain) if node.match == "all" else _any(plain)
+            rows = await OxydeIssue.objects.filter(
+                _in("project_id", self.scope.project_ids) & q
+            ).values("id").all()
+            sets.append({r["id"] for r in rows})
+        for c in node.rows:
+            if has_label(c):
+                sets.append(await self.match_ids(c))
+        return set.intersection(*sets) if node.match == "all" else set().union(*sets)
+
+
+def has_label(node) -> bool:
+    """Whether ``node`` holds a label row anywhere."""
+    if isinstance(node, QueryRow):
+        return FIELDS[node.field].kind == "label"
+    return any(has_label(c) for c in node.rows)
 
 
 def _sort_value(field_name: str, row: dict):
@@ -779,12 +865,19 @@ async def run_query(
     if not scope.project_ids:
         return [], 0
     where = _in("project_id", scope.project_ids)
+    matched = None
     if query.filter is not None:
-        where = where & await _Compiler(scope, now).group(query.filter)
+        compiler = _Compiler(scope, now)
+        if has_label(query.filter):
+            matched = await compiler.match_ids(query.filter)
+        else:
+            where = where & await compiler.group(query.filter)
 
     order_by = query.order_by or DEFAULT_ORDER
     columns = {"id", "created_at", "identifier"} | {_ORDER_COLUMN[t.field] for t in order_by}
     rows = await OxydeIssue.objects.filter(where).values(*sorted(columns)).all()
+    if matched is not None:
+        rows = [r for r in rows if r["id"] in matched]
 
     rows.sort(key=lambda r: r["id"])
     rows.sort(key=lambda r: r["created_at"], reverse=True)
