@@ -374,7 +374,7 @@ jobs:
       - name: Launch each release APK on an emulator
         id: smoke
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 1
         env:
           SMOKE_NO_RETRY_MARKER: ${{ github.workspace }}/smoke-no-retry
           SMOKE_STUCK_LOG: ${{ github.workspace }}/smoke-stuck.log
