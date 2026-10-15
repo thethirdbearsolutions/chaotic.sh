@@ -25,6 +25,8 @@ from app.services.oauth_consent_service import with_query
 from app.oauth import ratelimit
 from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
 
+from .oauth_tokens import NEAR_MISS_RESOURCES
+
 BASE = "https://tracker.example.com"
 REDIRECT = "https://app.example/cb"
 LOOPBACK = "http://localhost/callback"
@@ -214,6 +216,15 @@ class TestAuthorizeValidation:
         trailing slash; the connection is for /mcp either way."""
         request_id = await _request_id(client, oauth_client, resource=resource)
         assert (await OxydeOAuthAuthorizationRequest.objects.get(id=request_id)).resource == BASE + "/mcp"
+
+    @pytest.mark.parametrize("resource", NEAR_MISS_RESOURCES)
+    async def test_near_miss_resource_values_are_refused(self, client, oauth_client, resource):
+        """CHT-1564 / PR #402 review L1, L2: one trailing slash is
+        tolerated and nothing else is normalised."""
+        response = await _authorize(client, oauth_client, resource=resource)
+        assert response.status_code == 302
+        assert _query(response.headers["location"])["error"] == "invalid_target"
+        assert await OxydeOAuthAuthorizationRequest.objects.count() == 0
 
     @pytest.mark.parametrize("scope,stored", [
         (None, "chaotic:write"),
