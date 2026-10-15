@@ -211,9 +211,6 @@ USER_FKS_ALLOWED_TO_CASCADE = {
     # Stored answers to a user's own keyed writes, for their replay: a
     # cache, not a record of who did what (CHT-1621, 0029).
     ("idempotency_records", "user_id"),
-    # A person's pending email-verification codes: credentials-in-flight
-    # for their own address, owned by nothing else (CHT-1790, 0032).
-    ("email_verification_codes", "user_id"),
 }
 
 

@@ -3,9 +3,13 @@
 No real email is sent: EmailService.send is replaced by a recorder.
 SMTP is "configured" by setting SMTP_HOST and clearing the settings cache.
 """
+import asyncio
+import logging
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
+
+from unittest.mock import patch
 
 import pytest
 
@@ -18,7 +22,6 @@ from app.services import email_verification_service as evs
 from app.services.email_service import EmailService
 from app.utils.security import create_access_token
 
-pytestmark = pytest.mark.asyncio
 
 REQUEST = "/api/auth/email-verification"
 CONFIRM = "/api/auth/email-verification/confirm"
@@ -101,6 +104,15 @@ class TestRequest:
         assert code not in row.code_hash
         assert row.code_hash == evs.hash_code(test_user.id, code)
         assert len(row.code_hash) == 64
+        assert row.armed is True
+        # The address is stored only as an HMAC of its normalised form.
+        assert "test@example.com" not in row.email_hash
+        assert row.email_hash == evs.hash_email(" Test@Example.COM ")
+        # A key derived for this purpose, not SECRET_KEY itself.
+        import hashlib
+        import hmac
+        raw = hmac.new(get_settings().secret_key.encode(), f"code:{test_user.id}:{code}".encode(), hashlib.sha256)
+        assert row.code_hash != raw.hexdigest()
         # Keyed: a different server key gives a different hash.
         get_settings().secret_key = "another-key-entirely-another-key"
         assert evs.hash_code(test_user.id, code) != row.code_hash
@@ -127,7 +139,7 @@ class TestRequest:
         assert response.status_code == 502
         assert response.json()["detail"]["error_code"] == "email_send_failed"
         [row] = await _codes(test_user.id)
-        assert row.attempts == evs.MAX_ATTEMPTS
+        assert row.armed is False
         # It still counts for the resend interval.
         outbox.fail = False
         assert (await client.post(REQUEST, headers=auth_headers)).status_code == 429
@@ -173,13 +185,14 @@ class TestRateLimits:
         assert 49 * 60 <= retry <= 50 * 60
         assert len(outbox.sent) == evs.HOURLY_LIMIT
 
-    async def test_codes_older_than_an_hour_are_pruned_and_stop_counting(self, client, auth_headers, test_user, outbox):
+    async def test_codes_older_than_an_hour_stop_counting(self, client, auth_headers, test_user, outbox):
         for _ in range(evs.HOURLY_LIMIT):
             await client.post(REQUEST, headers=auth_headers)
             await _age_codes(test_user.id, timedelta(minutes=2))
         await _age_codes(test_user.id, timedelta(hours=1))
         assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
-        assert len(await _codes(test_user.id)) == 1
+        # Kept, as the day's failure history, until a day old.
+        assert len(await _codes(test_user.id)) == evs.HOURLY_LIMIT + 1
 
     async def test_limits_are_per_user(self, client, auth_headers, auth_headers2, test_user, test_user2, outbox):
         assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
@@ -200,7 +213,8 @@ class TestConfirm:
         assert body["id"] == test_user.id
         assert body["email_verified_at"] is not None
         assert "hashed_password" not in body
-        assert await _codes(test_user.id) == []
+        [row] = await _codes(test_user.id)
+        assert row.used_at is not None
         await test_user.refresh()
         assert test_user.email_verified_at is not None
         me = (await client.get("/api/auth/me", headers=auth_headers)).json()
@@ -292,10 +306,11 @@ class TestConfirm:
     async def test_an_empty_code_is_a_validation_error(self, client, auth_headers, outbox):
         assert (await client.post(CONFIRM, headers=auth_headers, json={"code": ""})).status_code == 422
 
-    async def test_deleting_the_user_deletes_their_codes(self, client, auth_headers, test_user, outbox):
+    async def test_verifying_bumps_updated_at(self, client, auth_headers, test_user, outbox):
+        before = test_user.updated_at
         await client.post(REQUEST, headers=auth_headers)
-        assert (await client.delete("/api/users/me", headers=auth_headers)).status_code == 204
-        assert await OxydeEmailVerificationCode.objects.filter(user_id=test_user.id).count() == 0
+        body = (await client.post(CONFIRM, headers=auth_headers, json={"code": outbox.last_code()})).json()
+        assert datetime.fromisoformat(body["updated_at"]) > before
 
     async def test_the_user_update_schema_cannot_change_the_address(self, client, auth_headers, test_user):
         response = await client.patch("/api/users/me", headers=auth_headers, json={"email": "evil@example.com"})
@@ -393,3 +408,182 @@ class TestUserResponse:
         await OxydeUser.objects.filter(id=test_user.id).update(email_verified_at=now)
         body = (await client.get(f"/api/users/{test_user.id}", headers=auth_headers)).json()
         assert datetime.fromisoformat(body["email_verified_at"]) == now
+
+
+# ---------------------------------------------------------------------------
+# Limits are per address and survive the account (PR #423 review B1)
+# ---------------------------------------------------------------------------
+
+
+async def _signup(client, email="test@example.com") -> dict:
+    response = await client.post("/api/auth/signup", json={
+        "email": email, "password": "password123", "name": "Again",
+    })
+    assert response.status_code == 201, response.text
+    user_id = response.json()["id"]
+    return {"Authorization": f"Bearer {create_access_token(data={'sub': user_id})}"}
+
+
+async def _age_address(email: str, by: timedelta) -> None:
+    for row in await OxydeEmailVerificationCode.objects.filter(email_hash=evs.hash_email(email)).all():
+        await OxydeEmailVerificationCode.objects.filter(id=row.id).update(
+            created_at=row.created_at - by, expires_at=row.expires_at - by,
+        )
+
+
+class TestPerAddressLimits:
+    async def test_delete_and_sign_up_again_does_not_reset_the_resend_limit(self, client, auth_headers, outbox):
+        assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
+        assert (await client.post(CONFIRM, headers=auth_headers, json={"code": "000000"})).status_code in (200, 400)
+        assert (await client.delete("/api/users/me", headers=auth_headers)).status_code == 204
+        again = await _signup(client)
+        response = await client.post(REQUEST, headers=again)
+        assert response.status_code == 429
+        assert response.json()["detail"]["error_code"] == "email_verification_rate_limited"
+        assert len(outbox.sent) == 1
+
+    async def test_the_hourly_limit_survives_re_signup(self, client, auth_headers, outbox):
+        for _ in range(evs.HOURLY_LIMIT):
+            assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
+            await _age_address("test@example.com", timedelta(minutes=2))
+        await client.delete("/api/users/me", headers=auth_headers)
+        again = await _signup(client)
+        assert (await client.post(REQUEST, headers=again)).status_code == 429
+
+    async def test_a_new_account_cannot_confirm_the_old_accounts_code(self, client, auth_headers, outbox):
+        await client.post(REQUEST, headers=auth_headers)
+        old_code = outbox.last_code()
+        await client.delete("/api/users/me", headers=auth_headers)
+        again = await _signup(client)
+        response = await client.post(CONFIRM, headers=again, json={"code": old_code})
+        assert response.status_code == 400
+
+    async def test_limits_ignore_address_case(self, client, test_user, outbox):
+        # Two rows, two spellings of one address: one history.
+        other = await _signup(client, "Other@Example.com")
+        assert (await client.post(REQUEST, headers=other)).status_code == 202
+        await client.delete("/api/users/me", headers=other)
+        again = await _signup(client, "other@example.com")
+        assert (await client.post(REQUEST, headers=again)).status_code == 429
+
+    async def _burn_a_code(self, client, headers, outbox):
+        await _age_address("test@example.com", timedelta(seconds=61))
+        assert (await client.post(REQUEST, headers=headers)).status_code == 202
+        code = outbox.last_code()
+        wrong = f"{(int(code) + 1) % 10**6:06d}"
+        for _ in range(evs.MAX_ATTEMPTS):
+            assert (await client.post(CONFIRM, headers=headers, json={"code": wrong})).status_code == 400
+
+    async def test_the_daily_failure_cap_refuses_even_the_right_code(self, client, auth_headers, test_user, outbox):
+        assert evs.DAILY_FAILURE_LIMIT % evs.MAX_ATTEMPTS == 0
+        for _ in range(evs.DAILY_FAILURE_LIMIT // evs.MAX_ATTEMPTS):
+            await self._burn_a_code(client, auth_headers, outbox)
+            await _age_address("test@example.com", timedelta(minutes=15))  # stay under the hourly limit
+        await _age_address("test@example.com", timedelta(seconds=61))
+        assert (await client.post(REQUEST, headers=auth_headers)).status_code == 202
+        response = await client.post(CONFIRM, headers=auth_headers, json={"code": outbox.last_code()})
+        assert response.status_code == 400
+        assert response.json()["detail"] == {
+            "error_code": "invalid_verification_code", "message": evs.INVALID_CODE_MESSAGE,
+        }
+        await test_user.refresh()
+        assert test_user.email_verified_at is None
+
+    async def test_the_daily_failure_cap_survives_re_signup_and_lapses_after_a_day(self, client, auth_headers, outbox):
+        for _ in range(evs.DAILY_FAILURE_LIMIT // evs.MAX_ATTEMPTS):
+            await self._burn_a_code(client, auth_headers, outbox)
+            await _age_address("test@example.com", timedelta(minutes=15))
+        await client.delete("/api/users/me", headers=auth_headers)
+        again = await _signup(client)
+        await _age_address("test@example.com", timedelta(seconds=61))
+        assert (await client.post(REQUEST, headers=again)).status_code == 202
+        assert (await client.post(CONFIRM, headers=again, json={"code": outbox.last_code()})).status_code == 400
+        # A day later the history is pruned and a code works again.
+        await _age_address("test@example.com", evs.FAILURE_WINDOW)
+        assert (await client.post(REQUEST, headers=again)).status_code == 202
+        assert await OxydeEmailVerificationCode.objects.filter(
+            email_hash=evs.hash_email("test@example.com")).count() == 1
+        assert (await client.post(CONFIRM, headers=again, json={"code": outbox.last_code()})).status_code == 200
+
+    async def test_a_success_is_not_counted_as_a_failure(self, client, auth_headers, outbox):
+        await client.post(REQUEST, headers=auth_headers)
+        await client.post(CONFIRM, headers=auth_headers, json={"code": outbox.last_code()})
+        [row] = await OxydeEmailVerificationCode.objects.filter(email_hash=evs.hash_email("test@example.com")).all()
+        assert row.attempts == 1 and row.used_at is not None
+
+
+# ---------------------------------------------------------------------------
+# Unsent codes, concurrency, logging (PR #423 review N1 and test gaps)
+# ---------------------------------------------------------------------------
+
+
+class TestUnsentAndConcurrent:
+    async def test_an_unsent_code_is_never_confirmable(self, client, auth_headers, test_user, outbox, monkeypatch):
+        monkeypatch.setattr(evs, "new_code", lambda: "111111")
+        outbox.fail = True
+        assert (await client.post(REQUEST, headers=auth_headers)).status_code == 502
+        response = await client.post(CONFIRM, headers=auth_headers, json={"code": "111111"})
+        assert response.status_code == 400
+
+    async def test_a_failed_send_leaves_the_previous_code_working(self, client, auth_headers, test_user, outbox):
+        await client.post(REQUEST, headers=auth_headers)
+        code = outbox.last_code()
+        await _age_codes(test_user.id, timedelta(seconds=61))
+        outbox.fail = True
+        assert (await client.post(REQUEST, headers=auth_headers)).status_code == 502
+        assert (await client.post(CONFIRM, headers=auth_headers, json={"code": code})).status_code == 200
+
+    async def test_concurrent_wrong_confirms_stay_within_the_attempt_cap(self, client, auth_headers, test_user, outbox):
+        await client.post(REQUEST, headers=auth_headers)
+        code = outbox.last_code()
+        wrong = f"{(int(code) + 1) % 10**6:06d}"
+        responses = await asyncio.gather(*[
+            client.post(CONFIRM, headers=auth_headers, json={"code": wrong}) for _ in range(12)
+        ])
+        assert {r.status_code for r in responses} == {400}
+        [row] = await _codes(test_user.id)
+        assert row.attempts == evs.MAX_ATTEMPTS
+        # The code is dead now: even the right one is refused.
+        assert (await client.post(CONFIRM, headers=auth_headers, json={"code": code})).status_code == 400
+
+    async def test_concurrent_requests_send_at_most_one_code(self, client, auth_headers, test_user, outbox):
+        responses = await asyncio.gather(*[client.post(REQUEST, headers=auth_headers) for _ in range(6)])
+        statuses = [r.status_code for r in responses]
+        assert statuses.count(202) <= 1
+        assert set(statuses) <= {202, 429}
+        assert len(outbox.sent) == statuses.count(202)
+        assert len(await _codes(test_user.id)) == statuses.count(202)
+
+    async def test_the_code_is_never_logged_when_the_send_fails(self, client, auth_headers, monkeypatch, caplog):
+        monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+        get_settings.cache_clear()
+        monkeypatch.setattr(evs, "new_code", lambda: "424242")
+        caplog.set_level(logging.DEBUG)
+        with patch("smtplib.SMTP", side_effect=ConnectionRefusedError("nope")):
+            response = await client.post(REQUEST, headers=auth_headers)
+        assert response.status_code == 502
+        assert "SMTP send failed" in caplog.text
+        assert "424242" not in caplog.text
+
+
+class TestEmailAndStartup:
+    def test_the_email_warns_against_sharing_the_code(self):
+        subject, body = evs.render_code_email("123456")
+        assert "123456" not in subject
+        assert "123456" in body
+        assert "Never share this code" in body
+        assert "Chaotic will never ask you for it" in body
+        assert "If this wasn't you" in body
+        assert "Chaotic account with this email address" in body
+
+    def test_startup_says_the_gate_is_active_with_smtp(self, monkeypatch, caplog):
+        monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+        get_settings.cache_clear()
+        caplog.set_level(logging.INFO, logger="app.services.email_verification_service")
+        evs.log_invitation_gate()
+        assert "gate: ACTIVE" in caplog.text
+
+    def test_startup_says_the_gate_is_inactive_without_smtp(self, no_smtp, caplog):
+        caplog.set_level(logging.INFO, logger="app.services.email_verification_service")
+        evs.log_invitation_gate()
+        assert "gate: INACTIVE" in caplog.text

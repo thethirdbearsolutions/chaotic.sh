@@ -12,7 +12,6 @@ from oxyde.queries import Query, QueryManager
 import uuid
 from datetime import datetime, timezone
 from oxyde import Field, Index, Model
-from app.oxyde_models.user import OxydeUser
 from app.utils.datetimes import DateTimeUTC
 def _now() -> datetime:
     ...
@@ -22,12 +21,14 @@ class OxydeEmailVerificationCode(Model):
         is_table: bool
         table_name: str
     id: str
-    user: OxydeUser | None
+    email_hash: str
+    user_id: str
     code_hash: str
+    armed: bool
     expires_at: datetime
     attempts: int
+    used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fddb1c2c2c0>, json_schema_input_type=PydanticUndefined)] | None
     created_at: datetime
-    user_id: str | None
     objects: ClassVar["OxydeEmailVerificationCodeManager"]
 
 
@@ -39,6 +40,9 @@ class OxydeEmailVerificationCodeQuery(Query[OxydeEmailVerificationCode]):
     def filter(
         self,
         *args: Any,
+        armed: bool | None = None,
+        armed__in: list[bool] | None = None,
+        armed__isnull: bool | None = None,
         attempts: int | None = None,
         attempts__gt: int | None = None,
         attempts__gte: int | None = None,
@@ -70,6 +74,16 @@ class OxydeEmailVerificationCodeQuery(Query[OxydeEmailVerificationCode]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
+        email_hash: str | None = None,
+        email_hash__contains: str | None = None,
+        email_hash__icontains: str | None = None,
+        email_hash__startswith: str | None = None,
+        email_hash__istartswith: str | None = None,
+        email_hash__endswith: str | None = None,
+        email_hash__iendswith: str | None = None,
+        email_hash__iexact: str | None = None,
+        email_hash__in: list[str] | None = None,
+        email_hash__isnull: bool | None = None,
         expires_at: datetime | None = None,
         expires_at__gt: datetime | None = None,
         expires_at__gte: datetime | None = None,
@@ -92,9 +106,9 @@ class OxydeEmailVerificationCodeQuery(Query[OxydeEmailVerificationCode]):
         id__iexact: str | None = None,
         id__in: list[str] | None = None,
         id__isnull: bool | None = None,
-        user: OxydeUser | None = None,
-        user__in: list[OxydeUser] | None = None,
-        user__isnull: bool | None = None,
+        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fddb1c2c2c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fddb1c2c2c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        used_at__isnull: bool | None = None,
         user_id: str | None = None,
         user_id__contains: str | None = None,
         user_id__icontains: str | None = None,
@@ -112,6 +126,9 @@ class OxydeEmailVerificationCodeQuery(Query[OxydeEmailVerificationCode]):
     def exclude(
         self,
         *args: Any,
+        armed: bool | None = None,
+        armed__in: list[bool] | None = None,
+        armed__isnull: bool | None = None,
         attempts: int | None = None,
         attempts__gt: int | None = None,
         attempts__gte: int | None = None,
@@ -143,6 +160,16 @@ class OxydeEmailVerificationCodeQuery(Query[OxydeEmailVerificationCode]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
+        email_hash: str | None = None,
+        email_hash__contains: str | None = None,
+        email_hash__icontains: str | None = None,
+        email_hash__startswith: str | None = None,
+        email_hash__istartswith: str | None = None,
+        email_hash__endswith: str | None = None,
+        email_hash__iendswith: str | None = None,
+        email_hash__iexact: str | None = None,
+        email_hash__in: list[str] | None = None,
+        email_hash__isnull: bool | None = None,
         expires_at: datetime | None = None,
         expires_at__gt: datetime | None = None,
         expires_at__gte: datetime | None = None,
@@ -165,9 +192,9 @@ class OxydeEmailVerificationCodeQuery(Query[OxydeEmailVerificationCode]):
         id__iexact: str | None = None,
         id__in: list[str] | None = None,
         id__isnull: bool | None = None,
-        user: OxydeUser | None = None,
-        user__in: list[OxydeUser] | None = None,
-        user__isnull: bool | None = None,
+        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fddb1c2c2c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fddb1c2c2c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        used_at__isnull: bool | None = None,
         user_id: str | None = None,
         user_id__contains: str | None = None,
         user_id__icontains: str | None = None,
@@ -182,7 +209,7 @@ class OxydeEmailVerificationCodeQuery(Query[OxydeEmailVerificationCode]):
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["attempts", "-attempts", "code_hash", "-code_hash", "created_at", "-created_at", "expires_at", "-expires_at", "id", "-id", "user", "-user", "user_id", "-user_id"]) -> "OxydeEmailVerificationCodeQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["armed", "-armed", "attempts", "-attempts", "code_hash", "-code_hash", "created_at", "-created_at", "email_hash", "-email_hash", "expires_at", "-expires_at", "id", "-id", "used_at", "-used_at", "user_id", "-user_id"]) -> "OxydeEmailVerificationCodeQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -198,7 +225,7 @@ class OxydeEmailVerificationCodeQuery(Query[OxydeEmailVerificationCode]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["attempts", "code_hash", "created_at", "expires_at", "id", "user", "user_id"]) -> "OxydeEmailVerificationCodeQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["armed", "attempts", "code_hash", "created_at", "email_hash", "expires_at", "id", "used_at", "user_id"]) -> "OxydeEmailVerificationCodeQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -222,7 +249,7 @@ class OxydeEmailVerificationCodeQuery(Query[OxydeEmailVerificationCode]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["attempts", "code_hash", "created_at", "expires_at", "id", "user", "user_id"]) -> "OxydeEmailVerificationCodeQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["armed", "attempts", "code_hash", "created_at", "email_hash", "expires_at", "id", "used_at", "user_id"]) -> "OxydeEmailVerificationCodeQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -230,11 +257,11 @@ class OxydeEmailVerificationCodeQuery(Query[OxydeEmailVerificationCode]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["attempts", "code_hash", "created_at", "expires_at", "id", "user", "user_id"]) -> "OxydeEmailVerificationCodeQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["armed", "attempts", "code_hash", "created_at", "email_hash", "expires_at", "id", "used_at", "user_id"]) -> "OxydeEmailVerificationCodeQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["attempts", "code_hash", "created_at", "expires_at", "id", "user", "user_id"], flat: bool = False) -> "OxydeEmailVerificationCodeQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["armed", "attempts", "code_hash", "created_at", "email_hash", "expires_at", "id", "used_at", "user_id"], flat: bool = False) -> "OxydeEmailVerificationCodeQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -358,6 +385,9 @@ class OxydeEmailVerificationCodeManager(QueryManager[OxydeEmailVerificationCode]
     def filter(
         self,
         *args: Any,
+        armed: bool | None = None,
+        armed__in: list[bool] | None = None,
+        armed__isnull: bool | None = None,
         attempts: int | None = None,
         attempts__gt: int | None = None,
         attempts__gte: int | None = None,
@@ -389,6 +419,16 @@ class OxydeEmailVerificationCodeManager(QueryManager[OxydeEmailVerificationCode]
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
+        email_hash: str | None = None,
+        email_hash__contains: str | None = None,
+        email_hash__icontains: str | None = None,
+        email_hash__startswith: str | None = None,
+        email_hash__istartswith: str | None = None,
+        email_hash__endswith: str | None = None,
+        email_hash__iendswith: str | None = None,
+        email_hash__iexact: str | None = None,
+        email_hash__in: list[str] | None = None,
+        email_hash__isnull: bool | None = None,
         expires_at: datetime | None = None,
         expires_at__gt: datetime | None = None,
         expires_at__gte: datetime | None = None,
@@ -411,9 +451,9 @@ class OxydeEmailVerificationCodeManager(QueryManager[OxydeEmailVerificationCode]
         id__iexact: str | None = None,
         id__in: list[str] | None = None,
         id__isnull: bool | None = None,
-        user: OxydeUser | None = None,
-        user__in: list[OxydeUser] | None = None,
-        user__isnull: bool | None = None,
+        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fddb1c2c2c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fddb1c2c2c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        used_at__isnull: bool | None = None,
         user_id: str | None = None,
         user_id__contains: str | None = None,
         user_id__icontains: str | None = None,
@@ -431,6 +471,9 @@ class OxydeEmailVerificationCodeManager(QueryManager[OxydeEmailVerificationCode]
     def exclude(
         self,
         *args: Any,
+        armed: bool | None = None,
+        armed__in: list[bool] | None = None,
+        armed__isnull: bool | None = None,
         attempts: int | None = None,
         attempts__gt: int | None = None,
         attempts__gte: int | None = None,
@@ -462,6 +505,16 @@ class OxydeEmailVerificationCodeManager(QueryManager[OxydeEmailVerificationCode]
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
+        email_hash: str | None = None,
+        email_hash__contains: str | None = None,
+        email_hash__icontains: str | None = None,
+        email_hash__startswith: str | None = None,
+        email_hash__istartswith: str | None = None,
+        email_hash__endswith: str | None = None,
+        email_hash__iendswith: str | None = None,
+        email_hash__iexact: str | None = None,
+        email_hash__in: list[str] | None = None,
+        email_hash__isnull: bool | None = None,
         expires_at: datetime | None = None,
         expires_at__gt: datetime | None = None,
         expires_at__gte: datetime | None = None,
@@ -484,9 +537,9 @@ class OxydeEmailVerificationCodeManager(QueryManager[OxydeEmailVerificationCode]
         id__iexact: str | None = None,
         id__in: list[str] | None = None,
         id__isnull: bool | None = None,
-        user: OxydeUser | None = None,
-        user__in: list[OxydeUser] | None = None,
-        user__isnull: bool | None = None,
+        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fddb1c2c2c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fddb1c2c2c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        used_at__isnull: bool | None = None,
         user_id: str | None = None,
         user_id__contains: str | None = None,
         user_id__icontains: str | None = None,
@@ -501,11 +554,11 @@ class OxydeEmailVerificationCodeManager(QueryManager[OxydeEmailVerificationCode]
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["attempts", "code_hash", "created_at", "expires_at", "id", "user", "user_id"]) -> OxydeEmailVerificationCodeQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["armed", "attempts", "code_hash", "created_at", "email_hash", "expires_at", "id", "used_at", "user_id"]) -> OxydeEmailVerificationCodeQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["attempts", "code_hash", "created_at", "expires_at", "id", "user", "user_id"], flat: bool = False) -> OxydeEmailVerificationCodeQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["armed", "attempts", "code_hash", "created_at", "email_hash", "expires_at", "id", "used_at", "user_id"], flat: bool = False) -> OxydeEmailVerificationCodeQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -656,12 +709,14 @@ class OxydeEmailVerificationCodeManager(QueryManager[OxydeEmailVerificationCode]
         instance: OxydeEmailVerificationCode | None = None,
         client: Any | None = None,
         using: str | None = None,
+        armed: bool | None = None,
         attempts: int | None = None,
         code_hash: str | None = None,
         created_at: datetime | None = None,
+        email_hash: str | None = None,
         expires_at: datetime | None = None,
         id: str | None = None,
-        user: OxydeUser | None = None,
+        used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fddb1c2c2c0>, json_schema_input_type=PydanticUndefined)] | None = None,
         user_id: str | None = None,
     ) -> OxydeEmailVerificationCode:
         """Create new object."""

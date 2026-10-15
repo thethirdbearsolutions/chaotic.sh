@@ -436,6 +436,9 @@ class TestAppSession:
         ("post", "/api/api-keys", {"name": "from the phone"}),
         ("patch", "/api/users/me", {"name": "Renamed"}),
         ("delete", "/api/users/me", None),
+        # Email verification changes the account (CHT-1790).
+        ("post", "/api/auth/email-verification", None),
+        ("post", "/api/auth/email-verification/confirm", {"code": "123456"}),
     ])
     async def test_account_routes_refuse_an_app_session(self, client, app_tokens, method, path, body):
         kwargs = {"json": body} if body is not None else {}

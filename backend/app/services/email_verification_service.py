@@ -11,16 +11,22 @@ Rules:
 
 * A code lives ``CODE_TTL`` (15 minutes) and allows ``MAX_ATTEMPTS``
   (5) confirmations; after that it is dead and a new one is needed.
-* Only a user's newest code can be confirmed, so sending one retires
-  every older one.
-* At most one code per ``RESEND_INTERVAL`` (60 s) and ``HOURLY_LIMIT``
-  (5) per hour per user. The rows are the send history the limits
-  count; rows older than the hour are pruned on the next request, and
-  all of a user's rows go once the address is verified.
-* Only an HMAC-SHA256 of the code is stored, keyed with the server's
-  SECRET_KEY and bound to the user id, and it is compared with
-  ``hmac.compare_digest``. A copy of the database alone does not give
-  the codes back.
+* Only a user's newest sent code can be confirmed, so sending one
+  retires every older one. A code whose request was refused or whose
+  send failed is never confirmable (its row is not ``armed``).
+* Limits are per **address** (an HMAC of the normalised address), not
+  per account, so deleting the account and signing up again with the
+  same address resets nothing: at most one code per ``RESEND_INTERVAL``
+  (60 s) and ``HOURLY_LIMIT`` (5) per hour, and at most
+  ``DAILY_FAILURE_LIMIT`` (15) failed confirmations in a rolling
+  ``FAILURE_WINDOW`` (24 h). Past that cap every confirmation, the right
+  code included, gets the same 400 as a wrong one, so it is not an
+  oracle. The rows are that history; they are pruned once older than
+  ``FAILURE_WINDOW``.
+* Only HMAC-SHA256s are stored: of the code (bound to the user id) and
+  of the address, under a key derived from the server's SECRET_KEY for
+  this purpose alone. Codes are compared with ``hmac.compare_digest``.
+  A copy of the database alone does not give the codes back.
 
 Unlike the app's other email, the send is awaited: the person is
 waiting for this code, so a failed send is reported to them, not only
@@ -28,13 +34,15 @@ logged. ``EmailService.send`` never raises; its False is the failure.
 
 Nothing changes an account's address today (``UserUpdate`` has no
 ``email``). Whatever ever does must set ``email_verified_at`` back to
-NULL and delete the user's codes in the same write, or a verification
-of the old address would vouch for the new one.
+NULL in the same write, or a verification of the old address would
+vouch for the new one; the old codes are bound to the old address's
+hash and stop matching on their own.
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -46,12 +54,33 @@ from app.oxyde_models.user import OxydeUser
 from app.services.email_service import EmailService
 from app.utils.datetimes import ensure_utc
 
+logger = logging.getLogger(__name__)
+
 CODE_TTL = timedelta(minutes=15)
 MAX_ATTEMPTS = 5
 RESEND_INTERVAL = timedelta(seconds=60)
 HOURLY_WINDOW = timedelta(hours=1)
 HOURLY_LIMIT = 5
+FAILURE_WINDOW = timedelta(hours=24)
+DAILY_FAILURE_LIMIT = 15
 CODE_DIGITS = 6
+_KEY_PURPOSE = b"chaotic-email-verification"
+
+
+def log_invitation_gate() -> None:
+    """Say once, at startup, whether accepting an invitation requires a
+    verified address on this server (it does exactly when SMTP is
+    configured; see app.api.teams.accept_invitation)."""
+    if EmailService().is_configured():
+        logger.info(
+            "Invitation email-verification gate: ACTIVE (SMTP configured); "
+            "accepting a team invitation requires a verified email address."
+        )
+    else:
+        logger.info(
+            "Invitation email-verification gate: INACTIVE (no SMTP configured); "
+            "an invitation link alone is enough to accept it, so hand links over privately."
+        )
 
 
 class VerificationRefused(Exception):
@@ -83,10 +112,20 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _key() -> bytes:
+    """This feature's own key, derived from SECRET_KEY, so its hashes
+    cannot be confused with any other HMAC the server makes."""
+    return hmac.new(get_settings().secret_key.encode(), _KEY_PURPOSE, hashlib.sha256).digest()
+
+
 def hash_code(user_id: str, code: str) -> str:
-    """HMAC-SHA256 of ``code`` for ``user_id`` under the server's key."""
-    key = get_settings().secret_key.encode()
-    return hmac.new(key, f"{user_id}:{code}".encode(), hashlib.sha256).hexdigest()
+    """HMAC-SHA256 of ``code`` for ``user_id``."""
+    return hmac.new(_key(), f"code:{user_id}:{code}".encode(), hashlib.sha256).hexdigest()
+
+
+def hash_email(email: str) -> str:
+    """HMAC-SHA256 of the normalised address: what the limits count by."""
+    return hmac.new(_key(), f"email:{email.strip().lower()}".encode(), hashlib.sha256).hexdigest()
 
 
 def new_code() -> str:
@@ -98,12 +137,19 @@ def render_code_email(code: str) -> tuple[str, str]:
     minutes = int(CODE_TTL.total_seconds() // 60)
     subject = "[Chaotic] Your email verification code"
     body = (
-        f"Your Chaotic verification code is: {code}\n"
+        "Someone signed in to a Chaotic account with this email address and asked\n"
+        "to verify it.\n"
         "\n"
-        f"It expires in {minutes} minutes. Enter it in Chaotic to confirm this address\n"
-        "(`chaotic auth verify-email`).\n"
+        f"Your verification code is: {code}\n"
         "\n"
-        "If you did not ask for this, ignore this email.\n"
+        f"It expires in {minutes} minutes. Enter it in Chaotic yourself\n"
+        "(`chaotic auth verify-email`, or the invitation page).\n"
+        "\n"
+        "Never share this code with anyone. Chaotic will never ask you for it,\n"
+        "by email, chat or phone; whoever asks for it is trying to use your address.\n"
+        "\n"
+        "If this wasn't you, ignore this email: without the code, the address\n"
+        "stays unverified.\n"
         "\n"
         "— Chaotic"
     )
@@ -112,6 +158,12 @@ def render_code_email(code: str) -> tuple[str, str]:
 
 def _seconds_until(moment: datetime, now: datetime) -> int:
     return max(1, int((moment - now).total_seconds() + 0.999))
+
+
+def _rate_limited(message: str, retry: int) -> VerificationRefused:
+    return VerificationRefused(
+        429, "email_verification_rate_limited", message, headers={"Retry-After": str(retry)},
+    )
 
 
 class EmailVerificationService:
@@ -133,37 +185,38 @@ class EmailVerificationService:
             raise UNAVAILABLE
 
         now = _now()
+        email_hash = hash_email(user.email)
         codes = OxydeEmailVerificationCode.objects
-        await codes.filter(user_id=user.id, created_at__lt=now - HOURLY_WINDOW).delete()
+        await codes.filter(created_at__lt=now - FAILURE_WINDOW).delete()
 
-        # Insert first, then count: two requests racing each other then
-        # both see the other's row, and at worst both are refused, never
-        # both let through.
+        # Insert first (unarmed: nothing can confirm it yet), then count:
+        # two requests racing each other then both see the other's row,
+        # and at worst both are refused, never both sent.
         code = new_code()
         row = await codes.create(
+            email_hash=email_hash,
             user_id=user.id,
             code_hash=hash_code(user.id, code),
+            armed=False,
             expires_at=now + CODE_TTL,
             attempts=0,
             created_at=now,
         )
-        recent = await codes.filter(user_id=user.id, created_at__gte=now - HOURLY_WINDOW).order_by("created_at").all()
+        recent = await codes.filter(
+            email_hash=email_hash, created_at__gte=now - HOURLY_WINDOW,
+        ).order_by("created_at").all()
         others = [r for r in recent if r.id != row.id]
         refusal = None
         if others and ensure_utc(others[-1].created_at) > now - RESEND_INTERVAL:
             retry = _seconds_until(ensure_utc(others[-1].created_at) + RESEND_INTERVAL, now)
-            refusal = VerificationRefused(
-                429, "email_verification_rate_limited",
-                f"A code was sent less than a minute ago. Wait {retry} s before asking for another.",
-                headers={"Retry-After": str(retry)},
+            refusal = _rate_limited(
+                f"A code was sent less than a minute ago. Wait {retry} s before asking for another.", retry,
             )
         elif len(others) >= HOURLY_LIMIT:
             retry = _seconds_until(ensure_utc(others[-HOURLY_LIMIT].created_at) + HOURLY_WINDOW, now)
-            refusal = VerificationRefused(
-                429, "email_verification_rate_limited",
+            refusal = _rate_limited(
                 f"Too many codes requested in the last hour ({HOURLY_LIMIT} at most). "
-                f"Try again in {(retry + 59) // 60} min.",
-                headers={"Retry-After": str(retry)},
+                f"Try again in {(retry + 59) // 60} min.", retry,
             )
         if refusal is not None:
             await codes.filter(id=row.id).delete()
@@ -171,32 +224,42 @@ class EmailVerificationService:
 
         subject, body = render_code_email(code)
         if not await self.email.send(user.email, subject, body):
-            # Never delivered: kill it, but keep it as history so a
+            # Never delivered: it stays unarmed, but kept as history so a
             # failing relay is not hammered faster than the limits allow.
-            await codes.filter(id=row.id).update(attempts=MAX_ATTEMPTS)
             raise VerificationRefused(
                 502, "email_send_failed",
                 "The verification email could not be sent: the server's mail relay failed. "
                 "Try again later, or ask the server's operator to check its SMTP settings.",
             )
+        await codes.filter(id=row.id).update(armed=True)
         return row
 
     async def confirm(self, user: OxydeUser, code: str) -> OxydeUser:
-        """Check ``code`` against the user's newest code; on a match mark
-        the address verified and drop every code. A wrong, expired, dead
-        or superseded code all get the same 400 ``invalid_verification_code``.
+        """Check ``code`` against the user's newest sent code; on a match
+        mark the address verified. A wrong, expired, dead, superseded or
+        missing code, and any code once the address is over its daily
+        failure cap, all get the same 400 ``invalid_verification_code``.
         """
         if user.email_verified_at is not None:
             raise VerificationRefused(409, "email_already_verified", "Your email address is already verified.")
         invalid = VerificationRefused(400, "invalid_verification_code", INVALID_CODE_MESSAGE)
         now = _now()
+        email_hash = hash_email(user.email)
         codes = OxydeEmailVerificationCode.objects
-        latest = await codes.filter(user_id=user.id).order_by("-created_at").first()
-        if latest is None or ensure_utc(latest.expires_at) <= now:
+
+        history = await codes.filter(email_hash=email_hash, created_at__gte=now - FAILURE_WINDOW).all()
+        failures = sum(r.attempts - (1 if r.used_at is not None else 0) for r in history)
+        if failures >= DAILY_FAILURE_LIMIT:
+            raise invalid
+
+        latest = await codes.filter(
+            email_hash=email_hash, user_id=user.id, armed=True,
+        ).order_by("-created_at").first()
+        if latest is None or latest.used_at is not None or ensure_utc(latest.expires_at) <= now:
             raise invalid
         # Spend an attempt before comparing, conditionally, so concurrent
         # guesses cannot get past the cap between a read and a write.
-        spent = await codes.filter(id=latest.id, attempts__lt=MAX_ATTEMPTS).update(
+        spent = await codes.filter(id=latest.id, attempts__lt=MAX_ATTEMPTS, used_at__isnull=True).update(
             attempts=F("attempts") + 1,
         )
         if not spent:
@@ -204,8 +267,9 @@ class EmailVerificationService:
         if not hmac.compare_digest(latest.code_hash, hash_code(user.id, code.strip())):
             raise invalid
 
+        await codes.filter(id=latest.id).update(used_at=now)
         user.email_verified_at = now
-        await user.save(update_fields={"email_verified_at"})
-        await codes.filter(user_id=user.id).delete()
+        user.updated_at = now
+        await user.save(update_fields={"email_verified_at", "updated_at"})
         await user.refresh()
         return user
