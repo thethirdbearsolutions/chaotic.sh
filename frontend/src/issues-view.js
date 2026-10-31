@@ -27,6 +27,7 @@ import {
 import { getProjects } from './projects.js';
 import { ensureSprintCacheForIssues, getCachedCurrentSprintId, setCachedCurrentSprintId, getSprintCache } from './sprints.js';
 import { renderIssues } from './issue-list.js';
+import { withEditsInFlight } from './inline-dropdown.js';
 import { showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
 import { OPEN_STATUSES } from './constants.js';
@@ -44,6 +45,8 @@ import {
     sameRows,
     dropQuery,
     deriveQuery,
+    matcher,
+    isNewer,
 } from './issue-store.js';
 
 // Import from sub-modules
@@ -360,6 +363,43 @@ export function showCachedIssuesOrSkeleton() {
     return false;
 }
 
+/**
+ * A list response merged with what changed on screen while it was in
+ * flight (CHT-1921):
+ * - a row the list holds at a newer `updated_at` (an edit's answer, a /ws
+ *   update) is kept over the response's older copy;
+ * - a field edit still in flight keeps its value;
+ * - a row added since the request went out (a quick-create, a /ws create)
+ *   and not in the response stays, at the top;
+ * - a row removed since then (a /ws delete) stays removed.
+ * @param {Object[]} local - the list as it is now
+ * @param {Object[]} server - the response
+ * @param {Set<string>} idsAtRequest - the list's ids when the request went out
+ */
+export function keepLocalChanges(local, server, idsAtRequest, belongs = () => true) {
+    if (!Array.isArray(server)) return server;
+    const localById = new Map(local.map(i => [i.id, i]));
+    const serverIds = new Set(server.map(i => i.id));
+    // Titles of rows the server has that the list didn't: a quick-create
+    // whose row is already among them must not show twice (review I1).
+    const arrived = new Set(server.filter(i => !idsAtRequest.has(i.id)).map(i => i.title));
+    const added = local.filter(i => !idsAtRequest.has(i.id) && !serverIds.has(i.id)
+        && !(i._isOptimistic && arrived.has(i.title))
+        // A /ws create or quick-create outside this filter isn't kept,
+        // or the store would cache it under this query (review M1).
+        && (i._isOptimistic || belongs(i)));
+    const kept = [];
+    for (const row of server) {
+        const mine = localById.get(row.id);
+        if (!mine && idsAtRequest.has(row.id)) continue; // removed meanwhile
+        const newer = mine && isNewer(mine.updated_at, row.updated_at) ? mine : row;
+        kept.push(withEditsInFlight(newer));
+    }
+    // Added rows go on top and a newer row keeps the response's place,
+    // as the /ws handlers do; the next refresh puts them in sort order.
+    return added.length ? [...added, ...kept] : kept;
+}
+
 export async function loadIssues() {
     setSelectedIssueIndex(-1);
     // The paint below may be skipped (rows already on screen), so the
@@ -524,6 +564,9 @@ export async function loadIssues() {
                 .catch(e => { console.error('Failed to count closed search matches:', e); return 0; })
             : Promise.resolve(0);
 
+        // What the list held as the request went out: anything added or
+        // removed after this was the user's (or /ws), not the server's.
+        const idsAtRequest = new Set(getIssues().map(i => i.id));
         const issues = await fetchIssues(params);
 
         // Cache every response, even a superseded one: it is still that
@@ -532,9 +575,13 @@ export async function loadIssues() {
         if (requestId !== loadIssuesRequestId) return; // a newer loadIssues() has since started — drop this stale response
         rememberView(viewKey, key);
 
-        const unchanged = (showingCached || showingDerived) && paintedKey === key && sameRows(getIssues(), issues);
+        // Rows already on screen for this query may have changed while the
+        // request ran: keep those changes over the older answer (CHT-1921).
+        const onScreen = (showingCached || showingDerived) && paintedKey === key;
+        const rows = onScreen ? keepLocalChanges(getIssues(), issues, idsAtRequest, matcher(params)) : issues;
+        const unchanged = onScreen && sameRows(getIssues(), rows);
         setCurrentQueryKey(key);
-        setIssues(issues);
+        setIssues(rows);
         // Prev/next issue-detail nav context (CHT-1211 item 2) — this is the
         // Issues-view's own list, so it's the reliable source when arriving
         // at an issue detail from here. The request id above only orders
@@ -543,10 +590,10 @@ export async function loadIssues() {
         // after the user navigated away would clobber the context another
         // view has since written (CHT-1211 review #2).
         if (getCurrentView() === 'issues') {
-            setDetailNavContext(issues);
+            setDetailNavContext(Array.isArray(rows) ? rows.filter(i => !i._isOptimistic) : rows);
         }
 
-        const projectIds = [...new Set(issues.map(i => i.project_id))];
+        const projectIds = [...new Set(rows.map(i => i.project_id).filter(Boolean))];
         const sprintsKnown = Object.keys(getSprintCache()).length;
         await ensureSprintCacheForIssues(projectIds);
         if (requestId !== loadIssuesRequestId) return; // guard again — a newer request may have resolved during the await above
