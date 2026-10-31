@@ -171,6 +171,7 @@ vi.mock('./board.js', () => ({ loadBoard: vi.fn() }));
 vi.mock('./issue-detail-view.js', () => ({
     viewIssueByPath: vi.fn(),
     viewIssue: vi.fn(),
+    abandonIssueLoad: vi.fn(),
 }));
 vi.mock('./state.js', () => ({
     getCurrentView: vi.fn(),

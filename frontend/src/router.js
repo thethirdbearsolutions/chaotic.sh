@@ -21,6 +21,7 @@ let onDetailPopstate = null;
 let onRestoreProject = null;
 let onIssueNavigate = null;
 let onEpicNavigate = null;
+let onBeforeScrollRestore = null;
 let initialized = false;
 
 /**
@@ -37,6 +38,7 @@ export function resetRouter() {
     onRestoreProject = null;
     onIssueNavigate = null;
     onEpicNavigate = null;
+    onBeforeScrollRestore = null;
     initialized = false;
 }
 
@@ -56,14 +58,18 @@ export function registerViews(handlers) {
  * @param {Function} [opts.detailPopstate] - (state) => bool, handles detail popstate
  * @param {Function} [opts.restoreProject] - Restores project selection from URL
  * @param {Function} [opts.issueNavigate] - (identifier) => void, navigates to issue
+ * @param {Function} [opts.beforeScrollRestore] - Called just before Back
+ *   restores a scroll position, to finish painting anything still queued
+ *   so the position isn't clamped by a half-painted page (CHT-1897)
  */
-export function configureRouter({ beforeNavigate, detailRoute, detailPopstate, restoreProject, issueNavigate, epicNavigate } = {}) {
+export function configureRouter({ beforeNavigate, detailRoute, detailPopstate, restoreProject, issueNavigate, epicNavigate, beforeScrollRestore } = {}) {
     if (beforeNavigate) onBeforeNavigate = beforeNavigate;
     if (detailRoute) onDetailRoute = detailRoute;
     if (detailPopstate) onDetailPopstate = detailPopstate;
     if (restoreProject) onRestoreProject = restoreProject;
     if (issueNavigate) onIssueNavigate = issueNavigate;
     if (epicNavigate) onEpicNavigate = epicNavigate;
+    if (beforeScrollRestore) onBeforeScrollRestore = beforeScrollRestore;
 }
 
 /**
@@ -251,6 +257,7 @@ function restoreScrollPosition() {
     const savedY = scrollPositions.get(window.location.href);
     if (savedY !== undefined) {
         requestAnimationFrame(() => {
+            if (onBeforeScrollRestore) onBeforeScrollRestore();
             window.scrollTo(0, savedY);
         });
     }

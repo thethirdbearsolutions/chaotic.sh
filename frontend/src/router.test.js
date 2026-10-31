@@ -590,6 +590,24 @@ describe('router', () => {
             scrollToSpy.mockRestore();
         });
 
+        // CHT-1897 review C1: queued rows are painted before the restore, so
+        // the position is not clamped by a half-painted list.
+        it('finishes painting before restoring the scroll position', () => {
+            const order = [];
+            configureRouter({ beforeScrollRestore: () => order.push('paint') });
+            registerViews({ 'issues': vi.fn() });
+            const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => cb());
+            const scrollToSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => order.push('scroll'));
+            initRouter();
+            window.location.href = 'http://localhost/issues';
+            Object.defineProperty(window, 'scrollY', { value: 900, configurable: true });
+            saveScrollPosition();
+            window.dispatchEvent(new PopStateEvent('popstate', { state: { view: 'issues' } }));
+            expect(order.slice(0, 2)).toEqual(['paint', 'scroll']);
+            rafSpy.mockRestore();
+            scrollToSpy.mockRestore();
+        });
+
         // Behavioral test for the actual bug: a detail view (simulated here
         // via a bare saveScrollPosition() call, mirroring what viewIssue/
         // viewEpic/viewSprint/viewDocument now do) records the list's scroll

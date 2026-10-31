@@ -488,6 +488,16 @@ subscribe((key) => {
 // Bumped by every navigating viewIssue() call -- not by background
 // refreshes (see `refresh` below).
 let viewIssueNavigationId = 0;
+
+/**
+ * Leaving the detail (the router calls this before every view change)
+ * drops any load still in flight, so it can't paint the issue back over
+ * the view the user went to (CHT-1899 review I3: Back is pressable while
+ * the detail loads, since its history entry is pushed at once).
+ */
+export function abandonIssueLoad() {
+    viewIssueNavigationId++;
+}
 // Bumped by every viewIssue() call, refresh or navigation: a refresh renders
 // only if no later call of either kind started while it was fetching, so two
 // overlapping refreshes can never land oldest-last (PR #318 review 1).
@@ -533,13 +543,15 @@ function isShowingIssueDetail(issueId) {
 }
 
 /**
- * The row a list already loaded for this issue, if any: the list the user
- * opened it from, the Issues view's list, or the issue store (CHT-1899).
+ * The row a list already loaded for this issue, if any, newest source
+ * first: the Issues view's list (it carries in-flight edits), the issue
+ * store (kept current by /ws), then the list the user opened it from,
+ * which is a snapshot (CHT-1899).
  */
 function findLoadedIssue(issueId) {
-    return getDetailNavContext().find(i => i.id === issueId)
-        || getIssues().find(i => i.id === issueId)
+    return getIssues().find(i => i.id === issueId)
         || getStoredIssue(issueId)
+        || getDetailNavContext().find(i => i.id === issueId)
         || null;
 }
 
@@ -548,8 +560,9 @@ function findLoadedIssue(issueId) {
  * full detail (description, comments, activity) loads (CHT-1899). VISION.md:
  * opening an issue from a list shows something within 100 ms.
  *
- * Deliberately inert: no property rows or editors, so no shortcut can act
- * on a partial row. It does become the current detail issue, so j/k and
+ * Deliberately inert: its property rows have no data-field or action and
+ * there are no editors, so no shortcut or dropdown can act on a partial
+ * row. It does become the current detail issue, so j/k and
  * the arrows move on from this issue rather than the one before it.
  */
 function paintDetailFromRow(row) {
@@ -1226,11 +1239,20 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
             // noise (and an issue:deleted handler covers the 404 case).
             console.error('Failed to refresh issue detail:', e);
         } else {
+            // A load the user already left (opened another issue, went Back)
+            // says nothing (CHT-1899 review M4).
+            if (navigationId !== viewIssueNavigationId) return 'dropped';
             showApiError('load issue', e);
             // The row painted at once must not sit there loading forever.
             const fromRow = document.querySelector('#issue-detail-content .detail-from-row .issue-detail-description');
-            if (fromRow && navigationId === viewIssueNavigationId) {
-                fromRow.innerHTML = renderEmptyState({
+            if (fromRow) {
+                const gone = e?.status === 403 || e?.status === 404;
+                fromRow.innerHTML = renderEmptyState(gone ? {
+                    icon: EMPTY_ICONS.issues,
+                    heading: 'Issue not found',
+                    description: 'It may have been deleted, or you no longer have access to it',
+                    variant: 'error',
+                } : {
                     icon: EMPTY_ICONS.issues,
                     heading: 'Failed to load issue',
                     description: 'Check your connection and try again',

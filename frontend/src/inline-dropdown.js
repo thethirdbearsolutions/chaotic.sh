@@ -684,18 +684,19 @@ export async function updateIssueField(issueId, field, value) {
     closeAllDropdowns();
 
     // Optimistic (CHT-1895): show the new value at once, send the request,
-    // and put the old row back if it fails. The server's row replaces the
+    // and put the old value back if it fails. The server's row replaces the
     // guess when it answers, since one change can move others with it
     // (completed_at, a sprint's points).
-    const previous = {
-        issue: getIssues().find(i => i.id === issueId) || null,
-        myIssue: getMyIssues().find(i => i.id === issueId) || null,
-        detail: getCurrentDetailIssue()?.id === issueId ? getCurrentDetailIssue() : null,
-    };
-    const base = previous.issue || previous.myIssue || previous.detail;
-    if (base) {
-        applyIssueLocally(issueId, field, { ...base, [field]: value }, { focus: true });
-    }
+    //
+    // Only this field is guessed and only this field is rolled back, each
+    // copy (Issues list, My Issues, open detail) from its own value, so a
+    // failure can't undo another edit or a /ws update that landed during
+    // the flight. A newer edit to the same field owns it: an older
+    // request's answer or failure leaves it alone (CHT-1895 review I4, I5).
+    const seq = beginFieldEdit(issueId, field, value);
+    const previousValues = fieldValues(issueId, field);
+    const guessed = patchFieldEverywhere(issueId, field, () => value);
+    if (guessed) showIssueLocally(issueId, field, { focus: true });
 
     try {
         const updateData = {};
@@ -708,18 +709,25 @@ export async function updateIssueField(issueId, field, value) {
             throw new Error('Invalid response from server');
         }
 
-        // Update local state with full issue object (not just the changed field)
-        // This ensures related fields like completed_at are also updated
-        applyIssueLocally(issueId, field, updatedIssue, { focus: !base });
+        // Update local state with full issue object (not just the changed
+        // field), so related fields like completed_at are updated too. A
+        // field another edit still has in flight keeps that edit's value.
+        if (isCurrentFieldEdit(issueId, field, seq)) {
+            const merged = { ...updatedIssue, ...otherFieldsInFlight(issueId, field) };
+            replaceIssueEverywhere(issueId, { issue: merged, myIssue: merged, detail: merged });
+            showIssueLocally(issueId, field, { focus: !guessed });
+        }
     } catch (error) {
         showApiError('update issue', error);
-        // Roll back: every copy goes back to what it was before the edit.
-        if (base) {
-            replaceIssueEverywhere(issueId, previous);
-            rerenderIssueRow(issueId, field, previous.issue || previous.myIssue || previous.detail, { focus: false });
-            if (previous.detail && DETAIL_SIDEBAR_FIELDS.has(field)) updateDetailViewField(field, previous.detail);
+        if (isCurrentFieldEdit(issueId, field, seq)) {
+            patchFieldEverywhere(issueId, field, (copy, which) => (
+                copy[field] === value ? previousValues[which] : copy[field]
+            ));
+            showIssueLocally(issueId, field, { focus: false });
         }
         return;
+    } finally {
+        endFieldEdit(issueId, field, seq);
     }
 
     // The update has landed: nothing below may roll it back.
@@ -740,6 +748,69 @@ export async function updateIssueField(issueId, field, value) {
 
 // Fields the detail sidebar shows, so an edit to them updates it in place.
 const DETAIL_SIDEBAR_FIELDS = new Set(['sprint_id', 'status', 'priority', 'assignee_id', 'estimate', 'issue_type']);
+
+// issueId -> Map(field -> { seq, value }): the inline edits in flight.
+const fieldEditsInFlight = new Map();
+let fieldEditSeq = 0;
+
+function beginFieldEdit(issueId, field, value) {
+    const seq = ++fieldEditSeq;
+    if (!fieldEditsInFlight.has(issueId)) fieldEditsInFlight.set(issueId, new Map());
+    fieldEditsInFlight.get(issueId).set(field, { seq, value });
+    return seq;
+}
+
+function isCurrentFieldEdit(issueId, field, seq) {
+    return fieldEditsInFlight.get(issueId)?.get(field)?.seq === seq;
+}
+
+function endFieldEdit(issueId, field, seq) {
+    const edits = fieldEditsInFlight.get(issueId);
+    if (edits?.get(field)?.seq !== seq) return;
+    edits.delete(field);
+    if (edits.size === 0) fieldEditsInFlight.delete(issueId);
+}
+
+function otherFieldsInFlight(issueId, field) {
+    const out = {};
+    fieldEditsInFlight.get(issueId)?.forEach((edit, f) => { if (f !== field) out[f] = edit.value; });
+    return out;
+}
+
+/** The field's value in each copy that holds the issue. */
+function fieldValues(issueId, field) {
+    const detail = getCurrentDetailIssue();
+    return {
+        issue: getIssues().find(i => i.id === issueId)?.[field],
+        myIssue: getMyIssues().find(i => i.id === issueId)?.[field],
+        detail: detail?.id === issueId ? detail[field] : undefined,
+    };
+}
+
+/**
+ * Set one field in every copy that holds the issue, each from its own row:
+ * `next(copy, which)` returns the new value. Returns whether any copy held it.
+ */
+function patchFieldEverywhere(issueId, field, next) {
+    const patch = (copy, which) => ({ ...copy, [field]: next(copy, which) });
+    let found = false;
+    const issues = getIssues();
+    if (issues.some(i => i.id === issueId)) {
+        found = true;
+        setIssues(issues.map(i => (i.id === issueId ? patch(i, 'issue') : i)));
+    }
+    const myIssues = getMyIssues();
+    if (myIssues.some(i => i.id === issueId)) {
+        found = true;
+        setMyIssues(myIssues.map(i => (i.id === issueId ? patch(i, 'myIssue') : i)));
+    }
+    const detail = getCurrentDetailIssue();
+    if (detail?.id === issueId) {
+        found = true;
+        setCurrentDetailIssue(patch(detail, 'detail'));
+    }
+    return found;
+}
 
 /**
  * Put one version of an issue into the issues state, my-issues state and
@@ -784,10 +855,12 @@ function rerenderIssueRow(issueId, field, issue, { focus }) {
     if (trigger) trigger.focus();
 }
 
-function applyIssueLocally(issueId, field, issue, { focus }) {
-    replaceIssueEverywhere(issueId, { issue, myIssue: issue, detail: issue });
-    rerenderIssueRow(issueId, field, issue, { focus });
-    if (DETAIL_SIDEBAR_FIELDS.has(field)) updateDetailViewField(field, issue);
+// Re-render the row and the detail sidebar from the state as it now is.
+function showIssueLocally(issueId, field, { focus }) {
+    const row = getIssues().find(i => i.id === issueId) || getMyIssues().find(i => i.id === issueId);
+    rerenderIssueRow(issueId, field, row, { focus });
+    const detail = getCurrentDetailIssue();
+    if (detail?.id === issueId && DETAIL_SIDEBAR_FIELDS.has(field)) updateDetailViewField(field, detail);
 }
 
 /**

@@ -107,6 +107,7 @@ jobs:
   # dropped keys, and opening an issue and Back within 100 ms.
   speed:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4

@@ -44,12 +44,29 @@ function renderSummaryBar(issues) {
 export const FIRST_PAINT_ROWS = 60;
 const CHUNK_ROWS = 150;
 
-// Rows still to append, per group: [{ groupKey, issues }]. groupKey null
-// is the flat list. A new renderIssues() replaces them.
+// Rows still to append, per group: [{ groupKey, ids }]. groupKey null is
+// the flat list. Ids, not rows: each row is read from the issues state
+// when it is appended, so an edit made while it waited is not lost. A new
+// renderIssues() replaces them.
 let pendingRows = [];
 let firstPaintBudget = Infinity;
 let chunkTimer = null;
 let pendingSelectionId = null;
+// The first element of the paint the queue belongs to. Anything else that
+// rewrites #issues-list (skeleton, error, empty state) disconnects it, and
+// the queue is dropped instead of landing in that state.
+let paintAnchor = null;
+
+// Rows a re-paint must render at once: everything down to the bottom of
+// the viewport and a screen beyond, so the document keeps its height and
+// the scroll position survives (a /ws event re-renders while the user is
+// reading row 500). Counted at a row height under any real one.
+const MIN_ROW_PX = 24;
+function firstPaintRowsFor() {
+    const scrollY = typeof window.scrollY === 'number' ? window.scrollY : 0;
+    const viewport = window.innerHeight || 0;
+    return Math.max(FIRST_PAINT_ROWS, Math.ceil((scrollY + 2 * viewport) / MIN_ROW_PX));
+}
 
 /**
  * The rows for one group: as many as the first-paint budget allows, the
@@ -59,7 +76,7 @@ function rowsHtml(groupKey, issues) {
     const now = issues.slice(0, Math.max(0, firstPaintBudget));
     firstPaintBudget -= now.length;
     if (now.length < issues.length) {
-        pendingRows.push({ groupKey, issues: issues.slice(now.length) });
+        pendingRows.push({ groupKey, ids: issues.slice(now.length).map(i => i.id) });
     }
     return now.map(issue => renderIssueRow(issue)).join('');
 }
@@ -73,35 +90,48 @@ function groupContainer(list, groupKey) {
     return group?.querySelector('.issue-group-content') || null;
 }
 
+/** Drop any queued rows (the list is being replaced by something else). */
+export function cancelPendingRows() {
+    clearTimeout(chunkTimer);
+    chunkTimer = null;
+    paintGeneration++;
+    pendingRows = [];
+    pendingSelectionId = null;
+    paintAnchor = null;
+}
+
 /**
  * Append up to `limit` queued rows (all of them by default). Keyboard
- * navigation calls this before reading the rows, so G and j past the
- * painted rows see the whole list.
+ * navigation calls this before moving the cursor, and the router before
+ * restoring a scroll position, so both see the whole list.
  */
 export function appendPendingRows(limit = Infinity) {
+    if (pendingRows.length === 0) return;
     const list = document.getElementById('issues-list');
-    if (!list) {
-        pendingRows = [];
+    if (!list || !paintAnchor?.isConnected) {
+        cancelPendingRows();
         return;
     }
+    const byId = new Map(getIssues().map(issue => [issue.id, issue]));
     let budget = limit;
     while (pendingRows.length > 0 && budget > 0) {
         const head = pendingRows[0];
-        const take = head.issues.slice(0, budget);
+        const take = head.ids.slice(0, budget);
         const container = groupContainer(list, head.groupKey);
-        container?.insertAdjacentHTML('beforeend', take.map(issue => renderIssueRow(issue)).join(''));
+        const html = take.map(id => byId.get(id)).filter(Boolean).map(issue => renderIssueRow(issue)).join('');
+        container?.insertAdjacentHTML('beforeend', html);
         budget -= take.length;
-        if (take.length === head.issues.length) pendingRows.shift();
-        else head.issues = head.issues.slice(take.length);
+        if (take.length === head.ids.length) pendingRows.shift();
+        else head.ids = head.ids.slice(take.length);
     }
     if (pendingRows.length === 0) {
         clearTimeout(chunkTimer);
         chunkTimer = null;
-        if (pendingSelectionId) {
-            const id = pendingSelectionId;
-            pendingSelectionId = null;
-            reapplyKeyboardSelection(id);
-        }
+        const id = pendingSelectionId;
+        pendingSelectionId = null;
+        // Only if nothing was selected meanwhile (a click, or j on a
+        // painted row).
+        if (id && !list.querySelector('.issue-row.keyboard-selected')) reapplyKeyboardSelection(id);
     }
 }
 
@@ -145,12 +175,8 @@ export function renderIssues() {
     list.classList.add('issue-list-linear');
 
     // A new paint replaces whatever the last one still had queued.
-    clearTimeout(chunkTimer);
-    paintGeneration++;
-    chunkTimer = null;
-    pendingRows = [];
-    pendingSelectionId = null;
-    firstPaintBudget = FIRST_PAINT_ROWS;
+    cancelPendingRows();
+    firstPaintBudget = firstPaintRowsFor();
 
     const issues = getIssues();
 
@@ -201,6 +227,7 @@ export function renderIssues() {
     }
 
     firstPaintBudget = Infinity;
+    paintAnchor = list.firstElementChild;
     // A selected row that is still queued is selected once it lands.
     const selectedPainted = !!selectedIssueId && Array.prototype.some.call(
         list.querySelectorAll('.issue-row'), (row) => row.dataset.issueId === selectedIssueId,

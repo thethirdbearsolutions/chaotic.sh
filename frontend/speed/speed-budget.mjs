@@ -35,13 +35,21 @@ const untilFrame = `(done) => new Promise((resolve, reject) => {
     check();
 })`;
 
+// Wait for real conditions, not fixed sleeps (CHT-1898 review I6): no
+// request in flight, and no rows still queued for the chunked paint.
+async function settle(page) {
+    await page.waitForLoadState('networkidle');
+    await page.waitForFunction(() => !document.querySelector('#issue-detail-view:not(.hidden) .detail-from-row'));
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 50))));
+}
+
 const browser = await chromium.launch();
 try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.addInitScript((t) => localStorage.setItem('chaotic_token', t), token);
     await page.goto(`${base}/issues?project=${projectId}`);
     await page.waitForSelector('#issues-list .issue-row', { timeout: 30000 });
-    await page.waitForTimeout(1500); // the background refresh and the chunked rows settle
+    await settle(page);
     await page.addScriptTag({ content: `window.__untilFrame = ${untilFrame};` });
 
     // Dense: rows fully inside the viewport
@@ -74,7 +82,7 @@ try {
             link.click();
             return p;
         }, run * 2));
-        await page.waitForTimeout(700);
+        await settle(page); // the full detail has landed, so Back can't race it
         await page.addScriptTag({ content: `window.__untilFrame = window.__untilFrame || ${untilFrame};` });
         // Back to the list
         back.push(await page.evaluate(() => {
@@ -85,8 +93,24 @@ try {
             history.back();
             return p;
         }));
-        await page.waitForTimeout(700);
+        await settle(page);
     }
+
+    // Back keeps the reader's place in a long list (CHT-1897 review C1)
+    await page.evaluate(() => window.scrollTo(0, 6000));
+    await page.waitForTimeout(100);
+    const before = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('#issues-list .issue-row')];
+        rows.find((r) => r.getBoundingClientRect().top > 100).querySelector('.issue-title').click();
+    });
+    await settle(page);
+    await page.evaluate(() => history.back());
+    await page.waitForFunction(() => !document.getElementById('issues-view').classList.contains('hidden'));
+    await settle(page);
+    const after = await page.evaluate(() => window.scrollY);
+    record('scroll position after Back (px)', after, Math.abs(after - before) <= 2, `== ${before}`);
+
     record('open an issue from the list (median ms)', Math.round(median(open)), median(open) <= BUDGET_MS, `<= ${BUDGET_MS}`);
     record('Back to the list (median ms)', Math.round(median(back)), median(back) <= BUDGET_MS, `<= ${BUDGET_MS}`);
 } finally {

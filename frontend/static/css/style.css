@@ -3086,21 +3086,6 @@ input[type="checkbox"] {
     outline-offset: -2px;
 }
 
-.issue-row.updating {
-    opacity: 0.6;
-    pointer-events: none;
-}
-
-.issue-row.updated {
-    animation: rowFlash 0.4s ease;
-}
-
-@keyframes rowFlash {
-    0% { background: var(--bg-tertiary); }
-    50% { background: rgba(34, 197, 94, 0.1); }
-    100% { background: var(--bg-tertiary); }
-}
-
 .issue-row-right {
     display: flex;
     align-items: center;

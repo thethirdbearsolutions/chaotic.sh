@@ -330,7 +330,9 @@ export function createListNavigationHandler(actions) {
         // underneath it (CHT-1290).
         if (actions.isInlineDropdownOpen?.()) return;
 
-        actions.beforeNavigate?.();
+        // Only a cursor move can reach past the painted rows; the other keys
+        // act on the selected row, which is painted already (CHT-1897).
+        if (['j', 'k', 'ArrowDown', 'ArrowUp'].includes(e.key)) actions.beforeNavigate?.();
         const items = document.querySelectorAll(selector);
         if (items.length === 0) return;
 

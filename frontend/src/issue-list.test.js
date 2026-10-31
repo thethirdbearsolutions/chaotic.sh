@@ -1,7 +1,7 @@
 /**
  * Tests for issue-list.js module (CHT-664)
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock all dependency modules before importing issue-list
 vi.mock('./state.js', () => {
@@ -146,6 +146,12 @@ describe('issue-list', () => {
             priority: 'medium', project_id: 'p', created_at: '2026-01-01T00:00:00Z', ...extra,
         }));
         const rowCount = () => document.querySelectorAll('#issues-list .issue-row').length;
+        const setWindow = (scrollY, innerHeight) => {
+            Object.defineProperty(window, 'scrollY', { value: scrollY, configurable: true });
+            Object.defineProperty(window, 'innerHeight', { value: innerHeight, configurable: true });
+        };
+        beforeEach(() => setWindow(0, 0));
+        afterEach(() => setWindow(0, 768));
 
         it('paints a short list in one go', () => {
             setTestIssues(many(10));
@@ -190,6 +196,53 @@ describe('issue-list', () => {
             const inGroup = (g) => document.querySelectorAll(`.issue-group[data-group="${g}"] .issue-row`).length;
             expect(inGroup('todo')).toBe(50);
             expect(inGroup('done')).toBe(50);
+        });
+
+        // CHT-1897 review C1: a re-paint keeps the rows down to the viewport,
+        // so the document keeps its height and the scroll position holds.
+        it('renders through the viewport at once when scrolled down', () => {
+            setTestIssues(many(1000));
+            setWindow(3000, 900);
+            renderIssues();
+            expect(rowCount()).toBe(Math.ceil((3000 + 1800) / 24));
+            expect(hasPendingRows()).toBe(true);
+        });
+
+        // review I1
+        it('drops the queue when something else replaces the list', async () => {
+            setTestIssues(many(400));
+            renderIssues();
+            document.getElementById('issues-list').innerHTML = '<div class="skeleton"></div>';
+            appendPendingRows();
+            expect(rowCount()).toBe(0);
+            expect(hasPendingRows()).toBe(false);
+        });
+
+        // review I2
+        it('appends a queued row as it is now, not as it was when queued', () => {
+            const issues = many(200);
+            setTestIssues(issues);
+            renderIssues();
+            setTestIssues(issues.map(i => (i.id === 'i-150' ? { ...i, title: 'Renamed meanwhile' } : i)));
+            appendPendingRows();
+            const row = document.querySelector('#issues-list .issue-row[data-issue-id="i-150"]');
+            expect(row.textContent).toContain('Renamed meanwhile');
+        });
+
+        // review M1
+        it('does not move a selection made while the rows were queued', () => {
+            setTestIssues(many(200));
+            renderIssues();
+            appendPendingRows();
+            document.querySelectorAll('#issues-list .issue-row')[150].classList.add('keyboard-selected');
+            setSelectedIssueIndex(150);
+            renderIssues();
+            const rows = document.querySelectorAll('#issues-list .issue-row');
+            rows[3].classList.add('keyboard-selected');
+            setSelectedIssueIndex(3);
+            appendPendingRows();
+            expect([...document.querySelectorAll('#issues-list .keyboard-selected')].map(r => r.dataset.issueId)).toEqual(['i-3']);
+            expect(getSelectedIssueIndex()).toBe(3);
         });
 
         it('re-selects a queued row once it lands', () => {

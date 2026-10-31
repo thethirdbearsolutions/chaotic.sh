@@ -31,4 +31,8 @@ curl -sf "http://127.0.0.1:$port/" > /dev/null || { cat "$work/server.log"; exit
 cd "$repo/frontend"
 echo "Seeding $issues issues..."
 node speed/seed.mjs "http://127.0.0.1:$port" "$issues" > "$work/seed.json"
-node speed/speed-budget.mjs "http://127.0.0.1:$port" "$work/seed.json"
+node speed/speed-budget.mjs "http://127.0.0.1:$port" "$work/seed.json" || {
+    echo "--- server log (last 100 lines) ---"
+    tail -n 100 "$work/server.log"
+    exit 1
+}

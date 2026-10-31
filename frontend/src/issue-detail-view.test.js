@@ -142,6 +142,7 @@ import {
     deleteRelation,
     loadTicketRituals,
     noteSkippedDetailRefresh,
+    abandonIssueLoad,
 } from './issue-detail-view.js';
 
 // Combine every registerActions({...}) call this module made at import time
@@ -469,6 +470,42 @@ describe('issue-detail-view', () => {
                 const content = document.getElementById('issue-detail-content');
                 expect(content.innerHTML).toContain('Failed to load issue');
                 expect(content.querySelector('[data-action="retry-issue-comments"]')?.dataset.issueId).toBe('issue-1');
+            });
+
+            // CHT-1899 review I3: Back is pressable while the detail loads
+            it('drops a load the user left before it finished', async () => {
+                getDetailNavContext.mockReturnValue([row]);
+                let resolve;
+                api.getIssue.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+                const pending = viewIssue('issue-1');
+                await Promise.resolve();
+                abandonIssueLoad();
+                resolve(mockIssue);
+                expect(await pending).toBe('dropped');
+                expect(document.querySelector('.issue-detail-title').textContent).toBe('From the list');
+            });
+
+            // review M4
+            it('says nothing about a failed load the user already left', async () => {
+                getDetailNavContext.mockReturnValue([row]);
+                let reject;
+                api.getIssue.mockReturnValueOnce(new Promise((_, r) => { reject = r; }));
+                showApiError.mockClear();
+                const pending = viewIssue('issue-1');
+                await Promise.resolve();
+                abandonIssueLoad();
+                reject(new Error('offline'));
+                expect(await pending).toBe('dropped');
+                expect(showApiError).not.toHaveBeenCalled();
+            });
+
+            it('offers no retry for an issue that is gone', async () => {
+                getDetailNavContext.mockReturnValue([row]);
+                api.getIssue.mockRejectedValueOnce(Object.assign(new Error('Not found'), { status: 404 }));
+                await viewIssue('issue-1');
+                const content = document.getElementById('issue-detail-content');
+                expect(content.innerHTML).toContain('Issue not found');
+                expect(content.querySelector('[data-action="retry-issue-comments"]')).toBeNull();
             });
 
             it('waits for the API when no list has the issue', async () => {

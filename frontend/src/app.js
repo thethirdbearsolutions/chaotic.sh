@@ -90,7 +90,7 @@ import {
 } from './command-palette.js';
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus, filterMyIssues } from './dashboard.js';
 import { loadBoard } from './board.js';
-import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
+import { viewIssueByPath, viewIssue, abandonIssueLoad } from './issue-detail-view.js';
 import {
     getCurrentView,
     getSelectedIssueIndex,
@@ -127,7 +127,9 @@ import { getTheme, setTheme } from './storage.js';
 
 // Configure router (CHT-782)
 configureRouter({
+    beforeScrollRestore: appendPendingRows,
     beforeNavigate: () => {
+        abandonIssueLoad();
         clearProjectSettingsState();
         setOnRitualsChanged(null);
         setCurrentDetailIssue(null);
