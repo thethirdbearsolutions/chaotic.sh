@@ -480,8 +480,22 @@ that holds no registrar key at all (CHT-1906):
 Then the CLI and `chaotic mcp` register the session with no
 `Authorization` header (the proxy's `X-Chaotic-Registrar-Key` is the
 credential), cache the session key as usual, and send every other
-request with the session key in `Authorization`, which the proxy leaves
-alone. `chaotic auth whoami` shows the session identity.
+request with the session key in `X-Chaotic-Key` and no `Authorization`.
+That is not a style choice: on a host it injects a secret for, the
+cloud proxy **drops the client's own `Authorization` header**, so a
+session key sent there never arrives and every request answers "Not
+authenticated" (CHT-1913). `chaotic auth whoami` shows the session
+identity.
+
+- **`X-Chaotic-Key: ck_...`** works on every REST route, exactly like
+  `Authorization: Bearer ck_...`: the same key rules, registrar rule
+  (a registrar's key there can read but writes get 403
+  `registrar_cannot_write`) and scopes. It is read only when the request
+  has no `Authorization` header at all (any `Authorization`, whatever its
+  scheme, wins); it takes API keys
+  only (a login or OAuth token is 401 `key_header_not_a_key`), and once
+  (twice is 400 `key_header_repeated`). Any script behind such a proxy
+  can use it the same way.
 
 - The server reads `X-Chaotic-Registrar-Key` on `POST /agents/register`
   only. Everywhere else it is ignored: it never authenticates a request,
@@ -497,6 +511,10 @@ alone. `chaotic auth whoami` shows the session identity.
   `default_name` and the server names a new identity `<registrar> ·
   <8 random hex>`. Only an agent registrar works this way: a person's
   key would need a `team_id`.
+- Only the session's requests use `X-Chaotic-Key`. `chaotic agent
+  register` (the registrar's own call) and `CHAOTIC_SESSION_IDENTITY=off`
+  with a key in the profile still send `Authorization`, which this proxy
+  drops (CHT-1916).
 - `chaotic config set-registrar-key-via header|local` saves the mode in
   the profile instead; the environment variable wins over it. In header
   mode a key configured locally (`auth set-key`, `CHAOTIC_API_KEY`) is

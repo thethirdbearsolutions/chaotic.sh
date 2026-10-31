@@ -45,19 +45,31 @@ class FakeServer:
         self.lock = threading.Lock()
         self.registrar_keys = {REGISTRAR_KEY}
         self.names: dict[str, str] = {}
+        self.sent_headers: list[dict] = []
 
     # A cloud environment's proxy injecting the registrar key as a network
     # secret (CHT-1906): set to a key to add X-Chaotic-Registrar-Key to
     # every request, which the server reads on /agents/register only.
     proxy_registrar_key: str | None = None
 
+    def presented(self, request: httpx.Request) -> str:
+        """The key the server would see. With a proxy (header mode) the
+        client's Authorization is dropped, as the real cloud proxy does on
+        a host it injects a secret for (CHT-1913); X-Chaotic-Key passes."""
+        if self.proxy_registrar_key:
+            return request.headers.get(si.KEY_HEADER, "")
+        # Local mode: only Authorization counts, so a regression that sent
+        # the key header here would fail every local-mode test (review L4).
+        return request.headers.get("Authorization", "").removeprefix("Bearer ")
+
     def handler(self, request: httpx.Request) -> httpx.Response:
-        bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        bearer = self.presented(request)
         path = request.url.path.removeprefix("/api")
         assert si.REGISTRAR_KEY_HEADER.lower() not in {h.lower() for h in request.headers}, \
             "the CLI never sends the registrar header itself"
         with self.lock:
             self.requests.append((request.method, path, bearer))
+            self.sent_headers.append({k.lower(): v for k, v in request.headers.items()})
         if path == "/agents/register" and self.proxy_registrar_key:
             bearer = self.proxy_registrar_key
         if path == "/auth/me" and bearer in self.registrar_keys:
@@ -224,6 +236,11 @@ class TestAutoMode:
         assert stat.S_IMODE((home / "sessions").stat().st_mode) == 0o700
         slot = "\n".join((REF, API, si.fingerprint(REGISTRAR_KEY), ""))
         assert _cache().name == f"{__import__('hashlib').sha256(slot.encode()).hexdigest()[:16]}.json"
+
+    def test_local_mode_sends_authorization_not_the_key_header(self, auto, server, configured):
+        key = Client()._request("GET", "/issues")["key"]
+        last = server.sent_headers[-1]
+        assert last.get("authorization") == f"Bearer {key}" and "x-chaotic-key" not in last
 
     def test_later_requests_and_processes_reuse_the_cache(self, auto, server, configured):
         first = Client()._request("GET", "/issues")["key"]
@@ -1005,6 +1022,10 @@ class TestRegistrarKeyViaHeader:
         assert not [r for r in proxied.requests if r[1] == "/auth/me"]
         writes = [r for r in proxied.requests if r[1] == "/issues"]
         assert writes == [("POST", "/issues", result["key"])]
+        # The session key went in X-Chaotic-Key, with no Authorization for
+        # the proxy to drop (CHT-1913).
+        assert proxied.sent_headers and all("authorization" not in h for h in proxied.sent_headers)
+        assert proxied.sent_headers[-1].get("x-chaotic-key") == result["key"]
         record = json.loads(_header_cache().read_text())
         assert record["api_key"] == result["key"] and record["registrar"] == si.HEADER_FP
         assert stat.S_IMODE(_header_cache().stat().st_mode) == 0o600
@@ -1102,7 +1123,7 @@ class TestMcpInHeaderMode:
         base = proxied.handler
 
         def handler(request):
-            bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
+            bearer = proxied.presented(request)
             if request.url.path == "/api/teams" and bearer in proxied.live_keys:
                 proxied.requests.append((request.method, "/teams", bearer))
                 return httpx.Response(200, json=[{"id": "team-reg", "name": "Falls", "key": "FALLS"}])

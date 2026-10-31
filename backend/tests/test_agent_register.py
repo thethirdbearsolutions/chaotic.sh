@@ -1307,3 +1307,113 @@ class TestRegistrarKeyHeader:
         path = re.sub(r"\{[^}]+\}", "x", path)
         response = await client.get(path, headers={**_bearer(session_key), **_registrar_header(key)})
         assert response.status_code in (401, 403), (path, response.text)
+
+
+def _key_header(key):
+    return {"X-Chaotic-Key": key}
+
+
+class TestKeyHeader:
+    """An API key in X-Chaotic-Key (CHT-1913): a cloud proxy with a network
+    secret for the host drops the client's Authorization, so header mode
+    sends the session key here."""
+
+    async def test_a_session_key_acts_as_the_session_on_reads_and_writes(self, client, registrar, test_project):
+        _, key = registrar
+        reg = (await _register(client, key)).json()
+        headers = {**_key_header(reg["api_key"]), **_registrar_header(key)}  # what the proxy forwards
+
+        me = await client.get("/api/auth/me", headers=headers)
+        assert me.status_code == 200 and me.json()["id"] == reg["agent"]["id"]
+        issue = await client.post(f"/api/projects/{test_project.id}/issues", json={"title": "kh"}, headers=headers)
+        assert issue.status_code == 201, issue.text
+        assert issue.json()["creator"]["id"] == reg["agent"]["id"]
+
+    async def test_a_registrar_key_reads_but_cannot_write(self, client, registrar, test_project):
+        _, key = registrar
+        assert (await client.get("/api/auth/me", headers=_key_header(key))).status_code == 200
+        issue = await client.post(f"/api/projects/{test_project.id}/issues", json={"title": "no"}, headers=_key_header(key))
+        assert issue.status_code == 403 and _code(issue) == "registrar_cannot_write"
+
+    async def test_authorization_wins_when_both_are_sent(self, client, registrar, auth_headers, test_user):
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        me = await client.get("/api/auth/me", headers={**auth_headers, **_key_header(session_key)})
+        assert me.status_code == 200 and me.json()["id"] == test_user.id
+        # Junk in the key header beside a good Authorization is never read.
+        me = await client.get("/api/auth/me", headers={**auth_headers, **_key_header("junk")})
+        assert me.status_code == 200 and me.json()["id"] == test_user.id
+
+    async def test_the_registrar_header_still_wins_on_register(self, client, registrar):
+        registrar_id, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        response = await client.post(
+            "/api/agents/register", json={"external_ref": "claude-code:session:kh-2"},
+            headers={**_key_header(session_key), **_registrar_header(key)},
+        )
+        assert response.status_code == 201 and response.json()["agent"]["registered_by_id"] == registrar_id
+
+    async def test_register_with_only_the_key_header(self, client, registrar):
+        """The key header is a credential like the bearer, so a registrar
+        may register with it too."""
+        _, key = registrar
+        response = await client.post("/api/agents/register", json={"external_ref": REF}, headers=_key_header(key))
+        assert response.status_code == 201, response.text
+
+    async def test_a_jwt_or_junk_is_401(self, client, test_user):
+        jwt = create_access_token(data={"sub": test_user.id})
+        for value in (jwt, "not-a-key"):
+            response = await client.get("/api/auth/me", headers=_key_header(value))
+            assert response.status_code == 401 and _code(response) == "key_header_not_a_key"
+
+    async def test_a_revoked_key_names_the_header(self, client, registrar):
+        registrar_id, key = registrar
+        await OxydeAPIKey.objects.filter(principal_user_id=registrar_id).update(is_active=False)
+        response = await client.get("/api/auth/me", headers=_key_header(key))
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Invalid API key (from X-Chaotic-Key)"
+
+    async def test_a_repeated_header_is_400(self, client, registrar):
+        _, key = registrar
+        for headers in ([("X-Chaotic-Key", key), ("X-Chaotic-Key", key)], [("X-Chaotic-Key", f"{key}, {key}")]):
+            response = await client.get("/api/auth/me", headers=headers)
+            assert response.status_code == 400 and _code(response) == "key_header_repeated"
+
+    async def test_it_cannot_pass_a_human_session_gate(self, client, auth_headers, test_team):
+        """Only an API key goes in it, and a human-session route wants a
+        web-login JWT in Authorization: the key authenticates (not a 401)
+        and the gate still refuses it."""
+        from app.api.deps import require_human_session
+
+        created = await client.post("/api/api-keys", json={"name": "mine"}, headers=auth_headers)
+        assert created.status_code in (200, 201), created.text
+        human_key = created.json()["key"]
+        routes = [(m, p) for m, p, _, d in _api_routes() if _depends_on(d, require_human_session) and "GET" in m]
+        assert routes
+        for _, raw in routes:
+            path = re.sub(r"\{[^}]+\}", "x", raw)
+            response = await client.get(path, headers=_key_header(human_key))
+            assert response.status_code == 403, (path, response.text)
+            assert _code(response) == "human_session_required", (path, response.text)
+
+    async def test_connected_apps_take_a_persons_key_but_not_an_agents(self, client, auth_headers, registrar):
+        """The connected-apps routes (a person on their own credential):
+        a human's ck_ key in the header is accepted, a session's refused."""
+        created = await client.post("/api/api-keys", json={"name": "mine"}, headers=auth_headers)
+        human_key = created.json()["key"]
+        routes = [p for m, p, e, _ in _api_routes() if "GET" in m and p.endswith("/connections")]
+        assert routes, "no connected-apps list route"
+        ok = await client.get(routes[0], headers=_key_header(human_key))
+        assert ok.status_code == 200, ok.text
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        refused = await client.get(routes[0], headers=_key_header(session_key))
+        assert refused.status_code == 403, refused.text
+
+    async def test_another_authorization_scheme_is_not_replaced_by_it(self, client, registrar):
+        """Read only when there is no Authorization at all: a Basic (or
+        empty Bearer) Authorization is answered as before."""
+        _, key = registrar
+        for auth in ("Basic dXNlcjpwdw==", "Bearer "):
+            response = await client.get("/api/auth/me", headers={"Authorization": auth, **_key_header(key)})
+            assert response.status_code == 401, (auth, response.text)
