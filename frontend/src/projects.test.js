@@ -1240,6 +1240,14 @@ describe('project rules: epic and assignee knobs', () => {
     }));
   });
 
+  it('keeps a current default the epic list did not return', async () => {
+    setProjects([{ id: 'proj-1', name: 'P', key: 'P', default_epic_id: 'gone' }]);
+    api.getIssues.mockResolvedValue([]);
+    await viewProjectSettings('proj-1');
+    await vi.waitFor(() => expect(document.getElementById('ps-default-epic').disabled).toBe(false));
+    expect(document.getElementById('ps-default-epic').value).toBe('gone');
+  });
+
   it('leaves the default epic alone when the epics failed to load', async () => {
     setProjects([{ id: 'proj-1', name: 'P', key: 'P', default_epic_id: 'e-1' }]);
     api.getIssues.mockRejectedValue(new Error('boom'));

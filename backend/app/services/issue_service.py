@@ -242,6 +242,9 @@ _EPIC_REQUIRED_MESSAGE = (
     "epic first (or ask an admin to set the project's default epic)"
 )
 
+# Same bound as _validate_parent's ancestor walk in api/issues.py.
+_PARENT_WALK_LIMIT = 1000
+
 # Statuses after which a ticket is closed (done or abandoned).
 CLOSED_STATUSES = frozenset({IssueStatus.DONE, IssueStatus.CANCELED})
 
@@ -1145,18 +1148,34 @@ class IssueService:
         ):
             return None
         if issue_id is not None:
-            # Bounded walk up from the epic; the API's own parent checks
-            # use the same bound.
+            # Walk up from the epic with the bound _validate_parent uses
+            # (api/issues.py), refusing at the bound as it does.
             row = epic
-            for _ in range(50):
+            for _ in range(_PARENT_WALK_LIMIT):
                 if not row.parent_id:
-                    break
+                    return epic.id
                 if row.parent_id == issue_id:
                     return None
                 row = await OxydeIssue.objects.get_or_none(id=row.parent_id)
                 if row is None:
-                    break
+                    return epic.id
+            return None
         return epic.id
+
+    async def has_epic_ancestor(self, parent_id: str | None) -> bool:
+        """Whether a ticket under ``parent_id`` belongs to an epic: the
+        parent, or one of its ancestors, is an epic (CHT-1900). A sub-task
+        of a task that is under no epic does not."""
+        for _ in range(_PARENT_WALK_LIMIT):
+            if not parent_id:
+                return False
+            row = await OxydeIssue.objects.get_or_none(id=parent_id)
+            if row is None:
+                return False
+            if row.issue_type == IssueType.EPIC:
+                return True
+            parent_id = row.parent_id
+        return False
 
     async def _get_next_issue_number_for_key(self, project_key: str) -> int:
         """Get the next issue number for a project key."""
@@ -1206,8 +1225,8 @@ class IssueService:
             issue_in.status == IssueStatus.DONE
             and project.require_epic_on_close
             and not is_human_request
-            and issue_in.parent_id is None
             and issue_in.issue_type != IssueType.EPIC
+            and not await self.has_epic_ancestor(issue_in.parent_id)
         ):
             raise EpicRequiredError(_EPIC_REQUIRED_MESSAGE)
 
@@ -1417,7 +1436,13 @@ class IssueService:
                         raise EstimateRequiredError(
                             "Estimate is required before claiming issues in this project"
                         )
-                if project and project.require_assignee_on_claim and not is_human_request:
+                # Not under skip_ritual_check: that is a cleared intent's
+                # auto-transition, which nothing can answer if it is
+                # refused here (PR #462 review 2).
+                if (
+                    project and project.require_assignee_on_claim
+                    and not is_human_request and not skip_ritual_check
+                ):
                     if update_data.get("assignee_id", issue.assignee_id) is None:
                         raise AssigneeRequiredError(
                             "An assignee is required before claiming issues in this project"
@@ -1428,28 +1453,41 @@ class IssueService:
                         issue.project_id, issue.id, RitualTrigger.TICKET_CLAIM, intent_id=gate_intent_id,
                     ))
 
+            final_parent_id = update_data.get("parent_id", issue.parent_id)
             if (
                 new_status == IssueStatus.DONE and old_status != IssueStatus.DONE
                 and project and project.require_epic_on_close and not is_human_request
-                and update_data.get("parent_id", issue.parent_id) is None
                 and update_data.get("issue_type", issue.issue_type) != IssueType.EPIC
+                and not await self.has_epic_ancestor(final_parent_id)
             ):
-                # CHT-1900: file it under the default epic, or refuse.
-                # Before the ritual gates, like the estimate check: an
-                # attestation cannot supply a missing epic.
-                default_epic_id = await self.usable_default_epic(project, issue.id)
+                # CHT-1900: a parentless ticket is filed under the default
+                # epic; otherwise the close is refused. Before the ritual
+                # gates, like the estimate check: an attestation cannot
+                # supply a missing epic. A cleared intent's auto-transition
+                # (skip_ritual_check) still takes the default but is never
+                # refused: nothing could answer that refusal.
+                default_epic_id = (
+                    await self.usable_default_epic(project, issue.id)
+                    if final_parent_id is None else None
+                )
                 if default_epic_id is None:
-                    raise EpicRequiredError(_EPIC_REQUIRED_MESSAGE)
-                update_data["parent_id"] = default_epic_id
-                if user_id:
-                    activities.append({
-                        "issue_id": issue.id,
-                        "user_id": user_id,
-                        "activity_type": ActivityType.UPDATED,
-                        "field_name": "parent_id",
-                        "old_value": None,
-                        "new_value": default_epic_id,
-                    })
+                    if not skip_ritual_check:
+                        raise EpicRequiredError(_EPIC_REQUIRED_MESSAGE)
+                else:
+                    update_data["parent_id"] = default_epic_id
+                    if user_id:
+                        # One row for the net change, replacing any the
+                        # generic loop wrote for a parent_id this request
+                        # sent (PR #462 review 5).
+                        activities = [a for a in activities if a["field_name"] != "parent_id"]
+                        activities.append({
+                            "issue_id": issue.id,
+                            "user_id": user_id,
+                            "activity_type": ActivityType.UPDATED,
+                            "field_name": "parent_id",
+                            "old_value": issue.parent_id,
+                            "new_value": default_epic_id,
+                        })
 
             if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
                 # Closing a ticket nobody ever claimed must pass its

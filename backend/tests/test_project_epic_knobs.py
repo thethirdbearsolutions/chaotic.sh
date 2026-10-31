@@ -238,3 +238,104 @@ async def test_templates_carry_the_new_knobs(client, auth_headers, test_project,
     settings = snap.body.sections["settings"]
     assert settings["require_assignee_on_claim"] is True
     assert settings["require_epic_on_close"] is True
+
+
+# --- PR #462 review follow-ups ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_subtask_of_a_non_epic_does_not_count(client, auth_headers, test_project, db):
+    """require_epic_on_close means an epic ancestor, not any parent."""
+    assert (await _set(client, auth_headers, test_project.id, require_epic_on_close=True)).status_code == 200
+    task = await _create(client, auth_headers, test_project.id, title="Plain task")
+    sub = await _create(client, auth_headers, test_project.id, title="Sub", parent_id=task["id"])
+    r = await client.patch(f"/api/issues/{sub['id']}", headers=auth_headers, json={"status": "done"})
+    assert r.status_code == 400
+
+    # Once the task above it becomes an epic, the close passes.
+    r = await client.patch(f"/api/issues/{task['id']}", headers=auth_headers, json={"issue_type": "epic"})
+    assert r.status_code == 200, r.text
+    r = await client.patch(f"/api/issues/{sub['id']}", headers=auth_headers, json={"status": "done"})
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_issue_type_in_the_same_request_counts(client, auth_headers, test_project, test_issue, db):
+    assert (await _set(client, auth_headers, test_project.id, require_epic_on_close=True)).status_code == 200
+    # Becoming an epic while closing: no parent needed.
+    r = await client.patch(
+        f"/api/issues/{test_issue.id}", headers=auth_headers, json={"status": "done", "issue_type": "epic"},
+    )
+    assert r.status_code == 200, r.text
+    # An epic turned into a task while closing needs one.
+    epic = await _create(client, auth_headers, test_project.id, title="Was an epic", issue_type="epic")
+    r = await client.patch(
+        f"/api/issues/{epic['id']}", headers=auth_headers, json={"status": "done", "issue_type": "task"},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_epic_requirement_is_refused_before_close_rituals(client, auth_headers, test_project, test_issue, db):
+    r = await client.post(f"/api/projects/{test_project.id}/rituals", headers=auth_headers, json={
+        "name": "write-tests", "prompt": "Tests?", "trigger": "ticket_close",
+        "approval_mode": "auto", "note_required": True,
+    })
+    assert r.status_code in (200, 201), r.text
+    assert (await _set(client, auth_headers, test_project.id, require_epic_on_close=True)).status_code == 200
+    r = await client.patch(f"/api/issues/{test_issue.id}", headers=auth_headers, json={"status": "done"})
+    assert r.status_code == 400, r.text
+    assert "epic" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_auto_transition_is_never_refused_by_the_new_gates(test_project, test_issue, test_user, db):
+    """A cleared intent's auto-transition (skip_ritual_check) cannot be
+    answered if refused, so the assignee and epic gates do not refuse it
+    (PR #462 review 2)."""
+    from app.oxyde_models.project import OxydeProject
+    from app.schemas.issue import IssueUpdate
+    from app.services.issue_service import IssueService
+    from app.enums import IssueStatus
+
+    await OxydeProject.objects.filter(id=test_project.id).update(
+        require_assignee_on_claim=True, require_epic_on_close=True,
+    )
+    svc = IssueService()
+    issue = await svc.get_by_id(test_issue.id)
+    claimed = await svc.update(
+        issue, IssueUpdate(status=IssueStatus.IN_PROGRESS), test_user.id,
+        is_human_request=False, skip_ritual_check=True,
+    )
+    assert claimed.status == IssueStatus.IN_PROGRESS
+    closed = await svc.update(
+        claimed, IssueUpdate(status=IssueStatus.DONE), test_user.id,
+        is_human_request=False, skip_ritual_check=True,
+    )
+    assert closed.status == IssueStatus.DONE
+
+
+@pytest.mark.asyncio
+async def test_detach_and_close_logs_one_parent_activity(client, auth_headers, test_project, db):
+    epic = await _create(client, auth_headers, test_project.id, title="Goal", issue_type="epic")
+    other = await _create(client, auth_headers, test_project.id, title="Other", issue_type="epic")
+    child = await _create(client, auth_headers, test_project.id, parent_id=other["id"])
+    r = await _set(client, auth_headers, test_project.id, default_epic_id=epic["id"], require_epic_on_close=True)
+    assert r.status_code == 200, r.text
+    r = await client.patch(
+        f"/api/issues/{child['id']}", headers=auth_headers, json={"status": "done", "parent_id": None},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["parent_id"] == epic["id"]
+    acts = (await client.get(f"/api/issues/{child['id']}/activities", headers=auth_headers)).json()
+    parent_rows = [a for a in acts if a.get("field_name") == "parent_id"]
+    assert len(parent_rows) == 1
+    assert parent_rows[0]["old_value"] == other["id"]
+    assert parent_rows[0]["new_value"] == epic["id"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_null_on_a_bool_knob_is_ignored(client, auth_headers, test_project, db):
+    r = await _set(client, auth_headers, test_project.id, require_epic_on_close=None, require_assignee_on_claim=None)
+    assert r.status_code == 200, r.text
+    assert r.json()["require_epic_on_close"] is False

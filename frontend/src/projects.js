@@ -544,7 +544,12 @@ export async function populateDefaultEpicSelect(project) {
   if (currentSettingsProjectId !== project.id) return;
   const options = epics.filter(e => e.id === project.default_epic_id
     || (e.status !== 'done' && e.status !== 'canceled'));
-  select.innerHTML = '<option value="">None</option>' + options.map(e =>
+  // A current default the list did not return (no longer an epic, or past
+  // the limit) stays selectable, so saving other rules does not clear it.
+  const keepCurrent = project.default_epic_id && !options.some(e => e.id === project.default_epic_id)
+    ? `<option value="${escapeAttr(project.default_epic_id)}">Current default (not an open epic)</option>`
+    : '';
+  select.innerHTML = '<option value="">None</option>' + keepCurrent + options.map(e =>
     `<option value="${escapeAttr(e.id)}">${escapeHtml(e.identifier)} ${escapeHtml(e.title)}</option>`,
   ).join('');
   select.value = project.default_epic_id || '';

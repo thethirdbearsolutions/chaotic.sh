@@ -74,6 +74,14 @@ class ProjectService:
     async def update(self, project: OxydeProject, project_in: ProjectUpdate) -> OxydeProject:
         """Update a project."""
         update_data = project_in.model_dump(exclude_unset=True)
+        # These columns are NOT NULL: an explicit null means "leave it"
+        # rather than a failed write (PR #462 review 7).
+        for field in (
+            "human_rituals_required", "require_estimate_on_claim",
+            "require_assignee_on_claim", "require_epic_on_close",
+        ):
+            if field in update_data and update_data[field] is None:
+                del update_data[field]
         # Clients resend settings that did not change (the web Rules save
         # always sends default_sprint_budget), so only a real change of
         # default re-reads it into planned sprints. Under a null default a
