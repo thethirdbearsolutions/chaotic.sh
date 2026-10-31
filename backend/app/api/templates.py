@@ -21,6 +21,7 @@ from app.schemas.template import (
     TemplateResponse,
     TemplateSnapshotRequest,
 )
+from app.api.projects import GATE_SETTINGS, refuse_agent_lifting_gates
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.template_service import TemplateService
@@ -156,6 +157,20 @@ async def apply_template(
         )
 
     try:
+        if current_user.is_agent and not apply_in.dry_run:
+            # An agent may not lift a gate through a template either (CHT-1905).
+            preview = await TemplateService().apply(
+                template, project,
+                update_rituals=apply_in.update_rituals,
+                update_all=apply_in.update_all,
+                dry_run=True,
+            )
+            refuse_agent_lifting_gates(current_user, [
+                change.field for change in preview.settings
+                if change.field in GATE_SETTINGS and change.action == "set"
+                and change.old_value is True and change.new_value is False
+            ])
+
         return await TemplateService().apply(
             template,
             project,

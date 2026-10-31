@@ -139,6 +139,42 @@ async def get_project(project_id: str, current_user: CurrentUser) -> ProjectResp
     return ProjectResponse.model_validate(project)
 
 
+# Project settings that gate a ticket's claim or close. An agent may turn
+# one on but never off: they exist to hold agents to a rule, so the agent
+# being held cannot be the one to lift it (CHT-1905).
+GATE_SETTINGS = (
+    "human_rituals_required",
+    "require_estimate_on_claim",
+    "require_assignee_on_claim",
+    "require_epic_on_close",
+)
+
+
+def refuse_agent_lifting_gates(current_user, lifted: list[str]) -> None:
+    """403 when an agent would switch off gate settings that are on.
+
+    Shared by the project PATCH and template apply, the two ways a
+    project's settings change."""
+    if current_user.is_agent and lifted:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Agents cannot turn off "
+                + ", ".join(lifted)
+                + "; a person has to change it."
+            ),
+        )
+
+
+def _lifted_by_update(project, project_in: ProjectUpdate) -> list[str]:
+    return [
+        name for name in GATE_SETTINGS
+        if name in project_in.model_fields_set
+        and getattr(project_in, name) is False
+        and getattr(project, name)
+    ]
+
+
 @router.patch("/{project_id}", response_model=ProjectResponse)
 @writes
 async def update_project(
@@ -151,6 +187,7 @@ async def update_project(
 
     # A project the caller cannot see answers like a missing one (CHT-1785).
     project = await visible_project(current_user, project_id)
+    refuse_agent_lifting_gates(current_user, _lifted_by_update(project, project_in))
     await _validate_lead(project_in.lead_id, project.team_id, project.id, project.lead_id)
     await _validate_default_epic(project_in.default_epic_id, project.id, project.default_epic_id)
 

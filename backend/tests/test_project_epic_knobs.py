@@ -339,3 +339,95 @@ async def test_explicit_null_on_a_bool_knob_is_ignored(client, auth_headers, tes
     r = await _set(client, auth_headers, test_project.id, require_epic_on_close=None, require_assignee_on_claim=None)
     assert r.status_code == 200, r.text
     assert r.json()["require_epic_on_close"] is False
+
+
+# --- CHT-1905: an agent cannot lift the gates that hold it -----------------
+
+_GATES = (
+    "human_rituals_required",
+    "require_estimate_on_claim",
+    "require_assignee_on_claim",
+    "require_epic_on_close",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gate", _GATES)
+async def test_agent_cannot_turn_a_gate_off(client, auth_headers, agent_headers, test_project, gate, db):
+    assert (await _set(client, auth_headers, test_project.id, **{gate: True})).status_code == 200
+    r = await _set(client, agent_headers, test_project.id, **{gate: False})
+    assert r.status_code == 403, r.text
+    assert gate in r.json()["detail"]
+    assert (await client.get(f"/api/projects/{test_project.id}", headers=auth_headers)).json()[gate] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gate", _GATES)
+async def test_agent_can_turn_a_gate_on(client, agent_headers, test_project, gate, db):
+    r = await _set(client, agent_headers, test_project.id, **{gate: True})
+    assert r.status_code == 200, r.text
+    assert r.json()[gate] is True
+
+
+@pytest.mark.asyncio
+async def test_agent_may_resend_a_gate_unchanged_and_edit_other_fields(client, auth_headers, agent_headers, test_project, db):
+    assert (await _set(client, auth_headers, test_project.id, require_epic_on_close=True)).status_code == 200
+    # Already off stays off, already on stays on: neither lifts anything.
+    r = await _set(client, agent_headers, test_project.id, require_epic_on_close=True,
+                   require_assignee_on_claim=False, description="edited by an agent")
+    assert r.status_code == 200, r.text
+    assert r.json()["description"] == "edited by an agent"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_agent_update_changes_nothing(client, auth_headers, agent_headers, test_project, db):
+    assert (await _set(client, auth_headers, test_project.id, require_epic_on_close=True)).status_code == 200
+    r = await _set(client, agent_headers, test_project.id, require_epic_on_close=False, description="nope")
+    assert r.status_code == 403
+    assert (await client.get(f"/api/projects/{test_project.id}", headers=auth_headers)).json()["description"] != "nope"
+
+
+@pytest.mark.asyncio
+async def test_a_person_can_turn_a_gate_off(client, auth_headers, test_project, db):
+    assert (await _set(client, auth_headers, test_project.id, require_epic_on_close=True)).status_code == 200
+    r = await _set(client, auth_headers, test_project.id, require_epic_on_close=False)
+    assert r.status_code == 200
+    assert r.json()["require_epic_on_close"] is False
+
+
+async def _template(client, headers, team_id, **settings):
+    r = await client.post(
+        f"/api/teams/{team_id}/templates", headers=headers,
+        json={"name": "loosen", "body": {"version": 1, "sections": {"settings": settings}}},
+    )
+    assert r.status_code in (200, 201), r.text
+    return r.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_agent_cannot_lift_a_gate_through_a_template(client, auth_headers, agent_headers, test_project, test_team, db):
+    assert (await _set(client, auth_headers, test_project.id, require_epic_on_close=True)).status_code == 200
+    tid = await _template(client, auth_headers, test_team.id, require_epic_on_close=False, default_sprint_budget=7)
+    # A dry run only reports, so it is allowed.
+    dry = await client.post(f"/api/templates/{tid}/apply", headers=agent_headers,
+                            json={"project_id": test_project.id, "dry_run": True})
+    assert dry.status_code == 200, dry.text
+    r = await client.post(f"/api/templates/{tid}/apply", headers=agent_headers,
+                          json={"project_id": test_project.id})
+    assert r.status_code == 403, r.text
+    assert "require_epic_on_close" in r.json()["detail"]
+    project = (await client.get(f"/api/projects/{test_project.id}", headers=auth_headers)).json()
+    assert project["require_epic_on_close"] is True
+    assert project["default_sprint_budget"] != 7  # nothing applied
+    # A person can apply it.
+    ok = await client.post(f"/api/templates/{tid}/apply", headers=auth_headers,
+                           json={"project_id": test_project.id})
+    assert ok.status_code == 200, ok.text
+
+
+@pytest.mark.asyncio
+async def test_agent_can_apply_a_template_that_tightens(client, agent_headers, test_project, test_team, auth_headers, db):
+    tid = await _template(client, auth_headers, test_team.id, require_epic_on_close=True)
+    r = await client.post(f"/api/templates/{tid}/apply", headers=agent_headers,
+                          json={"project_id": test_project.id})
+    assert r.status_code == 200, r.text
