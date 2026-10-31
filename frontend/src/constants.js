@@ -17,3 +17,7 @@ export const PRIORITY_OPTIONS = ['no_priority', 'urgent', 'high', 'medium', 'low
 
 /** Board column statuses (excludes canceled) */
 export const BOARD_STATUSES = ['backlog', 'todo', 'in_progress', 'in_review', 'done'];
+
+// The Issues list rows j/k move over: every row except those inside a
+// collapsed group (CHT-1932). Flat-list rows sit directly in the list.
+export const ISSUE_NAV_ROWS = '#issues-list > .issue-row, #issues-list .issue-group:not(.collapsed) .issue-row';
