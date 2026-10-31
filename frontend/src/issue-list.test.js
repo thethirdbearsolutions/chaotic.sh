@@ -70,6 +70,7 @@ import {
     highlightSearchMatch,
     getDescriptionSnippet,
     appendPendingRows,
+    cancelPendingRows,
     hasPendingRows,
     FIRST_PAINT_ROWS,
 } from './issue-list.js';
@@ -160,13 +161,30 @@ describe('issue-list', () => {
             expect(hasPendingRows()).toBe(false);
         });
 
-        it('paints the first rows at once and the rest on later ticks', async () => {
+        // Fake timers and frames, so the chunk sequence itself is checked and
+        // no machine is too slow for it (CHT-1917).
+        const drainFrames = () => {
+            const counts = [rowCount()];
+            while (vi.getTimerCount() > 0) {
+                vi.advanceTimersToNextTimer();
+                if (rowCount() !== counts[counts.length - 1]) counts.push(rowCount());
+            }
+            return counts;
+        };
+        const useFakeFrames = () => vi.useFakeTimers({
+            toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'],
+        });
+        afterEach(() => {
+            cancelPendingRows();
+            vi.useRealTimers();
+        });
+
+        it('paints the first rows at once and the rest in chunks on later ticks', () => {
+            useFakeFrames();
             setTestIssues(many(400));
             renderIssues();
-            expect(rowCount()).toBe(FIRST_PAINT_ROWS);
             expect(hasPendingRows()).toBe(true);
-            // Generous: this checks the order rows land in, not machine speed (CHT-1917).
-            await vi.waitFor(() => expect(rowCount()).toBe(400), { timeout: 5000 });
+            expect(drainFrames()).toEqual([FIRST_PAINT_ROWS, 210, 360, 400]);
             const ids = [...document.querySelectorAll('#issues-list .issue-row')].map(r => r.dataset.issueId);
             expect(ids).toEqual(many(400).map(i => i.id));
         });
@@ -179,13 +197,17 @@ describe('issue-list', () => {
             expect(hasPendingRows()).toBe(false);
         });
 
-        it('drops the queued rows of a superseded paint', async () => {
+        it('drops the queued rows of a superseded paint', () => {
+            useFakeFrames();
             setTestIssues(many(400));
             renderIssues();
-            setTestIssues(many(5));
+            // Same ids again, so rows left over from the first queue would
+            // show up as duplicates.
+            setTestIssues(many(400, { title: 'Second paint' }));
             renderIssues();
-            await new Promise(r => setTimeout(r, 20));
-            expect(rowCount()).toBe(5);
+            drainFrames();
+            const ids = [...document.querySelectorAll('#issues-list .issue-row')].map(r => r.dataset.issueId);
+            expect(ids).toEqual(many(400).map(i => i.id));
         });
 
         it('appends queued rows into their own group', () => {
