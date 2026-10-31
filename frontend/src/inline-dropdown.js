@@ -3,6 +3,7 @@
  * Extracted from app.js for testability
  */
 
+import { handleCloseFollowups } from './epic-prompt.js';
 import { api } from './api.js';
 import { getIssues, setIssues, getLabels, setLabels, getCurrentTeam, getCurrentProject, getCurrentDetailIssue, setCurrentDetailIssue, getCurrentDetailSprints } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
@@ -708,6 +709,8 @@ export async function updateIssueField(issueId, field, value) {
         if (!updatedIssue || !updatedIssue.id) {
             throw new Error('Invalid response from server');
         }
+        // Closing the last open child of an epic asks what next (CHT-1901).
+        handleCloseFollowups(updatedIssue);
 
         // Update local state with full issue object (not just the changed
         // field), so related fields like completed_at are updated too. A

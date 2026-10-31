@@ -43,6 +43,7 @@ import sh.chaotic.api.models.IssueResponse
 import sh.chaotic.api.models.IssueStatus
 import sh.chaotic.api.models.IssueType
 import sh.chaotic.api.models.IssueUpdate
+import sh.chaotic.api.models.IssueUpdateResponse
 import sh.chaotic.api.models.TeamCommentResponse
 
 import sh.chaotic.api.infrastructure.*
@@ -930,14 +931,14 @@ import io.ktor.http.ParametersBuilder
         /**
         * PATCH /api/issues/{issue_id}
         * Update Issue
-        * Update an issue.
+        * Update an issue.  Closing one also reports what that leaves open (CHT-1901, CHT-1884): &#x60;&#x60;parent_prompt&#x60;&#x60; when it was the last open child of an open parent, &#x60;&#x60;open_children&#x60;&#x60; when it still has open children.
          * @param issueId  
          * @param issueUpdate  
          * @param xChaoticInteractive  (optional)
-         * @return IssueResponse
+         * @return IssueUpdateResponse
         */
             @Suppress("UNCHECKED_CAST")
-        open suspend fun updateIssueApiIssuesIssueIdPatch(issueId: kotlin.String, issueUpdate: IssueUpdate, xChaoticInteractive: kotlin.String? = null): HttpResponse<IssueResponse> {
+        open suspend fun updateIssueApiIssuesIssueIdPatch(issueId: kotlin.String, issueUpdate: IssueUpdate, xChaoticInteractive: kotlin.String? = null): HttpResponse<IssueUpdateResponse> {
 
             val localVariableAuthNames = listOf<String>("HTTPBearer")
 

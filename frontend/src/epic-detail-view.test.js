@@ -11,6 +11,7 @@ vi.mock('./api.js', () => ({
         getSubIssues: vi.fn(),
         getActivities: vi.fn(),
         getComments: vi.fn(),
+        updateIssue: vi.fn(),
     },
 }));
 
@@ -72,7 +73,7 @@ vi.mock('./issue-detail-view.js', () => ({
 
 import { api } from './api.js';
 import { getCurrentView } from './state.js';
-import { showApiError } from './ui.js';
+import { showApiError, showToast } from './ui.js';
 import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
@@ -451,6 +452,42 @@ describe('epic-detail-view', () => {
 
                 expect(api.getIssue).toHaveBeenCalledWith('epic-c');
             });
+        });
+    });
+
+    describe('pinned status (CHT-1901)', () => {
+        it('offers "Follow sub-issues" for an open pinned epic', async () => {
+            api.getIssue.mockResolvedValue(makeEpic({ status_pinned: true }));
+            await viewEpic('epic-1');
+            const content = document.getElementById('epic-detail-content').innerHTML;
+            expect(content).toContain('data-action="epic-follow-children"');
+        });
+
+        it('hides it when the status follows the children', async () => {
+            await viewEpic('epic-1');
+            const content = document.getElementById('epic-detail-content').innerHTML;
+            expect(content).not.toContain('epic-follow-children');
+        });
+
+        it('hides it on a closed epic', async () => {
+            api.getIssue.mockResolvedValue(makeEpic({ status: 'done', status_pinned: true }));
+            await viewEpic('epic-1');
+            const content = document.getElementById('epic-detail-content').innerHTML;
+            expect(content).not.toContain('epic-follow-children');
+        });
+
+        it('unpins and re-renders', async () => {
+            api.updateIssue.mockResolvedValue(makeEpic());
+            await epicDetailActions['epic-follow-children']({}, { epicId: 'epic-1' });
+            expect(api.updateIssue).toHaveBeenCalledWith('epic-1', { status_follows_children: true });
+            expect(showToast).toHaveBeenCalled();
+            expect(api.getIssue).toHaveBeenCalledWith('epic-1');
+        });
+
+        it('reports a failed unpin', async () => {
+            api.updateIssue.mockRejectedValue(new Error('nope'));
+            await epicDetailActions['epic-follow-children']({}, { epicId: 'epic-1' });
+            expect(showApiError).toHaveBeenCalledWith('update epic', expect.any(Error));
         });
     });
 

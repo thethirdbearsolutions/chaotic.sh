@@ -1081,7 +1081,8 @@ MCP_NOT_ROW_KEYED = {
     **{("issue_create", a): _MCP_VALUE for a in (
         "title", "description", "status", "priority", "issue_type", "estimate")},
     **{("issue_update", a): _MCP_VALUE for a in (
-        "status", "priority", "estimate", "title", "description", "issue_type", "no_parent")},
+        "status", "priority", "estimate", "title", "description", "issue_type", "no_parent",
+        "follow_children")},
     ("issue_comment", "content"): _MCP_VALUE,
     ("issue_start", "lease_seconds"): _MCP_VALUE,
     **{("issue_ready", a): _MCP_VALUE for a in ("mine", "include_assigned", "all_projects")},

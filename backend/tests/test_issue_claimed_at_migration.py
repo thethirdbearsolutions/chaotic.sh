@@ -118,7 +118,7 @@ def _rows(path: str) -> dict[str, dict]:
 
 def test_backfill_and_nothing_else_changes(at_before):
     before = _rows(at_before)
-    _migrate(at_before)
+    _migrate(at_before, target=THIS)
     after = _rows(at_before)
 
     assert set(after) == set(ISSUES)

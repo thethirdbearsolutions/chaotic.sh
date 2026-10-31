@@ -1104,7 +1104,7 @@
       }
     },
     "issue_update": {
-      "description": "Update an issue's status, priority, estimate, assignee, title, description, type, and/or parent.\n\n`parent` re-parents an existing issue (or makes it a sub-issue);\n`no_parent` detaches it. `issue_type` changes the type, e.g. to\npromote a task with children to an epic (CHT-1885). Labels go\nthrough issue_label, relations through issue_block/issue_unblock,\nand sprint membership through sprint_add/sprint_remove.\n\nAn `estimate` off the project's declared estimate_scale is stored as\ngiven and reported back in `warnings` (absent otherwise).\n\nOnly fields explicitly passed are changed. Returns the updated issue.\nPass `attest` to satisfy pending close/claim rituals in the same call.",
+      "description": "Update an issue's status, priority, estimate, assignee, title, description, type, and/or parent.\n\n`parent` re-parents an existing issue (or makes it a sub-issue);\n`no_parent` detaches it. `issue_type` changes the type, e.g. to\npromote a task with children to an epic (CHT-1885). Labels go\nthrough issue_label, relations through issue_block/issue_unblock,\nand sprint membership through sprint_add/sprint_remove.\n\nAn `estimate` off the project's declared estimate_scale is stored as\ngiven and reported back in `warnings` (absent otherwise).\n\nOnly fields explicitly passed are changed. Returns the updated issue.\nPass `attest` to satisfy pending close/claim rituals in the same call.\n\nClosing a ticket can add `parent_prompt`: it was the last open child\nof an open parent, which never closes itself, so ask the user whether\nto close that parent or add more. `open_children` means the closed\nticket still has open sub-issues. An epic's status follows its\nchildren until set by hand; `follow_children` undoes that.",
       "inputSchema": {
         "properties": {
           "assignee": {
@@ -1161,6 +1161,12 @@
             "default": null,
             "description": "New story point estimate.",
             "title": "Estimate"
+          },
+          "follow_children": {
+            "default": false,
+            "description": "Epics only: let the status follow the sub-issues again after it was set by hand. Cannot be combined with `status`.",
+            "title": "Follow Children",
+            "type": "boolean"
           },
           "identifier": {
             "description": "Issue identifier, e.g. CHT-123.",
