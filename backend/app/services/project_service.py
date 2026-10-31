@@ -19,6 +19,20 @@ from app.schemas.project import ProjectCreate, ProjectUpdate
 Project = OxydeProject
 
 
+
+# Project settings that gate a ticket's claim or close (CHT-1905). An
+# agent may turn one on but never off. The require_* ones hold agents to
+# a rule, so the agent being held cannot be the one to lift it;
+# human_rituals_required holds people, and an agent should not be able
+# to let people skip their rituals either.
+GATE_SETTINGS = (
+    "human_rituals_required",
+    "require_estimate_on_claim",
+    "require_assignee_on_claim",
+    "require_epic_on_close",
+)
+
+
 class ProjectService:
     """Service for project operations."""
 

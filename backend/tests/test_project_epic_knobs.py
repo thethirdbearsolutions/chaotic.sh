@@ -431,3 +431,35 @@ async def test_agent_can_apply_a_template_that_tightens(client, agent_headers, t
     r = await client.post(f"/api/templates/{tid}/apply", headers=agent_headers,
                           json={"project_id": test_project.id})
     assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_agent_lifting_two_gates_hears_both(client, auth_headers, agent_headers, test_project, db):
+    assert (await _set(client, auth_headers, test_project.id,
+                       require_epic_on_close=True, require_assignee_on_claim=True)).status_code == 200
+    # A string the schema coerces to False is still a lift.
+    r = await _set(client, agent_headers, test_project.id,
+                   require_epic_on_close="false", require_assignee_on_claim=0)
+    assert r.status_code == 403, r.text
+    assert "require_epic_on_close" in r.json()["detail"]
+    assert "require_assignee_on_claim" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_template_apply_creates_no_rituals(client, auth_headers, agent_headers, test_project, test_team, db):
+    from app.oxyde_models.ritual import OxydeRitual
+
+    assert (await _set(client, auth_headers, test_project.id, require_epic_on_close=True)).status_code == 200
+    r = await client.post(
+        f"/api/teams/{test_team.id}/templates", headers=auth_headers,
+        json={"name": "with-ritual", "body": {"version": 1, "sections": {
+            "settings": {"require_epic_on_close": False},
+            "rituals": [{"name": "tpl-ritual", "prompt": "Did you?", "trigger": "ticket_close",
+                         "approval_mode": "auto"}],
+        }}},
+    )
+    assert r.status_code in (200, 201), r.text
+    r = await client.post(f"/api/templates/{r.json()['id']}/apply", headers=agent_headers,
+                          json={"project_id": test_project.id})
+    assert r.status_code == 403, r.text
+    assert await OxydeRitual.objects.filter(project_id=test_project.id, name="tpl-ritual").count() == 0

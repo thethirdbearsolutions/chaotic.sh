@@ -3,11 +3,11 @@ from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import (
     CurrentUser, is_in_team_directory, can_read_team_data,
-    is_eligible_project_member, is_project_scoped_agent,
+    is_eligible_project_member, is_project_scoped_agent, refuse_agent_lifting_gates,
 )
 from app.api.visibility import team_hidden, visible_project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
-from app.services.project_service import ProjectService
+from app.services.project_service import GATE_SETTINGS, ProjectService
 from app.services.team_service import TeamService
 from app.websocket import broadcast_project_event
 
@@ -137,33 +137,6 @@ async def get_project(project_id: str, current_user: CurrentUser) -> ProjectResp
     project = await visible_project(current_user, project_id)
 
     return ProjectResponse.model_validate(project)
-
-
-# Project settings that gate a ticket's claim or close. An agent may turn
-# one on but never off: they exist to hold agents to a rule, so the agent
-# being held cannot be the one to lift it (CHT-1905).
-GATE_SETTINGS = (
-    "human_rituals_required",
-    "require_estimate_on_claim",
-    "require_assignee_on_claim",
-    "require_epic_on_close",
-)
-
-
-def refuse_agent_lifting_gates(current_user, lifted: list[str]) -> None:
-    """403 when an agent would switch off gate settings that are on.
-
-    Shared by the project PATCH and template apply, the two ways a
-    project's settings change."""
-    if current_user.is_agent and lifted:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Agents cannot turn off "
-                + ", ".join(lifted)
-                + "; a person has to change it."
-            ),
-        )
 
 
 def _lifted_by_update(project, project_in: ProjectUpdate) -> list[str]:

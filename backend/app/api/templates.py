@@ -12,7 +12,7 @@ is admin-only everywhere else.
 from fastapi import APIRouter, HTTPException, status
 
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, can_read_team_data
+from app.api.deps import CurrentUser, can_read_team_data, refuse_agent_lifting_gates
 from app.api.visibility import can_see_project, team_hidden, visible_project_in_team, visible_template
 from app.schemas.template import (
     TemplateApplyReport,
@@ -21,7 +21,6 @@ from app.schemas.template import (
     TemplateResponse,
     TemplateSnapshotRequest,
 )
-from app.api.projects import GATE_SETTINGS, refuse_agent_lifting_gates
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.template_service import TemplateService
@@ -157,26 +156,16 @@ async def apply_template(
         )
 
     try:
-        if current_user.is_agent and not apply_in.dry_run:
-            # An agent may not lift a gate through a template either (CHT-1905).
-            preview = await TemplateService().apply(
-                template, project,
-                update_rituals=apply_in.update_rituals,
-                update_all=apply_in.update_all,
-                dry_run=True,
-            )
-            refuse_agent_lifting_gates(current_user, [
-                change.field for change in preview.settings
-                if change.field in GATE_SETTINGS and change.action == "set"
-                and change.old_value is True and change.new_value is False
-            ])
-
         return await TemplateService().apply(
             template,
             project,
             update_rituals=apply_in.update_rituals,
             update_all=apply_in.update_all,
             dry_run=apply_in.dry_run,
+            # Checked inside the apply's transaction, against the values
+            # it is about to overwrite (CHT-1905). Defense in depth: the
+            # route already wants a team admin, which agents are not.
+            refuse_lifting=lambda lifted: refuse_agent_lifting_gates(current_user, lifted),
         )
     except ValueError as e:
         raise HTTPException(
