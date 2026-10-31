@@ -57,6 +57,10 @@ let pendingSelectionId = null;
 // the queue is dropped instead of landing in that state.
 let paintAnchor = null;
 
+// Groups the user collapsed, per group-by choice, so a re-render (an
+// edit, a /ws update) doesn't open them again (CHT-1923).
+const collapsedGroups = new Map();
+
 // Rows a re-paint must render at once: everything down to the bottom of
 // the viewport and a screen beyond, so the document keeps its height and
 // the scroll position survives (a /ws event re-renders while the user is
@@ -171,6 +175,9 @@ export function renderIssues() {
     // an incoming websocket event, or an inline field edit), so the visible
     // cursor silently drifts from the tracked index.
     const selectedIssueId = list.querySelector('.issue-row.keyboard-selected')?.dataset.issueId;
+    // The rebuild also drops focus from whatever control in the list had
+    // it; put it back on the same control of the same issue (CHT-1923).
+    const focused = focusedControl(list);
 
     list.classList.add('issue-list-linear');
 
@@ -228,6 +235,13 @@ export function renderIssues() {
 
     firstPaintBudget = Infinity;
     paintAnchor = list.firstElementChild;
+    const collapsed = collapsedGroups.get(groupBy);
+    if (collapsed?.size) {
+        list.querySelectorAll('.issue-group').forEach((group) => {
+            if (collapsed.has(group.dataset.group)) group.classList.add('collapsed');
+        });
+    }
+    if (focused) restoreFocus(list, focused);
     // A selected row that is still queued is selected once it lands.
     const selectedPainted = !!selectedIssueId && Array.prototype.some.call(
         list.querySelectorAll('.issue-row'), (row) => row.dataset.issueId === selectedIssueId,
@@ -546,9 +560,46 @@ function renderGroupedBySprint(list, issues) {
  */
 export function toggleGroup(groupId) {
     const group = document.querySelector(`.issue-group[data-group="${groupId}"]`);
-    if (group) {
-        group.classList.toggle('collapsed');
-    }
+    if (!group) return;
+    const isCollapsed = group.classList.toggle('collapsed');
+    const groupBy = getGroupByValue();
+    if (!collapsedGroups.has(groupBy)) collapsedGroups.set(groupBy, new Set());
+    const collapsed = collapsedGroups.get(groupBy);
+    if (isCollapsed) collapsed.add(group.dataset.group);
+    else collapsed.delete(group.dataset.group);
+}
+
+/** Forget collapsed groups (tests). */
+export function clearCollapsedGroups() {
+    collapsedGroups.clear();
+}
+
+/**
+ * The control in the list that has focus, as something that survives a
+ * rebuild: its row's issue id and, for a row's dropdown trigger, its type.
+ */
+function focusedControl(list) {
+    const active = document.activeElement;
+    if (!active || active === list || !list.contains(active)) return null;
+    const row = active.closest('.issue-row');
+    if (!row?.dataset.issueId) return null;
+    return {
+        issueId: row.dataset.issueId,
+        dropdownType: active.dataset?.dropdownType || null,
+        isRow: active === row,
+    };
+}
+
+function restoreFocus(list, { issueId, dropdownType, isRow }) {
+    if (list.contains(document.activeElement)) return;
+    const row = Array.prototype.find.call(
+        list.querySelectorAll('.issue-row'), (r) => r.dataset.issueId === issueId,
+    );
+    if (!row) return;
+    const target = isRow ? row
+        : dropdownType ? row.querySelector(`[data-dropdown-type="${dropdownType}"]`)
+            : row.querySelector('a[href], button');
+    target?.focus({ preventScroll: true });
 }
 
 /**

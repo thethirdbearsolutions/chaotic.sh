@@ -64,6 +64,7 @@ import {
     renderIssues,
     renderIssueRow,
     toggleGroup,
+    clearCollapsedGroups,
     getPriorityIcon,
     getStatusIcon,
     sumEstimates,
@@ -723,6 +724,51 @@ describe('issue-list', () => {
             expect(document.querySelector('.issue-group').classList.contains('collapsed')).toBe(false);
         });
 
+        describe('across a re-render (CHT-1923)', () => {
+            const grouped = [
+                { id: 'i1', identifier: 'T-1', title: 'One', status: 'todo', priority: 'high' },
+                { id: 'i2', identifier: 'T-2', title: 'Two', status: 'done', priority: 'low' },
+            ];
+            beforeEach(() => {
+                clearCollapsedGroups();
+                document.body.innerHTML = '<div id="issues-list"></div>';
+                setTestIssues(grouped);
+                getGroupByValue.mockReturnValue('status');
+            });
+            afterEach(() => {
+                clearCollapsedGroups();
+                getGroupByValue.mockReturnValue('');
+            });
+            const isCollapsed = (key) => document.querySelector(`.issue-group[data-group="${key}"]`).classList.contains('collapsed');
+
+            it('keeps a collapsed group collapsed', () => {
+                renderIssues();
+                toggleGroup('done');
+                renderIssues();
+                expect(isCollapsed('done')).toBe(true);
+                expect(isCollapsed('todo')).toBe(false);
+            });
+
+            it('opens it again once expanded', () => {
+                renderIssues();
+                toggleGroup('done');
+                toggleGroup('done');
+                renderIssues();
+                expect(isCollapsed('done')).toBe(false);
+            });
+
+            it('remembers collapsed groups per group-by choice', () => {
+                renderIssues();
+                toggleGroup('done');
+                getGroupByValue.mockReturnValue('priority');
+                renderIssues();
+                expect(document.querySelectorAll('.issue-group.collapsed')).toHaveLength(0);
+                getGroupByValue.mockReturnValue('status');
+                renderIssues();
+                expect(isCollapsed('done')).toBe(true);
+            });
+        });
+
         it('does nothing if group not found', () => {
             document.body.innerHTML = `
                 <div class="issue-group" data-group="todo"></div>
@@ -730,6 +776,37 @@ describe('issue-list', () => {
 
             // Should not throw
             toggleGroup('nonexistent');
+        });
+    });
+
+    describe('focus across a re-render (CHT-1923)', () => {
+        beforeEach(() => {
+            document.body.innerHTML = '<div id="issues-list"></div>';
+            setTestIssues([
+                { id: 'i1', identifier: 'T-1', title: 'One', status: 'todo', priority: 'high' },
+                { id: 'i2', identifier: 'T-2', title: 'Two', status: 'todo', priority: 'low' },
+            ]);
+            getGroupByValue.mockReturnValue('');
+        });
+        const rowOf = (id) => document.querySelector(`#issues-list .issue-row[data-issue-id="${id}"]`);
+
+        it('puts focus back on the same trigger of the same issue', () => {
+            renderIssues();
+            const trigger = rowOf('i2').querySelector('[data-dropdown-type="priority"]');
+            expect(trigger).not.toBeNull();
+            trigger.focus();
+            renderIssues();
+            expect(document.activeElement).not.toBe(trigger); // a new element
+            expect(document.activeElement).toBe(rowOf('i2').querySelector('[data-dropdown-type="priority"]'));
+        });
+
+        it('leaves focus alone when nothing in the list had it', () => {
+            const outside = document.createElement('input');
+            document.body.appendChild(outside);
+            outside.focus();
+            renderIssues();
+            renderIssues();
+            expect(document.activeElement).toBe(outside);
         });
     });
 
