@@ -175,6 +175,7 @@ vi.mock('./issue-detail-view.js', () => ({
 }));
 vi.mock('./issue-store.js', () => ({
     upsertIssue: vi.fn(),
+    getStoredIssue: vi.fn(),
 }));
 vi.mock('./state.js', () => ({
     getCurrentView: vi.fn(),

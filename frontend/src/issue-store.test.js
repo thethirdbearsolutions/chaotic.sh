@@ -226,6 +226,14 @@ describe('issue-store', () => {
             expect(sameRows([row('a')], [row('a', { sprint_id: 's' })])).toBe(false);
             expect(sameRows([row('a', { description: null })], [row('a', { description: 'x' })])).toBe(false);
         });
+
+        // CHT-1915 review M3: a guess the server never took, same version
+        it('sees the fields a row shows even at the same version', () => {
+            for (const [field, value] of [['status', 'done'], ['priority', 'urgent'], ['estimate', 8],
+                ['assignee_id', 'u9'], ['issue_type', 'bug'], ['title', 'Renamed']]) {
+                expect(sameRows([row('a')], [row('a', { [field]: value })])).toBe(false);
+            }
+        });
     });
 
     describe('subscriber', () => {
