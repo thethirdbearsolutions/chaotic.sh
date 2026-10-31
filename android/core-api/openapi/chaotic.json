@@ -6082,7 +6082,7 @@
           "agents"
         ],
         "summary": "Update Agent",
-        "description": "Update an agent's name or avatar, or make it a registrar\n(`can_register`, CHT-1498). Allowed to its creator while in the\nagent's team and to that team's admins. A built-in app's session may\nrename, but not change `can_register` (CHT-1602): a registrar mints\nkeys, a capability that would outlive the session.",
+        "description": "Update an agent's name or avatar, or make it a registrar\n(`can_register`, CHT-1498). Allowed to its creator while in the\nagent's team and to that team's admins. A built-in app's session may\nrename, but not change `can_register` (CHT-1602): a registrar mints\nkeys, a capability that would outlive the session.\n\nA registered session identity may also rename itself, and change\nnothing else (CHT-1918): a cloud session has no person at hand to\nname it, and the name is all it may choose. It still may not rename\nany other agent.",
         "operationId": "update_agent_api_agents__agent_id__patch",
         "security": [
           {
