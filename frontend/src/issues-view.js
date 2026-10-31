@@ -31,6 +31,18 @@ import { showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
 import { OPEN_STATUSES } from './constants.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
+import {
+    queryKey,
+    readQuery,
+    readQueryMeta,
+    writeQuery,
+    setQueryMeta,
+    setCurrentQueryKey,
+    getCurrentQueryKey,
+    rememberView,
+    queryForView,
+    sameRows,
+} from './issue-store.js';
 
 // Import from sub-modules
 import {
@@ -247,6 +259,63 @@ function setHiddenClosedHint(count) {
     hint.classList.remove('hidden');
 }
 
+/**
+ * What the Issues view is showing, as the user chose it: the team, the
+ * filters in the URL (syncFiltersToUrl keeps them there) and the search
+ * text. Readable before the filter dropdowns have their options, which is
+ * what lets a view render its cached rows at once (CHT-1894).
+ */
+export function currentViewKey() {
+    const search = new URLSearchParams(window.location.search);
+    search.sort();
+    const text = document.getElementById('issue-search')?.value?.trim() || '';
+    return JSON.stringify([getCurrentTeam()?.id || '', search.toString(), text]);
+}
+
+function setListRefreshing(on) {
+    document.getElementById('issues-list')?.classList.toggle('is-refreshing', !!on);
+}
+
+function showCachedRows(key, rows) {
+    setListRefreshing(false);
+    setCurrentQueryKey(key);
+    setIssues(rows);
+    if (getCurrentView() === 'issues') setDetailNavContext(rows);
+    renderIssues();
+    setHiddenClosedHint(readQueryMeta(key).hiddenClosed || 0);
+}
+
+function showLoadingState() {
+    const list = document.getElementById('issues-list');
+    if (list?.querySelector('.issue-row')) {
+        setListRefreshing(true);
+    } else {
+        setCurrentQueryKey(null);
+        showIssuesLoadingSkeleton();
+        setHiddenClosedHint(0);
+    }
+}
+
+/**
+ * Entering the Issues view: render the rows last loaded for this view at
+ * once, from the store, or the skeleton when there are none. loadIssues()
+ * follows and refreshes them (CHT-1894).
+ */
+export function showCachedIssuesOrSkeleton() {
+    const key = queryForView(currentViewKey());
+    const cached = key ? readQuery(key) : null;
+    if (cached) {
+        setSelectedIssueIndex(-1);
+        showCachedRows(key, cached);
+        return true;
+    }
+    setCurrentQueryKey(null);
+    setListRefreshing(false);
+    showIssuesLoadingSkeleton();
+    setHiddenClosedHint(0);
+    return false;
+}
+
 export async function loadIssues() {
     setSelectedIssueIndex(-1);
     const requestId = ++loadIssuesRequestId;
@@ -268,9 +337,9 @@ export async function loadIssues() {
         return;
     }
 
-    showIssuesLoadingSkeleton();
-    setHiddenClosedHint(0);
-
+    // The view key is read now, before the awaits below: it names what
+    // the user asked for (URL filters + search text) at call time.
+    const viewKey = currentViewKey();
     const params = { limit: 1000 };
 
     const sortValue = document.getElementById('sort-by-select')?.value || 'created-desc';
@@ -332,8 +401,13 @@ export async function loadIssues() {
     // query used to silently no-op with no visible explanation.
     if (searchQuery && searchQuery.length >= 1) {
         params.search = searchQuery;
+    } else {
+        // The compact shape (CHT-1893): a list never shows the description,
+        // except as a search snippet, so only a search asks for it.
+        params.fields = 'list';
     }
 
+    let showingCached = false;
     try {
         // Label/exclude-label filters are sent to the server (which matches
         // by name, case-insensitively) instead of over-fetching a 1000-row
@@ -353,6 +427,25 @@ export async function loadIssues() {
         }
 
         if (projectId) params.project_id = projectId;
+
+        // Render what the store already has for this query at once, then
+        // refresh in the background (CHT-1894). With nothing cached, keep
+        // the rows on screen (dimmed) while the new ones load; the skeleton
+        // is only for a list with nothing to show yet.
+        const key = queryKey({ ...params, scope: projectId || `team:${getCurrentTeam().id}` });
+        const cached = readQuery(key);
+        if (cached) {
+            showingCached = true;
+            // Entering the view already painted these rows
+            // (showCachedIssuesOrSkeleton); painting them again would
+            // double the cost of Back.
+            if (!(getCurrentQueryKey() === key && sameRows(getIssues(), cached))) {
+                showCachedRows(key, cached);
+            }
+        } else {
+            showLoadingState();
+        }
+
         const fetchIssues = (p) => {
             if (projectId) return api.getIssues(p);
             if (getProjects().length > 0) return api.getTeamIssues(getCurrentTeam().id, p);
@@ -368,8 +461,14 @@ export async function loadIssues() {
 
         const issues = await fetchIssues(params);
 
+        // Cache every response, even a superseded one: it is still that
+        // query's latest result.
+        writeQuery(key, issues);
         if (requestId !== loadIssuesRequestId) return; // a newer loadIssues() has since started — drop this stale response
+        rememberView(viewKey, key);
 
+        const unchanged = showingCached && sameRows(getIssues(), issues);
+        setCurrentQueryKey(key);
         setIssues(issues);
         // Prev/next issue-detail nav context (CHT-1211 item 2) — this is the
         // Issues-view's own list, so it's the reliable source when arriving
@@ -386,13 +485,22 @@ export async function loadIssues() {
         await ensureSprintCacheForIssues(projectIds);
         if (requestId !== loadIssuesRequestId) return; // guard again — a newer request may have resolved during the await above
 
-        renderIssues();
+        if (!unchanged) renderIssues();
+        setListRefreshing(false);
 
         const hiddenClosed = await closedCountPromise;
+        setQueryMeta(key, { hiddenClosed });
         if (requestId !== loadIssuesRequestId) return;
         setHiddenClosedHint(hiddenClosed);
     } catch (e) {
         if (requestId !== loadIssuesRequestId) return;
+        setListRefreshing(false);
+        if (showingCached) {
+            // The cached rows stay: a failed background refresh must not
+            // blank a list the user is reading.
+            showApiError('refresh issues', e);
+            return;
+        }
         // CHT-1224: the skeleton from showIssuesLoadingSkeleton() above must
         // not be left on screen forever — replace it with a persistent error
         // + Retry cta (matches board.js's failed-load pattern) instead of a

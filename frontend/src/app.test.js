@@ -88,7 +88,7 @@ vi.mock('./issues-view.js', () => ({
     debounceSearch: vi.fn(),
     filterIssues: vi.fn(),
     updateGroupBy: vi.fn(),
-    showIssuesLoadingSkeleton: vi.fn(),
+    showCachedIssuesOrSkeleton: vi.fn(),
 }));
 vi.mock('./gate-approvals.js', () => ({ loadGateApprovals: vi.fn() }));
 vi.mock('./inbox.js', () => ({
@@ -221,7 +221,7 @@ vi.mock('./utils.js', () => ({
 
 // Import mocked modules so we can assert on them
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
-import { initFilterBar, loadIssues, loadFiltersFromUrl, populateLabelFilter, updateSprintFilter, showIssuesLoadingSkeleton } from './issues-view.js';
+import { initFilterBar, loadIssues, loadFiltersFromUrl, populateLabelFilter, updateSprintFilter, showCachedIssuesOrSkeleton } from './issues-view.js';
 import { loadTeamMembers, loadTeamAgents, loadTeamInvitations } from './teams.js';
 import { loadApiKeys } from './api-keys.js';
 import { loadAgents } from './agents.js';
@@ -318,10 +318,11 @@ describe('app.js view registrations', () => {
         await vi.waitFor(() => expect(loadIssues).toHaveBeenCalled());
     });
 
-    // CHT-1211 item 8: showIssuesLoadingSkeleton() used to only run inside
-    // loadIssues(), chained after populateLabelFilter()/updateSprintFilter()
-    // resolve — leaving the previous project/view's stale rows visible in
-    // #issues-list until then. It must run synchronously on view entry.
+    // CHT-1211 item 8: the previous project/view's rows used to stay in
+    // #issues-list until populateLabelFilter()/updateSprintFilter()
+    // resolved. They are replaced synchronously on view entry, with the
+    // cached rows for this view or the skeleton (CHT-1894), and after the
+    // URL filters are read, since those pick the cached rows.
     it('clears stale issue rows synchronously, before label/sprint filters resolve', () => {
         // Never-resolving promises prove the skeleton call isn't waiting on
         // these — if it were, this assertion would never see it happen.
@@ -330,7 +331,9 @@ describe('app.js view registrations', () => {
 
         registeredViews['issues']();
 
-        expect(showIssuesLoadingSkeleton).toHaveBeenCalled();
+        expect(showCachedIssuesOrSkeleton).toHaveBeenCalled();
+        expect(loadFiltersFromUrl.mock.invocationCallOrder[0])
+            .toBeLessThan(showCachedIssuesOrSkeleton.mock.invocationCallOrder[0]);
     });
 
     it('team view loads members, agents, and invitations', () => {

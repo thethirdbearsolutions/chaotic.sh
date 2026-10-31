@@ -66,12 +66,13 @@ vi.mock('./api.js', () => ({
 }));
 
 import { api } from './api.js';
-import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setDetailNavContext, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject, setCurrentProject, getCurrentView } from './state.js';
+import { getIssues, getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setDetailNavContext, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject, setCurrentProject, getCurrentView } from './state.js';
 import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
 import { getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { showApiError } from './ui.js';
+import { clearIssueStore } from './issue-store.js';
 
 import { registerActions } from './event-delegation.js';
 
@@ -101,6 +102,7 @@ import {
     updateSprintFilter,
     updateSprintBudgetBar,
     loadIssues,
+    showCachedIssuesOrSkeleton,
     debounceSearch,
     filterIssues,
     getGroupByValue,
@@ -131,6 +133,7 @@ describe('issues-view', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        clearIssueStore();
         replaceStateSpy = vi.spyOn(history, 'replaceState').mockImplementation(() => {});
 
         getCurrentTeam.mockReturnValue({ id: 'team-1' });
@@ -1089,6 +1092,104 @@ describe('issues-view', () => {
             api.getIssues.mockResolvedValue([]);
             await loadIssues();
             expect(setSelectedIssueIndex).toHaveBeenCalledWith(-1);
+        });
+
+        // CHT-1893/CHT-1894: the compact shape, and rendering from the store
+        describe('issue store', () => {
+            const rowsV1 = [
+                { id: 'i-1', project_id: 'p-1', updated_at: 't1', title: 'One' },
+                { id: 'i-2', project_id: 'p-1', updated_at: 't1', title: 'Two' },
+            ];
+            const listHtml = () => document.getElementById('issues-list').innerHTML;
+
+            it('asks for the compact list shape unless searching', async () => {
+                await loadIssues();
+                expect(api.getIssues).toHaveBeenLastCalledWith(expect.objectContaining({ fields: 'list' }));
+                document.getElementById('issue-search').value = 'login';
+                await loadIssues();
+                expect(api.getIssues.mock.lastCall[0].fields).toBeUndefined();
+            });
+
+            it('shows the skeleton on first load only, then renders cached rows at once', async () => {
+                api.getIssues.mockResolvedValue(rowsV1);
+                await loadIssues();
+                expect(setIssues).toHaveBeenLastCalledWith(rowsV1);
+
+                // Second load: the cached rows render before the request resolves
+                let resolve;
+                api.getIssues.mockReturnValue(new Promise(r => { resolve = r; }));
+                setIssues.mockClear();
+                renderIssues.mockClear();
+                document.getElementById('issues-list').innerHTML = '<div class="issue-row"></div>';
+                const pending = loadIssues();
+                await vi.waitFor(() => expect(setIssues).toHaveBeenCalledWith(rowsV1));
+                expect(renderIssues).toHaveBeenCalledTimes(1);
+                expect(listHtml()).not.toContain('skeleton');
+
+                const rowsV2 = [{ ...rowsV1[0], updated_at: 't2', title: 'One, renamed' }];
+                resolve(rowsV2);
+                await pending;
+                expect(setIssues).toHaveBeenLastCalledWith(rowsV2);
+                expect(renderIssues).toHaveBeenCalledTimes(2);
+            });
+
+            it('skips the re-render when the refresh brings the same rows', async () => {
+                api.getIssues.mockResolvedValue(rowsV1);
+                await loadIssues();
+                getIssues.mockReturnValue(rowsV1);
+                renderIssues.mockClear();
+                api.getIssues.mockResolvedValue(rowsV1.map(r => ({ ...r })));
+                await loadIssues();
+                // These rows are already on screen under this query, and the
+                // refresh changed nothing: no paint at all.
+                expect(renderIssues).not.toHaveBeenCalled();
+                getIssues.mockReturnValue([]);
+            });
+
+            it('keeps the rows on screen, dimmed, while an uncached query loads', async () => {
+                api.getIssues.mockResolvedValue(rowsV1);
+                const list = document.getElementById('issues-list');
+                list.innerHTML = '<div class="issue-row" data-issue-id="i-1"></div>';
+                let resolve;
+                api.getIssues.mockReturnValue(new Promise(r => { resolve = r; }));
+                const pending = loadIssues();
+                await vi.waitFor(() => expect(list.classList.contains('is-refreshing')).toBe(true));
+                expect(list.innerHTML).toContain('issue-row');
+                resolve(rowsV1);
+                await pending;
+                expect(list.classList.contains('is-refreshing')).toBe(false);
+            });
+
+            it('keeps cached rows when the background refresh fails', async () => {
+                api.getIssues.mockResolvedValue(rowsV1);
+                await loadIssues();
+                document.getElementById('issues-list').innerHTML = '<div class="issue-row"></div>';
+                api.getIssues.mockRejectedValue(new Error('offline'));
+                await loadIssues();
+                expect(listHtml()).not.toContain('Failed to load issues');
+                expect(showApiError).toHaveBeenCalledWith('refresh issues', expect.any(Error));
+            });
+
+            it('renders the rows last loaded for this view on entry, before any request', async () => {
+                api.getIssues.mockResolvedValue(rowsV1);
+                await loadIssues();
+                setIssues.mockClear();
+                api.getIssues.mockClear();
+                expect(showCachedIssuesOrSkeleton()).toBe(true);
+                expect(setIssues).toHaveBeenCalledWith(rowsV1);
+                expect(api.getIssues).not.toHaveBeenCalled();
+
+                clearIssueStore();
+                expect(showCachedIssuesOrSkeleton()).toBe(false);
+                expect(listHtml()).toContain('skeleton');
+            });
+
+            it('keeps a different query separate', async () => {
+                api.getIssues.mockResolvedValue(rowsV1);
+                await loadIssues();
+                document.getElementById('issue-search').value = 'other';
+                expect(showCachedIssuesOrSkeleton()).toBe(false);
+            });
         });
 
         // CHT-1755 review M1: under the Open default a search must say how

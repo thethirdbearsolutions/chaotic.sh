@@ -4,6 +4,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock state.js
+vi.mock('./issue-store.js', () => ({
+    upsertIssue: vi.fn(),
+    removeIssue: vi.fn(),
+}));
 vi.mock('./state.js', () => ({
     getIssues: vi.fn(() => []),
     setIssues: vi.fn(),

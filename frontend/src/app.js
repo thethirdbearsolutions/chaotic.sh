@@ -33,7 +33,7 @@ import {
     debounceSearch,
     filterIssues,
     updateGroupBy,
-    showIssuesLoadingSkeleton,
+    showCachedIssuesOrSkeleton,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
 import { loadQueryView } from './query-view.js';
@@ -199,13 +199,14 @@ registerViews({
         loadInbox({ focusFirst: true });
     },
     'issues': () => {
-        // Clear stale rows synchronously, before the async label/sprint
-        // filter population below — otherwise the previous project/view's
-        // #issues-list content stays visible until loadIssues() itself gets
-        // around to calling this, several awaits later (CHT-1211 item 8).
-        showIssuesLoadingSkeleton();
         // Load filters from URL if present
         loadFiltersFromUrl();
+        // Replace the previous project/view's rows synchronously, before the
+        // async label/sprint filter population below (CHT-1211 item 8):
+        // with the rows this view showed last time when the store has them,
+        // so Back and switching views paint at once (CHT-1894), else the
+        // skeleton. loadIssues() below refreshes them.
+        showCachedIssuesOrSkeleton();
         // Initialize filter bar chips and badge
         initFilterBar();
         // Populate label filter dropdown

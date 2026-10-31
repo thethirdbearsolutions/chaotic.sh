@@ -2887,6 +2887,13 @@ input[type="checkbox"] {
     overflow: hidden;
 }
 
+/* A refetch keeps the rows on screen, dimmed after a short pause so a
+   fast response never flickers (CHT-1894). */
+#issues-list.is-refreshing {
+    opacity: 0.6;
+    transition: opacity 0.15s ease 0.15s;
+}
+
 .issue-row {
     display: flex;
     align-items: center;

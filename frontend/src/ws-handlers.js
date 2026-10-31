@@ -5,6 +5,7 @@
  * Each handler is self-contained and subscribes to specific events.
  */
 
+import { upsertIssue, removeIssue } from './issue-store.js';
 import { subscribe } from './ws.js';
 import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, setCurrentUser, setCurrentTeam, getCurrentView, getCurrentDetailIssue } from './state.js';
 import { getMyIssues, setMyIssues, renderMyIssues, loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
@@ -218,6 +219,9 @@ function handleIssueCreated(data) {
 }
 
 function handleIssueUpdated(data) {
+    // Every cached list holding this issue reads its row from the store
+    // (CHT-1894), so one write keeps them all current.
+    upsertIssue(data);
     // Update in local arrays
     const currentIssues = getIssues();
     if (currentIssues.some(i => i.id === data.id)) {
@@ -265,6 +269,7 @@ function handleIssueUpdated(data) {
 }
 
 function handleIssueDeleted(data) {
+    removeIssue(data.id);
     // Remove from local arrays
     setIssues(getIssues().filter(i => i.id !== data.id));
     setMyIssues(getMyIssues().filter(i => i.id !== data.id));
