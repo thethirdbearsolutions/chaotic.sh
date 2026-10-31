@@ -521,6 +521,12 @@ class TeamService:
         user has afterwards (the invitation's, or the one they kept), and,
         when it created the membership, as MEMBER_ADDED too (with the
         invitation's id), so that ``action=member_added`` lists every join.
+
+        Raises OwnerInvitationRefused for an owner invitation that cannot
+        make this account an owner. When that is because its sender is no
+        longer an owner, the invitation is first voided (status EXPIRED,
+        logged as INVITATION_INVALIDATED) in the claim's transaction
+        (CHT-1868); when it is about the account, nothing changes.
         """
         async with atomic():
             claimed = await OxydeTeamInvitation.objects.filter(
@@ -528,47 +534,74 @@ class TeamService:
             ).update(status=InvitationStatus.ACCEPTED)
             if claimed != 1:
                 return None
-            if invitation.role == TeamRole.OWNER:
+            refused = (
                 await self._check_owner_invitation(invitation, user)
-            member = await self.get_member(invitation.team_id, user.id)
-            joined = False
-            if member is None:
-                try:
-                    member = await OxydeTeamMember.objects.create(
-                        team_id=invitation.team_id,
-                        user_id=user.id,
-                        role=invitation.role,
-                    )
-                    joined = True
-                except IntegrityError:
-                    # Defence in depth for the unique index (CHT-1791).
-                    # Unreachable on SQLite: the claim above already holds
-                    # the write lock, so no other writer can insert in
-                    # between. Any backend that doesn't serialise writers
-                    # gets the existing membership, as above.
-                    member = await self.get_member(invitation.team_id, user.id)
-                    if member is None:
-                        raise
-            await self.record_activity(
-                invitation.team_id, TeamActivityAction.INVITATION_ACCEPTED, actor_id=user.id,
-                target_user_id=user.id, invitation_id=invitation.id, email=invitation.email,
-                role=member.role,
+                if invitation.role == TeamRole.OWNER else None
             )
-            if joined:
-                await self.record_activity(
-                    invitation.team_id, TeamActivityAction.MEMBER_ADDED, actor_id=user.id,
-                    target_user_id=user.id, invitation_id=invitation.id, role=member.role,
+            if refused is not None:
+                # It can never make an owner (CHT-1868): void it, so the
+                # address can be invited again and the link stops
+                # previewing as a live invitation. Committed with the
+                # claim, then refused outside the transaction.
+                await OxydeTeamInvitation.objects.filter(id=invitation.id).update(
+                    status=InvitationStatus.EXPIRED,
                 )
+                await self.record_activity(
+                    invitation.team_id, TeamActivityAction.INVITATION_INVALIDATED, actor_id=user.id,
+                    target_user_id=user.id, invitation_id=invitation.id, email=invitation.email,
+                    role=invitation.role,
+                )
+            else:
+                member = await self.get_member(invitation.team_id, user.id)
+                joined = False
+                if member is None:
+                    try:
+                        member = await OxydeTeamMember.objects.create(
+                            team_id=invitation.team_id,
+                            user_id=user.id,
+                            role=invitation.role,
+                        )
+                        joined = True
+                    except IntegrityError:
+                        # Defence in depth for the unique index (CHT-1791).
+                        # Unreachable on SQLite: the claim above already holds
+                        # the write lock, so no other writer can insert in
+                        # between. Any backend that doesn't serialise writers
+                        # gets the existing membership, as above.
+                        member = await self.get_member(invitation.team_id, user.id)
+                        if member is None:
+                            raise
+                await self.record_activity(
+                    invitation.team_id, TeamActivityAction.INVITATION_ACCEPTED, actor_id=user.id,
+                    target_user_id=user.id, invitation_id=invitation.id, email=invitation.email,
+                    role=member.role,
+                )
+                if joined:
+                    await self.record_activity(
+                        invitation.team_id, TeamActivityAction.MEMBER_ADDED, actor_id=user.id,
+                        target_user_id=user.id, invitation_id=invitation.id, role=member.role,
+                    )
+        if refused is not None:
+            raise refused
         await member.refresh()
         return member
 
-    async def _check_owner_invitation(self, invitation: OxydeTeamInvitation, user: OxydeUser) -> None:
+    async def _check_owner_invitation(
+        self, invitation: OxydeTeamInvitation, user: OxydeUser,
+    ) -> OwnerInvitationRefused | None:
         """An owner invitation makes an owner only of a person with an
         active account, and only while its sender is still an acting owner
         of the team (PR #455 review 1: one sent by an admin before only
         owners could send them must not make an owner). Read after the
-        claim, under its writer lock; raising rolls the claim back, so the
-        invitation stays pending."""
+        claim, under its writer lock.
+
+        A refusal about the accepting account is raised: that rolls the
+        claim back, so the invitation stays pending for its person to
+        accept. A refusal about the invitation itself (its sender is not
+        an acting owner) is returned, for the caller to void the
+        invitation before refusing (CHT-1868). Voided, not left pending:
+        no other account can accept it (it is for one address), and a
+        sender who later becomes an owner again sends a new one."""
         [row] = await execute_raw(
             "SELECT EXISTS (SELECT 1 FROM users WHERE id = ? AND is_agent = 0 AND is_active = 1) AS person, "
             "EXISTS (SELECT 1 FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.team_id = ? "
@@ -578,10 +611,11 @@ class TeamService:
         if not row["person"]:
             raise OwnerInvitationRefused("Only a person with an active account can accept an owner invitation")
         if not row["sender_owns"]:
-            raise OwnerInvitationRefused(
+            return OwnerInvitationRefused(
                 "This owner invitation was sent by someone who is not an owner of the team; "
                 "ask an owner to invite you again"
             )
+        return None
 
     async def decline_invitation(self, invitation: OxydeTeamInvitation) -> None:
         """Decline a team invitation."""

@@ -1083,7 +1083,7 @@
           "teams"
         ],
         "summary": "Accept Invitation",
-        "description": "Accept a team invitation.\n\nAn account whose address is not verified (with SMTP configured) may\nsend ``{\"code\": ...}``: the code a team admin issued for this\ninvitation (CHT-1828), which lets it past the gate for this\ninvitation only and leaves the address unverified, or else a mailed\nverification code, which verifies the address as\n``/auth/email-verification/confirm`` does. A wrong one gets 400\n``invalid_verification_code``.\n\nAn unknown, expired, accepted, declined or revoked invitation gets\nthe preview's one 404, checked before the email match, so whatever\naccount asks, the answer does not tell those states apart (CHT-1265\nreview F10). Before CHT-1788 a used token could be accepted again\nand added a second membership row.",
+        "description": "Accept a team invitation.\n\nAn account whose address is not verified (with SMTP configured) may\nsend ``{\"code\": ...}``: the code a team admin issued for this\ninvitation (CHT-1828), which lets it past the gate for this\ninvitation only and leaves the address unverified, or else a mailed\nverification code, which verifies the address as\n``/auth/email-verification/confirm`` does. A wrong one gets 400\n``invalid_verification_code``.\n\nAn unknown, expired, accepted, declined or revoked invitation gets\nthe preview's one 404, checked before the email match, so whatever\naccount asks, the answer does not tell those states apart (CHT-1265\nreview F10). Before CHT-1788 a used token could be accepted again\nand added a second membership row.\n\nAn owner invitation is refused with 403 to an account that is not a\nperson with an active account (the invitation stays pending), and\nwhen its sender is no longer an owner of the team; that refusal\nalso voids it (CHT-1868), so the link then gets the 404 and the\naddress can be invited again.",
         "operationId": "accept_invitation_api_teams_invitations__token__accept_post",
         "security": [
           {
@@ -15739,10 +15739,11 @@
           "invitation_cancelled",
           "invitation_accepted",
           "verification_code_issued",
-          "ownership_transferred"
+          "ownership_transferred",
+          "invitation_invalidated"
         ],
         "title": "TeamActivityAction",
-        "description": "What a team_activities row records (CHT-1843, CHT-1845).\n\nWho did it is ``actor_id``; whom it concerns, ``target_user_id``. A\nmember leaving on their own is MEMBER_REMOVED with actor and target\nthe same user. OWNERSHIP_TRANSFERRED (CHT-1848) is the transfer as a\nwhole, actor the owner who handed it on, target the new owner; the\ntwo role changes it makes are logged as ROLE_CHANGED rows beside it,\nso that ``action=role_changed`` lists every change of role."
+        "description": "What a team_activities row records (CHT-1843, CHT-1845).\n\nWho did it is ``actor_id``; whom it concerns, ``target_user_id``. A\nmember leaving on their own is MEMBER_REMOVED with actor and target\nthe same user. OWNERSHIP_TRANSFERRED (CHT-1848) is the transfer as a\nwhole, actor the owner who handed it on, target the new owner; the\ntwo role changes it makes are logged as ROLE_CHANGED rows beside it,\nso that ``action=role_changed`` lists every change of role.\nINVITATION_INVALIDATED (CHT-1868) is an owner invitation voided when\nits accept was refused because its sender is no longer an owner of\nthe team, actor and target the account that tried to accept it; it\nstays in the table with status EXPIRED. An invitation expiring with\ntime is not logged."
       },
       "TeamActivityResponse": {
         "properties": {

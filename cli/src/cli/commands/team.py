@@ -20,7 +20,7 @@ from .shared import _client, console, resolve_content_value
 TEAM_ACTIVITY_ACTIONS = [
     "member_added", "member_removed", "role_changed", "invitation_created",
     "invitation_cancelled", "invitation_accepted", "verification_code_issued",
-    "ownership_transferred",
+    "ownership_transferred", "invitation_invalidated",
 ]
 
 

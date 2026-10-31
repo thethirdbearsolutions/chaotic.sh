@@ -144,6 +144,11 @@ class TeamActivityAction(str, Enum):
     whole, actor the owner who handed it on, target the new owner; the
     two role changes it makes are logged as ROLE_CHANGED rows beside it,
     so that ``action=role_changed`` lists every change of role.
+    INVITATION_INVALIDATED (CHT-1868) is an owner invitation voided when
+    its accept was refused because its sender is no longer an owner of
+    the team, actor and target the account that tried to accept it; it
+    stays in the table with status EXPIRED. An invitation expiring with
+    time is not logged.
     """
     MEMBER_ADDED = "member_added"
     MEMBER_REMOVED = "member_removed"
@@ -153,6 +158,7 @@ class TeamActivityAction(str, Enum):
     INVITATION_ACCEPTED = "invitation_accepted"
     VERIFICATION_CODE_ISSUED = "verification_code_issued"
     OWNERSHIP_TRANSFERRED = "ownership_transferred"
+    INVITATION_INVALIDATED = "invitation_invalidated"
 
 
 # --- Project enums ---

@@ -713,6 +713,12 @@ async def accept_invitation(
     account asks, the answer does not tell those states apart (CHT-1265
     review F10). Before CHT-1788 a used token could be accepted again
     and added a second membership row.
+
+    An owner invitation is refused with 403 to an account that is not a
+    person with an active account (the invitation stays pending), and
+    when its sender is no longer an owner of the team; that refusal
+    also voids it (CHT-1868), so the link then gets the 404 and the
+    address can be invited again.
     """
     team_service = TeamService()
     invitation = await team_service.get_valid_invitation_by_token(token)
