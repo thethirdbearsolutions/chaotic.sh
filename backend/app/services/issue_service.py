@@ -1249,12 +1249,12 @@ class IssueService:
             if parent_id in seen:
                 continue
             seen.add(parent_id)
+            await self._settle_children_closed(parent_id, only_if_reopened=True)
             try:
                 epic = await self.derive_epic_status(parent_id, actor_id)
             except Exception:
                 logger.exception("Failed to derive epic status for issue=%s", parent_id)
                 continue
-            await self._settle_children_closed(parent_id, only_if_reopened=True)
             if epic is not None:
                 await self._broadcast_issue_updated(epic)
                 if epic.parent_id:
@@ -1821,6 +1821,10 @@ class IssueService:
         if was_open and issue.status in CLOSED_STATUSES:
             # Closed: a "nothing is left open under it" entry is answered.
             await self._settle_children_closed(issue.id)
+        if was_open and old_parent_id and issue.parent_id != old_parent_id:
+            # Moving an open ticket away can empty its old parent, and the
+            # PATCH response only asks about a close (CHT-1909 review).
+            await self.notify_children_closed(old_parent_id, user_id, "moved to another parent")
 
         if new_assignee_id:
             try:
@@ -1997,7 +2001,7 @@ class IssueService:
 
         return [(c, issue_map.get(c.issue_id)) for c in comments]
 
-    async def delete(self, issue, actor_id: str | None = None) -> None:
+    async def delete(self, issue, *, actor_id: str | None) -> None:
         """Delete an issue.
 
         The child-table deletes below are defense in depth, not a
