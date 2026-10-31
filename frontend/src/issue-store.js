@@ -25,7 +25,7 @@
  * current key. The store is dropped when the team changes.
  */
 
-import { subscribe, getIssues } from './state.js';
+import { subscribe, getIssues, getCurrentView } from './state.js';
 
 export const MAX_CACHED_QUERIES = 24;
 
@@ -93,11 +93,27 @@ export function readQueryMeta(key) {
     return queries.get(key)?.meta || {};
 }
 
+/**
+ * Store a row, unless the store already has a newer copy (a superseded
+ * response must not undo a /ws update). A compact row (no description,
+ * CHT-1893) of the same version keeps the description a search row
+ * brought, so a cached search still shows its snippets.
+ */
+function putEntity(issue) {
+    const prev = entities.get(issue.id);
+    if (prev?.updated_at && issue.updated_at && issue.updated_at < prev.updated_at) return;
+    if (issue.description == null && prev?.description != null && prev.updated_at === issue.updated_at) {
+        entities.set(issue.id, { ...issue, description: prev.description });
+        return;
+    }
+    entities.set(issue.id, issue);
+}
+
 /** Save a query's result. `meta` keeps whatever it had unless given. */
 export function writeQuery(key, issues, meta) {
     if (!Array.isArray(issues)) return;
     const rows = realRows(issues);
-    rows.forEach(issue => entities.set(issue.id, issue));
+    rows.forEach(putEntity);
     const previous = queries.get(key);
     touch(key, { ids: rows.map(i => i.id), meta: meta ?? previous?.meta ?? {} });
 }
@@ -110,7 +126,15 @@ export function setQueryMeta(key, meta) {
 
 /** Record a newer copy of an issue for every cached list that holds it. */
 export function upsertIssue(issue) {
-    if (issue?.id && entities.has(issue.id)) entities.set(issue.id, issue);
+    if (issue?.id && entities.has(issue.id)) putEntity(issue);
+}
+
+/** Forget one query, e.g. after the server refused it (403/404). */
+export function dropQuery(key) {
+    queries.delete(key);
+    views.forEach((k, viewKey) => { if (k === key) views.delete(viewKey); });
+    if (currentKey === key) currentKey = null;
+    pruneEntities();
 }
 
 /** Forget a deleted issue everywhere. */
@@ -142,15 +166,23 @@ export function queryForView(viewKey) {
     return key && queries.has(key) ? key : null;
 }
 
+// What a row shows beyond its own version: labels (a rename edits only
+// the label), the sprint, and whether the description (the search
+// snippet's source) is present.
+function rowSignature(issue) {
+    const labels = (issue.labels || []).map(l => `${l.id}:${l.name}:${l.color}`).join(',');
+    return `${issue.id}|${issue.updated_at}|${issue.sprint_id ?? ''}|${labels}|${issue.description == null ? 0 : 1}`;
+}
+
 /**
  * Whether two row lists would render the same: same issues, same order,
- * none changed since. Lets a background refresh skip a re-render that
- * would only reset hover and scroll.
+ * nothing they show changed. Lets a background refresh skip a re-render
+ * that would only reset hover and scroll.
  */
 export function sameRows(a, b) {
     if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) {
-        if (a[i].id !== b[i].id || a[i].updated_at !== b[i].updated_at) return false;
+        if (rowSignature(a[i]) !== rowSignature(b[i])) return false;
     }
     return true;
 }
@@ -168,6 +200,9 @@ subscribe((key, value, oldValue) => {
         return;
     }
     if (key !== 'issues' || currentKey === null || !queries.has(currentKey)) return;
+    // Outside the Issues view the issues state is not that query's list
+    // any more (a /ws create is prepended whatever the view).
+    if (getCurrentView() !== 'issues') return;
     const entry = queries.get(currentKey);
     writeQuery(currentKey, getIssues(), entry.meta);
 });

@@ -37,6 +37,7 @@ vi.mock('./sprints.js', () => ({
     ensureSprintCacheForIssues: vi.fn(),
     getCachedCurrentSprintId: vi.fn(() => undefined),
     setCachedCurrentSprintId: vi.fn(),
+    getSprintCache: vi.fn(() => ({})),
 }));
 
 // Mock issue-list.js
@@ -1182,6 +1183,72 @@ describe('issues-view', () => {
                 clearIssueStore();
                 expect(showCachedIssuesOrSkeleton()).toBe(false);
                 expect(listHtml()).toContain('skeleton');
+            });
+
+            // CHT-1894 review 1: an error screen leaves the issues state
+            // behind; going back to that query must repaint, not skip.
+            it('repaints a cached query after an error screen replaced it', async () => {
+                api.getIssues.mockResolvedValue(rowsV1);
+                await loadIssues();
+                getIssues.mockReturnValue(rowsV1);
+                document.getElementById('issues-list').innerHTML = '<div class="issue-row"></div>';
+
+                // An uncached filter fails: the error state replaces the rows
+                checkStatuses(['done']);
+                api.getIssues.mockRejectedValueOnce(new Error('offline'));
+                await loadIssues();
+                expect(listHtml()).toContain('Failed to load issues');
+
+                // Back to the first query: cached, same rows, but not on screen
+                checkStatuses([]);
+                renderIssues.mockClear();
+                api.getIssues.mockResolvedValue(rowsV1);
+                await loadIssues();
+                expect(renderIssues).toHaveBeenCalled();
+                getIssues.mockReturnValue([]);
+            });
+
+            // CHT-1894 review 3: the view key follows the controls, not the URL
+            it('keys the view on the status checkboxes, not only the URL', async () => {
+                api.getIssues.mockResolvedValue(rowsV1);
+                await loadIssues();
+                checkStatuses(['done']);
+                expect(showCachedIssuesOrSkeleton()).toBe(false);
+                checkStatuses([]);
+                expect(showCachedIssuesOrSkeleton()).toBe(true);
+            });
+
+            // CHT-1894 review 8
+            it('forgets the rows when the refresh is refused', async () => {
+                api.getIssues.mockResolvedValue(rowsV1);
+                await loadIssues();
+                document.getElementById('issues-list').innerHTML = '<div class="issue-row"></div>';
+                api.getIssues.mockRejectedValue(Object.assign(new Error('Not found'), { status: 404 }));
+                await loadIssues();
+                expect(listHtml()).toContain('Failed to load issues');
+                expect(showCachedIssuesOrSkeleton()).toBe(false);
+            });
+
+            // CHT-1894 review 7
+            it('clears a stale keyboard highlight when it resets the index', async () => {
+                document.getElementById('issues-list').innerHTML = '<div class="issue-row keyboard-selected"></div>';
+                await loadIssues();
+                expect(document.querySelector('#issues-list .keyboard-selected')).toBeNull();
+            });
+
+            // CHT-1894 review 10
+            it('hides the last query\'s closed-match hint while a new one loads', async () => {
+                const hint = document.createElement('div');
+                hint.id = 'issues-hidden-closed-hint';
+                hint.textContent = '3 closed matches hidden';
+                document.body.appendChild(hint);
+                document.getElementById('issues-list').innerHTML = '<div class="issue-row"></div>';
+                let resolve;
+                api.getIssues.mockReturnValue(new Promise(r => { resolve = r; }));
+                const pending = loadIssues();
+                await vi.waitFor(() => expect(hint.classList.contains('hidden')).toBe(true));
+                resolve([]);
+                await pending;
             });
 
             it('keeps a different query separate', async () => {

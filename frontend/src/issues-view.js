@@ -25,7 +25,7 @@ import {
     subscribe,
 } from './state.js';
 import { getProjects } from './projects.js';
-import { ensureSprintCacheForIssues, getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
+import { ensureSprintCacheForIssues, getCachedCurrentSprintId, setCachedCurrentSprintId, getSprintCache } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
@@ -42,6 +42,7 @@ import {
     rememberView,
     queryForView,
     sameRows,
+    dropQuery,
 } from './issue-store.js';
 
 // Import from sub-modules
@@ -266,10 +267,34 @@ function setHiddenClosedHint(count) {
  * what lets a view render its cached rows at once (CHT-1894).
  */
 export function currentViewKey() {
-    const search = new URLSearchParams(window.location.search);
-    search.sort();
-    const text = document.getElementById('issue-search')?.value?.trim() || '';
-    return JSON.stringify([getCurrentTeam()?.id || '', search.toString(), text]);
+    // The same inputs loadIssues() reads, except the sprint and label
+    // filters: their dropdown options may not be loaded yet on view entry,
+    // so those come from the URL, which syncFiltersToUrl() keeps in step.
+    const url = new URLSearchParams(window.location.search);
+    return JSON.stringify({
+        team: getCurrentTeam()?.id || '',
+        project: getCurrentProject() || '',
+        status: [...getSelectedStatuses()].sort(),
+        priority: [...getSelectedPriorities()].sort(),
+        assignee: document.getElementById('assignee-filter')?.value || '',
+        type: document.getElementById('issue-type-filter')?.value || '',
+        sort: document.getElementById('sort-by-select')?.value || '',
+        sprint: url.get('sprint') || '',
+        label: url.getAll('label').sort(),
+        excludeLabel: url.getAll('exclude_label').sort(),
+        search: document.getElementById('issue-search')?.value?.trim() || '',
+    });
+}
+
+// The query whose rows #issues-list shows right now, or null when it shows
+// a skeleton, an error or an empty state. "Already painted" is decided by
+// this, not by the issues state, which an error screen leaves behind
+// (CHT-1894 review).
+let paintedKey = null;
+
+function clearKeyboardHighlight() {
+    document.querySelectorAll('#issues-list .keyboard-selected')
+        .forEach(el => el.classList.remove('keyboard-selected'));
 }
 
 function setListRefreshing(on) {
@@ -282,17 +307,25 @@ function showCachedRows(key, rows) {
     setIssues(rows);
     if (getCurrentView() === 'issues') setDetailNavContext(rows);
     renderIssues();
+    paintedKey = key;
     setHiddenClosedHint(readQueryMeta(key).hiddenClosed || 0);
+}
+
+function showSkeleton() {
+    setCurrentQueryKey(null);
+    paintedKey = null;
+    setListRefreshing(false);
+    showIssuesLoadingSkeleton();
+    setHiddenClosedHint(0);
 }
 
 function showLoadingState() {
     const list = document.getElementById('issues-list');
+    setHiddenClosedHint(0);
     if (list?.querySelector('.issue-row')) {
         setListRefreshing(true);
     } else {
-        setCurrentQueryKey(null);
-        showIssuesLoadingSkeleton();
-        setHiddenClosedHint(0);
+        showSkeleton();
     }
 }
 
@@ -309,15 +342,15 @@ export function showCachedIssuesOrSkeleton() {
         showCachedRows(key, cached);
         return true;
     }
-    setCurrentQueryKey(null);
-    setListRefreshing(false);
-    showIssuesLoadingSkeleton();
-    setHiddenClosedHint(0);
+    showSkeleton();
     return false;
 }
 
 export async function loadIssues() {
     setSelectedIssueIndex(-1);
+    // The paint below may be skipped (rows already on screen), so the
+    // highlight must not outlive the index it showed.
+    clearKeyboardHighlight();
     const requestId = ++loadIssuesRequestId;
     if (!getCurrentTeam()) return;
 
@@ -328,6 +361,7 @@ export async function loadIssues() {
     const searchQuery = document.getElementById('issue-search')?.value?.trim();
 
     if (!projectId && getProjects().length === 0) {
+        paintedKey = null;
         document.getElementById('issues-list').innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.projects,
             heading: 'No projects yet',
@@ -408,6 +442,7 @@ export async function loadIssues() {
     }
 
     let showingCached = false;
+    let key = null;
     try {
         // Label/exclude-label filters are sent to the server (which matches
         // by name, case-insensitively) instead of over-fetching a 1000-row
@@ -432,14 +467,14 @@ export async function loadIssues() {
         // refresh in the background (CHT-1894). With nothing cached, keep
         // the rows on screen (dimmed) while the new ones load; the skeleton
         // is only for a list with nothing to show yet.
-        const key = queryKey({ ...params, scope: projectId || `team:${getCurrentTeam().id}` });
+        key = queryKey({ ...params, scope: projectId || `team:${getCurrentTeam().id}` });
         const cached = readQuery(key);
         if (cached) {
             showingCached = true;
             // Entering the view already painted these rows
             // (showCachedIssuesOrSkeleton); painting them again would
             // double the cost of Back.
-            if (!(getCurrentQueryKey() === key && sameRows(getIssues(), cached))) {
+            if (!(paintedKey === key && getCurrentQueryKey() === key && sameRows(getIssues(), cached))) {
                 showCachedRows(key, cached);
             }
         } else {
@@ -467,7 +502,7 @@ export async function loadIssues() {
         if (requestId !== loadIssuesRequestId) return; // a newer loadIssues() has since started — drop this stale response
         rememberView(viewKey, key);
 
-        const unchanged = showingCached && sameRows(getIssues(), issues);
+        const unchanged = showingCached && paintedKey === key && sameRows(getIssues(), issues);
         setCurrentQueryKey(key);
         setIssues(issues);
         // Prev/next issue-detail nav context (CHT-1211 item 2) — this is the
@@ -482,10 +517,14 @@ export async function loadIssues() {
         }
 
         const projectIds = [...new Set(issues.map(i => i.project_id))];
+        const sprintsKnown = Object.keys(getSprintCache()).length;
         await ensureSprintCacheForIssues(projectIds);
         if (requestId !== loadIssuesRequestId) return; // guard again — a newer request may have resolved during the await above
 
-        if (!unchanged) renderIssues();
+        // Newly loaded sprints change the rows' sprint badges.
+        const sprintsChanged = Object.keys(getSprintCache()).length !== sprintsKnown;
+        if (!unchanged || sprintsChanged) renderIssues();
+        paintedKey = key;
         setListRefreshing(false);
 
         const hiddenClosed = await closedCountPromise;
@@ -495,12 +534,17 @@ export async function loadIssues() {
     } catch (e) {
         if (requestId !== loadIssuesRequestId) return;
         setListRefreshing(false);
-        if (showingCached) {
+        const refused = e?.status === 403 || e?.status === 404;
+        if (showingCached && !refused) {
             // The cached rows stay: a failed background refresh must not
             // blank a list the user is reading.
             showApiError('refresh issues', e);
             return;
         }
+        // Refused (access lost, project gone): forget the rows rather than
+        // repaint them on every visit.
+        if (refused && key) dropQuery(key);
+        paintedKey = null;
         // CHT-1224: the skeleton from showIssuesLoadingSkeleton() above must
         // not be left on screen forever — replace it with a persistent error
         // + Retry cta (matches board.js's failed-load pattern) instead of a

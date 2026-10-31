@@ -3,7 +3,7 @@
  * that keeps the current list in step with the `issues` state.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { setIssues, setCurrentTeam } from './state.js';
+import { setIssues, setCurrentTeam, setState } from './state.js';
 import {
     queryKey,
     readQuery,
@@ -12,6 +12,7 @@ import {
     setQueryMeta,
     upsertIssue,
     removeIssue,
+    dropQuery,
     setCurrentQueryKey,
     rememberView,
     queryForView,
@@ -25,6 +26,7 @@ const row = (id, extra = {}) => ({ id, updated_at: 't1', title: id, ...extra });
 describe('issue-store', () => {
     beforeEach(() => {
         clearIssueStore();
+        setState('currentView', 'issues');
         setIssues([]);
     });
 
@@ -74,6 +76,32 @@ describe('issue-store', () => {
         expect(readQuery('mine')).toEqual([]);
     });
 
+    // CHT-1894 review 6
+    it('keeps a newer row when an older response arrives', () => {
+        writeQuery('k', [row('a', { updated_at: '2026-01-02', title: 'new' })]);
+        writeQuery('other', [row('a', { updated_at: '2026-01-01', title: 'old' })]);
+        expect(readQuery('k')[0].title).toBe('new');
+        upsertIssue(row('a', { updated_at: '2026-01-01', title: 'old' }));
+        expect(readQuery('k')[0].title).toBe('new');
+    });
+
+    // CHT-1894 review 2
+    it('keeps a search row\'s description when a compact copy of the same version arrives', () => {
+        writeQuery('search', [row('a', { description: 'the body' })]);
+        writeQuery('list', [row('a', { description: null })]);
+        expect(readQuery('search')[0].description).toBe('the body');
+        writeQuery('list', [row('a', { description: null, updated_at: 't2' })]);
+        expect(readQuery('search')[0].description).toBeNull();
+    });
+
+    it('drops one query and the views that point at it', () => {
+        writeQuery('k', [row('a')]);
+        rememberView('view', 'k');
+        dropQuery('k');
+        expect(readQuery('k')).toBeNull();
+        expect(queryForView('view')).toBeNull();
+    });
+
     it('keeps meta across a rewrite unless given, and sets it alone', () => {
         writeQuery('k', [row('a')], { hiddenClosed: 3 });
         writeQuery('k', [row('a')]);
@@ -111,6 +139,14 @@ describe('issue-store', () => {
             expect(sameRows([row('a')], [])).toBe(false);
             expect(sameRows(null, [])).toBe(false);
         });
+
+        // CHT-1894 review 2 and 5: what a row shows beyond its version
+        it('sees label, sprint and description changes', () => {
+            const labelled = row('a', { labels: [{ id: 'l', name: 'bug', color: '#f00' }] });
+            expect(sameRows([labelled], [{ ...labelled, labels: [{ id: 'l', name: 'defect', color: '#f00' }] }])).toBe(false);
+            expect(sameRows([row('a')], [row('a', { sprint_id: 's' })])).toBe(false);
+            expect(sameRows([row('a', { description: null })], [row('a', { description: 'x' })])).toBe(false);
+        });
     });
 
     describe('subscriber', () => {
@@ -119,6 +155,15 @@ describe('issue-store', () => {
             setCurrentQueryKey('k');
             setIssues([row('a', { status: 'done' }), row('b')]);
             expect(readQuery('k')[0].status).toBe('done');
+        });
+
+        // CHT-1894 review 9
+        it('leaves the store alone outside the Issues view', () => {
+            writeQuery('k', [row('a')]);
+            setCurrentQueryKey('k');
+            setState('currentView', 'board');
+            setIssues([row('b'), row('a')]);
+            expect(readQuery('k').map(i => i.id)).toEqual(['a']);
         });
 
         it('leaves the store alone with no current query', () => {
