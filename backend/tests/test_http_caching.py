@@ -1,0 +1,300 @@
+"""Compression and Cache-Control (CHT-1874)."""
+import gzip
+
+import pytest
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.routing import Route, WebSocketRoute
+from starlette.testclient import TestClient
+
+from app.http_caching import (
+    IMMUTABLE,
+    NO_STORE,
+    REVALIDATE,
+    ApiNoStoreMiddleware,
+    CodingAwareGZipMiddleware,
+)
+
+GZIP = {"Accept-Encoding": "gzip"}
+IDENTITY = {"Accept-Encoding": "identity"}
+BIG = "x" * 4096
+
+
+def _hashes():
+    from app.main import _version_info
+
+    info = _version_info()
+    return info["bundle_hash"], info["css_hash"]
+
+
+class TestCompression:
+    async def test_bundle_is_gzipped_when_accepted(self, client):
+        response = await client.get("/static/js/app.bundle.js", headers=GZIP)
+        assert response.status_code == 200
+        assert response.headers["content-encoding"] == "gzip"
+        assert "Accept-Encoding" in response.headers["vary"]
+        # httpx decoded it: the body is the real bundle.
+        assert len(response.content) > 1024
+
+    async def test_stylesheet_is_gzipped_when_accepted(self, client):
+        response = await client.get("/static/css/style.css", headers=GZIP)
+        assert response.headers["content-encoding"] == "gzip"
+
+    async def test_index_is_gzipped_when_accepted(self, client):
+        response = await client.get("/", headers=GZIP)
+        assert response.headers["content-encoding"] == "gzip"
+
+    async def test_api_json_is_gzipped_when_accepted(self, client):
+        response = await client.get("/openapi.json", headers=GZIP)
+        assert response.headers["content-encoding"] == "gzip"
+        assert response.json()["openapi"]
+
+    async def test_not_gzipped_when_not_accepted(self, client):
+        response = await client.get("/static/js/app.bundle.js", headers=IDENTITY)
+        assert response.status_code == 200
+        assert "content-encoding" not in response.headers
+
+    async def test_small_responses_are_left_alone(self, client):
+        response = await client.get("/health", headers=GZIP)
+        assert "content-encoding" not in response.headers
+
+
+def _gzip_options():
+    """The GZipMiddleware options app.main actually installs."""
+    from app.main import app
+
+    entries = [m for m in app.user_middleware if m.cls is CodingAwareGZipMiddleware]
+    assert len(entries) == 1
+    return entries[0].kwargs
+
+
+def _probe_app():
+    """A tiny app behind the same GZipMiddleware, with the response shapes
+    the real app produces: SSE (the MCP transport), a body its endpoint
+    already encoded, a plain stream, and a websocket."""
+
+    async def sse(request):
+        async def events():
+            for i in range(3):
+                yield f"data: {i} {BIG}\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream")
+
+    async def pre_encoded(request):
+        body = gzip.compress(BIG.encode())
+        return Response(body, headers={"Content-Encoding": "gzip", "ETag": '"own"'})
+
+    async def stream(request):
+        async def chunks():
+            for _ in range(3):
+                yield BIG
+
+        return StreamingResponse(chunks(), media_type="text/plain")
+
+    async def ws(websocket):
+        await websocket.accept()
+        await websocket.send_text(BIG)
+        await websocket.close()
+
+    return Starlette(
+        routes=[
+            Route("/sse", sse),
+            Route("/pre-encoded", pre_encoded),
+            Route("/stream", stream),
+            WebSocketRoute("/ws", ws),
+        ],
+        middleware=[Middleware(CodingAwareGZipMiddleware, **_gzip_options())],
+    )
+
+
+class TestCompressionLeavesSpecialResponsesAlone:
+    def test_event_stream_is_not_compressed(self):
+        with TestClient(_probe_app()) as tc:
+            response = tc.get("/sse", headers=GZIP)
+        assert "content-encoding" not in response.headers
+        assert response.text.count("data:") == 3
+
+    def test_own_content_encoding_is_kept(self):
+        """An endpoint that encoded its own body keeps its encoding and its
+        own validator: nothing is recompressed or weakened."""
+        with TestClient(_probe_app()) as tc:
+            response = tc.get("/pre-encoded", headers=GZIP)
+        assert response.headers["content-encoding"] == "gzip"
+        assert response.headers["etag"] == '"own"'
+        assert response.text == BIG
+
+    def test_plain_stream_is_compressed_and_complete(self):
+        with TestClient(_probe_app()) as tc:
+            response = tc.get("/stream", headers=GZIP)
+        assert response.headers["content-encoding"] == "gzip"
+        assert response.text == BIG * 3
+
+    def test_websocket_still_works(self):
+        with TestClient(_probe_app()) as tc, tc.websocket_connect("/ws") as ws:
+            assert ws.receive_text() == BIG
+
+
+class TestRecodedStaticHeaders:
+    """CHT-1874 review finding 5: a gzipped static file is a different
+    representation from the identity one."""
+
+    async def test_gzipped_file_has_a_weak_etag_and_no_ranges(self, client):
+        identity = await client.get("/static/js/app.bundle.js", headers=IDENTITY)
+        gzipped = await client.get("/static/js/app.bundle.js", headers=GZIP)
+        assert gzipped.headers["content-encoding"] == "gzip"
+        assert identity.headers["etag"].startswith('"')
+        assert gzipped.headers["etag"] == "W/" + identity.headers["etag"]
+        assert identity.headers["accept-ranges"] == "bytes"
+        assert "accept-ranges" not in gzipped.headers
+
+    async def test_weak_etag_still_revalidates(self, client):
+        etag = (await client.get("/static/js/app.bundle.js", headers=GZIP)).headers["etag"]
+        response = await client.get(
+            "/static/js/app.bundle.js", headers={**GZIP, "If-None-Match": etag}
+        )
+        assert response.status_code == 304
+
+    async def test_range_is_served_from_the_identity_bytes(self, client):
+        full = await client.get("/static/js/app.bundle.js", headers=IDENTITY)
+        response = await client.get(
+            "/static/js/app.bundle.js", headers={**GZIP, "Range": "bytes=0-99"}
+        )
+        assert response.status_code == 206
+        assert "content-encoding" not in response.headers
+        assert response.content == full.content[:100]
+
+    async def test_head_varies_on_accept_encoding(self, client):
+        response = await client.head("/static/js/app.bundle.js", headers=GZIP)
+        assert response.status_code == 200
+        assert "Accept-Encoding" in response.headers["vary"]
+        assert "content-encoding" not in response.headers
+
+
+class TestStaticCacheControl:
+    async def test_hashed_bundle_is_immutable(self, client):
+        bundle_hash, _ = _hashes()
+        response = await client.get(f"/static/js/app.bundle.js?v={bundle_hash}")
+        assert response.headers["cache-control"] == IMMUTABLE
+
+    async def test_hashed_stylesheet_is_immutable(self, client):
+        _, css_hash = _hashes()
+        response = await client.get(f"/static/css/style.css?v={css_hash}")
+        assert response.headers["cache-control"] == IMMUTABLE
+
+    async def test_stale_version_revalidates(self, client):
+        """An old page asking for an old ?v= must not pin today's bytes
+        under that URL for a year."""
+        response = await client.get("/static/js/app.bundle.js?v=deadbeef")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == REVALIDATE
+
+    async def test_rebuilt_file_does_not_match_its_old_hash(self, tmp_path):
+        """A bundle rebuilt under a running server: the page still names
+        the hash from before, which must not pin the new bytes."""
+        import os
+
+        from app.http_caching import CachedStaticFiles
+        from app.version import asset_cache_buster
+
+        asset = tmp_path / "app.js"
+        asset.write_bytes(b"old build")
+        old_hash = asset_cache_buster.__wrapped__(str(asset))
+        app = Starlette(routes=[], middleware=[])
+        app.mount("/static", CachedStaticFiles(directory=str(tmp_path)))
+        with TestClient(app) as tc:
+            assert tc.get(f"/static/app.js?v={old_hash}").headers["cache-control"] == IMMUTABLE
+            asset.write_bytes(b"new build, other size")
+            st = asset.stat()
+            os.utime(asset, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+            response = tc.get(f"/static/app.js?v={old_hash}")
+            assert response.text == "new build, other size"
+            assert response.headers["cache-control"] == REVALIDATE
+
+    async def test_another_files_hash_does_not_count(self, client):
+        _, css_hash = _hashes()
+        response = await client.get(f"/static/js/app.bundle.js?v={css_hash}")
+        assert response.headers["cache-control"] == REVALIDATE
+
+    async def test_unversioned_asset_revalidates_with_etag(self, client):
+        response = await client.get("/static/js/app.bundle.js")
+        assert response.headers["cache-control"] == REVALIDATE
+        assert response.headers["etag"]
+
+    async def test_favicon_revalidates(self, client):
+        response = await client.get("/static/favicon.ico")
+        assert response.headers["cache-control"] == REVALIDATE
+
+    async def test_not_modified_keeps_the_policy(self, client):
+        bundle_hash, _ = _hashes()
+        url = f"/static/js/app.bundle.js?v={bundle_hash}"
+        etag = (await client.get(url)).headers["etag"]
+        response = await client.get(url, headers={"If-None-Match": etag})
+        assert response.status_code == 304
+        assert response.headers["cache-control"] == IMMUTABLE
+
+    async def test_missing_file_gets_no_policy(self, client):
+        response = await client.get("/static/js/nope.js?v=deadbeef")
+        assert response.status_code == 404
+        assert response.headers.get("cache-control") != IMMUTABLE
+
+
+class TestPageAndApiCacheControl:
+    async def test_index_revalidates(self, client):
+        response = await client.get("/")
+        assert response.headers["cache-control"] == REVALIDATE
+
+    async def test_spa_route_revalidates(self, client):
+        response = await client.get("/issues")
+        assert response.headers["cache-control"] == REVALIDATE
+
+    async def test_invite_page_stays_no_store(self, client):
+        response = await client.get("/invite/sometoken")
+        assert response.headers["cache-control"] == "no-store"
+
+    async def test_cli_auth_page_is_never_cached(self, client):
+        response = await client.get("/cli-auth?callback=http://localhost:9999/cb&state=x")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == NO_STORE
+
+    async def test_api_is_never_cached(self, client):
+        response = await client.get("/api/version")
+        assert response.headers["cache-control"] == NO_STORE
+
+    async def test_api_error_is_never_cached(self, client):
+        response = await client.get("/api/issues")
+        assert response.status_code == 401
+        assert response.headers["cache-control"] == NO_STORE
+
+    async def test_authenticated_api_is_never_cached(self, client, auth_headers):
+        response = await client.get("/api/auth/me", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == NO_STORE
+
+
+class TestApiNoStoreMiddleware:
+    def _app(self):
+        async def plain(request):
+            return JSONResponse({"ok": True})
+
+        async def own(request):
+            return JSONResponse({"ok": True}, headers={"Cache-Control": "private, max-age=60"})
+
+        return Starlette(
+            routes=[Route("/api/plain", plain), Route("/api/own", own), Route("/apiary", plain),
+                    Route("/api", plain)],
+            middleware=[Middleware(ApiNoStoreMiddleware)],
+        )
+
+    @pytest.mark.parametrize("path", ["/api", "/api/plain"])
+    def test_api_paths_get_no_store(self, path):
+        with TestClient(self._app()) as tc:
+            assert tc.get(path).headers["cache-control"] == NO_STORE
+
+    def test_endpoint_choice_is_kept(self):
+        with TestClient(self._app()) as tc:
+            assert tc.get("/api/own").headers["cache-control"] == "private, max-age=60"
+
+    def test_non_api_prefix_is_untouched(self):
+        with TestClient(self._app()) as tc:
+            assert "cache-control" not in tc.get("/apiary").headers

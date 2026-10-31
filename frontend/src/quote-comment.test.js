@@ -15,7 +15,9 @@ import {
     getQuotableSelection,
     hideTooltip,
     getTooltip,
+    isQuoteTooltipVisible,
 } from './quote-comment.js';
+import { createKeyboardHandler } from './keyboard.js';
 
 describe('quote-comment module', () => {
     beforeEach(() => {
@@ -340,5 +342,94 @@ describe('quote-comment module', () => {
 
             expect(getQuotableSelection()).toBe('Some');
         });
+    });
+});
+
+// CHT-1873 review finding 3: Escape that dismisses the Quote tooltip on issue
+// detail must not also go Back. The global handler (registered at app start,
+// so it runs before the tooltip's own listener) sees the tooltip as an open
+// menu and leaves the detail view alone.
+describe('Escape on the Quote tooltip (CHT-1873)', () => {
+    let globalHandler;
+    let leaveDetailView;
+
+    beforeEach(() => {
+        document.body.innerHTML = `
+            <div id="issue-detail-content">
+                <div class="description-content">Some description text</div>
+            </div>
+            <textarea id="new-comment"></textarea>
+        `;
+        leaveDetailView = vi.fn();
+        globalHandler = createKeyboardHandler({
+            closeModal: vi.fn(), navigateTo: vi.fn(), showCreateIssueModal: vi.fn(),
+            showKeyboardShortcutsHelp: vi.fn(), isModalOpen: () => false, focusSearch: vi.fn(),
+            closeDropdowns: vi.fn(), isDetailViewActive: () => true,
+            isMenuOpen: isQuoteTooltipVisible, leaveDetailView,
+        });
+        document.addEventListener('keydown', globalHandler);
+        setupQuoteComment();
+    });
+
+    afterEach(() => {
+        document.removeEventListener('keydown', globalHandler);
+        hideTooltip();
+        window.getSelection().removeAllRanges();
+    });
+
+    it('dismisses the tooltip without leaving the issue', () => {
+        const text = document.querySelector('.description-content').firstChild;
+        const range = document.createRange();
+        range.setStart(text, 0);
+        range.setEnd(text, 4);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        document.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true }));
+        expect(isQuoteTooltipVisible()).toBe(true);
+
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(isQuoteTooltipVisible()).toBe(false);
+        expect(leaveDetailView).not.toHaveBeenCalled();
+
+        // The next Escape, with nothing left open, goes Back.
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(leaveDetailView).toHaveBeenCalledTimes(1);
+    });
+
+    it('also holds when the global handler runs before the tooltip listener', async () => {
+        // A fresh module instance attaches its document listeners now, after
+        // the global handler above, which is the production order.
+        vi.resetModules();
+        const fresh = await import('./quote-comment.js');
+        document.removeEventListener('keydown', globalHandler);
+        const freshLeave = vi.fn();
+        const handler = createKeyboardHandler({
+            closeModal: vi.fn(), navigateTo: vi.fn(), showCreateIssueModal: vi.fn(),
+            showKeyboardShortcutsHelp: vi.fn(), isModalOpen: () => false, focusSearch: vi.fn(),
+            closeDropdowns: vi.fn(), isDetailViewActive: () => true,
+            isMenuOpen: fresh.isQuoteTooltipVisible, leaveDetailView: freshLeave,
+        });
+        document.addEventListener('keydown', handler);
+        try {
+            fresh.setupQuoteComment();
+            const text = document.querySelector('.description-content').firstChild;
+            const range = document.createRange();
+            range.setStart(text, 0);
+            range.setEnd(text, 4);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+            document.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true }));
+            expect(fresh.isQuoteTooltipVisible()).toBe(true);
+            // The earlier instance's listeners are still attached and showed
+            // its own tooltip too; take it out of the picture.
+            hideTooltip();
+
+            document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            expect(fresh.isQuoteTooltipVisible()).toBe(false);
+            expect(freshLeave).not.toHaveBeenCalled();
+        } finally {
+            document.removeEventListener('keydown', handler);
+            fresh.hideTooltip();
+        }
     });
 });

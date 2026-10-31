@@ -174,13 +174,34 @@ class TestInvitations:
         assert any(m.get("user_id") == accept_user.id for m in members)
 
 
-def test_the_cli_knows_every_team_activity_action():
+def test_the_cli_knows_every_team_activity_action(test_server):
     """`chaotic team activity --action` lists the server's actions by hand
-    (the CLI cannot import the backend); this keeps the two equal."""
+    (the CLI cannot import the backend); this keeps the two equal. It
+    checks the enum the served /openapi.json declares for the `action`
+    query parameter of the route the CLI calls (CHT-1875), so the list is
+    pinned to what the server accepts on the wire, not only to the
+    Python enum that happens to back it today."""
+    import httpx
+
     from app.enums import TeamActivityAction
     from cli.commands.team import TEAM_ACTIVITY_ACTIONS
+    from conftest import TEST_PORT
 
-    assert sorted(TEAM_ACTIVITY_ACTIONS) == sorted(a.value for a in TeamActivityAction)
+    spec = httpx.get(f"http://127.0.0.1:{TEST_PORT}/openapi.json").raise_for_status().json()
+    params = spec["paths"]["/api/teams/{team_id}/activity"]["get"]["parameters"]
+    (action,) = [p for p in params if p["name"] == "action"]
+    schema = action["schema"]
+    refs = [s["$ref"] for s in schema.get("anyOf", [schema]) if "$ref" in s]
+    assert len(refs) == 1, f"`action` is no longer one enum: {schema}"
+    wire = spec["components"]["schemas"][refs[0].rsplit("/", 1)[-1]]["enum"]
+
+    missing = sorted(set(wire) - set(TEAM_ACTIVITY_ACTIONS))
+    unknown = sorted(set(TEAM_ACTIVITY_ACTIONS) - set(wire))
+    assert not missing and not unknown, (
+        f"cli TEAM_ACTIVITY_ACTIONS lacks {missing} and has {unknown} the server refuses"
+    )
+    assert len(TEAM_ACTIVITY_ACTIONS) == len(set(TEAM_ACTIVITY_ACTIONS))
+    assert sorted(wire) == sorted(a.value for a in TeamActivityAction)
 
 
 class TestRemovedMembersAuditReadsTheServersLog:

@@ -685,6 +685,23 @@ describe('issue-detail-view', () => {
                 });
             });
 
+            // CHT-1873: Escape on issue detail leaves it once no menu is
+            // open, so the overflow menu's own Escape must not reach it.
+            it('keeps the overflow menu Escape from reaching the global handler', async () => {
+                await viewIssue('issue-1');
+                const menu = document.querySelector('#issue-detail-view .overflow-menu-dropdown');
+                menu.classList.remove('hidden');
+                const global = vi.fn();
+                document.addEventListener('keydown', global);
+                try {
+                    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                    expect(menu.classList.contains('hidden')).toBe(true);
+                    expect(global).not.toHaveBeenCalled();
+                } finally {
+                    document.removeEventListener('keydown', global);
+                }
+            });
+
             it('logs instead of showing an error toast when the refresh fails', async () => {
                 await viewIssue('issue-1');
                 showApiError.mockClear();
