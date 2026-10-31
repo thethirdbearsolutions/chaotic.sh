@@ -56,11 +56,11 @@ export async function handleQuickCreate(event) {
         });
         input.value = '';
         // Replace optimistic with real
+        // A new array: state only notifies (and the issue store only
+        // records the created row, CHT-1894) on a new reference.
         const issuesAfterCreate = getIssues();
-        const idx = issuesAfterCreate.findIndex(i => i.id === tempId);
-        if (idx !== -1) {
-            issuesAfterCreate[idx] = created;
-            setIssues(issuesAfterCreate);
+        if (issuesAfterCreate.some(i => i.id === tempId)) {
+            setIssues(issuesAfterCreate.map(i => (i.id === tempId ? created : i)));
         }
         renderIssues();
         loadProjects(); // Update issue count in background

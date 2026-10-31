@@ -42,6 +42,10 @@ vi.mock('./sprints.js', () => ({
 vi.mock('./projects.js', () => ({ loadProjects: vi.fn(), renderProjects: vi.fn() }));
 vi.mock('./epics.js', () => ({ loadEpics: vi.fn() }));
 vi.mock('./router.js', () => ({ navigateTo: vi.fn() }));
+vi.mock('./issue-store.js', () => ({
+    upsertIssue: vi.fn(),
+    removeIssue: vi.fn(),
+}));
 vi.mock('./state.js', () => {
     let entries = [];
     let unread = 0;

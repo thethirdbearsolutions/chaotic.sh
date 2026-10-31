@@ -2,6 +2,7 @@
  * Chaotic - Main Application
  */
 
+import { appendPendingRows } from './issue-list.js';
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
 import { closeModal, isModalOpen, showToast, closeInlineDropdownsFromEscape, isModalDirty, focusModalFirstField } from './ui.js';
@@ -33,7 +34,7 @@ import {
     debounceSearch,
     filterIssues,
     updateGroupBy,
-    showIssuesLoadingSkeleton,
+    showCachedIssuesOrSkeleton,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
 import { loadQueryView } from './query-view.js';
@@ -89,7 +90,7 @@ import {
 } from './command-palette.js';
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus, filterMyIssues } from './dashboard.js';
 import { loadBoard } from './board.js';
-import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
+import { viewIssueByPath, viewIssue, abandonIssueLoad } from './issue-detail-view.js';
 import {
     getCurrentView,
     getSelectedIssueIndex,
@@ -126,7 +127,9 @@ import { getTheme, setTheme } from './storage.js';
 
 // Configure router (CHT-782)
 configureRouter({
+    beforeScrollRestore: appendPendingRows,
     beforeNavigate: () => {
+        abandonIssueLoad();
         clearProjectSettingsState();
         setOnRitualsChanged(null);
         setCurrentDetailIssue(null);
@@ -199,13 +202,14 @@ registerViews({
         loadInbox({ focusFirst: true });
     },
     'issues': () => {
-        // Clear stale rows synchronously, before the async label/sprint
-        // filter population below — otherwise the previous project/view's
-        // #issues-list content stays visible until loadIssues() itself gets
-        // around to calling this, several awaits later (CHT-1211 item 8).
-        showIssuesLoadingSkeleton();
         // Load filters from URL if present
         loadFiltersFromUrl();
+        // Replace the previous project/view's rows synchronously, before the
+        // async label/sprint filter population below (CHT-1211 item 8):
+        // with the rows this view showed last time when the store has them,
+        // so Back and switching views paint at once (CHT-1894), else the
+        // skeleton. loadIssues() below refreshes them.
+        showCachedIssuesOrSkeleton();
         // Initialize filter bar chips and badge
         initFilterBar();
         // Populate label filter dropdown
@@ -636,6 +640,9 @@ document.addEventListener('keydown', createListNavigationHandler({
     isModalOpen,
     isCommandPaletteOpen,
     isDetailViewActive: isAnyDetailViewActive,
+    // The list paints its first rows at once and appends the rest in
+    // chunks (CHT-1897); a key reads the whole list.
+    beforeNavigate: appendPendingRows,
 }));
 
 // j/k/Enter/e list navigation for documents

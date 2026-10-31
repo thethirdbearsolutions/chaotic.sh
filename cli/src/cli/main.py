@@ -179,10 +179,22 @@ def json_result(build=None):
     return decorator
 
 
+def has_credential() -> bool:
+    """Will requests be authenticated: a key or login token is configured
+    here, or a proxy supplies the registrar key for this session's own
+    identity (CHT-1906)? What `require_auth` and friends check. Reads
+    this module's getters, so a patched `get_token`/`get_api_key` applies."""
+    if get_token() or get_api_key():
+        return True
+    from cli import session_identity
+
+    return session_identity.has_proxied_identity()
+
+
 def require_auth(f):
     """Decorator to require authentication."""
     def wrapper(*args, **kwargs):
-        if not get_token() and not get_api_key():
+        if not has_credential():
             console.print(
                 "[red]Not authenticated.[/red] Run 'chaotic auth login' or 'chaotic auth set-key' "
                 "first, or 'chaotic quickstart' to get set up."
@@ -545,7 +557,7 @@ def cli(ctx, profile, json_output, yes):
 
     if ctx.invoked_subcommand is None:
         # No subcommand - check auth status and show appropriate message
-        if not get_token() and not get_api_key():
+        if not has_credential():
             console.print("\n[bold]Welcome to Chaotic![/bold]\n")
             console.print("To get started, run:\n")
             console.print("  [bold cyan]chaotic quickstart[/bold cyan]")
@@ -1112,7 +1124,7 @@ def status():
         result = {
             "profile": get_effective_profile(),
             "config_path": str(local_cfg) if local_cfg else None,
-            "authenticated": bool(get_token() or get_api_key()),
+            "authenticated": has_credential(),
             "user": None,
             "team_id": get_current_team(),
             "team": None,
@@ -1157,7 +1169,7 @@ def status():
     console.print(f"[bold]Current Context[/bold] {config_type_markup}\n")
 
     # Auth status (CHT-478)
-    if get_token() or get_api_key():
+    if has_credential():
         try:
             user = client.get_me()
             if user.get("is_agent"):
@@ -1200,7 +1212,7 @@ def status():
     # CHT-1221: bare `chaotic` already points a zero-state user at quickstart
     # (main.py's no-subcommand branch) -- `status` gave the same information
     # with no next step. Match it.
-    if not (get_token() or get_api_key()) and not team_id and not project_id:
+    if not has_credential() and not team_id and not project_id:
         console.print()
         console.print("Run [bold cyan]chaotic quickstart[/bold cyan] to get set up.")
 
@@ -1241,7 +1253,7 @@ def status():
 @handle_error
 def whoami():
     """Show current authenticated identity."""
-    if not (get_token() or get_api_key()):
+    if not has_credential():
         console.print("[red]Not authenticated.[/red] Run `chaotic login` or set an API key.")
         raise SystemExit(1)
 

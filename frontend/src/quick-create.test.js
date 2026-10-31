@@ -121,6 +121,17 @@ describe('handleQuickCreate', () => {
         expect(input.disabled).toBe(false);
     });
 
+    // CHT-1894 review 4: state notifies only on a new array, and the issue
+    // store records the created row through that notification.
+    it('replaces the optimistic row with a new array, not in place', async () => {
+        let current = [];
+        setIssues.mockImplementation((issues) => { current = issues; });
+        getIssues.mockImplementation(() => current);
+        await handleQuickCreate({ key: 'Enter', target: input });
+        expect(setIssues.mock.calls[1][0]).not.toBe(setIssues.mock.calls[0][0]);
+        expect(setIssues.mock.calls[1][0][0].id).toBe('real-1');
+    });
+
     it('renders issues twice (optimistic + real)', async () => {
         const event = { key: 'Enter', target: input };
         await handleQuickCreate(event);

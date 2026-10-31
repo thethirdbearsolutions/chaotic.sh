@@ -685,10 +685,16 @@ async def list_issues(
     search: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
     sort_by: Annotated[str | None, Query(pattern="^(created|updated|priority|status|title|estimate|random)$")] = None,
     order: Annotated[str | None, Query(pattern="^(asc|desc)$")] = None,
+    fields: Annotated[str | None, Query(pattern="^(full|list)$")] = None,
     skip: int = 0,
     limit: int = 1000,
 ) -> list[IssueResponse]:
     """List issues with filters. Pass multiple status/priority/label values to filter by multiple values.
+
+    ``fields=list`` returns the compact shape a list view needs (CHT-1893):
+    the same rows with ``description`` null, since a list never shows it
+    and it is most of a row's bytes. ``full`` (the default) returns every
+    field.
 
     ``label_match`` controls multi-``label`` semantics: ``all`` (default —
     issue must carry every named label; the CLI's documented contract) or
@@ -809,7 +815,10 @@ async def list_issues(
             detail="Must provide project_id, team_id, sprint_id, or assignee_id",
         )
 
-    return await issues_to_responses(issues)
+    responses = await issues_to_responses(issues)
+    if fields == "list":
+        responses = [r.model_copy(update={"description": None}) for r in responses]
+    return responses
 
 
 @router.get("/query/fields", response_model=IssueQueryFieldsResponse)

@@ -1,7 +1,7 @@
 /**
  * Tests for inline-dropdown.js module (CHT-667)
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock all dependencies before importing the module under test
 vi.mock('./api.js', () => ({
@@ -440,13 +440,115 @@ describe('inline-dropdown', () => {
             expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { status: 'done' });
         });
 
+        // CHT-1895: optimistic edits with rollback
+        it('shows the new value before the server answers', async () => {
+            let resolve;
+            api.updateIssue.mockReturnValue(new Promise(r => { resolve = r; }));
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo', title: 'T' }]);
+            setIssues.mockClear();
+            const pending = updateIssueField('issue-1', 'status', 'done');
+            expect(setIssues).toHaveBeenCalledWith([{ id: 'issue-1', status: 'done', title: 'T' }]);
+            resolve({ id: 'issue-1', status: 'done', title: 'T', completed_at: 'now' });
+            await pending;
+            expect(setIssues).toHaveBeenLastCalledWith([{ id: 'issue-1', status: 'done', title: 'T', completed_at: 'now' }]);
+        });
+
+        it('puts the old value back when the update fails', async () => {
+            const before = { id: 'issue-1', status: 'todo', title: 'T' };
+            api.updateIssue.mockRejectedValue(new Error('nope'));
+            getIssues.mockReturnValue([before]);
+            setIssues.mockClear();
+            await updateIssueField('issue-1', 'status', 'done');
+            expect(setIssues.mock.calls[0][0][0].status).toBe('done');
+            expect(setIssues).toHaveBeenLastCalledWith([before]);
+            expect(showApiError).toHaveBeenCalledWith('update issue', expect.any(Error));
+        });
+
+        describe('overlapping edits (CHT-1895 review I4, I5)', () => {
+            let live;
+            let detail;
+            const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+            beforeEach(() => {
+                live = [{ id: 'issue-1', status: 'todo', priority: 'low', title: 'T' }];
+                detail = null;
+                getIssues.mockImplementation(() => live);
+                setIssues.mockImplementation((v) => { live = v; });
+                getCurrentDetailIssue.mockImplementation(() => detail);
+                setCurrentDetailIssue.mockImplementation((v) => { detail = v; });
+            });
+            afterEach(() => {
+                setIssues.mockImplementation(() => {});
+                setCurrentDetailIssue.mockImplementation(() => {});
+            });
+
+            it('a failed edit rolls back only its own field', async () => {
+                const priority = deferred();
+                const status = deferred();
+                api.updateIssue.mockImplementation((_id, data) => ('priority' in data ? priority.promise : status.promise));
+                const p1 = updateIssueField('issue-1', 'priority', 'high');
+                const p2 = updateIssueField('issue-1', 'status', 'done');
+                status.resolve({ id: 'issue-1', status: 'done', priority: 'low', title: 'T' });
+                await p2;
+                // the in-flight priority guess survives the status answer
+                expect(live[0].priority).toBe('high');
+                priority.reject(new Error('gate'));
+                await p1;
+                expect(live[0]).toMatchObject({ status: 'done', priority: 'low' });
+            });
+
+            it('an older request on the same field neither rolls back nor overwrites a newer one', async () => {
+                const first = deferred();
+                const second = deferred();
+                api.updateIssue.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+                const p1 = updateIssueField('issue-1', 'status', 'in_progress');
+                const p2 = updateIssueField('issue-1', 'status', 'done');
+                second.resolve({ id: 'issue-1', status: 'done', priority: 'low', title: 'T' });
+                await p2;
+                first.reject(new Error('timeout'));
+                await p1;
+                expect(live[0].status).toBe('done');
+            });
+
+            it('keeps a remote change that landed during the flight', async () => {
+                const req = deferred();
+                api.updateIssue.mockReturnValue(req.promise);
+                const pending = updateIssueField('issue-1', 'status', 'done');
+                live = [{ ...live[0], title: 'Renamed by a teammate' }];
+                req.reject(new Error('nope'));
+                await pending;
+                expect(live[0]).toMatchObject({ status: 'todo', title: 'Renamed by a teammate' });
+            });
+
+            it('patches the open detail from its own copy, not the list row', async () => {
+                detail = { id: 'issue-1', status: 'todo', priority: 'low', title: 'T', description: 'fresh from the detail' };
+                live = [{ id: 'issue-1', status: 'todo', priority: 'low', title: 'T', description: null }];
+                const req = deferred();
+                api.updateIssue.mockReturnValue(req.promise);
+                const pending = updateIssueField('issue-1', 'status', 'done');
+                expect(detail).toMatchObject({ status: 'done', description: 'fresh from the detail' });
+                req.reject(new Error('nope'));
+                await pending;
+                expect(detail).toMatchObject({ status: 'todo', description: 'fresh from the detail' });
+            });
+        });
+
+        it('keeps the keyboard cursor on the re-rendered row', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            const rowHtml = '<div class="issue-row" data-issue-id="issue-1"></div>';
+            renderIssueRow.mockReturnValueOnce(rowHtml).mockReturnValueOnce(rowHtml);
+            document.body.innerHTML = '<div id="issues-list"><div class="issue-row keyboard-selected" data-issue-id="issue-1"></div></div>';
+            await updateIssueField('issue-1', 'status', 'done');
+            expect(document.querySelector('.issue-row').classList.contains('keyboard-selected')).toBe(true);
+        });
+
         it('returns focus to the field trigger button on the re-rendered row (CHT-1293)', async () => {
             api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
             getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
-            renderIssueRow.mockReturnValueOnce(
+            const rowHtml =
                 '<div class="issue-row" data-issue-id="issue-1">' +
-                '<button class="status-btn" data-dropdown-type="status">S</button></div>'
-            );
+                '<button class="status-btn" data-dropdown-type="status">S</button></div>';
+            renderIssueRow.mockReturnValueOnce(rowHtml).mockReturnValueOnce(rowHtml);
             document.body.innerHTML =
                 '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1">' +
                 '<button data-dropdown-type="status">S</button></div></div>';
@@ -461,10 +563,10 @@ describe('inline-dropdown', () => {
         it('maps the non-identity field name to the trigger type (assignee_id -> assignee) (CHT-1293)', async () => {
             api.updateIssue.mockResolvedValue({ id: 'issue-1', assignee_id: 'u-2' });
             getIssues.mockReturnValue([{ id: 'issue-1' }]);
-            renderIssueRow.mockReturnValueOnce(
+            const rowHtml =
                 '<div class="issue-row" data-issue-id="issue-1">' +
-                '<button class="assignee-btn" data-dropdown-type="assignee">A</button></div>'
-            );
+                '<button class="assignee-btn" data-dropdown-type="assignee">A</button></div>';
+            renderIssueRow.mockReturnValueOnce(rowHtml).mockReturnValueOnce(rowHtml);
             document.body.innerHTML =
                 '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1">' +
                 '<button data-dropdown-type="assignee">A</button></div></div>';

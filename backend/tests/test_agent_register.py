@@ -44,6 +44,10 @@ def _api_routes():
     return routes
 
 
+def _depends_on(dependant, call):
+    return any(d.call is call or _depends_on(d, call) for d in dependant.dependencies)
+
+
 def _depends_on_current_user(dependant):
     return any(d.call is get_current_user or _depends_on_current_user(d) for d in dependant.dependencies)
 
@@ -1174,3 +1178,242 @@ class TestConcurrentRegistration:
         assert response.status_code == 200, response.text
         assert response.json()["agent"]["id"] == rival_id and response.json()["agent"]["name"] == "Ours"
         assert await OxydeUser.objects.filter(external_ref=REF).count() == 1
+
+
+def _registrar_header(key):
+    return {"X-Chaotic-Registrar-Key": key}
+
+
+class TestRegistrarKeyHeader:
+    """The registrar's key in X-Chaotic-Registrar-Key (CHT-1906): a cloud
+    environment's proxy injects it on every request to the server, beside
+    whatever session key the client sends in Authorization."""
+
+    async def test_register_with_only_the_header(self, client, registrar):
+        registrar_id, key = registrar
+        response = await client.post(
+            "/api/agents/register", json={"external_ref": REF, "default_name": "Claude · header"},
+            headers=_registrar_header(key),
+        )
+        assert response.status_code == 201, response.text
+        agent = response.json()["agent"]
+        assert agent["registered_by_id"] == registrar_id and agent["name"] == "Claude · header"
+
+        again = await client.post("/api/agents/register", json={"external_ref": REF}, headers=_registrar_header(key))
+        assert again.status_code == 200 and again.json()["agent"]["id"] == agent["id"]
+
+    async def test_the_header_wins_over_authorization_on_register(self, client, registrar):
+        """What the proxy sends when a client registers while holding a
+        session key: the registrar header is the caller."""
+        registrar_id, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        other = "claude-code:session:2b1f0000-aaaa-bbbb-cccc-000000000002"
+
+        response = await client.post(
+            "/api/agents/register", json={"external_ref": other},
+            headers={**_bearer(session_key), **_registrar_header(key)},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["agent"]["registered_by_id"] == registrar_id
+
+    async def test_an_empty_header_falls_back_to_authorization(self, client, registrar):
+        _, key = registrar
+        response = await client.post(
+            "/api/agents/register", json={"external_ref": REF}, headers={**_bearer(key), **_registrar_header("  ")},
+        )
+        assert response.status_code == 201, response.text
+
+    async def test_a_session_key_and_the_header_act_as_the_session(self, client, registrar, test_project):
+        """Every other request the proxy sends: the session key in
+        Authorization authenticates, the header is ignored, writes land."""
+        _, key = registrar
+        reg = (await _register(client, key)).json()
+        headers = {**_bearer(reg["api_key"]), **_registrar_header(key)}
+
+        me = await client.get("/api/auth/me", headers=headers)
+        assert me.status_code == 200 and me.json()["id"] == reg["agent"]["id"]
+        issue = await client.post(f"/api/projects/{test_project.id}/issues", json={"title": "proxied"}, headers=headers)
+        assert issue.status_code == 201, issue.text
+        assert issue.json()["creator"]["id"] == reg["agent"]["id"]
+
+    async def test_the_header_never_authenticates_elsewhere(self, client, registrar, test_project):
+        _, key = registrar
+        assert (await client.get("/api/auth/me", headers=_registrar_header(key))).status_code == 401
+        issue = await client.post(
+            f"/api/projects/{test_project.id}/issues", json={"title": "no"}, headers=_registrar_header(key),
+        )
+        assert issue.status_code == 401
+
+    async def test_a_non_registrar_key_in_the_header_is_403(self, client, auth_headers, test_team):
+        created = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": "plain"}, headers=auth_headers)
+        assert created.status_code == 201, created.text
+        response = await client.post(
+            "/api/agents/register", json={"external_ref": REF}, headers=_registrar_header(created.json()["api_key"]),
+        )
+        assert response.status_code == 403 and _code(response) == "not_a_registrar"
+
+    async def test_a_session_key_in_the_header_is_403(self, client, registrar):
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        response = await client.post(
+            "/api/agents/register", json={"external_ref": "claude-code:session:x"},
+            headers=_registrar_header(session_key),
+        )
+        assert response.status_code == 403 and _code(response) == "registered_identity_cannot_register"
+
+    async def test_a_jwt_or_junk_in_the_header_is_401(self, client, test_user):
+        jwt = create_access_token(data={"sub": test_user.id})
+        for value in (jwt, "not-a-key"):
+            response = await client.post(
+                "/api/agents/register", json={"external_ref": REF}, headers=_registrar_header(value),
+            )
+            assert response.status_code == 401
+            assert _code(response) == "registrar_header_not_a_key"
+
+    async def test_a_revoked_key_in_the_header_is_401(self, client, registrar):
+        registrar_id, key = registrar
+        await OxydeAPIKey.objects.filter(principal_user_id=registrar_id).update(is_active=False)
+        response = await client.post("/api/agents/register", json={"external_ref": REF}, headers=_registrar_header(key))
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Invalid API key (from X-Chaotic-Registrar-Key)"
+
+    async def test_a_repeated_header_is_400(self, client, registrar):
+        _, key = registrar
+        for headers in (
+            [("X-Chaotic-Registrar-Key", key), ("X-Chaotic-Registrar-Key", key)],
+            [("X-Chaotic-Registrar-Key", f"{key}, {key}")],
+        ):
+            response = await client.post("/api/agents/register", json={"external_ref": REF}, headers=headers)
+            assert response.status_code == 400 and _code(response) == "registrar_header_repeated"
+
+    async def test_an_invalid_header_elsewhere_is_ignored_not_refused(self, client, registrar, test_user):
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        jwt = create_access_token(data={"sub": test_user.id})
+        for junk in ("not-a-key", jwt, f"{key}, {key}"):
+            me = await client.get("/api/auth/me", headers={**_bearer(session_key), **_registrar_header(junk)})
+            assert me.status_code == 200 and me.json()["kind"] == "session"
+
+    async def test_the_header_cannot_pass_a_human_session_gate(self, client, registrar, test_project):
+        """A human-only route keys on Authorization; a registrar key in
+        the header beside it changes nothing."""
+        from app.api.deps import require_human_session
+
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        routes = [(m, p) for m, p, _, d in _api_routes() if _depends_on(d, require_human_session) and "GET" in m]
+        assert routes, "no GET route behind require_human_session to probe"
+        _, path = routes[0]
+        path = re.sub(r"\{[^}]+\}", "x", path)
+        response = await client.get(path, headers={**_bearer(session_key), **_registrar_header(key)})
+        assert response.status_code in (401, 403), (path, response.text)
+
+
+def _key_header(key):
+    return {"X-Chaotic-Key": key}
+
+
+class TestKeyHeader:
+    """An API key in X-Chaotic-Key (CHT-1913): a cloud proxy with a network
+    secret for the host drops the client's Authorization, so header mode
+    sends the session key here."""
+
+    async def test_a_session_key_acts_as_the_session_on_reads_and_writes(self, client, registrar, test_project):
+        _, key = registrar
+        reg = (await _register(client, key)).json()
+        headers = {**_key_header(reg["api_key"]), **_registrar_header(key)}  # what the proxy forwards
+
+        me = await client.get("/api/auth/me", headers=headers)
+        assert me.status_code == 200 and me.json()["id"] == reg["agent"]["id"]
+        issue = await client.post(f"/api/projects/{test_project.id}/issues", json={"title": "kh"}, headers=headers)
+        assert issue.status_code == 201, issue.text
+        assert issue.json()["creator"]["id"] == reg["agent"]["id"]
+
+    async def test_a_registrar_key_reads_but_cannot_write(self, client, registrar, test_project):
+        _, key = registrar
+        assert (await client.get("/api/auth/me", headers=_key_header(key))).status_code == 200
+        issue = await client.post(f"/api/projects/{test_project.id}/issues", json={"title": "no"}, headers=_key_header(key))
+        assert issue.status_code == 403 and _code(issue) == "registrar_cannot_write"
+
+    async def test_authorization_wins_when_both_are_sent(self, client, registrar, auth_headers, test_user):
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        me = await client.get("/api/auth/me", headers={**auth_headers, **_key_header(session_key)})
+        assert me.status_code == 200 and me.json()["id"] == test_user.id
+        # Junk in the key header beside a good Authorization is never read.
+        me = await client.get("/api/auth/me", headers={**auth_headers, **_key_header("junk")})
+        assert me.status_code == 200 and me.json()["id"] == test_user.id
+
+    async def test_the_registrar_header_still_wins_on_register(self, client, registrar):
+        registrar_id, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        response = await client.post(
+            "/api/agents/register", json={"external_ref": "claude-code:session:kh-2"},
+            headers={**_key_header(session_key), **_registrar_header(key)},
+        )
+        assert response.status_code == 201 and response.json()["agent"]["registered_by_id"] == registrar_id
+
+    async def test_register_with_only_the_key_header(self, client, registrar):
+        """The key header is a credential like the bearer, so a registrar
+        may register with it too."""
+        _, key = registrar
+        response = await client.post("/api/agents/register", json={"external_ref": REF}, headers=_key_header(key))
+        assert response.status_code == 201, response.text
+
+    async def test_a_jwt_or_junk_is_401(self, client, test_user):
+        jwt = create_access_token(data={"sub": test_user.id})
+        for value in (jwt, "not-a-key"):
+            response = await client.get("/api/auth/me", headers=_key_header(value))
+            assert response.status_code == 401 and _code(response) == "key_header_not_a_key"
+
+    async def test_a_revoked_key_names_the_header(self, client, registrar):
+        registrar_id, key = registrar
+        await OxydeAPIKey.objects.filter(principal_user_id=registrar_id).update(is_active=False)
+        response = await client.get("/api/auth/me", headers=_key_header(key))
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Invalid API key (from X-Chaotic-Key)"
+
+    async def test_a_repeated_header_is_400(self, client, registrar):
+        _, key = registrar
+        for headers in ([("X-Chaotic-Key", key), ("X-Chaotic-Key", key)], [("X-Chaotic-Key", f"{key}, {key}")]):
+            response = await client.get("/api/auth/me", headers=headers)
+            assert response.status_code == 400 and _code(response) == "key_header_repeated"
+
+    async def test_it_cannot_pass_a_human_session_gate(self, client, auth_headers, test_team):
+        """Only an API key goes in it, and a human-session route wants a
+        web-login JWT in Authorization: the key authenticates (not a 401)
+        and the gate still refuses it."""
+        from app.api.deps import require_human_session
+
+        created = await client.post("/api/api-keys", json={"name": "mine"}, headers=auth_headers)
+        assert created.status_code in (200, 201), created.text
+        human_key = created.json()["key"]
+        routes = [(m, p) for m, p, _, d in _api_routes() if _depends_on(d, require_human_session) and "GET" in m]
+        assert routes
+        for _, raw in routes:
+            path = re.sub(r"\{[^}]+\}", "x", raw)
+            response = await client.get(path, headers=_key_header(human_key))
+            assert response.status_code == 403, (path, response.text)
+            assert _code(response) == "human_session_required", (path, response.text)
+
+    async def test_connected_apps_take_a_persons_key_but_not_an_agents(self, client, auth_headers, registrar):
+        """The connected-apps routes (a person on their own credential):
+        a human's ck_ key in the header is accepted, a session's refused."""
+        created = await client.post("/api/api-keys", json={"name": "mine"}, headers=auth_headers)
+        human_key = created.json()["key"]
+        routes = [p for m, p, e, _ in _api_routes() if "GET" in m and p.endswith("/connections")]
+        assert routes, "no connected-apps list route"
+        ok = await client.get(routes[0], headers=_key_header(human_key))
+        assert ok.status_code == 200, ok.text
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        refused = await client.get(routes[0], headers=_key_header(session_key))
+        assert refused.status_code == 403, refused.text
+
+    async def test_another_authorization_scheme_is_not_replaced_by_it(self, client, registrar):
+        """Read only when there is no Authorization at all: a Basic (or
+        empty Bearer) Authorization is answered as before."""
+        _, key = registrar
+        for auth in ("Basic dXNlcjpwdw==", "Bearer "):
+            response = await client.get("/api/auth/me", headers={"Authorization": auth, **_key_header(key)})
+            assert response.status_code == 401, (auth, response.text)

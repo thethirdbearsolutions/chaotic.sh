@@ -67,6 +67,17 @@ PROJECT_SCOPED_TEAM_WIDE = (
 PROJECT_SCOPE_GONE = "This API key's scoped project no longer exists."
 
 
+
+def _as_configured() -> bool:
+    """Whether the default-team and project-scope lookups go with the
+    configured key itself. Yes, except when a proxy supplies the registrar
+    key (CHT-1906): no key is configured then (or one that header mode
+    does not use), and the session identity, an agent in the registrar's
+    team, answers them."""
+    from . import session_identity
+
+    return session_identity.proxied_ref() is None
+
 class RestBackend:
     capabilities = Capabilities(team_param=False)
 
@@ -79,7 +90,7 @@ class RestBackend:
     @staticmethod
     def _require_auth() -> None:
         m = _main()
-        if not m.get_token() and not m.get_api_key():
+        if not m.has_credential():
             raise ToolInputError(
                 "Not authenticated. Run 'chaotic auth login' or 'chaotic auth set-key' "
                 "first, or 'chaotic quickstart' to get set up."
@@ -105,8 +116,8 @@ class RestBackend:
         # may already have listed them for a person registrar (CHT-1691).
         # Keyed like the process team (config._process_team_slot).
         teams = await self._call(
-            config.accessible_teams, config.get_api_url(), config.get_api_key() or config.get_token() or "",
-            functools.partial(self._client().get_teams, as_configured=True),
+            config.accessible_teams, config.get_api_url(), config.lookup_credential() or "",
+            functools.partial(self._client().get_teams, as_configured=_as_configured()),
         ) or []
         if len(teams) == 1:
             config.set_process_team(teams[0]["id"])
@@ -133,10 +144,10 @@ class RestBackend:
         configured, and once per process, so a set-up profile never
         pays for it."""
         from . import config
-        slot = config._team_slot(config.get_api_url(), config.get_api_key() or config.get_token() or "")
+        slot = config._team_slot(config.get_api_url(), config.lookup_credential() or "")
         if slot in _key_projects:
             return _key_projects[slot]
-        me = await self._call(functools.partial(self._client().get_me, as_configured=True)) or {}
+        me = await self._call(functools.partial(self._client().get_me, as_configured=_as_configured())) or {}
         project = None
         if me.get("is_agent") and me.get("agent_project_id"):
             try:

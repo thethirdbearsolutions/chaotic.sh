@@ -4,7 +4,8 @@
  */
 
 import { getCommentDraft, setCommentDraft, getDescriptionDraft, setDescriptionDraft, getDescriptionDraftBase } from './storage.js';
-import { getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints, getCurrentView, getDetailNavContext, subscribe } from './state.js';
+import { getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints, getCurrentView, getDetailNavContext, getIssues, subscribe } from './state.js';
+import { getStoredIssue } from './issue-store.js';
 import { api } from './api.js';
 import { showToast, showModal, closeModal, showApiError, showMentionWarnings } from './ui.js';
 import { navigateTo, saveScrollPosition } from './router.js';
@@ -487,6 +488,16 @@ subscribe((key) => {
 // Bumped by every navigating viewIssue() call -- not by background
 // refreshes (see `refresh` below).
 let viewIssueNavigationId = 0;
+
+/**
+ * Leaving the detail (the router calls this before every view change)
+ * drops any load still in flight, so it can't paint the issue back over
+ * the view the user went to (CHT-1899 review I3: Back is pressable while
+ * the detail loads, since its history entry is pushed at once).
+ */
+export function abandonIssueLoad() {
+    viewIssueNavigationId++;
+}
 // Bumped by every viewIssue() call, refresh or navigation: a refresh renders
 // only if no later call of either kind started while it was fetching, so two
 // overlapping refreshes can never land oldest-last (PR #318 review 1).
@@ -532,6 +543,71 @@ function isShowingIssueDetail(issueId) {
 }
 
 /**
+ * The row a list already loaded for this issue, if any, newest source
+ * first: the Issues view's list (it carries in-flight edits), the issue
+ * store (kept current by /ws), then the list the user opened it from,
+ * which is a snapshot (CHT-1899).
+ */
+function findLoadedIssue(issueId) {
+    return getIssues().find(i => i.id === issueId)
+        || getStoredIssue(issueId)
+        || getDetailNavContext().find(i => i.id === issueId)
+        || null;
+}
+
+/**
+ * Paint the issue from the row a list already loaded, at once, while the
+ * full detail (description, comments, activity) loads (CHT-1899). VISION.md:
+ * opening an issue from a list shows something within 100 ms.
+ *
+ * Deliberately inert: its property rows have no data-field or action and
+ * there are no editors, so no shortcut or dropdown can act on a partial
+ * row. It does become the current detail issue, so j/k and
+ * the arrows move on from this issue rather than the one before it.
+ */
+function paintDetailFromRow(row) {
+    const detailView = document.getElementById('issue-detail-view');
+    const content = detailView?.querySelector('#issue-detail-content');
+    if (!content) return;
+    setCurrentDetailIssue(row);
+    const nav = computeDetailNav(row.id);
+    detailNavPrevId = nav.prevIssue ? nav.prevIssue.id : null;
+    detailNavNextId = nav.nextIssue ? nav.nextIssue.id : null;
+    const project = getProjects().find(p => p.id === row.project_id);
+    const assignee = row.assignee_id ? getAssigneeById(row.assignee_id) : null;
+    const backView = getCurrentView() || 'my-issues';
+
+    document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+    detailView.classList.remove('hidden');
+    content.innerHTML = `
+            <div class="detail-layout detail-from-row" aria-busy="true">
+                <div class="detail-main">
+                    <div class="issue-detail-nav">
+                        <button class="back-link" data-action="navigate-to" data-view="${escapeAttr(backView)}">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                            Back
+                        </button>
+                        ${renderDetailNavArrows(nav)}
+                        <span class="issue-detail-breadcrumb">${project ? escapeHtml(project.name) : 'Project'} › ${escapeHtml(row.identifier)}</span>
+                    </div>
+                    <h1 class="issue-detail-title">${escapeHtml(row.title)}</h1>
+                    <div class="issue-detail-description">
+                        <div class="skeleton skeleton-title"></div>
+                        <div class="skeleton skeleton-title" style="width: 70%"></div>
+                    </div>
+                </div>
+                <aside class="detail-sidebar">
+                    <div class="sidebar-section">
+                        <h4>Properties</h4>
+                        <div class="property-row"><span class="property-label">Status</span><span class="property-value">${getStatusIcon(row.status)}<span>${formatStatus(row.status)}</span></span></div>
+                        <div class="property-row"><span class="property-label">Priority</span><span class="property-value">${getPriorityIcon(row.priority)}<span>${formatPriority(row.priority)}</span></span></div>
+                        <div class="property-row"><span class="property-label">Assignee</span><span class="property-value">${assignee ? escapeHtml(formatAssigneeName(assignee)) : 'Unassigned'}</span></div>
+                    </div>
+                </aside>
+            </div>`;
+}
+
+/**
  * @param {string} issueId
  * @param {boolean} [pushHistory=true]
  * @param {{refresh?: boolean}} [options] refresh: a background re-render of
@@ -566,6 +642,20 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
 
         // A refresh keeps whatever the user expanded (PR #318 review 3).
         if (!refresh) ticketRitualsCollapsed = true;
+
+        // Paint what a list already loaded at once (CHT-1899), and take the
+        // history entry now, so Back works while the rest loads.
+        let historyPushed = false;
+        if (!refresh) {
+            const row = findLoadedIssue(issueId);
+            if (row) {
+                paintDetailFromRow(row);
+                if (pushHistory) {
+                    history.pushState({ issueId, view: getCurrentView() }, '', `/issue/${row.identifier}`);
+                    historyPushed = true;
+                }
+            }
+        }
         // CHT-1224: comments used to be the one fetch in this Promise.all with
         // no per-call .catch (unlike ritual status/sprints below), so a single
         // comments-endpoint failure discarded 4 successful fetches and failed
@@ -641,7 +731,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         const relatedIssues = relations.filter(r => r.relation_type === 'relates_to');
 
         // Update URL
-        if (pushHistory) {
+        if (pushHistory && !historyPushed) {
             history.pushState({ issueId, view: getCurrentView() }, '', `/issue/${issue.identifier}`);
         }
 
@@ -1149,7 +1239,27 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
             // noise (and an issue:deleted handler covers the 404 case).
             console.error('Failed to refresh issue detail:', e);
         } else {
+            // A load the user already left (opened another issue, went Back)
+            // says nothing (CHT-1899 review M4).
+            if (navigationId !== viewIssueNavigationId) return 'dropped';
             showApiError('load issue', e);
+            // The row painted at once must not sit there loading forever.
+            const fromRow = document.querySelector('#issue-detail-content .detail-from-row .issue-detail-description');
+            if (fromRow) {
+                const gone = e?.status === 403 || e?.status === 404;
+                fromRow.innerHTML = renderEmptyState(gone ? {
+                    icon: EMPTY_ICONS.issues,
+                    heading: 'Issue not found',
+                    description: 'It may have been deleted, or you no longer have access to it',
+                    variant: 'error',
+                } : {
+                    icon: EMPTY_ICONS.issues,
+                    heading: 'Failed to load issue',
+                    description: 'Check your connection and try again',
+                    cta: { label: 'Retry', action: 'retry-issue-comments', data: { 'issue-id': issueId } },
+                    variant: 'error',
+                });
+            }
         }
         return 'failed';
     }

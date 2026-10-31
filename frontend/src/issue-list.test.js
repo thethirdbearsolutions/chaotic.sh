@@ -1,7 +1,7 @@
 /**
  * Tests for issue-list.js module (CHT-664)
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock all dependency modules before importing issue-list
 vi.mock('./state.js', () => {
@@ -69,6 +69,10 @@ import {
     sumEstimates,
     highlightSearchMatch,
     getDescriptionSnippet,
+    appendPendingRows,
+    cancelPendingRows,
+    hasPendingRows,
+    FIRST_PAINT_ROWS,
 } from './issue-list.js';
 
 import { getIssues, getSelectedIssueIndex, setSelectedIssueIndex } from './state.js';
@@ -133,6 +137,151 @@ describe('issue-list', () => {
             expect(ISSUE_TYPE_ORDER).toEqual([
                 'task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'refactor', 'epic'
             ]);
+        });
+    });
+
+    // CHT-1897: the first rows paint with the list, the rest follow in chunks
+    describe('chunked paint', () => {
+        const many = (n, extra = {}) => Array.from({ length: n }, (_, i) => ({
+            id: `i-${i}`, identifier: `T-${i}`, title: `Issue ${i}`, status: 'todo',
+            priority: 'medium', project_id: 'p', created_at: '2026-01-01T00:00:00Z', ...extra,
+        }));
+        const rowCount = () => document.querySelectorAll('#issues-list .issue-row').length;
+        const setWindow = (scrollY, innerHeight) => {
+            Object.defineProperty(window, 'scrollY', { value: scrollY, configurable: true });
+            Object.defineProperty(window, 'innerHeight', { value: innerHeight, configurable: true });
+        };
+        beforeEach(() => setWindow(0, 0));
+        afterEach(() => setWindow(0, 768));
+
+        it('paints a short list in one go', () => {
+            setTestIssues(many(10));
+            renderIssues();
+            expect(rowCount()).toBe(10);
+            expect(hasPendingRows()).toBe(false);
+        });
+
+        // Fake timers and frames, so the chunk sequence itself is checked and
+        // no machine is too slow for it (CHT-1917).
+        const drainFrames = () => {
+            const counts = [rowCount()];
+            while (vi.getTimerCount() > 0) {
+                vi.advanceTimersToNextTimer();
+                if (rowCount() !== counts[counts.length - 1]) counts.push(rowCount());
+            }
+            return counts;
+        };
+        const useFakeFrames = () => vi.useFakeTimers({
+            toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'],
+        });
+        afterEach(() => {
+            cancelPendingRows();
+            vi.useRealTimers();
+        });
+
+        it('paints the first rows at once and the rest in chunks on later ticks', () => {
+            useFakeFrames();
+            setTestIssues(many(400));
+            renderIssues();
+            expect(hasPendingRows()).toBe(true);
+            expect(drainFrames()).toEqual([FIRST_PAINT_ROWS, 210, 360, 400]);
+            const ids = [...document.querySelectorAll('#issues-list .issue-row')].map(r => r.dataset.issueId);
+            expect(ids).toEqual(many(400).map(i => i.id));
+        });
+
+        it('appends everything at once on demand, for keyboard navigation', () => {
+            setTestIssues(many(400));
+            renderIssues();
+            appendPendingRows();
+            expect(rowCount()).toBe(400);
+            expect(hasPendingRows()).toBe(false);
+        });
+
+        it('drops the queued rows of a superseded paint', () => {
+            useFakeFrames();
+            setTestIssues(many(400));
+            renderIssues();
+            // Same ids again, so rows left over from the first queue would
+            // show up as duplicates.
+            setTestIssues(many(400, { title: 'Second paint' }));
+            renderIssues();
+            drainFrames();
+            const ids = [...document.querySelectorAll('#issues-list .issue-row')].map(r => r.dataset.issueId);
+            expect(ids).toEqual(many(400).map(i => i.id));
+        });
+
+        it('appends queued rows into their own group', () => {
+            getGroupByValue.mockReturnValue('status');
+            const issues = [...many(50, { status: 'todo' }), ...many(50, { status: 'done' }).map(i => ({ ...i, id: `d-${i.id}` }))];
+            setTestIssues(issues);
+            renderIssues();
+            appendPendingRows();
+            const inGroup = (g) => document.querySelectorAll(`.issue-group[data-group="${g}"] .issue-row`).length;
+            expect(inGroup('todo')).toBe(50);
+            expect(inGroup('done')).toBe(50);
+        });
+
+        // CHT-1897 review C1: a re-paint keeps the rows down to the viewport,
+        // so the document keeps its height and the scroll position holds.
+        it('renders through the viewport at once when scrolled down', () => {
+            setTestIssues(many(1000));
+            setWindow(3000, 900);
+            renderIssues();
+            expect(rowCount()).toBe(Math.ceil((3000 + 1800) / 24));
+            expect(hasPendingRows()).toBe(true);
+        });
+
+        // review I1
+        it('drops the queue when something else replaces the list', async () => {
+            setTestIssues(many(400));
+            renderIssues();
+            document.getElementById('issues-list').innerHTML = '<div class="skeleton"></div>';
+            appendPendingRows();
+            expect(rowCount()).toBe(0);
+            expect(hasPendingRows()).toBe(false);
+        });
+
+        // review I2
+        it('appends a queued row as it is now, not as it was when queued', () => {
+            const issues = many(200);
+            setTestIssues(issues);
+            renderIssues();
+            setTestIssues(issues.map(i => (i.id === 'i-150' ? { ...i, title: 'Renamed meanwhile' } : i)));
+            appendPendingRows();
+            const row = document.querySelector('#issues-list .issue-row[data-issue-id="i-150"]');
+            expect(row.textContent).toContain('Renamed meanwhile');
+        });
+
+        // review M1
+        it('does not move a selection made while the rows were queued', () => {
+            setTestIssues(many(200));
+            renderIssues();
+            appendPendingRows();
+            document.querySelectorAll('#issues-list .issue-row')[150].classList.add('keyboard-selected');
+            setSelectedIssueIndex(150);
+            renderIssues();
+            const rows = document.querySelectorAll('#issues-list .issue-row');
+            rows[3].classList.add('keyboard-selected');
+            setSelectedIssueIndex(3);
+            appendPendingRows();
+            expect([...document.querySelectorAll('#issues-list .keyboard-selected')].map(r => r.dataset.issueId)).toEqual(['i-3']);
+            expect(getSelectedIssueIndex()).toBe(3);
+        });
+
+        it('re-selects a queued row once it lands', () => {
+            const issues = many(200);
+            setTestIssues(issues);
+            renderIssues();
+            appendPendingRows();
+            const rows = document.querySelectorAll('#issues-list .issue-row');
+            rows[150].classList.add('keyboard-selected');
+            setSelectedIssueIndex(150);
+            renderIssues();
+            expect(document.querySelector('.keyboard-selected')).toBeNull();
+            appendPendingRows();
+            const selected = document.querySelector('#issues-list .keyboard-selected');
+            expect(selected?.dataset.issueId).toBe('i-150');
+            expect(getSelectedIssueIndex()).toBe(150);
         });
     });
 

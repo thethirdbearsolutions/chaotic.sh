@@ -33,18 +33,23 @@ class Client:
         """The profile's credential: the API key, else the login token."""
         return get_api_key() or get_token()
 
-    def _headers(self, credential: str | None = None) -> dict:
+    def _headers(self, credential: str | None = None, *, key_header: bool = False) -> dict:
         """Get request headers.
 
         Reads config on each call to support profile switching.
         `credential` overrides the configured one (a session identity's
-        key, CHT-1499).
+        key, CHT-1499). With `key_header` it goes as X-Chaotic-Key and
+        no Authorization is sent (CHT-1913): a cloud proxy that injects
+        the registrar key for this host drops the client's Authorization.
         """
         headers = {"Content-Type": "application/json"}
-        # Prefer API key over JWT token
-        credential = credential or self._configured_credential()
-        if credential:
-            headers["Authorization"] = f"Bearer {credential}"
+        if key_header:
+            headers[session_identity.KEY_HEADER] = credential
+        else:
+            # Prefer API key over JWT token
+            credential = credential or self._configured_credential()
+            if credential:
+                headers["Authorization"] = f"Bearer {credential}"
         # Signals whether this invocation is an interactive (TTY) session,
         # as opposed to an agent or other non-interactive automation. Used
         # by the backend to require both a human account AND an interactive
@@ -100,11 +105,14 @@ class Client:
             api_url = get_api_url()
         url = f"{api_url}{path}"
         key = self._session_key(ref, credential, api_url) if ref else None
+        # Header mode (no registrar key here): the session key goes in
+        # X-Chaotic-Key, the header the proxy passes through (CHT-1913).
+        key_header = bool(ref) and session_identity.registrar_key_via() == "header"
         with httpx.Client() as client:
             send = getattr(client, method.lower())
 
             def _send(credential):
-                kwargs = {"headers": self._headers(credential)}
+                kwargs = {"headers": self._headers(credential, key_header=key_header)}
                 if data is not None:
                     kwargs["json"] = data
                 return send(url, **kwargs)
