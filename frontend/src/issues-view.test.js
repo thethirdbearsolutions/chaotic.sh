@@ -1161,6 +1161,42 @@ describe('issues-view', () => {
                 expect(list.classList.contains('is-refreshing')).toBe(false);
             });
 
+            // CHT-1910: a filter the store can answer paints at once
+            describe('rows derived from a covering query', () => {
+                const mixed = [
+                    { id: 'a', project_id: 'p-1', updated_at: 't1', title: 'A', status: 'todo' },
+                    { id: 'b', project_id: 'p-1', updated_at: 't1', title: 'B', status: 'done' },
+                    { id: 'c', project_id: 'p-1', updated_at: 't1', title: 'C', status: 'todo' },
+                ];
+                afterEach(() => checkStatuses([]));
+
+                it('paints the filtered rows before the server answers, then its answer', async () => {
+                    checkStatuses([]);
+                    api.getIssues.mockResolvedValue(mixed);
+                    await loadIssues();
+                    checkStatuses(['todo']);
+                    let resolve;
+                    api.getIssues.mockReturnValue(new Promise(r => { resolve = r; }));
+                    setIssues.mockClear();
+                    const pending = loadIssues();
+                    await vi.waitFor(() => expect(setIssues).toHaveBeenCalledWith([mixed[0], mixed[2]]));
+                    const fromServer = [mixed[0], { ...mixed[2], updated_at: 't2' }];
+                    resolve(fromServer);
+                    await pending;
+                    expect(setIssues).toHaveBeenLastCalledWith(fromServer);
+                });
+
+                it('shows the error, not the derived rows, when the request fails', async () => {
+                    checkStatuses([]);
+                    api.getIssues.mockResolvedValue(mixed);
+                    await loadIssues();
+                    checkStatuses(['done']);
+                    api.getIssues.mockRejectedValue(new Error('offline'));
+                    await loadIssues();
+                    expect(listHtml()).toContain('Failed to load issues');
+                });
+            });
+
             it('keeps cached rows when the background refresh fails', async () => {
                 api.getIssues.mockResolvedValue(rowsV1);
                 await loadIssues();

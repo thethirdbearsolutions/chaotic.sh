@@ -18,6 +18,7 @@ import {
     queryForView,
     sameRows,
     clearIssueStore,
+    deriveQuery,
     MAX_CACHED_QUERIES,
 } from './issue-store.js';
 
@@ -129,6 +130,52 @@ describe('issue-store', () => {
         expect(queryForView('unknown')).toBeNull();
         clearIssueStore();
         expect(queryForView('view')).toBeNull();
+    });
+
+    // CHT-1910
+    describe('deriveQuery', () => {
+        const base = { scope: 'p', project_id: 'p', sort_by: 'created', order: 'desc', limit: 1000, fields: 'list' };
+        const rows = [
+            row('a', { status: 'todo', priority: 'high', assignee_id: 'u1', labels: [{ id: 'l1', name: 'Bug' }] }),
+            row('b', { status: 'done', priority: 'low', assignee_id: null, labels: [] }),
+            row('c', { status: 'todo', priority: 'low', assignee_id: 'u1', labels: [{ id: 'l2', name: 'ui' }] }),
+        ];
+        beforeEach(() => writeQuery(queryKey(base), rows));
+        const ids = (r) => r && r.map(i => i.id);
+
+        it('filters the unfiltered list by status, priority, assignee and labels', () => {
+            expect(ids(deriveQuery({ ...base, status: ['todo'] }))).toEqual(['a', 'c']);
+            expect(ids(deriveQuery({ ...base, status: ['todo'], priority: ['low'] }))).toEqual(['c']);
+            expect(ids(deriveQuery({ ...base, assignee_id: 'u1' }))).toEqual(['a', 'c']);
+            expect(ids(deriveQuery({ ...base, label: ['bug'], label_match: 'any' }))).toBeNull(); // label_match differs
+            expect(ids(deriveQuery({ ...base, exclude_label: ['BUG'] }))).toEqual(['b', 'c']);
+        });
+
+        it('narrows a filtered list only to a subset of its filter', () => {
+            clearIssueStore();
+            writeQuery(queryKey({ ...base, status: ['todo', 'backlog'] }), [rows[0], rows[2]]);
+            expect(ids(deriveQuery({ ...base, status: ['todo'] }))).toEqual(['a', 'c']);
+            expect(deriveQuery({ ...base, status: ['done'] })).toBeNull();
+            expect(deriveQuery({ ...base })).toBeNull();
+        });
+
+        it('leaves searches, other sorts and other scopes to the server', () => {
+            expect(deriveQuery({ ...base, search: 'x' })).toBeNull();
+            expect(deriveQuery({ ...base, sort_by: 'priority' })).toBeNull();
+            expect(deriveQuery({ ...base, scope: 'q', project_id: 'q' })).toBeNull();
+        });
+
+        it('honours label any-of and exclusions held by the source', () => {
+            clearIssueStore();
+            const labelled = { ...base, label: ['bug', 'ui'], label_match: 'any' };
+            writeQuery(queryKey(labelled), [rows[0], rows[2]]);
+            expect(ids(deriveQuery({ ...labelled, label: ['ui'] }))).toEqual(['c']);
+            expect(deriveQuery({ ...labelled, label: ['docs'] })).toBeNull();
+            clearIssueStore();
+            writeQuery(queryKey({ ...base, exclude_label: ['bug'] }), [rows[1], rows[2]]);
+            expect(deriveQuery({ ...base })).toBeNull();
+            expect(ids(deriveQuery({ ...base, exclude_label: ['bug', 'ui'] }))).toEqual(['b']);
+        });
     });
 
     describe('sameRows', () => {

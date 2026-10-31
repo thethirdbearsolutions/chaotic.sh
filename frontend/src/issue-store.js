@@ -192,6 +192,79 @@ export function sameRows(a, b) {
     return true;
 }
 
+// ========================================
+// Derived rows (CHT-1910)
+// ========================================
+
+// Filters a cached query can be narrowed by on the client.
+const ARRAY_FILTERS = ['status', 'priority'];
+const SCALAR_FILTERS = ['assignee_id', 'sprint_id', 'issue_type'];
+// Must match exactly: they change which rows come back, or their order,
+// in ways the client can't reproduce.
+const SAME = ['scope', 'project_id', 'sort_by', 'order', 'limit', 'label_match'];
+
+const lower = (names) => (names || []).map(n => String(n).toLowerCase());
+
+// Whether every row `target` asks for is among the rows `source` returned
+// (given `source` was complete), so filtering `source` gives `target`.
+function covers(source, target) {
+    if (source.search || target.search) return false;
+    if (SAME.some(k => (source[k] ?? null) !== (target[k] ?? null))) return false;
+    for (const k of ARRAY_FILTERS) {
+        if (source[k] === undefined) continue;
+        if (target[k] === undefined || !target[k].every(v => source[k].includes(v))) return false;
+    }
+    for (const k of SCALAR_FILTERS) {
+        if (source[k] !== undefined && source[k] !== target[k]) return false;
+    }
+    // label is "any of": a narrower set selects fewer rows.
+    if (source.label !== undefined) {
+        if (target.label === undefined) return false;
+        const allowed = lower(source.label);
+        if (!lower(target.label).every(n => allowed.includes(n))) return false;
+    }
+    // exclude_label: the target must exclude at least what the source did.
+    if (source.exclude_label !== undefined) {
+        const excluded = lower(target.exclude_label);
+        if (!lower(source.exclude_label).every(n => excluded.includes(n))) return false;
+    }
+    return true;
+}
+
+function matches(issue, target) {
+    for (const k of ARRAY_FILTERS) {
+        if (target[k] !== undefined && !target[k].includes(issue[k])) return false;
+    }
+    for (const k of SCALAR_FILTERS) {
+        if (target[k] !== undefined && (issue[k] ?? null) !== target[k]) return false;
+    }
+    const names = lower((issue.labels || []).map(l => l.name));
+    if (target.label !== undefined && !lower(target.label).some(n => names.includes(n))) return false;
+    if (target.exclude_label !== undefined && lower(target.exclude_label).some(n => names.includes(n))) return false;
+    return true;
+}
+
+/**
+ * Rows for a query the store has not loaded, filtered on the client from
+ * a cached query that covers it (e.g. Open priorities from the unfiltered
+ * list), in that query's order. Null when no cached query covers it, or
+ * when the target is a search (matching is the server's). The caller
+ * shows them while the real request runs and replaces them with its
+ * answer (VISION.md: filtering shows something within 100 ms).
+ */
+export function deriveQuery(params) {
+    const target = Object.fromEntries(JSON.parse(queryKey(params)));
+    let best = null;
+    queries.forEach((entry, key) => {
+        if (best && entry.ids.length >= best.ids.length) return;
+        let source;
+        try { source = Object.fromEntries(JSON.parse(key)); } catch { return; }
+        if (covers(source, target)) best = entry;
+    });
+    if (!best) return null;
+    return best.ids.map(id => entities.get(id)).filter(issue => issue && matches(issue, target));
+}
+
 export function clearIssueStore() {
     entities.clear();
     queries.clear();

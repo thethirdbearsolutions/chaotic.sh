@@ -96,6 +96,41 @@ try {
         await settle(page);
     }
 
+    // Filtering to a combination not loaded yet shows its rows at once,
+    // derived from the list already loaded (CHT-1910). The list request gets 300 ms of network latency here: on localhost
+    // the server answers in ~20 ms, which would hide whether the rows came
+    // from the store or from the server.
+    const slowList = async (route) => { await new Promise((r) => setTimeout(r, 300)); await route.continue().catch(() => {}); };
+    const isList = (url) => url.pathname === '/api/issues';
+    await page.route(isList, slowList);
+    const filter = [];
+    for (const priority of ['high', 'urgent', 'low', 'medium']) {
+        await page.evaluate(() => window.scrollTo(0, 0));
+        filter.push(await page.evaluate((value) => {
+            // Every row shown has the new priority: the filter has visibly applied.
+            const rows = () => [...document.querySelectorAll('#issues-list .issue-row')];
+            const p = window.__untilFrame(() => {
+                const list = document.getElementById('issues-list');
+                const shown = rows();
+                return !list.classList.contains('is-refreshing') && shown.length > 0
+                    && shown.every((r) => r.querySelector('.priority-btn')?.title.toLowerCase() === `priority: ${value}`);
+            });
+            const box = document.querySelector(`#priority-filter-dropdown input[value="${value}"]`);
+            box.checked = true;
+            box.dispatchEvent(new Event('change', { bubbles: true }));
+            return p;
+        }, priority));
+        await settle(page);
+        await page.evaluate((value) => {
+            const box = document.querySelector(`#priority-filter-dropdown input[value="${value}"]`);
+            box.checked = false;
+            box.dispatchEvent(new Event('change', { bubbles: true }));
+        }, priority);
+        await settle(page);
+    }
+    await page.unroute(isList, slowList);
+    record('filter to an unloaded combination, 300 ms network (median ms)', Math.round(median(filter)), median(filter) <= BUDGET_MS, `<= ${BUDGET_MS}`);
+
     // Back keeps the reader's place in a long list (CHT-1897 review C1)
     await page.evaluate(() => window.scrollTo(0, 6000));
     await page.waitForTimeout(100);

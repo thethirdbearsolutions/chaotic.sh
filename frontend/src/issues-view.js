@@ -43,6 +43,7 @@ import {
     queryForView,
     sameRows,
     dropQuery,
+    deriveQuery,
 } from './issue-store.js';
 
 // Import from sub-modules
@@ -311,6 +312,19 @@ function showCachedRows(key, rows) {
     setHiddenClosedHint(readQueryMeta(key).hiddenClosed || 0);
 }
 
+// Rows filtered on the client from another cached query (CHT-1910). No
+// current query: an edit made meanwhile must not be saved under a key
+// these rows were never loaded for. The server's answer takes over.
+function showDerivedRows(key, rows) {
+    setListRefreshing(false);
+    setCurrentQueryKey(null);
+    setIssues(rows);
+    if (getCurrentView() === 'issues') setDetailNavContext(rows);
+    renderIssues();
+    paintedKey = key;
+    setHiddenClosedHint(0);
+}
+
 function showSkeleton() {
     setCurrentQueryKey(null);
     paintedKey = null;
@@ -442,6 +456,7 @@ export async function loadIssues() {
     }
 
     let showingCached = false;
+    let showingDerived = false;
     let key = null;
     try {
         // Label/exclude-label filters are sent to the server (which matches
@@ -467,7 +482,8 @@ export async function loadIssues() {
         // refresh in the background (CHT-1894). With nothing cached, keep
         // the rows on screen (dimmed) while the new ones load; the skeleton
         // is only for a list with nothing to show yet.
-        key = queryKey({ ...params, scope: projectId || `team:${getCurrentTeam().id}` });
+        const scope = projectId || `team:${getCurrentTeam().id}`;
+        key = queryKey({ ...params, scope });
         const cached = readQuery(key);
         if (cached) {
             showingCached = true;
@@ -478,7 +494,18 @@ export async function loadIssues() {
                 showCachedRows(key, cached);
             }
         } else {
-            showLoadingState();
+            // A cached query that covers this one (the unfiltered list
+            // covers every status filter) gives its rows at once, filtered
+            // here, while the server answers (CHT-1910). Nothing is
+            // written back to the store from them, and a failed request
+            // replaces them with the error.
+            const derived = deriveQuery({ ...params, scope });
+            if (derived && derived.length > 0) {
+                showingDerived = true;
+                showDerivedRows(key, derived);
+            } else {
+                showLoadingState();
+            }
         }
 
         const fetchIssues = (p) => {
@@ -502,7 +529,7 @@ export async function loadIssues() {
         if (requestId !== loadIssuesRequestId) return; // a newer loadIssues() has since started — drop this stale response
         rememberView(viewKey, key);
 
-        const unchanged = showingCached && paintedKey === key && sameRows(getIssues(), issues);
+        const unchanged = (showingCached || showingDerived) && paintedKey === key && sameRows(getIssues(), issues);
         setCurrentQueryKey(key);
         setIssues(issues);
         // Prev/next issue-detail nav context (CHT-1211 item 2) — this is the
