@@ -172,7 +172,7 @@ describe('epic-detail-view', () => {
             expect(content).toContain('25%');
         });
 
-        it('counts canceled as done for progress', async () => {
+        it('leaves canceled sub-issues out of progress, like the Epics list (CHT-1902)', async () => {
             api.getSubIssues.mockResolvedValue([
                 makeSubIssue({ id: 's1', status: 'done' }),
                 makeSubIssue({ id: 's2', status: 'canceled' }),
@@ -181,8 +181,20 @@ describe('epic-detail-view', () => {
             await viewEpic('epic-1');
 
             const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('2 of 3 done');
-            expect(content).toContain('67%');
+            expect(content).toContain('1 of 2 done');
+            expect(content).toContain('50%');
+        });
+
+        it("uses the Epics list's counts when opened from it, nested tickets included", async () => {
+            getCurrentEpics.mockReturnValueOnce([{ id: 'epic-1', children: {
+                total: 6, backlog: 1, todo: 1, in_progress: 0, in_review: 0, done: 3, canceled: 1,
+            } }]);
+            api.getSubIssues.mockResolvedValue([makeSubIssue({ id: 's1', status: 'done' })]);
+            await viewEpic('epic-1');
+
+            const content = document.getElementById('epic-detail-content').innerHTML;
+            expect(content).toContain('3 of 5 done');
+            expect(content).toContain('60%');
         });
 
         it('renders 100% progress with complete class', async () => {

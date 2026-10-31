@@ -39,6 +39,11 @@ const CLOSED = new Set(['done', 'canceled']);
 // Whether closed epics are listed; per page load, like the board's filters.
 let showClosed = false;
 
+/** Test hook: forget the closed-epics toggle. */
+export function resetEpicsViewState() {
+    showClosed = false;
+}
+
 /**
  * Load and render the epics list view.
  */
@@ -231,6 +236,10 @@ export function renderEpics(progress, container) {
         return header + rows + gap;
     }).join('');
 
+    const emptyNote = !body.trim() && closedCount > 0
+        ? `<tr class="epic-empty-row"><td colspan="7" class="text-muted">Every epic here is closed.</td></tr>`
+        : '';
+
     const toggle = closedCount > 0
         ? `<button class="btn btn-secondary btn-small epic-closed-toggle" data-epics-toggle-closed>${showClosed ? 'Hide' : 'Show'} ${plural(closedCount, 'closed epic')}</button>`
         : '';
@@ -249,7 +258,7 @@ export function renderEpics(progress, container) {
                 </tr>
             </thead>
             <tbody>
-                ${body}
+                ${body}${emptyNote}
             </tbody>
         </table>
         ${toggle ? `<div class="epic-table-footer">${toggle}</div>` : ''}
@@ -261,6 +270,8 @@ export function renderEpics(progress, container) {
         container._epicClickHandler = (e) => {
             if (e.target.closest('[data-epics-toggle-closed]')) {
                 showClosed = !showClosed;
+                // The rows change under the keyboard cursor, as on reload.
+                setSelectedEpicIndex(-1);
                 renderEpics(container._epicProgress, container);
                 return;
             }

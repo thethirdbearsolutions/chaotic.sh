@@ -16,11 +16,7 @@ vi.mock('./router.js', () => ({
     navigateToEpicByIdentifier: vi.fn(),
 }));
 
-// Mock the utils module
-vi.mock('./utils.js', () => ({
-    escapeHtml: (s) => s != null ? String(s) : '',
-    escapeAttr: (s) => s != null ? String(s) : '',
-}));
+// utils.js is real, so the escaping test below exercises the real escapers.
 
 // CHT-1226: loadEpics()'s catch block now calls showApiError(); without
 // this mock it hits the real showToast(), which throws on the missing
@@ -33,7 +29,7 @@ vi.mock('./ui.js', () => ({
 }));
 
 import { setCurrentTeam, setCurrentProject, getSelectedEpicIndex, setSelectedEpicIndex } from './state.js';
-import { loadEpics, renderEpics, renderSprintStrip, getCurrentEpics } from './epics.js';
+import { loadEpics, renderEpics, renderSprintStrip, getCurrentEpics, resetEpicsViewState } from './epics.js';
 import { api } from './api.js';
 import { navigateToEpicByIdentifier } from './router.js';
 import { showApiError } from './ui.js';
@@ -157,6 +153,7 @@ describe('renderEpics', () => {
     beforeEach(() => {
         setupDom();
         vi.clearAllMocks();
+        resetEpicsViewState();
         container = document.getElementById('epics-list');
     });
 
@@ -233,6 +230,29 @@ describe('renderEpics', () => {
 
         container.querySelector('[data-epics-toggle-closed]').click();
         expect(container.querySelectorAll('.epic-row').length).toBe(1);
+    });
+
+    it('resets the keyboard cursor when the closed toggle re-renders', () => {
+        renderEpics(response([epic(), epic({ id: 'e2', identifier: 'CHT-9', status: 'done' })]), container);
+        setSelectedEpicIndex(0);
+        container.querySelector('[data-epics-toggle-closed]').click();
+        expect(getSelectedEpicIndex()).toBe(-1);
+    });
+
+    it('says so when every epic is closed', () => {
+        renderEpics(response([epic({ status: 'canceled' })]), container);
+        expect(container.querySelectorAll('.epic-row').length).toBe(0);
+        expect(container.textContent).toContain('Every epic here is closed');
+    });
+
+    it('escapes server text', () => {
+        const evil = '<img src=x onerror="window.__pwned=1">';
+        renderEpics(response(
+            [epic({ title: evil, identifier: evil, project_key: evil, sprints: [{ ...sprints([1])[0], name: evil }] })],
+            [untracked({ project_key: evil })],
+        ), container);
+        expect(container.querySelector('img')).toBeNull();
+        expect(container.textContent).toContain('<img');
     });
 
     it('navigates to epic on row click via event delegation', () => {

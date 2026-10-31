@@ -10,6 +10,7 @@ Read-only, and a fixed number of queries however many epics there are:
 the Epics view used to fetch sub-issues once per epic.
 """
 from collections import defaultdict
+from datetime import datetime, timezone
 
 from oxyde import execute_raw
 
@@ -40,6 +41,18 @@ _OPEN = {IssueStatus.BACKLOG, IssueStatus.TODO, IssueStatus.IN_PROGRESS, IssueSt
 
 def _placeholders(values) -> str:
     return ",".join("?" for _ in values)
+
+
+def _when(raw) -> datetime:
+    """A stored timestamp as an aware datetime, for ordering; a missing or
+    unreadable one sorts first."""
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    try:
+        value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def _status(raw) -> IssueStatus | None:
@@ -113,7 +126,7 @@ async def epic_progress(
 
     # Sprint windows: each project's most recent started sprints.
     sprint_rows = await execute_raw(
-        "SELECT id, project_id, name, status, activated_at, closed_at FROM sprints "
+        "SELECT id, project_id, name, status, activated_at, closed_at, created_at FROM sprints "
         f"WHERE project_id IN ({_placeholders(project_ids)}) AND status IN (?, ?) "
         "ORDER BY activated_at DESC, created_at DESC",
         [*project_ids, SprintStatus.ACTIVE.name, SprintStatus.COMPLETED.name],
@@ -128,13 +141,19 @@ async def epic_progress(
             window[s["project_id"]].append(s)
     for pid in window:
         # Oldest first; an active sprint is always last.
-        window[pid].sort(key=lambda s: (s["id"] == active.get(pid), s["activated_at"] or ""))
+        # Migration 0016 nulled activated_at on sprints that ran before
+        # it; those fall back to when they were made.
+        window[pid].sort(key=lambda s: (
+            s["id"] == active.get(pid), _when(s["activated_at"] or s["created_at"]), _when(s["created_at"]),
+        ))
         window[pid] = window[pid][-sprint_window:]
     sprint_ids = [s["id"] for ss in window.values() for s in ss]
 
-    # bucket -> sprint_id -> [closed, points]; bucket is an epic id, or
-    # ("untracked", project_id).
-    ticks: dict = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    # bucket -> sprint_id -> {issue_id: points}; bucket is an epic id, or
+    # ("untracked", project_id). Keyed by issue, so a ticket closed,
+    # reopened and closed again in one sprint counts once (its budget was
+    # charged twice; progress was made once).
+    closes: dict = defaultdict(lambda: defaultdict(dict))
     if sprint_ids:
         txns = await execute_raw(
             "SELECT sprint_id, issue_id, points FROM budget_transactions "
@@ -145,13 +164,19 @@ async def epic_progress(
             issue = issues.get(t["issue_id"])
             if issue is None:
                 continue
-            # An epic's own close counts toward itself.
-            bucket = t["issue_id"] if is_epic[t["issue_id"]] else owner.get(t["issue_id"])
+            # Ticks follow the same rule as the counts: a close counts
+            # toward the issue's nearest epic ancestor, so a nested epic's
+            # own close counts toward the epic above it.
+            bucket = owner.get(t["issue_id"])
             if bucket is None:
                 bucket = ("untracked", issue["project_id"])
-            cell = ticks[bucket][t["sprint_id"]]
-            cell[0] += 1
-            cell[1] += t["points"] or 0
+            cell = closes[bucket][t["sprint_id"]]
+            cell[t["issue_id"]] = max(cell.get(t["issue_id"], 0), t["points"] or 0)
+
+    ticks: dict = {
+        bucket: {sid: [len(cell), sum(cell.values())] for sid, cell in per_sprint.items()}
+        for bucket, per_sprint in closes.items()
+    }
 
     def sprint_ticks(bucket, project_id) -> list[SprintTick]:
         cells = ticks.get(bucket, {})

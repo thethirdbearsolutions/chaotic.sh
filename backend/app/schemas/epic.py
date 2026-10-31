@@ -58,7 +58,8 @@ class EpicProgress(BaseModel):
     # canceled tickets count toward neither.
     points_total: int
     points_done: int
-    # Closed while the project's current sprint was active.
+    # Tickets closed while the project's current sprint was active, each
+    # once however often it was reopened, toward their nearest epic.
     closed_this_sprint: int
     points_this_sprint: int
     # The project's most recent sprints, oldest first, the active one last.

@@ -114,3 +114,76 @@ async def test_empty_project(client, interactive_headers, test_project, db):
     data = (await client.get(f"/api/projects/{test_project.id}/epics", headers=interactive_headers)).json()
     assert data["epics"] == []
     assert data["untracked"][0]["open"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_reclosed_ticket_counts_once_per_sprint(client, interactive_headers, test_project, db):
+    """Review of CHT-1902: the budget is charged per close, progress is
+    made once. A ticket closed, reopened and closed again in one sprint
+    is one ticket and its points once."""
+    h = interactive_headers
+    await _active_sprint(test_project.id)
+    epic = await _create(client, h, test_project.id, title="Goal", issue_type="epic")
+    child = await _create(client, h, test_project.id, title="C", parent_id=epic["id"], estimate=3)
+    await _patch(client, h, child["id"], status="done")
+    await _patch(client, h, child["id"], status="todo")
+    await _patch(client, h, child["id"], status="done")
+
+    [row] = (await client.get(f"/api/projects/{test_project.id}/epics", headers=h)).json()["epics"]
+    assert row["points_done"] == 3
+    assert (row["closed_this_sprint"], row["points_this_sprint"]) == (1, 3)
+    assert [(t["closed"], t["points"]) for t in row["sprints"]] == [(1, 3)]
+
+
+@pytest.mark.asyncio
+async def test_an_epic_close_counts_toward_the_epic_above_it(client, interactive_headers, test_project, db):
+    """Ticks follow the counts' rule: a close counts toward the nearest
+    epic ancestor. A nested epic's own close is the outer epic's; a
+    top-level epic's own close is untracked, never more than its total."""
+    h = interactive_headers
+    await _active_sprint(test_project.id)
+    outer = await _create(client, h, test_project.id, title="Outer", issue_type="epic")
+    inner = await _create(client, h, test_project.id, title="Inner", issue_type="epic", parent_id=outer["id"], estimate=2)
+    leaf = await _create(client, h, test_project.id, title="Leaf", parent_id=inner["id"], estimate=3)
+    await _patch(client, h, leaf["id"], status="done")
+    await _patch(client, h, inner["id"], status="done")
+    await _patch(client, h, outer["id"], status="done")
+
+    data = (await client.get(f"/api/projects/{test_project.id}/epics", headers=h)).json()
+    rows = {e["title"]: e for e in data["epics"]}
+    assert (rows["Inner"]["closed_this_sprint"], rows["Inner"]["points_this_sprint"]) == (1, 3)
+    assert (rows["Outer"]["closed_this_sprint"], rows["Outer"]["points_this_sprint"]) == (1, 2)
+    assert rows["Outer"]["points_total"] == 2
+    [untracked] = data["untracked"]
+    assert untracked["closed_this_sprint"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sprints_without_activated_at_run_oldest_first(client, interactive_headers, test_project, db):
+    """Migration 0016 nulled activated_at on sprints that ran before it;
+    they order by when they were made, before the active sprint."""
+    from datetime import datetime, timedelta, timezone
+    from app.oxyde_models.sprint import OxydeSprint
+
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for n in range(3):
+        await OxydeSprint.objects.create(
+            project_id=test_project.id, name=f"Old{n}", status=SprintStatus.COMPLETED,
+            activated_at=None, created_at=base + timedelta(days=n),
+        )
+    await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Cur", status=SprintStatus.ACTIVE,
+        activated_at=base + timedelta(days=10), created_at=base + timedelta(days=9),
+    )
+    await _create(client, interactive_headers, test_project.id, title="Goal", issue_type="epic")
+    [row] = (await client.get(f"/api/projects/{test_project.id}/epics", headers=interactive_headers)).json()["epics"]
+    assert [t["name"] for t in row["sprints"]] == ["Old0", "Old1", "Old2", "Cur"]
+
+
+@pytest.mark.asyncio
+async def test_a_hand_set_status_is_reported(client, interactive_headers, test_project, db):
+    h = interactive_headers
+    epic = await _create(client, h, test_project.id, title="Goal", issue_type="epic")
+    await _patch(client, h, epic["id"], status="todo")
+    [row] = (await client.get(f"/api/projects/{test_project.id}/epics", headers=h)).json()["epics"]
+    assert row["status"] == "todo" and row["status_pinned"] is True
