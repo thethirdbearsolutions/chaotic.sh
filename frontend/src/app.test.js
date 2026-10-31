@@ -195,6 +195,7 @@ vi.mock('./issue-tooltip.js', () => ({
     initIssueTooltip: vi.fn(),
     hideTooltip: vi.fn(),
 }));
+vi.mock('./quote-comment.js', () => ({ isQuoteTooltipVisible: vi.fn().mockReturnValue(false) }));
 vi.mock('./router.js', () => ({
     navigateTo: vi.fn(),
     navigateToIssueByIdentifier: vi.fn(),
@@ -241,6 +242,7 @@ import { initIssueTooltip } from './issue-tooltip.js';
 import { closeSidebar } from './sidebar.js';
 import { hideTooltip } from './issue-tooltip.js';
 import { navigateTo, navigateToEpicByIdentifier } from './router.js';
+import { isQuoteTooltipVisible } from './quote-comment.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive } from './keyboard.js';
 import { initEventDelegation } from './event-delegation.js';
 import { initAuth } from './auth.js';
@@ -631,6 +633,26 @@ describe('app.js keyboard handler wiring', () => {
         it('reports the detail overflow menu as an open menu', () => {
             container.querySelector('.overflow-menu-dropdown').classList.remove('hidden');
             expect(keyboardHandlerConfig.isMenuOpen()).toBe(true);
+        });
+
+        it('reports a visible Quote tooltip as an open menu', () => {
+            isQuoteTooltipVisible.mockReturnValue(true);
+            try {
+                expect(keyboardHandlerConfig.isMenuOpen()).toBe(true);
+            } finally {
+                isQuoteTooltipVisible.mockReturnValue(false);
+            }
+        });
+
+        it('closeDropdowns closes the overflow menu opened by click', () => {
+            container.querySelector('#issue-detail-view').insertAdjacentHTML('beforeend',
+                '<button class="sidebar-overflow-trigger" aria-expanded="true"></button>');
+            const menu = container.querySelector('.overflow-menu-dropdown');
+            menu.classList.remove('hidden');
+            keyboardHandlerConfig.closeDropdowns();
+            expect(menu.classList.contains('hidden')).toBe(true);
+            expect(container.querySelector('.sidebar-overflow-trigger').getAttribute('aria-expanded')).toBe('false');
+            expect(keyboardHandlerConfig.isMenuOpen()).toBe(false);
         });
 
         it('leaves through the Back button', () => {

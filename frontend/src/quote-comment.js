@@ -95,6 +95,14 @@ function hideTooltip() {
 }
 
 /**
+ * Whether the Quote tooltip is showing. Escape dismisses it first, so the
+ * global handler must not also treat that Escape as "go back" (CHT-1873).
+ */
+export function isQuoteTooltipVisible() {
+    return tooltipVisible;
+}
+
+/**
  * Check if a node is inside a quotable area (.description-content or
  * .comment-content on the issue side; .document-content — the document
  * body's markdown class, CHT-1213 — on the document side).
@@ -249,6 +257,11 @@ export function setupQuoteComment({ containerId = 'issue-detail-content', textar
         // Dismiss on Escape
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && tooltipVisible) {
+                // This Escape is spent dismissing the tooltip. If this
+                // listener runs before the global one, stop it there; if
+                // after, the global one already saw the tooltip as an open
+                // menu via isQuoteTooltipVisible() (CHT-1873).
+                e.stopImmediatePropagation();
                 hideTooltip();
             }
         });
