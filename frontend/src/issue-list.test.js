@@ -165,7 +165,8 @@ describe('issue-list', () => {
             renderIssues();
             expect(rowCount()).toBe(FIRST_PAINT_ROWS);
             expect(hasPendingRows()).toBe(true);
-            await vi.waitFor(() => expect(rowCount()).toBe(400));
+            // Generous: this checks the order rows land in, not machine speed (CHT-1917).
+            await vi.waitFor(() => expect(rowCount()).toBe(400), { timeout: 5000 });
             const ids = [...document.querySelectorAll('#issues-list .issue-row')].map(r => r.dataset.issueId);
             expect(ids).toEqual(many(400).map(i => i.id));
         });
