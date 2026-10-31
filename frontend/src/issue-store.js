@@ -209,6 +209,9 @@ const MEANS_NULL = { assignee_id: 'unassigned', sprint_id: 'no_sprint' };
 // in ways the client can't reproduce.
 const SAME = ['scope', 'project_id', 'sort_by', 'order', 'limit'];
 
+// Folds like the server's Python str.lower() (CHT-1920). The two can
+// differ only on characters newer than Python's Unicode tables, and then
+// just until the server's rows replace the derived ones.
 const lower = (names) => (names || []).map(n => String(n).toLowerCase());
 
 // Whether every row `target` asks for is among the rows `source` returned

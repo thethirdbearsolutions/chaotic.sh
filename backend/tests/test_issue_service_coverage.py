@@ -217,6 +217,66 @@ async def test_list_issues_non_ascii_label_names_match_without_case(
 
 
 @pytest.mark.asyncio
+async def test_list_issues_label_names_differing_in_non_ascii_case_mean_both(
+    db, issue_service, test_team, test_project, test_user,
+):
+    """A team can hold `Über` and `über` both; naming either finds issues
+    carrying either, under both modes and in exclusions (CHT-1920)."""
+    upper = await OxydeLabel.objects.create(team_id=test_team.id, name="Über", color="#123456")
+    lower = await OxydeLabel.objects.create(team_id=test_team.id, name="über", color="#654321")
+    carriers = []
+    for label in (upper, lower):
+        number = await _next_issue_number(test_project)
+        issue = await OxydeIssue.objects.create(
+            project_id=test_project.id, identifier=f"{test_project.key}-{number}",
+            number=number, title=label.name, creator_id=test_user.id,
+        )
+        await OxydeIssueLabel.objects.create(issue_id=issue.id, label_id=label.id)
+        carriers.append(issue.id)
+    for mode in ("all", "any"):
+        found = await issue_service.list_issues(team_id=test_team.id, label_names=["ÜBER"], label_match=mode)
+        assert {r.id for r in found} == set(carriers), mode
+    kept = await issue_service.list_issues(team_id=test_team.id, exclude_label_names=["über"])
+    assert not set(carriers) & {r.id for r in kept}
+
+
+@pytest.mark.asyncio
+async def test_list_issues_label_match_all_needs_every_non_ascii_name(
+    db, issue_service, test_team, test_project, test_user,
+):
+    """'all' still ANDs per name after names became ids (CHT-1920)."""
+    a = await OxydeLabel.objects.create(team_id=test_team.id, name="Ärger", color="#111111")
+    b = await OxydeLabel.objects.create(team_id=test_team.id, name="Öl", color="#222222")
+    made = {}
+    for key, labels in (("both", (a, b)), ("one", (a,))):
+        number = await _next_issue_number(test_project)
+        issue = await OxydeIssue.objects.create(
+            project_id=test_project.id, identifier=f"{test_project.key}-{number}",
+            number=number, title=key, creator_id=test_user.id,
+        )
+        for label in labels:
+            await OxydeIssueLabel.objects.create(issue_id=issue.id, label_id=label.id)
+        made[key] = issue.id
+    found = await issue_service.list_issues(project_id=test_project.id, label_names=["ÄRGER", "ÖL"], label_match="all")
+    assert {r.id for r in found} == {made["both"]}
+    either = await issue_service.list_issues(project_id=test_project.id, label_names=["ÄRGER", "ÖL"], label_match="any")
+    assert {r.id for r in either} == {made["both"], made["one"]}
+
+
+@pytest.mark.asyncio
+async def test_label_ids_come_from_the_projects_team_even_if_team_id_differs(
+    db, issue_service, test_project, labeled_issue, test_label,
+):
+    """A list scoped to a project matches that project's labels, whatever
+    team_id is passed beside it; a missing project matches nothing."""
+    by_name = await issue_service._label_ids_by_name(project_id=test_project.id, team_id="other-team")
+    assert test_label.id in by_name[test_label.name.lower()]
+    assert await issue_service._label_ids_by_name(project_id="no-such-project", team_id=None) == {}
+    found = await issue_service.list_issues(project_id="no-such-project", label_names=[test_label.name])
+    assert found == []
+
+
+@pytest.mark.asyncio
 async def test_list_issues_unknown_label_name_matches_nothing_and_excludes_nothing(
     db, issue_service, test_team, labeled_issue, test_label, test_issue,
 ):

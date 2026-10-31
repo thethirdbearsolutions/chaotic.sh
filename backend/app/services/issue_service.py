@@ -2008,7 +2008,9 @@ class IssueService:
     ) -> dict[str, list[str]]:
         """Lowercased label name -> ids, for the team the list is in. A
         team can hold `Bug` and `bug` both; naming either means both."""
-        if not team_id and project_id:
+        if project_id:
+            # The project's own team, whatever team_id says: a list
+            # scoped to a project matches that project's labels.
             project = await OxydeProject.objects.get_or_none(id=project_id)
             team_id = project.team_id if project else None
         if not team_id:
@@ -2169,7 +2171,8 @@ class IssueService:
                 conditions.append("i.assignee_id IS NOT NULL")
 
         if exclude_label_names:
-            # Single NOT-IN subquery handles "issue has any of these labels"
+            # Drop issues carrying any of the named labels; a name no label
+            # has excludes nothing
             ids = [i for name in exclude_label_names for i in label_ids_by_name.get(name.lower(), [])]
             if ids:
                 conditions.append(f"NOT {_issue_has_label_in(ids)}")
