@@ -633,13 +633,13 @@ function markCollapsed(group, isCollapsed) {
 function resyncSelection(list, group) {
     const items = Array.from(document.querySelectorAll(ISSUE_NAV_ROWS));
     const selected = list.querySelector('.issue-row.keyboard-selected');
-    if (!selected) {
-        if (getSelectedIssueIndex() >= 0) setSelectedIssueIndex(-1);
-        return;
-    }
+    // No highlight: nothing to move. A re-render in progress (or a row
+    // still queued) re-finds the selection by id itself (review I2, M1).
+    if (!selected) return;
     let index = items.indexOf(selected);
     if (index < 0) {
         selected.classList.remove('keyboard-selected');
+        // FOLLOWING also matches the group's own rows; skip those.
         index = items.findIndex(row => group.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING
             && !group.contains(row));
         if (index < 0) index = items.length - 1;
@@ -852,21 +852,16 @@ export function getStatusIcon(status) {
     return icons[status] || icons.backlog;
 }
 
-// A group header is a button to the keyboard too: Enter or Space opens
-// or closes the group (CHT-1932).
-if (typeof document !== 'undefined') {
-    document.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        const header = event.target?.closest?.('#issues-list .issue-group-header');
-        if (!header) return;
-        event.preventDefault();
-        toggleGroup(header.dataset.group);
-    });
-}
-
 // Register delegated event handlers (CHT-1062)
 registerActions({
     'toggle-group': (event, data) => {
+        // Event delegation fires this on Enter/Space too, the header being
+        // a focusable button (CHT-1932): one toggle per press, and Space
+        // must not scroll the page.
+        if (event?.type === 'keydown') {
+            if (event.repeat) return;
+            event.preventDefault();
+        }
         toggleGroup(data.group);
     },
     'show-inline-dropdown': (event, data, target) => {

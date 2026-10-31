@@ -78,6 +78,7 @@ import {
 } from './issue-list.js';
 
 import { getIssues, getSelectedIssueIndex, setSelectedIssueIndex } from './state.js';
+import { registerActions } from './event-delegation.js';
 import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './assignees.js';
 import { formatEstimate } from './projects.js';
 import { getSprintCache } from './sprints.js';
@@ -804,14 +805,58 @@ describe('issue-list', () => {
                 expect(header().getAttribute('aria-expanded')).toBe('false');
             });
 
-            it('opens and closes a group with Enter or Space on its header', () => {
+            it('opens and closes a group once per Enter or Space on its header (review I1, M2)', () => {
                 renderIssues();
-                const header = document.querySelector('.issue-group[data-group="done"] .issue-group-header');
-                header.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-                expect(isCollapsed('done')).toBe(true);
+                const action = registerActions.mock.calls.map(c => c[0]).find(a => a['toggle-group'])['toggle-group'];
+                const press = (key, extra = {}) => {
+                    const event = { type: 'keydown', key, preventDefault: vi.fn(), ...extra };
+                    action(event, { group: 'done' });
+                    return event;
+                };
+                // Delegation is the only path: no second keydown listener.
                 document.querySelector('.issue-group[data-group="done"] .issue-group-header')
-                    .dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+                    .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
                 expect(isCollapsed('done')).toBe(false);
+                const enter = press('Enter');
+                expect(isCollapsed('done')).toBe(true);
+                expect(enter.preventDefault).toHaveBeenCalled(); // Space must not scroll
+                press(' ', { repeat: true });
+                expect(isCollapsed('done')).toBe(true);
+                press(' ');
+                expect(isCollapsed('done')).toBe(false);
+            });
+
+            it('keeps the selection when a re-render opens the group the row moved into (review I2)', () => {
+                renderIssues();
+                toggleGroup('done');
+                document.querySelector('.issue-row[data-issue-id="i1"]').classList.add('keyboard-selected');
+                setSelectedIssueIndex(0);
+                setTestIssues([{ ...grouped[0], status: 'done' }, grouped[1]]);
+                renderIssues();
+                const selected = document.querySelectorAll('.issue-row.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.issueId).toBe('i1');
+                expect(getSelectedIssueIndex()).toBeGreaterThanOrEqual(0);
+            });
+
+            it('keeps the same row selected when a group above it opens', () => {
+                setTestIssues([...grouped, { id: 'i3', identifier: 'T-3', title: 'Three', status: 'canceled', priority: 'low' }]);
+                renderIssues();
+                toggleGroup('done');
+                document.querySelector('.issue-row[data-issue-id="i3"]').classList.add('keyboard-selected');
+                setSelectedIssueIndex(1);
+                toggleGroup('done');
+                expect(document.querySelector('.issue-row.keyboard-selected').dataset.issueId).toBe('i3');
+                expect(getSelectedIssueIndex()).toBe(2);
+            });
+
+            it('falls back to the last row shown when the cursor\'s group is the last', () => {
+                renderIssues();
+                document.querySelector('.issue-row[data-issue-id="i2"]').classList.add('keyboard-selected');
+                setSelectedIssueIndex(1);
+                toggleGroup('done');
+                expect(document.querySelector('.issue-row.keyboard-selected').dataset.issueId).toBe('i1');
+                expect(getSelectedIssueIndex()).toBe(0);
             });
 
             it('moves the cursor off a group as it closes, to the next row shown', () => {

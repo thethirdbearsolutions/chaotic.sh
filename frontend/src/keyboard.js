@@ -255,7 +255,7 @@ export function createModifierKeyHandler(actions) {
  *
  * @param {number} newIndex - The index to select
  * @param {Function} setSelectedIndex - Setter for the selected index state
- * @param {string} [selector='#issues-list .list-item'] - CSS selector for list items
+ * @param {string} [selector=ISSUE_NAV_ROWS] - CSS selector for list items
  */
 export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = ISSUE_NAV_ROWS) {
     const items = document.querySelectorAll(selector);
@@ -326,8 +326,9 @@ export function createListNavigationHandler(actions) {
         // focused — these list handlers register earlier and would otherwise
         // ALSO move the list cursor on the same arrow press (CHT-1289 review).
         if (e.target.closest?.('.sidebar-nav')) return;
-        // A focused group header takes Enter/Space itself (CHT-1932).
-        if (e.target.closest?.('.issue-group-header')) return;
+        // A focused group header takes Enter/Space itself (CHT-1932);
+        // every other key still drives the list.
+        if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('.issue-group-header')) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
         // Once an inline field dropdown (opened here via s/p/a) is up, its own
