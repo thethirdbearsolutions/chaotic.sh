@@ -44,13 +44,7 @@ The CLI (`chaotic`) is the primary interface. It's designed for agents:
 - Clear error messages that tell the agent what to do
 - Fast, minimal friction for the happy path
 
-Humans *can* use the CLI, but it's optimized for agents. The web UI is optimized for humans, and it is held to Linear's bar: at least as fast, as dense and as keyboard-driven. Chaotic is meant to be both, an agent-native CLI and a human UI people prefer to Linear. Neither side is the afterthought.
-
-What that bar means in practice for the web UI:
-- Navigation, Back, filtering and opening an issue feel instant: render from data already loaded, refresh in the background, never blank the screen to refetch.
-- Every common action has a key, and a key pressed right after another is never dropped.
-- A screen shows as much work as Linear's does, not a few roomy cards.
-- It stays fast at real size (thousands of issues per project), not just on a dev database.
+Humans *can* use the CLI, but it's optimized for agents. The web UI is optimized for humans and held to its own bar (section 7).
 
 ### 2. Sprint Budgets & Arrears
 
@@ -145,6 +139,17 @@ What happens when an agent completes an issue with no estimate? Project-configur
 
 This is another environment control. The human decides the policy; the agent encounters it as CLI behavior.
 
+### 7. A Human UI Held to Linear's Bar
+
+"Agent-first" describes the control model: agents work through the CLI, and humans shape what the CLI allows. It does not mean the human side is secondary. Chaotic is meant to be both: a CLI native to agents, and a web UI that people supervising them would choose over Linear for daily triage.
+
+The bar is at least as fast, as dense and as keyboard-driven as Linear, measured on a project with 5,000 issues:
+- **Instant from loaded data.** Switching views, going back, filtering and opening an issue from a list show something within 100 ms, from data already in the page. Refreshes happen in the background, and the screen is never blanked to refetch.
+- **Keyboard-complete.** Navigation, status, priority, assignee, estimate, labels, search, create and comment each have a key. A key pressed straight after another is never dropped.
+- **Dense.** At 1440x900 the issue list shows at least 25 rows.
+
+These are product requirements, so a change that breaks one is a regression, the same as a failing test.
+
 ---
 
 ## Architecture
@@ -156,8 +161,9 @@ This is another environment control. The human decides the policy; the agent enc
 │   ┌─────────────┐    Configures     ┌──────────────────┐    │
 │   │   Web UI    │ ─────────────────>│  Rules & Gates   │    │
 │   │ (observe,   │                   │  - Budgets       │    │
-│   │  configure) │                   │  - Rituals       │    │
-│   └─────────────┘                   │  - Policies      │    │
+│   │  configure, │                   │  - Rituals       │    │
+│   │  triage)    │                   │  - Policies      │    │
+│   └─────────────┘                   │                  │    │
 │                                     └────────┬─────────┘    │
 └──────────────────────────────────────────────┼──────────────┘
                                                │
@@ -237,13 +243,13 @@ Linear is excellent human-first project management. But:
 
 2. **No ritual system**: Linear has no concept of "you must attest to these things before continuing."
 
-3. **Built for both**: Linear's API is an add-on for agents. Chaotic's CLI is native to agents, and its web UI is held to Linear's bar for the humans supervising them.
+3. **Built for both**: Linear is human-first, and agents reach it through its API. Chaotic's CLI is native to agents, and its web UI is held to Linear's bar for the humans supervising them (section 7).
 
 4. **Opinionated workflow**: Chaotic enforces Now/Next, budgets, rituals. Linear is flexible. For agent supervision, opinions are features.
 
-Use Linear if humans are the primary workers and you want flexibility.
+Use Linear if you want flexibility and no enforcement.
 
-Use Chaotic if agents are the primary workers and you want control.
+Use Chaotic if agents do much of the work and you want control without giving up a fast human UI.
 
 ---
 
