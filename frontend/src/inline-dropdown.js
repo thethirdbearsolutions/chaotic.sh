@@ -7,8 +7,9 @@ import { handleCloseFollowups } from './epic-prompt.js';
 import { api } from './api.js';
 import { getIssues, setIssues, getLabels, setLabels, getCurrentTeam, getCurrentProject, getCurrentDetailIssue, setCurrentDetailIssue, getCurrentDetailSprints } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
+import { upsertIssue } from './issue-store.js';
 import { closeAllDropdowns, registerDropdownClickOutside, setDropdownKeyHandler, showToast, showApiError, markModalDirty } from './ui.js';
-import { getStatusIcon, getPriorityIcon, renderIssueRow } from './issue-list.js';
+import { getStatusIcon, getPriorityIcon, renderIssueRow, renderIssues } from './issue-list.js';
 import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { formatEstimate, getEstimateOptions } from './projects.js';
@@ -841,10 +842,18 @@ function rerenderIssueRow(issueId, field, issue, { focus }) {
     // The server's answer re-renders a row the optimistic paint already
     // focused: keep the focus where it was.
     const hadFocus = row.contains(document.activeElement);
-    const wasSelected = row.classList.contains('keyboard-selected');
-    row.outerHTML = renderIssueRow(issue);
-    if (wasSelected) {
-        document.querySelector(`.issue-row[data-issue-id="${issueId}"]`)?.classList.add('keyboard-selected');
+    if (row.closest('#issues-list') && getIssues().some(i => i.id === issueId)) {
+        // The Issues list re-renders whole, so the summary, the group
+        // counts and points, and the row's group follow the edit at once
+        // (CHT-1915). renderIssues keeps the keyboard selection, and only
+        // paints the rows on screen straight away.
+        renderIssues();
+    } else {
+        const wasSelected = row.classList.contains('keyboard-selected');
+        row.outerHTML = renderIssueRow(issue);
+        if (wasSelected) {
+            document.querySelector(`.issue-row[data-issue-id="${issueId}"]`)?.classList.add('keyboard-selected');
+        }
     }
     if (!focus && !hadFocus) return;
     // Return focus to the field's trigger button on the fresh row
@@ -861,6 +870,10 @@ function rerenderIssueRow(issueId, field, issue, { focus }) {
 // Re-render the row and the detail sidebar from the state as it now is.
 function showIssueLocally(issueId, field, { focus }) {
     const row = getIssues().find(i => i.id === issueId) || getMyIssues().find(i => i.id === issueId);
+    // The store saves the Issues list only while that view is up; a guess
+    // or a rollback made from elsewhere must reach it too, or the next
+    // visit paints a value the server never had (CHT-1915).
+    if (row) upsertIssue(row);
     rerenderIssueRow(issueId, field, row, { focus });
     const detail = getCurrentDetailIssue();
     if (detail?.id === issueId && DETAIL_SIDEBAR_FIELDS.has(field)) updateDetailViewField(field, detail);

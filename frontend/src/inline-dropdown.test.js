@@ -44,6 +44,11 @@ vi.mock('./issue-list.js', () => ({
     getStatusIcon: vi.fn(() => '<svg></svg>'),
     getPriorityIcon: vi.fn(() => '<svg></svg>'),
     renderIssueRow: vi.fn(() => '<div class="issue-row"></div>'),
+    renderIssues: vi.fn(),
+}));
+
+vi.mock('./issue-store.js', () => ({
+    upsertIssue: vi.fn(),
 }));
 
 vi.mock('./utils.js', () => ({
@@ -79,7 +84,8 @@ vi.mock('./issues-view.js', () => ({
 
 // Import mocked modules to get references to mock functions
 import { api } from './api.js';
-import { renderIssueRow } from './issue-list.js';
+import { renderIssueRow, renderIssues } from './issue-list.js';
+import { upsertIssue } from './issue-store.js';
 import { getIssues, setIssues, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, getLabels } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
 import { closeAllDropdowns, showToast, showApiError } from './ui.js';
@@ -532,6 +538,39 @@ describe('inline-dropdown', () => {
                 await pending;
                 expect(detail).toMatchObject({ status: 'todo', description: 'fresh from the detail' });
             });
+        });
+
+        // CHT-1915: counts, group points and grouping follow the edit at once
+        it('re-renders the whole Issues list for an edit made there', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            document.body.innerHTML = '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1"></div></div>';
+            renderIssues.mockClear();
+            renderIssueRow.mockClear();
+            await updateIssueField('issue-1', 'status', 'done');
+            expect(renderIssues).toHaveBeenCalledTimes(2); // the guess, then the server's row
+            expect(renderIssueRow).not.toHaveBeenCalled();
+        });
+
+        it('re-renders just the row elsewhere (My Issues)', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
+            getMyIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            document.body.innerHTML = '<div id="my-issues-list"><div class="issue-row" data-issue-id="issue-1"></div></div>';
+            renderIssues.mockClear();
+            await updateIssueField('issue-1', 'status', 'done');
+            expect(renderIssues).not.toHaveBeenCalled();
+            expect(renderIssueRow).toHaveBeenCalled();
+        });
+
+        it('saves the guess and the rollback in the issue store, whatever the view', async () => {
+            api.updateIssue.mockRejectedValue(new Error('nope'));
+            let live = [{ id: 'issue-1', status: 'todo', updated_at: 't1' }];
+            getIssues.mockImplementation(() => live);
+            setIssues.mockImplementation((v) => { live = v; });
+            upsertIssue.mockClear();
+            await updateIssueField('issue-1', 'status', 'done');
+            expect(upsertIssue.mock.calls.map(c => c[0].status)).toEqual(['done', 'todo']);
+            setIssues.mockImplementation(() => {});
         });
 
         it('keeps the keyboard cursor on the re-rendered row', async () => {
