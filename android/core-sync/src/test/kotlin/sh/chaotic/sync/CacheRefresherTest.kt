@@ -318,6 +318,49 @@ class CacheRefresherTest {
     }
 
     @Test
+    fun aNotFoundTeamsProjectsDropTheTeamWhenItIsNoLongerListed() = runTest {
+        store.replaceTeams(listOf(Team(TEAM_A, "A", "A"), Team(TEAM_B, "B", "B")))
+        store.replaceSprintCards(TEAM_A, listOf(card("pa")))
+        remote.projects[TEAM_A] = Remote.HttpError(404)
+        remote.teams = Remote.Ok(listOf(Team(TEAM_B, "B", "B")))
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.TeamLost, refresher.refreshSprintCards(TEAM_A))
+
+        assertEquals(listOf(TEAM_B), store.teams().map { it.id })
+        assertTrue(store.sprintCards().isEmpty())
+    }
+
+    @Test
+    fun aRunOfNotFoundsAsksForTheTeamListOnce() = runTest {
+        store.replaceTeams(listOf(Team(TEAM_A, "A", "A")))
+        store.saveIssue(IssueDetail(issue("i1", TEAM_A), emptyList(), emptyList()))
+        store.saveIssue(IssueDetail(issue("i2", TEAM_A), emptyList(), emptyList()))
+        remote.issues["i1"] = Remote.HttpError(404)
+        remote.issues["i2"] = Remote.HttpError(404)
+        remote.teams = Remote.Ok(listOf(Team(TEAM_A, "A", "A")))
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Gone, refresher.refreshIssue("i1", TEAM_A))
+        assertEquals<RefreshOutcome>(RefreshOutcome.Gone, refresher.refreshIssue("i2", TEAM_A))
+
+        assertEquals(1, remote.teamCalls)
+        now += CacheRefresher.TEAMS_RECHECK_MILLIS
+        remote.issues["i3"] = Remote.HttpError(404)
+        refresher.refreshIssue("i3", TEAM_A)
+        assertEquals(2, remote.teamCalls)
+    }
+
+    @Test
+    fun aNotFoundWithAnErrorCodeIsNotAboutTheTeam() = runTest {
+        store.replaceTeams(listOf(Team(TEAM_A, "A", "A")))
+        store.saveIssue(IssueDetail(issue("i1", TEAM_A), emptyList(), emptyList()))
+        remote.issues["i1"] = Remote.HttpError(404, errorCode = "issue_deleted")
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Gone, refresher.refreshIssue("i1", TEAM_A))
+
+        assertEquals(0, remote.teamCalls)
+    }
+
+    @Test
     fun aNotFoundIssueWhenTheTeamListFailsDropsOnlyTheIssue() = runTest {
         store.replaceTeams(listOf(Team(TEAM_A, "A", "A")))
         store.saveIssue(IssueDetail(issue("i1", TEAM_A), emptyList(), emptyList()))

@@ -71,7 +71,10 @@ class HomeViewModelTest {
         // still be resuming on another thread after a test returns; resetMain
         // racing one of them throws "Dispatchers.Main is used concurrently
         // with setting it" (CHT-1867). Join, so none is left mid-resume.
-        home?.let { vm -> runBlocking { vm.viewModelScope.coroutineContext.job.cancelAndJoin() } }
+        val scope = home?.viewModelScope
+        if (scope != null) {
+            runBlocking { withTimeout(WAIT_MILLIS) { scope.coroutineContext.job.cancelAndJoin() } }
+        }
         database.close()
         Dispatchers.resetMain()
     }

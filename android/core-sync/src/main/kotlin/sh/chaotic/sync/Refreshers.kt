@@ -22,7 +22,11 @@ sealed interface RefreshOutcome {
      */
     data object Fresh : RefreshOutcome
 
-    /** The server says it is gone (404) and its team is still listed: it was removed from the cache. */
+    /**
+     * The server says it is gone (404): it was removed from the cache. Its
+     * team is still listed, or that could not be told (no team, a coded
+     * 404, or the team list could not be fetched).
+     */
     data object Gone : RefreshOutcome
 
     /** The person is no longer in the team (the team list says so): everything cached for it was dropped. */
@@ -67,6 +71,9 @@ class CacheRefresher(
     /** When each key was last fetched, and in which session generation. */
     private val fetched = ConcurrentHashMap<String, Pair<Long, Long>>()
 
+    /** The team ids the last fetched team list held, in which session generation: [byTeamList] reuses it briefly. */
+    @Volatile private var listed: Pair<Long, Set<String>>? = null
+
     /**
      * The team list, which also prunes every left team's cache, and drops
      * issues not opened for [ISSUE_RETENTION_DAYS] (it runs when the app
@@ -78,7 +85,10 @@ class CacheRefresher(
         session.write(ticket) { pruneIssues() } ?: return RefreshOutcome.Unauthorized
         if (!force && isFresh(TEAMS_KEY, ticket, teamsMaxAgeMillis)) return RefreshOutcome.Fresh
         return when (val teams = remote.teams()) {
-            is Remote.Ok -> written(ticket, TEAMS_KEY) { replaceTeams(teams.value) }
+            is Remote.Ok -> written(ticket, TEAMS_KEY) { replaceTeams(teams.value) }.also {
+                if (it == RefreshOutcome.Refreshed) listed = ticket to teams.value.mapTo(HashSet()) { team -> team.id }
+            }
+
             is Remote.Failure -> failure(ticket, teams, teamId = null)
         }
     }
@@ -267,7 +277,7 @@ class CacheRefresher(
         is Remote.HttpError -> when (result.status) {
             HTTP_UNAUTHORIZED -> RefreshOutcome.Unauthorized
             HTTP_FORBIDDEN -> forbidden(ticket, result, teamId)
-            HTTP_NOT_FOUND -> notFound(ticket, teamId, issueId)
+            HTTP_NOT_FOUND -> notFound(ticket, result, teamId, issueId)
             else -> RefreshOutcome.Failed(result.status)
         }
 
@@ -294,25 +304,42 @@ class CacheRefresher(
      * is dropped either way, and the team list decides whether the whole
      * team went with it (CHT-1801).
      */
-    private suspend fun notFound(ticket: Long, teamId: String?, issueId: String?): RefreshOutcome {
+    private suspend fun notFound(
+        ticket: Long,
+        error: Remote.HttpError,
+        teamId: String?,
+        issueId: String?,
+    ): RefreshOutcome {
         if (issueId != null) {
             session.write(ticket) { deleteIssue(issueId) } ?: return RefreshOutcome.Unauthorized
         }
-        return if (teamId == null) RefreshOutcome.Gone else byTeamList(ticket, teamId, RefreshOutcome.Gone)
+        // As for a 403: a 404 with an error code is about the request, not the team.
+        return if (teamId == null || error.errorCode != null) {
+            RefreshOutcome.Gone
+        } else {
+            byTeamList(ticket, teamId, RefreshOutcome.Gone)
+        }
     }
 
     /**
      * Fetch the team list and save it, which drops whatever was cached for
      * a team no longer on it: [RefreshOutcome.TeamLost] when [teamId] is
      * one of those, else [ifStillListed]. Also [ifStillListed] when the
-     * list cannot be fetched, so nothing is dropped on a guess.
+     * list cannot be fetched, so nothing is dropped on a guess. A list
+     * fetched in the last [TEAMS_RECHECK_MILLIS] is used again, so a run
+     * of 404s or 403s (several teams' cards, several stale issues after
+     * one flush) asks for it once.
      */
-    @Suppress("ReturnCount") // no team list, and a write refused, are early answers
+    @Suppress("ReturnCount") // a list just fetched, no team list, and a write refused, are early answers
     private suspend fun byTeamList(ticket: Long, teamId: String, ifStillListed: RefreshOutcome): RefreshOutcome {
+        val recent = listed?.takeIf { it.first == ticket && isFresh(TEAMS_KEY, ticket, TEAMS_RECHECK_MILLIS) }
+        if (recent != null) return if (teamId in recent.second) ifStillListed else RefreshOutcome.TeamLost
         val teams = remote.teams() as? Remote.Ok ?: return ifStillListed
         session.write(ticket) { replaceTeams(teams.value) } ?: return RefreshOutcome.Unauthorized
         fetched[TEAMS_KEY] = ticket to nowMillis()
-        return if (teams.value.any { it.id == teamId }) ifStillListed else RefreshOutcome.TeamLost
+        val ids = teams.value.mapTo(HashSet()) { it.id }
+        listed = ticket to ids
+        return if (teamId in ids) ifStillListed else RefreshOutcome.TeamLost
     }
 
     companion object {
@@ -328,6 +355,9 @@ class CacheRefresher(
 
         /** Until one request covers a team's sprints (CHT-1657), a tab flick costs one per project. */
         const val DEFAULT_CARDS_MAX_AGE_MILLIS = 60_000L
+
+        /** How long a team list fetched to judge a 403 or 404 answers the next one too. */
+        const val TEAMS_RECHECK_MILLIS = 10_000L
 
         private const val TEAMS_KEY = "teams"
         private const val CARDS_KEY = "cards:"

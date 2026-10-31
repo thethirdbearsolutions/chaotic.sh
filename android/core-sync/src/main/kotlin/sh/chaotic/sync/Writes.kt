@@ -98,7 +98,8 @@ data class PendingWrite(
  * A write the server refused, kept until the person has seen it: the
  * write itself is gone from the queue and will not be retried (a sprint
  * in arrears or limbo, a gate someone else already decided, a field the
- * server would not take). A refused comment keeps its text in [value].
+ * server would not take). A refused comment keeps its text in [value],
+ * and a refused rejection its note (CHT-1683).
  */
 data class WriteRefusal(
     val key: String,
