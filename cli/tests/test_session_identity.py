@@ -46,11 +46,20 @@ class FakeServer:
         self.registrar_keys = {REGISTRAR_KEY}
         self.names: dict[str, str] = {}
 
+    # A cloud environment's proxy injecting the registrar key as a network
+    # secret (CHT-1906): set to a key to add X-Chaotic-Registrar-Key to
+    # every request, which the server reads on /agents/register only.
+    proxy_registrar_key: str | None = None
+
     def handler(self, request: httpx.Request) -> httpx.Response:
         bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
         path = request.url.path.removeprefix("/api")
+        assert si.REGISTRAR_KEY_HEADER.lower() not in {h.lower() for h in request.headers}, \
+            "the CLI never sends the registrar header itself"
         with self.lock:
             self.requests.append((request.method, path, bearer))
+        if path == "/agents/register" and self.proxy_registrar_key:
+            bearer = self.proxy_registrar_key
         if path == "/auth/me" and bearer in self.registrar_keys:
             return httpx.Response(200, json=self.me)
         if path == "/agents/register":
@@ -967,3 +976,170 @@ class TestMcpDefaultTeam:
         assert Client()._request("GET", "/issues")["as"] == "sess-1"
         assert "team_id" not in teams_server.registrations[0]
 
+
+
+@pytest.fixture
+def proxied(monkeypatch, home, server):
+    """Header mode in a cloud environment: no key configured here, the
+    proxy supplies the registrar's (CHT-1906)."""
+    monkeypatch.setenv(si.MODE_ENV, "auto")
+    monkeypatch.setenv(si.SESSION_ENV, SESSION_ID)
+    monkeypatch.setenv(si.VIA_ENV, "header")
+    _set_profile(monkeypatch, key=None)
+    server.proxy_registrar_key = REGISTRAR_KEY
+    return server
+
+
+def _header_cache(url=API):
+    return si.cache_path(REF, url, si.HEADER_FP, None)
+
+
+class TestRegistrarKeyViaHeader:
+    def test_registers_without_a_local_key_and_writes_as_the_session(self, proxied, home):
+        result = Client()._request("POST", "/issues", {"title": "x"})
+
+        assert result["as"] == "sess-1"
+        assert proxied.registrations == [{"external_ref": REF}]  # the server names it after the registrar
+        register = [r for r in proxied.requests if r[1] == "/agents/register"]
+        assert register == [("POST", "/agents/register", "")]  # no Authorization: the proxy's header is it
+        assert not [r for r in proxied.requests if r[1] == "/auth/me"]
+        writes = [r for r in proxied.requests if r[1] == "/issues"]
+        assert writes == [("POST", "/issues", result["key"])]
+        record = json.loads(_header_cache().read_text())
+        assert record["api_key"] == result["key"] and record["registrar"] == si.HEADER_FP
+        assert stat.S_IMODE(_header_cache().stat().st_mode) == 0o600
+
+    def test_later_requests_reuse_the_cache_and_a_401_re_registers(self, proxied):
+        first = Client()._request("GET", "/issues")["key"]
+        assert Client()._request("GET", "/issues")["key"] == first
+        assert len(proxied.registrations) == 1
+        proxied.revoke_all()
+        assert Client()._request("GET", "/issues")["key"] != first
+        assert len(proxied.registrations) == 2
+
+    def test_a_locally_configured_key_is_not_the_registrar(self, proxied, monkeypatch):
+        """In header mode a key configured here is not used for the
+        session: register still goes without Authorization."""
+        _set_profile(monkeypatch, key="ck_someone_else")
+        assert Client()._request("GET", "/issues")["as"] == "sess-1"
+        assert [r for r in proxied.requests if r[1] == "/agents/register"][0][2] == ""
+        assert proxied.sent_with("ck_someone_else") == []
+
+    def test_no_injected_header_fails_loudly_and_names_the_fix(self, proxied):
+        proxied.proxy_registrar_key = None
+        proxied.registrar_keys.add("")  # the fake's register asserts a registrar; let it reach the 401
+        proxied.register_status, proxied.register_detail = 401, "Not authenticated"
+        with pytest.raises(APIError, match="X-Chaotic-Registrar-Key") as refused:
+            Client()._request("GET", "/issues")
+        assert refused.value.status_code == 401
+        assert si.NO_FALLBACK in str(refused.value)
+
+    def test_has_credential_needs_no_local_key(self, proxied, monkeypatch):
+        from cli import main
+
+        monkeypatch.setattr(main, "get_api_key", lambda: None)
+        monkeypatch.setattr(main, "get_token", lambda: None)
+        assert main.has_credential()
+        monkeypatch.delenv(si.SESSION_ENV)
+        assert not main.has_credential()  # outside a session there is nothing to send
+        monkeypatch.setenv(si.SESSION_ENV, SESSION_ID)
+        monkeypatch.setenv(si.VIA_ENV, "local")
+        assert not main.has_credential()
+
+    def test_the_profile_setting_and_an_invalid_value(self, home, monkeypatch):
+        monkeypatch.delenv(si.VIA_ENV, raising=False)
+        assert si.registrar_key_via() == "local"
+        si.set_registrar_key_via("header")
+        assert json.loads((home / "config.json").read_text())["registrar_key_via"] == "header"
+        assert si.registrar_key_via() == "header"
+        monkeypatch.setenv(si.VIA_ENV, "local")
+        assert si.registrar_key_via() == "local"  # the environment wins
+        si.set_registrar_key_via("local")
+        assert "registrar_key_via" not in json.loads((home / "config.json").read_text())
+        monkeypatch.setenv(si.VIA_ENV, "proxy")
+        with pytest.raises(si.SessionIdentityError, match="'local' or 'header'"):
+            si.registrar_key_via()
+        with pytest.raises(si.SessionIdentityError):
+            si.set_registrar_key_via("proxy")
+
+    def test_a_repository_chaotic_with_its_own_key_is_not_an_error(self, proxied, monkeypatch):
+        """The local key check guards a registrar key that would be
+        ignored; in header mode no local key is the registrar anyway."""
+        monkeypatch.setattr(cli_config, "load_local_config", lambda: {"api_key": "ck_repo"})
+        assert Client()._request("GET", "/issues")["as"] == "sess-1"
+
+    def test_auth_whoami_runs_with_no_local_key(self, proxied, monkeypatch):
+        """`require_auth` lets header mode through (CHT-1906), and whoami
+        asks as the session identity."""
+        from click.testing import CliRunner
+        from cli.main import cli
+
+        monkeypatch.setattr("cli.main.get_api_key", lambda: None)
+        monkeypatch.setattr("cli.main.get_token", lambda: None)
+        monkeypatch.setattr("cli.main.client", Client())  # not a mock another test left behind
+        result = CliRunner().invoke(cli, ["auth", "whoami", "--json"])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["as"] == "sess-1"
+        me = [r for r in proxied.requests if r[1] == "/auth/me"]
+        assert me and all(r[2].startswith("ck_session_") for r in me)
+
+
+class TestMcpInHeaderMode:
+    """`chaotic mcp` from the cloud recipe alone (CHT-1906 review M1): no
+    key and no team configured. Its default team and project scope are
+    asked as the session identity, the only credential there is."""
+
+    @pytest.fixture
+    def mcp(self, proxied, monkeypatch):
+        monkeypatch.setattr("cli.config.get_current_team", _REAL_GET_CURRENT_TEAM)
+        import cli.main as m
+        monkeypatch.setattr(m, "get_current_team", _REAL_GET_CURRENT_TEAM)
+        monkeypatch.setattr(m, "get_api_key", lambda: None)
+        monkeypatch.setattr(m, "get_token", lambda: None)
+        monkeypatch.setattr(m, "client", Client())
+        monkeypatch.setattr(cli_config, "_process_teams", {})
+        monkeypatch.setattr(cli_config, "_only_teams", {})
+        base = proxied.handler
+
+        def handler(request):
+            bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
+            if request.url.path == "/api/teams" and bearer in proxied.live_keys:
+                proxied.requests.append((request.method, "/teams", bearer))
+                return httpx.Response(200, json=[{"id": "team-reg", "name": "Falls", "key": "FALLS"}])
+            if request.url.path == "/api/auth/me" and bearer in proxied.live_keys:
+                proxied.requests.append((request.method, "/auth/me", bearer))
+                return httpx.Response(200, json={"id": proxied.live_keys[bearer], "is_agent": True,
+                                                 "kind": "session", "agent_project_id": None})
+            return base(request)
+
+        proxied.handler = handler
+        return proxied
+
+    async def test_the_default_team_is_the_session_identitys(self, mcp):
+        from cli.mcp_backend import RestBackend
+
+        assert await RestBackend().resolve_team(None) == "team-reg"
+        teams = [r for r in mcp.requests if r[1] == "/teams"]
+        assert teams and all(r[2].startswith("ck_session_") for r in teams)
+        # Kept for the process, keyed on the header-mode marker.
+        assert cli_config.get_current_team() == "team-reg"
+
+    async def test_a_local_personal_key_is_not_asked(self, mcp, monkeypatch):
+        """Review L2: header mode never uses a key configured here inside a
+        session, the MCP default team included."""
+        from cli.mcp_backend import RestBackend
+
+        monkeypatch.setenv("CHAOTIC_API_KEY", "ck_personal")
+        assert await RestBackend().resolve_team(None) == "team-reg"
+        assert mcp.sent_with("ck_personal") == []
+
+
+def test_a_persons_key_as_the_secret_is_named(proxied):
+    """Review L5: the server's "a person must name a team_id" becomes
+    advice to use an agent registrar."""
+    proxied.register_status = 422
+    proxied.register_detail = {"error_code": "tool_input",
+                               "message": "A person registering an identity must name a team_id or a project_id."}
+    with pytest.raises(APIError, match="needs an agent registrar's key") as refused:
+        Client()._request("GET", "/issues")
+    assert refused.value.status_code == 422

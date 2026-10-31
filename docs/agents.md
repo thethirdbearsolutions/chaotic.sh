@@ -448,6 +448,80 @@ Notes:
   registered in the current team), but the profile then acts as a
   session identity for everything inside Claude Code.
 
+### In a cloud environment: the registrar key as a network secret
+
+A cloud environment (Claude Code on the web, for one) keeps a secret
+safely as a **network secret**: its HTTPS proxy adds the value to one
+header on every request to one host, and the sandbox never sees it.
+Environment variables, by contrast, are stored in plain text and
+readable inside the sandbox, so `CHAOTIC_API_KEY` is the wrong place
+for a registrar key there.
+
+The registrar key cannot go in `Authorization` as a network secret: the
+proxy would overwrite every session key with it, and every write would
+be refused `registrar_cannot_write`. So the server also takes it in a
+header of its own, `X-Chaotic-Registrar-Key`, and the CLI has a mode
+that holds no registrar key at all (CHT-1906):
+
+1. **Network secret**: host `<your-chaotic-host>` (for example
+   `chaotic.example.com`), header `X-Chaotic-Registrar-Key`, value the
+   registrar's `ck_...` key.
+2. **Environment variables** (no key among them):
+
+   ```bash
+   CHAOTIC_API_URL=https://<your-chaotic-host>/api
+   CHAOTIC_SESSION_IDENTITY=auto
+   CHAOTIC_REGISTRAR_KEY_VIA=header
+   ```
+
+3. Install the CLI in the environment's setup script, and allow
+   `<your-chaotic-host>` in its network access.
+
+Then the CLI and `chaotic mcp` register the session with no
+`Authorization` header (the proxy's `X-Chaotic-Registrar-Key` is the
+credential), cache the session key as usual, and send every other
+request with the session key in `Authorization`, which the proxy leaves
+alone. `chaotic auth whoami` shows the session identity.
+
+- The server reads `X-Chaotic-Registrar-Key` on `POST /agents/register`
+  only. Everywhere else it is ignored: it never authenticates a request,
+  so the proxy adding it to a session's requests changes nothing.
+- On register, a non-empty `X-Chaotic-Registrar-Key` wins over
+  `Authorization`. It must be an API key (`ck_...`); a login token or
+  anything else there is 401 `registrar_header_not_a_key`. All the
+  registrar rules still apply: a key that is not a registrar's is 403
+  `not_a_registrar`, a session identity's is 403
+  `registered_identity_cannot_register`, and the caps are the same.
+- The CLI does not ask `/auth/me` as the registrar in this mode (the
+  header authenticates nothing but register), so it sends no
+  `default_name` and the server names a new identity `<registrar> ·
+  <8 random hex>`. Only an agent registrar works this way: a person's
+  key would need a `team_id`.
+- `chaotic config set-registrar-key-via header|local` saves the mode in
+  the profile instead; the environment variable wins over it. In header
+  mode a key configured locally (`auth set-key`, `CHAOTIC_API_KEY`) is
+  not used inside a Claude Code session, only outside one.
+- If register answers 401, the error says the proxy did not add a usable
+  key: check the secret's host and header name, and that the key is not
+  revoked.
+- The header must come once: sent twice, or folded into one comma-separated
+  value (a proxy that appends instead of replacing), register answers 400
+  `registrar_header_repeated`.
+- **A session id is a capability.** Every sandbox behind the secret can
+  register any `external_ref`, and registering revokes that identity's
+  previous key, so code that learns another session's id can take its
+  identity over. This is true of a registrar key held locally too (header
+  mode is better: the key itself cannot be read); the per-registrar caps
+  are the only brake. Keep one registrar per environment.
+- The cached session key does not record which registrar the proxy used.
+  After pointing the secret at a different registrar, delete
+  `~/.chaotic/sessions/` (or wait for the key to expire) so sessions
+  register under the new one.
+- `chaotic mcp` in this mode asks its default team and project scope as
+  the session identity (no key is configured to ask with), so the
+  registrar's team is found with no `chaotic team use`. A person's key as
+  the secret is refused with a message saying to use an agent registrar.
+
 ### By hand: `POST /api/agents/register`
 
 For other harnesses, or a script, `chaotic agent register --ref <ref>
@@ -462,6 +536,10 @@ curl -X POST https://your-chaotic-host/api/agents/register \
 
 It returns `{agent, created, api_key, api_key_id, expires_at}`; the key
 is shown only here.
+
+The registrar's key may go in `X-Chaotic-Registrar-Key: ck_...` instead
+of `Authorization` (see the cloud-environment recipe above); on this
+endpoint it takes precedence.
 
 - `external_ref` is the session's address in the harness (printable
   ASCII, no spaces, up to 200 characters), for example

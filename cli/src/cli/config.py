@@ -341,8 +341,20 @@ def set_token(token: str | None):
 _process_teams: dict[tuple[str, str], str] = {}
 
 
+def lookup_credential() -> str | None:
+    """What the process-wide team lookups are keyed on: the configured
+    credential, or, when a proxy supplies the registrar key for this
+    session (CHT-1906), a fixed marker for the session identity, which is
+    then the only credential and the one the lookups go as."""
+    from cli import session_identity  # imports this module
+
+    if session_identity.proxied_ref():
+        return session_identity.HEADER_FP
+    return get_api_key() or get_token()
+
+
 def _process_team_slot() -> tuple[str, str] | None:
-    credential = get_api_key() or get_token()
+    credential = lookup_credential()
     if not credential:
         return None
     return _team_slot(get_api_url(), credential)

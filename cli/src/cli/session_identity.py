@@ -31,6 +31,16 @@ The rules:
    nothing falls back to it (the server refuses a registrar's writes
    anyway, spec I8).
 
+5. With ``CHAOTIC_REGISTRAR_KEY_VIA=header`` (or the profile's
+   ``"registrar_key_via": "header"``, CHT-1906) no registrar key is held
+   here at all: a cloud environment's proxy injects it as
+   ``X-Chaotic-Registrar-Key`` on every request to the server, and the
+   server reads that header on ``POST /agents/register`` only. Register
+   is then sent with no ``Authorization``, and every other request with
+   the session key in ``Authorization``, which the proxy leaves alone.
+   No ``/auth/me`` as the registrar (the header authenticates nothing
+   else), so the server names the identity after its registrar.
+
 Off by default: without the setting, or without ``CLAUDE_CODE_SESSION_ID``,
 nothing here runs and the configured credential is used as before.
 """
@@ -64,6 +74,15 @@ REF_MAX = 200
 NAME_MAX = 255
 
 NO_FALLBACK = "Not falling back to the registrar key."
+
+VIA_ENV = "CHAOTIC_REGISTRAR_KEY_VIA"
+VIA_SETTING = "registrar_key_via"
+VIAS = ("local", "header")
+REGISTRAR_KEY_HEADER = "X-Chaotic-Registrar-Key"
+# The cache slot's registrar fingerprint in header mode: the key itself
+# is never seen here, so every proxied registrar shares one slot per
+# (session, server).
+HEADER_FP = "via-header"
 
 
 class SessionIdentityError(Exception):
@@ -100,6 +119,61 @@ def mode() -> str:
     if value not in MODES:
         raise SessionIdentityError(f"{source} must be 'auto' or 'off', not {raw!r}.")
     return value
+
+
+def registrar_key_via() -> str:
+    """'local' (the configured key is the registrar's) or 'header' (a
+    proxy injects it as X-Chaotic-Registrar-Key, CHT-1906). The
+    environment overrides the profile, like `mode()`; a repository's
+    `.chaotic` is never read."""
+    raw = os.environ.get(VIA_ENV)
+    source = VIA_ENV
+    if raw is None:
+        raw = _config.load_global_config().get(VIA_SETTING)
+        source = f"the profile's {VIA_SETTING!r}"
+    if raw is None or raw == "":
+        return "local"
+    value = str(raw).strip().lower()
+    if value not in VIAS:
+        raise SessionIdentityError(f"{source} must be 'local' or 'header', not {raw!r}.")
+    return value
+
+
+def set_registrar_key_via(value: str) -> None:
+    """Write the profile's setting ('local' or 'header')."""
+    if value not in VIAS:
+        raise SessionIdentityError(f"{VIA_SETTING} must be 'local' or 'header', not {value!r}.")
+    cfg = _config.load_global_config()
+    if value == "local":
+        cfg.pop(VIA_SETTING, None)
+    else:
+        cfg[VIA_SETTING] = value
+    _config.save_global_config(cfg)
+
+
+def has_proxied_identity() -> bool:
+    """Will requests carry a credential even with no key configured here:
+    a session identity whose registrar key the proxy supplies? Errors in
+    the settings count as yes, so the request itself reports them."""
+    try:
+        return registrar_key_via() == "header" and active_ref() is not None
+    except SessionIdentityError:
+        return True
+
+
+def proxied_ref() -> str | None:
+    """This session's ref when its registrar key comes from the proxy
+    (header mode), else None. Then the session identity is the only
+    credential there is: lookups the stdio MCP server would make with the
+    configured key (its default team, its project scope) go as the
+    session, and are keyed on HEADER_FP. Settings errors read as None
+    here; the request itself reports them."""
+    try:
+        if registrar_key_via() != "header":
+            return None
+        return active_ref()
+    except SessionIdentityError:
+        return None
 
 
 _suspension = threading.local()
@@ -207,6 +281,7 @@ def registrar_settings() -> tuple[str | None, str]:
     glob = _config.load_global_config()
     local = _config.load_local_config()
     default_url = f"http://localhost:{_config.DEFAULT_PORT}/api"
+    via_header = registrar_key_via() == "header"
 
     def effective(name, value):
         # Compare what each value means: an unset URL is the default one,
@@ -216,7 +291,7 @@ def registrar_settings() -> tuple[str | None, str]:
         return value
 
     for name, env in (("api_key", "CHAOTIC_API_KEY"), ("token", "CHAOTIC_TOKEN"), ("api_url", "CHAOTIC_API_URL")):
-        if os.environ.get(env):
+        if os.environ.get(env) or (via_header and name != "api_url"):
             continue
         if local.get(name) and effective(name, local.get(name)) != effective(name, glob.get(name)):
             raise SessionIdentityError(
@@ -224,7 +299,9 @@ def registrar_settings() -> tuple[str | None, str]:
                 f"the registrar's key and server come only from the profile or the environment. Remove "
                 f"{name} from .chaotic, or set CHAOTIC_SESSION_IDENTITY=off here. {NO_FALLBACK}"
             )
-    credential = (
+    # In header mode the registrar key is the proxy's, and a key
+    # configured here is not used for the session (only outside one).
+    credential = None if via_header else (
         os.environ.get("CHAOTIC_API_KEY") or glob.get("api_key")
         or os.environ.get("CHAOTIC_TOKEN") or glob.get("token")
     )
@@ -376,11 +453,14 @@ def _server_error(response: httpx.Response) -> tuple[str, object]:
     return (str(detail) if detail else f"HTTP {response.status_code}"), detail
 
 
-def _registrar_call(method: str, url: str, credential: str, body: dict | None = None) -> dict:
+def _registrar_call(method: str, url: str, credential: str | None, body: dict | None = None) -> dict:
     """One request with the registrar credential. Only this module makes
-    them, and only to /auth/me, /teams and /agents/register."""
-    headers = {"Authorization": f"Bearer {credential}", "Content-Type": "application/json",
-               "X-Chaotic-Interactive": "0"}
+    them, and only to /auth/me, /teams and /agents/register. With no
+    `credential` (header mode) it carries no Authorization, and the
+    proxy's X-Chaotic-Registrar-Key is the credential."""
+    headers = {"Content-Type": "application/json", "X-Chaotic-Interactive": "0"}
+    if credential:
+        headers["Authorization"] = f"Bearer {credential}"
     with httpx.Client() as client:
         response = client.request(method, url, headers=headers, json=body)
     if response.is_success:
@@ -392,7 +472,13 @@ def _registrar_call(method: str, url: str, credential: str, body: dict | None = 
                 status_code=response.status_code,
             )
     message, detail = _server_error(response)
-    if response.status_code == 401:
+    if response.status_code == 401 and not credential:
+        message = (
+            f"no usable registrar key reached the server ({message}). With {VIA_ENV}=header the "
+            f"environment's proxy must add {REGISTRAR_KEY_HEADER} to requests to this server: check "
+            "the network secret's host and header name, and that the key is not revoked"
+        )
+    elif response.status_code == 401:
         message = (
             f"the configured key was rejected ({message}); it may be revoked or its holder "
             "deactivated; check `chaotic auth set-key`"
@@ -499,6 +585,70 @@ def _register(ref: str, credential: str, api_url: str, team_id: str | None, me: 
     }
 
 
+def _register_via_header(ref: str, api_url: str) -> dict:
+    """Register `ref` with the registrar key the proxy injects (CHT-1906).
+    No default_name: without /auth/me this process does not know the
+    registrar's name, and the server's own default names it."""
+    try:
+        reg = _registrar_call("POST", f"{api_url}/agents/register", None, {"external_ref": ref})
+    except SessionIdentityError as exc:
+        if exc.status_code == 422 and "team_id" in str(exc):
+            # A person's key as the network secret: a person registers in
+            # a team, which this mode never names.
+            raise SessionIdentityError(
+                f"Session identity registration failed: {VIA_ENV}=header needs an agent registrar's key "
+                f"in {REGISTRAR_KEY_HEADER} (`chaotic agent create --registrar`), not a person's. {NO_FALLBACK}",
+                status_code=exc.status_code, detail=exc.detail,
+            ) from exc
+        raise
+    agent = reg.get("agent") or {}
+    if not reg.get("api_key"):
+        raise SessionIdentityError(f"Session identity registration returned no key. {NO_FALLBACK}")
+    return {
+        "external_ref": ref,
+        "api_url": api_url,
+        "registrar": HEADER_FP,
+        "team_id": None,
+        "registrar_is_agent": True,
+        "api_key": reg["api_key"],
+        "api_key_id": reg.get("api_key_id"),
+        "expires_at": reg.get("expires_at"),
+        "agent_id": agent.get("id"),
+        "agent_name": agent.get("name"),
+        "registered_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _session_key_via_header(ref: str, api_url: str, failed_key: str | None) -> str:
+    """`session_key` in header mode: one slot per (session, server), the
+    same lock and cache rules, and no team (only an agent registrar can
+    register without one, and a proxied secret is an agent's key)."""
+    slot = cache_path(ref, api_url, HEADER_FP, None)
+
+    def cached(trusted=True):
+        record = read_cache(slot) if trusted else None
+        if usable(record, ref, api_url, HEADER_FP, None) and record["api_key"] != failed_key:
+            return record["api_key"]
+        return None
+
+    key = cached()
+    if key:
+        return key
+    try:
+        trusted = _ensure_dir()
+        with _locked(slot):
+            key = cached(trusted)
+            if key:
+                return key
+            record = _register_via_header(ref, api_url)
+            write_cache(slot, record)
+            return record["api_key"]
+    except OSError as exc:
+        raise SessionIdentityError(
+            f"Session identity: cannot use the key cache ({exc}). {NO_FALLBACK}"
+        ) from exc
+
+
 def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: str | None = None) -> str:
     """The key to send for this session. With `failed_key` (the key a 401
     just refused), a cached key equal to it is not used: another process
@@ -510,10 +660,13 @@ def session_key(ref: str, credential: str | None, api_url: str, *, failed_key: s
     identity again and revoke the other slot's key). A person registers
     in the current team, so theirs includes it. Which one applies is
     known from the cache, or from /auth/me when registering."""
+    if not credential and registrar_key_via() == "header":
+        return _session_key_via_header(ref, api_url, failed_key)
     if not credential:
         raise SessionIdentityError(
             "session_identity is auto but no registrar key is configured "
-            "(`chaotic auth set-key`, or CHAOTIC_API_KEY)."
+            f"(`chaotic auth set-key`, or CHAOTIC_API_KEY; or {VIA_ENV}=header when a proxy "
+            f"supplies it as {REGISTRAR_KEY_HEADER})."
         )
     fp = fingerprint(credential)
     hint_path = team_hint_path(ref, api_url, fp)
