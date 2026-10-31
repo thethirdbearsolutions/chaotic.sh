@@ -12,8 +12,8 @@ semantic versioning, loosely. It is the release that was prepared as
 0.1.0a22, which never reached PyPI.
 
 Server, CLI, web UI and Android changes merged since a21 (PRs #260,
-#322-#329 and #331-#469). This release carries 20 database migrations
-(0020-0040; there is no 0035). Two of them refuse to run on data that breaks their rule
+#322-#329 and #331-#473). This release carries 22 database migrations
+(0020-0042; there is no 0035). Two of them refuse to run on data that breaks their rule
 (0020: a dangling agent owner; 0022: two API keys sharing a hash), and
 several delete or rewrite rows, each reporting what it does in the
 upgrade output. It also changes which agent API keys still sign in.
@@ -191,6 +191,11 @@ previous code out again and restarts the server on it. chaotic.thirdbearsolution
   `external_ref`, and rewrite the inbox titles that quoted the old names
   (CHT-1864, CHT-1869). `@` handles typed with an old tail now reach
   nobody.
+- **Migration 0042 recomputes open epics' status from their children**
+  (CHT-1901). An open epic whose status was set by hand to something its
+  children don't imply is pinned where it is; every other open epic takes
+  the derived status. Closed epics are left alone, and no activity rows
+  are written.
 - **New server settings, all off by default**: `OAUTH_ENABLED` (OAuth
   for `/mcp` and the Android app) and `MCP_CAPABILITY_URL_ENABLED`. Set
   them with `chaotic system config set`, which keeps them across
@@ -220,6 +225,17 @@ previous code out again and restarts the server on it. chaotic.thirdbearsolution
   then goes in `X-Chaotic-Key`, which every REST route accepts like a
   bearer API key when no `Authorization` is sent. `docs/agents.md` has
   the recipe (CHT-1906, CHT-1913).
+- **Epics track their goal.** An open epic's status follows its
+  children until set by hand (`status_follows_children` unpins it);
+  closing an epic's last open child asks whether to close the epic too;
+  and the Epics view shows progress toward each one (CHT-1884, CHT-1901,
+  CHT-1902).
+- **Per-project epic and assignee knobs**, off by default: `chaotic
+  project update --require-assignee-on-claim`, `--require-epic-on-close`
+  and `--default-epic CHT-X`, which new parentless tickets are filed under.
+  MCP `issue_update` takes `issue_type` (CHT-1885, CHT-1900).
+- **Query issues by relation**: `blocks=`, `blocked_by=` and `related=`
+  in the issue query (CHT-1903).
 - **A session identity can name itself**: `CHAOTIC_SESSION_NAME` names
   a new session identity when the CLI registers it, and `chaotic auth
   rename <name>` renames the session afterwards. A session identity may
@@ -281,8 +297,9 @@ previous code out again and restarts the server on it. chaotic.thirdbearsolution
 - **Web UI**: an open-only issue list that renders cached rows at once,
   polish passes against a stated bar, gzip and cache headers, dense
   issue rows, an issue detail that paints from the loaded row, and
-  optimistic inline edits with rollback (CHT-1747, CHT-1755, CHT-1874,
-  CHT-1886, CHT-1893 to CHT-1899).
+  optimistic inline edits with rollback, filter changes that paint at
+  once from a cached list (CHT-1747, CHT-1755, CHT-1874, CHT-1886,
+  CHT-1893 to CHT-1899, CHT-1910).
 
 ### Fixed
 
