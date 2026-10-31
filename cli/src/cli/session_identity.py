@@ -535,6 +535,23 @@ def chosen_name() -> str | None:
     return raw
 
 
+@contextmanager
+def _blaming_chosen_name(chosen: str | None):
+    """A registration the server refuses for its name, when that name
+    came from CHAOTIC_SESSION_NAME, says so: otherwise every command
+    fails with a name the person may not know where it came from."""
+    try:
+        yield
+    except SessionIdentityError as exc:
+        code = exc.detail.get("error_code") if isinstance(exc.detail, dict) else None
+        if not chosen or not (code or "").startswith("name_"):
+            raise
+        raise SessionIdentityError(
+            f"{exc} (The name {chosen!r} comes from {NAME_ENV}: choose another, or unset it.)",
+            status_code=exc.status_code, detail=exc.detail,
+        ) from exc
+
+
 def _whoami(credential: str, api_url: str) -> dict:
     return _registrar_call("GET", f"{api_url}/auth/me", credential)
 
@@ -587,8 +604,10 @@ def _register(ref: str, credential: str, api_url: str, team_id: str | None, me: 
                 f"session_identity is auto but no team is selected (`chaotic team use`). {NO_FALLBACK}"
             )
         body["team_id"] = team_id
-    body["default_name"] = chosen_name() or default_name(me.get("name") or "Claude Code")
-    reg = _registrar_call("POST", f"{api_url}/agents/register", credential, body)
+    chosen = chosen_name()
+    body["default_name"] = chosen or default_name(me.get("name") or "Claude Code")
+    with _blaming_chosen_name(chosen):
+        reg = _registrar_call("POST", f"{api_url}/agents/register", credential, body)
     agent = reg.get("agent") or {}
     if not reg.get("api_key"):
         raise SessionIdentityError(f"Session identity registration returned no key. {NO_FALLBACK}")
@@ -617,7 +636,8 @@ def _register_via_header(ref: str, api_url: str) -> dict:
     if name:
         body["default_name"] = name
     try:
-        reg = _registrar_call("POST", f"{api_url}/agents/register", None, body)
+        with _blaming_chosen_name(name):
+            reg = _registrar_call("POST", f"{api_url}/agents/register", None, body)
     except SessionIdentityError as exc:
         if exc.status_code == 422 and "team_id" in str(exc):
             # A person's key as the network secret: a person registers in

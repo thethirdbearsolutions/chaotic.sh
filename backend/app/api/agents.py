@@ -15,7 +15,7 @@ from app.schemas.agent import (
 )
 from app.enums import TeamRole
 from app.services.registration_service import (
-    RegistrationRefused, RegistrationService, member_named, name_matches_member_detail,
+    RegistrationRefused, RegistrationService, member_named, name_matches_member_detail, normalize_name,
 )
 from app.schemas.api_key import AgentKeyResponse, APIKeyCreated
 from app.services.agent_service import (
@@ -272,6 +272,31 @@ def _is_self_rename(current_user: OxydeUser, agent: OxydeUser, agent_in: AgentUp
     )
 
 
+async def _refuse_agent_name(agent: OxydeUser, name: str) -> None:
+    """A self-rename may not take another active agent's name or strong
+    @handle in the team (CHT-1918): an ambiguous handle reaches nobody, so
+    `@claude-mcp` would stop reaching Claude MCP, and the session could
+    pass for it. A manager's rename is not held to this, as before."""
+    from app.services.mention_handles import agent_name_handles
+
+    wanted, claims = normalize_name(name), agent_name_handles(name)
+    others = await OxydeUser.objects.filter(
+        agent_team_id=agent.agent_team_id, is_agent=True, is_active=True,
+    ).all()
+    if any(
+        other.id != agent.id
+        and (normalize_name(other.name) == wanted or not claims.isdisjoint(agent_name_handles(other.name)))
+        for other in others
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "name_matches_agent",
+                "message": f"{name!r} is the name or @handle of another agent in this team; choose another.",
+            },
+        )
+
+
 @router.patch("/agents/{agent_id}", response_model=AgentResponse)
 @writes
 async def update_agent(
@@ -296,9 +321,8 @@ async def update_agent(
     # Visible (else 404, as if missing), then manageable (403) (CHT-1785).
     agent = await visible_agent(current_user, agent_id)
 
-    if not (
-        _is_self_rename(current_user, agent, agent_in) or await can_manage_agent(current_user, agent)
-    ):
+    self_rename = _is_self_rename(current_user, agent, agent_in)
+    if not (self_rename or await can_manage_agent(current_user, agent)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this agent",
@@ -315,8 +339,17 @@ async def update_agent(
             },
         )
 
+    if self_rename:
+        agent_in.name = agent_in.name.strip()
+        if not normalize_name(agent_in.name):
+            raise HTTPException(
+                status_code=422,
+                detail={"error_code": "name_blank", "message": "A name must not be blank."},
+            )
     if agent_in.name is not None and agent_in.name != agent.name:
         await _refuse_member_name(agent.agent_team_id, agent_in.name)
+        if self_rename:
+            await _refuse_agent_name(agent, agent_in.name)
 
     agent = await agent_service.update(agent, agent_in)
 

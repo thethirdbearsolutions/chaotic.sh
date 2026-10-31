@@ -159,6 +159,30 @@ class TestAuthRename:
         assert "agent update" in result.output
         client.update_agent.assert_not_called()
 
+    def test_json_output(self, cli_runner):
+        import json as _json
+        from cli.main import cli, client
+
+        client.get_me = MagicMock(return_value={
+            "id": "sess-1", "name": "Old", "is_agent": True, "kind": "assistant", "registered_by_id": "reg-1",
+        })
+        client.update_agent = MagicMock(return_value={"id": "sess-1", "name": "Piper"})
+
+        result = cli_runner.invoke(cli, ['auth', 'rename', 'Piper', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert _json.loads(result.output)["name"] == "Piper"
+
+    def test_json_error_for_a_person(self, cli_runner):
+        import json as _json
+        from cli.main import cli, client
+
+        client.get_me = MagicMock(return_value={"id": "u-1", "name": "Alice", "is_agent": False})
+        result = cli_runner.invoke(cli, ['auth', 'rename', 'Piper', '--json'])
+
+        assert result.exit_code == 1
+        assert _json.loads(result.output)["error_code"] == "not_a_session_identity"
+
     def test_blank_is_refused(self, cli_runner):
         from cli.main import cli, client
 

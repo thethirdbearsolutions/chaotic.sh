@@ -8,6 +8,7 @@ import pytest
 
 REF = "claude-code:session:2b1f0000-aaaa-bbbb-cccc-000000001918"
 OTHER_REF = "claude-code:session:2b1f0000-aaaa-bbbb-cccc-000000001919"
+THIRD_REF = "claude-code:session:2b1f0000-aaaa-bbbb-cccc-000000001920"
 
 
 def _bearer(key):
@@ -67,7 +68,7 @@ async def test_a_session_cannot_rename_another_agent(client, registrar):
         assert refused.status_code == 403, refused.text
 
 
-@pytest.mark.parametrize("extra", [{"avatar_url": "https://example.com/a.png"}, {"avatar_url": None}, {"can_register": True}])
+@pytest.mark.parametrize("extra", [{"avatar_url": "https://example.com/a.png"}, {"avatar_url": None}, {"can_register": True}, {"name": None}])
 async def test_a_session_may_change_only_its_name(client, registrar, extra):
     session = await _register(client, registrar, REF)
 
@@ -76,7 +77,7 @@ async def test_a_session_may_change_only_its_name(client, registrar, extra):
         headers=_bearer(session["api_key"]),
     )
 
-    assert refused.status_code in (403, 409), refused.text
+    assert refused.status_code == 403, refused.text
     me = await client.get("/api/auth/me", headers=_bearer(session["api_key"]))
     assert me.json()["name"] != "Piper"
 
@@ -97,3 +98,57 @@ async def test_a_hand_made_agent_still_cannot_rename_itself(client, registrar):
     )
 
     assert refused.status_code == 403, refused.text
+
+
+async def test_renaming_to_its_own_name_is_a_no_op(client, registrar):
+    session = await _register(client, registrar, REF)
+    same = await client.patch(
+        f"/api/agents/{session['agent']['id']}", json={"name": session["agent"]["name"]},
+        headers=_bearer(session["api_key"]),
+    )
+    assert same.status_code == 200, same.text
+    assert same.json()["name"] == session["agent"]["name"]
+
+
+@pytest.mark.parametrize("name", ["   ", "\u200b"])
+async def test_a_blank_name_is_refused(client, registrar, name):
+    session = await _register(client, registrar, REF)
+    refused = await client.patch(
+        f"/api/agents/{session['agent']['id']}", json={"name": name}, headers=_bearer(session["api_key"]),
+    )
+    assert refused.status_code == 422, refused.text
+
+
+async def test_the_name_is_stripped(client, registrar):
+    session = await _register(client, registrar, REF)
+    renamed = await client.patch(
+        f"/api/agents/{session['agent']['id']}", json={"name": "  Piper "}, headers=_bearer(session["api_key"]),
+    )
+    assert renamed.json()["name"] == "Piper"
+
+
+async def test_a_session_may_not_take_another_agents_name_or_handle(client, registrar):
+    session = await _register(client, registrar, REF)
+    other = await _register(client, registrar, OTHER_REF)
+    await client.patch(
+        f"/api/agents/{other['agent']['id']}", json={"name": "Weir"}, headers=_bearer(other["api_key"]),
+    )
+
+    third = await _register(client, registrar, THIRD_REF)
+    tail = third["agent"]["name"].rsplit(" · ", 1)[1]
+
+    # The last one claims the third session's tail handle, registrar-<tail>.
+    for name in ("Weir", "weir", "Registrar", third["agent"]["name"], f"Registrar · elsewhere · {tail}"):
+        refused = await client.patch(
+            f"/api/agents/{session['agent']['id']}", json={"name": name}, headers=_bearer(session["api_key"]),
+        )
+        assert refused.status_code == 409, (name, refused.text)
+        assert refused.json()["detail"]["error_code"] == "name_matches_agent"
+
+
+async def test_a_manager_rename_is_not_held_to_the_agent_name_rule(client, auth_headers, registrar):
+    session = await _register(client, registrar, REF)
+    renamed = await client.patch(
+        f"/api/agents/{session['agent']['id']}", json={"name": "Registrar"}, headers=auth_headers,
+    )
+    assert renamed.status_code == 200, renamed.text

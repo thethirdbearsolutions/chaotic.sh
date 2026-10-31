@@ -728,6 +728,20 @@ class TestChosenName:
             Client()._request("GET", "/issues")
         assert server.registrations == []
 
+    def test_a_refused_name_says_where_it_came_from(self, auto, server, configured, monkeypatch):
+        monkeypatch.setenv(si.NAME_ENV, "Ethan")
+        original = server.handler
+
+        def refuse_the_name(request):
+            if request.url.path == "/api/agents/register":
+                return httpx.Response(422, json={"detail": {
+                    "error_code": "name_matches_member", "message": "'Ethan' is the name of a person"}})
+            return original(request)
+
+        server.handler = refuse_the_name
+        with pytest.raises(APIError, match=f"comes from {si.NAME_ENV}"):
+            Client()._request("GET", "/issues")
+
     def test_header_mode_sends_it_too(self, proxied, monkeypatch):
         monkeypatch.setenv(si.NAME_ENV, "Piper")
         Client()._request("GET", "/issues")
