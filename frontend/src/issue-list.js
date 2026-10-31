@@ -3,7 +3,7 @@
  * Extracted from app.js for testability
  */
 
-import { getIssues, getSelectedIssueIndex, setSelectedIssueIndex } from './state.js';
+import { getIssues, getSelectedIssueIndex, setSelectedIssueIndex, getCurrentUser } from './state.js';
 import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './assignees.js';
 import { formatEstimate, isOutOfScale } from './projects.js';
 import { getSprintCache } from './sprints.js';
@@ -57,6 +57,20 @@ let pendingSelectionId = null;
 // the queue is dropped instead of landing in that state.
 let paintAnchor = null;
 
+// Groups the user collapsed, so a re-render (an edit, a /ws update)
+// doesn't open them again (CHT-1923). Kept per user and group-by choice,
+// across projects: "Done is collapsed" means the same thing in each.
+const collapsedGroups = new Map();
+// The current render's collapsed group keys, and its rows held back for
+// them: a hidden group takes none of the first-paint budget and is
+// painted last, or at once when it is expanded.
+let collapsedNow = null;
+let collapsedQueue = [];
+// A focused control whose row is still queued, focused once it lands.
+let pendingFocus = null;
+
+const collapseKey = (groupBy) => `${getCurrentUser()?.id ?? ''}|${groupBy}`;
+
 // Rows a re-paint must render at once: everything down to the bottom of
 // the viewport and a screen beyond, so the document keeps its height and
 // the scroll position survives (a /ws event re-renders while the user is
@@ -73,6 +87,10 @@ function firstPaintRowsFor() {
  * rest queued for appendPendingRows().
  */
 function rowsHtml(groupKey, issues) {
+    if (groupKey !== null && collapsedNow?.has(String(groupKey))) {
+        collapsedQueue.push({ groupKey, ids: issues.map(i => i.id) });
+        return '';
+    }
     const now = issues.slice(0, Math.max(0, firstPaintBudget));
     firstPaintBudget -= now.length;
     if (now.length < issues.length) {
@@ -97,6 +115,7 @@ export function cancelPendingRows() {
     paintGeneration++;
     pendingRows = [];
     pendingSelectionId = null;
+    pendingFocus = null;
     paintAnchor = null;
 }
 
@@ -123,6 +142,13 @@ export function appendPendingRows(limit = Infinity) {
         budget -= take.length;
         if (take.length === head.ids.length) pendingRows.shift();
         else head.ids = head.ids.slice(take.length);
+    }
+    if (pendingFocus) {
+        const focus = pendingFocus;
+        if (findRow(list, focus.issueId)) {
+            pendingFocus = null;
+            restoreFocus(list, focus);
+        }
     }
     if (pendingRows.length === 0) {
         clearTimeout(chunkTimer);
@@ -170,7 +196,18 @@ export function renderIssues() {
     // otherwise survive independently of each other across a re-render (e.g.
     // an incoming websocket event, or an inline field edit), so the visible
     // cursor silently drifts from the tracked index.
-    const selectedIssueId = list.querySelector('.issue-row.keyboard-selected')?.dataset.issueId;
+    const selectedRow = list.querySelector('.issue-row.keyboard-selected');
+    const selectedIssueId = selectedRow?.dataset.issueId;
+    // The rebuild also drops focus from whatever control in the list had
+    // it; put it back on the same control of the same issue (CHT-1923).
+    const focused = focusedControl(list);
+    // The group each of those rows is in now, to tell a row that moved
+    // into a collapsed group from one whose group the user collapsed.
+    const groupOf = (row) => row?.closest('.issue-group')?.dataset.group ?? null;
+    const wasIn = [
+        [selectedIssueId, groupOf(selectedRow)],
+        [focused?.issueId, groupOf(focused?.row)],
+    ];
 
     list.classList.add('issue-list-linear');
 
@@ -210,6 +247,8 @@ export function renderIssues() {
     }
 
     const groupBy = getGroupByValue();
+    collapsedNow = collapsedGroups.get(collapseKey(groupBy)) || null;
+    collapsedQueue = [];
 
     if (groupBy === 'status') {
         renderGroupedByStatus(list, issues);
@@ -228,6 +267,22 @@ export function renderIssues() {
 
     firstPaintBudget = Infinity;
     paintAnchor = list.firstElementChild;
+    pendingRows.push(...collapsedQueue);
+    collapsedQueue = [];
+    const collapsed = collapsedNow;
+    collapsedNow = null;
+    if (collapsed?.size) {
+        list.querySelectorAll('.issue-group').forEach((group) => {
+            if (collapsed.has(group.dataset.group)) group.classList.add('collapsed');
+        });
+        // The row the user is on (selected or focused) stays in sight: a
+        // collapsed group it has just moved into (an edit) opens again.
+        wasIn.forEach(([id, group]) => { if (id) revealIssueGroup(id, list, group); });
+    }
+    if (focused) {
+        if (findRow(list, focused.issueId)) restoreFocus(list, focused);
+        else if (pendingRows.length > 0) pendingFocus = focused;
+    }
     // A selected row that is still queued is selected once it lands.
     const selectedPainted = !!selectedIssueId && Array.prototype.some.call(
         list.querySelectorAll('.issue-row'), (row) => row.dataset.issueId === selectedIssueId,
@@ -540,15 +595,100 @@ function renderGroupedBySprint(list, issues) {
     list.innerHTML = html;
 }
 
+function findGroup(list, groupKey) {
+    return Array.prototype.find.call(
+        list.querySelectorAll('.issue-group'), (el) => el.dataset.group === String(groupKey),
+    ) || null;
+}
+
+function findRow(list, issueId) {
+    return Array.prototype.find.call(
+        list.querySelectorAll('.issue-row'), (r) => r.dataset.issueId === issueId,
+    ) || null;
+}
+
+/** Paint a group's queued rows now (it was just expanded). */
+function paintGroupNow(list, groupKey) {
+    const container = groupContainer(list, groupKey);
+    if (!container) return;
+    const byId = new Map(getIssues().map(issue => [issue.id, issue]));
+    pendingRows = pendingRows.filter((entry) => {
+        if (String(entry.groupKey) !== String(groupKey)) return true;
+        const html = entry.ids.map(id => byId.get(id)).filter(Boolean).map(issue => renderIssueRow(issue)).join('');
+        container.insertAdjacentHTML('beforeend', html);
+        return false;
+    });
+}
+
+function setGroupCollapsed(list, group, isCollapsed) {
+    group.classList.toggle('collapsed', isCollapsed);
+    const key = collapseKey(getGroupByValue());
+    if (!collapsedGroups.has(key)) collapsedGroups.set(key, new Set());
+    const collapsed = collapsedGroups.get(key);
+    if (isCollapsed) {
+        collapsed.add(group.dataset.group);
+    } else {
+        collapsed.delete(group.dataset.group);
+        paintGroupNow(list, group.dataset.group);
+    }
+}
+
 /**
  * Toggle group collapse state
  * @param {string} groupId - Group identifier
  */
 export function toggleGroup(groupId) {
-    const group = document.querySelector(`.issue-group[data-group="${groupId}"]`);
-    if (group) {
-        group.classList.toggle('collapsed');
-    }
+    const list = document.getElementById('issues-list');
+    const group = list && findGroup(list, groupId);
+    if (!group) return;
+    setGroupCollapsed(list, group, !group.classList.contains('collapsed'));
+}
+
+/**
+ * Open the collapsed group an issue's row is in, if any, so the row the
+ * user just edited or is on stays visible (CHT-1923 review I3).
+ */
+export function revealIssueGroup(issueId, list = document.getElementById('issues-list'), unlessIn = undefined) {
+    if (!issueId || !list) return;
+    const pending = pendingRows.find(entry => entry.ids.includes(issueId));
+    const group = pending
+        ? (pending.groupKey === null ? null : findGroup(list, pending.groupKey))
+        : findRow(list, issueId)?.closest('.issue-group');
+    if (!group?.classList.contains('collapsed')) return;
+    if (unlessIn !== undefined && group.dataset.group === unlessIn) return; // it was already there
+    setGroupCollapsed(list, group, false);
+}
+
+/** Forget collapsed groups (tests). */
+export function clearCollapsedGroups() {
+    collapsedGroups.clear();
+}
+
+/**
+ * The control in the list that has focus, as something that survives a
+ * rebuild: its row's issue id and which control of the row it was.
+ */
+function focusedControl(list) {
+    const active = document.activeElement;
+    if (!active || active === list || !list.contains(active)) return null;
+    const row = active.closest('.issue-row');
+    if (!row?.dataset.issueId) return null;
+    return {
+        issueId: row.dataset.issueId,
+        row,
+        dropdownType: active.dataset?.dropdownType || null,
+        isTitle: active.classList.contains('issue-title'),
+    };
+}
+
+function restoreFocus(list, { issueId, dropdownType, isTitle }) {
+    if (list.contains(document.activeElement)) return;
+    const row = findRow(list, issueId);
+    if (!row) return;
+    const target = dropdownType ? row.querySelector(`[data-dropdown-type="${dropdownType}"]`)
+        : isTitle ? row.querySelector('.issue-title')
+            : row.querySelector('a[href], button');
+    target?.focus({ preventScroll: true });
 }
 
 /**
