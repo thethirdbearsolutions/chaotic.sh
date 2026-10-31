@@ -119,20 +119,40 @@ def register(cli):
             console.print("[yellow]No epics found.[/yellow]")
             return
 
+        # Progress for every epic in one read (CHT-1902). Older servers
+        # lack the endpoint; the list still shows without it.
+        try:
+            progress = {
+                p["id"]: p for p in _client().get_project_epic_progress(project_id, sprint_window=1)["epics"]
+            }
+        except m.APIError:
+            progress = {}
+
         table = Table(title="Epics")
         table.add_column("ID")
         table.add_column("Title")
         table.add_column("Status")
         table.add_column("Priority")
         table.add_column("Estimate")
+        table.add_column("Done")
 
         for ep in epics:
+            prog = progress.get(ep["id"])
+            if prog:
+                kids = prog["children"]
+                total = kids["total"] - kids["canceled"]
+                done_text = f"{kids['done']}/{total}" if total else "-"
+                if prog["points_total"]:
+                    done_text += f" ({prog['points_done']}/{prog['points_total']}p)"
+            else:
+                done_text = "-"
             table.add_row(
                 ep["identifier"],
                 ep["title"][:50] + ("..." if len(ep["title"]) > 50 else ""),
                 ep["status"].replace("_", " ").title(),
                 ep["priority"].replace("_", " ").title(),
                 "-" if ep.get("estimate") is None else str(ep["estimate"]),
+                done_text,
             )
 
         console.print(table)
