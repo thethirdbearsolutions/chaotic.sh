@@ -7429,6 +7429,26 @@ input[type="checkbox"] {
     align-self: center;
 }
 
+/* On a phone the actions (up to three buttons on a review) left the
+   ritual's name and prompt a ~20px column, one word per line (CHT-1892).
+   Stack them under the info instead, and let them wrap. */
+@media (max-width: 768px) {
+    .gate-ritual {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .gate-ritual .btn,
+    .gate-ritual-actions {
+        align-self: flex-start;
+    }
+
+    .gate-ritual-actions {
+        flex-wrap: wrap;
+    }
+}
+
 .gate-attestation-note {
     font-size: var(--font-sm);
     color: var(--text-secondary);
