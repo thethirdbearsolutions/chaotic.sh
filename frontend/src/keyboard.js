@@ -30,6 +30,12 @@
  *   registered dynamically per-view (always AFTER this global one), so bare
  *   'p'/'c' here would otherwise fire first and preempt the documented
  *   detail-view actions (Priority, focus comment box) with Projects/Create.
+ * @param {Function} [actions.isMenuOpen] - Returns true if a menu that
+ *   Escape closes (team/user dropdowns, filter/display menus, the detail
+ *   overflow menu) is open.
+ * @param {Function} [actions.leaveDetailView] - Leave the issue detail view
+ *   the way its Back button does. Escape calls it on issue detail when no
+ *   menu is open (CHT-1873).
  * @returns {Function} The keydown event handler
  */
 export function createKeyboardHandler(actions) {
@@ -90,6 +96,11 @@ export function createKeyboardHandler(actions) {
                 }
             } else if (document.body.classList.contains('sidebar-open') && actions.closeSidebar) {
                 actions.closeSidebar();
+            } else if (actions.leaveDetailView && actions.isDetailViewActive?.()
+                && actions.isMenuOpen && !actions.isMenuOpen()) {
+                // CHT-1873: with nothing open to close, Escape on issue
+                // detail goes back to the list it came from.
+                actions.leaveDetailView();
             } else {
                 actions.closeDropdowns();
             }

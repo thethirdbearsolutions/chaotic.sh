@@ -104,8 +104,14 @@ export function setActiveNav(view) {
 /**
  * Navigate to a view by name.
  * Updates URL, highlights nav item, hides/shows view containers, calls load handler.
+ *
+ * `options.transition: false` swaps the view synchronously instead of
+ * through a View Transition, whose callback runs after this call returns.
+ * A caller that focuses something in the new view right away needs it
+ * shown first (CHT-1873: `/` lost the keys typed before the search box
+ * could take focus).
  */
-export function navigateTo(view, pushHistory = true) {
+export function navigateTo(view, pushHistory = true, { transition = true } = {}) {
     // Save scroll position of the current page before navigating away
     if (pushHistory) {
         saveScrollPosition();
@@ -151,7 +157,7 @@ export function navigateTo(view, pushHistory = true) {
     };
 
     // Use View Transitions API for smooth crossfade (progressive enhancement)
-    if (document.startViewTransition) {
+    if (transition && document.startViewTransition) {
         document.startViewTransition(switchView);
     } else {
         switchView();

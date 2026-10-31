@@ -146,9 +146,19 @@ body.theme-light {
 /* Base */
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    font-size: var(--font-base);
     background-color: var(--bg-primary);
     color: var(--text-primary);
     line-height: 1.5;
+}
+
+/* Form controls use the page's font, not the browser's own (Arial in
+   Chrome) (CHT-1887). A later rule that sizes a control still wins.
+   line-height stays the controls' own `normal`: inheriting body's 1.5
+   would make every button and field taller. */
+button, input, select, textarea {
+    font: inherit;
+    line-height: normal;
 }
 
 a {
@@ -179,6 +189,9 @@ a:hover {
    4. AUTH & ONBOARDING
    ============================================================================ */
 .auth-container {
+    /* The sign-in and invite screens are laid out at 16px, which body
+       no longer gives them (CHT-1887). */
+    font-size: var(--font-lg);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -399,6 +412,7 @@ textarea {
 }
 
 .team-selector {
+    font-size: var(--font-md);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -437,6 +451,8 @@ textarea {
 }
 
 .nav-item {
+    /* The sidebar's own size, a step above body text (CHT-1887). */
+    font-size: var(--font-md);
     display: flex;
     align-items: center;
     gap: 0.75rem;
@@ -480,6 +496,7 @@ textarea {
 }
 
 .user-menu {
+    font-size: var(--font-md);
     display: flex;
     align-items: center;
     gap: 0.75rem;
@@ -1244,6 +1261,10 @@ textarea {
 }
 
 .document-content {
+    /* Long-form reading size, set here rather than inherited now that body
+       is 13px (CHT-1887); headings are em-based and follow it. Phones use
+       their own 15px below. */
+    font-size: var(--font-lg);
     line-height: 1.8;
     max-width: 65ch;
 }
@@ -1398,6 +1419,7 @@ textarea {
 }
 
 .linked-item-title {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     flex: 1;
 }
 
@@ -2074,6 +2096,7 @@ select:focus-visible {
 }
 
 .member-name {
+    font-size: var(--font-md);
     font-weight: 500;
 }
 
@@ -5498,6 +5521,7 @@ input[type="checkbox"] {
 }
 
 .api-key-name {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     color: var(--text-primary);
     margin-bottom: 4px;
@@ -6312,6 +6336,7 @@ input[type="checkbox"] {
 }
 
 .ticket-ritual-name {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     color: var(--text-primary);
 }
@@ -6602,6 +6627,7 @@ input[type="checkbox"] {
 }
 
 .agent-name {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     color: var(--text-primary);
 }
@@ -7101,12 +7127,14 @@ input[type="checkbox"] {
 }
 
 .gate-issue-id {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     color: var(--text-muted);
     flex-shrink: 0;
 }
 
 .gate-issue-title {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7272,6 +7300,7 @@ input[type="checkbox"] {
 }
 
 .inbox-row-title {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
 }
 
@@ -7690,6 +7719,7 @@ button.stat-card-link:hover .stat-note {
 }
 
 .ledger-item-title {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7750,6 +7780,7 @@ button.stat-card-link:hover .stat-note {
 }
 
 .document-list-title {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -8665,6 +8696,7 @@ button.stat-card-link:hover .stat-note {
     color: var(--text-primary);
 }
 .oauth-consent {
+    font-size: var(--font-lg); /* laid out at 16px, like sign-in (CHT-1887) */
     max-width: 560px;
     margin: 0 auto;
     padding: 48px var(--space-xl);

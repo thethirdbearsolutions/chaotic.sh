@@ -1016,6 +1016,10 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
             // Escape to close
             overflowDropdown.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
+                    // This Escape is spent closing the menu: the global
+                    // handler would otherwise see no menu open and leave
+                    // the issue too (CHT-1873).
+                    e.stopPropagation();
                     closeOverflow();
                     overflowTrigger.focus();
                 }

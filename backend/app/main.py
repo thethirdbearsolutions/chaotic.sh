@@ -6,7 +6,6 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.exceptions import RequestValidationError
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -30,6 +29,7 @@ from app.oauth.discovery import router as oauth_discovery_router
 from app.api.oauth import public_router as oauth_router
 from app.oauth.errors import FRAME_HEADERS, OAuthHTTPError, oauth_error_handler
 from app.version import get_version_info
+from app.http_caching import ApiNoStoreMiddleware, CachedStaticFiles, CodingAwareGZipMiddleware, NO_STORE, REVALIDATE
 from app import log_redaction
 from app.utils import vapid
 
@@ -281,6 +281,21 @@ app.include_router(oauth_discovery_router)
 app.include_router(oauth_router)
 app.add_exception_handler(OAuthHTTPError, oauth_error_handler)
 
+# /api responses are never cached (CHT-1874); an endpoint that sets its
+# own Cache-Control keeps it.
+app.add_middleware(ApiNoStoreMiddleware)
+
+# Compress responses for any client that accepts gzip (CHT-1874), so a
+# self-hosted server is compressed whatever proxy, if any, sits in front.
+# Starlette's middleware passes through websockets, text/event-stream (the
+# MCP transport's SSE), 206 range responses, already-compressed media types
+# and anything that set its own Content-Encoding; a streamed body is
+# compressed chunk by chunk with a sync flush, so it still streams. The
+# subclass also weakens the ETag and drops Accept-Ranges on a body it
+# compressed (see app/http_caching.py). 1 KiB
+# keeps small JSON replies, where gzip's overhead buys nothing, as they are.
+app.add_middleware(CodingAwareGZipMiddleware, minimum_size=1024, compresslevel=6)
+
 # Client address from a trusted reverse proxy's X-Forwarded-For (CHT-1586).
 # Added last, so it is the outermost middleware and everything inside it,
 # the OAuth per-address limits included, sees the real client. Only the
@@ -296,7 +311,9 @@ FRONTEND_DIR = os.path.join(os.path.dirname(BASE_DIR), "frontend")
 
 # Mount static files if frontend exists
 if os.path.exists(os.path.join(FRONTEND_DIR, "static")):
-    app.mount("/static", StaticFiles(directory=os.path.join(FRONTEND_DIR, "static")), name="static")
+    # Cache-Control per request (CHT-1874): immutable for a ?v= that is the
+    # file's content hash, revalidate (ETag) otherwise. See app/http_caching.py.
+    app.mount("/static", CachedStaticFiles(directory=os.path.join(FRONTEND_DIR, "static")), name="static")
 
 # Templates
 templates = Jinja2Templates(directory=os.path.join(FRONTEND_DIR, "templates"))
@@ -330,6 +347,9 @@ def _render_index(request: Request):
     # path carries the consent request id, so no path in Referers either.
     response.headers.update(FRAME_HEADERS)
     response.headers["Referrer-Policy"] = "same-origin"
+    # The shell names the current asset hashes, so it must be revalidated
+    # on every load or a cached copy would keep pointing at old assets.
+    response.headers["Cache-Control"] = REVALIDATE
     return response
 
 
@@ -528,6 +548,8 @@ async def cli_auth(request: Request, callback: str = Query(...), state: str = Qu
     # It mints an API key on a click: never framed (CHT-1519 review N6).
     response.headers.update(FRAME_HEADERS)
     response.headers["Referrer-Policy"] = "no-referrer"
+    # Credential-adjacent, like the invite page: never cached (CHT-1874).
+    response.headers["Cache-Control"] = NO_STORE
     return response
 
 

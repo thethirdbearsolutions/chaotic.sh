@@ -195,6 +195,7 @@ vi.mock('./issue-tooltip.js', () => ({
     initIssueTooltip: vi.fn(),
     hideTooltip: vi.fn(),
 }));
+vi.mock('./quote-comment.js', () => ({ isQuoteTooltipVisible: vi.fn().mockReturnValue(false) }));
 vi.mock('./router.js', () => ({
     navigateTo: vi.fn(),
     navigateToIssueByIdentifier: vi.fn(),
@@ -241,6 +242,7 @@ import { initIssueTooltip } from './issue-tooltip.js';
 import { closeSidebar } from './sidebar.js';
 import { hideTooltip } from './issue-tooltip.js';
 import { navigateTo, navigateToEpicByIdentifier } from './router.js';
+import { isQuoteTooltipVisible } from './quote-comment.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive } from './keyboard.js';
 import { initEventDelegation } from './event-delegation.js';
 import { initAuth } from './auth.js';
@@ -559,6 +561,106 @@ describe('app.js keyboard handler wiring', () => {
         expect(keyboardHandlerConfig).toHaveProperty('isModalOpen');
         expect(keyboardHandlerConfig).toHaveProperty('focusSearch');
         expect(keyboardHandlerConfig).toHaveProperty('closeDropdowns');
+    });
+
+    // CHT-1873: '/' focused the box 100 ms after the view switch, so the
+    // first keys typed after it were lost.
+    describe('focusSearch (CHT-1873)', () => {
+        let input;
+
+        beforeEach(() => {
+            input = document.createElement('input');
+            input.id = 'issue-search';
+            document.body.appendChild(input);
+            navigateTo.mockClear();
+        });
+
+        afterEach(() => input.remove());
+
+        it('focuses the search box in the same tick as the view switch', () => {
+            vi.useFakeTimers();
+            try {
+                keyboardHandlerConfig.focusSearch();
+                // No timer has been allowed to run: focus is already there.
+                expect(document.activeElement).toBe(input);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('switches views without a deferred View Transition', () => {
+            keyboardHandlerConfig.focusSearch();
+            expect(navigateTo).toHaveBeenCalledWith('issues', true, { transition: false });
+        });
+
+        it('the palette command uses the same path', () => {
+            commandPaletteCommands.find(c => c.id === 'search-issues').action();
+            expect(document.activeElement).toBe(input);
+            expect(navigateTo).toHaveBeenCalledWith('issues', true, { transition: false });
+        });
+    });
+
+    describe('Escape on issue detail (CHT-1873)', () => {
+        let container;
+
+        beforeEach(() => {
+            container = document.createElement('div');
+            container.innerHTML = `
+                <div id="team-dropdown" class="hidden"></div>
+                <div id="user-dropdown" class="hidden"></div>
+                <div id="filter-menu-dropdown" class="hidden"></div>
+                <div id="display-menu-dropdown" class="hidden"></div>
+                <div id="issue-detail-view">
+                    <button class="back-link"></button>
+                    <div class="overflow-menu-dropdown hidden"></div>
+                </div>
+            `;
+            document.body.appendChild(container);
+        });
+
+        afterEach(() => container.remove());
+
+        it('reports no menu open when all are hidden', () => {
+            expect(keyboardHandlerConfig.isMenuOpen()).toBe(false);
+        });
+
+        it.each(['team-dropdown', 'user-dropdown', 'filter-menu-dropdown', 'display-menu-dropdown'])(
+            'reports #%s as an open menu', (id) => {
+                document.getElementById(id).classList.remove('hidden');
+                expect(keyboardHandlerConfig.isMenuOpen()).toBe(true);
+            });
+
+        it('reports the detail overflow menu as an open menu', () => {
+            container.querySelector('.overflow-menu-dropdown').classList.remove('hidden');
+            expect(keyboardHandlerConfig.isMenuOpen()).toBe(true);
+        });
+
+        it('reports a visible Quote tooltip as an open menu', () => {
+            isQuoteTooltipVisible.mockReturnValue(true);
+            try {
+                expect(keyboardHandlerConfig.isMenuOpen()).toBe(true);
+            } finally {
+                isQuoteTooltipVisible.mockReturnValue(false);
+            }
+        });
+
+        it('closeDropdowns closes the overflow menu opened by click', () => {
+            container.querySelector('#issue-detail-view').insertAdjacentHTML('beforeend',
+                '<button class="sidebar-overflow-trigger" aria-expanded="true"></button>');
+            const menu = container.querySelector('.overflow-menu-dropdown');
+            menu.classList.remove('hidden');
+            keyboardHandlerConfig.closeDropdowns();
+            expect(menu.classList.contains('hidden')).toBe(true);
+            expect(container.querySelector('.sidebar-overflow-trigger').getAttribute('aria-expanded')).toBe('false');
+            expect(keyboardHandlerConfig.isMenuOpen()).toBe(false);
+        });
+
+        it('leaves through the Back button', () => {
+            const click = vi.fn();
+            container.querySelector('.back-link').addEventListener('click', click);
+            keyboardHandlerConfig.leaveDetailView();
+            expect(click).toHaveBeenCalledTimes(1);
+        });
     });
 
     it('creates modifier key handler', () => {
