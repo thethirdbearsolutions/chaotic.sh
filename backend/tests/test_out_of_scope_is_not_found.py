@@ -1018,6 +1018,9 @@ MCP_PROBES = [
     ("issue_list", {"where": "project={project_key}"}, "project_key"),
     ("issue_list", {"where": 'sprint="{sprint_name}"'}, "sprint_name"),
     ("issue_list", {"where": "parent={identifier}"}, "identifier"),
+    ("issue_list", {"where": "blocks={identifier}"}, "identifier"),
+    ("issue_list", {"where": "blocked_by={identifier}"}, "identifier"),
+    ("issue_list", {"where": "related={identifier}"}, "identifier"),
     ("issue_list", {"where": 'label="{label_name}"'}, "label_name"),
     # Ritual arguments, in the caller's own project.
     *[

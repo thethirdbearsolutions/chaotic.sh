@@ -36,7 +36,7 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * A field a filter row can test (``FIELDS`` says how).
  *
- * Values: status,priority,type,assignee,creator,project,sprint,label,estimate,parent,identifier,created,updated,completed,due,title,text,unknown_default_open_api
+ * Values: status,priority,type,assignee,creator,project,sprint,label,estimate,parent,blocks,blocked_by,related,identifier,created,updated,completed,due,title,text,unknown_default_open_api
  */
 @Serializable(with = QueryFieldSerializer::class)
 enum class QueryField(val value: kotlin.String) {
@@ -70,6 +70,15 @@ enum class QueryField(val value: kotlin.String) {
 
     @SerialName(value = "parent")
     parent("parent"),
+
+    @SerialName(value = "blocks")
+    blocks("blocks"),
+
+    @SerialName(value = "blocked_by")
+    blocked_by("blocked_by"),
+
+    @SerialName(value = "related")
+    related("related"),
 
     @SerialName(value = "identifier")
     identifier("identifier"),
