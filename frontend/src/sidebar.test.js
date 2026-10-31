@@ -112,6 +112,19 @@ describe('sidebar focus skips hidden dropdown items (CHT-1929)', () => {
         expect(document.activeElement.id).toBe('first-visible');
     });
 
+    it('skips controls inside a [hidden] container', () => {
+        document.querySelector('.sidebar').insertAdjacentHTML('afterbegin',
+            '<div hidden><button id="hidden-attr">Hidden</button></div>');
+        toggleSidebar();
+        expect(document.activeElement.id).toBe('first-visible');
+    });
+
+    it('includes the items of an open dropdown', () => {
+        document.getElementById('team-dropdown').classList.remove('hidden');
+        toggleSidebar();
+        expect(document.activeElement.textContent).toBe('Team A');
+    });
+
     it('wraps Shift+Tab from the first visible control to the last', () => {
         toggleSidebar();
         const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });

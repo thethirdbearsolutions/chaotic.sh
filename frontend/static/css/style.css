@@ -7446,7 +7446,11 @@ input[type="checkbox"] {
         gap: 12px;
     }
 
-    .gate-ritual .btn,
+    .gate-ritual-info {
+        flex: none;
+    }
+
+    .gate-ritual > .btn,
     .gate-ritual-actions {
         align-self: flex-start;
     }
