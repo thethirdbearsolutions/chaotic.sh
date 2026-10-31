@@ -377,6 +377,35 @@ async def test_list_issues_by_project(client, auth_headers, test_project, test_i
 
 
 @pytest.mark.asyncio
+async def test_list_issues_fields_list_drops_description(client, auth_headers, test_project, test_issue):
+    """fields=list is the compact list shape (CHT-1893): same rows, no
+    description; the default and fields=full keep it."""
+    test_issue.description = "a long body the list never shows"
+    await test_issue.save(update_fields={"description"})
+
+    async def row(query):
+        response = await client.get(
+            f"/api/issues?project_id={test_project.id}{query}", headers=auth_headers,
+        )
+        assert response.status_code == 200
+        return next(i for i in response.json() if i["id"] == test_issue.id)
+
+    full = await row("")
+    assert full["description"] == "a long body the list never shows"
+    assert (await row("&fields=full"))["description"] == full["description"]
+    compact = await row("&fields=list")
+    assert compact["description"] is None
+    assert {k: v for k, v in compact.items() if k != "description"} == {
+        k: v for k, v in full.items() if k != "description"
+    }
+
+    bad = await client.get(
+        f"/api/issues?project_id={test_project.id}&fields=everything", headers=auth_headers,
+    )
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_list_issues_with_status_filter(client, auth_headers, test_project, test_issue, db):
     """Test listing issues with status filter."""
     # Set issue to specific status

@@ -584,7 +584,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * GET /api/issues
         * List Issues
-        * List issues with filters. Pass multiple status/priority/label values to filter by multiple values.  &#x60;&#x60;label_match&#x60;&#x60; controls multi-&#x60;&#x60;label&#x60;&#x60; semantics: &#x60;&#x60;all&#x60;&#x60; (default — issue must carry every named label; the CLI&#39;s documented contract) or &#x60;&#x60;any&#x60;&#x60; (issue must carry at least one; used by the web UI&#39;s multi-select filter).  Exclude filters (&#x60;&#x60;exclude_label&#x60;&#x60;, &#x60;&#x60;exclude_status&#x60;&#x60;, &#x60;&#x60;exclude_priority&#x60;&#x60;, &#x60;&#x60;exclude_issue_type&#x60;&#x60;, &#x60;&#x60;exclude_assignee_id&#x60;&#x60;) remove matching issues from the result. For labels, an issue is excluded if it carries any of the named labels. Use &#x60;&#x60;exclude_assignee_id&#x3D;unassigned&#x60;&#x60; to hide issues with no assignee.  All filter parameters work consistently whether querying by project_id or team_id.
+        * List issues with filters. Pass multiple status/priority/label values to filter by multiple values.  &#x60;&#x60;fields&#x3D;list&#x60;&#x60; returns the compact shape a list view needs (CHT-1893): the same rows with &#x60;&#x60;description&#x60;&#x60; null, since a list never shows it and it is most of a row&#39;s bytes. &#x60;&#x60;full&#x60;&#x60; (the default) returns every field.  &#x60;&#x60;label_match&#x60;&#x60; controls multi-&#x60;&#x60;label&#x60;&#x60; semantics: &#x60;&#x60;all&#x60;&#x60; (default — issue must carry every named label; the CLI&#39;s documented contract) or &#x60;&#x60;any&#x60;&#x60; (issue must carry at least one; used by the web UI&#39;s multi-select filter).  Exclude filters (&#x60;&#x60;exclude_label&#x60;&#x60;, &#x60;&#x60;exclude_status&#x60;&#x60;, &#x60;&#x60;exclude_priority&#x60;&#x60;, &#x60;&#x60;exclude_issue_type&#x60;&#x60;, &#x60;&#x60;exclude_assignee_id&#x60;&#x60;) remove matching issues from the result. For labels, an issue is excluded if it carries any of the named labels. Use &#x60;&#x60;exclude_assignee_id&#x3D;unassigned&#x60;&#x60; to hide issues with no assignee.  All filter parameters work consistently whether querying by project_id or team_id.
          * @param projectId  (optional)
          * @param sprintId  (optional)
          * @param assigneeId  (optional)
@@ -603,12 +603,13 @@ import io.ktor.http.ParametersBuilder
          * @param search  (optional)
          * @param sortBy  (optional)
          * @param order  (optional)
+         * @param fields  (optional)
          * @param skip  (optional, default to 0)
          * @param limit  (optional, default to 1000)
          * @return kotlin.collections.List<IssueResponse>
         */
             @Suppress("UNCHECKED_CAST")
-        open suspend fun listIssuesApiIssuesGet(projectId: kotlin.String? = null, sprintId: kotlin.String? = null, assigneeId: kotlin.String? = null, teamId: kotlin.String? = null, parentId: kotlin.String? = null, status: kotlin.collections.List<IssueStatus>? = null, priority: kotlin.collections.List<IssuePriority>? = null, issueType: IssueType? = null, label: kotlin.collections.List<kotlin.String?>? = null, labelMatch: kotlin.String? = "all", excludeLabel: kotlin.collections.List<kotlin.String>? = null, excludeStatus: kotlin.collections.List<IssueStatus>? = null, excludePriority: kotlin.collections.List<IssuePriority>? = null, excludeIssueType: kotlin.collections.List<IssueType>? = null, excludeAssigneeId: kotlin.collections.List<kotlin.String>? = null, search: kotlin.String? = null, sortBy: kotlin.String? = null, order: kotlin.String? = null, skip: kotlin.Int? = 0, limit: kotlin.Int? = 1000): HttpResponse<kotlin.collections.List<IssueResponse>> {
+        open suspend fun listIssuesApiIssuesGet(projectId: kotlin.String? = null, sprintId: kotlin.String? = null, assigneeId: kotlin.String? = null, teamId: kotlin.String? = null, parentId: kotlin.String? = null, status: kotlin.collections.List<IssueStatus>? = null, priority: kotlin.collections.List<IssuePriority>? = null, issueType: IssueType? = null, label: kotlin.collections.List<kotlin.String?>? = null, labelMatch: kotlin.String? = "all", excludeLabel: kotlin.collections.List<kotlin.String>? = null, excludeStatus: kotlin.collections.List<IssueStatus>? = null, excludePriority: kotlin.collections.List<IssuePriority>? = null, excludeIssueType: kotlin.collections.List<IssueType>? = null, excludeAssigneeId: kotlin.collections.List<kotlin.String>? = null, search: kotlin.String? = null, sortBy: kotlin.String? = null, order: kotlin.String? = null, fields: kotlin.String? = null, skip: kotlin.Int? = 0, limit: kotlin.Int? = 1000): HttpResponse<kotlin.collections.List<IssueResponse>> {
 
             val localVariableAuthNames = listOf<String>("HTTPBearer")
 
@@ -634,6 +635,7 @@ import io.ktor.http.ParametersBuilder
             search?.apply { localVariableQuery["search"] = listOf("$search") }
             sortBy?.apply { localVariableQuery["sort_by"] = listOf("$sortBy") }
             order?.apply { localVariableQuery["order"] = listOf("$order") }
+            fields?.apply { localVariableQuery["fields"] = listOf("$fields") }
             skip?.apply { localVariableQuery["skip"] = listOf("$skip") }
             limit?.apply { localVariableQuery["limit"] = listOf("$limit") }
 

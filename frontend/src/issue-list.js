@@ -448,10 +448,16 @@ export function getDescriptionSnippet(description, query, contextChars = 40) {
     return `${start > 0 ? '…' : ''}${highlighted}${end < description.length ? '…' : ''}`;
 }
 
+// One formatter for every row: toLocaleDateString() with options builds a
+// new Intl formatter per call, which was a third of a 1,000-row render's
+// script time (CHT-1894).
+const SHORT_DATE = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+
 export function renderIssueRow(issue) {
     const assignee = issue.assignee_id ? getAssigneeById(issue.assignee_id) : null;
     const assigneeName = assignee ? formatAssigneeName(assignee) : null;
-    const createdDate = new Date(issue.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const created = new Date(issue.created_at);
+    const createdDate = Number.isNaN(created.getTime()) ? '' : SHORT_DATE.format(created);
     const estimateDisplay = issue.estimate != null ? formatEstimate(issue.estimate, issue.project_id) : '';
     const outOfScale = isOutOfScale(issue.estimate, issue.project_id);
     const sprintInfo = issue.sprint_id ? getSprintCache()[issue.sprint_id] : null;

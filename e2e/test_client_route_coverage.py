@@ -90,6 +90,7 @@ ROUTES_WITHOUT_A_CLIENT_METHOD: dict = {}
 PARAMS_NOT_EXPOSED = {
     ("GET", "/api/issues"): {
         "label_match": "CLI deliberately omits it (pinned by cli/tests/test_issue_list_labels.py)",
+        "fields": "web Issues list's compact rows (CHT-1893); the CLI shows descriptions, so it wants the full shape",
     },
 }
 
