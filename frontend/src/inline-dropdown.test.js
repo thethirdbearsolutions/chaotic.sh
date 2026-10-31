@@ -101,6 +101,7 @@ import {
     isInlineDropdownOpen,
     showDetailDropdown,
     updateIssueField,
+    withEditsInFlight,
     updateDetailViewField,
     toggleIssueLabel,
     createLabelFromDropdown,
@@ -440,6 +441,18 @@ describe('inline-dropdown', () => {
     });
 
     describe('updateIssueField', () => {
+        it('reports a field edit while it is in flight, and not after (CHT-1921)', async () => {
+            let resolve;
+            api.updateIssue.mockReturnValue(new Promise(r => { resolve = r; }));
+            const row = { id: 'issue-1', status: 'todo', priority: 'low' };
+            const pending = updateIssueField('issue-1', 'status', 'done');
+            expect(withEditsInFlight(row)).toEqual({ ...row, status: 'done' });
+            expect(withEditsInFlight({ id: 'other' })).toEqual({ id: 'other' });
+            resolve({ id: 'issue-1', status: 'done' });
+            await pending;
+            expect(withEditsInFlight(row)).toBe(row);
+        });
+
         it('calls API to update issue', async () => {
             api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
             getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);

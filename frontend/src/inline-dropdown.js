@@ -785,6 +785,18 @@ const DETAIL_SIDEBAR_FIELDS = new Set(['sprint_id', 'status', 'priority', 'assig
 
 // issueId -> Map(field -> { seq, value }): the inline edits in flight.
 const fieldEditsInFlight = new Map();
+
+/**
+ * The issue with every field edit still in flight applied: a list response
+ * computed before the edit must not paint the old value (CHT-1921).
+ */
+export function withEditsInFlight(issue) {
+    const edits = issue && fieldEditsInFlight.get(issue.id);
+    if (!edits?.size) return issue;
+    const out = { ...issue };
+    edits.forEach((edit, field) => { out[field] = edit.value; });
+    return out;
+}
 let fieldEditSeq = 0;
 
 function beginFieldEdit(issueId, field, value) {
