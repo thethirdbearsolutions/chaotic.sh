@@ -218,9 +218,9 @@ def register(cli):
             f"Estimate Scale: {esc(scale)}\n"
             f"Default Sprint Budget: {esc(budget_str)}\n"
             f"Unestimated Handling: {esc(unest)}\n"
-            f"Require Estimate on Claim: {_yes_no(p.get('require_estimate_on_claim'))}\n"
-            f"Require Assignee on Claim: {_yes_no(p.get('require_assignee_on_claim'))}\n"
-            f"Require Epic on Close: {_yes_no(p.get('require_epic_on_close'))}\n"
+            f"Require Estimate on Claim: {esc(_yes_no(p.get('require_estimate_on_claim')))}\n"
+            f"Require Assignee on Claim: {esc(_yes_no(p.get('require_assignee_on_claim')))}\n"
+            f"Require Epic on Close: {esc(_yes_no(p.get('require_epic_on_close')))}\n"
             f"Default Epic: {esc(_default_epic_label(p))}",
             title="Project Details"
         ))
