@@ -226,42 +226,54 @@ class TestIsolation:
 
     async def test_the_whole_dispatch_is_capped(self, seen, monkeypatch, caplog):
         """CHT-1629: per-hook bounds add up over events and hooks; one cap
-        bounds the whole dispatch, and it is logged."""
-        monkeypatch.setattr(credential_events, "HOOK_TIMEOUT_SECONDS", 10)
-        monkeypatch.setattr(credential_events, "DISPATCH_TIMEOUT_SECONDS", 0.1)
-        ran = []
+        bounds the whole dispatch, and it is logged.
+
+        Nothing here races the cap (CHT-1852). Every builtin hook is a
+        stub: the push hook's writes once took the whole cap on a loaded
+        worker (CHT-1642), and neither builtin is what this tests. So the
+        hooks before the slow one need a few loop turns against a whole
+        second. The slow hook never returns on its own and the per-hook
+        bound is far off, so only the cap can end the dispatch, however
+        fast or slow the host is."""
+        monkeypatch.setattr(credential_events, "HOOK_TIMEOUT_SECONDS", 60)
+        monkeypatch.setattr(credential_events, "DISPATCH_TIMEOUT_SECONDS", 1.0)
+
+        async def no_sockets(event):
+            pass
 
         async def no_push_writes(event):
             pass
 
-        # The push hook writes to the database (two deletes per event),
-        # which can take the whole 0.1 s on a loaded worker before the
-        # hooks under test run at all (CHT-1642).
+        monkeypatch.setattr("app.websocket.on_credentials_ended", no_sockets)
         monkeypatch.setattr("app.services.push_service.on_credentials_ended", no_push_writes)
+        ran = []
 
         async def slow(event):
             ran.append(event.reason)
-            await asyncio.sleep(0.04)
+            await asyncio.Event().wait()  # never set
 
         remove = credential_events.register(slow)
-        loop = asyncio.get_running_loop()
-        started = loop.time()
         try:
             with caplog.at_level(logging.ERROR, logger="app.services.credential_events"):
-                await credential_events.dispatch(
-                    [CredentialsEnded.of(f"e{i}", key_ids=[f"k{i}"]) for i in range(10)],
+                # Without the cap only the per-hook bound (60 s, ten
+                # times) would end this; the guard fails the test first.
+                await asyncio.wait_for(
+                    credential_events.dispatch(
+                        [CredentialsEnded.of(f"e{i}", key_ids=[f"k{i}"]) for i in range(10)],
+                    ),
+                    10,
                 )
         finally:
             remove()
-        assert loop.time() - started < 1
         assert len(seen) == 10  # registered before the slow hook: ran on every event
-        assert len(ran) < 10  # stopped part-way through the slow hook
-        assert "dispatch stopped after 0.1s" in caplog.text
-        # The line names the hook that was left, and how many runs.
+        assert ran == ["e0"]  # the cap stopped the slow hook in its first run
+        assert "timed out" not in caplog.text  # the cap ended it, not the per-hook bound
+        assert "dispatch stopped after 1.0s" in caplog.text
+        # The line names the hook that was left and how many runs, and
+        # only it: finished hooks (the stubs, `seen`) are not listed.
         line = next(r.getMessage() for r in caplog.records if "dispatch stopped" in r.getMessage())
-        assert "hook runs left:" in line
-        assert f"{__name__}.{TestIsolation.__name__}.test_the_whole_dispatch_is_capped.<locals>.slow x" in line
-        assert "seen" not in line.split("left:")[1].split("(reasons")[0]  # finished hooks are not listed
+        slow_name = f"{__name__}.{TestIsolation.__name__}.test_the_whole_dispatch_is_capped.<locals>.slow"
+        assert line.split("hook runs left: ")[1].split(" (reasons")[0] == f"{slow_name} x10"
 
     async def test_each_hook_runs_on_every_event_before_the_next_hook(self, seen, monkeypatch):
         """The socket hook closes every socket before the push hook
