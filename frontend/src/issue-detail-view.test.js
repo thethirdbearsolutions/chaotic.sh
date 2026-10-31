@@ -435,6 +435,54 @@ describe('issue-detail-view', () => {
             getProjects.mockReturnValue([{ id: 'project-1', name: 'Test Project' }]);
         });
 
+        // CHT-1899: paint from the row a list already loaded, then fill in
+        describe('painting from a loaded row', () => {
+            const row = { ...mockIssue, description: null, title: 'From the list' };
+            afterEach(() => getDetailNavContext.mockReturnValue([]));
+
+            it('shows the row before the API answers, then the full detail', async () => {
+                getDetailNavContext.mockReturnValue([row]);
+                let resolve;
+                api.getIssue.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+                const pushStateSpy = vi.spyOn(history, 'pushState');
+                const pending = viewIssue('issue-1');
+                await Promise.resolve();
+                const content = document.getElementById('issue-detail-content');
+                expect(content.querySelector('.detail-from-row')).not.toBeNull();
+                expect(content.querySelector('.issue-detail-title').textContent).toBe('From the list');
+                expect(document.getElementById('issue-detail-view').classList.contains('hidden')).toBe(false);
+                // inert: no editor or dropdown entry points on a partial row
+                expect(content.querySelector('[data-action="edit-description"], [data-action="show-detail-dropdown"]')).toBeNull();
+                expect(getCurrentDetailIssue().id).toBe('issue-1');
+                resolve(mockIssue);
+                await pending;
+                expect(content.querySelector('.detail-from-row')).toBeNull();
+                expect(content.querySelector('.issue-detail-title').textContent).toBe('Test Issue');
+                expect(pushStateSpy).toHaveBeenCalledTimes(1);
+                pushStateSpy.mockRestore();
+            });
+
+            it('replaces the loading row with a retry when the load fails', async () => {
+                getDetailNavContext.mockReturnValue([row]);
+                api.getIssue.mockRejectedValueOnce(new Error('offline'));
+                await viewIssue('issue-1');
+                const content = document.getElementById('issue-detail-content');
+                expect(content.innerHTML).toContain('Failed to load issue');
+                expect(content.querySelector('[data-action="retry-issue-comments"]')?.dataset.issueId).toBe('issue-1');
+            });
+
+            it('waits for the API when no list has the issue', async () => {
+                let resolve;
+                api.getIssue.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+                document.getElementById('issue-detail-content').innerHTML = '';
+                const pending = viewIssue('issue-1');
+                await Promise.resolve();
+                expect(document.querySelector('.detail-from-row')).toBeNull();
+                resolve(mockIssue);
+                await pending;
+            });
+        });
+
         it('fetches issue data from API', async () => {
             await viewIssue('issue-1');
 
