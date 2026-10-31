@@ -141,6 +141,28 @@ class TestStaticCacheControl:
         assert response.status_code == 200
         assert response.headers["cache-control"] == REVALIDATE
 
+    async def test_rebuilt_file_does_not_match_its_old_hash(self, tmp_path):
+        """A bundle rebuilt under a running server: the page still names
+        the hash from before, which must not pin the new bytes."""
+        import os
+
+        from app.http_caching import CachedStaticFiles
+        from app.version import asset_cache_buster
+
+        asset = tmp_path / "app.js"
+        asset.write_bytes(b"old build")
+        old_hash = asset_cache_buster.__wrapped__(str(asset))
+        app = Starlette(routes=[], middleware=[])
+        app.mount("/static", CachedStaticFiles(directory=str(tmp_path)))
+        with TestClient(app) as tc:
+            assert tc.get(f"/static/app.js?v={old_hash}").headers["cache-control"] == IMMUTABLE
+            asset.write_bytes(b"new build, other size")
+            st = asset.stat()
+            os.utime(asset, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+            response = tc.get(f"/static/app.js?v={old_hash}")
+            assert response.text == "new build, other size"
+            assert response.headers["cache-control"] == REVALIDATE
+
     async def test_another_files_hash_does_not_count(self, client):
         _, css_hash = _hashes()
         response = await client.get(f"/static/js/app.bundle.js?v={css_hash}")

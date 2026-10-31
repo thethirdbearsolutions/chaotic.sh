@@ -8,9 +8,10 @@ Two pieces, both added in ``app.main``:
   ``public, max-age=31536000, immutable``: those exact bytes never change
   under that URL. Everything else, a stale or missing ``?v=`` included,
   gets ``no-cache``, so the browser revalidates against the ETag that
-  StaticFiles already sends. The hash is checked against the file on disk
-  rather than trusted from the URL, so an old page asking for an old
-  ``?v=`` after a deploy cannot pin the new bytes under it for a year.
+  StaticFiles already sends. The hash is checked against the file's bytes
+  as they are on disk now rather than trusted from the URL, so an old page
+  asking for an old ``?v=`` after a deploy or a rebuild cannot pin the new
+  bytes under it for a year.
 
 - ``ApiNoStoreMiddleware`` gives every ``/api`` response
   ``Cache-Control: no-store`` unless the endpoint set its own. API
@@ -18,6 +19,7 @@ Two pieces, both added in ``app.main``:
 """
 from __future__ import annotations
 
+import functools
 from starlette.datastructures import MutableHeaders, QueryParams
 from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
@@ -45,10 +47,23 @@ class CachedStaticFiles(StaticFiles):
         version = QueryParams(scope.get("query_string", b"")).get("v")
         if not version:
             return REVALIDATE
-        full_path, _ = self.lookup_path(path)
-        if full_path and version == asset_cache_buster(full_path):
+        full_path, stat = self.lookup_path(path)
+        if stat and version == _content_hash(full_path, stat.st_mtime_ns, stat.st_size):
             return IMMUTABLE
         return REVALIDATE
+
+
+@functools.lru_cache(maxsize=64)
+def _content_hash(full_path: str, mtime_ns: int, size: int) -> str:
+    """The file's ``?v=`` hash, keyed on its stat as well as its path.
+
+    ``index.html`` stamps a hash cached for the life of the process, so
+    after a rebuild without a restart (``npm run build`` beside a running
+    dev server) the page still asks for the old ``?v=``. Hashing the bytes
+    as they are now means that request no longer matches and is answered
+    ``no-cache``, instead of pinning the new bytes under the old URL.
+    """
+    return asset_cache_buster.__wrapped__(full_path)
 
 
 def _is_api_path(path: str) -> bool:
