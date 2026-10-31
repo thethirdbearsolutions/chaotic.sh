@@ -504,6 +504,23 @@ alone. `chaotic auth whoami` shows the session identity.
 - If register answers 401, the error says the proxy did not add a usable
   key: check the secret's host and header name, and that the key is not
   revoked.
+- The header must come once: sent twice, or folded into one comma-separated
+  value (a proxy that appends instead of replacing), register answers 400
+  `registrar_header_repeated`.
+- **A session id is a capability.** Every sandbox behind the secret can
+  register any `external_ref`, and registering revokes that identity's
+  previous key, so code that learns another session's id can take its
+  identity over. This is true of a registrar key held locally too (header
+  mode is better: the key itself cannot be read); the per-registrar caps
+  are the only brake. Keep one registrar per environment.
+- The cached session key does not record which registrar the proxy used.
+  After pointing the secret at a different registrar, delete
+  `~/.chaotic/sessions/` (or wait for the key to expire) so sessions
+  register under the new one.
+- `chaotic mcp` in this mode asks its default team and project scope as
+  the session identity (no key is configured to ask with), so the
+  registrar's team is found with no `chaotic team use`. A person's key as
+  the secret is refused with a message saying to use an agent registrar.
 
 ### By hand: `POST /api/agents/register`
 

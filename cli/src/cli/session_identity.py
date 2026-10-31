@@ -161,6 +161,21 @@ def has_proxied_identity() -> bool:
         return True
 
 
+def proxied_ref() -> str | None:
+    """This session's ref when its registrar key comes from the proxy
+    (header mode), else None. Then the session identity is the only
+    credential there is: lookups the stdio MCP server would make with the
+    configured key (its default team, its project scope) go as the
+    session, and are keyed on HEADER_FP. Settings errors read as None
+    here; the request itself reports them."""
+    try:
+        if registrar_key_via() != "header":
+            return None
+        return active_ref()
+    except SessionIdentityError:
+        return None
+
+
 _suspension = threading.local()
 
 
@@ -574,7 +589,18 @@ def _register_via_header(ref: str, api_url: str) -> dict:
     """Register `ref` with the registrar key the proxy injects (CHT-1906).
     No default_name: without /auth/me this process does not know the
     registrar's name, and the server's own default names it."""
-    reg = _registrar_call("POST", f"{api_url}/agents/register", None, {"external_ref": ref})
+    try:
+        reg = _registrar_call("POST", f"{api_url}/agents/register", None, {"external_ref": ref})
+    except SessionIdentityError as exc:
+        if exc.status_code == 422 and "team_id" in str(exc):
+            # A person's key as the network secret: a person registers in
+            # a team, which this mode never names.
+            raise SessionIdentityError(
+                f"Session identity registration failed: {VIA_ENV}=header needs an agent registrar's key "
+                f"in {REGISTRAR_KEY_HEADER} (`chaotic agent create --registrar`), not a person's. {NO_FALLBACK}",
+                status_code=exc.status_code, detail=exc.detail,
+            ) from exc
+        raise
     agent = reg.get("agent") or {}
     if not reg.get("api_key"):
         raise SessionIdentityError(f"Session identity registration returned no key. {NO_FALLBACK}")

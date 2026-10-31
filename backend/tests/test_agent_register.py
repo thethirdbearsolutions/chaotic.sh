@@ -44,6 +44,10 @@ def _api_routes():
     return routes
 
 
+def _depends_on(dependant, call):
+    return any(d.call is call or _depends_on(d, call) for d in dependant.dependencies)
+
+
 def _depends_on_current_user(dependant):
     return any(d.call is get_current_user or _depends_on_current_user(d) for d in dependant.dependencies)
 
@@ -1271,3 +1275,35 @@ class TestRegistrarKeyHeader:
         await OxydeAPIKey.objects.filter(principal_user_id=registrar_id).update(is_active=False)
         response = await client.post("/api/agents/register", json={"external_ref": REF}, headers=_registrar_header(key))
         assert response.status_code == 401
+        assert response.json()["detail"] == "Invalid API key (from X-Chaotic-Registrar-Key)"
+
+    async def test_a_repeated_header_is_400(self, client, registrar):
+        _, key = registrar
+        for headers in (
+            [("X-Chaotic-Registrar-Key", key), ("X-Chaotic-Registrar-Key", key)],
+            [("X-Chaotic-Registrar-Key", f"{key}, {key}")],
+        ):
+            response = await client.post("/api/agents/register", json={"external_ref": REF}, headers=headers)
+            assert response.status_code == 400 and _code(response) == "registrar_header_repeated"
+
+    async def test_an_invalid_header_elsewhere_is_ignored_not_refused(self, client, registrar, test_user):
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        jwt = create_access_token(data={"sub": test_user.id})
+        for junk in ("not-a-key", jwt, f"{key}, {key}"):
+            me = await client.get("/api/auth/me", headers={**_bearer(session_key), **_registrar_header(junk)})
+            assert me.status_code == 200 and me.json()["kind"] == "session"
+
+    async def test_the_header_cannot_pass_a_human_session_gate(self, client, registrar, test_project):
+        """A human-only route keys on Authorization; a registrar key in
+        the header beside it changes nothing."""
+        from app.api.deps import require_human_session
+
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        routes = [(m, p) for m, p, _, d in _api_routes() if _depends_on(d, require_human_session) and "GET" in m]
+        assert routes, "no GET route behind require_human_session to probe"
+        _, path = routes[0]
+        path = re.sub(r"\{[^}]+\}", "x", path)
+        response = await client.get(path, headers={**_bearer(session_key), **_registrar_header(key)})
+        assert response.status_code in (401, 403), (path, response.text)

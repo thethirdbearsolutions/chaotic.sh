@@ -1082,3 +1082,64 @@ class TestRegistrarKeyViaHeader:
         assert json.loads(result.output)["as"] == "sess-1"
         me = [r for r in proxied.requests if r[1] == "/auth/me"]
         assert me and all(r[2].startswith("ck_session_") for r in me)
+
+
+class TestMcpInHeaderMode:
+    """`chaotic mcp` from the cloud recipe alone (CHT-1906 review M1): no
+    key and no team configured. Its default team and project scope are
+    asked as the session identity, the only credential there is."""
+
+    @pytest.fixture
+    def mcp(self, proxied, monkeypatch):
+        monkeypatch.setattr("cli.config.get_current_team", _REAL_GET_CURRENT_TEAM)
+        import cli.main as m
+        monkeypatch.setattr(m, "get_current_team", _REAL_GET_CURRENT_TEAM)
+        monkeypatch.setattr(m, "get_api_key", lambda: None)
+        monkeypatch.setattr(m, "get_token", lambda: None)
+        monkeypatch.setattr(m, "client", Client())
+        monkeypatch.setattr(cli_config, "_process_teams", {})
+        monkeypatch.setattr(cli_config, "_only_teams", {})
+        base = proxied.handler
+
+        def handler(request):
+            bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
+            if request.url.path == "/api/teams" and bearer in proxied.live_keys:
+                proxied.requests.append((request.method, "/teams", bearer))
+                return httpx.Response(200, json=[{"id": "team-reg", "name": "Falls", "key": "FALLS"}])
+            if request.url.path == "/api/auth/me" and bearer in proxied.live_keys:
+                proxied.requests.append((request.method, "/auth/me", bearer))
+                return httpx.Response(200, json={"id": proxied.live_keys[bearer], "is_agent": True,
+                                                 "kind": "session", "agent_project_id": None})
+            return base(request)
+
+        proxied.handler = handler
+        return proxied
+
+    async def test_the_default_team_is_the_session_identitys(self, mcp):
+        from cli.mcp_backend import RestBackend
+
+        assert await RestBackend().resolve_team(None) == "team-reg"
+        teams = [r for r in mcp.requests if r[1] == "/teams"]
+        assert teams and all(r[2].startswith("ck_session_") for r in teams)
+        # Kept for the process, keyed on the header-mode marker.
+        assert cli_config.get_current_team() == "team-reg"
+
+    async def test_a_local_personal_key_is_not_asked(self, mcp, monkeypatch):
+        """Review L2: header mode never uses a key configured here inside a
+        session, the MCP default team included."""
+        from cli.mcp_backend import RestBackend
+
+        monkeypatch.setenv("CHAOTIC_API_KEY", "ck_personal")
+        assert await RestBackend().resolve_team(None) == "team-reg"
+        assert mcp.sent_with("ck_personal") == []
+
+
+def test_a_persons_key_as_the_secret_is_named(proxied):
+    """Review L5: the server's "a person must name a team_id" becomes
+    advice to use an agent registrar."""
+    proxied.register_status = 422
+    proxied.register_detail = {"error_code": "tool_input",
+                               "message": "A person registering an identity must name a team_id or a project_id."}
+    with pytest.raises(APIError, match="needs an agent registrar's key") as refused:
+        Client()._request("GET", "/issues")
+    assert refused.value.status_code == 422

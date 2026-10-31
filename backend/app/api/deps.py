@@ -23,6 +23,11 @@ REGISTRAR_HEADER_NOT_A_KEY = {
     "message": f"{REGISTRAR_KEY_HEADER} takes a registrar's API key (ck_...).",
 }
 
+REGISTRAR_HEADER_REPEATED = {
+    "error_code": "registrar_header_repeated",
+    "message": f"Send {REGISTRAR_KEY_HEADER} once: this request carries it more than once.",
+}
+
 
 def presented_credential(request: Request, credentials: HTTPAuthorizationCredentials | None) -> str | None:
     """The credential this request authenticates with.
@@ -36,7 +41,12 @@ def presented_credential(request: Request, credentials: HTTPAuthorizationCredent
     else the header is ignored, never authenticating and never refused,
     so the session's own requests go through as the session."""
     if access_of(request.scope.get("endpoint")) is Access.REGISTER:
-        registrar_key = (request.headers.get(REGISTRAR_KEY_HEADER) or "").strip()
+        values = [v.strip() for v in request.headers.getlist(REGISTRAR_KEY_HEADER) if v.strip()]
+        if len(values) > 1 or any("," in v for v in values):
+            # A proxy that appends rather than replaces: which key is the
+            # registrar's is not ours to guess.
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=dict(REGISTRAR_HEADER_REPEATED))
+        registrar_key = values[0] if values else ""
         if registrar_key:
             if classify(registrar_key) is not CredentialKind.API_KEY:
                 raise HTTPException(
@@ -56,10 +66,16 @@ async def get_current_user(
     credential itself is resolved by ``app.auth.credentials`` (CHT-1560),
     shared with /mcp; this maps its failure to REST's 401/403. Which
     header it comes from: ``presented_credential``."""
+    credential = presented_credential(request, credentials)
     try:
-        principal = await rest_resolver.resolve(presented_credential(request, credentials))
+        principal = await rest_resolver.resolve(credential)
     except CredentialError as exc:
-        raise _http_error(exc) from None
+        error = _http_error(exc)
+        if credential is not None and (credentials is None or credential != credentials.credentials):
+            # Say where the refused key came from: a direct caller of
+            # register may not know a proxy added it.
+            error.detail = f"{exc.detail} (from {REGISTRAR_KEY_HEADER})"
+        raise error from None
     # The matched route's endpoint function (Starlette puts it in the
     # scope when routing), classified @reads/@writes/@registers
     # (app.auth.access, CHT-1561). Every authenticated REST route depends
