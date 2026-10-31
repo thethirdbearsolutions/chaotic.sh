@@ -12,7 +12,7 @@ semantic versioning, loosely. It is the release that was prepared as
 0.1.0a22, which never reached PyPI.
 
 Server, CLI, web UI and Android changes merged since a21 (PRs #260,
-#322-#329 and #331-#464). This release carries 20 database migrations
+#322-#329 and #331-#467). This release carries 20 database migrations
 (0020-0040; there is no 0035). Two of them refuse to run on data that breaks their rule
 (0020: a dangling agent owner; 0022: two API keys sharing a hash), and
 several delete or rewrite rows, each reporting what it does in the
@@ -215,8 +215,11 @@ previous code out again and restarts the server on it. chaotic.thirdbearsolution
   also takes the key in `X-Chaotic-Registrar-Key`, which nothing else
   reads, and `CHAOTIC_REGISTRAR_KEY_VIA=header` (or `chaotic config
   set-registrar-key-via header`) makes the CLI hold no registrar key at
-  all, so a cloud environment's proxy can inject it. `docs/agents.md`
-  has the recipe (CHT-1906).
+  all, so a cloud environment's proxy can inject it. Because that proxy
+  drops the client's own `Authorization` on the host, the session key
+  then goes in `X-Chaotic-Key`, which every REST route accepts like a
+  bearer API key when no `Authorization` is sent. `docs/agents.md` has
+  the recipe (CHT-1906, CHT-1913).
 - **OAuth for `/mcp`, behind `OAUTH_ENABLED`**: discovery, client
   registration (CIMD and DCR), a consent page that names the app, the
   team, the agent it acts as and its projects, token rotation with reuse
@@ -271,8 +274,10 @@ previous code out again and restarts the server on it. chaotic.thirdbearsolution
   rolls back a failed migration, and warns when the `chaotic` on PATH is
   not the one it rebuilt (CHT-1675, CHT-1477, CHT-1694, CHT-1695).
 - **Web UI**: an open-only issue list that renders cached rows at once,
-  polish passes against a stated bar, gzip and cache headers (CHT-1747,
-  CHT-1755, CHT-1874, CHT-1886, CHT-1893, CHT-1894).
+  polish passes against a stated bar, gzip and cache headers, dense
+  issue rows, an issue detail that paints from the loaded row, and
+  optimistic inline edits with rollback (CHT-1747, CHT-1755, CHT-1874,
+  CHT-1886, CHT-1893 to CHT-1899).
 
 ### Fixed
 
