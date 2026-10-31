@@ -176,7 +176,11 @@ export function queryForView(viewKey) {
 // snippet's source) is present.
 function rowSignature(issue) {
     const labels = (issue.labels || []).map(l => `${l.id}:${l.name}:${l.color}`).join(',');
-    return `${issue.id}|${issue.updated_at}|${issue.sprint_id ?? ''}|${labels}|${issue.description == null ? 0 : 1}`;
+    // The fields a row shows, so a guessed value that never reached the
+    // server doesn't read as the same row (CHT-1915 review M3).
+    const shown = [issue.status, issue.priority, issue.estimate, issue.assignee_id, issue.issue_type, issue.title]
+        .map(v => v ?? '').join('|');
+    return `${issue.id}|${issue.updated_at}|${issue.sprint_id ?? ''}|${labels}|${issue.description == null ? 0 : 1}|${shown}`;
 }
 
 /**
