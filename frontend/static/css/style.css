@@ -81,6 +81,12 @@
     /* Transitions */
     --transition-fast: 0.15s ease;
     --transition-normal: 0.2s ease;
+
+    /* Issue list rows, from the linear-recent palette (CHT-1896) */
+    --row-hover: #1c2129;
+    --row-cursor: #23253a;
+    --row-cursor-edge: #7c86f0;
+    --row-height: 28px;
 }
 
 body.theme-light {
@@ -97,6 +103,9 @@ body.theme-light {
     --success-color: #16a34a;
     --warning-color: #d97706;
     --error-color: #dc2626;
+    --row-hover: #f0f0ee;
+    --row-cursor: #eef0ff;
+    --row-cursor-edge: #5e6ad2;
 }
 
 /* ============================================================================
@@ -2892,6 +2901,162 @@ input[type="checkbox"] {
 #issues-list.is-refreshing {
     opacity: 0.6;
     transition: opacity 0.15s ease 0.15s;
+}
+
+/* ========================================
+   Dense Issues view (CHT-1896, CHT-1897)
+
+   VISION.md: at 1440x900 the issue list shows at least 25 rows. The rows
+   are one line at a fixed --row-height in the look of the linear-recent
+   page: muted metadata, a hover tint, and the keyboard cursor as a tinted
+   row with an accent edge on the left. The controls above the list are
+   trimmed to one line each so the rows start higher.
+
+   content-visibility lets the browser skip style and layout for rows
+   off screen, which was most of the cost of painting a 1,000-row list
+   (the list is also painted in chunks, see renderIssues). The intrinsic
+   size keeps the scrollbar right for rows it has not laid out yet.
+   ======================================== */
+
+#issues-list .issue-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 44px;
+}
+
+#issues-list .issue-row:hover {
+    background: var(--row-hover);
+}
+
+#issues-list .issue-row.keyboard-selected {
+    background: var(--row-cursor);
+    outline: none;
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
+}
+
+/* Desktop: one line per row. Phones keep their two-line rows. */
+@media (min-width: 769px) {
+    #issues-list.list {
+        gap: 0;
+    }
+
+    .main-content:has(> #issues-view:not(.hidden)) {
+        padding-top: 1rem;
+    }
+
+    #issues-view .view-header {
+        align-items: center;
+        margin-bottom: 8px;
+    }
+
+    #issues-view .view-header h2 {
+        font-size: 1.125rem;
+    }
+
+    #issues-view .search-box {
+        padding: 4px 10px;
+    }
+
+    #issues-view .search-box input {
+        padding: 0;
+        height: 22px;
+    }
+
+    #issues-view .filter-chips-row {
+        padding: 0;
+        margin-bottom: 6px;
+    }
+
+    #issues-view .filter-chips-row:empty {
+        display: none;
+    }
+
+    #issues-view .filter-chip {
+        padding: 2px 6px 2px 8px;
+    }
+
+    #issues-view .sprint-budget-bar {
+        padding: 4px 12px;
+        margin-bottom: 6px;
+    }
+
+    #issues-view .quick-create {
+        padding: 4px 12px;
+        margin-bottom: 8px;
+    }
+
+    #issues-view .quick-create-input {
+        padding: 2px 0;
+        height: 22px;
+    }
+
+    #issues-list .issue-list-summary {
+        padding: 4px 12px;
+        margin-bottom: 0;
+    }
+
+    #issues-list .issue-row {
+        min-height: 0;
+        height: var(--row-height);
+        padding: 0 10px 0 12px;
+        flex-wrap: nowrap;
+        border-bottom: 0;
+        transition: none;
+        contain-intrinsic-size: auto var(--row-height);
+    }
+
+    #issues-list .issue-row-left {
+        min-height: 0;
+        gap: 6px;
+    }
+
+    #issues-list .issue-row-right {
+        flex-wrap: nowrap;
+        gap: 4px;
+    }
+
+    #issues-list .issue-icon-btn {
+        width: 22px;
+        height: 22px;
+    }
+
+    #issues-list .issue-row .issue-identifier {
+        font-size: 12.5px;
+        min-width: 62px;
+    }
+
+    #issues-list .issue-row .issue-title {
+        font-size: var(--font-base);
+        font-weight: 450;
+    }
+
+    #issues-list .issue-row .issue-type-badge {
+        font-size: 10.5px;
+        padding: 0 5px;
+        line-height: 16px;
+    }
+
+    /* Task is the default type: only the others earn a badge */
+    #issues-list .issue-row[data-issue-type="task"] .issue-type-badge {
+        display: none;
+    }
+
+    #issues-list .issue-row .issue-date {
+        font-size: 12px;
+        color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
+        min-width: 44px;
+        text-align: right;
+    }
+
+    #issues-list .issue-row .issue-label {
+        font-size: 11px;
+        padding: 0 6px;
+        line-height: 16px;
+    }
+
+    #issues-list .issue-group-content {
+        margin-top: 0;
+    }
 }
 
 .issue-row {

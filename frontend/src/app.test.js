@@ -211,7 +211,7 @@ vi.mock('./storage.js', () => ({
     getTheme: vi.fn().mockReturnValue('dark'),
     setTheme: vi.fn(),
 }));
-vi.mock('./issue-list.js', () => ({ renderIssueRow: vi.fn() }));
+vi.mock('./issue-list.js', () => ({ renderIssueRow: vi.fn(), appendPendingRows: vi.fn() }));
 vi.mock('./utils.js', () => ({
     escapeHtml: vi.fn(s => s),
     escapeAttr: vi.fn(s => s),

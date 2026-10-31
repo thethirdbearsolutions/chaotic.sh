@@ -34,6 +34,90 @@ function renderSummaryBar(issues) {
     return `<div class="issue-list-summary">${issues.length} issues · ${total}pt</div>`;
 }
 
+// ========================================
+// Chunked paint (CHT-1897)
+// ========================================
+
+// Rows painted with the list itself; the rest follow in chunks, so the
+// first screen of a 1,000-row list appears without parsing every row
+// first. Enough to fill a tall screen at --row-height.
+export const FIRST_PAINT_ROWS = 60;
+const CHUNK_ROWS = 150;
+
+// Rows still to append, per group: [{ groupKey, issues }]. groupKey null
+// is the flat list. A new renderIssues() replaces them.
+let pendingRows = [];
+let firstPaintBudget = Infinity;
+let chunkTimer = null;
+let pendingSelectionId = null;
+
+/**
+ * The rows for one group: as many as the first-paint budget allows, the
+ * rest queued for appendPendingRows().
+ */
+function rowsHtml(groupKey, issues) {
+    const now = issues.slice(0, Math.max(0, firstPaintBudget));
+    firstPaintBudget -= now.length;
+    if (now.length < issues.length) {
+        pendingRows.push({ groupKey, issues: issues.slice(now.length) });
+    }
+    return now.map(issue => renderIssueRow(issue)).join('');
+}
+
+function groupContainer(list, groupKey) {
+    if (groupKey === null) return list;
+    const group = Array.prototype.find.call(
+        list.querySelectorAll('.issue-group'),
+        (el) => el.dataset.group === String(groupKey),
+    );
+    return group?.querySelector('.issue-group-content') || null;
+}
+
+/**
+ * Append up to `limit` queued rows (all of them by default). Keyboard
+ * navigation calls this before reading the rows, so G and j past the
+ * painted rows see the whole list.
+ */
+export function appendPendingRows(limit = Infinity) {
+    const list = document.getElementById('issues-list');
+    if (!list) {
+        pendingRows = [];
+        return;
+    }
+    let budget = limit;
+    while (pendingRows.length > 0 && budget > 0) {
+        const head = pendingRows[0];
+        const take = head.issues.slice(0, budget);
+        const container = groupContainer(list, head.groupKey);
+        container?.insertAdjacentHTML('beforeend', take.map(issue => renderIssueRow(issue)).join(''));
+        budget -= take.length;
+        if (take.length === head.issues.length) pendingRows.shift();
+        else head.issues = head.issues.slice(take.length);
+    }
+    if (pendingRows.length === 0) {
+        clearTimeout(chunkTimer);
+        chunkTimer = null;
+        if (pendingSelectionId) {
+            const id = pendingSelectionId;
+            pendingSelectionId = null;
+            reapplyKeyboardSelection(id);
+        }
+    }
+}
+
+export function hasPendingRows() {
+    return pendingRows.length > 0;
+}
+
+function schedulePendingRows() {
+    clearTimeout(chunkTimer);
+    if (pendingRows.length === 0) return;
+    chunkTimer = setTimeout(function step() {
+        appendPendingRows(CHUNK_ROWS);
+        if (pendingRows.length > 0) chunkTimer = setTimeout(step, 0);
+    }, 0);
+}
+
 /**
  * Render the issues list (main entry point)
  */
@@ -49,6 +133,13 @@ export function renderIssues() {
     const selectedIssueId = list.querySelector('.issue-row.keyboard-selected')?.dataset.issueId;
 
     list.classList.add('issue-list-linear');
+
+    // A new paint replaces whatever the last one still had queued.
+    clearTimeout(chunkTimer);
+    chunkTimer = null;
+    pendingRows = [];
+    pendingSelectionId = null;
+    firstPaintBudget = FIRST_PAINT_ROWS;
 
     const issues = getIssues();
 
@@ -77,6 +168,7 @@ export function renderIssues() {
             });
         }
         setSelectedIssueIndex(-1);
+        firstPaintBudget = Infinity;
         return;
     }
 
@@ -94,10 +186,20 @@ export function renderIssues() {
         renderGroupedBySprint(list, issues);
     } else {
         // No grouping - render flat list with summary
-        list.innerHTML = renderSummaryBar(issues) + issues.map(issue => renderIssueRow(issue)).join('');
+        list.innerHTML = renderSummaryBar(issues) + rowsHtml(null, issues);
     }
 
-    reapplyKeyboardSelection(selectedIssueId);
+    firstPaintBudget = Infinity;
+    // A selected row that is still queued is selected once it lands.
+    const selectedPainted = !!selectedIssueId && Array.prototype.some.call(
+        list.querySelectorAll('.issue-row'), (row) => row.dataset.issueId === selectedIssueId,
+    );
+    if (selectedIssueId && pendingRows.length > 0 && !selectedPainted) {
+        pendingSelectionId = selectedIssueId;
+    } else {
+        reapplyKeyboardSelection(selectedIssueId);
+    }
+    schedulePendingRows();
 }
 
 /**
@@ -160,7 +262,7 @@ function renderGroupedByStatus(list, issues) {
                     <span class="group-points">${sumEstimates(groupIssues)}pt</span>
                 </div>
                 <div class="issue-group-content">
-                    ${groupIssues.map(issue => renderIssueRow(issue)).join('')}
+                    ${rowsHtml(status, groupIssues)}
                 </div>
             </div>
         `;
@@ -197,7 +299,7 @@ function renderGroupedByPriority(list, issues) {
                     <span class="group-points">${sumEstimates(groupIssues)}pt</span>
                 </div>
                 <div class="issue-group-content">
-                    ${groupIssues.map(issue => renderIssueRow(issue)).join('')}
+                    ${rowsHtml(priority, groupIssues)}
                 </div>
             </div>
         `;
@@ -234,7 +336,7 @@ function renderGroupedByType(list, issues) {
                     <span class="group-points">${sumEstimates(groupIssues)}pt</span>
                 </div>
                 <div class="issue-group-content">
-                    ${groupIssues.map(issue => renderIssueRow(issue)).join('')}
+                    ${rowsHtml(issueType, groupIssues)}
                 </div>
             </div>
         `;
@@ -283,7 +385,7 @@ function renderGroupedByAssignee(list, issues) {
                     <span class="group-points">${sumEstimates(groups[unassignedKey])}pt</span>
                 </div>
                 <div class="issue-group-content">
-                    ${groups[unassignedKey].map(issue => renderIssueRow(issue)).join('')}
+                    ${rowsHtml(unassignedKey, groups[unassignedKey])}
                 </div>
             </div>
         `;
@@ -308,7 +410,7 @@ function renderGroupedByAssignee(list, issues) {
                     <span class="group-points">${sumEstimates(groupIssues)}pt</span>
                 </div>
                 <div class="issue-group-content">
-                    ${groupIssues.map(issue => renderIssueRow(issue)).join('')}
+                    ${rowsHtml(assignee.id, groupIssues)}
                 </div>
             </div>
         `;
@@ -371,7 +473,7 @@ function renderGroupedBySprint(list, issues) {
                     <span class="group-points">${sumEstimates(groupIssues)}pt</span>
                 </div>
                 <div class="issue-group-content">
-                    ${groupIssues.map(issue => renderIssueRow(issue)).join('')}
+                    ${rowsHtml(safeId, groupIssues)}
                 </div>
             </div>
         `;
@@ -391,7 +493,7 @@ function renderGroupedBySprint(list, issues) {
                     <span class="group-points">${sumEstimates(groups[noSprintKey])}pt</span>
                 </div>
                 <div class="issue-group-content">
-                    ${groups[noSprintKey].map(issue => renderIssueRow(issue)).join('')}
+                    ${rowsHtml(noSprintKey, groups[noSprintKey])}
                 </div>
             </div>
         `;

@@ -2,6 +2,7 @@
  * Chaotic - Main Application
  */
 
+import { appendPendingRows } from './issue-list.js';
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
 import { closeModal, isModalOpen, showToast, closeInlineDropdownsFromEscape, isModalDirty, focusModalFirstField } from './ui.js';
@@ -637,6 +638,9 @@ document.addEventListener('keydown', createListNavigationHandler({
     isModalOpen,
     isCommandPaletteOpen,
     isDetailViewActive: isAnyDetailViewActive,
+    // The list paints its first rows at once and appends the rest in
+    // chunks (CHT-1897); a key reads the whole list.
+    beforeNavigate: appendPendingRows,
 }));
 
 // j/k/Enter/e list navigation for documents
