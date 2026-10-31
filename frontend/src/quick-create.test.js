@@ -121,6 +121,20 @@ describe('handleQuickCreate', () => {
         expect(input.disabled).toBe(false);
     });
 
+    // CHT-1921 review I1: a list response or /ws listed the real row first
+    it('drops the placeholder when the created row is already listed', async () => {
+        let current = [];
+        setIssues.mockImplementation((issues) => { current = issues; });
+        getIssues.mockImplementation(() => current);
+        let resolve;
+        api.createIssue.mockReturnValue(new Promise(r => { resolve = r; }));
+        const pending = handleQuickCreate({ key: 'Enter', target: input });
+        current = [...current, { id: 'real-1', title: 'New issue' }];
+        resolve({ id: 'real-1', title: 'New issue' });
+        await pending;
+        expect(current.map(i => i.id)).toEqual(['real-1']);
+    });
+
     // CHT-1894 review 4: state notifies only on a new array, and the issue
     // store records the created row through that notification.
     it('replaces the optimistic row with a new array, not in place', async () => {

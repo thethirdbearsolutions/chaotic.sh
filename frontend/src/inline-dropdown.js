@@ -466,26 +466,31 @@ async function _doToggleIssueLabel(issueId, labelId, buttonEl) {
     try {
         const updated = await api.updateIssue(issueId, { label_ids: newLabelIds });
 
-        // Update local state
+        // Update local state, as it is now: a list response may have
+        // replaced it during the request. A new row, with the server's
+        // updated_at, so it reads as newer than an answer computed before
+        // the toggle (CHT-1921 review I2).
         const updatedLabels = updated.labels || [];
-        const issueIndex = issues.findIndex(i => i.id === issueId);
-        if (issueIndex !== -1) {
-            issues[issueIndex].labels = updatedLabels;
-            setIssues([...issues]);
+        const withLabels = (row) => ({
+            ...row, labels: updatedLabels, updated_at: updated.updated_at ?? row.updated_at,
+        });
+        const issuesNow = getIssues();
+        if (issuesNow.some(i => i.id === issueId)) {
+            setIssues(issuesNow.map(i => (i.id === issueId ? withLabels(i) : i)));
         }
-        const myIssueIndex = myIssues.findIndex(i => i.id === issueId);
-        if (myIssueIndex !== -1) {
-            myIssues[myIssueIndex].labels = updatedLabels;
-            setMyIssues([...myIssues]);
+        const myIssuesNow = getMyIssues();
+        if (myIssuesNow.some(i => i.id === issueId)) {
+            setMyIssues(myIssuesNow.map(i => (i.id === issueId ? withLabels(i) : i)));
         }
-        if (currentDetailIssue?.id === issueId) {
-            setCurrentDetailIssue({ ...currentDetailIssue, labels: updatedLabels });
+        const detailNow = getCurrentDetailIssue();
+        if (detailNow?.id === issueId) {
+            setCurrentDetailIssue(withLabels(detailNow));
         }
 
         // Re-render the row if visible
         const row = visibleIssueRow(issueId);
         if (row && row.parentNode) {
-            const issueData = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId);
+            const issueData = getIssues().find(i => i.id === issueId) || getMyIssues().find(i => i.id === issueId);
             if (issueData) row.outerHTML = renderIssueRow(issueData);
         }
 

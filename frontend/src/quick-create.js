@@ -59,7 +59,11 @@ export async function handleQuickCreate(event) {
         // A new array: state only notifies (and the issue store only
         // records the created row, CHT-1894) on a new reference.
         const issuesAfterCreate = getIssues();
-        if (issuesAfterCreate.some(i => i.id === tempId)) {
+        if (issuesAfterCreate.some(i => i.id === created.id)) {
+            // The real row is already listed (a list response or /ws got
+            // here first): just drop the placeholder (CHT-1921 review I1).
+            setIssues(issuesAfterCreate.filter(i => i.id !== tempId));
+        } else if (issuesAfterCreate.some(i => i.id === tempId)) {
             setIssues(issuesAfterCreate.map(i => (i.id === tempId ? created : i)));
         }
         renderIssues();

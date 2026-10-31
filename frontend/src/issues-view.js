@@ -45,6 +45,8 @@ import {
     sameRows,
     dropQuery,
     deriveQuery,
+    matcher,
+    isNewer,
 } from './issue-store.js';
 
 // Import from sub-modules
@@ -374,18 +376,27 @@ export function showCachedIssuesOrSkeleton() {
  * @param {Object[]} server - the response
  * @param {Set<string>} idsAtRequest - the list's ids when the request went out
  */
-export function keepLocalChanges(local, server, idsAtRequest) {
+export function keepLocalChanges(local, server, idsAtRequest, belongs = () => true) {
     if (!Array.isArray(server)) return server;
     const localById = new Map(local.map(i => [i.id, i]));
     const serverIds = new Set(server.map(i => i.id));
-    const added = local.filter(i => !idsAtRequest.has(i.id) && !serverIds.has(i.id));
+    // Titles of rows the server has that the list didn't: a quick-create
+    // whose row is already among them must not show twice (review I1).
+    const arrived = new Set(server.filter(i => !idsAtRequest.has(i.id)).map(i => i.title));
+    const added = local.filter(i => !idsAtRequest.has(i.id) && !serverIds.has(i.id)
+        && !(i._isOptimistic && arrived.has(i.title))
+        // A /ws create or quick-create outside this filter isn't kept,
+        // or the store would cache it under this query (review M1).
+        && (i._isOptimistic || belongs(i)));
     const kept = [];
     for (const row of server) {
         const mine = localById.get(row.id);
         if (!mine && idsAtRequest.has(row.id)) continue; // removed meanwhile
-        const newer = mine?.updated_at && row.updated_at && mine.updated_at > row.updated_at ? mine : row;
+        const newer = mine && isNewer(mine.updated_at, row.updated_at) ? mine : row;
         kept.push(withEditsInFlight(newer));
     }
+    // Added rows go on top and a newer row keeps the response's place,
+    // as the /ws handlers do; the next refresh puts them in sort order.
     return added.length ? [...added, ...kept] : kept;
 }
 
@@ -567,7 +578,7 @@ export async function loadIssues() {
         // Rows already on screen for this query may have changed while the
         // request ran: keep those changes over the older answer (CHT-1921).
         const onScreen = (showingCached || showingDerived) && paintedKey === key;
-        const rows = onScreen ? keepLocalChanges(getIssues(), issues, idsAtRequest) : issues;
+        const rows = onScreen ? keepLocalChanges(getIssues(), issues, idsAtRequest, matcher(params)) : issues;
         const unchanged = onScreen && sameRows(getIssues(), rows);
         setCurrentQueryKey(key);
         setIssues(rows);
@@ -579,7 +590,7 @@ export async function loadIssues() {
         // after the user navigated away would clobber the context another
         // view has since written (CHT-1211 review #2).
         if (getCurrentView() === 'issues') {
-            setDetailNavContext(rows);
+            setDetailNavContext(Array.isArray(rows) ? rows.filter(i => !i._isOptimistic) : rows);
         }
 
         const projectIds = [...new Set(rows.map(i => i.project_id).filter(Boolean))];

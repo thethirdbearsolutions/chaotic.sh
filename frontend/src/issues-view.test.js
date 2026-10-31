@@ -1167,7 +1167,6 @@ describe('issues-view', () => {
                 expect(list.classList.contains('is-refreshing')).toBe(false);
             });
 
-            // CHT-1910: a filter the store can answer paints at once
             describe('changes made while the request runs (CHT-1921)', () => {
                 const first = [
                     { id: 'a', project_id: 'p-1', updated_at: 't1', title: 'A', status: 'todo' },
@@ -1220,6 +1219,7 @@ describe('issues-view', () => {
                 });
             });
 
+            // CHT-1910: a filter the store can answer paints at once
             describe('rows derived from a covering query', () => {
                 const mixed = [
                     { id: 'a', project_id: 'p-1', updated_at: 't1', title: 'A', status: 'todo' },
@@ -2111,6 +2111,25 @@ describe('issues-view', () => {
         it('takes a row that only the server has, if the list never held it', () => {
             const merged = keepLocalChanges([row('a')], [row('a'), row('b')], new Set(['a']));
             expect(merged.map(i => i.id)).toEqual(['a', 'b']);
+        });
+
+        it('drops a quick-create placeholder whose real row the response has (review I1)', () => {
+            const temp = { id: 'temp-1', title: 'New', _isOptimistic: true };
+            const merged = keepLocalChanges([temp, row('a')], [row('real', { title: 'New' }), row('a')], new Set(['a']));
+            expect(merged.map(i => i.id)).toEqual(['real', 'a']);
+        });
+
+        it('keeps an added row only if it belongs in the list (review M1)', () => {
+            const belongs = (i) => i.status === 'todo';
+            const local = [row('n1', { status: 'backlog' }), row('n2'), row('a')];
+            const merged = keepLocalChanges(local, [row('a')], new Set(['a']), belongs);
+            expect(merged.map(i => i.id)).toEqual(['n2', 'a']);
+        });
+
+        it('compares updated_at as times, not strings (review M2)', () => {
+            const local = [row('a', { updated_at: '2026-01-01T00:00:00Z', status: 'mine' })];
+            const server = [row('a', { updated_at: '2026-01-01T00:00:00.500000Z' })];
+            expect(keepLocalChanges(local, server, new Set(['a']))[0]).toBe(server[0]);
         });
 
         it('applies field edits still in flight', () => {
