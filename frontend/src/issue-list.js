@@ -13,7 +13,7 @@ import { registerActions } from './event-delegation.js';
 import { showInlineDropdown } from './inline-dropdown.js';
 import { viewIssue } from './issue-detail-view.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
-import { STATUS_ORDER, PRIORITY_ORDER } from './constants.js';
+import { STATUS_ORDER, PRIORITY_ORDER, ISSUE_NAV_ROWS } from './constants.js';
 
 // Re-export for backward compatibility
 export { STATUS_ORDER, PRIORITY_ORDER };
@@ -273,7 +273,7 @@ export function renderIssues() {
     collapsedNow = null;
     if (collapsed?.size) {
         list.querySelectorAll('.issue-group').forEach((group) => {
-            if (collapsed.has(group.dataset.group)) group.classList.add('collapsed');
+            if (collapsed.has(group.dataset.group)) markCollapsed(group, true);
         });
         // The row the user is on (selected or focused) stays in sight: a
         // collapsed group it has just moved into (an edit) opens again.
@@ -308,7 +308,7 @@ function reapplyKeyboardSelection(selectedIssueId) {
     const prevIndex = getSelectedIssueIndex();
     if (prevIndex < 0) return;
 
-    const items = document.querySelectorAll('#issues-list .issue-row');
+    const items = document.querySelectorAll(ISSUE_NAV_ROWS);
     if (items.length === 0) {
         setSelectedIssueIndex(-1);
         return;
@@ -345,7 +345,7 @@ function renderGroupedByStatus(list, issues) {
 
         html += `
             <div class="issue-group" data-group="${status}">
-                <div class="issue-group-header" data-action="toggle-group" data-group="${status}">
+                <div class="issue-group-header" role="button" tabindex="0" aria-expanded="true" data-action="toggle-group" data-group="${status}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M4 6l4 4 4-4"/>
                     </svg>
@@ -382,7 +382,7 @@ function renderGroupedByPriority(list, issues) {
 
         html += `
             <div class="issue-group" data-group="${priority}">
-                <div class="issue-group-header" data-action="toggle-group" data-group="${priority}">
+                <div class="issue-group-header" role="button" tabindex="0" aria-expanded="true" data-action="toggle-group" data-group="${priority}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M4 6l4 4 4-4"/>
                     </svg>
@@ -419,7 +419,7 @@ function renderGroupedByType(list, issues) {
 
         html += `
             <div class="issue-group" data-group="${issueType}">
-                <div class="issue-group-header" data-action="toggle-group" data-group="${issueType}">
+                <div class="issue-group-header" role="button" tabindex="0" aria-expanded="true" data-action="toggle-group" data-group="${issueType}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M4 6l4 4 4-4"/>
                     </svg>
@@ -468,7 +468,7 @@ function renderGroupedByAssignee(list, issues) {
     if (groups[unassignedKey].length > 0) {
         html += `
             <div class="issue-group" data-group="${unassignedKey}">
-                <div class="issue-group-header" data-action="toggle-group" data-group="${unassignedKey}">
+                <div class="issue-group-header" role="button" tabindex="0" aria-expanded="true" data-action="toggle-group" data-group="${unassignedKey}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M4 6l4 4 4-4"/>
                     </svg>
@@ -493,7 +493,7 @@ function renderGroupedByAssignee(list, issues) {
         const extra = assignee.is_agent ? (assignee.parent_user_name ? ` (${assignee.parent_user_name})` : ' (agent)') : '';
         html += `
             <div class="issue-group" data-group="${escapeAttr(assignee.id)}">
-                <div class="issue-group-header" data-action="toggle-group" data-group="${escapeAttr(assignee.id)}">
+                <div class="issue-group-header" role="button" tabindex="0" aria-expanded="true" data-action="toggle-group" data-group="${escapeAttr(assignee.id)}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M4 6l4 4 4-4"/>
                     </svg>
@@ -556,7 +556,7 @@ function renderGroupedBySprint(list, issues) {
 
         html += `
             <div class="issue-group" data-group="${safeId}">
-                <div class="issue-group-header" data-action="toggle-group" data-group="${safeId}">
+                <div class="issue-group-header" role="button" tabindex="0" aria-expanded="true" data-action="toggle-group" data-group="${safeId}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M4 6l4 4 4-4"/>
                     </svg>
@@ -576,7 +576,7 @@ function renderGroupedBySprint(list, issues) {
     if (groups[noSprintKey].length > 0) {
         html += `
             <div class="issue-group" data-group="${noSprintKey}">
-                <div class="issue-group-header" data-action="toggle-group" data-group="${noSprintKey}">
+                <div class="issue-group-header" role="button" tabindex="0" aria-expanded="true" data-action="toggle-group" data-group="${noSprintKey}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M4 6l4 4 4-4"/>
                     </svg>
@@ -620,8 +620,36 @@ function paintGroupNow(list, groupKey) {
     });
 }
 
-function setGroupCollapsed(list, group, isCollapsed) {
+function markCollapsed(group, isCollapsed) {
     group.classList.toggle('collapsed', isCollapsed);
+    group.querySelector('.issue-group-header')?.setAttribute('aria-expanded', String(!isCollapsed));
+}
+
+/**
+ * Keep the j/k cursor on a row the user can see after a group opens or
+ * closes (CHT-1932): the selected row by id if it is still navigable,
+ * else the first visible row after the group that hid it, else the last.
+ */
+function resyncSelection(list, group) {
+    const items = Array.from(document.querySelectorAll(ISSUE_NAV_ROWS));
+    const selected = list.querySelector('.issue-row.keyboard-selected');
+    // No highlight: nothing to move. A re-render in progress (or a row
+    // still queued) re-finds the selection by id itself (review I2, M1).
+    if (!selected) return;
+    let index = items.indexOf(selected);
+    if (index < 0) {
+        selected.classList.remove('keyboard-selected');
+        // FOLLOWING also matches the group's own rows; skip those.
+        index = items.findIndex(row => group.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING
+            && !group.contains(row));
+        if (index < 0) index = items.length - 1;
+        if (index >= 0) items[index].classList.add('keyboard-selected');
+    }
+    setSelectedIssueIndex(index);
+}
+
+function setGroupCollapsed(list, group, isCollapsed) {
+    markCollapsed(group, isCollapsed);
     const key = collapseKey(getGroupByValue());
     if (!collapsedGroups.has(key)) collapsedGroups.set(key, new Set());
     const collapsed = collapsedGroups.get(key);
@@ -631,6 +659,7 @@ function setGroupCollapsed(list, group, isCollapsed) {
         collapsed.delete(group.dataset.group);
         paintGroupNow(list, group.dataset.group);
     }
+    resyncSelection(list, group);
 }
 
 /**
@@ -826,6 +855,13 @@ export function getStatusIcon(status) {
 // Register delegated event handlers (CHT-1062)
 registerActions({
     'toggle-group': (event, data) => {
+        // Event delegation fires this on Enter/Space too, the header being
+        // a focusable button (CHT-1932): one toggle per press, and Space
+        // must not scroll the page.
+        if (event?.type === 'keydown') {
+            if (event.repeat) return;
+            event.preventDefault();
+        }
         toggleGroup(data.group);
     },
     'show-inline-dropdown': (event, data, target) => {
