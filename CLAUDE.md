@@ -116,6 +116,19 @@ smell — treat the following as invariants:
 If a budget number surprises you, reconcile it against *"points from tickets
 closed while this sprint was active (unestimated = 1)"* before suspecting a bug.
 
+## Epic Status (read this before calling it a bug)
+
+An open epic's status is **derived from its children** (CHT-1901):
+`in_progress` once any child is in progress, in review or done; `todo` when
+any child is todo; else `backlog`. `IssueService.rederive_parents` runs
+after every child create, status or parent change, delete and lease expiry.
+It **never closes an epic**: when a close leaves an open parent with no open
+children, the PATCH response carries `parent_prompt` and the CLI, MCP and
+web ask the closer "close it, or add more?". Setting an epic's status by
+hand pins it (`issues.status_pinned`); `status_follows_children: true` on
+PATCH unpins it. Closing a parent that still has open children returns
+`open_children` as a warning (CHT-1884).
+
 ## Enum Representation (read this before "fixing" a casing bug)
 
 Every enum here has **two** legitimate string forms, and they are not

@@ -2239,7 +2239,7 @@
           "issues"
         ],
         "summary": "Update Issue",
-        "description": "Update an issue.",
+        "description": "Update an issue.\n\nClosing one also reports what that leaves open (CHT-1901, CHT-1884):\n``parent_prompt`` when it was the last open child of an open parent,\n``open_children`` when it still has open children.",
         "operationId": "update_issue_api_issues__issue_id__patch",
         "security": [
           {
@@ -2289,7 +2289,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueResponse"
+                  "$ref": "#/components/schemas/IssueUpdateResponse"
                 }
               }
             }
@@ -12669,6 +12669,11 @@
             ],
             "title": "Lease Expires At"
           },
+          "status_pinned": {
+            "type": "boolean",
+            "title": "Status Pinned",
+            "default": false
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -12879,11 +12884,298 @@
               }
             ],
             "title": "Lease Seconds"
+          },
+          "status_follows_children": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Follows Children"
           }
         },
         "type": "object",
         "title": "IssueUpdate",
         "description": "Schema for updating an issue."
+      },
+      "IssueUpdateResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "identifier": {
+            "type": "string",
+            "title": "Identifier"
+          },
+          "number": {
+            "type": "integer",
+            "title": "Number"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IssueStatus"
+          },
+          "priority": {
+            "$ref": "#/components/schemas/IssuePriority"
+          },
+          "issue_type": {
+            "$ref": "#/components/schemas/IssueType"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate"
+          },
+          "assignee_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
+          "creator_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator Id"
+          },
+          "creator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator Name"
+          },
+          "sprint_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sprint Id"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "assignee_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Name"
+          },
+          "sprint_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sprint Name"
+          },
+          "parent_identifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Identifier"
+          },
+          "project_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Key"
+          },
+          "creator": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "lease_expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lease Expires At"
+          },
+          "status_pinned": {
+            "type": "boolean",
+            "title": "Status Pinned",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "labels": {
+            "items": {
+              "$ref": "#/components/schemas/LabelResponse"
+            },
+            "type": "array",
+            "title": "Labels",
+            "default": []
+          },
+          "parent_prompt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParentPrompt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "open_children": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenChildrenWarning"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "identifier",
+          "number",
+          "title",
+          "description",
+          "status",
+          "priority",
+          "issue_type",
+          "estimate",
+          "assignee_id",
+          "creator_id",
+          "sprint_id",
+          "parent_id",
+          "due_date",
+          "completed_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "IssueUpdateResponse",
+        "description": "PATCH /issues/{id}: the issue, plus what closing it leaves for\nthe caller to decide. Both are null unless this update closed it."
       },
       "LabelAddedResponse": {
         "properties": {
@@ -13101,6 +13393,33 @@
         "title": "MarkAllReadResponse",
         "description": "Response for POST /inbox/mark-all-read."
       },
+      "OpenChildrenWarning": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "identifiers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Identifiers"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count",
+          "identifiers",
+          "message"
+        ],
+        "title": "OpenChildrenWarning",
+        "description": "This update closed an issue that still has open children\n(CHT-1884): they stay open under a closed parent."
+      },
       "OrderField": {
         "type": "string",
         "enum": [
@@ -13120,6 +13439,39 @@
         ],
         "title": "OrderField",
         "description": "A field a query can be ordered by."
+      },
+      "ParentPrompt": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "identifier": {
+            "type": "string",
+            "title": "Identifier"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "issue_type": {
+            "$ref": "#/components/schemas/IssueType"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "identifier",
+          "title",
+          "issue_type",
+          "message"
+        ],
+        "title": "ParentPrompt",
+        "description": "The open parent whose last open child this update closed\n(CHT-1901). Epics never close themselves, so whoever closed the last\nchild is asked what happens next."
       },
       "PendingApprovalIssueResponse": {
         "properties": {

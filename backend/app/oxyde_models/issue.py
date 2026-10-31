@@ -44,6 +44,9 @@ class OxydeIssue(Model):
     # of a ticket with no claimed_at must pass its claim rituals, since
     # nothing else made it pass them. Not exposed in responses.
     claimed_at: DateTimeUTC | None = Field(default=None)
+    # An epic's status follows its children (CHT-1901) until someone sets
+    # it by hand, which pins it here. Ignored for other issue types.
+    status_pinned: bool = Field(default=False)
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     labels: list["OxydeLabel"] = Field(default_factory=list, db_m2m=True, db_through="OxydeIssueLabel")

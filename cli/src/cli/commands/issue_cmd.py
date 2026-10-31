@@ -10,6 +10,7 @@ from ..markup import Markup, Table, esc, markup
 from ..principals import principal_markup
 from .shared import (
     _warn_off_scale_estimate,
+    _report_close_followups,
     _client,
     apply_ritual_attestations,
     console,
@@ -946,6 +947,8 @@ def register(cli):
     @click.option("--no-sprint", "clear_sprint", is_flag=True, help="Remove from sprint")
     @click.option("--parent", help="Set parent issue (e.g., CHT-123) to make this a sub-issue")
     @click.option("--no-parent", "clear_parent", is_flag=True, help="Detach from parent issue")
+    @click.option("--follow-children", is_flag=True,
+                  help="Epics only: let the status follow the sub-issues again after it was set by hand")
     @click.option("--label", "-l", "add_labels", multiple=True, help="Add label(s) to issue (can be used multiple times)")
     @click.option("--remove-label", "remove_labels", multiple=True, help="Remove label(s) from issue (can be used multiple times)")
     @click.option("--blocked-by", "blocked_by", multiple=True, help="Add blocked-by relation(s) (can be used multiple times)")
@@ -962,9 +965,15 @@ def register(cli):
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, clear_sprint, parent, clear_parent, add_labels, remove_labels, blocked_by, relates_to, unceremonious, note, attest_specs):
-        """Update an issue."""
+    def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, clear_sprint, parent, clear_parent, follow_children, add_labels, remove_labels, blocked_by, relates_to, unceremonious, note, attest_specs):
+        """Update an issue.
+
+        An epic's status follows its sub-issues until set by hand with
+        --status; --follow-children undoes that (CHT-1901).
+        """
         m = _main()
+        if follow_children and status:
+            raise click.UsageError("Pass either --status or --follow-children, not both.")
         iss = _client().get_issue_by_identifier(identifier)
 
         # Warn if --note used without --unceremoniously-attest-all-rituals
@@ -1054,6 +1063,8 @@ def register(cli):
             data["description"] = description
         if status:
             data["status"] = status
+        if follow_children:
+            data["status_follows_children"] = True
         if priority:
             data["priority"] = priority
         if issue_type:
@@ -1105,7 +1116,7 @@ def register(cli):
             return
 
         if data:
-            _client().update_issue(iss["id"], **data)
+            _report_close_followups(_client().update_issue(iss["id"], **data))
             _warn_off_scale_estimate(iss.get("project_id"), data.get("estimate"))
         if m.is_json_output():
             updated = _client().get_issue_by_identifier(identifier)
@@ -1436,7 +1447,7 @@ def register(cli):
         Shortcut for 'issue update IDENTIFIER --status STATUS'.
         """
         iss = _client().get_issue_by_identifier(identifier)
-        _client().update_issue(iss["id"], status=status)
+        _report_close_followups(_client().update_issue(iss["id"], status=status))
         console.print(f"[green]Issue {esc(identifier)} moved to {esc(status.replace('_', ' ').title())}.[/green]")
 
     @issue.command("close")
@@ -1458,7 +1469,7 @@ def register(cli):
         """
         iss = _client().get_issue_by_identifier(identifier)
         apply_ritual_attestations(iss, attest_specs)
-        _client().update_issue(iss["id"], status="done")
+        _report_close_followups(_client().update_issue(iss["id"], status="done"))
         console.print(f"[green]Issue {esc(identifier)} closed.[/green]")
 
     @issue.command("complete")
@@ -1499,7 +1510,7 @@ def register(cli):
         if iss["status"] == "canceled":
             console.print(f"[dim]Issue {esc(identifier)} is already canceled.[/dim]")
             return iss
-        _client().update_issue(iss["id"], status="canceled")
+        _report_close_followups(_client().update_issue(iss["id"], status="canceled"))
         console.print(f"[green]Issue {esc(identifier)} marked as wontfix (canceled).[/green]")
 
     @issue.command("cancel")

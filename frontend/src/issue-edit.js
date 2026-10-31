@@ -4,6 +4,7 @@
  * Extracted from app.js to decouple issue editing logic from the main application module.
  */
 
+import { handleCloseFollowups } from './epic-prompt.js';
 import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { escapeHtml, escapeAttr } from './utils.js';
@@ -39,7 +40,7 @@ export async function showEditIssueModal(issueId) {
                 </div>
                 <div class="form-group">
                     <label for="edit-issue-status">Status</label>
-                    <select id="edit-issue-status">
+                    <select id="edit-issue-status" data-original="${escapeAttr(issue.status)}">
                         <option value="backlog" ${issue.status === 'backlog' ? 'selected' : ''}>Backlog</option>
                         <option value="todo" ${issue.status === 'todo' ? 'selected' : ''}>Todo</option>
                         <option value="in_progress" ${issue.status === 'in_progress' ? 'selected' : ''}>In Progress</option>
@@ -148,14 +149,19 @@ export async function handleUpdateIssue(event, issueId) {
         const data = {
             title: titleEl.value,
             description: descEl ? descEl.value : '',
-            status: statusEl.value,
             priority: priorityEl.value,
             issue_type: typeEl.value,
             estimate: estimateEl && estimateEl.value ? parseInt(estimateEl.value) : null,
             sprint_id: sprintEl && sprintEl.value ? sprintEl.value : null,
         };
 
-        await api.updateIssue(issueId, data);
+        // Status only when the user changed it: a form opened before a
+        // derived epic status moved would otherwise put it back and pin
+        // it (CHT-1901).
+        if (!statusEl.dataset.original || statusEl.value !== statusEl.dataset.original) {
+            data.status = statusEl.value;
+        }
+        const updated = await api.updateIssue(issueId, data);
         // Clear the draft only when this save actually committed it — a save
         // that never loaded a stale draft (finding 1's no-prefill path) must
         // not delete the draft the warning just told the user to review.
@@ -165,6 +171,7 @@ export async function handleUpdateIssue(event, issueId) {
         closeModal();
         await viewIssue(issueId);
         showToast('Issue updated!', 'success');
+        handleCloseFollowups(updated);
     } catch (e) {
         showApiError('update issue', e);
     }

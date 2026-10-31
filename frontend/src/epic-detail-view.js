@@ -12,7 +12,7 @@ import {
 } from './issue-detail-view.js';
 import { api } from './api.js';
 import { getCurrentView } from './state.js';
-import { showApiError } from './ui.js';
+import { showApiError, showToast } from './ui.js';
 import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
@@ -222,6 +222,15 @@ export async function viewEpic(epicId, pushHistory = true) {
                                 ${formatStatus(epic.status)}
                             </span>
                         </div>
+                        ${epic.status_pinned && !['done', 'canceled'].includes(epic.status) ? `
+                        <div class="property-row epic-status-pinned">
+                            <span class="property-label"></span>
+                            <span class="property-value-static">
+                                <span class="text-muted" title="Set by hand, so it no longer follows its sub-issues">Set by hand</span>
+                                <button class="btn btn-secondary btn-small" data-action="epic-follow-children" data-epic-id="${escapeAttr(epic.id)}">Follow sub-issues</button>
+                            </span>
+                        </div>
+                        ` : ''}
 
                         <div class="property-row">
                             <span class="property-label">Priority</span>
@@ -293,5 +302,16 @@ export async function viewEpic(epicId, pushHistory = true) {
 registerActions({
     'navigate-epic': (_event, data) => {
         viewEpic(data.epicId);
+    },
+    // Unpin a hand-set epic status so it is derived from its children
+    // again (CHT-1901).
+    'epic-follow-children': async (_event, data) => {
+        try {
+            await api.updateIssue(data.epicId, { status_follows_children: true });
+            showToast('Status now follows sub-issues');
+            await viewEpic(data.epicId, false);
+        } catch (e) {
+            showApiError('update epic', e);
+        }
     },
 });

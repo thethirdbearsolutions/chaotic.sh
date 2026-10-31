@@ -56,6 +56,16 @@ class IssueUpdate(BaseModel):
     # as label_ids). Only has an effect on a self-claim (assignee_id ==
     # the acting principal, status -> IN_PROGRESS); ignored otherwise.
     lease_seconds: int | None = Field(default=None, ge=1)
+    # CHT-1901: an epic's status follows its children until set by hand;
+    # true unpins it and takes the derived status at once. Not a column
+    # (status_pinned is); ignored for issues that are not epics.
+    status_follows_children: bool | None = None
+
+    @model_validator(mode="after")
+    def _follow_or_set_status(self):
+        if self.status_follows_children and self.status is not None:
+            raise ValueError("Pass either status or status_follows_children, not both")
+        return self
 
 
 class IssueResponse(HasPrincipals, BaseModel):
@@ -92,6 +102,9 @@ class IssueResponse(HasPrincipals, BaseModel):
     due_date: DateTimeUTC | None
     completed_at: DateTimeUTC | None
     lease_expires_at: DateTimeUTC | None = None
+    # An epic's status was set by hand and no longer follows its
+    # children (CHT-1901). Always false for other issue types.
+    status_pinned: bool = False
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
     labels: list["LabelResponse"] = []
@@ -116,6 +129,35 @@ class IssueResponse(HasPrincipals, BaseModel):
     @model_validator(mode="after")
     def _name_deleted_author(self):
         return name_deleted_author(self, "creator_id", "creator_name")
+
+
+class ParentPrompt(BaseModel):
+    """The open parent whose last open child this update closed
+    (CHT-1901). Epics never close themselves, so whoever closed the last
+    child is asked what happens next."""
+
+    id: str
+    identifier: str
+    title: str
+    issue_type: IssueType
+    message: str
+
+
+class OpenChildrenWarning(BaseModel):
+    """This update closed an issue that still has open children
+    (CHT-1884): they stay open under a closed parent."""
+
+    count: int
+    identifiers: list[str]
+    message: str
+
+
+class IssueUpdateResponse(IssueResponse):
+    """PATCH /issues/{id}: the issue, plus what closing it leaves for
+    the caller to decide. Both are null unless this update closed it."""
+
+    parent_prompt: ParentPrompt | None = None
+    open_children: OpenChildrenWarning | None = None
 
 
 class IssueCommentCreate(BaseModel):

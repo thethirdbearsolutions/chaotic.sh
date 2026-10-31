@@ -242,6 +242,15 @@ _EPIC_REQUIRED_MESSAGE = (
     "epic first (or ask an admin to set the project's default epic)"
 )
 
+# An epic's derived status as SQL over `issues` (the outer row being the
+# epic), stored by name. Shared by derive_epic_status and migration 0042.
+_DERIVED_EPIC_STATUS_SQL = (
+    "(CASE WHEN EXISTS (SELECT 1 FROM issues c WHERE c.parent_id = issues.id "
+    "AND c.status IN ('IN_PROGRESS', 'IN_REVIEW', 'DONE')) THEN 'IN_PROGRESS' "
+    "WHEN EXISTS (SELECT 1 FROM issues c WHERE c.parent_id = issues.id "
+    "AND c.status = 'TODO') THEN 'TODO' ELSE 'BACKLOG' END)"
+)
+
 # Same bound as _validate_parent's ancestor walk in api/issues.py.
 _PARENT_WALK_LIMIT = 1000
 
@@ -1177,6 +1186,73 @@ class IssueService:
             parent_id = row.parent_id
         return False
 
+    async def derive_epic_status(self, epic_id: str | None, actor_id: str | None = None) -> OxydeIssue | None:
+        """Move an open, unpinned epic to the status its children imply
+        (CHT-1901), and return it if that changed anything.
+
+        in_progress once any child is in progress, in review or done;
+        todo when any child is todo; else backlog. It never closes an
+        epic: when the last child closes, the closer is asked instead
+        (see app.api.issues._close_followups). A pinned epic, a closed
+        one, or a non-epic is left alone.
+
+        The children are read by the same UPDATE that writes, so two
+        derivations racing each other cannot leave a status computed from
+        a stale read (PR 2 review 4). Gates (arrears, rituals) do not
+        apply: nobody is claiming or closing the epic, its children
+        already passed theirs.
+        """
+        if not epic_id:
+            return None
+        epic = await OxydeIssue.objects.get_or_none(id=epic_id)
+        if (
+            epic is None or epic.issue_type != IssueType.EPIC
+            or epic.status_pinned or epic.status in CLOSED_STATUSES
+        ):
+            return None
+        async with atomic():
+            rows = await execute_raw(
+                "UPDATE issues SET status = " + _DERIVED_EPIC_STATUS_SQL + ", updated_at = ? "
+                "WHERE id = ? AND status = ? AND status_pinned = 0 "
+                "AND " + _DERIVED_EPIC_STATUS_SQL + " != status RETURNING status",
+                [datetime.now(timezone.utc), epic.id, epic.status.name],
+            )
+            if not rows:
+                return None
+            await OxydeIssueActivity.objects.create(
+                issue_id=epic.id,
+                user_id=actor_id,
+                activity_type=ActivityType.STATUS_CHANGED,
+                field_name="status",
+                old_value=epic.status.name,
+                new_value=rows[0]["status"],
+            )
+        return await self.get_by_id(epic.id)
+
+    async def rederive_parents(self, parent_ids, actor_id: str | None = None) -> None:
+        """Re-derive each named epic after a child changed (CHT-1901) and
+        broadcast the ones that moved; an epic that moved is itself a
+        child, so its own parent is re-derived next (nested epics, PR 2
+        review 2). Best-effort, after the child's own write has
+        committed: a failure here is logged, never surfaced as a failure
+        of that write."""
+        queue = [p for p in parent_ids if p]
+        seen: set[str] = set()
+        while queue and len(seen) < _PARENT_WALK_LIMIT:
+            parent_id = queue.pop(0)
+            if parent_id in seen:
+                continue
+            seen.add(parent_id)
+            try:
+                epic = await self.derive_epic_status(parent_id, actor_id)
+            except Exception:
+                logger.exception("Failed to derive epic status for issue=%s", parent_id)
+                continue
+            if epic is not None:
+                await self._broadcast_issue_updated(epic)
+                if epic.parent_id:
+                    queue.append(epic.parent_id)
+
     async def _get_next_issue_number_for_key(self, project_key: str) -> int:
         """Get the next issue number for a project key."""
         rows = await execute_raw(
@@ -1269,6 +1345,12 @@ class IssueService:
                         due_date=issue_in.due_date,
                         completed_at=datetime.now(timezone.utc) if issue_in.status == IssueStatus.DONE else None,
                         claimed_at=datetime.now(timezone.utc) if issue_in.status == IssueStatus.IN_PROGRESS else None,
+                        # An epic created with a status other than the
+                        # default was given it by hand (CHT-1901).
+                        status_pinned=(
+                            issue_in.issue_type == IssueType.EPIC
+                            and issue_in.status != IssueStatus.BACKLOG
+                        ),
                     )
 
                     # Handle labels via junction table
@@ -1296,6 +1378,7 @@ class IssueService:
                     if issue_in.status == IssueStatus.DONE:
                         await self._deduct_from_sprint_budget(issue, creator_id)
 
+                await self.rederive_parents([issue.parent_id], creator_id)
                 # Reload with relations
                 return await self.get_by_id(issue.id)
 
@@ -1347,7 +1430,27 @@ class IssueService:
         ROUND_ROBIN rotation lands on the ritual it was blocked on
         (CHT-1405).
         """
-        update_data = issue_in.model_dump(exclude_unset=True, exclude={"label_ids", "lease_seconds"})
+        update_data = issue_in.model_dump(
+            exclude_unset=True, exclude={"label_ids", "lease_seconds", "status_follows_children"},
+        )
+        # Epic status (CHT-1901): a status set by hand pins it; asking for
+        # it to follow the children again unpins it and re-derives below.
+        old_parent_id = issue.parent_id
+        final_type = update_data.get("issue_type", issue.issue_type)
+        follow_children = bool(issue_in.status_follows_children) and final_type == IssueType.EPIC
+        if final_type != IssueType.EPIC and issue.status_pinned:
+            # A pin belongs to an epic; one that becomes a task drops it,
+            # so becoming an epic again starts by following (PR 2 review 6).
+            update_data["status_pinned"] = False
+        if follow_children:
+            update_data.pop("status", None)
+            update_data["status_pinned"] = False
+        elif (
+            final_type == IssueType.EPIC
+            and "status" in update_data
+            and update_data["status"] != issue.status
+        ):
+            update_data["status_pinned"] = True
 
         # Decide upfront whether this update will snapshot the
         # description, against the newest revision rather than the
@@ -1369,6 +1472,8 @@ class IssueService:
         new_assignee_id = None
         if user_id:
             for field, new_value in update_data.items():
+                if field == "status_pinned":
+                    continue  # bookkeeping; the status change is the activity
                 old_value = getattr(issue, field)
                 old_cmp = old_value
                 new_cmp = new_value
@@ -1647,6 +1752,17 @@ class IssueService:
             if needs_budget_deduction:
                 await self._deduct_from_sprint_budget(issue, user_id)
 
+        # The epic(s) this ticket belongs to, or belonged to, may move
+        # (CHT-1901); and an epic told to follow its children again, or
+        # just made an epic, takes its derived status now.
+        rederive = []
+        if "status" in update_data or "parent_id" in update_data:
+            rederive += [old_parent_id, issue.parent_id]
+        if follow_children or ("issue_type" in update_data and final_type == IssueType.EPIC):
+            rederive.append(issue.id)
+        if rederive:
+            await self.rederive_parents(rederive, user_id)
+
         if new_assignee_id:
             try:
                 await self._notify_assignment(issue, user_id, new_assignee_id)
@@ -1836,6 +1952,12 @@ class IssueService:
         span nine tables that a future migration could add to without
         a cascade.
         """
+        parent_id = issue.parent_id
+        await self._delete_rows(issue)
+        await self.rederive_parents([parent_id])
+
+    async def _delete_rows(self, issue) -> None:
+        """delete()'s writes, in one transaction."""
         from app.oxyde_models.ritual import OxydeRitualAttestation, OxydeRitualRejection
 
         async with atomic():
@@ -2210,6 +2332,8 @@ class IssueService:
                 new_value=IssueStatus.TODO.name,
             )
 
+        # Its epic may have had this as its only active child (CHT-1901).
+        await self.rederive_parents([issue.parent_id], old_assignee_id)
         updated = await self.get_by_id(issue.id)
         logger.info(
             "Released expired lease for issue=%s (identifier=%s, was assigned to %s)",

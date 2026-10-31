@@ -802,6 +802,22 @@ class TestIssueUpdateBody:
         assert result["error"]["error_code"] == "tool_input"
         assert fake.calls_to("update_issue") == []
 
+    async def test_follow_children_unpins(self, fake):
+        await _tools(fake)["issue_update"]("CHT-1", follow_children=True)
+        (_, kwargs), = fake.calls_to("update_issue")
+        assert kwargs == {"status_follows_children": True}
+
+    async def test_follow_children_with_status_is_an_input_error(self, fake):
+        result = await _tools(fake)["issue_update"]("CHT-1", follow_children=True, status="todo")
+        assert result["error"]["error_code"] == "tool_input"
+
+    async def test_null_close_followups_are_dropped(self, fake):
+        async def upd(issue_id, **fields):
+            return {"id": issue_id, "parent_prompt": None, "open_children": None}
+        fake.update_issue = upd
+        result = await _tools(fake)["issue_update"]("CHT-1", title="x")
+        assert "parent_prompt" not in result and "open_children" not in result
+
     async def test_no_parent_sends_explicit_null(self, fake):
         await _tools(fake)["issue_update"]("CHT-1", no_parent=True)
         (_, kwargs), = fake.calls_to("update_issue")

@@ -466,6 +466,13 @@ async def issue_update(
         bool,
         Field(description="Detach this issue from its parent. Cannot be combined with `parent`.")
     ] = False,
+    follow_children: Annotated[
+        bool,
+        Field(description=(
+            "Epics only: let the status follow the sub-issues again after it "
+            "was set by hand. Cannot be combined with `status`."
+        ))
+    ] = False,
     attest: Annotated[
         dict[str, str] | None,
         Field(description=(
@@ -491,9 +498,17 @@ async def issue_update(
 
     Only fields explicitly passed are changed. Returns the updated issue.
     Pass `attest` to satisfy pending close/claim rituals in the same call.
+
+    Closing a ticket can add `parent_prompt`: it was the last open child
+    of an open parent, which never closes itself, so ask the user whether
+    to close that parent or add more. `open_children` means the closed
+    ticket still has open sub-issues. An epic's status follows its
+    children until set by hand; `follow_children` undoes that.
     """
     if parent is not None and no_parent:
         raise ToolInputError("Pass either `parent` or `no_parent`, not both.")
+    if follow_children and status is not None:
+        raise ToolInputError("Pass either `status` or `follow_children`, not both.")
     if parent is not None and not parent.strip():
         raise ToolInputError("`parent` must be an issue identifier; use `no_parent` to detach.")
     # Resolved before any read or write, so a bad type fails the whole call.
@@ -540,6 +555,8 @@ async def issue_update(
         fields["parent_id"] = parent_id
     if no_parent:
         fields["parent_id"] = None
+    if follow_children:
+        fields["status_follows_children"] = True
 
     if not fields and not attest:
         raise ToolInputError("No fields provided to update.")
@@ -548,6 +565,11 @@ async def issue_update(
         return await backend.get_issue(identifier)
 
     updated = await backend.update_issue(iss["id"], **fields)
+    # What a close left open (CHT-1901, CHT-1884): kept when present,
+    # dropped when null so an ordinary update's output is unchanged.
+    for key in ("parent_prompt", "open_children"):
+        if key in updated and updated[key] is None:
+            updated = {k: v for k, v in updated.items() if k != key}
     return await _with_estimate_warning(backend, updated, iss.get("project_id"), estimate)
 
 

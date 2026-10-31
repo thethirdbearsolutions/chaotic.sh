@@ -250,6 +250,12 @@ describe('issue-edit', () => {
             });
         });
 
+        it('leaves status out when the user did not change it (CHT-1901)', async () => {
+            document.getElementById('edit-issue-title').value = 'Typo fixed';
+            await handleUpdateIssue({}, 'issue-1');
+            expect(api.updateIssue.mock.calls[0][1]).not.toHaveProperty('status');
+        });
+
         it('closes the modal, refreshes the issue, and shows a toast on success', async () => {
             await handleUpdateIssue({}, 'issue-1');
 

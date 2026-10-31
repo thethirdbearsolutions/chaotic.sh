@@ -4,6 +4,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock all dependencies before importing the module under test
+vi.mock('./epic-prompt.js', () => ({ handleCloseFollowups: vi.fn() }));
+
 vi.mock('./api.js', () => ({
     api: {
         updateIssue: vi.fn(),
