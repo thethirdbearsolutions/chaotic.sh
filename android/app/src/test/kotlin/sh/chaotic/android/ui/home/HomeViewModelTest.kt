@@ -1,11 +1,13 @@
 package sh.chaotic.android.ui.home
 
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
@@ -48,6 +50,7 @@ class HomeViewModelTest {
     private lateinit var database: ChaoticDatabase
     private lateinit var syncer: InboxSyncer
     private lateinit var queue: WriteQueue
+    private var home: HomeViewModel? = null
 
     @Before
     fun setUp() {
@@ -62,6 +65,13 @@ class HomeViewModelTest {
 
     @After
     fun tearDown() {
+        // Stop the view model's own coroutines before resetting Main. The
+        // state's WhileSubscribed upstream and the writes launched from
+        // open() run on viewModelScope (Dispatchers.Main.immediate) and can
+        // still be resuming on another thread after a test returns; resetMain
+        // racing one of them throws "Dispatchers.Main is used concurrently
+        // with setting it" (CHT-1867). Join, so none is left mid-resume.
+        home?.let { vm -> runBlocking { vm.viewModelScope.coroutineContext.job.cancelAndJoin() } }
         database.close()
         Dispatchers.resetMain()
     }
@@ -80,7 +90,7 @@ class HomeViewModelTest {
             refresher = CacheRefresher(remote, cache),
             trigger = SyncTrigger(),
             writes = WriteActions(queue) {},
-        )
+        ).also { home = it }
     }
 
     private suspend fun waitFor(condition: () -> Boolean) = withTimeout(WAIT_MILLIS) {
