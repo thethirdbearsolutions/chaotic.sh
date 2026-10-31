@@ -78,3 +78,45 @@ describe('sidebar ARIA dialog semantics (CHT-899)', () => {
         expect(() => toggleSidebar()).not.toThrow();
     });
 });
+
+describe('sidebar focus skips hidden dropdown items (CHT-1929)', () => {
+    beforeEach(() => {
+        document.body.className = '';
+        document.body.innerHTML = `
+            <button id="hamburger-btn"></button>
+            <aside class="sidebar">
+                <div id="team-dropdown" class="dropdown hidden">
+                    <button class="dropdown-item">Team A</button>
+                </div>
+                <a href="/home" id="first-visible">Home</a>
+                <a href="/settings" id="last-visible">Settings</a>
+                <div id="user-dropdown" class="dropdown hidden">
+                    <button class="dropdown-item">Sign Out</button>
+                </div>
+            </aside>
+            <div class="main-content"></div>
+        `;
+    });
+
+    it('focuses the first visible control on open, not a hidden dropdown item', () => {
+        toggleSidebar();
+        expect(document.activeElement.id).toBe('first-visible');
+    });
+
+    it('wraps Tab from the last visible control to the first', () => {
+        toggleSidebar();
+        document.getElementById('last-visible').focus();
+        const e = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+        document.dispatchEvent(e);
+        expect(e.defaultPrevented).toBe(true);
+        expect(document.activeElement.id).toBe('first-visible');
+    });
+
+    it('wraps Shift+Tab from the first visible control to the last', () => {
+        toggleSidebar();
+        const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+        document.dispatchEvent(e);
+        expect(e.defaultPrevented).toBe(true);
+        expect(document.activeElement.id).toBe('last-visible');
+    });
+});

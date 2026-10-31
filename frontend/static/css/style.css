@@ -4877,14 +4877,21 @@ input[type="checkbox"] {
     }
 
     /* Mobile sidebar: off-canvas drawer */
+    /* Closed, the drawer is also visibility: hidden, so its links leave the
+       tab order and the accessibility tree instead of sitting focusable
+       off-canvas (CHT-1292). Visibility flips after the slide-out ends,
+       and at once on open, so toggleSidebar() can focus the first link. */
     .sidebar {
         transform: translateX(-100%);
-        transition: transform 0.25s ease;
+        visibility: hidden;
+        transition: transform 0.25s ease, visibility 0s linear 0.25s;
         z-index: 200;
     }
 
     body.sidebar-open .sidebar {
         transform: translateX(0);
+        visibility: visible;
+        transition: transform 0.25s ease, visibility 0s linear 0s;
     }
 
     body.sidebar-open {
