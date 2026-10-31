@@ -15858,7 +15858,7 @@
           "created_at"
         ],
         "title": "TeamActivityResponse",
-        "description": "One row of a team's administrative log (CHT-1843, CHT-1845).\n\n``actor_*`` did it, ``target_user_*`` it concerns (the same user when\na member left on their own). ``email`` is the invited address on\ninvitation rows. ``role`` is the role granted (the new one on\nrole_changed, the one held on member_removed, owner on\nownership_transferred); ``old_role`` only on role_changed and\nownership_transferred (the new owner's role before it). Names are\nnull for a user since deleted."
+        "description": "One row of a team's administrative log (CHT-1843, CHT-1845).\n\n``actor_*`` did it, ``target_user_*`` it concerns (the same user when\na member left on their own). ``email`` is the invited address on\ninvitation rows. ``role`` is the role granted (the new one on\nrole_changed, the one held on member_removed, owner on\nownership_transferred), or on invitation_created,\ninvitation_cancelled and invitation_invalidated the role offered\n(on invitation_invalidated never granted: the owner invitation was\nvoided, CHT-1868); ``old_role`` only on role_changed and\nownership_transferred (the new owner's role before it). Names are\nnull for a user since deleted."
       },
       "TeamCommentResponse": {
         "properties": {
