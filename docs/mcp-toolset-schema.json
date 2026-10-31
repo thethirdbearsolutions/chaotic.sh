@@ -1104,7 +1104,7 @@
       }
     },
     "issue_update": {
-      "description": "Update an issue's status, priority, estimate, assignee, title, description, and/or parent.\n\n`parent` re-parents an existing issue (or makes it a sub-issue);\n`no_parent` detaches it. Labels go through issue_label, relations\nthrough issue_block/issue_unblock, and sprint membership through\nsprint_add/sprint_remove. Changing the issue type has no MCP tool\nyet; the CLI does it with `chaotic issue update ID --type TYPE`.\n\nAn `estimate` off the project's declared estimate_scale is stored as\ngiven and reported back in `warnings` (absent otherwise).\n\nOnly fields explicitly passed are changed. Returns the updated issue.\nPass `attest` to satisfy pending close/claim rituals in the same call.",
+      "description": "Update an issue's status, priority, estimate, assignee, title, description, type, and/or parent.\n\n`parent` re-parents an existing issue (or makes it a sub-issue);\n`no_parent` detaches it. `issue_type` changes the type, e.g. to\npromote a task with children to an epic (CHT-1885). Labels go\nthrough issue_label, relations through issue_block/issue_unblock,\nand sprint membership through sprint_add/sprint_remove.\n\nAn `estimate` off the project's declared estimate_scale is stored as\ngiven and reported back in `warnings` (absent otherwise).\n\nOnly fields explicitly passed are changed. Returns the updated issue.\nPass `attest` to satisfy pending close/claim rituals in the same call.",
       "inputSchema": {
         "properties": {
           "assignee": {
@@ -1166,6 +1166,19 @@
             "description": "Issue identifier, e.g. CHT-123.",
             "title": "Identifier",
             "type": "string"
+          },
+          "issue_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New issue type. One of: task, bug, feature, chore, docs, tech_debt, refactor, epic (aliases accepted, e.g. 'feat'). Use 'epic' to promote a ticket that grew children.",
+            "title": "Issue Type"
           },
           "no_parent": {
             "default": false,

@@ -789,6 +789,19 @@ class TestIssueUpdateBody:
         (_, kwargs), = fake.calls_to("update_issue")
         assert kwargs == {"parent_id": "i2"}
 
+    async def test_issue_type_resolves_aliases(self, fake):
+        # CHT-1885: promote a ticket that grew children to an epic.
+        await _tools(fake)["issue_update"]("CHT-1", issue_type="Epic")
+        await _tools(fake)["issue_update"]("CHT-1", issue_type="feat")
+        assert [kw for _, kw in fake.calls_to("update_issue")] == [
+            {"issue_type": "epic"}, {"issue_type": "feature"},
+        ]
+
+    async def test_unknown_issue_type_is_an_input_error_before_any_write(self, fake):
+        result = await _tools(fake)["issue_update"]("CHT-1", issue_type="saga", status="done")
+        assert result["error"]["error_code"] == "tool_input"
+        assert fake.calls_to("update_issue") == []
+
     async def test_no_parent_sends_explicit_null(self, fake):
         await _tools(fake)["issue_update"]("CHT-1", no_parent=True)
         (_, kwargs), = fake.calls_to("update_issue")

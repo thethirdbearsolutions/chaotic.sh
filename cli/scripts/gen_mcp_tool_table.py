@@ -36,7 +36,7 @@ CLI_EQUIVALENTS: dict[str, str] = {
     "issue_view": "`issue show`",
     "issue_create": "`issue create`",
     "issue_update": (
-        "`issue update` + `issue assign` (status/priority/estimate/assignee/title/description/parent; "
+        "`issue update` + `issue assign` (status/priority/estimate/assignee/title/description/type/parent; "
         "`assignee: \"unassigned\"` clears; `no_parent` is `--no-parent`; `attest` map for ritual notes)"
     ),
     "issue_comment": "`issue comment`",

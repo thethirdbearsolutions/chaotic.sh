@@ -31,7 +31,7 @@ from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.ritual import OxydeRitualRejection
 from app.oxyde_models.sprint import OxydeSprint
-from app.enums import IssueStatus, ActivityType, IssueRelationType
+from app.enums import IssueStatus, IssueType, ActivityType, IssueRelationType
 from app.enums import SprintStatus, UnestimatedHandling
 from app.enums import LimboType
 from app.enums import ApprovalMode, RitualTrigger
@@ -214,11 +214,36 @@ class RelationCycleError(Exception):
     BLOCKS graph is too large to check (possible pre-existing cycle)."""
 
 
-class EstimateRequiredError(Exception):
-    """Raised when estimate is required but missing."""
+class RequirementMissingError(Exception):
+    """A per-project requirement refused a claim or close: the ticket
+    lacks something the project says it must have first (an estimate,
+    an assignee, an epic). Answered as a 400 with the message."""
 
     def __init__(self, message: str):
         super().__init__(message)
+
+
+class EstimateRequiredError(RequirementMissingError):
+    """Raised when estimate is required but missing."""
+
+
+class AssigneeRequiredError(RequirementMissingError):
+    """require_assignee_on_claim: an agent claimed a ticket and left it
+    unassigned (CHT-1900)."""
+
+
+class EpicRequiredError(RequirementMissingError):
+    """require_epic_on_close: an agent closed a non-epic ticket that has
+    no parent, and the project has no usable default epic (CHT-1900)."""
+
+
+_EPIC_REQUIRED_MESSAGE = (
+    "This project requires closed tickets to belong to an epic: set a parent "
+    "epic first (or ask an admin to set the project's default epic)"
+)
+
+# Statuses after which a ticket is closed (done or abandoned).
+CLOSED_STATUSES = frozenset({IssueStatus.DONE, IssueStatus.CANCELED})
 
 
 class IssueAlreadyClaimedError(Exception):
@@ -1102,6 +1127,37 @@ class IssueService:
             if ritual_service._evaluate_conditions(_without_status_conditions(r), probe)
         ]
 
+    async def usable_default_epic(self, project, issue_id: str | None = None) -> str | None:
+        """The project's default epic id (CHT-1900), if it can take
+        ``issue_id`` as a child now: it still exists in this project, is
+        an open epic, is not the issue itself, and does not sit beneath
+        it (filing the issue under it would close a loop). None
+        otherwise, in which case nothing is defaulted."""
+        epic_id = getattr(project, "default_epic_id", None)
+        if not epic_id or epic_id == issue_id:
+            return None
+        epic = await OxydeIssue.objects.get_or_none(id=epic_id)
+        if (
+            epic is None
+            or epic.project_id != project.id
+            or epic.issue_type != IssueType.EPIC
+            or epic.status in CLOSED_STATUSES
+        ):
+            return None
+        if issue_id is not None:
+            # Bounded walk up from the epic; the API's own parent checks
+            # use the same bound.
+            row = epic
+            for _ in range(50):
+                if not row.parent_id:
+                    break
+                if row.parent_id == issue_id:
+                    return None
+                row = await OxydeIssue.objects.get_or_none(id=row.parent_id)
+                if row is None:
+                    break
+        return epic.id
+
     async def _get_next_issue_number_for_key(self, project_key: str) -> int:
         """Get the next issue number for a project key."""
         rows = await execute_raw(
@@ -1118,6 +1174,13 @@ class IssueService:
         project_id = project.id
         project_key = project.key
 
+        # A new non-epic ticket with no parent goes under the project's
+        # default epic, whoever files it (CHT-1900).
+        if issue_in.parent_id is None and issue_in.issue_type != IssueType.EPIC:
+            default_epic_id = await self.usable_default_epic(project)
+            if default_epic_id:
+                issue_in = issue_in.model_copy(update={"parent_id": default_epic_id})
+
         # Check constraints for non-default statuses (CHT-536)
         if issue_in.status in {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}:
             await self._check_sprint_limbo(project_id)
@@ -1129,10 +1192,24 @@ class IssueService:
                     raise EstimateRequiredError(
                         "Estimate is required before claiming issues in this project"
                     )
+            if project.require_assignee_on_claim and not is_human_request:
+                if issue_in.assignee_id is None:
+                    raise AssigneeRequiredError(
+                        "An assignee is required before claiming issues in this project"
+                    )
             if not is_human_request:
                 claim_rituals = await self._claim_rituals_for_new_issue(project_id, issue_in)
                 if claim_rituals:
                     raise ClaimRitualsError("NEW", rituals=claim_rituals)
+
+        if (
+            issue_in.status == IssueStatus.DONE
+            and project.require_epic_on_close
+            and not is_human_request
+            and issue_in.parent_id is None
+            and issue_in.issue_type != IssueType.EPIC
+        ):
+            raise EpicRequiredError(_EPIC_REQUIRED_MESSAGE)
 
         if issue_in.status == IssueStatus.DONE and not is_human_request:
             # Created as done is also a close of a never-claimed ticket,
@@ -1328,20 +1405,51 @@ class IssueService:
                 await self._check_sprint_limbo(issue.project_id)
                 await self._check_sprint_arrears(issue.project_id)
 
+            project = None
+            if new_status != old_status and new_status in (IssueStatus.IN_PROGRESS, IssueStatus.DONE):
+                project = await OxydeProject.objects.get_or_none(id=issue.project_id)
+
             # Then ticket-level rituals (CHT-145)
             if new_status == IssueStatus.IN_PROGRESS and old_status != IssueStatus.IN_PROGRESS:
-                project = await OxydeProject.objects.get_or_none(id=issue.project_id)
                 if project and project.require_estimate_on_claim and not is_human_request:
                     estimate_value = update_data.get("estimate", issue.estimate)
                     if estimate_value is None:
                         raise EstimateRequiredError(
                             "Estimate is required before claiming issues in this project"
                         )
+                if project and project.require_assignee_on_claim and not is_human_request:
+                    if update_data.get("assignee_id", issue.assignee_id) is None:
+                        raise AssigneeRequiredError(
+                            "An assignee is required before claiming issues in this project"
+                        )
                 gated = skip_ritual_check or await self._check_claim_rituals(issue, user_id, is_human_request)
                 if gated:
                     rotations.append(await RitualService().prepare_ticket_rotation(
                         issue.project_id, issue.id, RitualTrigger.TICKET_CLAIM, intent_id=gate_intent_id,
                     ))
+
+            if (
+                new_status == IssueStatus.DONE and old_status != IssueStatus.DONE
+                and project and project.require_epic_on_close and not is_human_request
+                and update_data.get("parent_id", issue.parent_id) is None
+                and update_data.get("issue_type", issue.issue_type) != IssueType.EPIC
+            ):
+                # CHT-1900: file it under the default epic, or refuse.
+                # Before the ritual gates, like the estimate check: an
+                # attestation cannot supply a missing epic.
+                default_epic_id = await self.usable_default_epic(project, issue.id)
+                if default_epic_id is None:
+                    raise EpicRequiredError(_EPIC_REQUIRED_MESSAGE)
+                update_data["parent_id"] = default_epic_id
+                if user_id:
+                    activities.append({
+                        "issue_id": issue.id,
+                        "user_id": user_id,
+                        "activity_type": ActivityType.UPDATED,
+                        "field_name": "parent_id",
+                        "old_value": None,
+                        "new_value": default_epic_id,
+                    })
 
             if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
                 # Closing a ticket nobody ever claimed must pass its
@@ -1693,6 +1801,9 @@ class IssueService:
         from app.oxyde_models.ritual import OxydeRitualAttestation, OxydeRitualRejection
 
         async with atomic():
+            # A project whose default epic this was stops defaulting
+            # (CHT-1900); the column has no foreign key to do it.
+            await OxydeProject.objects.filter(default_epic_id=issue.id).update(default_epic_id=None)
             await OxydeIssueComment.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueActivity.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueLabel.objects.filter(issue_id=issue.id).delete()

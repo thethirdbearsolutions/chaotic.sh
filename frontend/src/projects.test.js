@@ -26,6 +26,7 @@ import {
   deleteProjectRitual,
   loadProjectSettingsRituals,
   setCurrentSettingsProjectId,
+  saveProjectSettingsRules,
 } from './projects.js';
 import { api } from './api.js';
 import { showToast } from './ui.js';
@@ -38,6 +39,7 @@ vi.mock('./api.js', () => ({
     updateProject: vi.fn(),
     deleteProject: vi.fn(),
     getRituals: vi.fn(),
+    getIssues: vi.fn(),
     createRitual: vi.fn(),
     updateRitual: vi.fn(),
     deleteRitual: vi.fn(),
@@ -1161,5 +1163,90 @@ describe('isOutOfScale', () => {
     expect(isOutOfScale(0, 'proj-1')).toBe(false);
     expect(isOutOfScale(null, 'proj-1')).toBe(false);
     expect(isOutOfScale(undefined, 'proj-1')).toBe(false);
+  });
+});
+
+// CHT-1900: assignee/epic requirements and the default epic.
+describe('project rules: epic and assignee knobs', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div class="view hidden" id="project-settings-view">
+        <h2 id="project-settings-title"></h2>
+        <input id="ps-name"><input id="ps-key"><textarea id="ps-description"></textarea>
+        <input type="color" id="ps-color">
+        <select id="ps-estimate-scale"><option value="fibonacci">f</option></select>
+        <input type="number" id="ps-default-sprint-budget">
+        <select id="ps-unestimated-handling"><option value="default_one_point">d</option></select>
+        <input type="checkbox" id="ps-human-rituals-required">
+        <input type="checkbox" id="ps-require-estimate-on-claim">
+        <input type="checkbox" id="ps-require-assignee-on-claim">
+        <input type="checkbox" id="ps-require-epic-on-close">
+        <select id="ps-default-epic" disabled><option value="">None</option></select>
+        <button class="settings-tab active" data-tab="general"></button>
+        <div id="project-settings-tab-general" class="settings-tab-content"></div>
+      </div>
+      <div id="projects-list"></div>
+      <select id="project-filter"></select>
+    `;
+    vi.clearAllMocks();
+    setCurrentTeam({ id: 'team-1' });
+    window.history.pushState = vi.fn();
+  });
+
+  afterEach(() => {
+    setCurrentTeam(null);
+    setProjects([]);
+    clearProjectSettingsState();
+  });
+
+  it('loads the knobs and offers open epics plus the current default', async () => {
+    setProjects([{
+      id: 'proj-1', name: 'P', key: 'P', require_epic_on_close: true,
+      require_assignee_on_claim: false, default_epic_id: 'e-closed',
+    }]);
+    api.getIssues.mockResolvedValue([
+      { id: 'e-open', identifier: 'P-1', title: 'Open goal', status: 'in_progress' },
+      { id: 'e-done', identifier: 'P-2', title: 'Old goal', status: 'done' },
+      { id: 'e-closed', identifier: 'P-3', title: 'Current <b>', status: 'canceled' },
+    ]);
+    await viewProjectSettings('proj-1');
+    await vi.waitFor(() => expect(document.getElementById('ps-default-epic').disabled).toBe(false));
+
+    expect(document.getElementById('ps-require-epic-on-close').checked).toBe(true);
+    expect(document.getElementById('ps-require-assignee-on-claim').checked).toBe(false);
+    const select = document.getElementById('ps-default-epic');
+    expect([...select.options].map(o => o.value)).toEqual(['', 'e-open', 'e-closed']);
+    expect(select.value).toBe('e-closed');
+    expect(select.innerHTML).not.toContain('<b>');
+    expect(api.getIssues).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'proj-1', issue_type: 'epic' }));
+  });
+
+  it('saves the knobs and the chosen default epic', async () => {
+    setProjects([{ id: 'proj-1', name: 'P', key: 'P' }]);
+    api.getIssues.mockResolvedValue([{ id: 'e-open', identifier: 'P-1', title: 'Goal', status: 'todo' }]);
+    api.updateProject.mockResolvedValue({});
+    api.getProjects.mockResolvedValue([]);
+    await viewProjectSettings('proj-1');
+    await vi.waitFor(() => expect(document.getElementById('ps-default-epic').disabled).toBe(false));
+
+    document.getElementById('ps-require-epic-on-close').checked = true;
+    document.getElementById('ps-require-assignee-on-claim').checked = true;
+    document.getElementById('ps-default-epic').value = 'e-open';
+    await saveProjectSettingsRules();
+    expect(api.updateProject).toHaveBeenCalledWith('proj-1', expect.objectContaining({
+      require_epic_on_close: true,
+      require_assignee_on_claim: true,
+      default_epic_id: 'e-open',
+    }));
+  });
+
+  it('leaves the default epic alone when the epics failed to load', async () => {
+    setProjects([{ id: 'proj-1', name: 'P', key: 'P', default_epic_id: 'e-1' }]);
+    api.getIssues.mockRejectedValue(new Error('boom'));
+    api.updateProject.mockResolvedValue({});
+    api.getProjects.mockResolvedValue([]);
+    await viewProjectSettings('proj-1');
+    await saveProjectSettingsRules();
+    expect(api.updateProject.mock.calls[0][1]).not.toHaveProperty('default_epic_id');
   });
 });

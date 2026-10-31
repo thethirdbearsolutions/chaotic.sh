@@ -21,6 +21,10 @@
 - Refactoring needs tickets
 - Documentation changes need tickets
 - If you discover something that needs fixing while working on another ticket, create a new ticket for it first
+- **File every ticket under the epic for the goal it serves** (`chaotic issue create --parent CHT-X`, MCP `parent`).
+  If the goal has no epic yet, create one first. Progress toward goals is read off epics, so a ticket under no
+  epic is invisible to it. Projects can enforce this with `require_epic_on_close` and a default epic
+  (`chaotic project update --require-epic-on-close --default-epic CHT-X`, CHT-1900).
 
 **File tickets proactively:**
 - When you think of something that should be done → file a ticket

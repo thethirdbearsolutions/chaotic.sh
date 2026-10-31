@@ -50,6 +50,8 @@ class ProjectService:
                 unestimated_handling=project_in.unestimated_handling,
                 default_sprint_budget=project_in.default_sprint_budget,
                 require_estimate_on_claim=project_in.require_estimate_on_claim,
+                require_assignee_on_claim=project_in.require_assignee_on_claim,
+                require_epic_on_close=project_in.require_epic_on_close,
             )
         except IntegrityError:
             existing = await self.get_by_key(team_id, project_in.key)

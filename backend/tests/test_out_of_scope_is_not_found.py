@@ -282,6 +282,7 @@ ROUTES = [
     ("GET", "/api/projects/{project}/issues/query", None, "project"),
     ("POST", "/api/projects/{project}/agents", {"name": "x"}, "project"),
     ("PATCH", "/api/projects/{own_project}", {"lead_id": "{user}"}, "user"),
+    ("PATCH", "/api/projects/{own_project}", {"default_epic_id": "{issue}"}, "issue"),
     ("POST", "/api/teams/{own_team}/projects", {"name": "x", "key": "ZZZ", "lead_id": "{user}"}, "user"),
     # Sprints.
     ("GET", "/api/sprints/{sprint}", None, "sprint"),
@@ -1080,7 +1081,7 @@ MCP_NOT_ROW_KEYED = {
     **{("issue_create", a): _MCP_VALUE for a in (
         "title", "description", "status", "priority", "issue_type", "estimate")},
     **{("issue_update", a): _MCP_VALUE for a in (
-        "status", "priority", "estimate", "title", "description", "no_parent")},
+        "status", "priority", "estimate", "title", "description", "issue_type", "no_parent")},
     ("issue_comment", "content"): _MCP_VALUE,
     ("issue_start", "lease_seconds"): _MCP_VALUE,
     **{("issue_ready", a): _MCP_VALUE for a in ("mine", "include_assigned", "all_projects")},
