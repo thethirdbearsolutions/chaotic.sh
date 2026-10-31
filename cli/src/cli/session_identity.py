@@ -37,7 +37,9 @@ The rules:
    ``X-Chaotic-Registrar-Key`` on every request to the server, and the
    server reads that header on ``POST /agents/register`` only. Register
    is then sent with no ``Authorization``, and every other request with
-   the session key in ``Authorization``, which the proxy leaves alone.
+   the session key in ``X-Chaotic-Key`` and no ``Authorization``: the
+   proxy drops a client's ``Authorization`` on a host it injects a
+   secret for (CHT-1913).
    No ``/auth/me`` as the registrar (the header authenticates nothing
    else), so the server names the identity after its registrar.
 
@@ -79,6 +81,9 @@ VIA_ENV = "CHAOTIC_REGISTRAR_KEY_VIA"
 VIA_SETTING = "registrar_key_via"
 VIAS = ("local", "header")
 REGISTRAR_KEY_HEADER = "X-Chaotic-Registrar-Key"
+# Where header mode sends the session key (CHT-1913): the proxy that
+# injects the registrar header drops the client's own Authorization.
+KEY_HEADER = "X-Chaotic-Key"
 # The cache slot's registrar fingerprint in header mode: the key itself
 # is never seen here, so every proxied registrar shares one slot per
 # (session, server).

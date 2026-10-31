@@ -249,7 +249,8 @@ class TestAutomaticSessionIdentity:
 class TestRegistrarKeyViaProxyHeader:
     """CHT-1906 end to end: no key configured locally; a proxy injects
     the registrar's key as X-Chaotic-Registrar-Key on every request to
-    the server, as a cloud environment's network secret does."""
+    the server, as a cloud environment's network secret does, and drops
+    the client's own Authorization, as that proxy also does (CHT-1913)."""
 
     SESSION_ID = "e2e-session-proxied"
 
@@ -266,6 +267,7 @@ class TestRegistrarKeyViaProxyHeader:
         class InjectingProxy(httpx.HTTPTransport):
             def handle_request(self, request):
                 seen.append(request.headers.get("Authorization", ""))
+                request.headers.pop("Authorization", None)
                 request.headers["X-Chaotic-Registrar-Key"] = secret
                 return super().handle_request(request)
 
@@ -292,5 +294,5 @@ class TestRegistrarKeyViaProxyHeader:
         assert me["name"].startswith("Cloud registrar · ")
         assert issue["creator"]["id"] == me["id"]
         assert secret not in seen  # the CLI never sent the registrar key itself
-        assert seen[0] == ""  # register went with no Authorization
+        assert set(seen) == {""}  # nothing for the proxy to drop: the session key goes in X-Chaotic-Key
         assert session_identity.registrar_key_via() == "header"
