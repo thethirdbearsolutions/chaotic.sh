@@ -490,8 +490,9 @@ identity.
 - **`X-Chaotic-Key: ck_...`** works on every REST route, exactly like
   `Authorization: Bearer ck_...`: the same key rules, registrar rule
   (a registrar's key there can read but writes get 403
-  `registrar_cannot_write`) and scopes. It is read only when there is no
-  `Authorization`, which wins when both are sent; it takes API keys
+  `registrar_cannot_write`) and scopes. It is read only when the request
+  has no `Authorization` header at all (any `Authorization`, whatever its
+  scheme, wins); it takes API keys
   only (a login or OAuth token is 401 `key_header_not_a_key`), and once
   (twice is 400 `key_header_repeated`). Any script behind such a proxy
   can use it the same way.
@@ -510,6 +511,10 @@ identity.
   `default_name` and the server names a new identity `<registrar> ·
   <8 random hex>`. Only an agent registrar works this way: a person's
   key would need a `team_id`.
+- Only the session's requests use `X-Chaotic-Key`. `chaotic agent
+  register` (the registrar's own call) and `CHAOTIC_SESSION_IDENTITY=off`
+  with a key in the profile still send `Authorization`, which this proxy
+  drops (CHT-1916).
 - `chaotic config set-registrar-key-via header|local` saves the mode in
   the profile instead; the environment variable wins over it. In header
   mode a key configured locally (`auth set-key`, `CHAOTIC_API_KEY`) is

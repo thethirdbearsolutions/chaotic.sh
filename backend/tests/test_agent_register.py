@@ -1381,7 +1381,8 @@ class TestKeyHeader:
 
     async def test_it_cannot_pass_a_human_session_gate(self, client, auth_headers, test_team):
         """Only an API key goes in it, and a human-session route wants a
-        web-login JWT in Authorization."""
+        web-login JWT in Authorization: the key authenticates (not a 401)
+        and the gate still refuses it."""
         from app.api.deps import require_human_session
 
         created = await client.post("/api/api-keys", json={"name": "mine"}, headers=auth_headers)
@@ -1389,6 +1390,30 @@ class TestKeyHeader:
         human_key = created.json()["key"]
         routes = [(m, p) for m, p, _, d in _api_routes() if _depends_on(d, require_human_session) and "GET" in m]
         assert routes
-        path = re.sub(r"\{[^}]+\}", "x", routes[0][1])
-        response = await client.get(path, headers=_key_header(human_key))
-        assert response.status_code in (401, 403), (path, response.text)
+        for _, raw in routes:
+            path = re.sub(r"\{[^}]+\}", "x", raw)
+            response = await client.get(path, headers=_key_header(human_key))
+            assert response.status_code == 403, (path, response.text)
+            assert _code(response) == "human_session_required", (path, response.text)
+
+    async def test_connected_apps_take_a_persons_key_but_not_an_agents(self, client, auth_headers, registrar):
+        """The connected-apps routes (a person on their own credential):
+        a human's ck_ key in the header is accepted, a session's refused."""
+        created = await client.post("/api/api-keys", json={"name": "mine"}, headers=auth_headers)
+        human_key = created.json()["key"]
+        routes = [p for m, p, e, _ in _api_routes() if "GET" in m and p.endswith("/connections")]
+        assert routes, "no connected-apps list route"
+        ok = await client.get(routes[0], headers=_key_header(human_key))
+        assert ok.status_code == 200, ok.text
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        refused = await client.get(routes[0], headers=_key_header(session_key))
+        assert refused.status_code == 403, refused.text
+
+    async def test_another_authorization_scheme_is_not_replaced_by_it(self, client, registrar):
+        """Read only when there is no Authorization at all: a Basic (or
+        empty Bearer) Authorization is answered as before."""
+        _, key = registrar
+        for auth in ("Basic dXNlcjpwdw==", "Bearer "):
+            response = await client.get("/api/auth/me", headers={"Authorization": auth, **_key_header(key)})
+            assert response.status_code == 401, (auth, response.text)

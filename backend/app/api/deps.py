@@ -30,7 +30,10 @@ def _not_a_key(header: str) -> HTTPException:
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail={
             "error_code": "registrar_header_not_a_key" if header == REGISTRAR_KEY_HEADER else "key_header_not_a_key",
-            "message": f"{header} takes an API key (ck_...).",
+            "message": (
+                f"{header} takes a registrar's API key (ck_...)." if header == REGISTRAR_KEY_HEADER
+                else f"{header} takes an API key (ck_...)."
+            ),
         },
         headers={"WWW-Authenticate": "Bearer"},
     )
@@ -78,6 +81,11 @@ def presented(request: Request, credentials: HTTPAuthorizationCredentials | None
             return registrar_key, REGISTRAR_KEY_HEADER
     if credentials:
         return credentials.credentials, None
+    if "authorization" in request.headers:
+        # Some other Authorization (Basic, another scheme, an empty
+        # Bearer): left to the resolver as it always was. The key header
+        # is read only when there is no Authorization at all.
+        return None, None
     key = _single_header(request, KEY_HEADER)
     if key:
         return key, KEY_HEADER

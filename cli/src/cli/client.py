@@ -107,7 +107,7 @@ class Client:
         key = self._session_key(ref, credential, api_url) if ref else None
         # Header mode (no registrar key here): the session key goes in
         # X-Chaotic-Key, the header the proxy passes through (CHT-1913).
-        key_header = bool(ref) and not credential
+        key_header = bool(ref) and session_identity.registrar_key_via() == "header"
         with httpx.Client() as client:
             send = getattr(client, method.lower())
 

@@ -56,8 +56,11 @@ class FakeServer:
         """The key the server would see. With a proxy (header mode) the
         client's Authorization is dropped, as the real cloud proxy does on
         a host it injects a secret for (CHT-1913); X-Chaotic-Key passes."""
-        bearer = "" if self.proxy_registrar_key else request.headers.get("Authorization", "").removeprefix("Bearer ")
-        return bearer or request.headers.get(si.KEY_HEADER, "")
+        if self.proxy_registrar_key:
+            return request.headers.get(si.KEY_HEADER, "")
+        # Local mode: only Authorization counts, so a regression that sent
+        # the key header here would fail every local-mode test (review L4).
+        return request.headers.get("Authorization", "").removeprefix("Bearer ")
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         bearer = self.presented(request)
@@ -233,6 +236,11 @@ class TestAutoMode:
         assert stat.S_IMODE((home / "sessions").stat().st_mode) == 0o700
         slot = "\n".join((REF, API, si.fingerprint(REGISTRAR_KEY), ""))
         assert _cache().name == f"{__import__('hashlib').sha256(slot.encode()).hexdigest()[:16]}.json"
+
+    def test_local_mode_sends_authorization_not_the_key_header(self, auto, server, configured):
+        key = Client()._request("GET", "/issues")["key"]
+        last = server.sent_headers[-1]
+        assert last.get("authorization") == f"Bearer {key}" and "x-chaotic-key" not in last
 
     def test_later_requests_and_processes_reuse_the_cache(self, auto, server, configured):
         first = Client()._request("GET", "/issues")["key"]
