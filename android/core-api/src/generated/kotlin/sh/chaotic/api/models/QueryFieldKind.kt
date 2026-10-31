@@ -36,7 +36,7 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * How a field's values are read and resolved (``FieldSpec.kind``).
  *
- * Values: `enum`,user,project,sprint,label,number,issue,identifier,date,text,unknown_default_open_api
+ * Values: `enum`,user,project,sprint,label,relation,number,issue,identifier,date,text,unknown_default_open_api
  */
 @Serializable(with = QueryFieldKindSerializer::class)
 enum class QueryFieldKind(val value: kotlin.String) {
@@ -55,6 +55,9 @@ enum class QueryFieldKind(val value: kotlin.String) {
 
     @SerialName(value = "label")
     label("label"),
+
+    @SerialName(value = "relation")
+    relation("relation"),
 
     @SerialName(value = "number")
     number("number"),

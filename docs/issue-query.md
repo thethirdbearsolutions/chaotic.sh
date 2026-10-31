@@ -64,6 +64,7 @@ created=-7d..   due=..2026-11-01               date ranges
 | `label` | `=` (any) `!=` (none) all, empty | label names, case-insensitive |
 | `estimate` | `=` `!=` ranges, empty | whole numbers, 0 to 1000000 |
 | `parent` | `=` `!=` empty | an identifier (CHT-12) or id |
+| `blocks`, `blocked_by`, `related` | `=` (any) `!=` (none) empty | identifiers or ids |
 | `identifier` | `=` `!=` | identifiers |
 | `created`, `updated` | ranges | dates |
 | `completed`, `due` | ranges, empty | dates |
@@ -85,8 +86,19 @@ read as the `T` form, so the canonical text and the echoed structure
 spell it with `T`. `..9999-12-31` means "with no upper end"; a datetime whose
 offset puts it outside the years 1 to 9999 in UTC is a 400.
 
+**Relations**: `blocks=CHT-12` lists the issues that block CHT-12, and
+`blocked_by=CHT-12` the issues CHT-12 blocks. `related=CHT-12` lists the
+issues linked to it by `relates_to`, whichever side created the link; a
+`duplicates` link is none of the three. `blocks=` (empty) is the issues
+that block nothing, and `blocks!=` the issues that block something.
+Both ends of a relation must be issues the caller can name: a
+project's query can list its issues that block an issue in another
+project of the team, but an edge to an issue the caller cannot see (a
+project-scoped agent's sibling project, another team) counts as no edge,
+as in the issue's own relation list.
+
 A name that matches nothing is an error, not an empty result. This
-applies to a person, label, sprint, project or parent, and the message
+applies to a person, label, sprint, project, parent or related issue, and the message
 names it. Names resolve only within the team being queried. Note the
 difference from the plain filters: `chaotic issue list --label nosuch`
 (no `--where`) lists nothing, while `--where label=nosuch` is a 400
@@ -227,8 +239,9 @@ names or other data, only the vocabulary.
 
 - **`kind`** says how a field's values are read, and so which value
   editor fits it. The kinds are `enum`, `user`, `project`, `sprint`,
-  `label`, `number`, `issue` (an identifier or id), `identifier`, `date`
-  and `text`.
+  `label`, `relation` (an identifier or id, matched through the issue's
+  relations), `number`, `issue` (an identifier or id), `identifier`,
+  `date` and `text`.
 - **`ops`** lists the operators the field accepts. Any other operator is
   a 400.
 - **`enum_values`** lists every value an `enum` field accepts. It is
