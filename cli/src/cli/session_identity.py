@@ -66,6 +66,10 @@ from cli import config as _config
 
 SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
 MODE_ENV = "CHAOTIC_SESSION_IDENTITY"
+# The name a new session identity is registered under (CHT-1918). Only
+# the environment: a profile is shared by every session on the machine,
+# and each would take the same name.
+NAME_ENV = "CHAOTIC_SESSION_NAME"
 SETTING = "session_identity"
 REF_PREFIX = "claude-code:session:"
 MODES = ("auto", "off")
@@ -518,6 +522,36 @@ def default_name(registrar_name: str) -> str:
     return name[:NAME_MAX]
 
 
+def chosen_name() -> str | None:
+    """`CHAOTIC_SESSION_NAME`, stripped, or None when unset or blank
+    (CHT-1918). It goes as `default_name`, so it names a new identity
+    only: an identity that exists keeps its name, and a later rename
+    (`chaotic auth rename`) survives every re-registration."""
+    raw = (os.environ.get(NAME_ENV) or "").strip()
+    if not raw:
+        return None
+    if len(raw) > NAME_MAX:
+        raise SessionIdentityError(f"{NAME_ENV} is longer than {NAME_MAX} characters. {NO_FALLBACK}")
+    return raw
+
+
+@contextmanager
+def _blaming_chosen_name(chosen: str | None):
+    """A registration the server refuses for its name, when that name
+    came from CHAOTIC_SESSION_NAME, says so: otherwise every command
+    fails with a name the person may not know where it came from."""
+    try:
+        yield
+    except SessionIdentityError as exc:
+        code = exc.detail.get("error_code") if isinstance(exc.detail, dict) else None
+        if not chosen or not (code or "").startswith("name_"):
+            raise
+        raise SessionIdentityError(
+            f"{exc} (The name {chosen!r} comes from {NAME_ENV}: choose another, or unset it.)",
+            status_code=exc.status_code, detail=exc.detail,
+        ) from exc
+
+
 def _whoami(credential: str, api_url: str) -> dict:
     return _registrar_call("GET", f"{api_url}/auth/me", credential)
 
@@ -570,8 +604,10 @@ def _register(ref: str, credential: str, api_url: str, team_id: str | None, me: 
                 f"session_identity is auto but no team is selected (`chaotic team use`). {NO_FALLBACK}"
             )
         body["team_id"] = team_id
-    body["default_name"] = default_name(me.get("name") or "Claude Code")
-    reg = _registrar_call("POST", f"{api_url}/agents/register", credential, body)
+    chosen = chosen_name()
+    body["default_name"] = chosen or default_name(me.get("name") or "Claude Code")
+    with _blaming_chosen_name(chosen):
+        reg = _registrar_call("POST", f"{api_url}/agents/register", credential, body)
     agent = reg.get("agent") or {}
     if not reg.get("api_key"):
         raise SessionIdentityError(f"Session identity registration returned no key. {NO_FALLBACK}")
@@ -592,10 +628,16 @@ def _register(ref: str, credential: str, api_url: str, team_id: str | None, me: 
 
 def _register_via_header(ref: str, api_url: str) -> dict:
     """Register `ref` with the registrar key the proxy injects (CHT-1906).
-    No default_name: without /auth/me this process does not know the
-    registrar's name, and the server's own default names it."""
+    No generated default_name: without /auth/me this process does not
+    know the registrar's name, and the server's own default names it.
+    `CHAOTIC_SESSION_NAME` still goes as default_name (CHT-1918)."""
+    body: dict = {"external_ref": ref}
+    name = chosen_name()
+    if name:
+        body["default_name"] = name
     try:
-        reg = _registrar_call("POST", f"{api_url}/agents/register", None, {"external_ref": ref})
+        with _blaming_chosen_name(name):
+            reg = _registrar_call("POST", f"{api_url}/agents/register", None, body)
     except SessionIdentityError as exc:
         if exc.status_code == 422 and "team_id" in str(exc):
             # A person's key as the network secret: a person registers in

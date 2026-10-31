@@ -387,7 +387,29 @@ A new identity is named `<registrar> · <git branch or directory> ·
 teammate sees, carries nothing of the session id. The CLI sends that
 as `default_name`, which never renames an existing identity, so the
 name is drawn once and a rename by hand survives every later
-registration. `chaotic auth whoami` shows the session identity, its
+registration.
+
+**A session can choose its own name** (CHT-1918). Set
+`CHAOTIC_SESSION_NAME=Piper` in the session's own environment before
+its first `chaotic` call, and a new identity is registered as `Piper`
+(it goes as `default_name`, so it names a new identity only; an
+existing one keeps its name). It is read from the environment only,
+never the profile, and should be set per session: a profile, or an
+environment variable every session shares, would give each session
+the same name. A name the server refuses (a person's name, say) fails
+registration with an error that names `CHAOTIC_SESSION_NAME`.
+
+Afterwards, `chaotic auth rename <name>` renames the session identity
+you are signed in as. A registered session identity may change its own
+name (`PATCH /agents/{own id}` with only `name`) and nothing else about
+itself, and cannot rename any other agent. On that path the name is
+stripped, may not be blank (422 `name_blank`), and may not be a
+person's (422 `name_matches_member`) or another active agent's name or
+@handle in the team (409 `name_matches_agent`), so a session cannot
+take over `@claude-mcp`. A team admin's or creator's rename is not
+held to the agent-name rule.
+
+`chaotic auth whoami` shows the session identity, its
 `external_ref` and the registrar that registered it; run
 `CHAOTIC_SESSION_IDENTITY=off chaotic auth whoami` to see the registrar
 itself. Subagents of a session share its identity.
@@ -507,10 +529,11 @@ identity.
   `not_a_registrar`, a session identity's is 403
   `registered_identity_cannot_register`, and the caps are the same.
 - The CLI does not ask `/auth/me` as the registrar in this mode (the
-  header authenticates nothing but register), so it sends no
+  header authenticates nothing but register), so it generates no
   `default_name` and the server names a new identity `<registrar> ·
-  <8 random hex>`. Only an agent registrar works this way: a person's
-  key would need a `team_id`.
+  <8 random hex>`. `CHAOTIC_SESSION_NAME`, when set, is still sent
+  as `default_name`. Only an agent registrar works this way: a
+  person's key would need a `team_id`.
 - Only the session's requests use `X-Chaotic-Key`. `chaotic agent
   register` (the registrar's own call) and `CHAOTIC_SESSION_IDENTITY=off`
   with a key in the profile still send `Authorization`, which this proxy
