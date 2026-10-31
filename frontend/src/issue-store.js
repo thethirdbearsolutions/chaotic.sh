@@ -104,9 +104,21 @@ export function readQueryMeta(key) {
  * CHT-1893) of the same version keeps the description a search row
  * brought, so a cached search still shows its snippets.
  */
+/**
+ * Whether timestamp `a` is later than `b`. Compared as dates: the server
+ * leaves out a zero fraction ("…:00Z" vs "…:00.5Z"), which a string
+ * comparison gets wrong (CHT-1921 review M2). Missing stamps are never newer.
+ */
+export function isNewer(a, b) {
+    if (!a || !b) return false;
+    const ta = Date.parse(a);
+    const tb = Date.parse(b);
+    return Number.isNaN(ta) || Number.isNaN(tb) ? a > b : ta > tb;
+}
+
 function putEntity(issue) {
     const prev = entities.get(issue.id);
-    if (prev?.updated_at && issue.updated_at && issue.updated_at < prev.updated_at) return;
+    if (isNewer(prev?.updated_at, issue.updated_at)) return;
     if (issue.description == null && prev?.description != null && prev.updated_at === issue.updated_at) {
         entities.set(issue.id, { ...issue, description: prev.description });
         return;
@@ -242,7 +254,8 @@ function covers(source, target) {
     return true;
 }
 
-function matcher(target) {
+/** A test for whether an issue belongs in the list `target` asks for. */
+export function matcher(target) {
     const wanted = target.label === undefined ? null : lower(target.label);
     const unwanted = target.exclude_label === undefined ? null : lower(target.exclude_label);
     return (issue) => {

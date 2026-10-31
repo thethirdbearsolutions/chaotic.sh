@@ -101,6 +101,7 @@ import {
     isInlineDropdownOpen,
     showDetailDropdown,
     updateIssueField,
+    withEditsInFlight,
     updateDetailViewField,
     toggleIssueLabel,
     createLabelFromDropdown,
@@ -440,6 +441,18 @@ describe('inline-dropdown', () => {
     });
 
     describe('updateIssueField', () => {
+        it('reports a field edit while it is in flight, and not after (CHT-1921)', async () => {
+            let resolve;
+            api.updateIssue.mockReturnValue(new Promise(r => { resolve = r; }));
+            const row = { id: 'issue-1', status: 'todo', priority: 'low' };
+            const pending = updateIssueField('issue-1', 'status', 'done');
+            expect(withEditsInFlight(row)).toEqual({ ...row, status: 'done' });
+            expect(withEditsInFlight({ id: 'other' })).toEqual({ id: 'other' });
+            resolve({ id: 'issue-1', status: 'done' });
+            await pending;
+            expect(withEditsInFlight(row)).toBe(row);
+        });
+
         it('calls API to update issue', async () => {
             api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
             getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
@@ -852,6 +865,28 @@ describe('inline-dropdown', () => {
             await toggleIssueLabel('issue-1', 'label-1', null);
 
             expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { label_ids: [] });
+        });
+
+        // CHT-1921 review I2
+        it('writes into the list as it is after the request, as a newer row', async () => {
+            let live = [{ id: 'issue-1', labels: [], updated_at: '2026-01-01T00:00:00Z' }];
+            getIssues.mockImplementation(() => live);
+            setIssues.mockImplementation((v) => { live = v; });
+            let resolve;
+            api.updateIssue.mockReturnValue(new Promise(r => { resolve = r; }));
+            try {
+                const original = live[0];
+                toggleIssueLabel('issue-1', 'label-1', null);
+                await vi.waitFor(() => expect(api.updateIssue).toHaveBeenCalled());
+                live = [...live, { id: 'issue-2', labels: [] }]; // a list response landed
+                resolve({ id: 'issue-1', labels: [{ id: 'label-1' }], updated_at: '2026-01-01T00:00:05Z' });
+                await vi.waitFor(() => expect(live[0].labels).toEqual([{ id: 'label-1' }]));
+                expect(live.map(i => i.id)).toEqual(['issue-1', 'issue-2']);
+                expect(live[0].updated_at).toBe('2026-01-01T00:00:05Z');
+                expect(original.labels).toEqual([]); // not changed in place
+            } finally {
+                setIssues.mockImplementation(() => {});
+            }
         });
     });
 
