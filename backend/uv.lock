@@ -240,7 +240,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "chaotic-cli"
-version = "0.1.0a22"
+version = "0.1.0"
 source = { editable = "../cli" }
 dependencies = [
     { name = "anyio" },

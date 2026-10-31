@@ -5,7 +5,11 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
-## [0.1.0a22] - 2026-10-31
+## [0.1.0] - 2026-10-31
+
+The first release without an alpha tag. From here on, versions follow
+semantic versioning, loosely. It is the release that was prepared as
+0.1.0a22, which never reached PyPI.
 
 Server, CLI, web UI and Android changes merged since a21 (PRs #260,
 #322-#329 and #331-#464). This release carries 21 database migrations
@@ -14,8 +18,8 @@ Server, CLI, web UI and Android changes merged since a21 (PRs #260,
 several delete or rewrite rows, each reporting what it does in the
 upgrade output. It also changes which agent API keys still sign in.
 **Run the preflight checks below before upgrading.** Install the new
-CLI first (`uv tool install --force chaotic-cli==0.1.0a22`), then run
-`chaotic system upgrade --version v0.1.0a22`, which stops the server,
+CLI first (`uv tool install --force chaotic-cli==0.1.0`), then run
+`chaotic system upgrade --version v0.1.0`, which stops the server,
 backs up the database, checks out the new code and migrates before
 restarting. chaotic.thirdbearsolutions.com has run this code since
 2026-10-31 (5701ed09).
@@ -26,7 +30,7 @@ restarting. chaotic.thirdbearsolutions.com has run this code since
   a foreign key to `users.parent_user_id` (the human who owns an agent).
   If any row names a parent that no longer exists, 0020 stops before
   writing anything and lists the ids. By then `chaotic system upgrade` has
-  already checked out the a22 code, and it restarts the server on it. The
+  already checked out the 0.1.0 code, and it restarts the server on it. The
   server refuses to serve a database whose migrations are behind its code,
   so **the server stays down** until you fix the rows and run `chaotic
   system upgrade --yes` again. The database itself is untouched (still at
@@ -42,11 +46,11 @@ restarting. chaotic.thirdbearsolutions.com has run this code since
   for example `sqlite3 "file:/path/to/chaotic.db?mode=ro" "<query>"`. Fix
   every row it returns: point each agent at an existing human, or set
   `parent_user_id = NULL` on a row that is not an agent. Then upgrade.
-- **Preflight 2: agent keys that stop signing in at upgrade.** From a22,
+- **Preflight 2: agent keys that stop signing in at upgrade.** From 0.1.0,
   an agent key signs in only while its holder is a member of the agent's
   team (see the next two notes for who the holder is). This is checked at
   every sign-in, not only when someone is removed, so **the moment the
-  server comes up on a22, every key whose recorded holder already left
+  server comes up on 0.1.0, every key whose recorded holder already left
   the agent's team returns 401**. That includes keys a team admin minted
   for an agent whose creator has since left, because pre-release keys are
   recorded as the creator's. To list them before upgrading (read-only, as
@@ -122,7 +126,7 @@ restarting. chaotic.thirdbearsolutions.com has run this code since
   the new code (unless `--no-backup`); `chaotic system backup --list`
   shows the backups. The server serves only a database whose applied
   migrations match its code exactly, ahead or behind. So `chaotic system
-  backup --restore <timestamp>` on its own puts a21's database under a22
+  backup --restore <timestamp>` on its own puts a21's database under 0.1.0
   code, and the server will not start. Going back means the a21 code
   *and* the pre-upgrade backup together; there is no single command for
   that yet (CHT-1546). Do not downgrade 0020 with `oxyde migrate`
@@ -157,7 +161,7 @@ restarting. chaotic.thirdbearsolutions.com has run this code since
   at every startup until resolved (`chaotic system audit`, CHT-1827).
 - **Migration 0036 gives every agent a team and revokes those agents'
   keys** (CHT-1837). Project-scoped agents made without a team get their
-  project's team. Their keys have been refused since a22's holder rule,
+  project's team. Their keys have been refused since this release's holder rule,
   so instead of bringing them back silently, 0036 revokes them: the
   owner or a team admin mints new ones. Agents it cannot place are left
   as they are and listed. To count before upgrading:
