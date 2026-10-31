@@ -9,12 +9,13 @@ from app.api.deps import (
 )
 from app.api.visibility import team_hidden, visible_agent, visible_project, visible_team
 from app.enums import AgentKind
+from app.oxyde_models.user import OxydeUser
 from app.schemas.agent import (
     AgentCreate, AgentRegister, AgentRegistered, AgentUpdate, AgentResponse, AgentCreated,
 )
 from app.enums import TeamRole
 from app.services.registration_service import (
-    RegistrationRefused, RegistrationService, member_named, name_matches_member_detail,
+    RegistrationRefused, RegistrationService, member_named, name_matches_member_detail, normalize_name,
 )
 from app.schemas.api_key import AgentKeyResponse, APIKeyCreated
 from app.services.agent_service import (
@@ -259,6 +260,43 @@ async def get_agent(
     )
 
 
+def _is_self_rename(current_user: OxydeUser, agent: OxydeUser, agent_in: AgentUpdate) -> bool:
+    """Is this a registered session identity changing only its own name
+    (CHT-1918)? A field sent as null counts as sent: a self-rename sends
+    `name` and nothing else."""
+    return (
+        current_user.id == agent.id
+        and (agent.kind == AgentKind.SESSION or agent.registered_by_id is not None)
+        and agent_in.name is not None
+        and agent_in.model_fields_set == {"name"}
+    )
+
+
+async def _refuse_agent_name(agent: OxydeUser, name: str) -> None:
+    """A self-rename may not take another active agent's name or strong
+    @handle in the team (CHT-1918): an ambiguous handle reaches nobody, so
+    `@claude-mcp` would stop reaching Claude MCP, and the session could
+    pass for it. A manager's rename is not held to this, as before."""
+    from app.services.mention_handles import agent_name_handles
+
+    wanted, claims = normalize_name(name), agent_name_handles(name)
+    others = await OxydeUser.objects.filter(
+        agent_team_id=agent.agent_team_id, is_agent=True, is_active=True,
+    ).all()
+    if any(
+        other.id != agent.id
+        and (normalize_name(other.name) == wanted or not claims.isdisjoint(agent_name_handles(other.name)))
+        for other in others
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "name_matches_agent",
+                "message": f"{name!r} is the name or @handle of another agent in this team; choose another.",
+            },
+        )
+
+
 @router.patch("/agents/{agent_id}", response_model=AgentResponse)
 @writes
 async def update_agent(
@@ -271,14 +309,20 @@ async def update_agent(
     (`can_register`, CHT-1498). Allowed to its creator while in the
     agent's team and to that team's admins. A built-in app's session may
     rename, but not change `can_register` (CHT-1602): a registrar mints
-    keys, a capability that would outlive the session."""
+    keys, a capability that would outlive the session.
+
+    A registered session identity may also rename itself, and change
+    nothing else (CHT-1918): a cloud session has no person at hand to
+    name it, and the name is all it may choose. It still may not rename
+    any other agent."""
     if agent_in.can_register is not None:
         check_not_app_session(principal)
     agent_service = AgentService()
     # Visible (else 404, as if missing), then manageable (403) (CHT-1785).
     agent = await visible_agent(current_user, agent_id)
 
-    if not await can_manage_agent(current_user, agent):
+    self_rename = _is_self_rename(current_user, agent, agent_in)
+    if not (self_rename or await can_manage_agent(current_user, agent)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this agent",
@@ -295,8 +339,17 @@ async def update_agent(
             },
         )
 
+    if self_rename:
+        agent_in.name = agent_in.name.strip()
+        if not normalize_name(agent_in.name):
+            raise HTTPException(
+                status_code=422,
+                detail={"error_code": "name_blank", "message": "A name must not be blank."},
+            )
     if agent_in.name is not None and agent_in.name != agent.name:
         await _refuse_member_name(agent.agent_team_id, agent_in.name)
+        if self_rename:
+            await _refuse_agent_name(agent, agent_in.name)
 
     agent = await agent_service.update(agent, agent_in)
 
