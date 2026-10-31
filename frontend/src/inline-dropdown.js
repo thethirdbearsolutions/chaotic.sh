@@ -683,8 +683,19 @@ export async function createLabelForCreateIssue() {
 export async function updateIssueField(issueId, field, value) {
     closeAllDropdowns();
 
-    const row = document.querySelector(`.issue-row[data-issue-id="${issueId}"]`);
-    if (row) row.classList.add('updating');
+    // Optimistic (CHT-1895): show the new value at once, send the request,
+    // and put the old row back if it fails. The server's row replaces the
+    // guess when it answers, since one change can move others with it
+    // (completed_at, a sprint's points).
+    const previous = {
+        issue: getIssues().find(i => i.id === issueId) || null,
+        myIssue: getMyIssues().find(i => i.id === issueId) || null,
+        detail: getCurrentDetailIssue()?.id === issueId ? getCurrentDetailIssue() : null,
+    };
+    const base = previous.issue || previous.myIssue || previous.detail;
+    if (base) {
+        applyIssueLocally(issueId, field, { ...base, [field]: value }, { focus: true });
+    }
 
     try {
         const updateData = {};
@@ -699,71 +710,84 @@ export async function updateIssueField(issueId, field, value) {
 
         // Update local state with full issue object (not just the changed field)
         // This ensures related fields like completed_at are also updated
-        const issues = getIssues();
-        const issueIndex = issues.findIndex(i => i.id === issueId);
-        if (issueIndex !== -1) {
-            issues[issueIndex] = updatedIssue;
-            setIssues([...issues]);
-        }
-        const myIssues = getMyIssues();
-        const myIssueIndex = myIssues.findIndex(i => i.id === issueId);
-        if (myIssueIndex !== -1) {
-            myIssues[myIssueIndex] = updatedIssue;
-            setMyIssues([...myIssues]);
-        }
-        // Update detail view state if this issue is currently being viewed
-        const currentDetailIssue = getCurrentDetailIssue();
-        if (currentDetailIssue?.id === issueId) {
-            setCurrentDetailIssue(updatedIssue);
-        }
-
-        // Re-render the specific row
-        if (row && row.parentNode) {
-            const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || updatedIssue;
-            if (issue) {
-                row.outerHTML = renderIssueRow(issue);
-                const newRow = document.querySelector(`.issue-row[data-issue-id="${issueId}"]`);
-                if (newRow) {
-                    newRow.classList.add('updated');
-                    setTimeout(() => newRow.classList.remove('updated'), 500);
-                    // Return focus to the field's trigger button on the fresh row
-                    // (CHT-1293): closeAllDropdowns + this re-render dropped the
-                    // focused option, stranding a keyboard user on <body>. Focus
-                    // the re-rendered trigger (mirrors standard menu-close focus
-                    // return) so j/k and re-opening keep working.
-                    const dropdownType = DROPDOWN_TYPE_FOR_FIELD[field];
-                    const trigger = dropdownType && newRow.querySelector(`[data-dropdown-type="${dropdownType}"]`);
-                    if (trigger) trigger.focus();
-                }
-            }
-        }
-
-        showToast('Issue updated', 'success');
-
-        // Refresh sprint budget bar if status changed (may affect points_spent)
-        if (field === 'status') {
-            const projectId = getCurrentProject();
-            if (projectId) {
-                try {
-                    const sprints = await api.getSprints(projectId);
-                    const activeSprint = sprints.find(s => s.status === 'active');
-                    updateSprintBudgetBar(activeSprint || null);
-                } catch { /* non-critical */ }
-            }
-        }
-
-        // Refresh detail view if open and a sidebar-displayed field changed
-        if (field === 'sprint_id' || field === 'status' || field === 'priority' || field === 'assignee_id' || field === 'estimate' || field === 'issue_type') {
-            const detailView = document.getElementById('issue-detail-view');
-            if (detailView && !detailView.classList.contains('hidden')) {
-                // Update the detail view dynamically instead of reloading
-                updateDetailViewField(field, updatedIssue);
-            }
-        }
+        applyIssueLocally(issueId, field, updatedIssue, { focus: !base });
     } catch (error) {
         showApiError('update issue', error);
-        if (row) row.classList.remove('updating');
+        // Roll back: every copy goes back to what it was before the edit.
+        if (base) {
+            replaceIssueEverywhere(issueId, previous);
+            rerenderIssueRow(issueId, field, previous.issue || previous.myIssue || previous.detail, { focus: false });
+            if (previous.detail && DETAIL_SIDEBAR_FIELDS.has(field)) updateDetailViewField(field, previous.detail);
+        }
+        return;
     }
+
+    // The update has landed: nothing below may roll it back.
+    showToast('Issue updated', 'success');
+
+    // Refresh sprint budget bar if status changed (may affect points_spent)
+    if (field === 'status') {
+        try {
+            const projectId = getCurrentProject();
+            if (projectId) {
+                const sprints = await api.getSprints(projectId);
+                const activeSprint = sprints.find(s => s.status === 'active');
+                updateSprintBudgetBar(activeSprint || null);
+            }
+        } catch { /* non-critical */ }
+    }
+}
+
+// Fields the detail sidebar shows, so an edit to them updates it in place.
+const DETAIL_SIDEBAR_FIELDS = new Set(['sprint_id', 'status', 'priority', 'assignee_id', 'estimate', 'issue_type']);
+
+/**
+ * Put one version of an issue into the issues state, my-issues state and
+ * the open detail, wherever each already holds it.
+ * @param {string} issueId
+ * @param {{issue?: Object|null, myIssue?: Object|null, detail?: Object|null}} versions
+ */
+function replaceIssueEverywhere(issueId, versions) {
+    const issues = getIssues();
+    if (versions.issue && issues.some(i => i.id === issueId)) {
+        setIssues(issues.map(i => (i.id === issueId ? versions.issue : i)));
+    }
+    const myIssues = getMyIssues();
+    if (versions.myIssue && myIssues.some(i => i.id === issueId)) {
+        setMyIssues(myIssues.map(i => (i.id === issueId ? versions.myIssue : i)));
+    }
+    if (versions.detail && getCurrentDetailIssue()?.id === issueId) {
+        setCurrentDetailIssue(versions.detail);
+    }
+}
+
+function rerenderIssueRow(issueId, field, issue, { focus }) {
+    const row = document.querySelector(`.issue-row[data-issue-id="${issueId}"]`);
+    if (!row || !row.parentNode || !issue) return;
+    // The server's answer re-renders a row the optimistic paint already
+    // focused: keep the focus where it was.
+    const hadFocus = row.contains(document.activeElement);
+    const wasSelected = row.classList.contains('keyboard-selected');
+    row.outerHTML = renderIssueRow(issue);
+    if (wasSelected) {
+        document.querySelector(`.issue-row[data-issue-id="${issueId}"]`)?.classList.add('keyboard-selected');
+    }
+    if (!focus && !hadFocus) return;
+    // Return focus to the field's trigger button on the fresh row
+    // (CHT-1293): closeAllDropdowns + this re-render dropped the focused
+    // option, stranding a keyboard user on <body>. Focus the re-rendered
+    // trigger (mirrors standard menu-close focus return) so j/k and
+    // re-opening keep working.
+    const newRow = document.querySelector(`.issue-row[data-issue-id="${issueId}"]`);
+    const dropdownType = DROPDOWN_TYPE_FOR_FIELD[field];
+    const trigger = dropdownType && newRow?.querySelector(`[data-dropdown-type="${dropdownType}"]`);
+    if (trigger) trigger.focus();
+}
+
+function applyIssueLocally(issueId, field, issue, { focus }) {
+    replaceIssueEverywhere(issueId, { issue, myIssue: issue, detail: issue });
+    rerenderIssueRow(issueId, field, issue, { focus });
+    if (DETAIL_SIDEBAR_FIELDS.has(field)) updateDetailViewField(field, issue);
 }
 
 /**

@@ -440,13 +440,47 @@ describe('inline-dropdown', () => {
             expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { status: 'done' });
         });
 
+        // CHT-1895: optimistic edits with rollback
+        it('shows the new value before the server answers', async () => {
+            let resolve;
+            api.updateIssue.mockReturnValue(new Promise(r => { resolve = r; }));
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo', title: 'T' }]);
+            setIssues.mockClear();
+            const pending = updateIssueField('issue-1', 'status', 'done');
+            expect(setIssues).toHaveBeenCalledWith([{ id: 'issue-1', status: 'done', title: 'T' }]);
+            resolve({ id: 'issue-1', status: 'done', title: 'T', completed_at: 'now' });
+            await pending;
+            expect(setIssues).toHaveBeenLastCalledWith([{ id: 'issue-1', status: 'done', title: 'T', completed_at: 'now' }]);
+        });
+
+        it('puts the old value back when the update fails', async () => {
+            const before = { id: 'issue-1', status: 'todo', title: 'T' };
+            api.updateIssue.mockRejectedValue(new Error('nope'));
+            getIssues.mockReturnValue([before]);
+            setIssues.mockClear();
+            await updateIssueField('issue-1', 'status', 'done');
+            expect(setIssues.mock.calls[0][0][0].status).toBe('done');
+            expect(setIssues).toHaveBeenLastCalledWith([before]);
+            expect(showApiError).toHaveBeenCalledWith('update issue', expect.any(Error));
+        });
+
+        it('keeps the keyboard cursor on the re-rendered row', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            const rowHtml = '<div class="issue-row" data-issue-id="issue-1"></div>';
+            renderIssueRow.mockReturnValueOnce(rowHtml).mockReturnValueOnce(rowHtml);
+            document.body.innerHTML = '<div id="issues-list"><div class="issue-row keyboard-selected" data-issue-id="issue-1"></div></div>';
+            await updateIssueField('issue-1', 'status', 'done');
+            expect(document.querySelector('.issue-row').classList.contains('keyboard-selected')).toBe(true);
+        });
+
         it('returns focus to the field trigger button on the re-rendered row (CHT-1293)', async () => {
             api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
             getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
-            renderIssueRow.mockReturnValueOnce(
+            const rowHtml =
                 '<div class="issue-row" data-issue-id="issue-1">' +
-                '<button class="status-btn" data-dropdown-type="status">S</button></div>'
-            );
+                '<button class="status-btn" data-dropdown-type="status">S</button></div>';
+            renderIssueRow.mockReturnValueOnce(rowHtml).mockReturnValueOnce(rowHtml);
             document.body.innerHTML =
                 '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1">' +
                 '<button data-dropdown-type="status">S</button></div></div>';
@@ -461,10 +495,10 @@ describe('inline-dropdown', () => {
         it('maps the non-identity field name to the trigger type (assignee_id -> assignee) (CHT-1293)', async () => {
             api.updateIssue.mockResolvedValue({ id: 'issue-1', assignee_id: 'u-2' });
             getIssues.mockReturnValue([{ id: 'issue-1' }]);
-            renderIssueRow.mockReturnValueOnce(
+            const rowHtml =
                 '<div class="issue-row" data-issue-id="issue-1">' +
-                '<button class="assignee-btn" data-dropdown-type="assignee">A</button></div>'
-            );
+                '<button class="assignee-btn" data-dropdown-type="assignee">A</button></div>';
+            renderIssueRow.mockReturnValueOnce(rowHtml).mockReturnValueOnce(rowHtml);
             document.body.innerHTML =
                 '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1">' +
                 '<button data-dropdown-type="assignee">A</button></div></div>';
