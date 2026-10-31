@@ -105,13 +105,15 @@ export function setActiveNav(view) {
  * Navigate to a view by name.
  * Updates URL, highlights nav item, hides/shows view containers, calls load handler.
  *
- * `options.transition: false` swaps the view synchronously instead of
- * through a View Transition, whose callback runs after this call returns.
- * A caller that focuses something in the new view right away needs it
- * shown first (CHT-1873: `/` lost the keys typed before the search box
- * could take focus).
+ * The view swaps synchronously. `options.transition: true` swaps it
+ * through a View Transition (a 120 ms crossfade) instead, whose callback
+ * runs after this call returns. It is off by default: the crossfade and
+ * its snapshot held every view switch, Back included, past VISION.md's
+ * 100 ms bar (CHT-1898, about 80 ms of a 100 ms Back), and a caller that
+ * focuses something in the new view right away needs it shown first
+ * (CHT-1873).
  */
-export function navigateTo(view, pushHistory = true, { transition = true } = {}) {
+export function navigateTo(view, pushHistory = true, { transition = false } = {}) {
     // Save scroll position of the current page before navigating away
     if (pushHistory) {
         saveScrollPosition();

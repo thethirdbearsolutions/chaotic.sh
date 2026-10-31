@@ -109,13 +109,23 @@ export function hasPendingRows() {
     return pendingRows.length > 0;
 }
 
+// The first chunk waits for a frame, so the rows painted with the list
+// reach the screen before any more are parsed (a zero timeout would run
+// first and delay that frame).
+const afterNextFrame = (cb) => (typeof requestAnimationFrame === 'function'
+    ? requestAnimationFrame(() => { chunkTimer = setTimeout(cb, 0); })
+    : (chunkTimer = setTimeout(cb, 16)));
+let paintGeneration = 0;
+
 function schedulePendingRows() {
     clearTimeout(chunkTimer);
     if (pendingRows.length === 0) return;
-    chunkTimer = setTimeout(function step() {
+    const generation = ++paintGeneration;
+    afterNextFrame(function step() {
+        if (generation !== paintGeneration) return; // a newer paint took over
         appendPendingRows(CHUNK_ROWS);
         if (pendingRows.length > 0) chunkTimer = setTimeout(step, 0);
-    }, 0);
+    });
 }
 
 /**
@@ -136,6 +146,7 @@ export function renderIssues() {
 
     // A new paint replaces whatever the last one still had queued.
     clearTimeout(chunkTimer);
+    paintGeneration++;
     chunkTimer = null;
     pendingRows = [];
     pendingSelectionId = null;

@@ -2945,7 +2945,7 @@ input[type="checkbox"] {
 
     #issues-view .view-header {
         align-items: center;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
     }
 
     #issues-view .view-header h2 {
@@ -2963,7 +2963,7 @@ input[type="checkbox"] {
 
     #issues-view .filter-chips-row {
         padding: 0;
-        margin-bottom: 6px;
+        margin-bottom: 4px;
     }
 
     #issues-view .filter-chips-row:empty {
@@ -2975,13 +2975,13 @@ input[type="checkbox"] {
     }
 
     #issues-view .sprint-budget-bar {
-        padding: 4px 12px;
-        margin-bottom: 6px;
+        padding: 2px 12px;
+        margin-bottom: 4px;
     }
 
     #issues-view .quick-create {
-        padding: 4px 12px;
-        margin-bottom: 8px;
+        padding: 2px 12px;
+        margin-bottom: 6px;
     }
 
     #issues-view .quick-create-input {
@@ -2990,7 +2990,7 @@ input[type="checkbox"] {
     }
 
     #issues-list .issue-list-summary {
-        padding: 4px 12px;
+        padding: 3px 12px;
         margin-bottom: 0;
     }
 

@@ -132,9 +132,16 @@ describe('router', () => {
         describe('view transitions (CHT-1873)', () => {
             afterEach(() => { delete document.startViewTransition; });
 
-            it('defers the swap to a View Transition by default', () => {
+            it('swaps synchronously by default (CHT-1898)', () => {
                 document.startViewTransition = vi.fn();
                 navigateTo('issues');
+                expect(document.startViewTransition).not.toHaveBeenCalled();
+                expect(document.getElementById('issues-view').classList.contains('hidden')).toBe(false);
+            });
+
+            it('defers the swap to a View Transition with transition: true', () => {
+                document.startViewTransition = vi.fn();
+                navigateTo('issues', true, { transition: true });
                 expect(document.startViewTransition).toHaveBeenCalled();
                 // The callback has not run: the view is still hidden.
                 expect(document.getElementById('issues-view').classList.contains('hidden')).toBe(true);

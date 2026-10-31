@@ -4,6 +4,19 @@ import globals from 'globals';
 export default [
   js.configs.recommended,
   {
+    // The speed budget scripts (CHT-1898): Node, with page.evaluate
+    // callbacks that run in the browser.
+    files: ['speed/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        ...globals.node,
+        ...globals.browser,
+      },
+    },
+  },
+  {
     files: ['src/**/*.js'],
     languageOptions: {
       ecmaVersion: 2022,
