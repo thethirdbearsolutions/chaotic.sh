@@ -715,6 +715,28 @@ document.addEventListener('keydown', createSimpleListNavigationHandler({
     isDetailViewActive: isAnyDetailViewActive,
 }));
 
+/**
+ * `/` and the palette's Search Issues: show the Issues view and focus its
+ * search box in the same tick, so the keys typed right after land in it
+ * (CHT-1873). The view swaps without a View Transition, whose deferred
+ * callback would leave the box hidden, and so unfocusable, here.
+ */
+function focusIssueSearch() {
+    navigateTo('issues', true, { transition: false });
+    document.getElementById('issue-search')?.focus();
+}
+
+/** True while a menu Escape should close first is open (CHT-1873). */
+function isAnyMenuOpen() {
+    const shown = (id) => {
+        const el = document.getElementById(id);
+        return !!el && !el.classList.contains('hidden');
+    };
+    return shown('team-dropdown') || shown('user-dropdown')
+        || shown('filter-menu-dropdown') || shown('display-menu-dropdown')
+        || !!document.querySelector('#issue-detail-view .overflow-menu-dropdown:not(.hidden)');
+}
+
 // Keyboard shortcuts (logic in keyboard.js)
 document.addEventListener('keydown', createKeyboardHandler({
     closeModal,
@@ -723,10 +745,7 @@ document.addEventListener('keydown', createKeyboardHandler({
     showCreateIssueModal,
     showKeyboardShortcutsHelp,
     isModalOpen,
-    focusSearch: () => {
-        navigateTo('issues');
-        setTimeout(() => document.getElementById('issue-search')?.focus(), 100);
-    },
+    focusSearch: focusIssueSearch,
     // CHT-1231: an open field picker is the topmost layer for Escape, and
     // a field in a clean modal closes it instead of just blurring.
     isInlineDropdownOpen,
@@ -741,6 +760,10 @@ document.addEventListener('keydown', createKeyboardHandler({
     // CHT-1215: lets bare 'p'/'c' defer to the issue detail view's own
     // Priority/focus-comment-box actions instead of Projects/Create Issue.
     isDetailViewActive: () => !document.getElementById('issue-detail-view')?.classList.contains('hidden'),
+    // CHT-1873: Escape on issue detail goes back, as the Back button does,
+    // once no menu is left for it to close.
+    isMenuOpen: isAnyMenuOpen,
+    leaveDetailView: () => document.querySelector('#issue-detail-view .back-link')?.click(),
 }));
 
 // ============================================
@@ -770,7 +793,7 @@ setCommandPaletteCommands([
     { id: 'create-team', title: 'Create Team', subtitle: 'Start a new team', icon: '👥', action: () => showCreateTeamModal(), category: 'Create' },
 
     // Actions
-    { id: 'search-issues', title: 'Search Issues', subtitle: 'Find issues by title or ID', icon: '🔍', shortcut: '/', action: () => { navigateTo('issues'); setTimeout(() => document.getElementById('issue-search')?.focus(), 100); }, category: 'Actions' },
+    { id: 'search-issues', title: 'Search Issues', subtitle: 'Find issues by title or ID', icon: '🔍', shortcut: '/', action: focusIssueSearch, category: 'Actions' },
     { id: 'invite-member', title: 'Invite Team Member', subtitle: 'Send an invitation', icon: '✉️', action: () => { navigateTo('team'); setTimeout(showInviteModal, 100); }, category: 'Actions' },
     { id: 'show-shortcuts', title: 'Keyboard Shortcuts', subtitle: 'View all shortcuts', icon: '⌨️', shortcut: '?', action: () => showKeyboardShortcutsHelp(), category: 'Help' },
     { id: 'show-me-around', title: 'Show Me Around', subtitle: 'Replay the onboarding tour', icon: '🎓', action: () => resetOnboarding(), category: 'Help' },

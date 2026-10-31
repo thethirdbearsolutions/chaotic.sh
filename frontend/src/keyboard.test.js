@@ -123,6 +123,60 @@ describe('Keyboard Handler', () => {
             document.body.classList.remove('sidebar-open');
         });
 
+        describe('on issue detail (CHT-1873)', () => {
+            beforeEach(() => {
+                actions.isDetailViewActive.mockReturnValue(true);
+                actions.isMenuOpen = vi.fn().mockReturnValue(false);
+                actions.leaveDetailView = vi.fn();
+                handler = createKeyboardHandler(actions);
+            });
+
+            it('goes back to the list when no menu is open', () => {
+                const event = makeEvent('Escape', { target: { tagName: 'BUTTON' } });
+                handler(event);
+                expect(actions.leaveDetailView).toHaveBeenCalledTimes(1);
+                expect(actions.closeDropdowns).not.toHaveBeenCalled();
+                expect(event.preventDefault).toHaveBeenCalled();
+            });
+
+            it('closes an open menu instead of leaving', () => {
+                actions.isMenuOpen.mockReturnValue(true);
+                handler(makeEvent('Escape'));
+                expect(actions.closeDropdowns).toHaveBeenCalled();
+                expect(actions.leaveDetailView).not.toHaveBeenCalled();
+            });
+
+            it('closes an inline field dropdown instead of leaving', () => {
+                actions.isInlineDropdownOpen = vi.fn().mockReturnValue(true);
+                actions.closeInlineDropdowns = vi.fn();
+                handler = createKeyboardHandler(actions);
+                handler(makeEvent('Escape'));
+                expect(actions.closeInlineDropdowns).toHaveBeenCalled();
+                expect(actions.leaveDetailView).not.toHaveBeenCalled();
+            });
+
+            it('only blurs a focused field', () => {
+                const blur = vi.fn();
+                handler(makeEvent('Escape', { target: { tagName: 'TEXTAREA', blur } }));
+                expect(blur).toHaveBeenCalled();
+                expect(actions.leaveDetailView).not.toHaveBeenCalled();
+            });
+
+            it('closes a modal opened over the detail view', () => {
+                actions.isModalOpen.mockReturnValue(true);
+                handler(makeEvent('Escape'));
+                expect(actions.closeModal).toHaveBeenCalled();
+                expect(actions.leaveDetailView).not.toHaveBeenCalled();
+            });
+
+            it('does not leave other views', () => {
+                actions.isDetailViewActive.mockReturnValue(false);
+                handler(makeEvent('Escape'));
+                expect(actions.leaveDetailView).not.toHaveBeenCalled();
+                expect(actions.closeDropdowns).toHaveBeenCalled();
+            });
+        });
+
         it('prefers modal over sidebar when both are open (CHT-869)', () => {
             actions.isModalOpen.mockReturnValue(true);
             document.body.classList.add('sidebar-open');
