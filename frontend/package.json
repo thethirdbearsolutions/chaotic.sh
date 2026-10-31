@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src/",
+    "lint": "eslint src/ speed/",
     "lint:fix": "eslint src/ --fix"
   },
   "dependencies": {
@@ -24,6 +24,7 @@
     "eslint": "^10.0.0",
     "globals": "^17.3.0",
     "jsdom": "^26.0.0",
+    "playwright": "1.63.0",
     "vite": "^6.0.0",
     "vitest": "^3.0.0"
   }

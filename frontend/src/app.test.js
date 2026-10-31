@@ -171,6 +171,7 @@ vi.mock('./board.js', () => ({ loadBoard: vi.fn() }));
 vi.mock('./issue-detail-view.js', () => ({
     viewIssueByPath: vi.fn(),
     viewIssue: vi.fn(),
+    abandonIssueLoad: vi.fn(),
 }));
 vi.mock('./state.js', () => ({
     getCurrentView: vi.fn(),
@@ -211,7 +212,7 @@ vi.mock('./storage.js', () => ({
     getTheme: vi.fn().mockReturnValue('dark'),
     setTheme: vi.fn(),
 }));
-vi.mock('./issue-list.js', () => ({ renderIssueRow: vi.fn() }));
+vi.mock('./issue-list.js', () => ({ renderIssueRow: vi.fn(), appendPendingRows: vi.fn() }));
 vi.mock('./utils.js', () => ({
     escapeHtml: vi.fn(s => s),
     escapeAttr: vi.fn(s => s),

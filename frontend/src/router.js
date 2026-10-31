@@ -21,6 +21,7 @@ let onDetailPopstate = null;
 let onRestoreProject = null;
 let onIssueNavigate = null;
 let onEpicNavigate = null;
+let onBeforeScrollRestore = null;
 let initialized = false;
 
 /**
@@ -37,6 +38,7 @@ export function resetRouter() {
     onRestoreProject = null;
     onIssueNavigate = null;
     onEpicNavigate = null;
+    onBeforeScrollRestore = null;
     initialized = false;
 }
 
@@ -56,14 +58,18 @@ export function registerViews(handlers) {
  * @param {Function} [opts.detailPopstate] - (state) => bool, handles detail popstate
  * @param {Function} [opts.restoreProject] - Restores project selection from URL
  * @param {Function} [opts.issueNavigate] - (identifier) => void, navigates to issue
+ * @param {Function} [opts.beforeScrollRestore] - Called just before Back
+ *   restores a scroll position, to finish painting anything still queued
+ *   so the position isn't clamped by a half-painted page (CHT-1897)
  */
-export function configureRouter({ beforeNavigate, detailRoute, detailPopstate, restoreProject, issueNavigate, epicNavigate } = {}) {
+export function configureRouter({ beforeNavigate, detailRoute, detailPopstate, restoreProject, issueNavigate, epicNavigate, beforeScrollRestore } = {}) {
     if (beforeNavigate) onBeforeNavigate = beforeNavigate;
     if (detailRoute) onDetailRoute = detailRoute;
     if (detailPopstate) onDetailPopstate = detailPopstate;
     if (restoreProject) onRestoreProject = restoreProject;
     if (issueNavigate) onIssueNavigate = issueNavigate;
     if (epicNavigate) onEpicNavigate = epicNavigate;
+    if (beforeScrollRestore) onBeforeScrollRestore = beforeScrollRestore;
 }
 
 /**
@@ -105,13 +111,15 @@ export function setActiveNav(view) {
  * Navigate to a view by name.
  * Updates URL, highlights nav item, hides/shows view containers, calls load handler.
  *
- * `options.transition: false` swaps the view synchronously instead of
- * through a View Transition, whose callback runs after this call returns.
- * A caller that focuses something in the new view right away needs it
- * shown first (CHT-1873: `/` lost the keys typed before the search box
- * could take focus).
+ * The view swaps synchronously. `options.transition: true` swaps it
+ * through a View Transition (a 120 ms crossfade) instead, whose callback
+ * runs after this call returns. It is off by default: the crossfade and
+ * its snapshot held every view switch, Back included, past VISION.md's
+ * 100 ms bar (CHT-1898, about 80 ms of a 100 ms Back), and a caller that
+ * focuses something in the new view right away needs it shown first
+ * (CHT-1873).
  */
-export function navigateTo(view, pushHistory = true, { transition = true } = {}) {
+export function navigateTo(view, pushHistory = true, { transition = false } = {}) {
     // Save scroll position of the current page before navigating away
     if (pushHistory) {
         saveScrollPosition();
@@ -249,6 +257,7 @@ function restoreScrollPosition() {
     const savedY = scrollPositions.get(window.location.href);
     if (savedY !== undefined) {
         requestAnimationFrame(() => {
+            if (onBeforeScrollRestore) onBeforeScrollRestore();
             window.scrollTo(0, savedY);
         });
     }

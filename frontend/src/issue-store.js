@@ -88,6 +88,11 @@ export function readQuery(key) {
     return entry.ids.map(id => entities.get(id)).filter(Boolean);
 }
 
+/** The latest row the store holds for an issue, or undefined. */
+export function getStoredIssue(id) {
+    return entities.get(id);
+}
+
 /** Extra values saved with a query (the hidden-closed count). */
 export function readQueryMeta(key) {
     return queries.get(key)?.meta || {};

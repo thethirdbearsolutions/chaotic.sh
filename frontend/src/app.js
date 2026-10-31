@@ -2,6 +2,7 @@
  * Chaotic - Main Application
  */
 
+import { appendPendingRows } from './issue-list.js';
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
 import { closeModal, isModalOpen, showToast, closeInlineDropdownsFromEscape, isModalDirty, focusModalFirstField } from './ui.js';
@@ -89,7 +90,7 @@ import {
 } from './command-palette.js';
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus, filterMyIssues } from './dashboard.js';
 import { loadBoard } from './board.js';
-import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
+import { viewIssueByPath, viewIssue, abandonIssueLoad } from './issue-detail-view.js';
 import {
     getCurrentView,
     getSelectedIssueIndex,
@@ -126,7 +127,9 @@ import { getTheme, setTheme } from './storage.js';
 
 // Configure router (CHT-782)
 configureRouter({
+    beforeScrollRestore: appendPendingRows,
     beforeNavigate: () => {
+        abandonIssueLoad();
         clearProjectSettingsState();
         setOnRitualsChanged(null);
         setCurrentDetailIssue(null);
@@ -637,6 +640,9 @@ document.addEventListener('keydown', createListNavigationHandler({
     isModalOpen,
     isCommandPaletteOpen,
     isDetailViewActive: isAnyDetailViewActive,
+    // The list paints its first rows at once and appends the rest in
+    // chunks (CHT-1897); a key reads the whole list.
+    beforeNavigate: appendPendingRows,
 }));
 
 // j/k/Enter/e list navigation for documents

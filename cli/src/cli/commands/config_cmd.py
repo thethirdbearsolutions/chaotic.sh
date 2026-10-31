@@ -97,8 +97,9 @@ def register(cli):
         CHAOTIC_API_KEY) is the registrar's. header: no registrar key is
         held here; a cloud environment's proxy adds it to requests to the
         server as X-Chaotic-Registrar-Key (a network secret), and the
-        server reads it only on registration. Session requests carry the
-        session's own key, which the proxy leaves alone.
+        server reads it only on registration. That proxy drops the
+        client's own Authorization on the host, so session requests carry
+        the session's key in X-Chaotic-Key instead (CHT-1913).
         CHAOTIC_REGISTRAR_KEY_VIA=local|header overrides this setting.
         Saved in the current profile.
         """

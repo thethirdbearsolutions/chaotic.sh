@@ -851,6 +851,19 @@ describe('List Navigation Handler', () => {
         `;
     });
 
+    // CHT-1897: rows still queued by the chunked paint are appended first
+    it('lets beforeNavigate add rows before it reads the list', () => {
+        handler = createListNavigationHandler({
+            ...actions,
+            getSelectedIndex: vi.fn().mockReturnValue(2),
+            beforeNavigate: () => {
+                document.getElementById('issues-list').insertAdjacentHTML('beforeend', '<div class="issue-row" data-issue-id="issue-4"></div>');
+            },
+        });
+        handler({ key: 'j', target: document.body, preventDefault: vi.fn() });
+        expect(actions.setSelectedIndex).toHaveBeenCalledWith(3);
+    });
+
     describe('guard conditions', () => {
         it('ignores when not in issues view', () => {
             actions.getCurrentView.mockReturnValue('projects');
