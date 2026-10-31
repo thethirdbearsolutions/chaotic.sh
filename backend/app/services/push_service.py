@@ -69,6 +69,7 @@ DEFAULT_KIND_ENABLED: dict[InboxEntryKind, bool] = {
     InboxEntryKind.GATE_REJECTED: True,
     InboxEntryKind.AGENT_STATUS: False,
     InboxEntryKind.PUSH_DEVICE_ADDED: True,
+    InboxEntryKind.CHILDREN_CLOSED: True,
 }
 # Always pushed, whatever was chosen: the new-device notice exists to
 # catch a device registered with a stolen credential, and that credential

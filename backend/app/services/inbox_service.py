@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 from oxyde import execute_raw
 
 from app.db.transactions import on_commit
-from app.enums import ActivityType, ApprovalMode, InboxEntryKind, TeamRole
+from app.enums import ActivityType, ApprovalMode, InboxEntryKind, IssueType, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
 from app.services.mention_handles import MentionDirectory, legacy_first_word_handle, normalize_token
@@ -303,6 +303,59 @@ class InboxService:
         )
         await self._broadcast(project.team_id, "created", entry)
         await self._push([entry], assigned_by.id if assigned_by else None)
+
+    async def notify_children_closed(self, *, parent, project, actor_id: str | None, how: str) -> None:
+        """``parent`` is open and has no open sub-issues left, and the
+        change that did it had nobody to ask "close it, or add more?"
+        (CHT-1909): a cleared intent closed the last one, or it was
+        deleted. Tell whoever owns the parent: its assignee, else its
+        creator, and that agent's owner when it is an agent. Nobody is
+        told about their own change, and an entry still open for the
+        parent is not repeated.
+        """
+        from app.services.user_service import UserService
+
+        owner_id = parent.assignee_id or parent.creator_id
+        if not owner_id:
+            return
+        owner = await UserService().get_by_id(owner_id)
+        recipients = [owner_id]
+        if owner is not None and owner.is_agent and owner.parent_user_id:
+            recipients.append(owner.parent_user_id)
+        noun = "epic" if parent.issue_type == IssueType.EPIC else "issue"
+        created = []
+        for recipient_id in dict.fromkeys(recipients):
+            if recipient_id == actor_id:
+                continue
+            if await self._has_open_entry(recipient_id, InboxEntryKind.CHILDREN_CLOSED, issue_id=parent.id):
+                continue
+            entry = await OxydeInboxEntry.objects.create(
+                recipient_user_id=recipient_id,
+                kind=InboxEntryKind.CHILDREN_CLOSED,
+                team_id=project.team_id,
+                project_id=project.id,
+                issue_id=parent.id,
+                source_user_id=actor_id,
+                title=f"Nothing is left open under {parent.identifier}",
+                body=(
+                    f"The last open sub-issue of {parent.identifier} ({parent.title}) {how}. "
+                    f"Close the {noun}, or add more."
+                ),
+            )
+            created.append(entry)
+            await self._broadcast(project.team_id, "created", entry)
+        await self._push(created, actor_id)
+
+    async def has_unresolved_children_closed(self, issue_id: str) -> bool:
+        return await OxydeInboxEntry.objects.filter(
+            issue_id=issue_id, kind=InboxEntryKind.CHILDREN_CLOSED.name, resolved_at=None,
+        ).exists()
+
+    async def resolve_children_closed(self, issue_id: str) -> int:
+        """Settle the CHILDREN_CLOSED entries about ``issue_id``: it was
+        closed, or it has an open sub-issue again, so the question is
+        answered (CHT-1909)."""
+        return await self._resolve({"issue_id": issue_id, "kind": InboxEntryKind.CHILDREN_CLOSED.name})
 
     async def notify_agent_status(self, *, agent, actor, verb: str) -> None:
         """Someone other than its creator deactivated or reactivated an

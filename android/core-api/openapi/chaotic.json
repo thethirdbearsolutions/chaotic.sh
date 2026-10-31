@@ -11288,7 +11288,8 @@
           "review_requested",
           "agent_status",
           "gate_rejected",
-          "push_device_added"
+          "push_device_added",
+          "children_closed"
         ],
         "title": "InboxEntryKind",
         "description": "What kind of 'awaiting you' item an inbox entry represents."

@@ -1077,6 +1077,12 @@ class IssueService:
         )
 
         await self._broadcast_issue_updated(updated_issue)
+        if new_status == IssueStatus.DONE:
+            # Nobody is waiting on this response to ask "close the
+            # parent, or add more?", so its owner's inbox asks (CHT-1909).
+            await self.notify_children_closed(
+                updated_issue.parent_id, actor_id, "was closed when its gate cleared",
+            )
 
         await self._emit_intent_event(
             issue, user_id, limbo_type, ActivityType.INTENT_CLEARED,
@@ -1248,10 +1254,59 @@ class IssueService:
             except Exception:
                 logger.exception("Failed to derive epic status for issue=%s", parent_id)
                 continue
+            await self._settle_children_closed(parent_id, only_if_reopened=True)
             if epic is not None:
                 await self._broadcast_issue_updated(epic)
                 if epic.parent_id:
                     queue.append(epic.parent_id)
+
+    async def _open_child_count(self, parent_id: str) -> int:
+        return await OxydeIssue.objects.filter(
+            parent_id=parent_id, status__in=[
+                IssueStatus.BACKLOG, IssueStatus.TODO, IssueStatus.IN_PROGRESS, IssueStatus.IN_REVIEW,
+            ],
+        ).count()
+
+    async def notify_children_closed(self, parent_id: str | None, actor_id: str | None, how: str) -> None:
+        """When ``parent_id`` is open and has no open sub-issues left after
+        a change nobody was asked about (a cleared intent's auto-close, a
+        delete), put the question in its owner's inbox (CHT-1909). A PATCH
+        close asks its caller instead (``parent_prompt``). Best-effort:
+        the change itself has already committed."""
+        if not parent_id:
+            return
+        try:
+            parent = await OxydeIssue.objects.get_or_none(id=parent_id)
+            if parent is None or parent.status in CLOSED_STATUSES:
+                return
+            if await self._open_child_count(parent_id):
+                return
+            project = await OxydeProject.objects.get_or_none(id=parent.project_id)
+            if project is None:
+                return
+            from app.services.inbox_service import InboxService
+
+            await InboxService().notify_children_closed(
+                parent=parent, project=project, actor_id=actor_id, how=how,
+            )
+        except Exception:
+            logger.exception("Failed to notify that issue=%s has no open children", parent_id)
+
+    async def _settle_children_closed(self, issue_id: str, only_if_reopened: bool = False) -> None:
+        """Resolve the "nothing is left open under it" entries of
+        ``issue_id`` once it is closed, or (``only_if_reopened``) once it
+        has an open sub-issue again (CHT-1909). Best-effort."""
+        try:
+            from app.services.inbox_service import InboxService
+
+            inbox = InboxService()
+            if not await inbox.has_unresolved_children_closed(issue_id):
+                return
+            if only_if_reopened and not await self._open_child_count(issue_id):
+                return
+            await inbox.resolve_children_closed(issue_id)
+        except Exception:
+            logger.exception("Failed to settle children-closed entries for issue=%s", issue_id)
 
     async def _get_next_issue_number_for_key(self, project_key: str) -> int:
         """Get the next issue number for a project key."""
@@ -1436,6 +1491,7 @@ class IssueService:
         # Epic status (CHT-1901): a status set by hand pins it; asking for
         # it to follow the children again unpins it and re-derives below.
         old_parent_id = issue.parent_id
+        was_open = issue.status not in CLOSED_STATUSES
         final_type = update_data.get("issue_type", issue.issue_type)
         follow_children = bool(issue_in.status_follows_children) and final_type == IssueType.EPIC
         if final_type != IssueType.EPIC and issue.status_pinned:
@@ -1762,6 +1818,9 @@ class IssueService:
             rederive.append(issue.id)
         if rederive:
             await self.rederive_parents(rederive, user_id)
+        if was_open and issue.status in CLOSED_STATUSES:
+            # Closed: a "nothing is left open under it" entry is answered.
+            await self._settle_children_closed(issue.id)
 
         if new_assignee_id:
             try:
@@ -1938,7 +1997,7 @@ class IssueService:
 
         return [(c, issue_map.get(c.issue_id)) for c in comments]
 
-    async def delete(self, issue) -> None:
+    async def delete(self, issue, actor_id: str | None = None) -> None:
         """Delete an issue.
 
         The child-table deletes below are defense in depth, not a
@@ -1953,8 +2012,11 @@ class IssueService:
         a cascade.
         """
         parent_id = issue.parent_id
+        was_open = issue.status not in CLOSED_STATUSES
         await self._delete_rows(issue)
         await self.rederive_parents([parent_id])
+        if was_open:
+            await self.notify_children_closed(parent_id, actor_id, "was deleted")
 
     async def _delete_rows(self, issue) -> None:
         """delete()'s writes, in one transaction."""

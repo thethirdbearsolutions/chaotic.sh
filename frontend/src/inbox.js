@@ -28,6 +28,7 @@ const KIND_LABELS = {
     agent_status: 'Agent',
     gate_rejected: 'Rejected',
     push_device_added: 'New device',
+    children_closed: 'Nothing left open',
 };
 
 // Only entries of these kinds are read-only within a fixed request race

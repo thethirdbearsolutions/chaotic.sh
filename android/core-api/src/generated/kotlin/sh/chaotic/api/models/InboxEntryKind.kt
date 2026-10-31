@@ -36,7 +36,7 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * What kind of 'awaiting you' item an inbox entry represents.
  *
- * Values: gate_pending,mention,assignment,review_requested,agent_status,gate_rejected,push_device_added,unknown_default_open_api
+ * Values: gate_pending,mention,assignment,review_requested,agent_status,gate_rejected,push_device_added,children_closed,unknown_default_open_api
  */
 @Serializable(with = InboxEntryKindSerializer::class)
 enum class InboxEntryKind(val value: kotlin.String) {
@@ -61,6 +61,9 @@ enum class InboxEntryKind(val value: kotlin.String) {
 
     @SerialName(value = "push_device_added")
     push_device_added("push_device_added"),
+
+    @SerialName(value = "children_closed")
+    children_closed("children_closed"),
 
     @SerialName(value = "unknown_default_open_api")
     unknown_default_open_api("unknown_default_open_api");
