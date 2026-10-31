@@ -40,30 +40,30 @@ _OPEN = {IssueStatus.BACKLOG, IssueStatus.TODO, IssueStatus.IN_PROGRESS, IssueSt
 
 
 _EPIC = (IssueType.EPIC.name, IssueType.EPIC.value)
-# How far up a parent chain the walk goes; the API refuses a chain this
-# deep (issue_service._PARENT_WALK_LIMIT), and it ends a cycle.
-_WALK_LIMIT = 1000
 
 
 def _owner_cte(scope: str, start: str) -> str:
     """``WITH RECURSIVE ... owners(issue_id, epic_id)``: for each issue
-    matching ``start`` (a WHERE over issues), its nearest epic ancestor,
-    or NULL. The walk climbs one parent per step and stops at the first
-    epic, at a parent outside the scope (``scope`` is the project id
-    placeholders), or at the depth bound, which also ends a cycle.
+    matching ``start`` (a WHERE over issues) that has an epic ancestor,
+    its nearest one; an issue with none has no row. The walk climbs one
+    parent per step and stops at the first epic or at a parent outside
+    the scope (``scope`` is the project id placeholders). ``UNION``, not
+    ``UNION ALL``: a row repeats only on a cycle, so a corrupt cycle in
+    old data ends after one lap instead of running to a depth bound for
+    every issue on or under it.
 
     Parameters, in order: ``start``'s, then the two epic spellings,
     then the scope's project ids."""
     return (
-        "WITH RECURSIVE walk(issue_id, cur, depth, epic_id) AS ("
-        f" SELECT id, parent_id, 0, NULL FROM issues WHERE {start}"
-        " UNION ALL"
-        " SELECT w.issue_id, p.parent_id, w.depth + 1,"
+        "WITH RECURSIVE walk(issue_id, cur, epic_id) AS ("
+        f" SELECT id, parent_id, NULL FROM issues WHERE {start}"
+        " UNION"
+        " SELECT w.issue_id, p.parent_id,"
         " CASE WHEN p.issue_type IN (?, ?) THEN p.id END"
         " FROM walk w JOIN issues p ON p.id = w.cur"
-        f" WHERE w.epic_id IS NULL AND w.depth < {_WALK_LIMIT} AND p.project_id IN ({scope})"
+        f" WHERE w.epic_id IS NULL AND p.project_id IN ({scope})"
         "), owners(issue_id, epic_id) AS ("
-        " SELECT issue_id, MAX(epic_id) FROM walk GROUP BY issue_id"
+        " SELECT issue_id, MIN(epic_id) FROM walk WHERE epic_id IS NOT NULL GROUP BY issue_id"
         ") "
     )
 
@@ -128,9 +128,9 @@ async def epic_progress(
         + "SELECT o.epic_id, i.project_id, i.status, "
         "CASE WHEN i.issue_type IN (?, ?) THEN 1 ELSE 0 END AS is_epic, "
         "COUNT(*) AS n, SUM(COALESCE(i.estimate, 1)) AS pts "
-        "FROM owners o JOIN issues i ON i.id = o.issue_id "
+        f"FROM issues i LEFT JOIN owners o ON o.issue_id = i.id WHERE i.project_id IN ({scope}) "
         "GROUP BY o.epic_id, i.project_id, i.status, is_epic",
-        [*project_ids, *_EPIC, *project_ids, *_EPIC],
+        [*project_ids, *_EPIC, *project_ids, *_EPIC, *project_ids],
     )
 
     # Sprint windows: each project's most recent started sprints.
@@ -171,10 +171,10 @@ async def epic_progress(
                 f"WHERE sprint_id IN ({_placeholders(sprint_ids)}))",
             )
             + "SELECT t.sprint_id, t.issue_id, t.points, o.epic_id, i.project_id "
-            "FROM budget_transactions t JOIN owners o ON o.issue_id = t.issue_id "
-            "JOIN issues i ON i.id = t.issue_id "
+            f"FROM budget_transactions t JOIN issues i ON i.id = t.issue_id AND i.project_id IN ({scope}) "
+            "LEFT JOIN owners o ON o.issue_id = t.issue_id "
             f"WHERE t.sprint_id IN ({_placeholders(sprint_ids)})",
-            [*project_ids, *sprint_ids, *_EPIC, *project_ids, *sprint_ids],
+            [*project_ids, *sprint_ids, *_EPIC, *project_ids, *project_ids, *sprint_ids],
         )
         for t in txns:
             # Ticks follow the same rule as the counts: a close counts
