@@ -5036,8 +5036,38 @@ input[type="checkbox"] {
     .epic-table,
     .epic-table tbody,
     .epic-row,
-    .epic-row td {
+    .epic-row td,
+    .epic-untracked-row,
+    .epic-untracked-row td,
+    .epic-group-row,
+    .epic-group-row th {
         display: block;
+    }
+
+    .epic-table .epic-row td,
+    .epic-table .epic-untracked-row td,
+    .epic-table .epic-group-row th {
+        border-bottom: none;
+        padding: 2px 0;
+    }
+
+    .epic-table .epic-untracked-row td:empty {
+        display: none;
+    }
+
+    .epic-table .epic-group-row th {
+        padding-top: 16px;
+    }
+
+    .epic-untracked-row {
+        padding: 12px 8px;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .epic-table .epic-untracked-row td {
+        width: auto;
+        background: none;
     }
 
     .epic-row {
@@ -8377,6 +8407,7 @@ button.stat-card-link:hover .stat-note {
 }
 
 .epic-progress-bar {
+    display: flex;
     flex: 1;
     height: 6px;
     background: var(--bg-tertiary);
@@ -8400,6 +8431,74 @@ button.stat-card-link:hover .stat-note {
     color: var(--text-muted);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+}
+
+/* Progress toward goals (CHT-1902) */
+.epic-progress-active {
+    height: 100%;
+    background: #93c5fd;
+}
+
+.epic-points,
+.epic-sprint {
+    white-space: nowrap;
+    font-size: var(--font-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.epic-sprint-strip {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 18px;
+    vertical-align: middle;
+}
+
+.epic-sprint-tick {
+    display: inline-flex;
+    align-items: flex-end;
+    width: 6px;
+    height: 100%;
+    background: var(--bg-tertiary);
+    border-radius: 1px;
+}
+
+.epic-sprint-fill {
+    display: block;
+    width: 100%;
+    background: #3b82f6;
+    border-radius: 1px;
+}
+
+.epic-sprint-current .epic-sprint-fill {
+    background: #22c55e;
+}
+
+.epic-sprint-current {
+    outline: 1px solid var(--border-color);
+}
+
+.epic-status-pinned-mark {
+    margin-left: 4px;
+    color: var(--text-muted);
+    cursor: help;
+}
+
+.epic-row-closed .epic-title {
+    color: var(--text-muted);
+}
+
+.epic-untracked-row td {
+    background: var(--bg-secondary);
+}
+
+.epic-group-row th {
+    padding-top: 16px;
+    color: var(--text-primary);
+}
+
+.epic-table-footer {
+    padding: 12px;
 }
 
 /* Epic detail page: progress bar and sub-issue rows. epic-detail-view.js
