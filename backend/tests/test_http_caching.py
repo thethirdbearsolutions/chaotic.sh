@@ -1,13 +1,20 @@
 """Compression and Cache-Control (CHT-1874)."""
+import gzip
+
 import pytest
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
-from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.testclient import TestClient
 
-from app.http_caching import IMMUTABLE, NO_STORE, REVALIDATE, ApiNoStoreMiddleware
+from app.http_caching import (
+    IMMUTABLE,
+    NO_STORE,
+    REVALIDATE,
+    ApiNoStoreMiddleware,
+    CodingAwareGZipMiddleware,
+)
 
 GZIP = {"Accept-Encoding": "gzip"}
 IDENTITY = {"Accept-Encoding": "identity"}
@@ -57,7 +64,7 @@ def _gzip_options():
     """The GZipMiddleware options app.main actually installs."""
     from app.main import app
 
-    entries = [m for m in app.user_middleware if m.cls is GZipMiddleware]
+    entries = [m for m in app.user_middleware if m.cls is CodingAwareGZipMiddleware]
     assert len(entries) == 1
     return entries[0].kwargs
 
@@ -75,7 +82,8 @@ def _probe_app():
         return StreamingResponse(events(), media_type="text/event-stream")
 
     async def pre_encoded(request):
-        return Response(b"\x1f\x8b" + b"z" * 4096, headers={"Content-Encoding": "br"})
+        body = gzip.compress(BIG.encode())
+        return Response(body, headers={"Content-Encoding": "gzip", "ETag": '"own"'})
 
     async def stream(request):
         async def chunks():
@@ -96,7 +104,7 @@ def _probe_app():
             Route("/stream", stream),
             WebSocketRoute("/ws", ws),
         ],
-        middleware=[Middleware(GZipMiddleware, **_gzip_options())],
+        middleware=[Middleware(CodingAwareGZipMiddleware, **_gzip_options())],
     )
 
 
@@ -108,9 +116,13 @@ class TestCompressionLeavesSpecialResponsesAlone:
         assert response.text.count("data:") == 3
 
     def test_own_content_encoding_is_kept(self):
+        """An endpoint that encoded its own body keeps its encoding and its
+        own validator: nothing is recompressed or weakened."""
         with TestClient(_probe_app()) as tc:
-            response = tc.get("/pre-encoded", headers={"Accept-Encoding": "gzip, br"})
-        assert response.headers["content-encoding"] == "br"
+            response = tc.get("/pre-encoded", headers=GZIP)
+        assert response.headers["content-encoding"] == "gzip"
+        assert response.headers["etag"] == '"own"'
+        assert response.text == BIG
 
     def test_plain_stream_is_compressed_and_complete(self):
         with TestClient(_probe_app()) as tc:
@@ -121,6 +133,42 @@ class TestCompressionLeavesSpecialResponsesAlone:
     def test_websocket_still_works(self):
         with TestClient(_probe_app()) as tc, tc.websocket_connect("/ws") as ws:
             assert ws.receive_text() == BIG
+
+
+class TestRecodedStaticHeaders:
+    """CHT-1874 review finding 5: a gzipped static file is a different
+    representation from the identity one."""
+
+    async def test_gzipped_file_has_a_weak_etag_and_no_ranges(self, client):
+        identity = await client.get("/static/js/app.bundle.js", headers=IDENTITY)
+        gzipped = await client.get("/static/js/app.bundle.js", headers=GZIP)
+        assert gzipped.headers["content-encoding"] == "gzip"
+        assert identity.headers["etag"].startswith('"')
+        assert gzipped.headers["etag"] == "W/" + identity.headers["etag"]
+        assert identity.headers["accept-ranges"] == "bytes"
+        assert "accept-ranges" not in gzipped.headers
+
+    async def test_weak_etag_still_revalidates(self, client):
+        etag = (await client.get("/static/js/app.bundle.js", headers=GZIP)).headers["etag"]
+        response = await client.get(
+            "/static/js/app.bundle.js", headers={**GZIP, "If-None-Match": etag}
+        )
+        assert response.status_code == 304
+
+    async def test_range_is_served_from_the_identity_bytes(self, client):
+        full = await client.get("/static/js/app.bundle.js", headers=IDENTITY)
+        response = await client.get(
+            "/static/js/app.bundle.js", headers={**GZIP, "Range": "bytes=0-99"}
+        )
+        assert response.status_code == 206
+        assert "content-encoding" not in response.headers
+        assert response.content == full.content[:100]
+
+    async def test_head_varies_on_accept_encoding(self, client):
+        response = await client.head("/static/js/app.bundle.js", headers=GZIP)
+        assert response.status_code == 200
+        assert "Accept-Encoding" in response.headers["vary"]
+        assert "content-encoding" not in response.headers
 
 
 class TestStaticCacheControl:
@@ -203,6 +251,11 @@ class TestPageAndApiCacheControl:
     async def test_invite_page_stays_no_store(self, client):
         response = await client.get("/invite/sometoken")
         assert response.headers["cache-control"] == "no-store"
+
+    async def test_cli_auth_page_is_never_cached(self, client):
+        response = await client.get("/cli-auth?callback=http://localhost:9999/cb&state=x")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == NO_STORE
 
     async def test_api_is_never_cached(self, client):
         response = await client.get("/api/version")

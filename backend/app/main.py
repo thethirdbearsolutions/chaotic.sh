@@ -6,7 +6,6 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.exceptions import RequestValidationError
-from starlette.middleware.gzip import GZipMiddleware
 from fastapi.templating import Jinja2Templates
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -30,7 +29,7 @@ from app.oauth.discovery import router as oauth_discovery_router
 from app.api.oauth import public_router as oauth_router
 from app.oauth.errors import FRAME_HEADERS, OAuthHTTPError, oauth_error_handler
 from app.version import get_version_info
-from app.http_caching import ApiNoStoreMiddleware, CachedStaticFiles, REVALIDATE
+from app.http_caching import ApiNoStoreMiddleware, CachedStaticFiles, CodingAwareGZipMiddleware, NO_STORE, REVALIDATE
 from app import log_redaction
 from app.utils import vapid
 
@@ -291,9 +290,11 @@ app.add_middleware(ApiNoStoreMiddleware)
 # Starlette's middleware passes through websockets, text/event-stream (the
 # MCP transport's SSE), 206 range responses, already-compressed media types
 # and anything that set its own Content-Encoding; a streamed body is
-# compressed chunk by chunk with a sync flush, so it still streams. 1 KiB
+# compressed chunk by chunk with a sync flush, so it still streams. The
+# subclass also weakens the ETag and drops Accept-Ranges on a body it
+# compressed (see app/http_caching.py). 1 KiB
 # keeps small JSON replies, where gzip's overhead buys nothing, as they are.
-app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+app.add_middleware(CodingAwareGZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # Client address from a trusted reverse proxy's X-Forwarded-For (CHT-1586).
 # Added last, so it is the outermost middleware and everything inside it,
@@ -547,6 +548,8 @@ async def cli_auth(request: Request, callback: str = Query(...), state: str = Qu
     # It mints an API key on a click: never framed (CHT-1519 review N6).
     response.headers.update(FRAME_HEADERS)
     response.headers["Referrer-Policy"] = "no-referrer"
+    # Credential-adjacent, like the invite page: never cached (CHT-1874).
+    response.headers["Cache-Control"] = NO_STORE
     return response
 
 
