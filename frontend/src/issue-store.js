@@ -210,18 +210,12 @@ const MEANS_NULL = { assignee_id: 'unassigned', sprint_id: 'no_sprint' };
 const SAME = ['scope', 'project_id', 'sort_by', 'order', 'limit'];
 
 const lower = (names) => (names || []).map(n => String(n).toLowerCase());
-// The server lowercases a label name in Python but the column with
-// SQLite's ASCII-only LOWER(), so a non-ASCII name matches differently
-// there than here (CHT-1920): leave such filters to the server.
-// eslint-disable-next-line no-control-regex
-const plainNames = (names) => (names || []).every(n => /^[\x00-\x7f]*$/.test(String(n)));
 
 // Whether every row `target` asks for is among the rows `source` returned
 // (given `source` was complete), so filtering `source` gives `target`.
 function covers(source, target) {
     if (source.search || target.search || target.sort_by === 'random') return false;
     if (SAME.some(k => (source[k] ?? null) !== (target[k] ?? null))) return false;
-    if (!plainNames(target.label) || !plainNames(target.exclude_label)) return false;
     // Only "any of" label matching is reproduced here (the web UI's).
     if (target.label !== undefined && target.label_match !== 'any') return false;
     for (const k of ARRAY_FILTERS) {

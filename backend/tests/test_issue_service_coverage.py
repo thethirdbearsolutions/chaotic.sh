@@ -192,6 +192,54 @@ async def test_list_issues_label_match_any_case_insensitive(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["team", "project"])
+async def test_list_issues_non_ascii_label_names_match_without_case(
+    db, issue_service, test_team, test_project, test_user, test_issue, scope,
+):
+    """SQLite's LOWER() folds only ASCII, so `ÜBER` never matched `Über`
+    there; names are resolved to ids in Python instead (CHT-1920)."""
+    label = await OxydeLabel.objects.create(team_id=test_team.id, name="Über", color="#123456")
+    number = await _next_issue_number(test_project)
+    issue = await OxydeIssue.objects.create(
+        project_id=test_project.id, identifier=f"{test_project.key}-{number}",
+        number=number, title="Umlaut", creator_id=test_user.id,
+    )
+    await OxydeIssueLabel.objects.create(issue_id=issue.id, label_id=label.id)
+    where = {"team_id": test_team.id} if scope == "team" else {"project_id": test_project.id}
+
+    for mode in ("all", "any"):
+        found = await issue_service.list_issues(**where, label_names=["ÜBER"], label_match=mode)
+        assert {r.id for r in found} == {issue.id}, mode
+    excluded = await issue_service.list_issues(**where, exclude_label_names=["üBER"])
+    ids = {r.id for r in excluded}
+    assert issue.id not in ids
+    assert test_issue.id in ids
+
+
+@pytest.mark.asyncio
+async def test_list_issues_unknown_label_name_matches_nothing_and_excludes_nothing(
+    db, issue_service, test_team, labeled_issue, test_label, test_issue,
+):
+    """A name no label has: a filter by it finds nothing, under either
+    mode or beside a real name under 'all'; excluding it removes nothing."""
+    for mode in ("all", "any"):
+        found = await issue_service.list_issues(
+            team_id=test_team.id, label_names=["no-such-label"], label_match=mode,
+        )
+        assert found == [], mode
+    both = await issue_service.list_issues(
+        team_id=test_team.id, label_names=[test_label.name, "no-such-label"], label_match="all",
+    )
+    assert both == []
+    either = await issue_service.list_issues(
+        team_id=test_team.id, label_names=[test_label.name, "no-such-label"], label_match="any",
+    )
+    assert {r.id for r in either} == {labeled_issue.id}
+    kept = await issue_service.list_issues(team_id=test_team.id, exclude_label_names=["no-such-label"])
+    assert {labeled_issue.id, test_issue.id} <= {r.id for r in kept}
+
+
+@pytest.mark.asyncio
 async def test_list_issues_multi_label_modes_project_scope(
     db, issue_service, test_project, labeled_issue, dual_labeled_issue,
     test_label, test_label2,
