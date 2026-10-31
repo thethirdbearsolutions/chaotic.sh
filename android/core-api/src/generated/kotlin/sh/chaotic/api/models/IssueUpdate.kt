@@ -51,6 +51,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param dueDate 
  * @param labelIds 
  * @param leaseSeconds 
+ * @param statusFollowsChildren 
  */
 @Serializable
 
@@ -90,7 +91,10 @@ data class IssueUpdate (
     val labelIds: kotlin.collections.List<kotlin.String>? = null,
 
     @SerialName(value = "lease_seconds")
-    val leaseSeconds: kotlin.Int? = null
+    val leaseSeconds: kotlin.Int? = null,
+
+    @SerialName(value = "status_follows_children")
+    val statusFollowsChildren: kotlin.Boolean? = null
 
 ) {
 

@@ -647,6 +647,17 @@ class Client:
     def get_issue_description_revision(self, issue_id: str, version: int) -> dict:
         return self._request("GET", f"/issues/{issue_id}/description-revisions/{version}")
 
+    # Epic progress (CHT-1902): every epic with its progress, in one read.
+    def get_project_epic_progress(self, project_id: str, sprint_window: int | None = None) -> dict:
+        return self._request(
+            "GET", self._with_query(f"/projects/{project_id}/epics", sprint_window=sprint_window),
+        )
+
+    def get_team_epic_progress(self, team_id: str, sprint_window: int | None = None) -> dict:
+        return self._request(
+            "GET", self._with_query(f"/teams/{team_id}/epics", sprint_window=sprint_window),
+        )
+
     # Sub-issues
     def get_sub_issues(self, issue_id: str, limit: int | None = None, skip: int | None = None) -> list:
         return self._request("GET", self._with_query(f"/issues/{issue_id}/sub-issues", skip=skip, limit=limit))

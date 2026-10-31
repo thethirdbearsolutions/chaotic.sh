@@ -12,7 +12,7 @@ import {
 } from './issue-detail-view.js';
 import { api } from './api.js';
 import { getCurrentView } from './state.js';
-import { showApiError } from './ui.js';
+import { showApiError, showToast } from './ui.js';
 import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
@@ -89,14 +89,23 @@ export async function viewEpic(epicId, pushHistory = true) {
         const assignee = epic.assignee_id ? getAssigneeById(epic.assignee_id) : null;
         const assigneeName = assignee ? formatAssigneeName(assignee) : null;
 
-        // Calculate progress
-        const total = subIssues.length;
-        const done = subIssues.filter(s => s.status === 'done' || s.status === 'canceled').length;
-        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-
         // Prev/next navigation from the Epics list's last-loaded contents,
         // matching the Issue detail parity gap called out in CHT-1211 item 6.
         const epicList = getCurrentEpics();
+
+        // Progress by the Epics list's rule (CHT-1902): every ticket whose
+        // nearest epic this is, canceled ones left out. The list's counts
+        // are used when the epic was opened from it; otherwise the direct
+        // sub-issues, by the same rule.
+        const listed = epicList.find(e => e.id === epic.id)?.children;
+        const total = listed
+            ? (listed.total || 0) - (listed.canceled || 0)
+            : subIssues.filter(s => s.status !== 'canceled').length;
+        const done = listed
+            ? (listed.done || 0)
+            : subIssues.filter(s => s.status === 'done').length;
+        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
         const currentIndex = epicList.findIndex(e => e.id === epic.id);
         const prevEpic = currentIndex > 0 ? epicList[currentIndex - 1] : null;
         const nextEpic = currentIndex >= 0 && currentIndex < epicList.length - 1 ? epicList[currentIndex + 1] : null;
@@ -222,6 +231,15 @@ export async function viewEpic(epicId, pushHistory = true) {
                                 ${formatStatus(epic.status)}
                             </span>
                         </div>
+                        ${epic.status_pinned && !['done', 'canceled'].includes(epic.status) ? `
+                        <div class="property-row epic-status-pinned">
+                            <span class="property-label"></span>
+                            <span class="property-value-static">
+                                <span class="text-muted" title="Set by hand, so it no longer follows its sub-issues">Set by hand</span>
+                                <button class="btn btn-secondary btn-small" data-action="epic-follow-children" data-epic-id="${escapeAttr(epic.id)}">Follow sub-issues</button>
+                            </span>
+                        </div>
+                        ` : ''}
 
                         <div class="property-row">
                             <span class="property-label">Priority</span>
@@ -293,5 +311,16 @@ export async function viewEpic(epicId, pushHistory = true) {
 registerActions({
     'navigate-epic': (_event, data) => {
         viewEpic(data.epicId);
+    },
+    // Unpin a hand-set epic status so it is derived from its children
+    // again (CHT-1901).
+    'epic-follow-children': async (_event, data) => {
+        try {
+            await api.updateIssue(data.epicId, { status_follows_children: true });
+            showToast('Status now follows sub-issues');
+            await viewEpic(data.epicId, false);
+        } catch (e) {
+            showApiError('update epic', e);
+        }
     },
 });

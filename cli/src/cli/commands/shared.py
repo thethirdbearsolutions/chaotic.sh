@@ -576,3 +576,25 @@ def _warn_off_scale_estimate(project_id, estimate):
     warning = off_scale_warning(estimate, scale)
     if warning:
         click.echo(click.style(f"Warning: {warning}", fg="yellow"), err=True)
+
+
+def _report_close_followups(result) -> None:
+    """After a status change, say what closing the ticket left open
+    (CHT-1901, CHT-1884), to stderr so --json stays clean. The PATCH
+    response carries ``parent_prompt`` when this closed the last open
+    child of an open parent (epics never close themselves), and
+    ``open_children`` when the closed ticket still has open children."""
+    if not isinstance(result, dict):
+        return
+    prompt = result.get("parent_prompt")
+    if prompt:
+        ident = prompt.get("identifier", "")
+        click.echo(click.style(prompt.get("message", ""), fg="cyan"), err=True)
+        click.echo(
+            f"  Close it:  chaotic issue close {ident}\n"
+            f"  Add more:  chaotic issue create \"...\" --parent {ident}",
+            err=True,
+        )
+    warning = result.get("open_children")
+    if warning:
+        click.echo(click.style(f"Warning: {warning.get('message', '')}", fg="yellow"), err=True)

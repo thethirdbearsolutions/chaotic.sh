@@ -13,6 +13,24 @@ def _main():
     return sys.modules['cli.main']
 
 
+def _yes_no(value) -> str:
+    return "Yes" if value else "No"
+
+
+def _default_epic_label(p: dict) -> str:
+    """The default epic's identifier and title, or "None". A lookup
+    failure (the epic was deleted, or the API is older) falls back to
+    the raw id rather than failing `project show`."""
+    epic_id = p.get("default_epic_id")
+    if not epic_id:
+        return "None"
+    try:
+        epic = _client().get_issue(epic_id)
+    except Exception:
+        return epic_id
+    return f"{epic.get('identifier', epic_id)} {epic.get('title', '')}".strip()
+
+
 def register(cli):
     """Register project commands on the CLI group."""
 
@@ -199,7 +217,11 @@ def register(cli):
             f"Issues: {esc(p['issue_count'])}\n"
             f"Estimate Scale: {esc(scale)}\n"
             f"Default Sprint Budget: {esc(budget_str)}\n"
-            f"Unestimated Handling: {esc(unest)}",
+            f"Unestimated Handling: {esc(unest)}\n"
+            f"Require Estimate on Claim: {esc(_yes_no(p.get('require_estimate_on_claim')))}\n"
+            f"Require Assignee on Claim: {esc(_yes_no(p.get('require_assignee_on_claim')))}\n"
+            f"Require Epic on Close: {esc(_yes_no(p.get('require_epic_on_close')))}\n"
+            f"Default Epic: {esc(_default_epic_label(p))}",
             title="Project Details"
         ))
 
@@ -215,11 +237,25 @@ def register(cli):
     @click.option("--unestimated-handling",
                   type=click.Choice(["default_one_point", "block_until_estimated"], case_sensitive=False),
                   help="How unestimated tickets are handled on completion")
+    @click.option("--require-estimate-on-claim/--no-require-estimate-on-claim", default=None,
+                  help="Agents must estimate a ticket before claiming it")
+    @click.option("--require-assignee-on-claim/--no-require-assignee-on-claim", default=None,
+                  help="Agents must leave a ticket assigned when claiming it")
+    @click.option("--require-epic-on-close/--no-require-epic-on-close", default=None,
+                  help="Agents must file a ticket under an epic before closing it "
+                       "(the default epic is used when one is set)")
+    @click.option("--default-epic", metavar="ISSUE",
+                  help="Epic (e.g. CHT-12) that new tickets without a parent are filed under")
+    @click.option("--no-default-epic", is_flag=True, help="Stop filing new tickets under a default epic")
     @_main().require_project
     @_main().handle_error
-    def project_update(name, description, color, estimate_scale, default_sprint_budget, no_default_sprint_budget, unestimated_handling):
+    def project_update(name, description, color, estimate_scale, default_sprint_budget, no_default_sprint_budget,
+                       unestimated_handling, require_estimate_on_claim, require_assignee_on_claim,
+                       require_epic_on_close, default_epic, no_default_epic):
         """Update the current project."""
         m = _main()
+        if default_epic and no_default_epic:
+            raise click.UsageError("Pass either --default-epic or --no-default-epic, not both.")
         data = {}
         if name:
             data["name"] = name
@@ -235,6 +271,17 @@ def register(cli):
             data["default_sprint_budget"] = default_sprint_budget
         if unestimated_handling:
             data["unestimated_handling"] = unestimated_handling
+        for field, value in (
+            ("require_estimate_on_claim", require_estimate_on_claim),
+            ("require_assignee_on_claim", require_assignee_on_claim),
+            ("require_epic_on_close", require_epic_on_close),
+        ):
+            if value is not None:
+                data[field] = value
+        if no_default_epic:
+            data["default_epic_id"] = None
+        elif default_epic:
+            data["default_epic_id"] = _client().get_issue_by_identifier(default_epic.strip())["id"]
 
         if not data:
             console.print("[yellow]No updates provided.[/yellow]")

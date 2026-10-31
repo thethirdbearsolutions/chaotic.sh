@@ -756,6 +756,27 @@
                                         </label>
                                         <small class="form-hint">Blocks issue creation or claiming without an estimate</small>
                                     </div>
+                                    <div class="form-group">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="ps-require-assignee-on-claim">
+                                            Require assignee on claim
+                                        </label>
+                                        <small class="form-hint">Agents can't start a ticket and leave it unassigned</small>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="ps-require-epic-on-close">
+                                            Require epic on close
+                                        </label>
+                                        <small class="form-hint">Agents can't close a ticket that belongs to no epic. With a default epic set, the ticket is filed under it instead.</small>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="ps-default-epic">Default epic</label>
+                                        <select id="ps-default-epic" disabled>
+                                            <option value="">None</option>
+                                        </select>
+                                        <small class="form-hint">New tickets created without a parent are filed under this epic</small>
+                                    </div>
                                     <button class="btn btn-primary">Save Changes</button>
                                 </div>
                             </section>

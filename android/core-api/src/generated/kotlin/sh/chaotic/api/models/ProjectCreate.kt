@@ -49,6 +49,8 @@ import kotlinx.serialization.encoding.Encoder
  * @param defaultSprintBudget 
  * @param humanRitualsRequired 
  * @param requireEstimateOnClaim 
+ * @param requireAssigneeOnClaim 
+ * @param requireEpicOnClose 
  */
 @Serializable
 
@@ -85,7 +87,13 @@ data class ProjectCreate (
     val humanRitualsRequired: kotlin.Boolean? = false,
 
     @SerialName(value = "require_estimate_on_claim")
-    val requireEstimateOnClaim: kotlin.Boolean? = false
+    val requireEstimateOnClaim: kotlin.Boolean? = false,
+
+    @SerialName(value = "require_assignee_on_claim")
+    val requireAssigneeOnClaim: kotlin.Boolean? = false,
+
+    @SerialName(value = "require_epic_on_close")
+    val requireEpicOnClose: kotlin.Boolean? = false
 
 ) {
 

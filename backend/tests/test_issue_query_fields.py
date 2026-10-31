@@ -31,6 +31,7 @@ SAMPLE = {
     "label": ("bug", "ui"),
     "number": ("3", "8"),
     "issue": ("CHT-1", "CHT-2"),
+    "relation": ("CHT-1", "CHT-2"),
     "identifier": ("CHT-1", "CHT-2"),
     "date": ("2026-01-01", "2026-02-01"),
     "text": ("x", "y"),
@@ -412,3 +413,10 @@ def test_row_and_depth_caps_are_the_listed_ones(vocab):
     QueryRow.model_validate({"field": "estimate", "op": "is", "values": [str(limits["max_number"])]})
     with pytest.raises(ValidationError):
         QueryRow.model_validate({"field": "estimate", "op": "is", "values": [str(limits["max_number"] + 1)]})
+
+
+
+def test_relation_fields_are_in_the_vocabulary(vocab):
+    kinds = {f["name"]: f["kind"] for f in vocab["fields"]}
+    assert kinds["blocks"] == kinds["blocked_by"] == kinds["related"] == "relation"
+    assert "relation" in {f["kind"] for f in vocab["fields"]}

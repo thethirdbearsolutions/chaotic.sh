@@ -8,11 +8,11 @@ Two halves:
   the ordering. The server owns the only parser, so the CLI, MCP and a
   web URL all mean the same thing by the same text.
 * **Running.** ``run_query`` compiles a validated structure into Oxyde
-  ``Q`` expressions (a tree with a label row is matched as id sets, see
+  ``Q`` expressions (a tree with a label or relation row is matched as id sets, see
   ``_Compiler.match_ids``) and runs it inside a scope (one project, or every
   project of a team) that the API layer has already access-checked.
-  Every value reaches the database as a bound parameter through the ORM;
-  no SQL text is built here.
+  Every value reaches the database as a bound parameter, through the ORM
+  except for the relation read, whose raw SQL holds only placeholders.
 
 The text form, by example (docs/issue-query.md has the reference)::
 
@@ -33,11 +33,11 @@ from datetime import date, datetime, time, timedelta, timezone
 from functools import reduce
 from typing import get_args
 
-from oxyde import Q
+from oxyde import Q, execute_raw
 from oxyde.queries.conditions import Condition
 from pydantic import ValidationError
 
-from app.enums import IssueType, SprintStatus
+from app.enums import IssueRelationType, IssueType, SprintStatus
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueLabel
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
@@ -733,15 +733,15 @@ class _Compiler:
         kind, op, vals = spec.kind, row.op, row.values
         column = _COLUMN.get(row.field)
 
-        if op == "empty" and kind != "label":
+        if op == "empty" and kind not in _ID_SET_KINDS:
             return _null(column, True)
-        if op == "not_empty" and kind != "label":
+        if op == "not_empty" and kind not in _ID_SET_KINDS:
             return _null(column, False)
 
         if kind == "text":
             return self._text(row.field, op, vals)
-        if kind == "label":  # pragma: no cover - match_ids takes label rows
-            raise AssertionError("label rows are matched by match_ids, not in SQL")
+        if kind in _ID_SET_KINDS:  # pragma: no cover - match_ids takes these rows
+            raise AssertionError(f"{kind} rows are matched by match_ids, not in SQL")
         if kind == "date":
             return self._date(column, op, vals)
         if kind == "number":
@@ -931,11 +931,59 @@ class _Compiler:
         hits = set().union(*(carrying(v) for v in vals))
         return hits if op == "is" else (await self._universe()) - hits
 
+    # -- relations (CHT-1903) ----------------------------------------------
+    #
+    # Matched as id sets like labels, for the same reason: a relation row
+    # is a condition on another table. A relation row stores
+    # ``issue_id`` blocks ``related_issue_id``; relates_to has no
+    # direction, so `related` reads it both ways round.
+    #
+    # Both ends must be issues the caller can name (``_team_projects``):
+    # an edge to an issue it cannot see is not there, as in the issue's
+    # own relation list (CHT-1780). That also bounds the read to the
+    # team's relations.
+
+    async def _relation_pairs(self, rtype: IssueRelationType) -> list[tuple[str, str]]:
+        """(blocker, blocked) or (a, b) for every ``rtype`` row whose two
+        ends are both in projects the caller can name."""
+        project_ids = [p.id for p in await self._team_projects()]
+        if not project_ids:
+            return []
+        marks = ",".join("?" for _ in project_ids)
+        rows = await execute_raw(
+            "SELECT r.issue_id AS a, r.related_issue_id AS b FROM issue_relations r "
+            "JOIN issues ia ON ia.id = r.issue_id JOIN issues ib ON ib.id = r.related_issue_id "
+            f"WHERE r.relation_type = ? AND ia.project_id IN ({marks}) AND ib.project_id IN ({marks})",
+            [rtype.name, *project_ids, *project_ids],
+        )
+        return [(r["a"], r["b"]) for r in rows]
+
+    async def _relation_ids(self, field_name: str, op: str, vals: list[str]) -> set[str]:
+        universe = await self._universe()
+        named = set(await self._issues(vals)) if op in ("is", "is_not") else None
+        if field_name == "related":
+            rows = await self._relation_pairs(IssueRelationType.RELATES_TO)
+            # (matched, other): each relates_to row links both ends.
+            pairs = rows + [(b, a) for a, b in rows]
+        elif field_name == "blocks":
+            # The matched issue blocks the named one.
+            pairs = await self._relation_pairs(IssueRelationType.BLOCKS)
+        else:  # blocked_by: the named issue blocks the matched one
+            pairs = [(b, a) for a, b in await self._relation_pairs(IssueRelationType.BLOCKS)]
+        if named is None:
+            linked = {mine for mine, _ in pairs} & universe
+            return universe - linked if op == "empty" else linked
+        hits = {mine for mine, other in pairs if other in named} & universe
+        return hits if op == "is" else universe - hits
+
     async def match_ids(self, node) -> set[str]:
-        """The in-scope ids matching ``node``, for a tree with a label row."""
+        """The in-scope ids matching ``node``, for a tree with a label or
+        relation row."""
         if isinstance(node, QueryRow):
+            if FIELDS[node.field].kind == "relation":
+                return await self._relation_ids(node.field, node.op, node.values)
             return await self._label_ids(node.op, node.values)
-        plain = [await self.node(c) for c in node.rows if not has_label(c)]
+        plain = [await self.node(c) for c in node.rows if not has_id_set_row(c)]
         sets = []
         if plain:
             q = _all(plain) if node.match == "all" else _any(plain)
@@ -944,16 +992,21 @@ class _Compiler:
             ).values("id").all()
             sets.append({r["id"] for r in rows})
         for c in node.rows:
-            if has_label(c):
+            if has_id_set_row(c):
                 sets.append(await self.match_ids(c))
         return set.intersection(*sets) if node.match == "all" else set().union(*sets)
 
 
-def has_label(node) -> bool:
-    """Whether ``node`` holds a label row anywhere."""
+# Kinds whose rows are matched as id sets by ``_Compiler.match_ids``.
+_ID_SET_KINDS = frozenset({"label", "relation"})
+
+
+def has_id_set_row(node) -> bool:
+    """Whether ``node`` holds a row matched as an id set (a label or a
+    relation row) anywhere."""
     if isinstance(node, QueryRow):
-        return FIELDS[node.field].kind == "label"
-    return any(has_label(c) for c in node.rows)
+        return FIELDS[node.field].kind in _ID_SET_KINDS
+    return any(has_id_set_row(c) for c in node.rows)
 
 
 # Type orders the way the enum lists it (task, bug, feature, ...), the
@@ -1029,7 +1082,7 @@ async def run_query(
     matched = None
     if query.filter is not None:
         compiler = _Compiler(scope, now)
-        if has_label(query.filter):
+        if has_id_set_row(query.filter):
             matched = await compiler.match_ids(query.filter)
         else:
             where = where & await compiler.group(query.filter)

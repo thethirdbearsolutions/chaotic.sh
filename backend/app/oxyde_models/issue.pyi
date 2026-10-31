@@ -36,10 +36,11 @@ class OxydeIssue(Model):
     creator: OxydeUser | None
     sprint_id: str | None
     parent_id: str | None
-    due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None
-    completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None
-    lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None
-    claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None
+    due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None
+    completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None
+    lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None
+    claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None
+    status_pinned: bool
     created_at: datetime
     updated_at: datetime
     creator_id: str | None
@@ -64,11 +65,11 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        claimed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        claimed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         claimed_at__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -105,8 +106,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -140,8 +141,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         issue_type: IssueType | None = None,
         issue_type__in: list[IssueType] | None = None,
         issue_type__isnull: bool | None = None,
-        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         lease_expires_at__isnull: bool | None = None,
         number: int | None = None,
         number__gt: int | None = None,
@@ -188,6 +189,9 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         status: IssueStatus | None = None,
         status__in: list[IssueStatus] | None = None,
         status__isnull: bool | None = None,
+        status_pinned: bool | None = None,
+        status_pinned__in: list[bool] | None = None,
+        status_pinned__isnull: bool | None = None,
         title: str | None = None,
         title__contains: str | None = None,
         title__icontains: str | None = None,
@@ -227,11 +231,11 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        claimed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        claimed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         claimed_at__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -268,8 +272,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -303,8 +307,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         issue_type: IssueType | None = None,
         issue_type__in: list[IssueType] | None = None,
         issue_type__isnull: bool | None = None,
-        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         lease_expires_at__isnull: bool | None = None,
         number: int | None = None,
         number__gt: int | None = None,
@@ -351,6 +355,9 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         status: IssueStatus | None = None,
         status__in: list[IssueStatus] | None = None,
         status__isnull: bool | None = None,
+        status_pinned: bool | None = None,
+        status_pinned__in: list[bool] | None = None,
+        status_pinned__isnull: bool | None = None,
         title: str | None = None,
         title__contains: str | None = None,
         title__icontains: str | None = None,
@@ -377,7 +384,7 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["assignee_id", "-assignee_id", "claimed_at", "-claimed_at", "completed_at", "-completed_at", "created_at", "-created_at", "creator", "-creator", "creator_id", "-creator_id", "description", "-description", "due_date", "-due_date", "estimate", "-estimate", "id", "-id", "identifier", "-identifier", "issue_type", "-issue_type", "lease_expires_at", "-lease_expires_at", "number", "-number", "parent_id", "-parent_id", "priority", "-priority", "project_id", "-project_id", "sprint_id", "-sprint_id", "status", "-status", "title", "-title", "updated_at", "-updated_at"]) -> "OxydeIssueQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["assignee_id", "-assignee_id", "claimed_at", "-claimed_at", "completed_at", "-completed_at", "created_at", "-created_at", "creator", "-creator", "creator_id", "-creator_id", "description", "-description", "due_date", "-due_date", "estimate", "-estimate", "id", "-id", "identifier", "-identifier", "issue_type", "-issue_type", "lease_expires_at", "-lease_expires_at", "number", "-number", "parent_id", "-parent_id", "priority", "-priority", "project_id", "-project_id", "sprint_id", "-sprint_id", "status", "-status", "status_pinned", "-status_pinned", "title", "-title", "updated_at", "-updated_at"]) -> "OxydeIssueQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -393,7 +400,7 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "title", "updated_at"]) -> "OxydeIssueQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "status_pinned", "title", "updated_at"]) -> "OxydeIssueQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -417,7 +424,7 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "title", "updated_at"]) -> "OxydeIssueQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "status_pinned", "title", "updated_at"]) -> "OxydeIssueQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -425,11 +432,11 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "title", "updated_at"]) -> "OxydeIssueQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "status_pinned", "title", "updated_at"]) -> "OxydeIssueQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "title", "updated_at"], flat: bool = False) -> "OxydeIssueQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "status_pinned", "title", "updated_at"], flat: bool = False) -> "OxydeIssueQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -563,11 +570,11 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        claimed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        claimed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         claimed_at__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -604,8 +611,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -639,8 +646,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         issue_type: IssueType | None = None,
         issue_type__in: list[IssueType] | None = None,
         issue_type__isnull: bool | None = None,
-        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         lease_expires_at__isnull: bool | None = None,
         number: int | None = None,
         number__gt: int | None = None,
@@ -687,6 +694,9 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         status: IssueStatus | None = None,
         status__in: list[IssueStatus] | None = None,
         status__isnull: bool | None = None,
+        status_pinned: bool | None = None,
+        status_pinned__in: list[bool] | None = None,
+        status_pinned__isnull: bool | None = None,
         title: str | None = None,
         title__contains: str | None = None,
         title__icontains: str | None = None,
@@ -726,11 +736,11 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        claimed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        claimed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         claimed_at__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -767,8 +777,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -802,8 +812,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         issue_type: IssueType | None = None,
         issue_type__in: list[IssueType] | None = None,
         issue_type__isnull: bool | None = None,
-        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         lease_expires_at__isnull: bool | None = None,
         number: int | None = None,
         number__gt: int | None = None,
@@ -850,6 +860,9 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         status: IssueStatus | None = None,
         status__in: list[IssueStatus] | None = None,
         status__isnull: bool | None = None,
+        status_pinned: bool | None = None,
+        status_pinned__in: list[bool] | None = None,
+        status_pinned__isnull: bool | None = None,
         title: str | None = None,
         title__contains: str | None = None,
         title__icontains: str | None = None,
@@ -876,11 +889,11 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "title", "updated_at"]) -> OxydeIssueQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "status_pinned", "title", "updated_at"]) -> OxydeIssueQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "title", "updated_at"], flat: bool = False) -> OxydeIssueQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["assignee_id", "claimed_at", "completed_at", "created_at", "creator", "creator_id", "description", "due_date", "estimate", "id", "identifier", "issue_type", "lease_expires_at", "number", "parent_id", "priority", "project_id", "sprint_id", "status", "status_pinned", "title", "updated_at"], flat: bool = False) -> OxydeIssueQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -1032,24 +1045,25 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         client: Any | None = None,
         using: str | None = None,
         assignee_id: str | None = None,
-        claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
+        claimed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
         created_at: datetime | None = None,
         creator: OxydeUser | None = None,
         creator_id: str | None = None,
         description: str | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
         estimate: int | None = None,
         id: str | None = None,
         identifier: str | None = None,
         issue_type: IssueType | None = None,
-        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
+        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
         number: int | None = None,
         parent_id: str | None = None,
         priority: IssuePriority | None = None,
         project_id: str | None = None,
         sprint_id: str | None = None,
         status: IssueStatus | None = None,
+        status_pinned: bool | None = None,
         title: str | None = None,
         updated_at: datetime | None = None,
     ) -> OxydeIssue:
@@ -3596,7 +3610,7 @@ class OxydeTicketLimbo(Model):
     limbo_type: LimboType
     requested_by_id: str
     requested_at: datetime
-    cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None
+    cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None
     cleared_by_id: str | None
     objects: ClassVar["OxydeTicketLimboManager"]
 
@@ -3609,8 +3623,8 @@ class OxydeTicketLimboQuery(Query[OxydeTicketLimbo]):
     def filter(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -3674,8 +3688,8 @@ class OxydeTicketLimboQuery(Query[OxydeTicketLimbo]):
     def exclude(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -3912,8 +3926,8 @@ class OxydeTicketLimboManager(QueryManager[OxydeTicketLimbo]):
     def filter(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -3977,8 +3991,8 @@ class OxydeTicketLimboManager(QueryManager[OxydeTicketLimbo]):
     def exclude(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -4194,7 +4208,7 @@ class OxydeTicketLimboManager(QueryManager[OxydeTicketLimbo]):
         instance: OxydeTicketLimbo | None = None,
         client: Any | None = None,
         using: str | None = None,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
         cleared_by_id: str | None = None,
         id: str | None = None,
         issue_id: str | None = None,
@@ -4235,7 +4249,7 @@ class OxydeTicketLimboBlocker(Model):
     id: str
     limbo_id: str
     ritual_id: str
-    resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None
+    resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None
     resolved_by_id: str | None
     objects: ClassVar["OxydeTicketLimboBlockerManager"]
 
@@ -4268,8 +4282,8 @@ class OxydeTicketLimboBlockerQuery(Query[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4318,8 +4332,8 @@ class OxydeTicketLimboBlockerQuery(Query[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4541,8 +4555,8 @@ class OxydeTicketLimboBlockerManager(QueryManager[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4591,8 +4605,8 @@ class OxydeTicketLimboBlockerManager(QueryManager[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4775,7 +4789,7 @@ class OxydeTicketLimboBlockerManager(QueryManager[OxydeTicketLimboBlocker]):
         using: str | None = None,
         id: str | None = None,
         limbo_id: str | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f318300b060>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fab22311b20>, json_schema_input_type=PydanticUndefined)] | None = None,
         resolved_by_id: str | None = None,
         ritual_id: str | None = None,
     ) -> OxydeTicketLimboBlocker:

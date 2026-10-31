@@ -417,6 +417,33 @@ class TestIssueClose:
         client.update_issue.assert_called_once_with('issue-uuid-123', status='done')
 
 
+    def test_close_reports_last_child_prompt_and_open_children(self, cli_runner, mock_issue):
+        """CHT-1901/CHT-1884: what closing left open goes to stderr."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_project = MagicMock(return_value={})
+        client.update_issue = MagicMock(return_value={
+            "parent_prompt": {"identifier": "CHT-9", "message": "That was the last open ticket under CHT-9 (Goal). Close CHT-9, or add more?"},
+            "open_children": {"count": 2, "identifiers": ["CHT-1", "CHT-2"], "message": "CHT-100 still has 2 open sub-issues"},
+        })
+        result = cli_runner.invoke(cli, ['issue', 'close', 'CHT-100'])
+        assert result.exit_code == 0, result.output
+        assert "last open ticket under CHT-9" in result.output
+        assert "chaotic issue close CHT-9" in result.output
+        assert "--parent CHT-9" in result.output
+        assert "still has 2 open sub-issues" in result.output
+
+    def test_close_without_followups_prints_nothing_extra(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock(return_value={"parent_prompt": None, "open_children": None})
+        result = cli_runner.invoke(cli, ['issue', 'close', 'CHT-100'])
+        assert result.exit_code == 0
+        assert "Close it" not in result.output and "Warning" not in result.output
+
+
 class TestIssueCloseAttest:
     """Tests for non-interactive ritual attestation on close (CHT-1326)."""
 

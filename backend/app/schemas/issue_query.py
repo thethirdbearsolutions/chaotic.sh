@@ -102,6 +102,7 @@ class QueryFieldKind(StrEnum):
     PROJECT = "project"
     SPRINT = "sprint"
     LABEL = "label"
+    RELATION = "relation"
     NUMBER = "number"
     ISSUE = "issue"
     IDENTIFIER = "identifier"
@@ -141,6 +142,13 @@ FIELDS: dict[str, FieldSpec] = {
         frozenset({"is", "is_not", "gte", "lte", "between", "empty", "not_empty"}),
     ),
     "parent": FieldSpec("issue", _NULLABLE_REF),
+    # Relations (CHT-1903): `blocks=CHT-1` matches the issues that
+    # block CHT-1 (the matched issue blocks CHT-1); `blocked_by=CHT-1`
+    # the issues CHT-1 blocks; `related=CHT-1` the issues linked to it by
+    # relates_to, either way round.
+    "blocks": FieldSpec("relation", _NULLABLE_REF),
+    "blocked_by": FieldSpec("relation", _NULLABLE_REF),
+    "related": FieldSpec("relation", _NULLABLE_REF),
     "identifier": FieldSpec("identifier", frozenset({"is", "is_not"})),
     "created": FieldSpec("date", _DATE),
     "updated": FieldSpec("date", _DATE),
@@ -164,6 +172,9 @@ class QueryField(StrEnum):
     LABEL = "label"
     ESTIMATE = "estimate"
     PARENT = "parent"
+    BLOCKS = "blocks"
+    BLOCKED_BY = "blocked_by"
+    RELATED = "related"
     IDENTIFIER = "identifier"
     CREATED = "created"
     UPDATED = "updated"

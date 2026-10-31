@@ -20,6 +20,9 @@ from app.schemas.issue import (
     IssueCreate,
     IssueUpdate,
     IssueResponse,
+    IssueUpdateResponse,
+    ParentPrompt,
+    OpenChildrenWarning,
     IssueBatchUpdate,
     AddLabelRequest,
     IssueCommentCreate,
@@ -49,7 +52,7 @@ from app.services.issue_service import (
     ClaimRitualsError,
     UnclaimedCloseRitualsError,
     IntentInFlightError,
-    EstimateRequiredError,
+    RequirementMissingError,
     IssueAlreadyClaimedError,
     AssigneeChangedError,
 )
@@ -230,10 +233,67 @@ def issue_to_response(issue: Issue) -> IssueResponse:
         due_date=ensure_utc(issue.due_date),
         completed_at=ensure_utc(issue.completed_at),
         lease_expires_at=ensure_utc(issue.lease_expires_at),
+        status_pinned=bool(getattr(issue, "status_pinned", False)) and _is_epic(issue),
         created_at=ensure_utc(issue.created_at),
         updated_at=ensure_utc(issue.updated_at),
         labels=[LabelResponse.model_validate(label) for label in issue.labels] if issue.labels else [],
     )
+
+
+def _is_epic(issue) -> bool:
+    return issue.issue_type == IssueType.EPIC
+
+
+_CLOSED = (IssueStatus.DONE, IssueStatus.CANCELED)
+
+
+async def _close_followups(issue, old_status) -> dict:
+    """What closing ``issue`` leaves for the caller (CHT-1901, CHT-1884),
+    as IssueUpdateResponse fields. Empty unless this update moved it
+    from open to closed.
+
+    - parent_prompt: its parent is still open and now has no open
+      children. Epics never close themselves, so whoever closed the
+      last child is asked: close the parent, or add more.
+    - open_children: it still has open children, which stay open under
+      a closed parent.
+    """
+    if old_status in _CLOSED or issue.status not in _CLOSED:
+        return {}
+    out = {}
+    if issue.parent_id:
+        parent = await Issue.objects.get_or_none(id=issue.parent_id)
+        if parent is not None and parent.status not in _CLOSED:
+            still_open = await Issue.objects.filter(
+                parent_id=parent.id, status__in=[
+                    IssueStatus.BACKLOG, IssueStatus.TODO, IssueStatus.IN_PROGRESS, IssueStatus.IN_REVIEW,
+                ],
+            ).count()
+            if still_open == 0:
+                out["parent_prompt"] = ParentPrompt(
+                    id=parent.id, identifier=parent.identifier, title=parent.title,
+                    issue_type=parent.issue_type,
+                    message=(
+                        f"That was the last open ticket under {parent.identifier} ({parent.title}). "
+                        f"Close {parent.identifier}, or add more?"
+                    ),
+                )
+    open_rows = await Issue.objects.filter(
+        parent_id=issue.id, status__in=[
+            IssueStatus.BACKLOG, IssueStatus.TODO, IssueStatus.IN_PROGRESS, IssueStatus.IN_REVIEW,
+        ],
+    ).order_by("number").values("identifier").all()
+    if open_rows:
+        identifiers = [r["identifier"] if isinstance(r, dict) else r.identifier for r in open_rows]
+        n = len(identifiers)
+        out["open_children"] = OpenChildrenWarning(
+            count=n, identifiers=identifiers[:20],
+            message=(
+                f"{issue.identifier} still has {n} open sub-issue{'s' if n != 1 else ''}, "
+                "which stay open under a closed parent. Close them, or move them to another parent."
+            ),
+        )
+    return out
 
 
 async def issues_to_responses(issues) -> list[IssueResponse]:
@@ -476,7 +536,7 @@ async def create_issue(
     # is DONE or IN_PROGRESS (CHT-536)
     try:
         issue = await issue_service.create(issue_in, project, current_user.id, is_human_request)
-    except EstimateRequiredError as e:
+    except RequirementMissingError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
@@ -1147,7 +1207,7 @@ async def get_issue(issue_id: str, current_user: CurrentUser) -> IssueResponse:
     return await issue_response(issue)
 
 
-@router.patch("/{issue_id}", response_model=IssueResponse)
+@router.patch("/{issue_id}", response_model=IssueUpdateResponse)
 @writes
 @idempotent
 async def update_issue(
@@ -1155,11 +1215,17 @@ async def update_issue(
     issue_in: IssueUpdate,
     current_user: CurrentUser,
     x_chaotic_interactive: Annotated[str | None, Header()] = None,
-) -> IssueResponse:
-    """Update an issue."""
+) -> IssueUpdateResponse:
+    """Update an issue.
+
+    Closing one also reports what that leaves open (CHT-1901, CHT-1884):
+    ``parent_prompt`` when it was the last open child of an open parent,
+    ``open_children`` when it still has open children.
+    """
     issue_service = IssueService()
 
     issue, project = await visible_issue(current_user, issue_id)
+    old_status = issue.status
 
     # Validate assignee, sprint, labels, parent if provided (CHT-293, CHT-294, CHT-296, CHT-295)
     if issue_in.assignee_id is not None:
@@ -1182,7 +1248,7 @@ async def update_issue(
 
     try:
         issue = await issue_service.update(issue, issue_in, current_user.id, is_human_request=is_human_request)
-    except EstimateRequiredError as e:
+    except RequirementMissingError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
@@ -1248,7 +1314,8 @@ async def update_issue(
             },
         )
 
-    response = await issue_response(issue)
+    base = await issue_response(issue)
+    response = IssueUpdateResponse(**base.model_dump(), **await _close_followups(issue, old_status))
 
     # Auto-link cross-referenced issues when description changes (CHT-133)
     if issue_in.description is not None:
@@ -1260,7 +1327,7 @@ async def update_issue(
             logger.warning("Failed to create cross-references for issue %s", issue.id, exc_info=True)
 
     # Broadcast real-time updates
-    await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"), project_id=project.id)
+    await broadcast_issue_event(project.team_id, "updated", base.model_dump(mode="json"), project_id=project.id)
     await broadcast_activity_event(project.team_id, "created", {"issue_id": issue.id}, project_id=project.id)
 
     return response

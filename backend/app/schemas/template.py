@@ -103,6 +103,8 @@ class TemplateSettings(BaseModel):
     default_sprint_budget: int | None = Field(default=None, ge=1)
     human_rituals_required: bool | None = None
     require_estimate_on_claim: bool | None = None
+    require_assignee_on_claim: bool | None = None
+    require_epic_on_close: bool | None = None
 
     @field_validator("estimate_scale", mode="before")
     @classmethod

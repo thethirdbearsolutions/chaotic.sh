@@ -791,6 +791,11 @@ async def test_project_scoped_agent_cannot_probe_sibling_names(client, auth_head
         await _query(client, headers, mine, where="parent=OTH-1"),
         await _query(client, headers, mine, where="parent=NOPE-1"),
     )
+    for field in ("blocks", "blocked_by", "related"):
+        same_as_missing(
+            await _query(client, headers, mine, where=f"{field}=OTH-1"),
+            await _query(client, headers, mine, where=f"{field}=NOPE-1"),
+        )
     same_as_missing(
         await _query(client, headers, mine, where="assignee=SibBot"),
         await _query(client, headers, mine, where="assignee=NOPE"),
@@ -1154,3 +1159,116 @@ async def test_an_unknown_label_is_400_here_but_empty_in_the_plain_list(
     assert "no label 'nosuch'" in r.json()["detail"]
     plain = await client.get(f"/api/issues?project_id={test_project.id}&label=nosuch", headers=auth_headers)
     assert plain.status_code == 200 and plain.json() == []
+
+
+async def _relate(a, b, rtype):
+    from app.oxyde_models.issue import OxydeIssueRelation
+
+    await OxydeIssueRelation.objects.create(issue_id=a.id, related_issue_id=b.id, relation_type=rtype)
+
+
+@pytest.mark.asyncio
+async def test_relations_blocks_blocked_by_related(client, auth_headers, test_project, test_user):
+    """CHT-1903: a workstream encoded as relation edges can be listed."""
+    from app.enums import IssueRelationType as R
+
+    goal = await _issue(test_project, test_user, title="goal")
+    blocker = await _issue(test_project, test_user, title="blocker")
+    blocker2 = await _issue(test_project, test_user, title="blocker2")
+    side = await _issue(test_project, test_user, title="side")
+    await _issue(test_project, test_user, title="loose")
+    await _relate(blocker, goal, R.BLOCKS)
+    await _relate(blocker2, goal, R.BLOCKS)
+    await _relate(blocker2, side, R.BLOCKS)
+    await _relate(side, goal, R.RELATES_TO)
+    # A duplicates edge is neither a block nor relates_to.
+    await _relate(goal, side, R.DUPLICATES)
+
+    t = lambda w: _titles(client, auth_headers, test_project, w)  # noqa: E731
+    g, s = goal.identifier, side.identifier
+    assert await t(f"blocks={g}") == {"blocker", "blocker2"}
+    assert await t(f"blocks={g.lower()},{s}") == {"blocker", "blocker2"}
+    assert await t(f"blocks={s}") == {"blocker2"}
+    assert await t(f"blocked_by={blocker2.identifier}") == {"goal", "side"}
+    assert await t(f"blocked_by={blocker.identifier}") == {"goal"}
+    # relates_to has no direction: both ends match each other.
+    assert await t(f"related={g}") == {"side"}
+    assert await t(f"related={s}") == {"goal"}
+    assert await t("related=") == {"blocker", "blocker2", "loose"}
+    assert await t("related!=") == {"goal", "side"}
+    assert await t("blocks=") == {"goal", "side", "loose"}
+    assert await t("blocked_by=") == {"blocker", "blocker2", "loose"}
+    assert await t(f"blocks!={g}") == {"goal", "side", "loose"}
+    # Combines with SQL-matched rows, a label, and OR.
+    assert await t(f"blocks={g} title~=2") == {"blocker2"}
+    assert await t(f"related={g} or blocked_by={blocker.identifier}") == {"side", "goal"}
+    # An unknown issue is a 400, like parent.
+    r = await _query(client, auth_headers, f"projects/{test_project.id}", where="blocks=NOPE-9")
+    assert r.status_code == 400 and "no issue NOPE-9" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_relations_stay_in_scope(client, auth_headers, test_team, test_project, test_user):
+    """A relation to an issue in another project of the team matches the
+    in-scope end only; a project-scoped agent cannot name the sibling."""
+    from app.enums import IssueRelationType as R
+    from app.oxyde_models.project import OxydeProject
+
+    other = await OxydeProject.objects.create(team_id=test_team.id, name="Other", key="OTH", color="#000000")
+    mine = await _issue(test_project, test_user, title="mine")
+    theirs = await _issue(other, test_user, title="theirs")
+    await _relate(mine, theirs, R.BLOCKS)
+
+    assert await _titles(client, auth_headers, test_project, f"blocks={theirs.identifier}") == {"mine"}
+    # The project query lists only its own issues, whatever the far end.
+    assert await _titles(client, auth_headers, test_project, f"blocked_by={mine.identifier}") == set()
+    r = await _query(client, auth_headers, f"teams/{test_team.id}", where=f"blocked_by={mine.identifier}")
+    assert {i["title"] for i in r.json()["issues"]} == {"theirs"}
+
+
+@pytest.mark.asyncio
+async def test_relations_to_unseen_issues_count_as_none(client, test_team, test_project, test_user):
+    """A project-scoped agent's query sees exactly the edges the issue's
+    relation list shows it (CHT-1780): an edge to a sibling project's
+    issue is no edge, for every operator."""
+    from app.enums import IssueRelationType as R
+    from app.oxyde_models.project import OxydeProject
+    from app.oxyde_models.user import OxydeUser
+    from app.utils.security import create_access_token
+
+    other = await OxydeProject.objects.create(team_id=test_team.id, name="Other", key="OTH", color="#000000")
+    agent = await OxydeUser.objects.create(
+        email="scoped-rel@example.com", hashed_password="x", name="ScopedRel", is_agent=True,
+        agent_team_id=test_team.id, agent_project_id=test_project.id,
+    )
+    headers = {"Authorization": f"Bearer {create_access_token(data={'sub': agent.id})}"}
+    hidden = await _issue(test_project, test_user, title="hidden-edge")
+    await _issue(test_project, test_user, title="plain")
+    theirs = await _issue(other, test_user, title="theirs")
+    await _relate(hidden, theirs, R.BLOCKS)
+    await _relate(theirs, hidden, R.RELATES_TO)
+
+    r = await client.get(f"/api/issues/{hidden.id}/relations", headers=headers)
+    assert r.status_code == 200 and r.json() == []
+    for where in ("blocks!=", "blocked_by!=", "related!="):
+        assert await _titles(client, headers, test_project, where) == set(), where
+    for where in ("blocks=", "blocked_by=", "related="):
+        assert await _titles(client, headers, test_project, where) == {"hidden-edge", "plain"}, where
+
+
+@pytest.mark.asyncio
+async def test_relation_value_by_id_and_identifier_and_team_is_not(
+    client, auth_headers, test_team, test_project, test_user,
+):
+    from app.enums import IssueRelationType as R
+
+    goal = await _issue(test_project, test_user, title="goal")
+    linked = await _issue(test_project, test_user, title="linked")
+    await _issue(test_project, test_user, title="loose")
+    await _relate(goal, linked, R.RELATES_TO)
+
+    # The same issue by id and by identifier is one value.
+    assert await _titles(client, auth_headers, test_project, f"related={goal.id},{goal.identifier}") == {"linked"}
+    r = await _query(client, auth_headers, f"teams/{test_team.id}", where=f"related!={goal.identifier}")
+    assert r.status_code == 200
+    assert {i["title"] for i in r.json()["issues"]} == {"goal", "loose"}

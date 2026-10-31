@@ -518,6 +518,44 @@ export async function confirmDeleteProject(projectId) {
 // Current project being edited in the settings page
 let currentSettingsProjectId = null;
 
+function setCheckedIfPresent(id, checked) {
+  const el = document.getElementById(id);
+  if (el) el.checked = checked;
+}
+
+/**
+ * Fill the default-epic select (CHT-1900) with the project's open epics.
+ * The select stays disabled until they load, so a save made before then
+ * leaves the setting alone. The current default is kept as an option even
+ * if it has since closed, so saving other rules does not clear it.
+ */
+export async function populateDefaultEpicSelect(project) {
+  const select = document.getElementById('ps-default-epic');
+  if (!select) return;
+  select.disabled = true;
+  select.innerHTML = '<option value="">None</option>';
+  let epics;
+  try {
+    epics = await api.getIssues({ project_id: project.id, issue_type: 'epic', limit: 500 }) || [];
+  } catch {
+    // Leave it disabled: the save then sends no default_epic_id.
+    return;
+  }
+  if (currentSettingsProjectId !== project.id) return;
+  const options = epics.filter(e => e.id === project.default_epic_id
+    || (e.status !== 'done' && e.status !== 'canceled'));
+  // A current default the list did not return (no longer an epic, or past
+  // the limit) stays selectable, so saving other rules does not clear it.
+  const keepCurrent = project.default_epic_id && !options.some(e => e.id === project.default_epic_id)
+    ? `<option value="${escapeAttr(project.default_epic_id)}">Current default (not an open epic)</option>`
+    : '';
+  select.innerHTML = '<option value="">None</option>' + keepCurrent + options.map(e =>
+    `<option value="${escapeAttr(e.id)}">${escapeHtml(e.identifier)} ${escapeHtml(e.title)}</option>`,
+  ).join('');
+  select.value = project.default_epic_id || '';
+  select.disabled = false;
+}
+
 /**
  * Navigate to and load the project settings page
  * @param {string} projectId - Project ID
@@ -552,6 +590,9 @@ export async function viewProjectSettings(projectId) {
   document.getElementById('ps-unestimated-handling').value = project.unestimated_handling || 'default_one_point';
   document.getElementById('ps-human-rituals-required').checked = project.human_rituals_required === true;
   document.getElementById('ps-require-estimate-on-claim').checked = project.require_estimate_on_claim === true;
+  setCheckedIfPresent('ps-require-assignee-on-claim', project.require_assignee_on_claim === true);
+  setCheckedIfPresent('ps-require-epic-on-close', project.require_epic_on_close === true);
+  populateDefaultEpicSelect(project);
 
   // Show the view
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
@@ -666,6 +707,14 @@ export async function saveProjectSettingsRules() {
     human_rituals_required: document.getElementById('ps-human-rituals-required').checked,
     require_estimate_on_claim: document.getElementById('ps-require-estimate-on-claim').checked,
   };
+  // CHT-1900: absent from older templates of the page, so only sent when
+  // the controls exist.
+  const requireAssignee = document.getElementById('ps-require-assignee-on-claim');
+  if (requireAssignee) data.require_assignee_on_claim = requireAssignee.checked;
+  const requireEpic = document.getElementById('ps-require-epic-on-close');
+  if (requireEpic) data.require_epic_on_close = requireEpic.checked;
+  const defaultEpic = document.getElementById('ps-default-epic');
+  if (defaultEpic && !defaultEpic.disabled) data.default_epic_id = defaultEpic.value || null;
 
   try {
     await api.updateProject(currentSettingsProjectId, data);
