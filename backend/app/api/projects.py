@@ -3,11 +3,11 @@ from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import (
     CurrentUser, is_in_team_directory, can_read_team_data,
-    is_eligible_project_member, is_project_scoped_agent,
+    is_eligible_project_member, is_project_scoped_agent, refuse_agent_lifting_gates,
 )
 from app.api.visibility import team_hidden, visible_project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
-from app.services.project_service import ProjectService
+from app.services.project_service import GATE_SETTINGS, ProjectService
 from app.services.team_service import TeamService
 from app.websocket import broadcast_project_event
 
@@ -139,6 +139,15 @@ async def get_project(project_id: str, current_user: CurrentUser) -> ProjectResp
     return ProjectResponse.model_validate(project)
 
 
+def _lifted_by_update(project, project_in: ProjectUpdate) -> list[str]:
+    return [
+        name for name in GATE_SETTINGS
+        if name in project_in.model_fields_set
+        and getattr(project_in, name) is False
+        and getattr(project, name)
+    ]
+
+
 @router.patch("/{project_id}", response_model=ProjectResponse)
 @writes
 async def update_project(
@@ -151,6 +160,7 @@ async def update_project(
 
     # A project the caller cannot see answers like a missing one (CHT-1785).
     project = await visible_project(current_user, project_id)
+    refuse_agent_lifting_gates(current_user, _lifted_by_update(project, project_in))
     await _validate_lead(project_in.lead_id, project.team_id, project.id, project.lead_id)
     await _validate_default_epic(project_in.default_epic_id, project.id, project.default_epic_id)
 
