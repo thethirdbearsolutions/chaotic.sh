@@ -24,8 +24,8 @@ import sh.chaotic.sync.WriteRefusal
  * Writes the server refused (CHT-1613), each with what the person did and
  * the server's reason, until dismissed. They are never retried: a sprint
  * in arrears or limbo, or a gate someone else decided, will not change by
- * sending again. A refused comment shows its text, to copy, so what the
- * person wrote is not lost.
+ * sending again. A refused comment or rejection shows the text or note,
+ * to copy, so what the person wrote is not lost (CHT-1683).
  */
 @Composable
 fun RefusalList(refusals: List<WriteRefusal>, onDismiss: (String) -> Unit, modifier: Modifier = Modifier) {
@@ -78,7 +78,7 @@ fun StalledList(
                     val reason = if (write.tooOld(nowMillis)) R.string.stalled_too_old else R.string.stalled_reason
                     Notice(stringResource(reason), MaterialTheme.typography.bodySmall)
                     val text = write.value
-                    if (write.kind == WriteKind.COMMENT && text != null) {
+                    if ((write.kind == WriteKind.COMMENT || write.kind == WriteKind.REJECT) && text != null) {
                         SelectionContainer { Notice(text, MaterialTheme.typography.bodyMedium) }
                     }
                 }

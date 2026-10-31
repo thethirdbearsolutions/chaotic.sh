@@ -122,6 +122,30 @@ class WriteQueueTest {
     }
 
     @Test
+    fun aRefusedRejectionKeepsItsNote() = runTest {
+        remote.answerWrite = { Remote.HttpError(409, message = "Sprint is in arrears.") }
+        queue.reject(gate, "  Needs tests  ", undoMillis = 0)
+
+        queue.flush()
+
+        val refusal = store.refusals().single()
+        assertEquals(WriteKind.REJECT, refusal.kind)
+        assertEquals("Needs tests", refusal.value)
+    }
+
+    @Test
+    fun aRejectionTooOldToSendKeepsItsNote() = runTest {
+        val key = assertNotNull(queue.reject(gate, "Needs tests", undoMillis = 0))
+        now += WriteQueue.REPLAY_WINDOW_MILLIS
+        queue.flush()
+
+        assertFalse(queue.retry(key))
+        assertTrue(remote.writesSent.isEmpty())
+
+        assertEquals("Needs tests", store.refusals().single().value)
+    }
+
+    @Test
     fun aRejectionWithoutAReasonIsNotQueued() = runTest {
         assertNull(queue.reject(gate, "   "))
         assertEquals(emptyList(), store.pendingWrites())
