@@ -5,7 +5,9 @@ creates the session identity it knows by external_ref and mints it a
 fresh 7-day key. Each rule of the ticket has a class here.
 """
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi.routing import APIRoute, iter_route_contexts
@@ -130,7 +132,9 @@ class TestRegister:
     async def test_default_name_names_the_registrar(self, client, registrar):
         _, key = registrar
         agent = (await _register(client, key)).json()["agent"]
-        assert agent["name"] == f"Claude Code (cloud) · {REF[-8:]}"
+        head, tail = agent["name"].rsplit(" · ", 1)
+        assert head == "Claude Code (cloud)"
+        assert re.fullmatch(r"[0-9a-f]{8}", tail)
 
     async def test_rejects_a_ref_with_whitespace(self, client, registrar):
         _, key = registrar
@@ -755,6 +759,114 @@ class TestNames:
         _, key = registrar
         response = await _register(client, key, default_name="Test User")
         assert response.status_code == 422 and _code(response) == "name_matches_member"
+
+
+class TestNameCarriesNoRef:
+    """CHT-1869: a session identity's name, and the ``<first word>-<tail>``
+    handle made from it, are shown to every teammate, so no part of the
+    ref may be in it."""
+
+    SESSION_ID = REF[len("claude-code:session:"):]
+
+    async def test_the_default_tail_is_not_the_refs(self, client, registrar):
+        _, key = registrar
+        tails = set()
+        for n in range(5):
+            ref = f"claude-code:session:{n:08x}-aaaa-bbbb-cccc-00000000000{n}"
+            name = (await _register(client, key, ref=ref)).json()["agent"]["name"]
+            tail = name.rsplit(" · ", 1)[1]
+            assert tail not in ref
+            tails.add(tail)
+        assert len(tails) == 5  # drawn per identity
+
+    async def test_a_second_registration_keeps_the_random_name(self, client, registrar):
+        _, key = registrar
+        first = (await _register(client, key)).json()["agent"]
+        again = await _register(client, key)
+        assert again.status_code == 200 and again.json()["agent"]["name"] == first["name"]
+        # Also when a newer CLI sends a freshly drawn default each time.
+        again = await _register(client, key, default_name="Claude Code · main · 0a1b2c")
+        assert again.json()["agent"]["name"] == first["name"]
+
+    async def test_an_older_clis_ref_tail_is_replaced_on_create(self, client, registrar):
+        _, key = registrar
+        sent = f"Claude Code · cht-1499 · {self.SESSION_ID[:6]}"
+        name = (await _register(client, key, default_name=sent)).json()["agent"]["name"]
+        head, tail = name.rsplit(" · ", 1)
+        assert head == "Claude Code · cht-1499"
+        assert re.fullmatch(r"[0-9a-f]{6}", tail) and tail not in REF
+        # ...and kept from then on, though the older CLI keeps sending it.
+        again = await _register(client, key, default_name=sent)
+        assert again.json()["agent"]["name"] == name
+
+    @pytest.mark.parametrize("sent", [
+        "Claude Code · cht-1499 · 2b1f0",  # not the whole 6
+        "Claude Code · cht-1499 · 2B1F00",  # not as the CLI wrote it
+        "Claude Code · cht-1499 · 2b1f00 x",  # not the last part
+        "Claude Code cht-1499 2b1f00",  # no separator
+    ])
+    async def test_any_other_default_name_is_kept_as_sent(self, client, registrar, sent):
+        _, key = registrar
+        assert self.SESSION_ID[:6] == "2b1f00"
+        assert (await _register(client, key, default_name=sent)).json()["agent"]["name"] == sent
+
+    async def test_a_name_given_by_hand_is_never_rewritten(self, client, registrar):
+        _, key = registrar
+        sent = f"Mine · {self.SESSION_ID[:6]}"
+        assert (await _register(client, key, name=sent)).json()["agent"]["name"] == sent
+
+    async def test_only_a_claude_code_ref_has_its_tail_replaced(self, client, registrar):
+        _, key = registrar
+        ref = "other-harness:2b1f00aa"
+        sent = "Bot · 2b1f00"
+        assert (await _register(client, key, ref=ref, default_name=sent)).json()["agent"]["name"] == sent
+
+    async def test_a_tail_that_clashes_with_a_person_is_drawn_again(self, client, registrar, monkeypatch):
+        from app.services import registration_service as rs
+
+        _, key = registrar
+        draws = iter(["deadbeef", "0badf00d"])
+        real = rs.secrets.token_hex
+        # Only the name's 4-byte tail is scripted; the address keeps its own.
+        monkeypatch.setattr(rs, "secrets", SimpleNamespace(
+            token_hex=lambda n: next(draws) if n == 4 else real(n)))
+        clashes = iter([True, False, False])
+        monkeypatch.setattr(rs, "member_named", lambda team_id, name: _resolved(next(clashes)))
+        name = (await _register(client, key)).json()["agent"]["name"]
+        assert name == "Claude Code (cloud) · 0badf00d"
+
+    async def test_a_tail_that_keeps_clashing_is_refused(self, client, registrar, monkeypatch):
+        from app.services import registration_service as rs
+
+        _, key = registrar
+        calls = []
+
+        async def always(team_id, name):
+            calls.append(name)
+            return True
+
+        monkeypatch.setattr(rs, "member_named", always)
+        response = await _register(client, key)
+        assert response.status_code == 422 and _code(response) == "name_matches_member"
+        assert len(set(calls)) == rs._NAME_DRAWS
+
+    async def test_a_given_name_that_clashes_is_not_redrawn(self, client, registrar, monkeypatch):
+        from app.services import registration_service as rs
+
+        _, key = registrar
+        calls = []
+
+        async def always(team_id, name):
+            calls.append(name)
+            return True
+
+        monkeypatch.setattr(rs, "member_named", always)
+        response = await _register(client, key, default_name="Plain default")
+        assert response.status_code == 422 and calls == ["Plain default"]
+
+
+async def _resolved(value):
+    return value
 
 
 class TestRegistrarToggle:

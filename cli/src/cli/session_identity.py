@@ -417,9 +417,13 @@ def _workspace_label() -> str:
     return Path.cwd().name or "session"
 
 
-def default_name(registrar_name: str, ref: str) -> str:
-    session_id = ref[len(REF_PREFIX):]
-    name = f"{registrar_name} · {_workspace_label()} · {session_id[:6]}"
+def default_name(registrar_name: str) -> str:
+    """`<registrar> · <branch> · <6 random hex>`. The tail was the
+    session id's first 6 characters until CHT-1869, which showed every
+    teammate part of a ref only admins may see. It is random now; the
+    server uses a default name only to name a new identity, so a later
+    registration of the same session never changes it."""
+    name = f"{registrar_name} · {_workspace_label()} · {secrets.token_hex(3)}"
     return name[:NAME_MAX]
 
 
@@ -475,7 +479,7 @@ def _register(ref: str, credential: str, api_url: str, team_id: str | None, me: 
                 f"session_identity is auto but no team is selected (`chaotic team use`). {NO_FALLBACK}"
             )
         body["team_id"] = team_id
-    body["default_name"] = default_name(me.get("name") or "Claude Code", ref)
+    body["default_name"] = default_name(me.get("name") or "Claude Code")
     reg = _registrar_call("POST", f"{api_url}/agents/register", credential, body)
     agent = reg.get("agent") or {}
     if not reg.get("api_key"):

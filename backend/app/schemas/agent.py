@@ -91,7 +91,7 @@ class AgentRegister(BaseModel):
 
     external_ref: str = Field(min_length=1, max_length=200, pattern=EXTERNAL_REF_PATTERN)
     # Display name. Optional: a new identity defaults to
-    # "<registrar> · <last 8 of the ref>"; an existing one keeps its name.
+    # "<registrar> · <8 random hex>" (CHT-1869); an existing one keeps its name.
     name: str | None = Field(default=None, min_length=1, max_length=255)
     # The name for a *new* identity only; an existing one keeps its name
     # (CHT-1499: the CLI's `<registrar> · <branch> · <session>` label must

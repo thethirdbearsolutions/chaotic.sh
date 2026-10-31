@@ -60,8 +60,9 @@ from app.enums import AgentKind
 HANDLE_RE = re.compile(r"[a-zA-Z0-9._-]+")
 _NOT_SLUG = re.compile(r"[^a-z0-9]+")
 # How a default session identity name is built: the registrar's name,
-# then " · "-separated parts ending with a piece of the session id
-# (cli/src/cli/session_identity.py, RegistrationService._default_name).
+# then " · "-separated parts ending with a random tail, which until
+# CHT-1869 was a piece of the session id (cli/src/cli/session_identity.py,
+# RegistrationService._new_name).
 SESSION_NAME_SEP = " · "
 ID_PREFIX_LEN = 8
 

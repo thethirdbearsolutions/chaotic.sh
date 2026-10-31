@@ -197,7 +197,11 @@ class TestAutoMode:
         assert len(server.registrations) == 1
         body = server.registrations[0]
         assert body["external_ref"] == REF
-        assert body["default_name"] == f"Claude Code · cht-1499 · {SESSION_ID[:6]}"
+        head, tail = body["default_name"].rsplit(" · ", 1)
+        assert head == "Claude Code · cht-1499"
+        # A random tail, nothing of the ref (CHT-1869).
+        assert len(tail) == 6 and int(tail, 16) >= 0
+        assert tail not in REF
         assert "name" not in body  # never renames an existing identity
         assert "team_id" not in body  # an agent registrar registers in its own team
         # The write went with the session key, never with the registrar's.
@@ -228,6 +232,9 @@ class TestAutoMode:
         assert len(server.registrations) == 2
         assert "name" not in server.registrations[1]  # only default_name: never a rename
         assert json.loads(_cache().read_text())["api_key"] == new
+        # Each registration sends a freshly drawn tail, and only the first
+        # names the identity (the server's rule, CHT-1869).
+        assert server.names["sess-1"] == server.registrations[0]["default_name"]
 
     def test_a_second_401_is_an_error_not_a_loop(self, auto, server, configured):
         Client()._request("GET", "/issues")

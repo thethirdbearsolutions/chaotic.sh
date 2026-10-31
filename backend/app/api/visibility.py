@@ -322,16 +322,22 @@ async def shown_emails(viewer, users) -> dict[str, str | None]:
     CHT-1864 the address carries no ref material (it is
     ``session-<random>@agent.local``), so this is defence in depth, not
     the only guard. Every other user's address is returned as is. Each
-    session identity is checked once, however many rows it has."""
-    from app.api.agents import sees_external_ref  # agents imports this module
+    session identity is checked once, however many rows it has, and the
+    viewer's admin standing once per team (CHT-1869)."""
+    from app.api.agents import _is_team_admin, sees_external_ref  # agents imports this module
     from app.enums import AgentKind
 
     shown: dict[str, str | None] = {}
+    admin_of: dict[str | None, bool] = {}
     for user in users:
         if user is None or user.id in shown:
             continue
         email = user.email
-        if user.is_agent and user.kind == AgentKind.SESSION and not await sees_external_ref(viewer, user):
-            email = None
+        if user.is_agent and user.kind == AgentKind.SESSION and user.external_ref:
+            team_id = user.agent_team_id
+            if viewer.id not in (user.id, user.parent_user_id) and team_id not in admin_of:
+                admin_of[team_id] = await _is_team_admin(viewer, team_id)
+            if not await sees_external_ref(viewer, user, admin=admin_of.get(team_id, False)):
+                email = None
         shown[user.id] = email
     return shown

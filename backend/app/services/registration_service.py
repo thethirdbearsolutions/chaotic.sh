@@ -41,6 +41,7 @@ retires its identities) is in ``AgentService.deactivate``.
 from __future__ import annotations
 
 import logging
+import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -59,6 +60,7 @@ from app.schemas.agent import AgentRegister
 from app.schemas.api_key import APIKeyCreate
 from app.services.api_key_service import APIKeyService
 from app.services.credential_events import revoking
+from app.services.mention_handles import SESSION_NAME_SEP
 from app.services.revocation_service import RevocationService
 from app.utils.datetimes import ensure_utc
 
@@ -197,10 +199,21 @@ class RegistrationService:
                 await self._check_identity_cap(caller, settings.registrar_max_active_identities)
             await self._check_rate(caller, settings.registrar_max_registrations_per_hour)
 
-            name = req.name or (
-                existing.name if existing else (req.default_name or self._default_name(caller, req.external_ref))
-            )
+            if req.name:
+                name, random_tail = req.name, False
+            elif existing:
+                # A default name names a new identity only, so the random
+                # tail is drawn once and a re-registration keeps it.
+                name, random_tail = existing.name, False
+            else:
+                name, random_tail = self._new_name(caller, req)
             if existing is None or (req.name and req.name != existing.name):
+                for _ in range(_NAME_DRAWS - 1):
+                    # A random tail can, very rarely, make a handle a
+                    # person has (rule 8): draw again instead of refusing.
+                    if not random_tail or not await member_named(team_id, name):
+                        break
+                    name, _ = self._new_name(caller, req)
                 await self._check_name(team_id, name)
 
             if existing is None:
@@ -414,15 +427,50 @@ class RegistrationService:
             raise RegistrationRefused(422, detail["error_code"], detail["message"])
 
     @staticmethod
-    def _default_name(caller: OxydeUser, external_ref: str) -> str:
-        return f"{caller.name} · {external_ref[-8:]}"[:255]
+    def _new_name(caller: OxydeUser, req: AgentRegister) -> tuple[str, bool]:
+        """A new identity's name when no `name` is given, and whether it
+        ends in a random tail. The registrar's `default_name` as sent,
+        except that an older CLI's tail cut from the ref is replaced
+        (``without_ref_tail``); otherwise ``<registrar> · <8 random hex>``.
+        Until CHT-1869 that tail was the ref's last 8 characters, and the
+        name and its ``<first word>-<tail>`` handle are shown to every
+        teammate, while the ref is shown only to a few."""
+        if req.default_name:
+            name = without_ref_tail(req.default_name, req.external_ref)
+            return name, name != req.default_name
+        return f"{caller.name}{SESSION_NAME_SEP}{secrets.token_hex(4)}"[:255], True
+
+
+# How often a new identity's random name tail is drawn before a clash
+# with a person's handle is refused (rule 8).
+_NAME_DRAWS = 3
+
+# A Claude Code session's ref, as the CLI forms it
+# (cli/src/cli/session_identity.py REF_PREFIX).
+CLI_REF_PREFIX = "claude-code:session:"
+# CLIs before CHT-1869 ended their default name with this many leading
+# characters of the session id.
+CLI_REF_TAIL_LEN = 6
+
+
+def without_ref_tail(name: str, external_ref: str) -> str:
+    """`name`, or, when it is an older CLI's default name, the same with
+    its last ``" · "`` part, the session id's first 6 characters, replaced
+    by 6 random hex (CHT-1869). Only that exact tail is replaced, and only
+    for a ``claude-code:session:`` ref; any other name is returned as is."""
+    if not external_ref.startswith(CLI_REF_PREFIX):
+        return name
+    ref_tail = external_ref[len(CLI_REF_PREFIX):][:CLI_REF_TAIL_LEN]
+    head, sep, tail = name.rpartition(SESSION_NAME_SEP)
+    if not sep or not ref_tail or tail != ref_tail:
+        return name
+    return f"{head}{sep}{secrets.token_hex(CLI_REF_TAIL_LEN // 2)}"
 
 
 def session_email() -> str:
-    """A new session identity's address: random, and nothing else. Until
-    CHT-1864 it carried the last 24 characters of the external_ref, which
-    leaked the ref to readers ``sees_external_ref`` hides it from;
-    migration 0039 rewrote those addresses to this form."""
-    import uuid
-
-    return f"session-{uuid.uuid4().hex}@agent.local"
+    """A new session identity's address: 128 random bits, and nothing
+    else. Until CHT-1864 it carried the last 24 characters of the
+    external_ref, which leaked the ref to readers ``sees_external_ref``
+    hides it from; migration 0039 rewrote those addresses to this form,
+    from as many random bits."""
+    return f"session-{secrets.token_hex(16)}@agent.local"
