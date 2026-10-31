@@ -130,6 +130,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(cli_config, "GLOBAL_CONFIG_DIR", tmp_path)
     monkeypatch.setattr(cli_config, "_current_profile", None)
     monkeypatch.delenv("CHAOTIC_PROFILE", raising=False)
+    monkeypatch.delenv(si.NAME_ENV, raising=False)
     # No repository .chaotic unless a test writes one.
     monkeypatch.setattr(cli_config, "load_local_config", lambda: {})
     return tmp_path
@@ -694,6 +695,43 @@ class TestRenamesSurvive:
         assert len(server.registrations) == 2
         assert server.names["sess-1"] == "Renamed by hand"
         assert all("name" not in body for body in server.registrations)
+
+
+class TestChosenName:
+    """CHAOTIC_SESSION_NAME names a new identity, and only a new one (CHT-1918)."""
+
+    def test_it_goes_as_the_default_name(self, auto, server, configured, monkeypatch):
+        monkeypatch.setenv(si.NAME_ENV, "  Piper ")
+        Client()._request("GET", "/issues")
+        assert server.registrations[0]["default_name"] == "Piper"
+        assert "name" not in server.registrations[0]  # never a rename
+        assert server.names["sess-1"] == "Piper"
+
+    def test_a_later_registration_keeps_the_first_name(self, auto, server, configured, monkeypatch):
+        monkeypatch.setenv(si.NAME_ENV, "Piper")
+        Client()._request("GET", "/issues")
+        server.revoke_all()
+        monkeypatch.setenv(si.NAME_ENV, "Weir")
+        Client()._request("GET", "/issues")
+        assert len(server.registrations) == 2
+        assert server.names["sess-1"] == "Piper"
+
+    def test_blank_is_unset(self, auto, server, configured, monkeypatch):
+        monkeypatch.setenv(si.NAME_ENV, "   ")
+        with patch("cli.session_identity._workspace_label", return_value="b"):
+            Client()._request("GET", "/issues")
+        assert server.registrations[0]["default_name"].startswith("Claude Code · b · ")
+
+    def test_too_long_fails_loudly(self, auto, server, configured, monkeypatch):
+        monkeypatch.setenv(si.NAME_ENV, "x" * (si.NAME_MAX + 1))
+        with pytest.raises(APIError, match=si.NAME_ENV):
+            Client()._request("GET", "/issues")
+        assert server.registrations == []
+
+    def test_header_mode_sends_it_too(self, proxied, monkeypatch):
+        monkeypatch.setenv(si.NAME_ENV, "Piper")
+        Client()._request("GET", "/issues")
+        assert proxied.registrations == [{"external_ref": REF, "default_name": "Piper"}]
 
 
 class TestRepositoryUrlNormalised:

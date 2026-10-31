@@ -9,6 +9,7 @@ from app.api.deps import (
 )
 from app.api.visibility import team_hidden, visible_agent, visible_project, visible_team
 from app.enums import AgentKind
+from app.oxyde_models.user import OxydeUser
 from app.schemas.agent import (
     AgentCreate, AgentRegister, AgentRegistered, AgentUpdate, AgentResponse, AgentCreated,
 )
@@ -259,6 +260,18 @@ async def get_agent(
     )
 
 
+def _is_self_rename(current_user: OxydeUser, agent: OxydeUser, agent_in: AgentUpdate) -> bool:
+    """Is this a registered session identity changing only its own name
+    (CHT-1918)? A field sent as null counts as sent: a self-rename sends
+    `name` and nothing else."""
+    return (
+        current_user.id == agent.id
+        and (agent.kind == AgentKind.SESSION or agent.registered_by_id is not None)
+        and agent_in.name is not None
+        and agent_in.model_fields_set == {"name"}
+    )
+
+
 @router.patch("/agents/{agent_id}", response_model=AgentResponse)
 @writes
 async def update_agent(
@@ -271,14 +284,21 @@ async def update_agent(
     (`can_register`, CHT-1498). Allowed to its creator while in the
     agent's team and to that team's admins. A built-in app's session may
     rename, but not change `can_register` (CHT-1602): a registrar mints
-    keys, a capability that would outlive the session."""
+    keys, a capability that would outlive the session.
+
+    A registered session identity may also rename itself, and change
+    nothing else (CHT-1918): a cloud session has no person at hand to
+    name it, and the name is all it may choose. It still may not rename
+    any other agent."""
     if agent_in.can_register is not None:
         check_not_app_session(principal)
     agent_service = AgentService()
     # Visible (else 404, as if missing), then manageable (403) (CHT-1785).
     agent = await visible_agent(current_user, agent_id)
 
-    if not await can_manage_agent(current_user, agent):
+    if not (
+        _is_self_rename(current_user, agent, agent_in) or await can_manage_agent(current_user, agent)
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this agent",

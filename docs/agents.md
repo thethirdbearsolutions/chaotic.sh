@@ -387,7 +387,18 @@ A new identity is named `<registrar> · <git branch or directory> ·
 teammate sees, carries nothing of the session id. The CLI sends that
 as `default_name`, which never renames an existing identity, so the
 name is drawn once and a rename by hand survives every later
-registration. `chaotic auth whoami` shows the session identity, its
+registration.
+
+**A session can choose its own name** (CHT-1918). Set
+`CHAOTIC_SESSION_NAME=Piper` before the session's first `chaotic` call
+and a new identity is registered as `Piper` instead (it goes as
+`default_name`, so it names a new identity only; an existing one keeps
+its name). Afterwards, `chaotic auth rename <name>` renames the session
+identity you are signed in as: a registered session identity may change
+its own name (`PATCH /agents/{own id}` with only `name`), and nothing
+else about itself, and still cannot rename any other agent. It is read
+from the environment only, not the profile: every session on a machine
+shares the profile and would take the same name. `chaotic auth whoami` shows the session identity, its
 `external_ref` and the registrar that registered it; run
 `CHAOTIC_SESSION_IDENTITY=off chaotic auth whoami` to see the registrar
 itself. Subagents of a session share its identity.
@@ -507,9 +518,10 @@ identity.
   `not_a_registrar`, a session identity's is 403
   `registered_identity_cannot_register`, and the caps are the same.
 - The CLI does not ask `/auth/me` as the registrar in this mode (the
-  header authenticates nothing but register), so it sends no
+  header authenticates nothing but register), so it generates no
   `default_name` and the server names a new identity `<registrar> ·
-  <8 random hex>`. Only an agent registrar works this way: a person's
+  <8 random hex>`, unless `CHAOTIC_SESSION_NAME` is set, which is sent
+  as the `default_name` in this mode too. Only an agent registrar works this way: a person's
   key would need a `team_id`.
 - Only the session's requests use `X-Chaotic-Key`. `chaotic agent
   register` (the registrar's own call) and `CHAOTIC_SESSION_IDENTITY=off`
