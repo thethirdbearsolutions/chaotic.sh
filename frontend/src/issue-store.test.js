@@ -141,13 +141,13 @@ describe('issue-store', () => {
             row('c', { status: 'todo', priority: 'low', assignee_id: 'u1', labels: [{ id: 'l2', name: 'ui' }] }),
         ];
         beforeEach(() => writeQuery(queryKey(base), rows));
-        const ids = (r) => r && r.map(i => i.id);
+        const ids = (r) => r && r.rows.map(i => i.id);
 
         it('filters the unfiltered list by status, priority, assignee and labels', () => {
             expect(ids(deriveQuery({ ...base, status: ['todo'] }))).toEqual(['a', 'c']);
             expect(ids(deriveQuery({ ...base, status: ['todo'], priority: ['low'] }))).toEqual(['c']);
             expect(ids(deriveQuery({ ...base, assignee_id: 'u1' }))).toEqual(['a', 'c']);
-            expect(ids(deriveQuery({ ...base, label: ['bug'], label_match: 'any' }))).toBeNull(); // label_match differs
+            expect(ids(deriveQuery({ ...base, label: ['bug'], label_match: 'any' }))).toEqual(['a']);
             expect(ids(deriveQuery({ ...base, exclude_label: ['BUG'] }))).toEqual(['b', 'c']);
         });
 
@@ -159,9 +159,41 @@ describe('issue-store', () => {
             expect(deriveQuery({ ...base })).toBeNull();
         });
 
+        // PR #470 review I1, M2
+        it('says whether the source was complete', () => {
+            expect(deriveQuery({ ...base, status: ['todo'] }).complete).toBe(true);
+            expect(deriveQuery({ ...base, status: ['backlog'] })).toEqual({ rows: [], complete: true });
+            clearIssueStore();
+            const capped = { ...base, limit: 2 };
+            writeQuery(queryKey(capped), rows.slice(0, 2));
+            expect(deriveQuery({ ...capped, status: ['todo'] })).toEqual({ rows: [rows[0]], complete: false });
+        });
+
+        // review M1
+        it('reads unassigned and no_sprint as empty, and filters sprint and type', () => {
+            expect(ids(deriveQuery({ ...base, assignee_id: 'unassigned' }))).toEqual(['b']);
+            expect(ids(deriveQuery({ ...base, sprint_id: 'no_sprint' }))).toEqual(['a', 'b', 'c']);
+            expect(ids(deriveQuery({ ...base, sprint_id: 's1' }))).toEqual([]);
+            expect(ids(deriveQuery({ ...base, issue_type: 'bug' }))).toEqual([]);
+        });
+
+        // review I3
+        it('leaves non-ASCII label names to the server', () => {
+            expect(deriveQuery({ ...base, label: ['Über'], label_match: 'any' })).toBeNull();
+            expect(deriveQuery({ ...base, exclude_label: ['Über'] })).toBeNull();
+            expect(deriveQuery({ ...base, label: ['bug'] })).toBeNull(); // only "any of" is reproduced
+        });
+
+        it('filters the smallest covering source', () => {
+            writeQuery(queryKey({ ...base, status: ['todo'] }), [rows[0]]); // stale on purpose: fewer rows
+            expect(ids(deriveQuery({ ...base, status: ['todo'], priority: ['high'] }))).toEqual(['a']);
+        });
+
         it('leaves searches, other sorts and other scopes to the server', () => {
             expect(deriveQuery({ ...base, search: 'x' })).toBeNull();
             expect(deriveQuery({ ...base, sort_by: 'priority' })).toBeNull();
+            writeQuery(queryKey({ ...base, sort_by: 'random' }), rows);
+            expect(deriveQuery({ ...base, sort_by: 'random', status: ['todo'] })).toBeNull();
             expect(deriveQuery({ ...base, scope: 'q', project_id: 'q' })).toBeNull();
         });
 

@@ -199,17 +199,27 @@ export function sameRows(a, b) {
 // Filters a cached query can be narrowed by on the client.
 const ARRAY_FILTERS = ['status', 'priority'];
 const SCALAR_FILTERS = ['assignee_id', 'sprint_id', 'issue_type'];
+// The server reads these filter values as "is empty".
+const MEANS_NULL = { assignee_id: 'unassigned', sprint_id: 'no_sprint' };
 // Must match exactly: they change which rows come back, or their order,
 // in ways the client can't reproduce.
-const SAME = ['scope', 'project_id', 'sort_by', 'order', 'limit', 'label_match'];
+const SAME = ['scope', 'project_id', 'sort_by', 'order', 'limit'];
 
 const lower = (names) => (names || []).map(n => String(n).toLowerCase());
+// The server lowercases a label name in Python but the column with
+// SQLite's ASCII-only LOWER(), so a non-ASCII name matches differently
+// there than here (CHT-1920): leave such filters to the server.
+// eslint-disable-next-line no-control-regex
+const plainNames = (names) => (names || []).every(n => /^[\x00-\x7f]*$/.test(String(n)));
 
 // Whether every row `target` asks for is among the rows `source` returned
 // (given `source` was complete), so filtering `source` gives `target`.
 function covers(source, target) {
-    if (source.search || target.search) return false;
+    if (source.search || target.search || target.sort_by === 'random') return false;
     if (SAME.some(k => (source[k] ?? null) !== (target[k] ?? null))) return false;
+    if (!plainNames(target.label) || !plainNames(target.exclude_label)) return false;
+    // Only "any of" label matching is reproduced here (the web UI's).
+    if (target.label !== undefined && target.label_match !== 'any') return false;
     for (const k of ARRAY_FILTERS) {
         if (source[k] === undefined) continue;
         if (target[k] === undefined || !target[k].every(v => source[k].includes(v))) return false;
@@ -219,7 +229,7 @@ function covers(source, target) {
     }
     // label is "any of": a narrower set selects fewer rows.
     if (source.label !== undefined) {
-        if (target.label === undefined) return false;
+        if (target.label === undefined || source.label_match !== target.label_match) return false;
         const allowed = lower(source.label);
         if (!lower(target.label).every(n => allowed.includes(n))) return false;
     }
@@ -231,38 +241,54 @@ function covers(source, target) {
     return true;
 }
 
-function matches(issue, target) {
-    for (const k of ARRAY_FILTERS) {
-        if (target[k] !== undefined && !target[k].includes(issue[k])) return false;
-    }
-    for (const k of SCALAR_FILTERS) {
-        if (target[k] !== undefined && (issue[k] ?? null) !== target[k]) return false;
-    }
-    const names = lower((issue.labels || []).map(l => l.name));
-    if (target.label !== undefined && !lower(target.label).some(n => names.includes(n))) return false;
-    if (target.exclude_label !== undefined && lower(target.exclude_label).some(n => names.includes(n))) return false;
-    return true;
+function matcher(target) {
+    const wanted = target.label === undefined ? null : lower(target.label);
+    const unwanted = target.exclude_label === undefined ? null : lower(target.exclude_label);
+    return (issue) => {
+        for (const k of ARRAY_FILTERS) {
+            if (target[k] !== undefined && !target[k].includes(issue[k])) return false;
+        }
+        for (const k of SCALAR_FILTERS) {
+            if (target[k] === undefined) continue;
+            const want = target[k] === MEANS_NULL[k] ? null : target[k];
+            if ((issue[k] ?? null) !== want) return false;
+        }
+        if (wanted || unwanted) {
+            const names = lower((issue.labels || []).map(l => l.name));
+            if (wanted && !wanted.some(n => names.includes(n))) return false;
+            if (unwanted && unwanted.some(n => names.includes(n))) return false;
+        }
+        return true;
+    };
 }
 
 /**
  * Rows for a query the store has not loaded, filtered on the client from
- * a cached query that covers it (e.g. Open priorities from the unfiltered
- * list), in that query's order. Null when no cached query covers it, or
- * when the target is a search (matching is the server's). The caller
- * shows them while the real request runs and replaces them with its
- * answer (VISION.md: filtering shows something within 100 ms).
+ * a cached query that covers it (e.g. High priority from the Open list),
+ * in that query's order: { rows, complete }, or null when no cached query
+ * covers it, or the target is a search or a random sort (the server's to
+ * answer). `complete` is false when the source hit its limit, so rows
+ * past it may be missing: the caller shows such rows as still loading.
+ * The caller replaces them with the server's answer either way
+ * (VISION.md: filtering shows something within 100 ms).
  */
 export function deriveQuery(params) {
+    if (params?.search) return null;
     const target = Object.fromEntries(JSON.parse(queryKey(params)));
     let best = null;
+    let bestKey = null;
     queries.forEach((entry, key) => {
         if (best && entry.ids.length >= best.ids.length) return;
         let source;
         try { source = Object.fromEntries(JSON.parse(key)); } catch { return; }
-        if (covers(source, target)) best = entry;
+        if (covers(source, target)) { best = entry; bestKey = key; }
     });
     if (!best) return null;
-    return best.ids.map(id => entities.get(id)).filter(issue => issue && matches(issue, target));
+    touch(bestKey, best); // a use: keep it from being evicted first
+    const keep = matcher(target);
+    const rows = best.ids.map(id => entities.get(id)).filter(issue => issue && keep(issue));
+    const limit = target.limit;
+    return { rows, complete: !(typeof limit === 'number' && best.ids.length >= limit) };
 }
 
 export function clearIssueStore() {

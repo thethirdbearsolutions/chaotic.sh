@@ -107,13 +107,13 @@ try {
     for (const priority of ['high', 'urgent', 'low', 'medium']) {
         await page.evaluate(() => window.scrollTo(0, 0));
         filter.push(await page.evaluate((value) => {
-            // Every row shown has the new priority: the filter has visibly applied.
+            // Every row shown has the new priority: the filter has visibly
+            // applied. (The seeded Open list is cut off at 1,000 rows, so
+            // these rows may still be dimmed as loading: something shows.)
             const rows = () => [...document.querySelectorAll('#issues-list .issue-row')];
             const p = window.__untilFrame(() => {
-                const list = document.getElementById('issues-list');
                 const shown = rows();
-                return !list.classList.contains('is-refreshing') && shown.length > 0
-                    && shown.every((r) => r.querySelector('.priority-btn')?.title.toLowerCase() === `priority: ${value}`);
+                return shown.length > 0 && shown.every((r) => r.dataset.priority === value);
             });
             const box = document.querySelector(`#priority-filter-dropdown input[value="${value}"]`);
             box.checked = true;

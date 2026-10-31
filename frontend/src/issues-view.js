@@ -315,12 +315,12 @@ function showCachedRows(key, rows) {
 // Rows filtered on the client from another cached query (CHT-1910). No
 // current query: an edit made meanwhile must not be saved under a key
 // these rows were never loaded for. The server's answer takes over.
-function showDerivedRows(key, rows) {
-    setListRefreshing(false);
+function showDerivedRows(key, rows, { loading }) {
     setCurrentQueryKey(null);
     setIssues(rows);
     if (getCurrentView() === 'issues') setDetailNavContext(rows);
     renderIssues();
+    setListRefreshing(loading);
     paintedKey = key;
     setHiddenClosedHint(0);
 }
@@ -500,9 +500,12 @@ export async function loadIssues() {
             // written back to the store from them, and a failed request
             // replaces them with the error.
             const derived = deriveQuery({ ...params, scope });
-            if (derived && derived.length > 0) {
+            // A complete source gives the whole answer, even an empty one.
+            // One cut off at its limit may be missing rows: show them as
+            // still loading (dimmed), never as the final list.
+            if (derived && (derived.complete || derived.rows.length > 0)) {
                 showingDerived = true;
-                showDerivedRows(key, derived);
+                showDerivedRows(key, derived.rows, { loading: !derived.complete });
             } else {
                 showLoadingState();
             }

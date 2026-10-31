@@ -73,7 +73,7 @@ import { getMembers } from './teams.js';
 import { getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { showApiError } from './ui.js';
-import { clearIssueStore } from './issue-store.js';
+import { clearIssueStore, getCurrentQueryKey } from './issue-store.js';
 
 import { registerActions } from './event-delegation.js';
 
@@ -1184,6 +1184,21 @@ describe('issues-view', () => {
                     resolve(fromServer);
                     await pending;
                     expect(setIssues).toHaveBeenLastCalledWith(fromServer);
+                });
+
+                it('shows a complete derived list as final, with no current query meanwhile', async () => {
+                    checkStatuses([]);
+                    api.getIssues.mockResolvedValue(mixed);
+                    await loadIssues();
+                    checkStatuses(['todo']);
+                    let resolve;
+                    api.getIssues.mockReturnValue(new Promise(r => { resolve = r; }));
+                    const pending = loadIssues();
+                    await vi.waitFor(() => expect(setIssues).toHaveBeenCalledWith([mixed[0], mixed[2]]));
+                    expect(document.getElementById('issues-list').classList.contains('is-refreshing')).toBe(false);
+                    expect(getCurrentQueryKey()).toBeNull();
+                    resolve([mixed[0], mixed[2]]);
+                    await pending;
                 });
 
                 it('shows the error, not the derived rows, when the request fails', async () => {
