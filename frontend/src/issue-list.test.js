@@ -791,6 +791,41 @@ describe('issue-list', () => {
                 expect(isCollapsed('done')).toBe(true);
             });
 
+            // CHT-1932
+            it('marks headers as buttons that say whether they are open', () => {
+                renderIssues();
+                const header = () => document.querySelector('.issue-group[data-group="done"] .issue-group-header');
+                expect(header().getAttribute('role')).toBe('button');
+                expect(header().getAttribute('tabindex')).toBe('0');
+                expect(header().getAttribute('aria-expanded')).toBe('true');
+                toggleGroup('done');
+                expect(header().getAttribute('aria-expanded')).toBe('false');
+                renderIssues();
+                expect(header().getAttribute('aria-expanded')).toBe('false');
+            });
+
+            it('opens and closes a group with Enter or Space on its header', () => {
+                renderIssues();
+                const header = document.querySelector('.issue-group[data-group="done"] .issue-group-header');
+                header.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                expect(isCollapsed('done')).toBe(true);
+                document.querySelector('.issue-group[data-group="done"] .issue-group-header')
+                    .dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+                expect(isCollapsed('done')).toBe(false);
+            });
+
+            it('moves the cursor off a group as it closes, to the next row shown', () => {
+                setTestIssues([...grouped, { id: 'i3', identifier: 'T-3', title: 'Three', status: 'canceled', priority: 'low' }]);
+                renderIssues();
+                document.querySelector('.issue-row[data-issue-id="i2"]').classList.add('keyboard-selected');
+                setSelectedIssueIndex(1);
+                toggleGroup('done');
+                const selected = document.querySelectorAll('.issue-row.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.issueId).toBe('i3');
+                expect(getSelectedIssueIndex()).toBe(1);
+            });
+
             it('remembers collapsed groups per group-by choice', () => {
                 renderIssues();
                 toggleGroup('done');
