@@ -44,7 +44,13 @@ The CLI (`chaotic`) is the primary interface. It's designed for agents:
 - Clear error messages that tell the agent what to do
 - Fast, minimal friction for the happy path
 
-Humans *can* use the CLI, but it's optimized for agents. The web UI is optimized for humans.
+Humans *can* use the CLI, but it's optimized for agents. The web UI is optimized for humans, and it is held to Linear's bar: at least as fast, as dense and as keyboard-driven. Chaotic is meant to be both, an agent-native CLI and a human UI people prefer to Linear. Neither side is the afterthought.
+
+What that bar means in practice for the web UI:
+- Navigation, Back, filtering and opening an issue feel instant: render from data already loaded, refresh in the background, never blank the screen to refetch.
+- Every common action has a key, and a key pressed right after another is never dropped.
+- A screen shows as much work as Linear's does, not a few roomy cards.
+- It stays fast at real size (thousands of issues per project), not just on a dev database.
 
 ### 2. Sprint Budgets & Arrears
 
@@ -231,7 +237,7 @@ Linear is excellent human-first project management. But:
 
 2. **No ritual system**: Linear has no concept of "you must attest to these things before continuing."
 
-3. **Human-optimized UX**: Linear's UI is beautiful for humans. Chaotic's CLI is optimized for agents.
+3. **Built for both**: Linear's API is an add-on for agents. Chaotic's CLI is native to agents, and its web UI is held to Linear's bar for the humans supervising them.
 
 4. **Opinionated workflow**: Chaotic enforces Now/Next, budgets, rituals. Linear is flexible. For agent supervision, opinions are features.
 
