@@ -76,6 +76,9 @@ from app.api import documents as _documents
 from app.api import issues as _issues
 from app.api import sprints as _sprints
 from app.api import rituals as _rituals
+from app.api import epics as _epics
+from app.schemas.epic import EpicProgressResponse
+from app.services.epic_progress import DEFAULT_SPRINT_WINDOW, MAX_SPRINT_WINDOW
 
 router = APIRouter()
 
@@ -255,6 +258,31 @@ async def query_team_issues(
         current_user, team_id=team_id, where=where, filter_json=filter_json,
         order=order, skip=skip, limit=limit,
     )
+
+
+_SprintWindowParam = Annotated[int, Query(ge=1, le=MAX_SPRINT_WINDOW)]
+
+
+@router.get("/projects/{project_id}/epics", response_model=EpicProgressResponse)
+@reads
+async def list_project_epics(
+    project_id: str,
+    current_user: CurrentUser,
+    sprint_window: _SprintWindowParam = DEFAULT_SPRINT_WINDOW,
+) -> EpicProgressResponse:
+    """Epic progress in one project, in one request (CHT-1902)."""
+    return await _epics.list_epic_progress(current_user, project_id=project_id, sprint_window=sprint_window)
+
+
+@router.get("/teams/{team_id}/epics", response_model=EpicProgressResponse)
+@reads
+async def list_team_epics(
+    team_id: str,
+    current_user: CurrentUser,
+    sprint_window: _SprintWindowParam = DEFAULT_SPRINT_WINDOW,
+) -> EpicProgressResponse:
+    """Epic progress across every project of a team (CHT-1902)."""
+    return await _epics.list_epic_progress(current_user, team_id=team_id, sprint_window=sprint_window)
 
 
 @router.post("/projects/{project_id}/sprints", response_model=SprintResponse, status_code=status.HTTP_200_OK)

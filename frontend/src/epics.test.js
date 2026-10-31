@@ -1,13 +1,13 @@
 /**
- * Tests for epics module (CHT-831)
+ * Tests for epics module (CHT-831, CHT-1902)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the api module
 vi.mock('./api.js', () => ({
     api: {
-        getTeamIssues: vi.fn(),
-        getSubIssues: vi.fn(),
+        getTeamEpicProgress: vi.fn(),
+        getProjectEpicProgress: vi.fn(),
     },
 }));
 
@@ -32,8 +32,8 @@ vi.mock('./ui.js', () => ({
     showApiError: vi.fn(),
 }));
 
-import { setCurrentTeam, getSelectedEpicIndex, setSelectedEpicIndex } from './state.js';
-import { loadEpics, renderEpics, getCurrentEpics } from './epics.js';
+import { setCurrentTeam, setCurrentProject, getSelectedEpicIndex, setSelectedEpicIndex } from './state.js';
+import { loadEpics, renderEpics, renderSprintStrip, getCurrentEpics } from './epics.js';
 import { api } from './api.js';
 import { navigateToEpicByIdentifier } from './router.js';
 import { showApiError } from './ui.js';
@@ -42,98 +42,76 @@ function setupDom() {
     document.body.innerHTML = '<div id="epics-list"></div>';
 }
 
+const sprints = (pointsList) => pointsList.map((p, i) => ({
+    sprint_id: `s${i}`, name: `Sprint ${i + 1}`,
+    status: i === pointsList.length - 1 ? 'active' : 'completed',
+    closed: p ? 1 : 0, points: p,
+}));
+
+const epic = (overrides = {}) => ({
+    id: 'e1', identifier: 'CHT-10', title: 'Auth Epic', status: 'in_progress',
+    status_pinned: false, priority: 'high', estimate: null,
+    project_id: 'p1', project_key: 'CHT',
+    children: { total: 4, backlog: 0, todo: 1, in_progress: 1, in_review: 0, done: 2, canceled: 0 },
+    open_children: 2, points_total: 8, points_done: 5,
+    closed_this_sprint: 1, points_this_sprint: 3,
+    sprints: sprints([0, 2, 3]),
+    ...overrides,
+});
+
+const untracked = (overrides = {}) => ({
+    project_id: 'p1', project_key: 'CHT', open: 7,
+    closed_this_sprint: 2, points_this_sprint: 2, sprints: sprints([1, 0, 2]),
+    ...overrides,
+});
+
+const response = (epics, gaps = []) => ({ epics, untracked: gaps, sprint_window: 8 });
+
 describe('loadEpics', () => {
     beforeEach(() => {
         setupDom();
         vi.clearAllMocks();
         setCurrentTeam({ id: 'team-1' });
+        setCurrentProject(null);
     });
 
     it('resets the keyboard cursor on (re)load (CHT-1291 review)', async () => {
-        api.getTeamIssues.mockResolvedValue([]);
+        api.getTeamEpicProgress.mockResolvedValue(response([]));
         setSelectedEpicIndex(5);
         await loadEpics();
         expect(getSelectedEpicIndex()).toBe(-1);
     });
 
     it('shows empty state when no epics exist', async () => {
-        api.getTeamIssues.mockResolvedValue([]);
-
+        api.getTeamEpicProgress.mockResolvedValue(response([], [untracked()]));
         await loadEpics();
-
         const el = document.getElementById('epics-list');
         expect(el.innerHTML).toContain('No epics found');
         expect(el.innerHTML).toContain('Create epic');
     });
 
-    it('renders epics with progress bars', async () => {
-        const epics = [
-            { id: 'e1', identifier: 'CHT-10', title: 'Auth Epic', status: 'in_progress', estimate: 8 },
-            { id: 'e2', identifier: 'CHT-20', title: 'Search Epic', status: 'todo', estimate: 5 },
-        ];
-        api.getTeamIssues.mockResolvedValue(epics);
-        api.getSubIssues.mockImplementation((id) => {
-            if (id === 'e1') {
-                return Promise.resolve([
-                    { id: 's1', status: 'done' },
-                    { id: 's2', status: 'in_progress' },
-                    { id: 's3', status: 'done' },
-                ]);
-            }
-            return Promise.resolve([]);
-        });
-
+    it('reads the team-wide endpoint once, with no per-epic fetches', async () => {
+        api.getTeamEpicProgress.mockResolvedValue(response([epic(), epic({ id: 'e2', identifier: 'CHT-20', title: 'Search Epic' })]));
         await loadEpics();
-
         const el = document.getElementById('epics-list');
-        expect(el.innerHTML).toContain('CHT-10');
+        expect(api.getTeamEpicProgress).toHaveBeenCalledTimes(1);
+        expect(api.getTeamEpicProgress).toHaveBeenCalledWith('team-1');
         expect(el.innerHTML).toContain('Auth Epic');
-        expect(el.innerHTML).toContain('2/3');
-        expect(el.innerHTML).toContain('CHT-20');
         expect(el.innerHTML).toContain('Search Epic');
-        // Verify team_id + issue_type=epic was passed
-        expect(api.getTeamIssues).toHaveBeenCalledWith('team-1', { issue_type: 'epic' });
     });
 
-    it('shows dash for progress when no sub-issues', async () => {
-        api.getTeamIssues.mockResolvedValue([
-            { id: 'e1', identifier: 'CHT-10', title: 'Empty Epic', status: 'backlog', estimate: null },
-        ]);
-        api.getSubIssues.mockResolvedValue([]);
-
+    it('reads the project endpoint when a project is selected', async () => {
+        setCurrentProject('p1');
+        api.getProjectEpicProgress.mockResolvedValue(response([epic()]));
         await loadEpics();
-
-        const el = document.getElementById('epics-list');
-        expect(el.innerHTML).toContain('CHT-10');
-        // Progress text should show dash
-        const progressTexts = el.querySelectorAll('.epic-progress-text');
-        expect(progressTexts[0].textContent).toBe('-');
-    });
-
-    it('handles sub-issues API failure gracefully', async () => {
-        api.getTeamIssues.mockResolvedValue([
-            { id: 'e1', identifier: 'CHT-10', title: 'Failing Epic', status: 'in_progress', estimate: 3 },
-        ]);
-        api.getSubIssues.mockRejectedValue(new Error('Not supported'));
-
-        await loadEpics();
-
-        const el = document.getElementById('epics-list');
-        expect(el.innerHTML).toContain('CHT-10');
-        // Should render with dash progress, not crash
-        const progressTexts = el.querySelectorAll('.epic-progress-text');
-        expect(progressTexts[0].textContent).toBe('-');
+        expect(api.getProjectEpicProgress).toHaveBeenCalledWith('p1');
+        expect(api.getTeamEpicProgress).not.toHaveBeenCalled();
     });
 
     it('handles API failure loading epics', async () => {
-        api.getTeamIssues.mockRejectedValue(new Error('Network error'));
-
+        api.getTeamEpicProgress.mockRejectedValue(new Error('Network error'));
         await loadEpics();
-
         const el = document.getElementById('epics-list');
-        // CHT-1226: standardized on renderEmptyState(); the raw exception
-        // message no longer leaks into the DOM (showApiError, mocked
-        // above, is the toast surface for that instead).
         expect(el.innerHTML).toContain('Failed to load epics');
         expect(el.innerHTML).toContain('empty-state-icon');
         expect(el.innerHTML).not.toContain('Network error');
@@ -141,177 +119,143 @@ describe('loadEpics', () => {
         expect(showApiError).toHaveBeenCalledWith('load epics', expect.any(Error));
     });
 
-    it('shows a standardized empty state (no raw div) when no team is selected', async () => {
+    it('shows a standardized empty state when no team is selected', async () => {
         setCurrentTeam(null);
-
         await loadEpics();
-
         const el = document.getElementById('epics-list');
         expect(el.innerHTML).toContain('Select a team');
         expect(el.innerHTML).toContain('empty-state-icon');
     });
 
-    it('shows complete progress bar style when all done', async () => {
-        api.getTeamIssues.mockResolvedValue([
-            { id: 'e1', identifier: 'CHT-10', title: 'Done Epic', status: 'done', estimate: 5 },
-        ]);
-        api.getSubIssues.mockResolvedValue([
-            { id: 's1', status: 'done' },
-            { id: 's2', status: 'done' },
-        ]);
-
+    // CHT-1211 review #3: a stale response from a superseded call is dropped.
+    it('drops a slow response from an earlier project switch', async () => {
+        let resolveFirst;
+        api.getTeamEpicProgress.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+        const firstLoad = loadEpics();
+        api.getTeamEpicProgress.mockImplementationOnce(() => Promise.resolve(response([epic({ id: 'fresh', title: 'Fresh Epic' })])));
         await loadEpics();
+        expect(getCurrentEpics().map(e => e.id)).toEqual(['fresh']);
 
-        const el = document.getElementById('epics-list');
-        const fill = el.querySelector('.epic-progress-fill');
-        expect(fill.classList.contains('epic-progress-complete')).toBe(true);
-        expect(fill.style.width).toBe('100%');
+        resolveFirst(response([epic({ id: 'stale', title: 'Stale Epic' })]));
+        await firstLoad;
+        expect(getCurrentEpics().map(e => e.id)).toEqual(['fresh']);
+        expect(document.getElementById('epics-list').innerHTML).not.toContain('Stale Epic');
     });
 
-    it('counts canceled as done for progress', async () => {
-        api.getTeamIssues.mockResolvedValue([
-            { id: 'e1', identifier: 'CHT-10', title: 'Mixed Epic', status: 'in_progress', estimate: 5 },
-        ]);
-        api.getSubIssues.mockResolvedValue([
-            { id: 's1', status: 'done' },
-            { id: 's2', status: 'canceled' },
-            { id: 's3', status: 'todo' },
-        ]);
-
+    it('clears getCurrentEpics when the list is empty', async () => {
+        api.getTeamEpicProgress.mockResolvedValue(response([epic()]));
         await loadEpics();
-
-        const el = document.getElementById('epics-list');
-        const progressTexts = el.querySelectorAll('.epic-progress-text');
-        expect(progressTexts[0].textContent).toBe('2/3');
-    });
-
-    // CHT-1211 review #3: same monotonic-request-id protection as the other
-    // list loaders — a stale response from a superseded loadEpics() call
-    // (rapid project switching) must not overwrite newer data.
-    describe('request sequencing (out-of-order responses)', () => {
-        it('drops a slow response from an earlier project switch', async () => {
-            let resolveFirst;
-            const staleEpics = [{ id: 'stale', identifier: 'CHT-1', title: 'Stale Epic', status: 'todo' }];
-            const freshEpics = [{ id: 'fresh', identifier: 'CHT-2', title: 'Fresh Epic', status: 'todo' }];
-            api.getSubIssues.mockResolvedValue([]);
-
-            api.getTeamIssues.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
-            const firstLoad = loadEpics(); // in flight, slow
-
-            api.getTeamIssues.mockImplementationOnce(() => Promise.resolve(freshEpics));
-            await loadEpics(); // resolves first (faster)
-
-            expect(getCurrentEpics().map(e => e.id)).toEqual(['fresh']);
-
-            // The slow first request now resolves — must be dropped
-            resolveFirst(staleEpics);
-            await firstLoad;
-
-            expect(getCurrentEpics().map(e => e.id)).toEqual(['fresh']);
-            expect(document.getElementById('epics-list').innerHTML).toContain('Fresh Epic');
-            expect(document.getElementById('epics-list').innerHTML).not.toContain('Stale Epic');
-        });
-    });
-
-    // CHT-1211 item 6: epic-detail-view.js's prev/next reads this list
-    describe('getCurrentEpics', () => {
-        it('exposes the last-loaded epics list', async () => {
-            api.getTeamIssues.mockResolvedValue([
-                { id: 'e1', identifier: 'CHT-10', title: 'Auth Epic', status: 'todo', estimate: 3 },
-            ]);
-            api.getSubIssues.mockResolvedValue([]);
-
-            await loadEpics();
-
-            expect(getCurrentEpics().map(e => e.id)).toEqual(['e1']);
-        });
-
-        it('clears to empty array when the list is empty', async () => {
-            api.getTeamIssues.mockResolvedValue([
-                { id: 'e1', identifier: 'CHT-10', title: 'Auth Epic', status: 'todo', estimate: 3 },
-            ]);
-            api.getSubIssues.mockResolvedValue([]);
-            await loadEpics();
-            expect(getCurrentEpics().length).toBe(1);
-
-            api.getTeamIssues.mockResolvedValue([]);
-            await loadEpics();
-
-            expect(getCurrentEpics()).toEqual([]);
-        });
+        expect(getCurrentEpics().length).toBe(1);
+        api.getTeamEpicProgress.mockResolvedValue(response([]));
+        await loadEpics();
+        expect(getCurrentEpics()).toEqual([]);
     });
 });
 
 describe('renderEpics', () => {
+    let container;
     beforeEach(() => {
         setupDom();
+        vi.clearAllMocks();
+        container = document.getElementById('epics-list');
     });
 
-    it('renders table with correct structure', () => {
-        const container = document.getElementById('epics-list');
-        const epics = [
-            {
-                id: 'e1',
-                identifier: 'CHT-10',
-                title: 'Test Epic',
-                status: 'in_progress',
-                estimate: 8,
-                subIssues: [{ status: 'done' }, { status: 'todo' }],
-            },
-        ];
-
-        renderEpics(epics, container);
-
-        expect(container.querySelector('table')).toBeTruthy();
-        expect(container.querySelector('thead')).toBeTruthy();
-        expect(container.querySelector('tbody')).toBeTruthy();
-        expect(container.querySelectorAll('th').length).toBe(5);
-        expect(container.querySelector('.epic-row')).toBeTruthy();
+    it('renders the progress table', () => {
+        renderEpics(response([epic()]), container);
+        expect(container.querySelectorAll('th').length).toBe(7);
+        const row = container.querySelector('.epic-row');
+        expect(row.querySelector('.epic-progress-text').textContent).toBe('2/4');
+        expect(row.querySelector('.epic-progress-fill').style.width).toBe('50%');
+        expect(row.querySelector('.epic-progress-active').style.width).toBe('25%');
+        expect(row.querySelector('.epic-points').textContent).toBe('5/8 pts');
+        expect(row.querySelector('.epic-sprint').textContent).toContain('+1');
+        expect(row.querySelector('.epic-sprint').textContent).toContain('3 pts');
     });
 
-    it('shows estimate as pts when present', () => {
-        const container = document.getElementById('epics-list');
-        renderEpics([{
-            id: 'e1', identifier: 'CHT-1', title: 'E', status: 'todo', estimate: 13,
-            subIssues: [],
-        }], container);
-
-        expect(container.querySelector('.epic-estimate').textContent).toBe('13pts');
+    it('leaves canceled tickets out of the progress total', () => {
+        renderEpics(response([epic({
+            children: { total: 3, backlog: 0, todo: 0, in_progress: 0, in_review: 0, done: 2, canceled: 1 },
+        })]), container);
+        const fill = container.querySelector('.epic-progress-fill');
+        expect(container.querySelector('.epic-progress-text').textContent).toBe('2/2');
+        expect(fill.classList.contains('epic-progress-complete')).toBe(true);
     });
 
-    it('shows dash for estimate when null', () => {
-        const container = document.getElementById('epics-list');
-        renderEpics([{
-            id: 'e1', identifier: 'CHT-1', title: 'E', status: 'todo', estimate: null,
-            subIssues: [],
-        }], container);
+    it('says so when an epic has no tickets', () => {
+        renderEpics(response([epic({
+            children: { total: 0, backlog: 0, todo: 0, in_progress: 0, in_review: 0, done: 0, canceled: 0 },
+            points_total: 0, points_done: 0, closed_this_sprint: 0,
+        })]), container);
+        expect(container.querySelector('.epic-progress-text').textContent).toBe('No tickets');
+        expect(container.querySelector('.epic-points').textContent).toBe('-');
+        expect(container.querySelector('.epic-sprint').textContent).toBe('-');
+    });
 
-        expect(container.querySelector('.epic-estimate').textContent).toBe('-');
+    it('marks a hand-set status on an open epic', () => {
+        renderEpics(response([epic({ status_pinned: true })]), container);
+        expect(container.querySelector('.epic-status-pinned-mark')).toBeTruthy();
+    });
+
+    it('shows the untracked row, which the keyboard cursor skips', () => {
+        renderEpics(response([epic()], [untracked()]), container);
+        const gap = container.querySelector('.epic-untracked-row');
+        expect(gap.textContent).toContain('No epic');
+        expect(gap.textContent).toContain('7 open tickets');
+        expect(gap.classList.contains('epic-row')).toBe(false);
+    });
+
+    it('omits an untracked row with nothing in it', () => {
+        renderEpics(response([epic()], [untracked({ open: 0, closed_this_sprint: 0, sprints: sprints([0, 0]) })]), container);
+        expect(container.querySelector('.epic-untracked-row')).toBeNull();
+    });
+
+    it('groups by project team-wide', () => {
+        renderEpics(response(
+            [epic(), epic({ id: 'e2', identifier: 'WEB-3', project_id: 'p2', project_key: 'WEB' })],
+            [untracked(), untracked({ project_id: 'p2', project_key: 'WEB' })],
+        ), container);
+        const groups = [...container.querySelectorAll('.epic-group-row')].map(r => r.textContent.trim());
+        expect(groups).toEqual(['CHT', 'WEB']);
+        expect(container.querySelectorAll('.epic-untracked-row').length).toBe(2);
+    });
+
+    it('hides closed epics until asked, and prev/next follows what is shown', () => {
+        renderEpics(response([epic(), epic({ id: 'e2', identifier: 'CHT-9', status: 'done' })]), container);
+        expect(container.querySelectorAll('.epic-row').length).toBe(1);
+        expect(getCurrentEpics().map(e => e.id)).toEqual(['e1']);
+
+        const toggle = container.querySelector('[data-epics-toggle-closed]');
+        expect(toggle.textContent).toContain('Show 1 closed epic');
+        toggle.click();
+        expect(container.querySelectorAll('.epic-row').length).toBe(2);
+        expect(getCurrentEpics().map(e => e.id)).toEqual(['e1', 'e2']);
+        expect(navigateToEpicByIdentifier).not.toHaveBeenCalled();
+
+        container.querySelector('[data-epics-toggle-closed]').click();
+        expect(container.querySelectorAll('.epic-row').length).toBe(1);
     });
 
     it('navigates to epic on row click via event delegation', () => {
-        const container = document.getElementById('epics-list');
-        renderEpics([{
-            id: 'e1', identifier: 'CHT-10', title: 'Clickable Epic', status: 'todo', estimate: 5,
-            subIssues: [],
-        }], container);
-
+        renderEpics(response([epic()]), container);
         const row = container.querySelector('.epic-row');
-        expect(row.dataset.identifier).toBe('CHT-10');
+        expect(row.getAttribute('onclick')).toBeNull();
         row.click();
         expect(navigateToEpicByIdentifier).toHaveBeenCalledWith('CHT-10');
     });
+});
 
-    it('uses data-identifier attribute instead of inline onclick', () => {
-        const container = document.getElementById('epics-list');
-        renderEpics([{
-            id: 'e1', identifier: 'CHT-10', title: 'Safe Epic', status: 'todo', estimate: 5,
-            subIssues: [],
-        }], container);
+describe('renderSprintStrip', () => {
+    it('draws one bar per sprint, scaled to the largest, current last', () => {
+        document.body.innerHTML = renderSprintStrip(sprints([0, 2, 4]));
+        const ticks = document.querySelectorAll('.epic-sprint-tick');
+        expect(ticks.length).toBe(3);
+        const heights = [...document.querySelectorAll('.epic-sprint-fill')].map(f => f.style.height);
+        expect(heights).toEqual(['0%', '50%', '100%']);
+        expect(ticks[2].classList.contains('epic-sprint-current')).toBe(true);
+        expect(ticks[2].getAttribute('title')).toBe('Sprint 3 (current): 1 ticket closed, 4 pts');
+    });
 
-        const row = container.querySelector('.epic-row');
-        // No inline onclick — uses data attribute + event delegation
-        expect(row.getAttribute('onclick')).toBeNull();
-        expect(row.dataset.identifier).toBe('CHT-10');
+    it('shows a dash with no sprints', () => {
+        expect(renderSprintStrip([])).toContain('-');
     });
 });
