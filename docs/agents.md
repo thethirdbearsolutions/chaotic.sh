@@ -475,11 +475,12 @@ is shown only here.
 - **Keys expire after 7 days** (`AGENT_SESSION_KEY_TTL_SECONDS`).
   Register again to renew.
 - `name` is optional and renames an existing identity; a new one
-  defaults to `<registrar> · <8 random hex>`. `default_name` names
-  a new identity only and leaves an existing one's name alone (what the
-  CLI sends). A name is shown to every teammate, so none of the ref goes
-  in it: a `default_name` from a CLI before CHT-1869, which ends in the
-  first 6 characters of the session id, gets 6 random hex in their place. An agent may not take the name of a person in its team.
+  defaults to `<registrar> · <8 random hex>`. `default_name` names a
+  new identity only and leaves an existing one's name alone (what the
+  CLI sends). A name is shown to every teammate, so none of the ref
+  goes in it: a `default_name` from a CLI before CHT-1869, which ends in
+  the first 6 characters of the session id, gets 6 random hex in their
+  place. An agent may not take the name of a person in its team.
 - `project_id` narrows a team-scoped registrar's identity to one of its
   projects. Nothing can be wider than the registrar: a `team_id` other
   than its own is a 403, and a `project_id` outside its scope (or, for a

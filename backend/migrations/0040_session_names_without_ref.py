@@ -26,6 +26,25 @@ exact tail. The part before the tail is not compared with anything:
 the registrar may have been renamed since, and the CLI's branch part
 cannot be derived at all.
 
+Inbox titles: an entry's title is written once, with the name of the
+principal who caused it (``inbox_service``), so it would keep showing
+the old tail. For each renamed identity this rewrites, in its own team:
+
+  * a title that starts with its old name and a space, on an entry it
+    caused (``source_user_id``): mentions, assignments and gate
+    rejections ("<name> mentioned you in …");
+  * ``" rejected <old name>'s "`` in a gate rejection's title, where it
+    is the attester rather than the source.
+
+Each rewritten entry's ``updated_at`` is bumped so that syncing clients
+fetch it again (CHT-1607). The old names are kept in a temp table only
+while the migration runs. Deliberately left alone, because people wrote
+them: ``@claude-<old tail>`` handles typed into comments, descriptions
+and documents (they now reach nobody), and inbox bodies, which quote
+that text. Also left alone: agent-status titles that name the agent
+("… your agent <name>", "acting as <name>"), which go only to its holder
+or a team admin, who may see the ref anyway.
+
 Handles: the new ``<first word>-<tail>`` is unique by chance only (2^-32
 or 2^-24 per pair). Two identities that draw the same tail share that
 handle, so it reaches neither (CHT-1502: an ambiguous handle reaches
@@ -48,17 +67,24 @@ depends_on = "0039_session_emails_without_ref"
 _SEP = " · "
 
 
-def _rename(tail: str, random_bytes: int) -> str:
-    """Replace the last ``" · <tail>"`` of a session identity's name,
-    where `tail` (an SQL expression over the row) is cut from its ref."""
+def _matches(tail: str) -> str:
+    """A session identity whose name ends in ``" · <tail>"``, where
+    `tail` (an SQL expression over the row) is cut from its own ref."""
     suffix = f"'{_SEP}' || {tail}"
     return (
-        f"UPDATE users SET name = substr(name, 1, length(name) - length({tail})) "
-        f"|| lower(hex(randomblob({random_bytes}))) "
-        "WHERE kind = 'SESSION' AND external_ref IS NOT NULL AND name IS NOT NULL "
+        "kind = 'SESSION' AND external_ref IS NOT NULL AND name IS NOT NULL "
         f"AND length({tail}) > 0 "
         f"AND length(name) >= length({suffix}) "
         f"AND substr(name, -length({suffix})) = {suffix}"
+    )
+
+
+def _rename(tail: str, random_bytes: int) -> str:
+    """Replace that tail with `random_bytes` random bytes in hex."""
+    return (
+        f"UPDATE users SET name = substr(name, 1, length(name) - length({tail})) "
+        f"|| lower(hex(randomblob({random_bytes}))) "
+        f"WHERE {_matches(tail)}"
     )
 
 
@@ -77,6 +103,47 @@ CLI_TAIL = (
 )
 RENAME_CLI_DEFAULT_SQL = _rename(CLI_TAIL, 3)
 
+RENAMED = "_cht1869_renamed"
+# Who is about to be renamed, under their old name, taken before either rename.
+REMEMBER_SQL = (
+    f"CREATE TEMP TABLE {RENAMED} AS SELECT id, agent_team_id AS team_id, name AS old_name "
+    f"FROM users WHERE ({_matches(SERVER_TAIL)}) OR ({_matches(CLI_TAIL)})"
+)
+
+# The stored datetime form, naive UTC "YYYY-MM-DD HH:MM:SS.ffffff" (0006).
+_NOW = "strftime('%Y-%m-%d %H:%M:%f', 'now') || '000'"
+
+# The old name of the renamed identity that caused an entry, in its team.
+_SOURCE_OLD = (
+    f"(SELECT r.old_name FROM {RENAMED} AS r WHERE r.id = inbox_entries.source_user_id "
+    "AND r.team_id = inbox_entries.team_id)"
+)
+RETITLE_SOURCE_SQL = (
+    "UPDATE inbox_entries SET "
+    "title = (SELECT u.name FROM users AS u WHERE u.id = inbox_entries.source_user_id) "
+    f"|| substr(title, length({_SOURCE_OLD}) + 1), "
+    f"updated_at = {_NOW} "
+    f"WHERE {_SOURCE_OLD} IS NOT NULL "
+    f"AND substr(title, 1, length({_SOURCE_OLD}) + 1) = {_SOURCE_OLD} || ' '"
+)
+
+# A gate rejection's "<who> rejected <attester>'s review: …".
+_REJECTED_OLD = "' rejected ' || r.old_name || '''s '"
+_REJECTED_NEW = "' rejected ' || u.name || '''s '"
+_ATTESTER = (
+    f"FROM {RENAMED} AS r JOIN users AS u ON u.id = r.id "
+    "WHERE r.team_id = inbox_entries.team_id "
+    f"AND instr(inbox_entries.title, {_REJECTED_OLD}) > 0"
+)
+RETITLE_ATTESTER_SQL = (
+    "UPDATE inbox_entries SET "
+    f"title = (SELECT replace(inbox_entries.title, {_REJECTED_OLD}, {_REJECTED_NEW}) {_ATTESTER} LIMIT 1), "
+    f"updated_at = {_NOW} "
+    f"WHERE kind = 'GATE_REJECTED' AND EXISTS (SELECT 1 {_ATTESTER})"
+)
+
+FORGET_SQL = f"DROP TABLE {RENAMED}"
+
 
 def _recording(ctx) -> bool:
     """True in the replay (collect mode); see 0017."""
@@ -87,11 +154,15 @@ def upgrade(ctx):
     """Apply migration."""
     if _recording(ctx):
         return
+    ctx.execute(REMEMBER_SQL)
     # Neither form's new tail can match the other's pattern: a ref never
     # contains " · ", so " · " plus 6 characters cannot end inside 8 new
     # hex, and the reverse needs the ref's own characters.
     ctx.execute(RENAME_SERVER_DEFAULT_SQL)
     ctx.execute(RENAME_CLI_DEFAULT_SQL)
+    ctx.execute(RETITLE_SOURCE_SQL)
+    ctx.execute(RETITLE_ATTESTER_SQL)
+    ctx.execute(FORGET_SQL)
 
 
 def downgrade(ctx):
