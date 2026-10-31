@@ -5,7 +5,7 @@ Until CHT-1864 RegistrationService made a session identity's address
 lowercased last 24 characters of its ``external_ref``. The ref is shown
 only to the identity, its holder and its team's admins
 (``sees_external_ref``), but the address went to every reader of the
-issue and document activity feeds, so the slug leaked the ref (about 76
+issue and document activity feeds, so the slug leaked the ref (about 78
 of a ``claude-code:session:<uuid>`` ref's 122 random bits). New
 identities now get ``session-<32 hex>@agent.local``
 (``registration_service.session_email``); this rewrites the existing
@@ -14,8 +14,8 @@ ones to that form.
 Data only: no schema changes, so nothing is recorded and the replay
 (collect mode) does nothing. Two UPDATEs through ctx.execute:
 
-  * every session identity (``kind`` SESSION) whose address is in the
-    old ``session-…@agent.local`` form gets a new one from
+  * every session identity (``kind`` SESSION) whose address matches
+    ``session-%@agent.local`` (SQLite's LIKE, so any case) gets a new one from
     ``randomblob(16)``, 128 random bits per row, so the UNIQUE indexes
     on ``email`` and ``email_folded`` cannot meet a collision in
     practice; if one ever did, the migration fails as a whole
@@ -25,8 +25,11 @@ Data only: no schema changes, so nothing is recorded and the replay
 
 Nothing looks a session identity up by its address: registration finds
 it by ``(agent_team_id, external_ref)``, and it has no password, so no
-login uses the address. A session identity whose address is not in the
-old form (made by hand) is left alone.
+login uses the address. A session identity whose address does not match
+(made by hand) is left alone. The pattern also matches the new form, so
+applying this again (after a rollback) gives every session identity,
+new ones included, yet another random address; that is harmless for the
+same reason (CHT-1869).
 
 The downgrade does nothing: the old addresses are not kept, and the
 code before this migration works with the new ones (it never parsed an

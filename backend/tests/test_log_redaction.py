@@ -56,7 +56,10 @@ class TestSecretFormat:
         ("app/oxyde_models/*.py", "uuid4"): "row primary keys: public ids",
         ("app/oxyde_db.py", "uuid4"): "primary-key default for a str pk column",
         ("app/services/agent_service.py", "uuid4"): "placeholder agent email, not a credential",
-        ("app/services/registration_service.py", "uuid4"): "suffix of a placeholder agent email",
+        ("app/services/registration_service.py", "token_hex"): (
+            "a session identity's placeholder email and the random tail of its default name "
+            "(CHT-1869): public labels, not credentials"
+        ),
         ("app/api/idempotency.py", "uuid4"): "idempotency claim token: names a request, grants nothing",
         ("app/services/issue_service.py", "random"): "shuffles issue order for display",
         ("app/services/ritual_selection.py", "random"): "seeded ritual sampling, deterministic by design",

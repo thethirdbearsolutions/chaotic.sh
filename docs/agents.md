@@ -383,9 +383,11 @@ From then on, inside a Claude Code session (which sets
    fall back to the registrar's key.
 
 A new identity is named `<registrar> · <git branch or directory> ·
-<first 6 of the session id>`. The CLI sends that as `default_name`,
-which never renames an existing identity, so a rename by hand survives
-every later registration. `chaotic auth whoami` shows the session identity, its
+<6 random hex>`. The tail is random so that the name, which every
+teammate sees, carries nothing of the session id. The CLI sends that
+as `default_name`, which never renames an existing identity, so the
+name is drawn once and a rename by hand survives every later
+registration. `chaotic auth whoami` shows the session identity, its
 `external_ref` and the registrar that registered it; run
 `CHAOTIC_SESSION_IDENTITY=off chaotic auth whoami` to see the registrar
 itself. Subagents of a session share its identity.
@@ -473,9 +475,11 @@ is shown only here.
 - **Keys expire after 7 days** (`AGENT_SESSION_KEY_TTL_SECONDS`).
   Register again to renew.
 - `name` is optional and renames an existing identity; a new one
-  defaults to `<registrar> · <last 8 of the ref>`. `default_name` names
+  defaults to `<registrar> · <8 random hex>`. `default_name` names
   a new identity only and leaves an existing one's name alone (what the
-  CLI sends). An agent may not take the name of a person in its team.
+  CLI sends). A name is shown to every teammate, so none of the ref goes
+  in it: a `default_name` from a CLI before CHT-1869, which ends in the
+  first 6 characters of the session id, gets 6 random hex in their place. An agent may not take the name of a person in its team.
 - `project_id` narrows a team-scoped registrar's identity to one of its
   projects. Nothing can be wider than the registrar: a `team_id` other
   than its own is a 403, and a `project_id` outside its scope (or, for a

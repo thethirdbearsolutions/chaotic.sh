@@ -1,5 +1,6 @@
 """E2E contract tests: Agents."""
 import json
+import re
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -211,7 +212,10 @@ class TestAutomaticSessionIdentity:
         assert issue["creator"]["kind"] == "session"
         assert issue["creator"]["registered_by_name"] == "Claude Code"
         assert me["external_ref"] == ref and me["registered_by_name"] == "Claude Code"
-        assert me["name"].startswith("Claude Code · ") and me["name"].endswith(" · e2e-se")
+        assert me["name"].startswith("Claude Code · ")
+        # A random tail, not the session id's first 6 characters (CHT-1869).
+        tail = me["name"].rsplit(" · ", 1)[1]
+        assert re.fullmatch(r"[0-9a-f]{6}", tail) and tail not in ref
         assert first["agent_id"] == me["id"]
 
         # Revoked (or expired): the next request registers again, once,
@@ -223,6 +227,9 @@ class TestAutomaticSessionIdentity:
         second = self._cache(registrar["api_key"])
         assert again["id"] == me["id"]
         assert second["api_key"] != first["api_key"]
+        # The CLI drew a new tail for its default_name, but a default
+        # names a new identity only: the name and its handle stay put.
+        assert again["name"] == me["name"]
 
     def test_a_non_registrar_key_fails_loudly(self, api_client, test_team, test_project, tmp_path, monkeypatch):
         from cli import session_identity

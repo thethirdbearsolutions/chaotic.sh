@@ -526,25 +526,29 @@ class TestSessionToSession:
 
         a = await register("claude-code:session:2b1f0000-aaaa-bbbb-cccc-00000000000a")
         b = await register("claude-code:session:2b1f0000-aaaa-bbbb-cccc-00000000000b")
-        # The default names share everything but the tail, and their
-        # registration response tells each session its handle.
-        assert a["agent"]["mention_handle"] == "claude-0000000a"
-        assert b["agent"]["mention_handle"] == "claude-0000000b"
+        # The default names share everything but the random tail
+        # (CHT-1869), and their registration response tells each session
+        # its handle.
+        tail_a = a["agent"]["name"].rsplit(" · ", 1)[1]
+        tail_b = b["agent"]["name"].rsplit(" · ", 1)[1]
+        assert a["agent"]["mention_handle"] == f"claude-{tail_a}"
+        assert b["agent"]["mention_handle"] == f"claude-{tail_b}"
+        handle_b = f"claude-{tail_b}"
 
         # Everyone in the team sees the same handles (agent list, team members).
         listed = (await client.get(f"/api/teams/{test_team.id}/agents", headers=auth_headers)).json()
         by_id = {row["id"]: row["mention_handle"] for row in listed}
-        assert by_id[b["agent"]["id"]] == "claude-0000000b"
+        assert by_id[b["agent"]["id"]] == handle_b
         assert by_id[mcp.id] == "claude-mcp"
         assert by_id[registrar_id] == "claude-code-cloud"
         one = (await client.get(f"/api/agents/{b['agent']['id']}", headers=auth_headers)).json()
-        assert one["mention_handle"] == "claude-0000000b"
+        assert one["mention_handle"] == handle_b
         members = (await client.get(f"/api/teams/{test_team.id}/members", headers=auth_headers)).json()
         assert [m["mention_handle"] for m in members] == ["test"]
 
         comment = await client.post(
             f"/api/issues/{test_issue.id}/comments",
-            json={"content": "@claude-0000000b can you take this? (@claude alone is ambiguous)"},
+            json={"content": f"@{handle_b} can you take this? (@claude alone is ambiguous)"},
             headers=_bearer(a["api_key"]),
         )
         assert comment.status_code == 201, comment.text
