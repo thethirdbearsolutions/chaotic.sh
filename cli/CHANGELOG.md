@@ -12,16 +12,17 @@ semantic versioning, loosely. It is the release that was prepared as
 0.1.0a22, which never reached PyPI.
 
 Server, CLI, web UI and Android changes merged since a21 (PRs #260,
-#322-#329 and #331-#464). This release carries 21 database migrations
-(0020-0040). Two of them refuse to run on data that breaks their rule
+#322-#329 and #331-#464). This release carries 20 database migrations
+(0020-0040; there is no 0035). Two of them refuse to run on data that breaks their rule
 (0020: a dangling agent owner; 0022: two API keys sharing a hash), and
 several delete or rewrite rows, each reporting what it does in the
 upgrade output. It also changes which agent API keys still sign in.
 **Run the preflight checks below before upgrading.** Install the new
 CLI first (`uv tool install --force chaotic-cli==0.1.0`), then run
-`chaotic system upgrade --version v0.1.0`, which stops the server,
-backs up the database, checks out the new code and migrates before
-restarting. chaotic.thirdbearsolutions.com has run this code since
+`chaotic system upgrade --version v0.1.0`, which backs up the
+database, stops the server, checks out the new code and migrates before
+restarting. If a migration fails, it restores the backup, checks the
+previous code out again and restarts the server on it. chaotic.thirdbearsolutions.com has run this code since
 2026-10-31 (5701ed09).
 
 ### Upgrade notes
@@ -29,13 +30,14 @@ restarting. chaotic.thirdbearsolutions.com has run this code since
 - **Preflight 1 (required): dangling agent owners.** Migration 0020 adds
   a foreign key to `users.parent_user_id` (the human who owns an agent).
   If any row names a parent that no longer exists, 0020 stops before
-  writing anything and lists the ids. By then `chaotic system upgrade` has
-  already checked out the 0.1.0 code, and it restarts the server on it. The
-  server refuses to serve a database whose migrations are behind its code,
-  so **the server stays down** until you fix the rows and run `chaotic
-  system upgrade --yes` again. The database itself is untouched (still at
-  a21's schema), so nothing needs restoring. Check first, read-only, in its
-  own process (never from inside the running server):
+  writing anything and lists the ids. The 0.1.0 CLI's `chaotic system
+  upgrade` then rolls back to the previous code and backup and restarts
+  the server there; fix the rows and run `chaotic system upgrade --yes`
+  again. (An older CLI does not roll back: it leaves the server on the new
+  code, which refuses to serve a database whose migrations are behind it,
+  so the server stays down until the rows are fixed and the upgrade is run
+  again. Install the 0.1.0 CLI first.) Check first, read-only, in its own
+  process (never from inside the running server):
 
   ```sql
   SELECT child.id, child.is_agent, child.parent_user_id FROM users AS child
@@ -60,7 +62,7 @@ restarting. chaotic.thirdbearsolutions.com has run this code since
   SELECT k.key_prefix, agent.id AS agent_id, agent.name AS agent,
          CASE WHEN k.user_id = agent.id THEN agent.parent_user_id ELSE k.user_id END AS holder_id
   FROM api_keys AS k
-  JOIN users AS agent ON agent.id = COALESCE(k.agent_user_id, k.user_id) AND agent.is_agent = 1
+  JOIN users AS agent ON agent.id = COALESCE(NULLIF(k.agent_user_id, ''), k.user_id) AND agent.is_agent = 1
   WHERE k.is_active = 1
     AND NOT EXISTS (SELECT 1 FROM team_members AS m
                     WHERE m.team_id = agent.agent_team_id
@@ -117,10 +119,6 @@ restarting. chaotic.thirdbearsolutions.com has run this code since
 - **New inbox kind `agent_status`**, for an agent's creator when someone
   else deactivates or reactivates it. A client that switches on inbox
   kinds will see a value it has not seen before.
-- **MCP clients should reconnect**: compact issue, document and inbox
-  rows gained `assignee`, `author` and `source_user`, and the
-  `sprint_current`/`sprint_close` descriptions changed, so a cached
-  toolset is stale (the tool count stays 38).
 - **Rolling back after a successful upgrade needs both halves.**
   `chaotic system upgrade` backs up the database before it checks out
   the new code (unless `--no-backup`); `chaotic system backup --list`
@@ -158,12 +156,14 @@ restarting. chaotic.thirdbearsolutions.com has run this code since
   Where accounts differ only in the case of their address, the oldest
   keeps it for case-insensitive lookups; the others still log in by their
   exact address, are listed by id in the upgrade output, and are logged
-  at every startup until resolved (`chaotic system audit`, CHT-1827).
+  at every startup until resolved (`chaotic system audit shared-addresses`, CHT-1827).
 - **Migration 0036 gives every agent a team and revokes those agents'
   keys** (CHT-1837). Project-scoped agents made without a team get their
-  project's team. Their keys have been refused since this release's holder rule,
-  so instead of bringing them back silently, 0036 revokes them: the
-  owner or a team admin mints new ones. Agents it cannot place are left
+  project's team. Under this release's holder rule (an agent key signs in
+  only while its holder is in the agent's team) a teamless agent's keys
+  are refused, so rather than letting the backfill bring them back without
+  anyone deciding to, 0036 revokes them, **including keys that sign in
+  today on a21**. The owner or a team admin mints new ones. Agents it cannot place are left
   as they are and listed. To count before upgrading:
 
   ```sql
@@ -171,7 +171,21 @@ restarting. chaotic.thirdbearsolutions.com has run this code since
   LEFT JOIN projects AS p ON p.id = u.agent_project_id
   LEFT JOIN teams AS t ON t.id = p.team_id
   WHERE u.is_agent AND u.agent_team_id IS NULL;
+
+  SELECT count(*) FROM api_keys AS k
+  JOIN users AS u ON u.id = coalesce(nullif(k.agent_user_id, ''), k.user_id)
+  JOIN projects AS p ON p.id = u.agent_project_id JOIN teams AS t ON t.id = p.team_id
+  WHERE u.is_agent AND u.agent_team_id IS NULL AND k.is_active;
   ```
+
+  The second counts the active keys it will revoke, on an a21 database.
+- **Migration 0031: existing sprints follow the project's default
+  budget** (CHT-1495). A planned sprint whose budget was set by hand
+  takes the default when it activates unless it is set again first:
+  re-set those with `chaotic sprint budget <id> <points>`.
+- **Migration 0032 starts every existing account unverified** (CHT-1790).
+  On a server with SMTP configured, accepting an invitation then needs a
+  verified email (`chaotic auth verify-email`).
 - **Migrations 0039 and 0040 rewrite session identities' addresses and
   default names** so they no longer carry a piece of the identity's
   `external_ref`, and rewrite the inbox titles that quoted the old names
@@ -183,8 +197,10 @@ restarting. chaotic.thirdbearsolutions.com has run this code since
   upgrades; `chaotic system config adopt` takes over values already in a
   hand-edited service file (CHT-1592, CHT-1676). `OAUTH_ENABLED` takes a
   restart.
-- **MCP clients should reconnect**: the toolset changed (39 tools), and
-  issue lists take a `where` query.
+- **MCP clients should reconnect**: the toolset changed. It has 39 tools
+  (`ritual_reject` is new), compact issue, document and inbox rows gained
+  `assignee`, `author` and `source_user`, and issue lists take a `where`
+  query.
 
 ### Added
 

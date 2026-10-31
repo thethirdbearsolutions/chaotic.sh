@@ -632,7 +632,7 @@ chaotic config set-session-identity auto</code></pre>
                         <li><strong>One agent identity per Claude Code session</strong>, opt-in with <code>session_identity: auto</code> and a registrar (<code>chaotic agent create --registrar</code>, or in the web app). In a cloud environment the registrar key can be a network secret.</li>
                         <li><strong>A human behind every agent</strong>: removed teammates lose the agent keys they hold, <code>chaotic agent deactivate</code> retires an agent, and every actor says whether it is an agent, and whose.</li>
                         <li>Issue queries with <code>--where</code> and a query page; invitations that work without SMTP; ownership transfer and a team activity log.</li>
-                        <li><strong>Run the preflight checks in the upgrade notes before upgrading</strong>: some migrations refuse bad data and leave the server down until it is fixed, and some agent keys stop working at upgrade.</li>
+                        <li><strong>Run the preflight checks in the upgrade notes before upgrading</strong>: some migrations refuse bad data (the upgrade then rolls back), and some agent keys stop working at upgrade.</li>
                     </ul>
                 </li>
                 <li class="release">
