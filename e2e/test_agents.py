@@ -4,6 +4,7 @@ import re
 from contextlib import contextmanager
 from unittest.mock import patch
 
+import httpx
 import pytest
 from cli.client import APIError, Client
 from conftest import TEST_BASE_URL
@@ -243,3 +244,53 @@ class TestAutomaticSessionIdentity:
         assert "Not falling back" in str(refused.value)
         with session_identity.suspended():
             assert api_client.get_issues(project_id=test_project["id"]) == []
+
+
+class TestRegistrarKeyViaProxyHeader:
+    """CHT-1906 end to end: no key configured locally; a proxy injects
+    the registrar's key as X-Chaotic-Registrar-Key on every request to
+    the server, as a cloud environment's network secret does."""
+
+    SESSION_ID = "e2e-session-proxied"
+
+    def test_registers_through_the_proxy_header_and_writes_as_the_session(
+        self, api_client, test_team, test_project, tmp_path, monkeypatch,
+    ):
+        from cli import config as cli_config
+        from cli import session_identity
+
+        registrar = api_client.create_team_agent(test_team["id"], "Cloud registrar", can_register=True)
+        secret = registrar["api_key"]
+        seen = []
+
+        class InjectingProxy(httpx.HTTPTransport):
+            def handle_request(self, request):
+                seen.append(request.headers.get("Authorization", ""))
+                request.headers["X-Chaotic-Registrar-Key"] = secret
+                return super().handle_request(request)
+
+        real = httpx.Client
+        monkeypatch.setattr(httpx, "Client", lambda *a, **kw: real(*a, transport=InjectingProxy(), **kw))
+        monkeypatch.setattr(cli_config, "GLOBAL_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(cli_config, "load_local_config", lambda: {})
+        monkeypatch.setattr(cli_config, "get_current_team", lambda: None)
+        monkeypatch.setenv("CHAOTIC_SESSION_IDENTITY", "auto")
+        monkeypatch.setenv("CHAOTIC_REGISTRAR_KEY_VIA", "header")
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", self.SESSION_ID)
+        monkeypatch.setenv("CHAOTIC_API_URL", TEST_BASE_URL)
+        for env in ("CHAOTIC_API_KEY", "CHAOTIC_TOKEN"):
+            monkeypatch.delenv(env, raising=False)
+        monkeypatch.setattr("cli.client.get_api_key", lambda: None)
+        monkeypatch.setattr("cli.client.get_token", lambda: None)
+
+        session = Client()
+        me = session.get_me()
+        issue = session.create_issue(project_id=test_project["id"], title="through the proxy")
+
+        assert me["kind"] == "session" and me["external_ref"] == "claude-code:session:" + self.SESSION_ID
+        assert me["registered_by_id"] == registrar["id"]
+        assert me["name"].startswith("Cloud registrar · ")
+        assert issue["creator"]["id"] == me["id"]
+        assert secret not in seen  # the CLI never sent the registrar key itself
+        assert seen[0] == ""  # register went with no Authorization
+        assert session_identity.registrar_key_via() == "header"

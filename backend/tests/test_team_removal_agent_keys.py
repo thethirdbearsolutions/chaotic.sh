@@ -491,7 +491,7 @@ class TestSelfMintGuards:
         removal that lands after sign-in cannot leave an unswept key."""
         from typing import Annotated
 
-        from fastapi import Depends
+        from fastapi import Depends, Request
         from fastapi.security import HTTPAuthorizationCredentials
 
         from app.api.deps import get_api_key_record, security
@@ -500,9 +500,10 @@ class TestSelfMintGuards:
         w = world
 
         async def removal_lands_now(
+            request: Request,
             credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
         ):
-            record = await get_api_key_record(credentials)
+            record = await get_api_key_record(request, credentials)
             await OxydeTeamMember.objects.filter(team_id=w["team"].id, user_id=w["bob"].id).delete()
             return record
 

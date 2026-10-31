@@ -79,7 +79,7 @@ class RestBackend:
     @staticmethod
     def _require_auth() -> None:
         m = _main()
-        if not m.get_token() and not m.get_api_key():
+        if not m.has_credential():
             raise ToolInputError(
                 "Not authenticated. Run 'chaotic auth login' or 'chaotic auth set-key' "
                 "first, or 'chaotic quickstart' to get set up."

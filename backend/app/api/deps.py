@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.oxyde_models.user import OxydeUser as User
-from app.auth.access import authorize
+from app.auth.access import Access, access_of, authorize
 from app.config import get_settings
 from app.auth.credentials import CredentialError, CredentialKind, Principal, classify, rest_resolver
 from app.services.api_key_service import APIKeyService
@@ -12,6 +12,41 @@ from app.utils.security import is_web_login
 
 security = HTTPBearer(auto_error=False)
 
+# The registrar's key in a header of its own (CHT-1906), so a cloud
+# environment can keep it as a network secret: its proxy sets one header
+# on every request to the server, and if that header were Authorization
+# it would overwrite every session key with the registrar's.
+REGISTRAR_KEY_HEADER = "X-Chaotic-Registrar-Key"
+
+REGISTRAR_HEADER_NOT_A_KEY = {
+    "error_code": "registrar_header_not_a_key",
+    "message": f"{REGISTRAR_KEY_HEADER} takes a registrar's API key (ck_...).",
+}
+
+
+def presented_credential(request: Request, credentials: HTTPAuthorizationCredentials | None) -> str | None:
+    """The credential this request authenticates with.
+
+    ``Authorization: Bearer``, except on a ``@registers`` route
+    (``POST /agents/register``), where a non-empty ``X-Chaotic-Registrar-Key``
+    takes precedence over it. A proxy that injects the registrar header
+    adds it to every request, beside whatever session key the client put
+    in Authorization; on register the registrar is the caller that
+    matters (a session identity cannot register anyway), and everywhere
+    else the header is ignored, never authenticating and never refused,
+    so the session's own requests go through as the session."""
+    if access_of(request.scope.get("endpoint")) is Access.REGISTER:
+        registrar_key = (request.headers.get(REGISTRAR_KEY_HEADER) or "").strip()
+        if registrar_key:
+            if classify(registrar_key) is not CredentialKind.API_KEY:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=dict(REGISTRAR_HEADER_NOT_A_KEY),
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return registrar_key
+    return credentials.credentials if credentials else None
+
 
 async def get_current_user(
     request: Request,
@@ -19,9 +54,10 @@ async def get_current_user(
 ) -> User:
     """Get current authenticated user via JWT token or API key. The
     credential itself is resolved by ``app.auth.credentials`` (CHT-1560),
-    shared with /mcp; this maps its failure to REST's 401/403."""
+    shared with /mcp; this maps its failure to REST's 401/403. Which
+    header it comes from: ``presented_credential``."""
     try:
-        principal = await rest_resolver.resolve(credentials.credentials if credentials else None)
+        principal = await rest_resolver.resolve(presented_credential(request, credentials))
     except CredentialError as exc:
         raise _http_error(exc) from None
     # The matched route's endpoint function (Starlette puts it in the
@@ -54,14 +90,16 @@ def _http_error(exc: CredentialError) -> HTTPException:
 
 
 async def get_api_key_record(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
 ):
-    """The key row behind this request's `ck_...` bearer token, or None
-    for a JWT. Only meaningful alongside CurrentUser, which has already
-    validated the token."""
-    if not credentials or classify(credentials.credentials) is not CredentialKind.API_KEY:
+    """The key row behind this request's `ck_...` key (the one
+    ``presented_credential`` picks), or None for a JWT. Only meaningful
+    alongside CurrentUser, which has already validated the token."""
+    credential = presented_credential(request, credentials)
+    if not credential or classify(credential) is not CredentialKind.API_KEY:
         return None
-    api_key, _legacy = await APIKeyService().find_by_key(credentials.credentials)
+    api_key, _legacy = await APIKeyService().find_by_key(credential)
     return api_key
 
 

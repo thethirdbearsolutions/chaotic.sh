@@ -37,6 +37,10 @@ def register(cli):
             session_mode = session_identity.mode()
         except Exception as exc:  # an invalid value: show it, don't crash `config show`
             session_mode = f"invalid ({exc})"
+        try:
+            registrar_via = session_identity.registrar_key_via()
+        except Exception as exc:
+            registrar_via = f"invalid ({exc})"
 
         if m.is_json_output():
             m.output_json({
@@ -48,6 +52,7 @@ def register(cli):
                 "team_id": team_id,
                 "project_id": project_id,
                 "session_identity": session_mode,
+                "registrar_key_via": registrar_via,
             })
             return
 
@@ -63,6 +68,7 @@ def register(cli):
         console.print(f"  [dim]Team ID:[/dim]     {esc(team_id) if team_id else '[dim](not set)[/dim]'}")
         console.print(f"  [dim]Project ID:[/dim]  {esc(project_id) if project_id else '[dim](not set)[/dim]'}")
         console.print(f"  [dim]Session identity:[/dim] {esc(session_mode)}")
+        console.print(f"  [dim]Registrar key:[/dim] {esc(registrar_via)}")
 
     @config.command("set-session-identity")
     @click.argument("mode", type=click.Choice(["auto", "off"]))
@@ -81,6 +87,25 @@ def register(cli):
 
         session_identity.set_mode(mode)
         console.print(f"[green]session_identity set to: {esc(mode)}[/green]")
+
+    @config.command("set-registrar-key-via")
+    @click.argument("via", type=click.Choice(["local", "header"]))
+    def config_set_registrar_key_via(via):
+        """Where session identity's registrar key comes from (CHT-1906).
+
+        local (the default): the configured key (`auth set-key`,
+        CHAOTIC_API_KEY) is the registrar's. header: no registrar key is
+        held here; a cloud environment's proxy adds it to requests to the
+        server as X-Chaotic-Registrar-Key (a network secret), and the
+        server reads it only on registration. Session requests carry the
+        session's own key, which the proxy leaves alone.
+        CHAOTIC_REGISTRAR_KEY_VIA=local|header overrides this setting.
+        Saved in the current profile.
+        """
+        from cli import session_identity
+
+        session_identity.set_registrar_key_via(via)
+        console.print(f"[green]registrar_key_via set to: {esc(via)}[/green]")
 
     @config.command("set-url")
     @click.argument("url")
