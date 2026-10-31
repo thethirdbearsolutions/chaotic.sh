@@ -49,7 +49,7 @@ from app.services.issue_service import (
     ClaimRitualsError,
     UnclaimedCloseRitualsError,
     IntentInFlightError,
-    EstimateRequiredError,
+    RequirementMissingError,
     IssueAlreadyClaimedError,
     AssigneeChangedError,
 )
@@ -476,7 +476,7 @@ async def create_issue(
     # is DONE or IN_PROGRESS (CHT-536)
     try:
         issue = await issue_service.create(issue_in, project, current_user.id, is_human_request)
-    except EstimateRequiredError as e:
+    except RequirementMissingError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
@@ -1182,7 +1182,7 @@ async def update_issue(
 
     try:
         issue = await issue_service.update(issue, issue_in, current_user.id, is_human_request=is_human_request)
-    except EstimateRequiredError as e:
+    except RequirementMissingError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),

@@ -447,6 +447,13 @@ async def issue_update(
     ] = None,
     title: Annotated[str | None, Field(description="New title.")] = None,
     description: Annotated[str | None, Field(description="New description (markdown).")] = None,
+    issue_type: Annotated[
+        str | None,
+        Field(description=(
+            f"New issue type. One of: {', '.join(ISSUE_TYPES)} (aliases accepted, "
+            "e.g. 'feat'). Use 'epic' to promote a ticket that grew children."
+        ))
+    ] = None,
     parent: Annotated[
         str | None,
         Field(description=(
@@ -471,13 +478,13 @@ async def issue_update(
         )),
     ] = None,
 ) -> dict:
-    """Update an issue's status, priority, estimate, assignee, title, description, and/or parent.
+    """Update an issue's status, priority, estimate, assignee, title, description, type, and/or parent.
 
     `parent` re-parents an existing issue (or makes it a sub-issue);
-    `no_parent` detaches it. Labels go through issue_label, relations
-    through issue_block/issue_unblock, and sprint membership through
-    sprint_add/sprint_remove. Changing the issue type has no MCP tool
-    yet; the CLI does it with `chaotic issue update ID --type TYPE`.
+    `no_parent` detaches it. `issue_type` changes the type, e.g. to
+    promote a task with children to an epic (CHT-1885). Labels go
+    through issue_label, relations through issue_block/issue_unblock,
+    and sprint membership through sprint_add/sprint_remove.
 
     An `estimate` off the project's declared estimate_scale is stored as
     given and reported back in `warnings` (absent otherwise).
@@ -489,6 +496,8 @@ async def issue_update(
         raise ToolInputError("Pass either `parent` or `no_parent`, not both.")
     if parent is not None and not parent.strip():
         raise ToolInputError("`parent` must be an issue identifier; use `no_parent` to detach.")
+    # Resolved before any read or write, so a bad type fails the whole call.
+    resolved_type = _resolve_issue_type(issue_type) if issue_type is not None else None
 
     iss = await backend.get_issue(identifier)
 
@@ -520,6 +529,8 @@ async def issue_update(
         fields["priority"] = priority
     if estimate is not None:
         fields["estimate"] = estimate
+    if resolved_type is not None:
+        fields["issue_type"] = resolved_type
     if assignee is not None:
         if assignee.strip().lower() == "unassigned":
             fields["assignee_id"] = None

@@ -267,3 +267,59 @@ class TestProjectUpdate:
         client.update_project.assert_called_once_with(
             'test-project-123', name='New Name', color='#ff0000',
         )
+
+
+class TestProjectEpicKnobs:
+    """CHT-1900: claim/close requirements and the default epic."""
+
+    def test_toggle_flags(self, cli_runner):
+        from cli.main import cli, client
+
+        client.update_project = MagicMock()
+        result = cli_runner.invoke(cli, [
+            'project', 'update', '--require-epic-on-close', '--no-require-assignee-on-claim',
+            '--require-estimate-on-claim',
+        ])
+        assert result.exit_code == 0, result.output
+        client.update_project.assert_called_once_with(
+            'test-project-123', require_estimate_on_claim=True,
+            require_assignee_on_claim=False, require_epic_on_close=True,
+        )
+
+    def test_default_epic_resolves_identifier(self, cli_runner):
+        from cli.main import cli, client
+
+        client.update_project = MagicMock()
+        client.get_issue_by_identifier = MagicMock(return_value={"id": "epic-1", "identifier": "CHT-12"})
+        result = cli_runner.invoke(cli, ['project', 'update', '--default-epic', 'CHT-12'])
+        assert result.exit_code == 0, result.output
+        client.get_issue_by_identifier.assert_called_once_with('CHT-12')
+        client.update_project.assert_called_once_with('test-project-123', default_epic_id='epic-1')
+
+    def test_no_default_epic_clears(self, cli_runner):
+        from cli.main import cli, client
+
+        client.update_project = MagicMock()
+        result = cli_runner.invoke(cli, ['project', 'update', '--no-default-epic'])
+        assert result.exit_code == 0, result.output
+        client.update_project.assert_called_once_with('test-project-123', default_epic_id=None)
+
+    def test_both_default_epic_flags_is_a_usage_error(self, cli_runner):
+        from cli.main import cli, client
+
+        client.update_project = MagicMock()
+        result = cli_runner.invoke(cli, ['project', 'update', '--default-epic', 'CHT-1', '--no-default-epic'])
+        assert result.exit_code != 0
+        client.update_project.assert_not_called()
+
+    def test_show_lists_requirements_and_default_epic(self, cli_runner, mock_project):
+        from cli.main import cli, client
+
+        project = {**mock_project, "require_epic_on_close": True, "default_epic_id": "epic-1"}
+        client.get_project = MagicMock(return_value=project)
+        client.get_issue = MagicMock(return_value={"identifier": "CHT-12", "title": "Goal"})
+        result = cli_runner.invoke(cli, ['project', 'show'])
+        assert result.exit_code == 0, result.output
+        assert "Require Epic on Close: Yes" in result.output
+        assert "Require Assignee on Claim: No" in result.output
+        assert "CHT-12 Goal" in result.output

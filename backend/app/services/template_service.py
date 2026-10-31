@@ -4,7 +4,9 @@ Templates are named, portable snapshots of (rituals + project settings)
 scoped to a team. Snapshot captures a project's active rituals (name,
 prompt, trigger, approval mode, note_required, is_active) and its
 settings (estimate scale, unestimated handling, default sprint budget,
-human_rituals_required, require_estimate_on_claim).
+human_rituals_required, require_estimate_on_claim,
+require_assignee_on_claim, require_epic_on_close). A project's default
+epic is one of its own rows, so it is not portable and not snapshotted.
 
 Apply semantics (idempotent by design):
   * rituals missing from the project are created;
@@ -58,6 +60,8 @@ _SETTINGS_FIELDS = (
     "default_sprint_budget",
     "human_rituals_required",
     "require_estimate_on_claim",
+    "require_assignee_on_claim",
+    "require_epic_on_close",
 )
 
 
@@ -112,8 +116,8 @@ class TemplateService:
                     ).model_dump(mode="json")
                     for r in rituals
                 ],
-                # exclude_unset (not exclude_none): all five settings are
-                # passed explicitly, so all five are pinned -- including
+                # exclude_unset (not exclude_none): every setting is
+                # passed explicitly, so every one is pinned -- including
                 # default_sprint_budget: null when the project's budget is
                 # unlimited (PR #220 review finding 1; an unlimited budget
                 # used to fall out of the snapshot silently).
@@ -123,6 +127,8 @@ class TemplateService:
                     default_sprint_budget=project.default_sprint_budget,
                     human_rituals_required=project.human_rituals_required,
                     require_estimate_on_claim=project.require_estimate_on_claim,
+                    require_assignee_on_claim=project.require_assignee_on_claim,
+                    require_epic_on_close=project.require_epic_on_close,
                 ).model_dump(mode="json", exclude_unset=True),
             },
         )
@@ -258,6 +264,8 @@ class TemplateService:
                 unestimated_handling=project.unestimated_handling,
                 human_rituals_required=project.human_rituals_required,
                 require_estimate_on_claim=project.require_estimate_on_claim,
+                require_assignee_on_claim=project.require_assignee_on_claim,
+                require_epic_on_close=project.require_epic_on_close,
             )
             to_set: dict = {}
             for field in _SETTINGS_FIELDS:

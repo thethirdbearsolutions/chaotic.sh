@@ -18,6 +18,8 @@ class ProjectCreate(BaseModel):
     default_sprint_budget: int | None = Field(default=None, ge=1)
     human_rituals_required: bool = False  # Whether humans must complete rituals
     require_estimate_on_claim: bool = False
+    require_assignee_on_claim: bool = False
+    require_epic_on_close: bool = False
 
 
 class ProjectUpdate(BaseModel):
@@ -33,6 +35,10 @@ class ProjectUpdate(BaseModel):
     default_sprint_budget: int | None = Field(default=None, ge=1)
     human_rituals_required: bool | None = None
     require_estimate_on_claim: bool | None = None
+    require_assignee_on_claim: bool | None = None
+    require_epic_on_close: bool | None = None
+    # An epic's issue id in this project; null clears it (CHT-1900).
+    default_epic_id: str | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -52,6 +58,9 @@ class ProjectResponse(BaseModel):
     default_sprint_budget: int | None
     human_rituals_required: bool
     require_estimate_on_claim: bool
+    require_assignee_on_claim: bool = False
+    require_epic_on_close: bool = False
+    default_epic_id: str | None = None
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
 
