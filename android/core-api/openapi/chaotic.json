@@ -1398,7 +1398,7 @@
           "issues"
         ],
         "summary": "List Issues",
-        "description": "List issues with filters. Pass multiple status/priority/label values to filter by multiple values.\n\n``label_match`` controls multi-``label`` semantics: ``all`` (default \u2014\nissue must carry every named label; the CLI's documented contract) or\n``any`` (issue must carry at least one; used by the web UI's\nmulti-select filter).\n\nExclude filters (``exclude_label``, ``exclude_status``, ``exclude_priority``,\n``exclude_issue_type``, ``exclude_assignee_id``) remove matching issues\nfrom the result. For labels, an issue is excluded if it carries any of\nthe named labels. Use ``exclude_assignee_id=unassigned`` to hide\nissues with no assignee.\n\nAll filter parameters work consistently whether querying by project_id or team_id.",
+        "description": "List issues with filters. Pass multiple status/priority/label values to filter by multiple values.\n\n``fields=list`` returns the compact shape a list view needs (CHT-1893):\nthe same rows with ``description`` null, since a list never shows it\nand it is most of a row's bytes. ``full`` (the default) returns every\nfield.\n\n``label_match`` controls multi-``label`` semantics: ``all`` (default \u2014\nissue must carry every named label; the CLI's documented contract) or\n``any`` (issue must carry at least one; used by the web UI's\nmulti-select filter).\n\nExclude filters (``exclude_label``, ``exclude_status``, ``exclude_priority``,\n``exclude_issue_type``, ``exclude_assignee_id``) remove matching issues\nfrom the result. For labels, an issue is excluded if it carries any of\nthe named labels. Use ``exclude_assignee_id=unassigned`` to hide\nissues with no assignee.\n\nAll filter parameters work consistently whether querying by project_id or team_id.",
         "operationId": "list_issues_api_issues_get",
         "security": [
           {
@@ -1715,6 +1715,23 @@
                 }
               ],
               "title": "Order"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(full|list)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fields"
             }
           },
           {
