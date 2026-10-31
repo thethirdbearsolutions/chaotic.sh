@@ -466,6 +466,80 @@ class TestOwnerInvitations:
         assert response.status_code == 403
         assert await _role(test_team.id, alt.id) is None
 
+    async def test_a_refused_owner_invitation_is_voided(
+        self, client, auth_headers, test_team, test_user, test_user2,
+    ):
+        """CHT-1868: refused because its sender is no owner, the
+        invitation is voided with the refusal, so the address can be
+        invited again as the refusal says, the link no longer previews,
+        and the void is in the team's log."""
+        await _join(test_team.id, test_user2.id, TeamRole.ADMIN)
+        alt = await _person("alt@example.com")
+        invitation = await self._owner_invitation(test_team.id, alt.email, test_user2.id)
+        alt_headers = await _headers_for(alt)
+        response = await client.post(f"/api/teams/invitations/{invitation.token}/accept", headers=alt_headers)
+        assert response.status_code == 403
+        assert "ask an owner to invite you again" in response.json()["detail"]
+        assert (await OxydeTeamInvitation.objects.get(id=invitation.id)).status == InvitationStatus.EXPIRED
+        rows = await OxydeTeamActivity.objects.filter(
+            team_id=test_team.id, invitation_id=invitation.id,
+        ).all()
+        assert [(r.action, r.actor_id, r.target_user_id, r.email, r.role) for r in rows] == [(
+            TeamActivityAction.INVITATION_INVALIDATED, alt.id, alt.id, alt.email, TeamRole.OWNER,
+        )]
+        # The link is gone: no preview, no second try.
+        preview = await client.get(f"/api/teams/invitations/{invitation.token}")
+        assert preview.status_code == 404
+        again = await client.post(f"/api/teams/invitations/{invitation.token}/accept", headers=alt_headers)
+        assert again.status_code == 404
+        listed = await client.get(f"/api/teams/{test_team.id}/invitations", headers=auth_headers)
+        assert listed.status_code == 200
+        assert listed.json() == []
+        # An owner invites the address again, and that one makes an owner.
+        reinvited = await client.post(
+            f"/api/teams/{test_team.id}/invitations", headers=auth_headers,
+            json={"email": alt.email, "role": "owner"},
+        )
+        assert reinvited.status_code == 201, reinvited.text
+        token = (await OxydeTeamInvitation.objects.get(id=reinvited.json()["id"])).token
+        accepted = await client.post(f"/api/teams/invitations/{token}/accept", headers=alt_headers)
+        assert accepted.status_code == 200, accepted.text
+        assert await _role(test_team.id, alt.id) == TeamRole.OWNER
+
+    async def test_a_former_owners_invitation_is_voided(self, test_team, test_user, test_user2):
+        """The sender was an owner when they sent it and is not now."""
+        await _join(test_team.id, test_user2.id, TeamRole.OWNER)
+        alt = await _person("alt@example.com")
+        invitation = await self._owner_invitation(test_team.id, alt.email, test_user2.id)
+        await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=test_user2.id).update(
+            role=TeamRole.MEMBER,
+        )
+        with pytest.raises(OwnerInvitationRefused):
+            await TeamService().accept_invitation(invitation, alt)
+        assert await _role(test_team.id, alt.id) is None
+        assert (await OxydeTeamInvitation.objects.get(id=invitation.id)).status == InvitationStatus.EXPIRED
+        # Becoming an owner again does not revive it.
+        await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=test_user2.id).update(
+            role=TeamRole.OWNER,
+        )
+        assert await TeamService().get_valid_invitation_by_token(invitation.token) is None
+
+    async def test_an_agent_refused_leaves_a_dead_senders_invitation_pending(
+        self, client, test_team, test_user2,
+    ):
+        """The account is checked first: an account that may not accept
+        any owner invitation does not void one for the person it is for."""
+        await _join(test_team.id, test_user2.id, TeamRole.ADMIN)
+        agent = await _agent(test_team.id)
+        invitation = await self._owner_invitation(test_team.id, agent.email, test_user2.id)
+        response = await client.post(
+            f"/api/teams/invitations/{invitation.token}/accept", headers=await _headers_for(agent),
+        )
+        assert response.status_code == 403
+        assert "person with an active account" in response.json()["detail"]
+        assert (await OxydeTeamInvitation.objects.get(id=invitation.id)).status == InvitationStatus.PENDING
+        assert await OxydeTeamActivity.objects.filter(invitation_id=invitation.id).count() == 0
+
 
 class TestAccountDeletion:
     """CHT-1865, folded into PR #455: a team's only owner cannot delete

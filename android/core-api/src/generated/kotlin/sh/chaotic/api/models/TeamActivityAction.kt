@@ -34,9 +34,9 @@ import kotlinx.serialization.encoding.Encoder
 
 
 /**
- * What a team_activities row records (CHT-1843, CHT-1845).  Who did it is ``actor_id``; whom it concerns, ``target_user_id``. A member leaving on their own is MEMBER_REMOVED with actor and target the same user. OWNERSHIP_TRANSFERRED (CHT-1848) is the transfer as a whole, actor the owner who handed it on, target the new owner; the two role changes it makes are logged as ROLE_CHANGED rows beside it, so that ``action=role_changed`` lists every change of role.
+ * What a team_activities row records (CHT-1843, CHT-1845).  Who did it is ``actor_id``; whom it concerns, ``target_user_id``. A member leaving on their own is MEMBER_REMOVED with actor and target the same user. OWNERSHIP_TRANSFERRED (CHT-1848) is the transfer as a whole, actor the owner who handed it on, target the new owner; the two role changes it makes are logged as ROLE_CHANGED rows beside it, so that ``action=role_changed`` lists every change of role. INVITATION_INVALIDATED (CHT-1868) is an owner invitation voided when its accept was refused because its sender is no longer an owner of the team, actor and target the account that tried to accept it; it stays in the table with status EXPIRED. An invitation expiring with time is not logged.
  *
- * Values: member_added,member_removed,role_changed,invitation_created,invitation_cancelled,invitation_accepted,verification_code_issued,ownership_transferred,unknown_default_open_api
+ * Values: member_added,member_removed,role_changed,invitation_created,invitation_cancelled,invitation_accepted,verification_code_issued,ownership_transferred,invitation_invalidated,unknown_default_open_api
  */
 @Serializable(with = TeamActivityActionSerializer::class)
 enum class TeamActivityAction(val value: kotlin.String) {
@@ -64,6 +64,9 @@ enum class TeamActivityAction(val value: kotlin.String) {
 
     @SerialName(value = "ownership_transferred")
     ownership_transferred("ownership_transferred"),
+
+    @SerialName(value = "invitation_invalidated")
+    invitation_invalidated("invitation_invalidated"),
 
     @SerialName(value = "unknown_default_open_api")
     unknown_default_open_api("unknown_default_open_api");

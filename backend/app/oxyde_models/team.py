@@ -70,7 +70,8 @@ class OxydeTeamActivity(Model):
     membership, beside its INVITATION_ACCEPTED), removed (or leaving, or
     deleting their account: actor and target the same) or given another
     role, an invitation created, cancelled (by an admin, or by its
-    sender's account deletion) or accepted, and a team admin issuing an
+    sender's account deletion), accepted, or voided at accept because
+    its sender is no longer an owner (CHT-1868), and a team admin issuing an
     invitation verification code (CHT-1828). Only what the server does:
     a row deleted by hand in the database has no entry unless the hand
     writes one (as `system audit removed-members`' remedy does). Read by team

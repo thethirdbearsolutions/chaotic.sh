@@ -36,7 +36,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * One row of a team's administrative log (CHT-1843, CHT-1845).  ``actor_*`` did it, ``target_user_*`` it concerns (the same user when a member left on their own). ``email`` is the invited address on invitation rows. ``role`` is the role granted (the new one on role_changed, the one held on member_removed, owner on ownership_transferred); ``old_role`` only on role_changed and ownership_transferred (the new owner's role before it). Names are null for a user since deleted.
+ * One row of a team's administrative log (CHT-1843, CHT-1845).  ``actor_*`` did it, ``target_user_*`` it concerns (the same user when a member left on their own). ``email`` is the invited address on invitation rows. ``role`` is the role granted (the new one on role_changed, the one held on member_removed, owner on ownership_transferred), or on invitation_created, invitation_cancelled and invitation_invalidated the role offered (on invitation_invalidated never granted: the owner invitation was voided, CHT-1868); ``old_role`` only on role_changed and ownership_transferred (the new owner's role before it). Names are null for a user since deleted.
  *
  * @param id 
  * @param teamId 

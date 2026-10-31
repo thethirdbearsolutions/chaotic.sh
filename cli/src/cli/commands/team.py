@@ -20,7 +20,7 @@ from .shared import _client, console, resolve_content_value
 TEAM_ACTIVITY_ACTIONS = [
     "member_added", "member_removed", "role_changed", "invitation_created",
     "invitation_cancelled", "invitation_accepted", "verification_code_issued",
-    "ownership_transferred",
+    "ownership_transferred", "invitation_invalidated",
 ]
 
 
@@ -567,9 +567,10 @@ def register(cli):
         """Show the team's administrative log, newest first (admins only).
 
         Members added, removed (or leaving) and given another role,
-        invitations created, cancelled and accepted, and invitation
-        verification codes issued: who did it, to whom, and when
-        (CHT-1843). Recorded since the server version that added it;
+        ownership transferred, invitations created, cancelled, accepted
+        and voided (an owner invitation refused because its sender is no
+        longer an owner), and invitation verification codes issued: who
+        did it, to whom, and when (CHT-1843). Recorded since the server version that added it;
         `chaotic system audit removed-members` reads it too."""
         m = _main()
         rows = _client().get_team_activity(m.get_current_team(), skip=skip, limit=limit, action=action)
