@@ -54,6 +54,9 @@ import kotlinx.serialization.encoding.Encoder
  * @param requireEstimateOnClaim 
  * @param createdAt 
  * @param updatedAt 
+ * @param requireAssigneeOnClaim 
+ * @param requireEpicOnClose 
+ * @param defaultEpicId 
  */
 @Serializable
 
@@ -105,7 +108,16 @@ data class ProjectResponse (
     val createdAt: kotlin.String,
 
     @SerialName(value = "updated_at")
-    val updatedAt: kotlin.String
+    val updatedAt: kotlin.String,
+
+    @SerialName(value = "require_assignee_on_claim")
+    val requireAssigneeOnClaim: kotlin.Boolean? = false,
+
+    @SerialName(value = "require_epic_on_close")
+    val requireEpicOnClose: kotlin.Boolean? = false,
+
+    @SerialName(value = "default_epic_id")
+    val defaultEpicId: kotlin.String? = null
 
 ) {
 

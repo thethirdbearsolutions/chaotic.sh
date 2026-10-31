@@ -8,6 +8,15 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
+
+@pytest.fixture(autouse=True)
+def _no_epic_progress_call(monkeypatch):
+    """`epic list` also reads the progress endpoint (CHT-1902); tests
+    that don't care get an empty answer instead of a network call."""
+    from unittest.mock import MagicMock
+    from cli.main import client
+    monkeypatch.setattr(client, "get_project_epic_progress", MagicMock(return_value={"epics": []}), raising=False)
+
 @pytest.fixture(autouse=True)
 def mock_dependencies(patched_client, patched_auth, patched_project):
     """Mock client, config, and auth before importing main."""
@@ -77,7 +86,8 @@ class TestEpicCreate:
         result = cli_runner.invoke(cli, ['epic', 'list'])
         assert result.exit_code == 0, result.output
         epic_row = next(line for line in result.output.splitlines() if "CHT-9" in line)
-        assert " 0 " in epic_row and " - " not in epic_row
+        cells = [c.strip() for c in epic_row.strip("│ ").split("│")]
+        assert cells[4] == "0"  # the Estimate column
 
     def test_create_basic(self, cli_runner):
         """epic create with title creates epic."""

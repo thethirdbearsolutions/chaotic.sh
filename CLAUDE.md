@@ -21,6 +21,10 @@
 - Refactoring needs tickets
 - Documentation changes need tickets
 - If you discover something that needs fixing while working on another ticket, create a new ticket for it first
+- **File every ticket under the epic for the goal it serves** (`chaotic issue create --parent CHT-X`, MCP `parent`).
+  If the goal has no epic yet, create one first. Progress toward goals is read off epics, so a ticket under no
+  epic is invisible to it. Projects can enforce this with `require_epic_on_close` and a default epic
+  (`chaotic project update --require-epic-on-close --default-epic CHT-X`, CHT-1900).
 
 **File tickets proactively:**
 - When you think of something that should be done → file a ticket
@@ -111,6 +115,19 @@ smell — treat the following as invariants:
 
 If a budget number surprises you, reconcile it against *"points from tickets
 closed while this sprint was active (unestimated = 1)"* before suspecting a bug.
+
+## Epic Status (read this before calling it a bug)
+
+An open epic's status is **derived from its children** (CHT-1901):
+`in_progress` once any child is in progress, in review or done; `todo` when
+any child is todo; else `backlog`. `IssueService.rederive_parents` runs
+after every child create, status or parent change, delete and lease expiry.
+It **never closes an epic**: when a close leaves an open parent with no open
+children, the PATCH response carries `parent_prompt` and the CLI, MCP and
+web ask the closer "close it, or add more?". Setting an epic's status by
+hand pins it (`issues.status_pinned`); `status_follows_children: true` on
+PATCH unpins it. Closing a parent that still has open children returns
+`open_children` as a warning (CHT-1884).
 
 ## Enum Representation (read this before "fixing" a casing bug)
 

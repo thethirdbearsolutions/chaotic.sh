@@ -3,6 +3,7 @@
  * Extracted from app.js for testability
  */
 
+import { handleCloseFollowups } from './epic-prompt.js';
 import { api } from './api.js';
 import { showToast, showApiError } from './ui.js';
 import { escapeHtml, escapeAttr, formatPriority, debounce } from './utils.js';
@@ -299,8 +300,9 @@ export async function handleDrop(e, target) {
 
     // Optimistic update
     try {
-        await api.updateIssue(issueId, { status: newStatus });
+        const updated = await api.updateIssue(issueId, { status: newStatus });
         showToast('Status updated', 'success');
+        handleCloseFollowups(updated);
     } catch (e) {
         // Revert on error
         issue.status = oldStatus;
@@ -332,8 +334,9 @@ export async function handleCardDrop(e, target) {
     renderBoard();
 
     try {
-        await api.updateIssue(issueId, { status: newStatus });
+        const updated = await api.updateIssue(issueId, { status: newStatus });
         showToast('Status updated', 'success');
+        handleCloseFollowups(updated);
     } catch (e) {
         issue.status = oldStatus;
         renderBoard();

@@ -25,6 +25,7 @@ package sh.chaotic.api.apis
 
 import sh.chaotic.api.models.DocumentCreate
 import sh.chaotic.api.models.DocumentResponse
+import sh.chaotic.api.models.EpicProgressResponse
 import sh.chaotic.api.models.HTTPValidationError
 import sh.chaotic.api.models.IssueCreate
 import sh.chaotic.api.models.IssueQueryResponse
@@ -262,6 +263,42 @@ import io.ktor.http.ParametersBuilder
             }
 
         /**
+        * GET /api/projects/{project_id}/epics
+        * List Project Epics
+        * Epic progress in one project, in one request (CHT-1902).
+         * @param projectId  
+         * @param sprintWindow  (optional, default to 8)
+         * @return EpicProgressResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun listProjectEpicsApiProjectsProjectIdEpicsGet(projectId: kotlin.String, sprintWindow: kotlin.Int? = 8): HttpResponse<EpicProgressResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+            sprintWindow?.apply { localVariableQuery["sprint_window"] = listOf("$sprintWindow") }
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/api/projects/{project_id}/epics".replace("{" + "project_id" + "}", "$projectId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
         * GET /api/projects/{project_id}/issues/ready
         * List Project Ready Issues
         * What can I start right now, project-scoped (CHT-1245). New endpoint, path-nested from the start per CHT-1223&#39;s convention -- see module docstring.
@@ -413,6 +450,42 @@ import io.ktor.http.ParametersBuilder
             val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.GET,
             "/api/teams/{team_id}/documents".replace("{" + "team_id" + "}", "$teamId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * GET /api/teams/{team_id}/epics
+        * List Team Epics
+        * Epic progress across every project of a team (CHT-1902).
+         * @param teamId  
+         * @param sprintWindow  (optional, default to 8)
+         * @return EpicProgressResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun listTeamEpicsApiTeamsTeamIdEpicsGet(teamId: kotlin.String, sprintWindow: kotlin.Int? = 8): HttpResponse<EpicProgressResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+            sprintWindow?.apply { localVariableQuery["sprint_window"] = listOf("$sprintWindow") }
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/api/teams/{team_id}/epics".replace("{" + "team_id" + "}", "$teamId"),
             query = localVariableQuery,
             headers = localVariableHeaders,
             requiresAuthentication = true,

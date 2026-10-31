@@ -2239,7 +2239,7 @@
           "issues"
         ],
         "summary": "Update Issue",
-        "description": "Update an issue.",
+        "description": "Update an issue.\n\nClosing one also reports what that leaves open (CHT-1901, CHT-1884):\n``parent_prompt`` when it was the last open child of an open parent,\n``open_children`` when it still has open children.",
         "operationId": "update_issue_api_issues__issue_id__patch",
         "security": [
           {
@@ -2289,7 +2289,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueResponse"
+                  "$ref": "#/components/schemas/IssueUpdateResponse"
                 }
               }
             }
@@ -6082,7 +6082,7 @@
           "agents"
         ],
         "summary": "Update Agent",
-        "description": "Update an agent's name or avatar, or make it a registrar\n(`can_register`, CHT-1498). Allowed to its creator while in the\nagent's team and to that team's admins. A built-in app's session may\nrename, but not change `can_register` (CHT-1602): a registrar mints\nkeys, a capability that would outlive the session.",
+        "description": "Update an agent's name or avatar, or make it a registrar\n(`can_register`, CHT-1498). Allowed to its creator while in the\nagent's team and to that team's admins. A built-in app's session may\nrename, but not change `can_register` (CHT-1602): a registrar mints\nkeys, a capability that would outlive the session.\n\nA registered session identity may also rename itself, and change\nnothing else (CHT-1918): a cloud session has no person at hand to\nname it, and the name is all it may choose. It still may not rename\nany other agent.",
         "operationId": "update_agent_api_agents__agent_id__patch",
         "security": [
           {
@@ -8474,6 +8474,126 @@
         }
       }
     },
+    "/api/projects/{project_id}/epics": {
+      "get": {
+        "tags": [
+          "nested-aliases"
+        ],
+        "summary": "List Project Epics",
+        "description": "Epic progress in one project, in one request (CHT-1902).",
+        "operationId": "list_project_epics_api_projects__project_id__epics_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "sprint_window",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 8,
+              "title": "Sprint Window"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpicProgressResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/teams/{team_id}/epics": {
+      "get": {
+        "tags": [
+          "nested-aliases"
+        ],
+        "summary": "List Team Epics",
+        "description": "Epic progress across every project of a team (CHT-1902).",
+        "operationId": "list_team_epics_api_teams__team_id__epics_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          },
+          {
+            "name": "sprint_window",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 8,
+              "title": "Sprint Window"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpicProgressResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{project_id}/sprints": {
       "post": {
         "tags": [
@@ -9889,6 +10009,48 @@
         "title": "BudgetTransactionResponse",
         "description": "Response schema for budget transactions."
       },
+      "ChildCounts": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "backlog": {
+            "type": "integer",
+            "title": "Backlog",
+            "default": 0
+          },
+          "todo": {
+            "type": "integer",
+            "title": "Todo",
+            "default": 0
+          },
+          "in_progress": {
+            "type": "integer",
+            "title": "In Progress",
+            "default": 0
+          },
+          "in_review": {
+            "type": "integer",
+            "title": "In Review",
+            "default": 0
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done",
+            "default": 0
+          },
+          "canceled": {
+            "type": "integer",
+            "title": "Canceled",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ChildCounts",
+        "description": "An epic's tickets by status: every issue whose nearest epic\nancestor it is, nested sub-issues included."
+      },
       "CompletedRitualResponse": {
         "properties": {
           "id": {
@@ -10920,6 +11082,129 @@
         ],
         "title": "EmailVerificationSent",
         "description": "A verification code was mailed (CHT-1790)."
+      },
+      "EpicProgress": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "identifier": {
+            "type": "string",
+            "title": "Identifier"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IssueStatus"
+          },
+          "status_pinned": {
+            "type": "boolean",
+            "title": "Status Pinned",
+            "default": false
+          },
+          "priority": {
+            "$ref": "#/components/schemas/IssuePriority"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "project_key": {
+            "type": "string",
+            "title": "Project Key"
+          },
+          "children": {
+            "$ref": "#/components/schemas/ChildCounts"
+          },
+          "open_children": {
+            "type": "integer",
+            "title": "Open Children"
+          },
+          "points_total": {
+            "type": "integer",
+            "title": "Points Total"
+          },
+          "points_done": {
+            "type": "integer",
+            "title": "Points Done"
+          },
+          "closed_this_sprint": {
+            "type": "integer",
+            "title": "Closed This Sprint"
+          },
+          "points_this_sprint": {
+            "type": "integer",
+            "title": "Points This Sprint"
+          },
+          "sprints": {
+            "items": {
+              "$ref": "#/components/schemas/SprintTick"
+            },
+            "type": "array",
+            "title": "Sprints"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "identifier",
+          "title",
+          "status",
+          "priority",
+          "project_id",
+          "project_key",
+          "children",
+          "open_children",
+          "points_total",
+          "points_done",
+          "closed_this_sprint",
+          "points_this_sprint",
+          "sprints"
+        ],
+        "title": "EpicProgress"
+      },
+      "EpicProgressResponse": {
+        "properties": {
+          "epics": {
+            "items": {
+              "$ref": "#/components/schemas/EpicProgress"
+            },
+            "type": "array",
+            "title": "Epics"
+          },
+          "untracked": {
+            "items": {
+              "$ref": "#/components/schemas/UntrackedProgress"
+            },
+            "type": "array",
+            "title": "Untracked"
+          },
+          "sprint_window": {
+            "type": "integer",
+            "title": "Sprint Window"
+          }
+        },
+        "type": "object",
+        "required": [
+          "epics",
+          "untracked",
+          "sprint_window"
+        ],
+        "title": "EpicProgressResponse"
       },
       "EstimateScale": {
         "type": "string",
@@ -12669,6 +12954,11 @@
             ],
             "title": "Lease Expires At"
           },
+          "status_pinned": {
+            "type": "boolean",
+            "title": "Status Pinned",
+            "default": false
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -12879,11 +13169,298 @@
               }
             ],
             "title": "Lease Seconds"
+          },
+          "status_follows_children": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Follows Children"
           }
         },
         "type": "object",
         "title": "IssueUpdate",
         "description": "Schema for updating an issue."
+      },
+      "IssueUpdateResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "identifier": {
+            "type": "string",
+            "title": "Identifier"
+          },
+          "number": {
+            "type": "integer",
+            "title": "Number"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IssueStatus"
+          },
+          "priority": {
+            "$ref": "#/components/schemas/IssuePriority"
+          },
+          "issue_type": {
+            "$ref": "#/components/schemas/IssueType"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate"
+          },
+          "assignee_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
+          "creator_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator Id"
+          },
+          "creator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator Name"
+          },
+          "sprint_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sprint Id"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "assignee_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Name"
+          },
+          "sprint_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sprint Name"
+          },
+          "parent_identifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Identifier"
+          },
+          "project_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Key"
+          },
+          "creator": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "lease_expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lease Expires At"
+          },
+          "status_pinned": {
+            "type": "boolean",
+            "title": "Status Pinned",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "labels": {
+            "items": {
+              "$ref": "#/components/schemas/LabelResponse"
+            },
+            "type": "array",
+            "title": "Labels",
+            "default": []
+          },
+          "parent_prompt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParentPrompt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "open_children": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenChildrenWarning"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "identifier",
+          "number",
+          "title",
+          "description",
+          "status",
+          "priority",
+          "issue_type",
+          "estimate",
+          "assignee_id",
+          "creator_id",
+          "sprint_id",
+          "parent_id",
+          "due_date",
+          "completed_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "IssueUpdateResponse",
+        "description": "PATCH /issues/{id}: the issue, plus what closing it leaves for\nthe caller to decide. Both are null unless this update closed it."
       },
       "LabelAddedResponse": {
         "properties": {
@@ -13101,6 +13678,33 @@
         "title": "MarkAllReadResponse",
         "description": "Response for POST /inbox/mark-all-read."
       },
+      "OpenChildrenWarning": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "identifiers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Identifiers"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count",
+          "identifiers",
+          "message"
+        ],
+        "title": "OpenChildrenWarning",
+        "description": "This update closed an issue that still has open children\n(CHT-1884): they stay open under a closed parent."
+      },
       "OrderField": {
         "type": "string",
         "enum": [
@@ -13120,6 +13724,39 @@
         ],
         "title": "OrderField",
         "description": "A field a query can be ordered by."
+      },
+      "ParentPrompt": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "identifier": {
+            "type": "string",
+            "title": "Identifier"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "issue_type": {
+            "$ref": "#/components/schemas/IssueType"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "identifier",
+          "title",
+          "issue_type",
+          "message"
+        ],
+        "title": "ParentPrompt",
+        "description": "The open parent whose last open child this update closed\n(CHT-1901). Epics never close themselves, so whoever closed the last\nchild is asked what happens next."
       },
       "PendingApprovalIssueResponse": {
         "properties": {
@@ -13619,6 +14256,16 @@
             "type": "boolean",
             "title": "Require Estimate On Claim",
             "default": false
+          },
+          "require_assignee_on_claim": {
+            "type": "boolean",
+            "title": "Require Assignee On Claim",
+            "default": false
+          },
+          "require_epic_on_close": {
+            "type": "boolean",
+            "title": "Require Epic On Close",
+            "default": false
           }
         },
         "type": "object",
@@ -13712,6 +14359,27 @@
           "require_estimate_on_claim": {
             "type": "boolean",
             "title": "Require Estimate On Claim"
+          },
+          "require_assignee_on_claim": {
+            "type": "boolean",
+            "title": "Require Assignee On Claim",
+            "default": false
+          },
+          "require_epic_on_close": {
+            "type": "boolean",
+            "title": "Require Epic On Close",
+            "default": false
+          },
+          "default_epic_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Epic Id"
           },
           "created_at": {
             "type": "string",
@@ -13858,6 +14526,39 @@
               }
             ],
             "title": "Require Estimate On Claim"
+          },
+          "require_assignee_on_claim": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Require Assignee On Claim"
+          },
+          "require_epic_on_close": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Require Epic On Close"
+          },
+          "default_epic_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Epic Id"
           }
         },
         "type": "object",
@@ -15681,6 +16382,63 @@
         "title": "SprintStatus",
         "description": "Sprint status."
       },
+      "SprintTick": {
+        "properties": {
+          "sprint_id": {
+            "type": "string",
+            "title": "Sprint Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SprintStatus"
+          },
+          "activated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "closed": {
+            "type": "integer",
+            "title": "Closed",
+            "default": 0
+          },
+          "points": {
+            "type": "integer",
+            "title": "Points",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "sprint_id",
+          "name",
+          "status"
+        ],
+        "title": "SprintTick",
+        "description": "What one sprint closed toward one goal. Sprints are the clock:\neach sprint close is a progress tick per epic (CLAUDE.md, \"Sprint &\nBudget Model\")."
+      },
       "SprintUpdate": {
         "properties": {
           "name": {
@@ -16716,6 +17474,48 @@
         ],
         "title": "UnreadCountResponse",
         "description": "Response for GET /inbox/unread-count."
+      },
+      "UntrackedProgress": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "project_key": {
+            "type": "string",
+            "title": "Project Key"
+          },
+          "open": {
+            "type": "integer",
+            "title": "Open"
+          },
+          "closed_this_sprint": {
+            "type": "integer",
+            "title": "Closed This Sprint"
+          },
+          "points_this_sprint": {
+            "type": "integer",
+            "title": "Points This Sprint"
+          },
+          "sprints": {
+            "items": {
+              "$ref": "#/components/schemas/SprintTick"
+            },
+            "type": "array",
+            "title": "Sprints"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "project_key",
+          "open",
+          "closed_this_sprint",
+          "points_this_sprint",
+          "sprints"
+        ],
+        "title": "UntrackedProgress",
+        "description": "Per project, the work that belongs to no epic: the gap that\nrequire_epic_on_close and a default epic close (CHT-1900)."
       },
       "UserCreate": {
         "properties": {

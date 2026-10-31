@@ -280,8 +280,10 @@ ROUTES = [
     ("GET", "/api/issues?project_id={project}", None, "project"),
     ("GET", "/api/projects/{project}/issues/ready", None, "project"),
     ("GET", "/api/projects/{project}/issues/query", None, "project"),
+    ("GET", "/api/projects/{project}/epics", None, "project"),
     ("POST", "/api/projects/{project}/agents", {"name": "x"}, "project"),
     ("PATCH", "/api/projects/{own_project}", {"lead_id": "{user}"}, "user"),
+    ("PATCH", "/api/projects/{own_project}", {"default_epic_id": "{issue}"}, "issue"),
     ("POST", "/api/teams/{own_team}/projects", {"name": "x", "key": "ZZZ", "lead_id": "{user}"}, "user"),
     # Sprints.
     ("GET", "/api/sprints/{sprint}", None, "sprint"),
@@ -396,6 +398,7 @@ ROUTES = [
     ("GET", "/api/teams/{team}/documents", None, "team"),
     ("GET", "/api/teams/{team}/issues/ready", None, "team"),
     ("GET", "/api/teams/{team}/issues/query", None, "team"),
+    ("GET", "/api/teams/{team}/epics", None, "team"),
     ("GET", "/api/teams/{team}/templates", None, "team"),
     ("POST", "/api/teams/{team}/templates", {"name": "x", "body": {"version": 1, "sections": {}}}, "team"),
     ("POST", "/api/teams/{team}/documents", {"title": "x", "icon": "x"}, "team"),
@@ -504,6 +507,7 @@ REFUSED_ALIKE = {
             ("GET", "/api/teams/{team}/documents", "Not authorized to access this team"),
             ("GET", "/api/teams/{team}/issues/ready", "Not authorized to access this team"),
             ("GET", "/api/teams/{team}/issues/query", "Not authorized to access this team"),
+            ("GET", "/api/teams/{team}/epics", "Not authorized to access this team"),
             ("GET", "/api/teams/{team}/templates", "Not authorized to access this team"),
             ("POST", "/api/teams/{team}/templates", "Only admins can manage templates"),
             ("POST", "/api/teams/{team}/documents", "Not authorized to access this team"),
@@ -1080,7 +1084,8 @@ MCP_NOT_ROW_KEYED = {
     **{("issue_create", a): _MCP_VALUE for a in (
         "title", "description", "status", "priority", "issue_type", "estimate")},
     **{("issue_update", a): _MCP_VALUE for a in (
-        "status", "priority", "estimate", "title", "description", "no_parent")},
+        "status", "priority", "estimate", "title", "description", "issue_type", "no_parent",
+        "follow_children")},
     ("issue_comment", "content"): _MCP_VALUE,
     ("issue_start", "lease_seconds"): _MCP_VALUE,
     **{("issue_ready", a): _MCP_VALUE for a in ("mine", "include_assigned", "all_projects")},

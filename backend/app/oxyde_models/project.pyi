@@ -34,6 +34,9 @@ class OxydeProject(Model):
     default_sprint_budget: int | None
     human_rituals_required: bool
     require_estimate_on_claim: bool
+    require_assignee_on_claim: bool
+    require_epic_on_close: bool
+    default_epic_id: str | None
     created_at: datetime
     updated_at: datetime
     objects: ClassVar["OxydeProjectManager"]
@@ -69,6 +72,16 @@ class OxydeProjectQuery(Query[OxydeProject]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
+        default_epic_id: str | None = None,
+        default_epic_id__contains: str | None = None,
+        default_epic_id__icontains: str | None = None,
+        default_epic_id__startswith: str | None = None,
+        default_epic_id__istartswith: str | None = None,
+        default_epic_id__endswith: str | None = None,
+        default_epic_id__iendswith: str | None = None,
+        default_epic_id__iexact: str | None = None,
+        default_epic_id__in: list[str] | None = None,
+        default_epic_id__isnull: bool | None = None,
         default_sprint_budget: int | None = None,
         default_sprint_budget__gt: int | None = None,
         default_sprint_budget__gte: int | None = None,
@@ -153,6 +166,12 @@ class OxydeProjectQuery(Query[OxydeProject]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
+        require_assignee_on_claim: bool | None = None,
+        require_assignee_on_claim__in: list[bool] | None = None,
+        require_assignee_on_claim__isnull: bool | None = None,
+        require_epic_on_close: bool | None = None,
+        require_epic_on_close__in: list[bool] | None = None,
+        require_epic_on_close__isnull: bool | None = None,
         require_estimate_on_claim: bool | None = None,
         require_estimate_on_claim__in: list[bool] | None = None,
         require_estimate_on_claim__isnull: bool | None = None,
@@ -210,6 +229,16 @@ class OxydeProjectQuery(Query[OxydeProject]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
+        default_epic_id: str | None = None,
+        default_epic_id__contains: str | None = None,
+        default_epic_id__icontains: str | None = None,
+        default_epic_id__startswith: str | None = None,
+        default_epic_id__istartswith: str | None = None,
+        default_epic_id__endswith: str | None = None,
+        default_epic_id__iendswith: str | None = None,
+        default_epic_id__iexact: str | None = None,
+        default_epic_id__in: list[str] | None = None,
+        default_epic_id__isnull: bool | None = None,
         default_sprint_budget: int | None = None,
         default_sprint_budget__gt: int | None = None,
         default_sprint_budget__gte: int | None = None,
@@ -294,6 +323,12 @@ class OxydeProjectQuery(Query[OxydeProject]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
+        require_assignee_on_claim: bool | None = None,
+        require_assignee_on_claim__in: list[bool] | None = None,
+        require_assignee_on_claim__isnull: bool | None = None,
+        require_epic_on_close: bool | None = None,
+        require_epic_on_close__in: list[bool] | None = None,
+        require_epic_on_close__isnull: bool | None = None,
         require_estimate_on_claim: bool | None = None,
         require_estimate_on_claim__in: list[bool] | None = None,
         require_estimate_on_claim__isnull: bool | None = None,
@@ -326,7 +361,7 @@ class OxydeProjectQuery(Query[OxydeProject]):
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["color", "-color", "created_at", "-created_at", "default_sprint_budget", "-default_sprint_budget", "description", "-description", "estimate_scale", "-estimate_scale", "human_rituals_required", "-human_rituals_required", "icon", "-icon", "id", "-id", "issue_count", "-issue_count", "key", "-key", "lead_id", "-lead_id", "name", "-name", "require_estimate_on_claim", "-require_estimate_on_claim", "team_id", "-team_id", "unestimated_handling", "-unestimated_handling", "updated_at", "-updated_at"]) -> "OxydeProjectQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["color", "-color", "created_at", "-created_at", "default_epic_id", "-default_epic_id", "default_sprint_budget", "-default_sprint_budget", "description", "-description", "estimate_scale", "-estimate_scale", "human_rituals_required", "-human_rituals_required", "icon", "-icon", "id", "-id", "issue_count", "-issue_count", "key", "-key", "lead_id", "-lead_id", "name", "-name", "require_assignee_on_claim", "-require_assignee_on_claim", "require_epic_on_close", "-require_epic_on_close", "require_estimate_on_claim", "-require_estimate_on_claim", "team_id", "-team_id", "unestimated_handling", "-unestimated_handling", "updated_at", "-updated_at"]) -> "OxydeProjectQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -342,7 +377,7 @@ class OxydeProjectQuery(Query[OxydeProject]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["color", "created_at", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"]) -> "OxydeProjectQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["color", "created_at", "default_epic_id", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_assignee_on_claim", "require_epic_on_close", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"]) -> "OxydeProjectQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -366,7 +401,7 @@ class OxydeProjectQuery(Query[OxydeProject]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["color", "created_at", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"]) -> "OxydeProjectQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["color", "created_at", "default_epic_id", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_assignee_on_claim", "require_epic_on_close", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"]) -> "OxydeProjectQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -374,11 +409,11 @@ class OxydeProjectQuery(Query[OxydeProject]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["color", "created_at", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"]) -> "OxydeProjectQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["color", "created_at", "default_epic_id", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_assignee_on_claim", "require_epic_on_close", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"]) -> "OxydeProjectQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["color", "created_at", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"], flat: bool = False) -> "OxydeProjectQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["color", "created_at", "default_epic_id", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_assignee_on_claim", "require_epic_on_close", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"], flat: bool = False) -> "OxydeProjectQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -524,6 +559,16 @@ class OxydeProjectManager(QueryManager[OxydeProject]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
+        default_epic_id: str | None = None,
+        default_epic_id__contains: str | None = None,
+        default_epic_id__icontains: str | None = None,
+        default_epic_id__startswith: str | None = None,
+        default_epic_id__istartswith: str | None = None,
+        default_epic_id__endswith: str | None = None,
+        default_epic_id__iendswith: str | None = None,
+        default_epic_id__iexact: str | None = None,
+        default_epic_id__in: list[str] | None = None,
+        default_epic_id__isnull: bool | None = None,
         default_sprint_budget: int | None = None,
         default_sprint_budget__gt: int | None = None,
         default_sprint_budget__gte: int | None = None,
@@ -608,6 +653,12 @@ class OxydeProjectManager(QueryManager[OxydeProject]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
+        require_assignee_on_claim: bool | None = None,
+        require_assignee_on_claim__in: list[bool] | None = None,
+        require_assignee_on_claim__isnull: bool | None = None,
+        require_epic_on_close: bool | None = None,
+        require_epic_on_close__in: list[bool] | None = None,
+        require_epic_on_close__isnull: bool | None = None,
         require_estimate_on_claim: bool | None = None,
         require_estimate_on_claim__in: list[bool] | None = None,
         require_estimate_on_claim__isnull: bool | None = None,
@@ -665,6 +716,16 @@ class OxydeProjectManager(QueryManager[OxydeProject]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
+        default_epic_id: str | None = None,
+        default_epic_id__contains: str | None = None,
+        default_epic_id__icontains: str | None = None,
+        default_epic_id__startswith: str | None = None,
+        default_epic_id__istartswith: str | None = None,
+        default_epic_id__endswith: str | None = None,
+        default_epic_id__iendswith: str | None = None,
+        default_epic_id__iexact: str | None = None,
+        default_epic_id__in: list[str] | None = None,
+        default_epic_id__isnull: bool | None = None,
         default_sprint_budget: int | None = None,
         default_sprint_budget__gt: int | None = None,
         default_sprint_budget__gte: int | None = None,
@@ -749,6 +810,12 @@ class OxydeProjectManager(QueryManager[OxydeProject]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
+        require_assignee_on_claim: bool | None = None,
+        require_assignee_on_claim__in: list[bool] | None = None,
+        require_assignee_on_claim__isnull: bool | None = None,
+        require_epic_on_close: bool | None = None,
+        require_epic_on_close__in: list[bool] | None = None,
+        require_epic_on_close__isnull: bool | None = None,
         require_estimate_on_claim: bool | None = None,
         require_estimate_on_claim__in: list[bool] | None = None,
         require_estimate_on_claim__isnull: bool | None = None,
@@ -781,11 +848,11 @@ class OxydeProjectManager(QueryManager[OxydeProject]):
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["color", "created_at", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"]) -> OxydeProjectQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["color", "created_at", "default_epic_id", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_assignee_on_claim", "require_epic_on_close", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"]) -> OxydeProjectQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["color", "created_at", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"], flat: bool = False) -> OxydeProjectQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["color", "created_at", "default_epic_id", "default_sprint_budget", "description", "estimate_scale", "human_rituals_required", "icon", "id", "issue_count", "key", "lead_id", "name", "require_assignee_on_claim", "require_epic_on_close", "require_estimate_on_claim", "team_id", "unestimated_handling", "updated_at"], flat: bool = False) -> OxydeProjectQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -938,6 +1005,7 @@ class OxydeProjectManager(QueryManager[OxydeProject]):
         using: str | None = None,
         color: str | None = None,
         created_at: datetime | None = None,
+        default_epic_id: str | None = None,
         default_sprint_budget: int | None = None,
         description: str | None = None,
         estimate_scale: EstimateScale | None = None,
@@ -948,6 +1016,8 @@ class OxydeProjectManager(QueryManager[OxydeProject]):
         key: str | None = None,
         lead_id: str | None = None,
         name: str | None = None,
+        require_assignee_on_claim: bool | None = None,
+        require_epic_on_close: bool | None = None,
         require_estimate_on_claim: bool | None = None,
         team_id: str | None = None,
         unestimated_handling: UnestimatedHandling | None = None,

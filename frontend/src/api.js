@@ -355,6 +355,15 @@ export class ApiClient {
         return this.request('GET', url);
     }
 
+    // Epics view (CHT-1902): every epic with its progress, in one read.
+    async getProjectEpicProgress(projectId) {
+        return this.request('GET', `/projects/${projectId}/epics`);
+    }
+
+    async getTeamEpicProgress(teamId) {
+        return this.request('GET', `/teams/${teamId}/epics`);
+    }
+
     async getSubIssues(issueId) {
         return this.request('GET', `/issues/${issueId}/sub-issues`);
     }

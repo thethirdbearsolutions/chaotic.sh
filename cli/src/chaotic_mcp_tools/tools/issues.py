@@ -447,6 +447,13 @@ async def issue_update(
     ] = None,
     title: Annotated[str | None, Field(description="New title.")] = None,
     description: Annotated[str | None, Field(description="New description (markdown).")] = None,
+    issue_type: Annotated[
+        str | None,
+        Field(description=(
+            f"New issue type. One of: {', '.join(ISSUE_TYPES)} (aliases accepted, "
+            "e.g. 'feat'). Use 'epic' to promote a ticket that grew children."
+        ))
+    ] = None,
     parent: Annotated[
         str | None,
         Field(description=(
@@ -458,6 +465,13 @@ async def issue_update(
     no_parent: Annotated[
         bool,
         Field(description="Detach this issue from its parent. Cannot be combined with `parent`.")
+    ] = False,
+    follow_children: Annotated[
+        bool,
+        Field(description=(
+            "Epics only: let the status follow the sub-issues again after it "
+            "was set by hand. Cannot be combined with `status`."
+        ))
     ] = False,
     attest: Annotated[
         dict[str, str] | None,
@@ -471,24 +485,34 @@ async def issue_update(
         )),
     ] = None,
 ) -> dict:
-    """Update an issue's status, priority, estimate, assignee, title, description, and/or parent.
+    """Update an issue's status, priority, estimate, assignee, title, description, type, and/or parent.
 
     `parent` re-parents an existing issue (or makes it a sub-issue);
-    `no_parent` detaches it. Labels go through issue_label, relations
-    through issue_block/issue_unblock, and sprint membership through
-    sprint_add/sprint_remove. Changing the issue type has no MCP tool
-    yet; the CLI does it with `chaotic issue update ID --type TYPE`.
+    `no_parent` detaches it. `issue_type` changes the type, e.g. to
+    promote a task with children to an epic (CHT-1885). Labels go
+    through issue_label, relations through issue_block/issue_unblock,
+    and sprint membership through sprint_add/sprint_remove.
 
     An `estimate` off the project's declared estimate_scale is stored as
     given and reported back in `warnings` (absent otherwise).
 
     Only fields explicitly passed are changed. Returns the updated issue.
     Pass `attest` to satisfy pending close/claim rituals in the same call.
+
+    Closing a ticket can add `parent_prompt`: it was the last open child
+    of an open parent, which never closes itself, so ask the user whether
+    to close that parent or add more. `open_children` means the closed
+    ticket still has open sub-issues. An epic's status follows its
+    children until set by hand; `follow_children` undoes that.
     """
     if parent is not None and no_parent:
         raise ToolInputError("Pass either `parent` or `no_parent`, not both.")
+    if follow_children and status is not None:
+        raise ToolInputError("Pass either `status` or `follow_children`, not both.")
     if parent is not None and not parent.strip():
         raise ToolInputError("`parent` must be an issue identifier; use `no_parent` to detach.")
+    # Resolved before any read or write, so a bad type fails the whole call.
+    resolved_type = _resolve_issue_type(issue_type) if issue_type is not None else None
 
     iss = await backend.get_issue(identifier)
 
@@ -520,6 +544,8 @@ async def issue_update(
         fields["priority"] = priority
     if estimate is not None:
         fields["estimate"] = estimate
+    if resolved_type is not None:
+        fields["issue_type"] = resolved_type
     if assignee is not None:
         if assignee.strip().lower() == "unassigned":
             fields["assignee_id"] = None
@@ -529,6 +555,8 @@ async def issue_update(
         fields["parent_id"] = parent_id
     if no_parent:
         fields["parent_id"] = None
+    if follow_children:
+        fields["status_follows_children"] = True
 
     if not fields and not attest:
         raise ToolInputError("No fields provided to update.")
@@ -537,6 +565,11 @@ async def issue_update(
         return await backend.get_issue(identifier)
 
     updated = await backend.update_issue(iss["id"], **fields)
+    # What a close left open (CHT-1901, CHT-1884): kept when present,
+    # dropped when null so an ordinary update's output is unchanged.
+    for key in ("parent_prompt", "open_children"):
+        if key in updated and updated[key] is None:
+            updated = {k: v for k, v in updated.items() if k != key}
     return await _with_estimate_warning(backend, updated, iss.get("project_id"), estimate)
 
 

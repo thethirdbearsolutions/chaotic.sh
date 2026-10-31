@@ -31,7 +31,7 @@ from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.ritual import OxydeRitualRejection
 from app.oxyde_models.sprint import OxydeSprint
-from app.enums import IssueStatus, ActivityType, IssueRelationType
+from app.enums import IssueStatus, IssueType, ActivityType, IssueRelationType
 from app.enums import SprintStatus, UnestimatedHandling
 from app.enums import LimboType
 from app.enums import ApprovalMode, RitualTrigger
@@ -214,11 +214,48 @@ class RelationCycleError(Exception):
     BLOCKS graph is too large to check (possible pre-existing cycle)."""
 
 
-class EstimateRequiredError(Exception):
-    """Raised when estimate is required but missing."""
+class RequirementMissingError(Exception):
+    """A per-project requirement refused a claim or close: the ticket
+    lacks something the project says it must have first (an estimate,
+    an assignee, an epic). Answered as a 400 with the message."""
 
     def __init__(self, message: str):
         super().__init__(message)
+
+
+class EstimateRequiredError(RequirementMissingError):
+    """Raised when estimate is required but missing."""
+
+
+class AssigneeRequiredError(RequirementMissingError):
+    """require_assignee_on_claim: an agent claimed a ticket and left it
+    unassigned (CHT-1900)."""
+
+
+class EpicRequiredError(RequirementMissingError):
+    """require_epic_on_close: an agent closed a non-epic ticket that has
+    no parent, and the project has no usable default epic (CHT-1900)."""
+
+
+_EPIC_REQUIRED_MESSAGE = (
+    "This project requires closed tickets to belong to an epic: set a parent "
+    "epic first (or ask an admin to set the project's default epic)"
+)
+
+# An epic's derived status as SQL over `issues` (the outer row being the
+# epic), stored by name. Shared by derive_epic_status and migration 0042.
+_DERIVED_EPIC_STATUS_SQL = (
+    "(CASE WHEN EXISTS (SELECT 1 FROM issues c WHERE c.parent_id = issues.id "
+    "AND c.status IN ('IN_PROGRESS', 'IN_REVIEW', 'DONE')) THEN 'IN_PROGRESS' "
+    "WHEN EXISTS (SELECT 1 FROM issues c WHERE c.parent_id = issues.id "
+    "AND c.status = 'TODO') THEN 'TODO' ELSE 'BACKLOG' END)"
+)
+
+# Same bound as _validate_parent's ancestor walk in api/issues.py.
+_PARENT_WALK_LIMIT = 1000
+
+# Statuses after which a ticket is closed (done or abandoned).
+CLOSED_STATUSES = frozenset({IssueStatus.DONE, IssueStatus.CANCELED})
 
 
 class IssueAlreadyClaimedError(Exception):
@@ -1102,6 +1139,120 @@ class IssueService:
             if ritual_service._evaluate_conditions(_without_status_conditions(r), probe)
         ]
 
+    async def usable_default_epic(self, project, issue_id: str | None = None) -> str | None:
+        """The project's default epic id (CHT-1900), if it can take
+        ``issue_id`` as a child now: it still exists in this project, is
+        an open epic, is not the issue itself, and does not sit beneath
+        it (filing the issue under it would close a loop). None
+        otherwise, in which case nothing is defaulted."""
+        epic_id = getattr(project, "default_epic_id", None)
+        if not epic_id or epic_id == issue_id:
+            return None
+        epic = await OxydeIssue.objects.get_or_none(id=epic_id)
+        if (
+            epic is None
+            or epic.project_id != project.id
+            or epic.issue_type != IssueType.EPIC
+            or epic.status in CLOSED_STATUSES
+        ):
+            return None
+        if issue_id is not None:
+            # Walk up from the epic with the bound _validate_parent uses
+            # (api/issues.py), refusing at the bound as it does.
+            row = epic
+            for _ in range(_PARENT_WALK_LIMIT):
+                if not row.parent_id:
+                    return epic.id
+                if row.parent_id == issue_id:
+                    return None
+                row = await OxydeIssue.objects.get_or_none(id=row.parent_id)
+                if row is None:
+                    return epic.id
+            return None
+        return epic.id
+
+    async def has_epic_ancestor(self, parent_id: str | None) -> bool:
+        """Whether a ticket under ``parent_id`` belongs to an epic: the
+        parent, or one of its ancestors, is an epic (CHT-1900). A sub-task
+        of a task that is under no epic does not."""
+        for _ in range(_PARENT_WALK_LIMIT):
+            if not parent_id:
+                return False
+            row = await OxydeIssue.objects.get_or_none(id=parent_id)
+            if row is None:
+                return False
+            if row.issue_type == IssueType.EPIC:
+                return True
+            parent_id = row.parent_id
+        return False
+
+    async def derive_epic_status(self, epic_id: str | None, actor_id: str | None = None) -> OxydeIssue | None:
+        """Move an open, unpinned epic to the status its children imply
+        (CHT-1901), and return it if that changed anything.
+
+        in_progress once any child is in progress, in review or done;
+        todo when any child is todo; else backlog. It never closes an
+        epic: when the last child closes, the closer is asked instead
+        (see app.api.issues._close_followups). A pinned epic, a closed
+        one, or a non-epic is left alone.
+
+        The children are read by the same UPDATE that writes, so two
+        derivations racing each other cannot leave a status computed from
+        a stale read (PR 2 review 4). Gates (arrears, rituals) do not
+        apply: nobody is claiming or closing the epic, its children
+        already passed theirs.
+        """
+        if not epic_id:
+            return None
+        epic = await OxydeIssue.objects.get_or_none(id=epic_id)
+        if (
+            epic is None or epic.issue_type != IssueType.EPIC
+            or epic.status_pinned or epic.status in CLOSED_STATUSES
+        ):
+            return None
+        async with atomic():
+            rows = await execute_raw(
+                "UPDATE issues SET status = " + _DERIVED_EPIC_STATUS_SQL + ", updated_at = ? "
+                "WHERE id = ? AND status = ? AND status_pinned = 0 "
+                "AND " + _DERIVED_EPIC_STATUS_SQL + " != status RETURNING status",
+                [datetime.now(timezone.utc), epic.id, epic.status.name],
+            )
+            if not rows:
+                return None
+            await OxydeIssueActivity.objects.create(
+                issue_id=epic.id,
+                user_id=actor_id,
+                activity_type=ActivityType.STATUS_CHANGED,
+                field_name="status",
+                old_value=epic.status.name,
+                new_value=rows[0]["status"],
+            )
+        return await self.get_by_id(epic.id)
+
+    async def rederive_parents(self, parent_ids, actor_id: str | None = None) -> None:
+        """Re-derive each named epic after a child changed (CHT-1901) and
+        broadcast the ones that moved; an epic that moved is itself a
+        child, so its own parent is re-derived next (nested epics, PR 2
+        review 2). Best-effort, after the child's own write has
+        committed: a failure here is logged, never surfaced as a failure
+        of that write."""
+        queue = [p for p in parent_ids if p]
+        seen: set[str] = set()
+        while queue and len(seen) < _PARENT_WALK_LIMIT:
+            parent_id = queue.pop(0)
+            if parent_id in seen:
+                continue
+            seen.add(parent_id)
+            try:
+                epic = await self.derive_epic_status(parent_id, actor_id)
+            except Exception:
+                logger.exception("Failed to derive epic status for issue=%s", parent_id)
+                continue
+            if epic is not None:
+                await self._broadcast_issue_updated(epic)
+                if epic.parent_id:
+                    queue.append(epic.parent_id)
+
     async def _get_next_issue_number_for_key(self, project_key: str) -> int:
         """Get the next issue number for a project key."""
         rows = await execute_raw(
@@ -1118,6 +1269,13 @@ class IssueService:
         project_id = project.id
         project_key = project.key
 
+        # A new non-epic ticket with no parent goes under the project's
+        # default epic, whoever files it (CHT-1900).
+        if issue_in.parent_id is None and issue_in.issue_type != IssueType.EPIC:
+            default_epic_id = await self.usable_default_epic(project)
+            if default_epic_id:
+                issue_in = issue_in.model_copy(update={"parent_id": default_epic_id})
+
         # Check constraints for non-default statuses (CHT-536)
         if issue_in.status in {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}:
             await self._check_sprint_limbo(project_id)
@@ -1129,10 +1287,24 @@ class IssueService:
                     raise EstimateRequiredError(
                         "Estimate is required before claiming issues in this project"
                     )
+            if project.require_assignee_on_claim and not is_human_request:
+                if issue_in.assignee_id is None:
+                    raise AssigneeRequiredError(
+                        "An assignee is required before claiming issues in this project"
+                    )
             if not is_human_request:
                 claim_rituals = await self._claim_rituals_for_new_issue(project_id, issue_in)
                 if claim_rituals:
                     raise ClaimRitualsError("NEW", rituals=claim_rituals)
+
+        if (
+            issue_in.status == IssueStatus.DONE
+            and project.require_epic_on_close
+            and not is_human_request
+            and issue_in.issue_type != IssueType.EPIC
+            and not await self.has_epic_ancestor(issue_in.parent_id)
+        ):
+            raise EpicRequiredError(_EPIC_REQUIRED_MESSAGE)
 
         if issue_in.status == IssueStatus.DONE and not is_human_request:
             # Created as done is also a close of a never-claimed ticket,
@@ -1173,6 +1345,12 @@ class IssueService:
                         due_date=issue_in.due_date,
                         completed_at=datetime.now(timezone.utc) if issue_in.status == IssueStatus.DONE else None,
                         claimed_at=datetime.now(timezone.utc) if issue_in.status == IssueStatus.IN_PROGRESS else None,
+                        # An epic created with a status other than the
+                        # default was given it by hand (CHT-1901).
+                        status_pinned=(
+                            issue_in.issue_type == IssueType.EPIC
+                            and issue_in.status != IssueStatus.BACKLOG
+                        ),
                     )
 
                     # Handle labels via junction table
@@ -1200,6 +1378,7 @@ class IssueService:
                     if issue_in.status == IssueStatus.DONE:
                         await self._deduct_from_sprint_budget(issue, creator_id)
 
+                await self.rederive_parents([issue.parent_id], creator_id)
                 # Reload with relations
                 return await self.get_by_id(issue.id)
 
@@ -1251,7 +1430,27 @@ class IssueService:
         ROUND_ROBIN rotation lands on the ritual it was blocked on
         (CHT-1405).
         """
-        update_data = issue_in.model_dump(exclude_unset=True, exclude={"label_ids", "lease_seconds"})
+        update_data = issue_in.model_dump(
+            exclude_unset=True, exclude={"label_ids", "lease_seconds", "status_follows_children"},
+        )
+        # Epic status (CHT-1901): a status set by hand pins it; asking for
+        # it to follow the children again unpins it and re-derives below.
+        old_parent_id = issue.parent_id
+        final_type = update_data.get("issue_type", issue.issue_type)
+        follow_children = bool(issue_in.status_follows_children) and final_type == IssueType.EPIC
+        if final_type != IssueType.EPIC and issue.status_pinned:
+            # A pin belongs to an epic; one that becomes a task drops it,
+            # so becoming an epic again starts by following (PR 2 review 6).
+            update_data["status_pinned"] = False
+        if follow_children:
+            update_data.pop("status", None)
+            update_data["status_pinned"] = False
+        elif (
+            final_type == IssueType.EPIC
+            and "status" in update_data
+            and update_data["status"] != issue.status
+        ):
+            update_data["status_pinned"] = True
 
         # Decide upfront whether this update will snapshot the
         # description, against the newest revision rather than the
@@ -1273,6 +1472,8 @@ class IssueService:
         new_assignee_id = None
         if user_id:
             for field, new_value in update_data.items():
+                if field == "status_pinned":
+                    continue  # bookkeeping; the status change is the activity
                 old_value = getattr(issue, field)
                 old_cmp = old_value
                 new_cmp = new_value
@@ -1328,20 +1529,70 @@ class IssueService:
                 await self._check_sprint_limbo(issue.project_id)
                 await self._check_sprint_arrears(issue.project_id)
 
+            project = None
+            if new_status != old_status and new_status in (IssueStatus.IN_PROGRESS, IssueStatus.DONE):
+                project = await OxydeProject.objects.get_or_none(id=issue.project_id)
+
             # Then ticket-level rituals (CHT-145)
             if new_status == IssueStatus.IN_PROGRESS and old_status != IssueStatus.IN_PROGRESS:
-                project = await OxydeProject.objects.get_or_none(id=issue.project_id)
                 if project and project.require_estimate_on_claim and not is_human_request:
                     estimate_value = update_data.get("estimate", issue.estimate)
                     if estimate_value is None:
                         raise EstimateRequiredError(
                             "Estimate is required before claiming issues in this project"
                         )
+                # Not under skip_ritual_check: that is a cleared intent's
+                # auto-transition, which nothing can answer if it is
+                # refused here (PR #462 review 2).
+                if (
+                    project and project.require_assignee_on_claim
+                    and not is_human_request and not skip_ritual_check
+                ):
+                    if update_data.get("assignee_id", issue.assignee_id) is None:
+                        raise AssigneeRequiredError(
+                            "An assignee is required before claiming issues in this project"
+                        )
                 gated = skip_ritual_check or await self._check_claim_rituals(issue, user_id, is_human_request)
                 if gated:
                     rotations.append(await RitualService().prepare_ticket_rotation(
                         issue.project_id, issue.id, RitualTrigger.TICKET_CLAIM, intent_id=gate_intent_id,
                     ))
+
+            final_parent_id = update_data.get("parent_id", issue.parent_id)
+            if (
+                new_status == IssueStatus.DONE and old_status != IssueStatus.DONE
+                and project and project.require_epic_on_close and not is_human_request
+                and update_data.get("issue_type", issue.issue_type) != IssueType.EPIC
+                and not await self.has_epic_ancestor(final_parent_id)
+            ):
+                # CHT-1900: a parentless ticket is filed under the default
+                # epic; otherwise the close is refused. Before the ritual
+                # gates, like the estimate check: an attestation cannot
+                # supply a missing epic. A cleared intent's auto-transition
+                # (skip_ritual_check) still takes the default but is never
+                # refused: nothing could answer that refusal.
+                default_epic_id = (
+                    await self.usable_default_epic(project, issue.id)
+                    if final_parent_id is None else None
+                )
+                if default_epic_id is None:
+                    if not skip_ritual_check:
+                        raise EpicRequiredError(_EPIC_REQUIRED_MESSAGE)
+                else:
+                    update_data["parent_id"] = default_epic_id
+                    if user_id:
+                        # One row for the net change, replacing any the
+                        # generic loop wrote for a parent_id this request
+                        # sent (PR #462 review 5).
+                        activities = [a for a in activities if a["field_name"] != "parent_id"]
+                        activities.append({
+                            "issue_id": issue.id,
+                            "user_id": user_id,
+                            "activity_type": ActivityType.UPDATED,
+                            "field_name": "parent_id",
+                            "old_value": issue.parent_id,
+                            "new_value": default_epic_id,
+                        })
 
             if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
                 # Closing a ticket nobody ever claimed must pass its
@@ -1500,6 +1751,17 @@ class IssueService:
             # Deduct from sprint budget inside transaction (CHT-974 review fix)
             if needs_budget_deduction:
                 await self._deduct_from_sprint_budget(issue, user_id)
+
+        # The epic(s) this ticket belongs to, or belonged to, may move
+        # (CHT-1901); and an epic told to follow its children again, or
+        # just made an epic, takes its derived status now.
+        rederive = []
+        if "status" in update_data or "parent_id" in update_data:
+            rederive += [old_parent_id, issue.parent_id]
+        if follow_children or ("issue_type" in update_data and final_type == IssueType.EPIC):
+            rederive.append(issue.id)
+        if rederive:
+            await self.rederive_parents(rederive, user_id)
 
         if new_assignee_id:
             try:
@@ -1690,9 +1952,18 @@ class IssueService:
         span nine tables that a future migration could add to without
         a cascade.
         """
+        parent_id = issue.parent_id
+        await self._delete_rows(issue)
+        await self.rederive_parents([parent_id])
+
+    async def _delete_rows(self, issue) -> None:
+        """delete()'s writes, in one transaction."""
         from app.oxyde_models.ritual import OxydeRitualAttestation, OxydeRitualRejection
 
         async with atomic():
+            # A project whose default epic this was stops defaulting
+            # (CHT-1900); the column has no foreign key to do it.
+            await OxydeProject.objects.filter(default_epic_id=issue.id).update(default_epic_id=None)
             await OxydeIssueComment.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueActivity.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueLabel.objects.filter(issue_id=issue.id).delete()
@@ -2061,6 +2332,8 @@ class IssueService:
                 new_value=IssueStatus.TODO.name,
             )
 
+        # Its epic may have had this as its only active child (CHT-1901).
+        await self.rederive_parents([issue.parent_id], old_assignee_id)
         updated = await self.get_by_id(issue.id)
         logger.info(
             "Released expired lease for issue=%s (identifier=%s, was assigned to %s)",

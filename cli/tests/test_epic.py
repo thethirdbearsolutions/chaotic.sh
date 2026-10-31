@@ -7,6 +7,15 @@ from unittest.mock import MagicMock
 import pytest
 
 
+
+@pytest.fixture(autouse=True)
+def _no_epic_progress_call(monkeypatch):
+    """`epic list` also reads the progress endpoint (CHT-1902); tests
+    that don't care get an empty answer instead of a network call."""
+    from unittest.mock import MagicMock
+    from cli.main import client
+    monkeypatch.setattr(client, "get_project_epic_progress", MagicMock(return_value={"epics": []}), raising=False)
+
 @pytest.fixture(autouse=True)
 def mock_dependencies(patched_client, patched_auth, patched_project):
     """Mock client, config, and auth before importing main."""
@@ -127,6 +136,36 @@ class TestEpicList:
         client.get_issues.assert_called_once()
         call_kwargs = client.get_issues.call_args
         assert call_kwargs[1]['issue_type'] == 'epic'
+
+    def test_list_epics_shows_progress_from_one_read(self, cli_runner, mock_epic):
+        """epic list reads every epic's progress in one call (CHT-1902)."""
+        from cli.main import cli, client
+
+        client.get_issues = MagicMock(return_value=[mock_epic])
+        client.get_project_epic_progress = MagicMock(return_value={"epics": [{
+            "id": mock_epic["id"], "points_done": 5, "points_total": 13,
+            "children": {"total": 6, "done": 3, "canceled": 1},
+        }], "untracked": [], "sprint_window": 1})
+        client.get_sub_issues = MagicMock()
+
+        result = cli_runner.invoke(cli, ['epic', 'list'])
+
+        assert result.exit_code == 0, result.output
+        assert '3/5 (5/13p)' in result.output
+        client.get_project_epic_progress.assert_called_once()
+        client.get_sub_issues.assert_not_called()
+
+    def test_list_epics_without_the_progress_endpoint(self, cli_runner, mock_epic):
+        """An older server without the endpoint still lists epics."""
+        from cli.main import cli, client, APIError
+
+        client.get_issues = MagicMock(return_value=[mock_epic])
+        client.get_project_epic_progress = MagicMock(side_effect=APIError("Not Found", 404))
+
+        result = cli_runner.invoke(cli, ['epic', 'list'])
+
+        assert result.exit_code == 0, result.output
+        assert 'CHT-50' in result.output
 
     def test_list_epics_empty(self, cli_runner):
         """epic list shows message when no epics exist."""

@@ -148,6 +148,41 @@ def register(cli):
             )
         console.print(Panel("\n".join(lines_markup), title="Current User"))
 
+    @auth.command("rename")
+    @click.argument("name")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    def auth_rename(name):
+        """Rename the session identity you are signed in as (CHT-1918).
+
+        Only a registered session identity may rename itself, and only its
+        name. A person renames an agent with `chaotic agent update`. To name
+        a new session before it first registers, set CHAOTIC_SESSION_NAME.
+        """
+        m = _main()
+        name = name.strip()
+        if not name:
+            raise click.BadParameter("must not be blank", param_hint="NAME")
+        me = _client().get_me()
+        if not me.get("is_agent") or not (me.get("kind") == "session" or me.get("registered_by_id")):
+            message = (
+                f"{me.get('name')!r} is not a session identity. `auth rename` renames the session "
+                f"identity you are signed in as; to rename an agent, use `chaotic agent update`."
+            )
+            if m.is_json_output():
+                m.output_json({"error": message, "error_code": "not_a_session_identity"})
+            else:
+                console.print(f"[red]Error: {escape(message)}[/red]")
+            raise SystemExit(1)
+        agent = _client().update_agent(me["id"], name=name)
+        if m.is_json_output():
+            m.output_json(agent)
+            return
+        console.print(
+            f"[green]Renamed {escape(me.get('name') or '')} to {escape(agent.get('name') or name)}.[/green]"
+        )
+
     @auth.command("verify-email")
     @click.option("--code", default=None, help="Confirm a code you already received, without requesting a new one.")
     @_main().json_option

@@ -11,6 +11,7 @@ vi.mock('./api.js', () => ({
         getSubIssues: vi.fn(),
         getActivities: vi.fn(),
         getComments: vi.fn(),
+        updateIssue: vi.fn(),
     },
 }));
 
@@ -72,7 +73,7 @@ vi.mock('./issue-detail-view.js', () => ({
 
 import { api } from './api.js';
 import { getCurrentView } from './state.js';
-import { showApiError } from './ui.js';
+import { showApiError, showToast } from './ui.js';
 import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
@@ -171,7 +172,7 @@ describe('epic-detail-view', () => {
             expect(content).toContain('25%');
         });
 
-        it('counts canceled as done for progress', async () => {
+        it('leaves canceled sub-issues out of progress, like the Epics list (CHT-1902)', async () => {
             api.getSubIssues.mockResolvedValue([
                 makeSubIssue({ id: 's1', status: 'done' }),
                 makeSubIssue({ id: 's2', status: 'canceled' }),
@@ -180,8 +181,20 @@ describe('epic-detail-view', () => {
             await viewEpic('epic-1');
 
             const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('2 of 3 done');
-            expect(content).toContain('67%');
+            expect(content).toContain('1 of 2 done');
+            expect(content).toContain('50%');
+        });
+
+        it("uses the Epics list's counts when opened from it, nested tickets included", async () => {
+            getCurrentEpics.mockReturnValueOnce([{ id: 'epic-1', children: {
+                total: 6, backlog: 1, todo: 1, in_progress: 0, in_review: 0, done: 3, canceled: 1,
+            } }]);
+            api.getSubIssues.mockResolvedValue([makeSubIssue({ id: 's1', status: 'done' })]);
+            await viewEpic('epic-1');
+
+            const content = document.getElementById('epic-detail-content').innerHTML;
+            expect(content).toContain('3 of 5 done');
+            expect(content).toContain('60%');
         });
 
         it('renders 100% progress with complete class', async () => {
@@ -451,6 +464,42 @@ describe('epic-detail-view', () => {
 
                 expect(api.getIssue).toHaveBeenCalledWith('epic-c');
             });
+        });
+    });
+
+    describe('pinned status (CHT-1901)', () => {
+        it('offers "Follow sub-issues" for an open pinned epic', async () => {
+            api.getIssue.mockResolvedValue(makeEpic({ status_pinned: true }));
+            await viewEpic('epic-1');
+            const content = document.getElementById('epic-detail-content').innerHTML;
+            expect(content).toContain('data-action="epic-follow-children"');
+        });
+
+        it('hides it when the status follows the children', async () => {
+            await viewEpic('epic-1');
+            const content = document.getElementById('epic-detail-content').innerHTML;
+            expect(content).not.toContain('epic-follow-children');
+        });
+
+        it('hides it on a closed epic', async () => {
+            api.getIssue.mockResolvedValue(makeEpic({ status: 'done', status_pinned: true }));
+            await viewEpic('epic-1');
+            const content = document.getElementById('epic-detail-content').innerHTML;
+            expect(content).not.toContain('epic-follow-children');
+        });
+
+        it('unpins and re-renders', async () => {
+            api.updateIssue.mockResolvedValue(makeEpic());
+            await epicDetailActions['epic-follow-children']({}, { epicId: 'epic-1' });
+            expect(api.updateIssue).toHaveBeenCalledWith('epic-1', { status_follows_children: true });
+            expect(showToast).toHaveBeenCalled();
+            expect(api.getIssue).toHaveBeenCalledWith('epic-1');
+        });
+
+        it('reports a failed unpin', async () => {
+            api.updateIssue.mockRejectedValue(new Error('nope'));
+            await epicDetailActions['epic-follow-children']({}, { epicId: 'epic-1' });
+            expect(showApiError).toHaveBeenCalledWith('update epic', expect.any(Error));
         });
     });
 

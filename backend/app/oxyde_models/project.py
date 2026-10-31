@@ -29,6 +29,15 @@ class OxydeProject(Model):
     default_sprint_budget: int | None = Field(default=None)
     human_rituals_required: bool = Field(default=False)
     require_estimate_on_claim: bool = Field(default=False)
+    # CHT-1900: off by default, agent requests only, like the estimate knob.
+    require_assignee_on_claim: bool = Field(default=False)
+    require_epic_on_close: bool = Field(default=False)
+    # An open epic in this project. New non-epic issues created with no
+    # parent are filed under it, and under require_epic_on_close a close
+    # with no parent files the issue under it instead of refusing. No
+    # foreign key (SQLite cannot add one without a table rebuild): a
+    # deleted or closed epic is simply not used.
+    default_epic_id: str | None = Field(default=None)
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 

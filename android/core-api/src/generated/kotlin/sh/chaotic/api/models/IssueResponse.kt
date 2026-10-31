@@ -67,6 +67,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param creator 
  * @param assignee 
  * @param leaseExpiresAt 
+ * @param statusPinned 
  * @param labels 
  */
 @Serializable
@@ -150,6 +151,9 @@ data class IssueResponse (
 
     @SerialName(value = "lease_expires_at")
     val leaseExpiresAt: kotlin.String? = null,
+
+    @SerialName(value = "status_pinned")
+    val statusPinned: kotlin.Boolean? = false,
 
     @SerialName(value = "labels")
     val labels: kotlin.collections.List<LabelResponse>? = null

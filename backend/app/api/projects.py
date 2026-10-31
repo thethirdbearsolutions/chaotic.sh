@@ -40,6 +40,30 @@ async def _validate_lead(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lead not found")
 
 
+async def _validate_default_epic(epic_id: str | None, project_id: str, current_epic_id: str | None) -> None:
+    """A project's default epic (CHT-1900) must be an open epic in that
+    project. Null clears it, and re-sending the current value passes
+    unchecked (the web Rules save resends every setting), as for the
+    lead. One 400 for every refusal, so it says nothing about a row in a
+    project the caller may not see (CHT-1785)."""
+    if epic_id is None or epic_id == current_epic_id:
+        return
+    from app.enums import IssueStatus, IssueType
+    from app.oxyde_models.issue import OxydeIssue
+
+    epic = await OxydeIssue.objects.get_or_none(id=epic_id)
+    if (
+        epic is None
+        or epic.project_id != project_id
+        or epic.issue_type != IssueType.EPIC
+        or epic.status in (IssueStatus.DONE, IssueStatus.CANCELED)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Default epic must be an open epic in this project",
+        )
+
+
 @writes
 async def create_project(
     team_id: str,
@@ -128,6 +152,7 @@ async def update_project(
     # A project the caller cannot see answers like a missing one (CHT-1785).
     project = await visible_project(current_user, project_id)
     await _validate_lead(project_in.lead_id, project.team_id, project.id, project.lead_id)
+    await _validate_default_epic(project_in.default_epic_id, project.id, project.default_epic_id)
 
     project = await project_service.update(project, project_in)
     response = ProjectResponse.model_validate(project, from_attributes=True)
