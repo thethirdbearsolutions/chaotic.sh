@@ -4877,14 +4877,21 @@ input[type="checkbox"] {
     }
 
     /* Mobile sidebar: off-canvas drawer */
+    /* Closed, the drawer is also visibility: hidden, so its links leave the
+       tab order and the accessibility tree instead of sitting focusable
+       off-canvas (CHT-1292). Visibility flips after the slide-out ends,
+       and at once on open, so toggleSidebar() can focus the first link. */
     .sidebar {
         transform: translateX(-100%);
-        transition: transform 0.25s ease;
+        visibility: hidden;
+        transition: transform 0.25s ease, visibility 0s linear 0.25s;
         z-index: 200;
     }
 
     body.sidebar-open .sidebar {
         transform: translateX(0);
+        visibility: visible;
+        transition: transform 0.25s ease, visibility 0s linear 0s;
     }
 
     body.sidebar-open {
@@ -7427,6 +7434,30 @@ input[type="checkbox"] {
     gap: 8px;
     flex-shrink: 0;
     align-self: center;
+}
+
+/* On a phone the actions (up to three buttons on a review) left the
+   ritual's name and prompt a ~20px column, one word per line (CHT-1892).
+   Stack them under the info instead, and let them wrap. */
+@media (max-width: 768px) {
+    .gate-ritual {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .gate-ritual-info {
+        flex: none;
+    }
+
+    .gate-ritual > .btn,
+    .gate-ritual-actions {
+        align-self: flex-start;
+    }
+
+    .gate-ritual-actions {
+        flex-wrap: wrap;
+    }
 }
 
 .gate-attestation-note {
