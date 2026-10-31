@@ -1261,6 +1261,10 @@ textarea {
 }
 
 .document-content {
+    /* Long-form reading size, set here rather than inherited now that body
+       is 13px (CHT-1887); headings are em-based and follow it. Phones use
+       their own 15px below. */
+    font-size: var(--font-lg);
     line-height: 1.8;
     max-width: 65ch;
 }
@@ -1415,6 +1419,7 @@ textarea {
 }
 
 .linked-item-title {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     flex: 1;
 }
 
@@ -5516,6 +5521,7 @@ input[type="checkbox"] {
 }
 
 .api-key-name {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     color: var(--text-primary);
     margin-bottom: 4px;
@@ -6330,6 +6336,7 @@ input[type="checkbox"] {
 }
 
 .ticket-ritual-name {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     color: var(--text-primary);
 }
@@ -6620,6 +6627,7 @@ input[type="checkbox"] {
 }
 
 .agent-name {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     color: var(--text-primary);
 }
@@ -7119,12 +7127,14 @@ input[type="checkbox"] {
 }
 
 .gate-issue-id {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     color: var(--text-muted);
     flex-shrink: 0;
 }
 
 .gate-issue-title {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7290,6 +7300,7 @@ input[type="checkbox"] {
 }
 
 .inbox-row-title {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
 }
 
@@ -7708,6 +7719,7 @@ button.stat-card-link:hover .stat-note {
 }
 
 .ledger-item-title {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7768,6 +7780,7 @@ button.stat-card-link:hover .stat-note {
 }
 
 .document-list-title {
+    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
