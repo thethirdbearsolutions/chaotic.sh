@@ -132,9 +132,16 @@ describe('router', () => {
         describe('view transitions (CHT-1873)', () => {
             afterEach(() => { delete document.startViewTransition; });
 
-            it('defers the swap to a View Transition by default', () => {
+            it('swaps synchronously by default (CHT-1898)', () => {
                 document.startViewTransition = vi.fn();
                 navigateTo('issues');
+                expect(document.startViewTransition).not.toHaveBeenCalled();
+                expect(document.getElementById('issues-view').classList.contains('hidden')).toBe(false);
+            });
+
+            it('defers the swap to a View Transition with transition: true', () => {
+                document.startViewTransition = vi.fn();
+                navigateTo('issues', true, { transition: true });
                 expect(document.startViewTransition).toHaveBeenCalled();
                 // The callback has not run: the view is still hidden.
                 expect(document.getElementById('issues-view').classList.contains('hidden')).toBe(true);
@@ -579,6 +586,24 @@ describe('router', () => {
             window.dispatchEvent(new PopStateEvent('popstate', { state: { view: 'issues' } }));
 
             expect(scrollToSpy).toHaveBeenCalledWith(0, 240);
+            rafSpy.mockRestore();
+            scrollToSpy.mockRestore();
+        });
+
+        // CHT-1897 review C1: queued rows are painted before the restore, so
+        // the position is not clamped by a half-painted list.
+        it('finishes painting before restoring the scroll position', () => {
+            const order = [];
+            configureRouter({ beforeScrollRestore: () => order.push('paint') });
+            registerViews({ 'issues': vi.fn() });
+            const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => cb());
+            const scrollToSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => order.push('scroll'));
+            initRouter();
+            window.location.href = 'http://localhost/issues';
+            Object.defineProperty(window, 'scrollY', { value: 900, configurable: true });
+            saveScrollPosition();
+            window.dispatchEvent(new PopStateEvent('popstate', { state: { view: 'issues' } }));
+            expect(order.slice(0, 2)).toEqual(['paint', 'scroll']);
             rafSpy.mockRestore();
             scrollToSpy.mockRestore();
         });

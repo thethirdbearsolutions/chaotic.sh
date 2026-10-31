@@ -280,6 +280,8 @@ export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = '
  * @param {Function} actions.showInlineDropdown - Opens an inline dropdown for a field
  * @param {Function} actions.isModalOpen - Returns true if a modal is open
  * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @param {Function} [actions.beforeNavigate] - Called before the handler
+ *   reads the rows, to finish painting any still queued (CHT-1897)
  * @param {Function} [actions.isDetailViewActive] - Returns true if a detail
  *   view is overlaying this handler's list; the handler disengages entirely
  *   while one is up (CHT-1215 review finding 1)
@@ -328,6 +330,9 @@ export function createListNavigationHandler(actions) {
         // underneath it (CHT-1290).
         if (actions.isInlineDropdownOpen?.()) return;
 
+        // Only a cursor move can reach past the painted rows; the other keys
+        // act on the selected row, which is painted already (CHT-1897).
+        if (['j', 'k', 'ArrowDown', 'ArrowUp'].includes(e.key)) actions.beforeNavigate?.();
         const items = document.querySelectorAll(selector);
         if (items.length === 0) return;
 
