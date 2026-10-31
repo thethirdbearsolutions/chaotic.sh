@@ -291,11 +291,43 @@ class CacheRefresherTest {
 
     @Test
     fun aDeletedIssueIsRemoved() = runTest {
+        store.replaceTeams(listOf(Team(TEAM_A, "A", "A")))
         store.saveIssue(IssueDetail(issue("i1"), emptyList(), emptyList()))
         remote.issues["i1"] = Remote.HttpError(404)
+        remote.teams = Remote.Ok(listOf(Team(TEAM_A, "A", "A")))
 
         assertEquals<RefreshOutcome>(RefreshOutcome.Gone, refresher.refreshIssue("i1", TEAM_A))
         assertNull(store.issue("i1"))
+        assertEquals(listOf(TEAM_A), store.teams().map { it.id })
+    }
+
+    @Test
+    fun aNotFoundIssueOfATeamNoLongerListedDropsTheTeam() = runTest {
+        // Out of scope answers 404 like deleted (CHT-1785): leaving the team now looks like this.
+        store.replaceTeams(listOf(Team(TEAM_A, "A", "A"), Team(TEAM_B, "B", "B")))
+        store.saveIssue(IssueDetail(issue("i1", TEAM_A), emptyList(), emptyList()))
+        store.replaceSprintCards(TEAM_A, listOf(card("pa")))
+        remote.issues["i1"] = Remote.HttpError(404)
+        remote.teams = Remote.Ok(listOf(Team(TEAM_B, "B", "B")))
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.TeamLost, refresher.refreshIssue("i1", TEAM_A))
+
+        assertNull(store.issue("i1"))
+        assertEquals(listOf(TEAM_B), store.teams().map { it.id })
+        assertTrue(store.sprintCards().isEmpty())
+    }
+
+    @Test
+    fun aNotFoundIssueWhenTheTeamListFailsDropsOnlyTheIssue() = runTest {
+        store.replaceTeams(listOf(Team(TEAM_A, "A", "A")))
+        store.saveIssue(IssueDetail(issue("i1", TEAM_A), emptyList(), emptyList()))
+        remote.issues["i1"] = Remote.HttpError(404)
+        remote.teams = Remote.Unreachable(IOException("offline"))
+
+        assertEquals<RefreshOutcome>(RefreshOutcome.Gone, refresher.refreshIssue("i1", TEAM_A))
+
+        assertNull(store.issue("i1"))
+        assertEquals(listOf(TEAM_A), store.teams().map { it.id })
     }
 
     @Test

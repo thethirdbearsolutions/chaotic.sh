@@ -22,7 +22,7 @@ sealed interface RefreshOutcome {
      */
     data object Fresh : RefreshOutcome
 
-    /** The server says it is gone (404): it was removed from the cache. */
+    /** The server says it is gone (404) and its team is still listed: it was removed from the cache. */
     data object Gone : RefreshOutcome
 
     /** The person is no longer in the team (the team list says so): everything cached for it was dropped. */
@@ -266,18 +266,8 @@ class CacheRefresher(
     ): RefreshOutcome = when (result) {
         is Remote.HttpError -> when (result.status) {
             HTTP_UNAUTHORIZED -> RefreshOutcome.Unauthorized
-
             HTTP_FORBIDDEN -> forbidden(ticket, result, teamId)
-
-            HTTP_NOT_FOUND -> {
-                if (issueId == null) {
-                    RefreshOutcome.Gone
-                } else {
-                    session.write(ticket) { deleteIssue(issueId) }?.let { RefreshOutcome.Gone }
-                        ?: RefreshOutcome.Unauthorized
-                }
-            }
-
+            HTTP_NOT_FOUND -> notFound(ticket, teamId, issueId)
             else -> RefreshOutcome.Failed(result.status)
         }
 
@@ -290,13 +280,39 @@ class CacheRefresher(
      * about this request, not the team. For a codeless one, the team list
      * decides: the team is dropped only when the list no longer has it.
      */
-    @Suppress("ReturnCount") // each way to tell (a code, no team list, a write refused) is an early answer
-    private suspend fun forbidden(ticket: Long, error: Remote.HttpError, teamId: String?): RefreshOutcome {
-        if (teamId == null || error.errorCode != null) return RefreshOutcome.Forbidden
-        val teams = remote.teams() as? Remote.Ok ?: return RefreshOutcome.Forbidden
+    private suspend fun forbidden(ticket: Long, error: Remote.HttpError, teamId: String?): RefreshOutcome =
+        if (teamId == null || error.errorCode != null) {
+            RefreshOutcome.Forbidden
+        } else {
+            byTeamList(ticket, teamId, ifStillListed = RefreshOutcome.Forbidden)
+        }
+
+    /**
+     * A 404 on something of [teamId]. Since CHT-1785 something the person
+     * can no longer see answers 404 exactly like something deleted, so a
+     * person who left the team now meets a 404 here, not a 403. The issue
+     * is dropped either way, and the team list decides whether the whole
+     * team went with it (CHT-1801).
+     */
+    private suspend fun notFound(ticket: Long, teamId: String?, issueId: String?): RefreshOutcome {
+        if (issueId != null) {
+            session.write(ticket) { deleteIssue(issueId) } ?: return RefreshOutcome.Unauthorized
+        }
+        return if (teamId == null) RefreshOutcome.Gone else byTeamList(ticket, teamId, RefreshOutcome.Gone)
+    }
+
+    /**
+     * Fetch the team list and save it, which drops whatever was cached for
+     * a team no longer on it: [RefreshOutcome.TeamLost] when [teamId] is
+     * one of those, else [ifStillListed]. Also [ifStillListed] when the
+     * list cannot be fetched, so nothing is dropped on a guess.
+     */
+    @Suppress("ReturnCount") // no team list, and a write refused, are early answers
+    private suspend fun byTeamList(ticket: Long, teamId: String, ifStillListed: RefreshOutcome): RefreshOutcome {
+        val teams = remote.teams() as? Remote.Ok ?: return ifStillListed
         session.write(ticket) { replaceTeams(teams.value) } ?: return RefreshOutcome.Unauthorized
         fetched[TEAMS_KEY] = ticket to nowMillis()
-        return if (teams.value.any { it.id == teamId }) RefreshOutcome.Forbidden else RefreshOutcome.TeamLost
+        return if (teams.value.any { it.id == teamId }) ifStillListed else RefreshOutcome.TeamLost
     }
 
     companion object {
