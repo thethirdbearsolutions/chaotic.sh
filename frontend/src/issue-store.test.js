@@ -178,10 +178,17 @@ describe('issue-store', () => {
         });
 
         // review I3
-        it('leaves non-ASCII label names to the server', () => {
-            expect(deriveQuery({ ...base, label: ['Über'], label_match: 'any' })).toBeNull();
-            expect(deriveQuery({ ...base, exclude_label: ['Über'] })).toBeNull();
-            expect(deriveQuery({ ...base, label: ['bug'] })).toBeNull(); // only "any of" is reproduced
+        it('only reproduces "any of" label matching', () => {
+            expect(deriveQuery({ ...base, label: ['bug'] })).toBeNull();
+        });
+
+        // The server folds non-ASCII names the same way since CHT-1920.
+        it('matches non-ASCII label names without case, like the server', () => {
+            clearIssueStore();
+            const umlaut = row('u', { labels: [{ id: 'l3', name: 'Über' }] });
+            writeQuery(queryKey(base), [...rows, umlaut]);
+            expect(ids(deriveQuery({ ...base, label: ['ÜBER'], label_match: 'any' }))).toEqual(['u']);
+            expect(ids(deriveQuery({ ...base, exclude_label: ['über'] }))).toEqual(['a', 'b', 'c']);
         });
 
         it('filters the smallest covering source', () => {
