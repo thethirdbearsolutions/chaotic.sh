@@ -187,3 +187,77 @@ async def test_a_hand_set_status_is_reported(client, interactive_headers, test_p
     await _patch(client, h, epic["id"], status="todo")
     [row] = (await client.get(f"/api/projects/{test_project.id}/epics", headers=h)).json()["epics"]
     assert row["status"] == "todo" and row["status_pinned"] is True
+
+
+# --- CHT-1922: counts computed in SQL match the per-issue walk -------------
+
+def _reference_counts(rows):
+    """The per-issue walk epic_progress did in Python before CHT-1922:
+    each issue's nearest epic ancestor, a cycle or a missing parent ending
+    the walk with none."""
+    by_id = {r["id"]: r for r in rows}
+    counts, untracked_open = {}, 0
+    for r in rows:
+        seen, cur, owner = set(), r["parent_id"], None
+        while cur is not None and cur in by_id and cur not in seen:
+            seen.add(cur)
+            if by_id[cur]["epic"]:
+                owner = cur
+                break
+            cur = by_id[cur]["parent_id"]
+        if owner is None:
+            if not r["epic"] and r["status"] in ("backlog", "todo", "in_progress", "in_review"):
+                untracked_open += 1
+            continue
+        c = counts.setdefault(owner, {"total": 0, "done": 0, "canceled": 0, "pts": 0, "pts_done": 0})
+        c["total"] += 1
+        if r["status"] in ("done", "canceled"):
+            c[r["status"]] += 1
+        if r["status"] != "canceled":
+            pts = r["estimate"] if r["estimate"] is not None else 1
+            c["pts"] += pts
+            if r["status"] == "done":
+                c["pts_done"] += pts
+    return counts, untracked_open
+
+
+@pytest.mark.asyncio
+async def test_sql_counts_match_the_walk_on_a_random_forest(test_project, test_user, db):
+    import random
+    from app.enums import IssueStatus, IssueType
+    from app.oxyde_models.issue import OxydeIssue
+    from app.services.epic_progress import epic_progress
+
+    rng = random.Random(1922)
+    statuses = list(IssueStatus)
+    rows = []
+    for n in range(1, 121):
+        parent = rng.choice(rows)["id"] if rows and rng.random() < 0.8 else None
+        epic = rng.random() < 0.15
+        status = rng.choice(statuses)
+        estimate = rng.choice([None, 1, 2, 4])
+        issue = await OxydeIssue.objects.create(
+            project_id=test_project.id, identifier=f"{test_project.key}-{n}", number=n,
+            title=f"Issue {n}", status=status, estimate=estimate, parent_id=parent,
+            issue_type=IssueType.EPIC if epic else IssueType.TASK, creator_id=test_user.id,
+        )
+        rows.append({"id": issue.id, "parent_id": parent, "epic": epic,
+                     "status": status.value, "estimate": estimate})
+    # A two-issue cycle with no epic in it: untracked, and the walk ends.
+    a, b = rows[-1], rows[-2]
+    await OxydeIssue.objects.filter(id=a["id"]).update(parent_id=b["id"], issue_type=IssueType.TASK)
+    await OxydeIssue.objects.filter(id=b["id"]).update(parent_id=a["id"], issue_type=IssueType.TASK)
+    a.update(parent_id=b["id"], epic=False)
+    b.update(parent_id=a["id"], epic=False)
+
+    expected, expected_untracked = _reference_counts(rows)
+    got = await epic_progress([test_project.id])
+    by_id = {e.id: e for e in got.epics}
+    assert set(by_id) == {r["id"] for r in rows if r["epic"]}
+    for epic_id, e in by_id.items():
+        want = expected.get(epic_id, {"total": 0, "done": 0, "canceled": 0, "pts": 0, "pts_done": 0})
+        assert (e.children.total, e.children.done, e.children.canceled, e.points_total, e.points_done) == (
+            want["total"], want["done"], want["canceled"], want["pts"], want["pts_done"],
+        ), epic_id
+    [untracked] = got.untracked
+    assert untracked.open == expected_untracked

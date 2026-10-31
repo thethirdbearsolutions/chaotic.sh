@@ -1,7 +1,7 @@
 """Epic progress (CHT-1902): progress toward goals, read off the data.
 
-One pass over the scope's issues (no descriptions) assigns every issue to
-its nearest epic ancestor, so a sub-task of a task under an epic counts
+A recursive query assigns every issue to its nearest epic ancestor and
+counts them there, in SQL (CHT-1922), so a sub-task of a task under an epic counts
 toward that epic, and an issue under no epic is "untracked". Sprints are
 the clock: the project's budget transactions say what each recent sprint
 closed, and so what it moved toward each goal.
@@ -37,6 +37,35 @@ _STATUS_FIELD = {
     IssueStatus.CANCELED: "canceled",
 }
 _OPEN = {IssueStatus.BACKLOG, IssueStatus.TODO, IssueStatus.IN_PROGRESS, IssueStatus.IN_REVIEW}
+
+
+_EPIC = (IssueType.EPIC.name, IssueType.EPIC.value)
+# How far up a parent chain the walk goes; the API refuses a chain this
+# deep (issue_service._PARENT_WALK_LIMIT), and it ends a cycle.
+_WALK_LIMIT = 1000
+
+
+def _owner_cte(scope: str, start: str) -> str:
+    """``WITH RECURSIVE ... owners(issue_id, epic_id)``: for each issue
+    matching ``start`` (a WHERE over issues), its nearest epic ancestor,
+    or NULL. The walk climbs one parent per step and stops at the first
+    epic, at a parent outside the scope (``scope`` is the project id
+    placeholders), or at the depth bound, which also ends a cycle.
+
+    Parameters, in order: ``start``'s, then the two epic spellings,
+    then the scope's project ids."""
+    return (
+        "WITH RECURSIVE walk(issue_id, cur, depth, epic_id) AS ("
+        f" SELECT id, parent_id, 0, NULL FROM issues WHERE {start}"
+        " UNION ALL"
+        " SELECT w.issue_id, p.parent_id, w.depth + 1,"
+        " CASE WHEN p.issue_type IN (?, ?) THEN p.id END"
+        " FROM walk w JOIN issues p ON p.id = w.cur"
+        f" WHERE w.epic_id IS NULL AND w.depth < {_WALK_LIMIT} AND p.project_id IN ({scope})"
+        "), owners(issue_id, epic_id) AS ("
+        " SELECT issue_id, MAX(epic_id) FROM walk GROUP BY issue_id"
+        ") "
+    )
 
 
 def _placeholders(values) -> str:
@@ -85,44 +114,24 @@ async def epic_progress(
     if not project_ids:
         return EpicProgressResponse(epics=[], untracked=[], sprint_window=sprint_window)
 
-    rows = await execute_raw(
-        "SELECT id, identifier, title, status, priority, issue_type, parent_id, project_id, "
-        "estimate, status_pinned, number FROM issues "
-        f"WHERE project_id IN ({_placeholders(project_ids)})",
-        list(project_ids),
+    scope = _placeholders(project_ids)
+    epic_rows = await execute_raw(
+        "SELECT id, identifier, title, status, priority, project_id, estimate, status_pinned, number "
+        f"FROM issues WHERE project_id IN ({scope}) AND issue_type IN (?, ?)",
+        [*project_ids, *_EPIC],
     )
-    issues = {r["id"]: r for r in rows}
-    is_epic = {i: r["issue_type"] in (IssueType.EPIC.name, IssueType.EPIC.value) for i, r in issues.items()}
 
-    # Nearest epic ancestor, memoised; a cycle or a parent outside the
-    # scope ends the walk with no epic.
-    owner: dict[str, str | None] = {}
-
-    def nearest_epic(issue_id: str) -> str | None:
-        path = []
-        seen = set()
-        current = issues[issue_id]["parent_id"]
-        result = None
-        while current is not None:
-            if current in owner:
-                result = owner[current] if not is_epic.get(current) else current
-                break
-            if current in seen or current not in issues:
-                break
-            seen.add(current)
-            if is_epic[current]:
-                result = current
-                break
-            path.append(current)
-            current = issues[current]["parent_id"]
-        for p in path:
-            owner[p] = result
-        owner[issue_id] = result
-        return result
-
-    for issue_id in issues:
-        if issue_id not in owner:
-            nearest_epic(issue_id)
+    # Counts by nearest epic, computed in SQL so the rows that cross into
+    # Python are one per (epic, status), not one per issue (CHT-1922).
+    count_rows = await execute_raw(
+        _owner_cte(scope, f"project_id IN ({scope})")
+        + "SELECT o.epic_id, i.project_id, i.status, "
+        "CASE WHEN i.issue_type IN (?, ?) THEN 1 ELSE 0 END AS is_epic, "
+        "COUNT(*) AS n, SUM(COALESCE(i.estimate, 1)) AS pts "
+        "FROM owners o JOIN issues i ON i.id = o.issue_id "
+        "GROUP BY o.epic_id, i.project_id, i.status, is_epic",
+        [*project_ids, *_EPIC, *project_ids, *_EPIC],
+    )
 
     # Sprint windows: each project's most recent started sprints.
     sprint_rows = await execute_raw(
@@ -156,20 +165,22 @@ async def epic_progress(
     closes: dict = defaultdict(lambda: defaultdict(dict))
     if sprint_ids:
         txns = await execute_raw(
-            "SELECT sprint_id, issue_id, points FROM budget_transactions "
-            f"WHERE sprint_id IN ({_placeholders(sprint_ids)}) AND issue_id IS NOT NULL",
-            sprint_ids,
+            _owner_cte(
+                scope,
+                f"project_id IN ({scope}) AND id IN (SELECT issue_id FROM budget_transactions "
+                f"WHERE sprint_id IN ({_placeholders(sprint_ids)}))",
+            )
+            + "SELECT t.sprint_id, t.issue_id, t.points, o.epic_id, i.project_id "
+            "FROM budget_transactions t JOIN owners o ON o.issue_id = t.issue_id "
+            "JOIN issues i ON i.id = t.issue_id "
+            f"WHERE t.sprint_id IN ({_placeholders(sprint_ids)})",
+            [*project_ids, *sprint_ids, *_EPIC, *project_ids, *sprint_ids],
         )
         for t in txns:
-            issue = issues.get(t["issue_id"])
-            if issue is None:
-                continue
             # Ticks follow the same rule as the counts: a close counts
             # toward the issue's nearest epic ancestor, so a nested epic's
             # own close counts toward the epic above it.
-            bucket = owner.get(t["issue_id"])
-            if bucket is None:
-                bucket = ("untracked", issue["project_id"])
+            bucket = t["epic_id"] or ("untracked", t["project_id"])
             cell = closes[bucket][t["sprint_id"]]
             cell[t["issue_id"]] = max(cell.get(t["issue_id"], 0), t["points"] or 0)
 
@@ -192,27 +203,26 @@ async def epic_progress(
     counts: dict[str, ChildCounts] = defaultdict(ChildCounts)
     points: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     untracked_open: dict[str, int] = defaultdict(int)
-    for issue_id, r in issues.items():
+    for r in count_rows:
         st = _status(r["status"])
-        epic_id = owner.get(issue_id)
+        n = r["n"]
+        epic_id = r["epic_id"]
         if epic_id is None:
-            if not is_epic[issue_id] and st in _OPEN:
-                untracked_open[r["project_id"]] += 1
+            if not r["is_epic"] and st in _OPEN:
+                untracked_open[r["project_id"]] += n
             continue
         c = counts[epic_id]
-        c.total += 1
+        c.total += n
         if st is not None:
-            setattr(c, _STATUS_FIELD[st], getattr(c, _STATUS_FIELD[st]) + 1)
+            setattr(c, _STATUS_FIELD[st], getattr(c, _STATUS_FIELD[st]) + n)
         if st != IssueStatus.CANCELED:
-            pts = r["estimate"] if r["estimate"] is not None else 1
-            points[epic_id][0] += pts
+            points[epic_id][0] += r["pts"] or 0
             if st == IssueStatus.DONE:
-                points[epic_id][1] += pts
+                points[epic_id][1] += r["pts"] or 0
 
     epics = []
-    for issue_id, r in issues.items():
-        if not is_epic[issue_id]:
-            continue
+    for r in epic_rows:
+        issue_id = r["id"]
         pid = r["project_id"]
         current = ticks.get(issue_id, {}).get(active.get(pid), [0, 0])
         c = counts.get(issue_id) or ChildCounts()
