@@ -56,6 +56,15 @@ IssueDescriptionRevision = OxydeIssueDescriptionRevision
 Label = OxydeLabel
 
 
+def _issue_has_label_in(label_ids: list[str]) -> str:
+    """SQL for "the issue carries one of these labels"; the caller adds
+    the ids as params. No ids matches nothing."""
+    if not label_ids:
+        return "0"
+    placeholders = ",".join("?" for _ in label_ids)
+    return f"i.id IN (SELECT il.issue_id FROM issue_labels il WHERE il.label_id IN ({placeholders}))"
+
+
 class SprintInArrearsError(Exception):
     """Raised when sprint is in arrears and budget-consuming operations are blocked.
 
@@ -2060,6 +2069,23 @@ class IssueService:
         except Exception:
             logger.exception("Failed to resolve inbox entries of deleted issue=%s", issue.id)
 
+    async def _label_ids_by_name(
+        self, project_id: str | None, team_id: str | None
+    ) -> dict[str, list[str]]:
+        """Lowercased label name -> ids, for the team the list is in. A
+        team can hold `Bug` and `bug` both; naming either means both."""
+        if project_id:
+            # The project's own team, whatever team_id says: a list
+            # scoped to a project matches that project's labels.
+            project = await OxydeProject.objects.get_or_none(id=project_id)
+            team_id = project.team_id if project else None
+        if not team_id:
+            return {}
+        by_name: dict[str, list[str]] = {}
+        for row in await OxydeLabel.objects.filter(team_id=team_id).values("id", "name").all():
+            by_name.setdefault(row["name"].lower(), []).append(row["id"])
+        return by_name
+
     async def list_issues(
         self,
         project_id: str | None = None,
@@ -2151,29 +2177,33 @@ class IssueService:
             pattern = f"%{search}%"
             params.extend([pattern, pattern, pattern])
 
+        # Label names match without case. SQLite's LOWER() folds only
+        # ASCII (LOWER('ÜBER') is 'Über'), so the names are resolved to
+        # ids here, folding both sides in Python (CHT-1920).
+        label_ids_by_name = (
+            await self._label_ids_by_name(project_id=project_id, team_id=team_id)
+            if label_names or exclude_label_names
+            else {}
+        )
+
         if label_names:
             if label_match == "any":
                 # OR-of-names: single IN-based subquery — the web UI's
                 # multi-select filter semantics (its pre-CHT-1212
                 # client-side .filter() used .some()), consistent with
                 # exclude_label_names' OR-of-names below.
-                placeholders = ",".join("?" for _ in label_names)
-                conditions.append(
-                    "i.id IN (SELECT il.issue_id FROM issue_labels il "
-                    f"JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) IN ({placeholders}))"
-                )
-                params.extend(name.lower() for name in label_names)
+                ids = [i for name in label_names for i in label_ids_by_name.get(name.lower(), [])]
+                conditions.append(_issue_has_label_in(ids))
+                params.extend(ids)
             else:
                 # AND-per-name (default): the CLI documents `--label a,b`
                 # as "issues must have ALL labels" and was the only
                 # server-side consumer of this param before CHT-1212 —
                 # its wire contract stays the default.
                 for label_name in label_names:
-                    conditions.append(
-                        "i.id IN (SELECT il.issue_id FROM issue_labels il "
-                        "JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) = LOWER(?))"
-                    )
-                    params.append(label_name)
+                    ids = label_ids_by_name.get(label_name.lower(), [])
+                    conditions.append(_issue_has_label_in(ids))
+                    params.extend(ids)
 
         if exclude_statuses:
             status_vals = [s.name for s in exclude_statuses]
@@ -2207,13 +2237,12 @@ class IssueService:
                 conditions.append("i.assignee_id IS NOT NULL")
 
         if exclude_label_names:
-            # Single NOT-IN subquery handles "issue has any of these labels"
-            placeholders = ",".join("?" for _ in exclude_label_names)
-            conditions.append(
-                "i.id NOT IN (SELECT il.issue_id FROM issue_labels il "
-                f"JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) IN ({placeholders}))"
-            )
-            params.extend(name.lower() for name in exclude_label_names)
+            # Drop issues carrying any of the named labels; a name no label
+            # has excludes nothing
+            ids = [i for name in exclude_label_names for i in label_ids_by_name.get(name.lower(), [])]
+            if ids:
+                conditions.append(f"NOT {_issue_has_label_in(ids)}")
+                params.extend(ids)
 
         # Build query
         if team_id and not project_id:
