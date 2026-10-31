@@ -73,7 +73,7 @@ import { getMembers } from './teams.js';
 import { getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { showApiError } from './ui.js';
-import { clearIssueStore } from './issue-store.js';
+import { clearIssueStore, getCurrentQueryKey } from './issue-store.js';
 
 import { registerActions } from './event-delegation.js';
 
@@ -1159,6 +1159,57 @@ describe('issues-view', () => {
                 resolve(rowsV1);
                 await pending;
                 expect(list.classList.contains('is-refreshing')).toBe(false);
+            });
+
+            // CHT-1910: a filter the store can answer paints at once
+            describe('rows derived from a covering query', () => {
+                const mixed = [
+                    { id: 'a', project_id: 'p-1', updated_at: 't1', title: 'A', status: 'todo' },
+                    { id: 'b', project_id: 'p-1', updated_at: 't1', title: 'B', status: 'done' },
+                    { id: 'c', project_id: 'p-1', updated_at: 't1', title: 'C', status: 'todo' },
+                ];
+                afterEach(() => checkStatuses([]));
+
+                it('paints the filtered rows before the server answers, then its answer', async () => {
+                    checkStatuses([]);
+                    api.getIssues.mockResolvedValue(mixed);
+                    await loadIssues();
+                    checkStatuses(['todo']);
+                    let resolve;
+                    api.getIssues.mockReturnValue(new Promise(r => { resolve = r; }));
+                    setIssues.mockClear();
+                    const pending = loadIssues();
+                    await vi.waitFor(() => expect(setIssues).toHaveBeenCalledWith([mixed[0], mixed[2]]));
+                    const fromServer = [mixed[0], { ...mixed[2], updated_at: 't2' }];
+                    resolve(fromServer);
+                    await pending;
+                    expect(setIssues).toHaveBeenLastCalledWith(fromServer);
+                });
+
+                it('shows a complete derived list as final, with no current query meanwhile', async () => {
+                    checkStatuses([]);
+                    api.getIssues.mockResolvedValue(mixed);
+                    await loadIssues();
+                    checkStatuses(['todo']);
+                    let resolve;
+                    api.getIssues.mockReturnValue(new Promise(r => { resolve = r; }));
+                    const pending = loadIssues();
+                    await vi.waitFor(() => expect(setIssues).toHaveBeenCalledWith([mixed[0], mixed[2]]));
+                    expect(document.getElementById('issues-list').classList.contains('is-refreshing')).toBe(false);
+                    expect(getCurrentQueryKey()).toBeNull();
+                    resolve([mixed[0], mixed[2]]);
+                    await pending;
+                });
+
+                it('shows the error, not the derived rows, when the request fails', async () => {
+                    checkStatuses([]);
+                    api.getIssues.mockResolvedValue(mixed);
+                    await loadIssues();
+                    checkStatuses(['done']);
+                    api.getIssues.mockRejectedValue(new Error('offline'));
+                    await loadIssues();
+                    expect(listHtml()).toContain('Failed to load issues');
+                });
             });
 
             it('keeps cached rows when the background refresh fails', async () => {
