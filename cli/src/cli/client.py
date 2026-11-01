@@ -130,21 +130,38 @@ def _retry_after(response) -> float | None:
         return 1.0
 
 
+def _app_error_code(response) -> str | None:
+    """The app's `detail.error_code`, when the body is the app's JSON."""
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        return None
+    return detail.get("error_code") if isinstance(detail, dict) else None
+
+
 def _no_answer_status(response) -> bool:
-    """An HTTP answer that is not the app's: a gateway's 502/504, or a
-    503 that is not the app's `idempotency_busy`. A proxy in front of the
-    server (docs/self-hosting-security.md) gives one when the server is
-    slow or restarting, and the server may still do the write."""
-    if response.status_code in (502, 504):
-        return True
-    return response.status_code == 503 and _retry_after(response) is None
+    """An HTTP answer that is not the app's: a gateway's 502/503/504. A
+    proxy in front of the server (docs/self-hosting-security.md) gives
+    one when the server is slow or restarting, and the server may still
+    do the write. The app's own 5xx refusals carry a `detail.error_code`
+    (502 `email_send_failed`, 503 `registration_busy`, 503
+    `idempotency_busy`); a proxy's error page does not, so those are
+    answers, reported as themselves."""
+    if response.status_code not in (502, 503, 504):
+        return False
+    return _app_error_code(response) is None
 
 
 def _settles(response) -> bool:
     """Whether an answer to a resend says what became of the write. A
     keyed resend is answered from the first attempt when that one was
-    done, so any answer of the app's settles it, except one given before
-    the key was looked at (401/403/407, 429) or a failure (408, 5xx)."""
+    done, so an answer of the app's settles it, except a failure (408,
+    5xx) or one that may have been given before the key was looked at:
+    401, 403, 407 and 429 come from authentication, the credential's
+    scope, a proxy, or rate limiting, all ahead of the claim. A 403 from
+    the endpoint itself would settle it, but the client cannot tell the
+    two apart, so a 403 is "may have landed": the cost is one needless
+    check, where the other answer's cost is a duplicate."""
     code = response.status_code
     return code < 500 and code not in (401, 403, 407, 408, 429)
 
@@ -165,11 +182,14 @@ class _WriteAttempts:
     def unknown(self, cause=None) -> WriteOutcomeUnknown:
         return WriteOutcomeUnknown(self.method, self.path, cause or self.lost)
 
+    def remaining(self) -> float:
+        return self.deadline - self.clock()
+
     def _timeout(self, remaining: float) -> httpx.Timeout:
-        return httpx.Timeout(
-            min(WRITE_TIMEOUT.read, remaining),
-            connect=min(WRITE_TIMEOUT.connect, remaining),
-        )
+        """httpx times connecting and reading apart: together they fit
+        in what is left, so the deadline is a wall, not a target."""
+        connect = min(WRITE_TIMEOUT.connect, remaining / 4)
+        return httpx.Timeout(min(WRITE_TIMEOUT.read, remaining - connect), connect=connect)
 
     def send(self, send_one):
         """`send_one(timeout)` up to WRITE_ATTEMPTS times; the response
@@ -209,9 +229,8 @@ class _WriteAttempts:
         if isinstance(failure, Exception):
             raise failure
         if failure is None:  # no time left for even one attempt
-            raise APIError(
-                f"No time left to send {self.method} {self.path.split('?', 1)[0]}; it was not sent."
-            )
+            message = f"No time left to send {self.method} {self.path.split('?', 1)[0]}; it was not sent."
+            raise APIError(message, detail={"error_code": "write_not_sent", "message": message})
         return failure
 
     def settle(self, response):
@@ -347,8 +366,20 @@ class Client:
 
             response = send_once(key)
             if ref and response.status_code == 401:
-                # Expired or revoked: register again, once.
-                key = self._session_key(ref, credential, api_url, failed_key=key)
+                # Expired or revoked: register again, once. Within a
+                # write's deadline (CHT-1957), registration included.
+                token = None
+                if attempts is not None:
+                    token = session_identity.registrar_deadline.set(time.monotonic() + attempts.remaining())
+                try:
+                    key = self._session_key(ref, credential, api_url, failed_key=key)
+                except (APIError, httpx.HTTPError):
+                    if attempts is not None and attempts.lost is not None:
+                        raise attempts.unknown()
+                    raise
+                finally:
+                    if token is not None:
+                        session_identity.registrar_deadline.reset(token)
                 response = send_once(key)
             if attempts is not None:
                 response = attempts.settle(response)

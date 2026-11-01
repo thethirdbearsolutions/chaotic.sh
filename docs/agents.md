@@ -262,7 +262,9 @@ safe. It may have landed: look (`issue_view`) before you send it again,
 or you may do it twice. The CLI's `--json` errors are the flat
 `{"error": "...", "error_code": "..."}`, and add `connect_error`,
 `timeout`, `network_error`, `usage_error`, `command_error`,
-`confirmation_required`, `aborted` and `internal_error`. Governance
+`confirmation_required`, `aborted`, `internal_error` and
+`write_not_sent` (the time ran out before the write was sent; safe to
+resend). Governance
 errors keep their structure (`pending_rituals`, `arrears_by`, `override`
 hints) so you can act on them without parsing prose. A claim/close refused
 for pending ticket rituals lists each ritual with its `approval_mode` and

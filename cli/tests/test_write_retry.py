@@ -253,6 +253,48 @@ class TestGatewayAnswers:
         assert Client().create_comment("i1", "hi") == COMMENT
         assert len(set(fake.keys())) == 1
 
+    def test_the_app_s_502_email_send_failed_is_its_answer(self, http):
+        # The mail relay failed: nothing was sent, and the server says so.
+        refusal = Response(502, {"detail": {
+            "error_code": "email_send_failed",
+            "message": "The server's mail relay failed; check its SMTP settings.",
+        }})
+        fake = http(refusal)
+        with pytest.raises(APIError) as exc:
+            Client().request_email_verification()
+        assert not isinstance(exc.value, WriteOutcomeUnknown)
+        assert exc.value.status_code == 502
+        assert exc.value.detail["error_code"] == "email_send_failed"
+        assert "SMTP" in str(exc.value)
+        assert len(fake.calls) == 1
+
+    def test_the_app_s_503_registration_busy_is_its_answer(self, http):
+        busy = Response(503, {"detail": {
+            "error_code": "registration_busy", "message": "Registration is busy; retry shortly.",
+        }}, headers={"Retry-After": "1"})
+        fake = http(busy)
+        with pytest.raises(APIError) as exc:
+            Client().register_agent("ref1")
+        assert not isinstance(exc.value, WriteOutcomeUnknown)
+        assert exc.value.detail["error_code"] == "registration_busy"
+        assert len(fake.calls) == 1
+
+    @pytest.mark.parametrize("code", [401, 403, 407, 408, 429])
+    def test_after_a_lost_answer_an_answer_from_before_the_key_does_not_settle_it(self, http, code):
+        # Each may come before the server looked at the key (auth, scope,
+        # a proxy, rate limiting) or is a failure, so it says nothing of
+        # the first attempt.
+        http(_timeout(), Response(code, {"detail": {"error_code": "x", "message": "no"}}))
+        with pytest.raises(WriteOutcomeUnknown):
+            Client().create_comment("i1", "hi")
+
+    @pytest.mark.parametrize("code", [400, 404, 409, 422])
+    def test_after_a_lost_answer_the_endpoint_s_refusal_settles_it(self, http, code):
+        http(_timeout(), Response(code, {"detail": {"error_code": "x", "message": "no"}}))
+        with pytest.raises(APIError) as exc:
+            Client().create_comment("i1", "hi")
+        assert not isinstance(exc.value, WriteOutcomeUnknown)
+
     def test_the_app_s_own_5xx_on_a_first_attempt_is_its_answer(self, http):
         fake = http(Response(500, {"detail": "Internal Server Error"}))
         with pytest.raises(APIError) as exc:
@@ -289,12 +331,83 @@ class TestDeadline:
             Client().create_comment("i1", "hi")
         first, second = fake.call_timeouts()
         assert first.read == WRITE_TIMEOUT.read
-        # 60 s gone, then a 1 s wait: the second attempt gets what is left.
-        assert second.read == pytest.approx(WRITE_DEADLINE - WRITE_TIMEOUT.read - 1.0)
+        assert first.connect + first.read <= WRITE_DEADLINE
+        # 60 s gone, then a 1 s wait: connecting and reading together get
+        # what is left, so the deadline is a wall.
+        assert second.connect + second.read == pytest.approx(WRITE_DEADLINE - WRITE_TIMEOUT.read - 1.0)
         assert len(fake.calls) == 2  # no time for a third
 
     def test_the_deadline_fits_a_120_second_shell_timeout(self):
-        assert WRITE_DEADLINE + WRITE_TIMEOUT.connect < 120
+        assert WRITE_DEADLINE < 120
+
+    def test_out_of_time_before_sending_says_it_was_not_sent(self, http, monkeypatch):
+        from cli import session_identity
+
+        monkeypatch.setattr(session_identity, "active_ref", lambda: "ref1")
+        monkeypatch.setattr(session_identity, "registrar_settings", lambda: ("reg", "http://test/api"))
+        monkeypatch.setattr(session_identity, "registrar_key_via", lambda: "bearer")
+
+        def session_key(self, *a, failed_key=None, **kw):
+            if failed_key:  # re-registering took the rest of the deadline
+                http.clock[0] += WRITE_DEADLINE
+            return "sk"
+
+        monkeypatch.setattr(Client, "_session_key", session_key)
+        http(Response(401, {"detail": "expired"}))
+        with pytest.raises(APIError) as exc:
+            Client().create_comment("i1", "hi")
+        assert exc.value.detail["error_code"] == "write_not_sent"
+        assert "it was not sent" in str(exc.value)
+
+
+class TestRegistrarDeadline:
+    def test_a_re_register_inside_a_write_is_cut_to_its_deadline(self, monkeypatch):
+        import time
+
+        from cli import session_identity
+
+        token = session_identity.registrar_deadline.set(time.monotonic() + 20)
+        try:
+            timeout = session_identity._registrar_timeout()
+        finally:
+            session_identity.registrar_deadline.reset(token)
+        assert timeout.connect + timeout.read <= 20
+
+    def test_no_time_left_refuses_to_register(self):
+        import time
+
+        from cli import session_identity
+
+        token = session_identity.registrar_deadline.set(time.monotonic())
+        try:
+            with pytest.raises(session_identity.SessionIdentityError):
+                session_identity._registrar_timeout()
+        finally:
+            session_identity.registrar_deadline.reset(token)
+
+    def test_outside_a_write_it_is_the_full_timeout(self):
+        from cli import session_identity
+
+        timeout = session_identity._registrar_timeout()
+        assert timeout.read == session_identity.REGISTRAR_TIMEOUT
+
+    def test_the_client_sets_the_deadline_while_it_re_registers(self, http, monkeypatch):
+        from cli import session_identity
+
+        monkeypatch.setattr(session_identity, "active_ref", lambda: "ref1")
+        monkeypatch.setattr(session_identity, "registrar_settings", lambda: ("reg", "http://test/api"))
+        monkeypatch.setattr(session_identity, "registrar_key_via", lambda: "bearer")
+        seen = []
+
+        def session_key(self, *a, failed_key=None, **kw):
+            seen.append(session_identity.registrar_deadline.get())
+            return "sk"
+
+        monkeypatch.setattr(Client, "_session_key", session_key)
+        http(Response(401, {"detail": "expired"}), Response(201, COMMENT))
+        Client().create_comment("i1", "hi")
+        assert seen[0] is None and seen[1] is not None  # set only for the re-register
+        assert session_identity.registrar_deadline.get() is None
 
 
 class TestReRegister:

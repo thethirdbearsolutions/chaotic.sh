@@ -115,7 +115,7 @@ Under `--json`:
   there is one: the server's (e.g. `sprint_in_arrears`), or the CLI's
   own `connect_error`, `timeout`, `network_error`, `usage_error`,
   `command_error`, `confirmation_required`, `aborted`, `internal_error`,
-  and `write_outcome_unknown` (below). A batch command's failed items
+  `write_not_sent` and `write_outcome_unknown` (below). A batch command's failed items
   (`sprint add`, `sprint remove`) carry the same fields.
 - This holds even for errors Click raises before your command runs — an
   invalid choice value (`--status bogus`), a missing required argument,
@@ -138,7 +138,12 @@ an issue, updating one (status, assignee, parent, ...), commenting, and
 the inbox and ritual actions. Other writes are resent only when they
 never reached the server. A write still without an answer exits 1 with
 `write_outcome_unknown`: **it may have landed, so check before retrying**
-(`chaotic issue view`), rather than sending it again blind.
+(`chaotic issue view`), rather than sending it again blind. A write
+refused on a resend for how things stand right now (a sprint in
+arrears, a claim race) is reported as refused, but the first attempt,
+if it was still queued, can land later once things change: at most one
+of them is done, never two. `write_not_sent` means the time ran out
+before the write could be sent at all.
 
 `chaotic await` has its own richer JSON contract (a normalized event
 schema, not just "whatever the entity looks like") — see the

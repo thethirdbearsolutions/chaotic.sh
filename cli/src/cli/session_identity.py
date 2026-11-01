@@ -48,6 +48,7 @@ nothing here runs and the configured credential is used as before.
 """
 from __future__ import annotations
 
+import contextvars
 import fcntl
 import hashlib
 import json
@@ -56,6 +57,7 @@ import secrets
 import stat
 import subprocess
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -462,6 +464,32 @@ def _server_error(response: httpx.Response) -> tuple[str, object]:
     return (str(detail) if detail else f"HTTP {response.status_code}"), detail
 
 
+REGISTRAR_TIMEOUT = 60.0
+REGISTRAR_CONNECT_TIMEOUT = 10.0
+# A monotonic time the registrar calls must end by, or None. The client
+# sets it while it re-registers in the middle of a write, so the write's
+# deadline is a hard wall (CHT-1957).
+registrar_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "registrar_deadline", default=None,
+)
+
+
+def _registrar_timeout() -> httpx.Timeout:
+    """60 s (not httpx's 5 s default: a registration queued behind other
+    writes can take longer, and it is idempotent server-side), cut to fit
+    `registrar_deadline` when one is set."""
+    deadline = registrar_deadline.get()
+    if deadline is None:
+        return httpx.Timeout(REGISTRAR_TIMEOUT, connect=REGISTRAR_CONNECT_TIMEOUT)
+    remaining = deadline - time.monotonic()
+    if remaining < 1.0:
+        raise SessionIdentityError(
+            f"Session identity registration: no time left in this write's deadline. {NO_FALLBACK}"
+        )
+    connect = min(REGISTRAR_CONNECT_TIMEOUT, remaining / 4)
+    return httpx.Timeout(min(REGISTRAR_TIMEOUT, remaining - connect), connect=connect)
+
+
 def _registrar_call(method: str, url: str, credential: str | None, body: dict | None = None) -> dict:
     """One request with the registrar credential. Only this module makes
     them, and only to /auth/me, /teams and /agents/register. With no
@@ -470,9 +498,7 @@ def _registrar_call(method: str, url: str, credential: str | None, body: dict | 
     headers = {"Content-Type": "application/json", "X-Chaotic-Interactive": "0"}
     if credential:
         headers["Authorization"] = f"Bearer {credential}"
-    # Not httpx's 5 s default (CHT-1957): a registration queued behind
-    # other writes can take longer, and it is idempotent server-side.
-    with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+    with httpx.Client(timeout=_registrar_timeout()) as client:
         response = client.request(method, url, headers=headers, json=body)
     if response.is_success:
         try:
