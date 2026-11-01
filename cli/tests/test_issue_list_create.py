@@ -674,16 +674,16 @@ class TestIssueCreate:
         assigned (one request, not create then update)."""
         from cli.main import cli, client
 
-        client.get_team_members = MagicMock(return_value=[{"user_id": "u-look", "user_name": "Look"}])
+        client.get_team_members = MagicMock(return_value=[{"user_id": "u-alex", "user_name": "Alex"}])
         client.get_team_agents = MagicMock(return_value=[])
         client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "CHT-2", "title": "X"})
         client.update_issue = MagicMock()
 
-        result = cli_runner.invoke(cli, ['issue', 'create', 'X', '--assignee', 'look'])
+        result = cli_runner.invoke(cli, ['issue', 'create', 'X', '--assignee', 'alex'])
 
         assert result.exit_code == 0, result.output
         client.get_team_members.assert_called_once_with("test-team-123")
-        assert client.create_issue.call_args.kwargs["assignee_id"] == "u-look"
+        assert client.create_issue.call_args.kwargs["assignee_id"] == "u-alex"
         client.update_issue.assert_not_called()
 
     def test_create_with_parent_resolves_the_assignee_in_the_parents_team(self, cli_runner):
@@ -693,20 +693,20 @@ class TestIssueCreate:
             "id": "parent-id", "identifier": "OTH-1", "project_id": "other-project", "project_key": "OTH",
         })
         client.get_project = MagicMock(return_value={"id": "other-project", "team_id": "other-team"})
-        client.get_team_members = MagicMock(return_value=[{"user_id": "u-look", "user_name": "Look"}])
+        client.get_team_members = MagicMock(return_value=[{"user_id": "u-alex", "user_name": "Alex"}])
         client.get_team_agents = MagicMock(return_value=[])
         client.get_labels = MagicMock(return_value=[{"id": "label-there", "name": "Bug"}])
         client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "OTH-2", "title": "Sub"})
 
         result = cli_runner.invoke(
-            cli, ['issue', 'create', 'Sub', '--parent', 'OTH-1', '--assignee', 'Look', '--label', 'bug'],
+            cli, ['issue', 'create', 'Sub', '--parent', 'OTH-1', '--assignee', 'Alex', '--label', 'bug'],
         )
 
         assert result.exit_code == 0, result.output
         client.get_project.assert_called_once_with("other-project")
         client.get_team_members.assert_called_once_with("other-team")
         client.get_labels.assert_called_once_with("other-team", limit=1000)
-        assert client.create_issue.call_args.kwargs["assignee_id"] == "u-look"
+        assert client.create_issue.call_args.kwargs["assignee_id"] == "u-alex"
 
     def test_create_with_me_as_assignee(self, cli_runner):
         from cli.main import cli, client

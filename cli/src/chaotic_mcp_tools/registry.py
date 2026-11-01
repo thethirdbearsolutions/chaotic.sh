@@ -28,7 +28,7 @@ from .errors import (
     backend_error_payload,
     error_envelope,
 )
-from .hints import SCOPE_HINTS, current_hints, reset_hints, scope_hint_refusal, set_hints
+from .hints import SCOPE_HINTS, IssueLookupReuse, current_hints, reset_hints, scope_hint_refusal, set_hints
 from .tools import ALL_TOOLS
 
 
@@ -201,10 +201,13 @@ def bind(tool, backend: Backend):
 
 
 async def _hinted(backend: Backend, tool, hints, arguments, *args, **kwargs) -> dict:
-    refusal = await scope_hint_refusal(tool.__name__, backend, hints, arguments)
+    # The issue rows the check fetches are reused by the tool's own first
+    # lookup of each, so a hint costs no second fetch of the same row.
+    reusing = IssueLookupReuse(backend)
+    refusal = await scope_hint_refusal(tool.__name__, reusing, hints, arguments)
     if refusal is not None:
         return refusal
-    return await tool(backend, *args, **kwargs)
+    return await tool(reusing, *args, **kwargs)
 
 
 def bind_all(backend: Backend, tools=ALL_TOOLS) -> list:

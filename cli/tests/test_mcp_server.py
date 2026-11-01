@@ -509,14 +509,14 @@ class TestIssueCreate:
         create request (PR #497 review: dropping it from RestBackend
         failed no test)."""
         from cli.main import client
-        client.get_team_members = MagicMock(return_value=[{"user_id": "u-look", "user_name": "Look"}])
+        client.get_team_members = MagicMock(return_value=[{"user_id": "u-alex", "user_name": "Alex"}])
         client.get_team_agents = MagicMock(return_value=[])
         client.create_issue = MagicMock(return_value=mock_issue)
 
-        await mcp_mod.issue_create(title="T", assignee="Look")
+        await mcp_mod.issue_create(title="T", assignee="Alex")
 
         client.get_team_members.assert_called_once_with("test-team-123")
-        assert client.create_issue.call_args.kwargs["assignee_id"] == "u-look"
+        assert client.create_issue.call_args.kwargs["assignee_id"] == "u-alex"
 
     async def test_create_resolves_the_assignee_in_the_projects_team(self, mcp_mod, mock_issue, monkeypatch):
         """A `project` in another team than the profile's: the assignee is
@@ -524,18 +524,18 @@ class TestIssueCreate:
         from cli.main import client
         monkeypatch.setattr("cli.main.resolve_project_id", lambda ident: "project-b")
         client.get_project = MagicMock(return_value={"id": "project-b", "team_id": "team-b"})
-        members = {"team-b": [{"user_id": "u-look", "user_name": "Look"}], "test-team-123": []}
+        members = {"team-b": [{"user_id": "u-alex", "user_name": "Alex"}], "test-team-123": []}
         client.get_team_members = MagicMock(side_effect=lambda team_id: members[team_id])
         client.get_team_agents = MagicMock(return_value=[])
         client.create_issue = MagicMock(return_value=mock_issue)
 
-        result = await mcp_mod.issue_create(title="T", project="B", assignee="Look")
+        result = await mcp_mod.issue_create(title="T", project="B", assignee="Alex")
 
         assert "error" not in result, result
         client.get_project.assert_called_once_with("project-b")
         client.get_team_members.assert_called_once_with("team-b")
         assert client.create_issue.call_args.args[0] == "project-b"
-        assert client.create_issue.call_args.kwargs["assignee_id"] == "u-look"
+        assert client.create_issue.call_args.kwargs["assignee_id"] == "u-alex"
 
     async def test_an_ambiguous_assignee_names_the_candidates_and_prints_nothing(self, mcp_mod, capsys):
         """stdout is the protocol channel on stdio: the candidates go in the
@@ -1908,7 +1908,7 @@ class TestMCPProtocolLoop:
         async def run():
             server = mcp_mod.build_server()
             async with _connected_session(server) as session:
-                return await session.call_tool("issue_create", {"title": "T", "asignee": "Look"})
+                return await session.call_tool("issue_create", {"title": "T", "asignee": "Alex"})
 
         result = asyncio.run(run())
         assert result.is_error is not True

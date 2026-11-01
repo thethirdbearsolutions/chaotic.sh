@@ -1209,6 +1209,60 @@ async def test_mcp_out_of_scope_answers_like_missing(world, mcp_users, principal
     assert existing == echoed
 
 
+# Scope hints (CHT-1951): a `team` or `project` passed to a tool that does
+# not declare it is not an argument the tool sees (the guard middleware
+# takes it out and sets ``hints.set_hints``), so MCP_PROBES cannot reach
+# it; the hint check resolves it on its own. One tool per anchor kind --
+# an issue, a document, the default team, a team directory tool -- since
+# the resolvers behind them are shared. (tool, arguments, hints, the
+# placeholder replaced by a missing row.)
+MCP_HINT_PROBES = [
+    *[
+        (tool, args, {hint: "{" + placeholder + "}"}, placeholder)
+        for tool, args in [
+            ("issue_view", {"identifier": "{own_identifier}"}),
+            ("doc_view", {"document_id": "{own_doc}"}),
+            ("server_info", {}),
+        ]
+        for hint, placeholders in [("team", ("team", "team_key")), ("project", ("project", "project_key"))]
+        for placeholder in placeholders
+    ],
+    *[
+        ("label_list", {}, {"project": "{" + placeholder + "}"}, placeholder)
+        for placeholder in ("project", "project_key")
+    ],
+]
+
+
+@pytest.mark.parametrize("principal", PRINCIPALS)
+@pytest.mark.parametrize(
+    "tool_name,args,hints,placeholder", MCP_HINT_PROBES,
+    ids=[f"{t} {json.dumps(a, sort_keys=True)} hint {json.dumps(h)} [{ph}]" for t, a, h, ph in MCP_HINT_PROBES],
+)
+async def test_mcp_out_of_scope_hint_answers_like_missing(world, mcp_users, principal, tool_name, args, hints,
+                                                         placeholder):
+    from chaotic_mcp_tools.hints import reset_hints, set_hints
+
+    values = world[principal][1]
+    gone = _missing(values, placeholder)
+    tool = getattr(tools, tool_name)
+
+    async def call(fill):
+        token = set_hints(_tool_args(hints, fill))
+        try:
+            return await tool(**_tool_args(args, fill))
+        finally:
+            reset_hints(token)
+
+    with acting_as(mcp_users[principal]):
+        missing = await call(gone)
+        existing = await call(values)
+    echoed = _swapped(missing, str(gone[placeholder]), str(values[placeholder]))
+    assert _refused(existing), existing
+    assert (existing.get("error") or {}).get("error_code") != "unexpected", existing
+    assert existing == echoed
+
+
 async def test_every_mcp_tool_argument_is_probed_or_explained():
     """Each argument of each remote MCP tool (the registry the server
     serves, so a new tool is covered the day it lands) is probed by an

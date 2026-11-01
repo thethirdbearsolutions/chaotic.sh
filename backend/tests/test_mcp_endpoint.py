@@ -821,6 +821,36 @@ class TestToolsCall:
         assert error["error_code"] == "scope_mismatch"
         assert error["acts_in"]["project"] is None
 
+    async def test_a_caller_in_two_teams_passing_team_to_unscoped_tools(
+        self, client, bearer_headers, test_user, test_team, test_project,
+    ):
+        """server_info and inbox_mark_read have no scope of their own. For a
+        caller in several teams, the `team` they pass picks the team the
+        hint check uses; it must not answer "pass `team` to disambiguate"
+        (PR #497 delta review 2, finding 1)."""
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+
+        other = await OxydeTeam.objects.create(name="Other Team", key="OTHER")
+        await OxydeTeamMember.objects.create(team_id=other.id, user_id=test_user.id, role=TeamRole.MEMBER)
+
+        for n, (name, arguments) in enumerate([
+            ("server_info", {"team": test_team.key}),
+            ("server_info", {"team": "OTHER"}),
+            ("inbox_mark_read", {"entry_id": "no-such-entry", "team": test_team.key}),
+        ]):
+            resp = await _tool_call(client, bearer_headers, name, arguments, id=n + 1)
+            payload = json.loads(resp.json()["result"]["content"][0]["text"])
+            message = (payload.get("error") or {}).get("message", "")
+            assert "disambiguate" not in message, (name, payload)
+            assert (payload.get("error") or {}).get("error_code") != "scope_mismatch", (name, payload)
+        info = json.loads((await _tool_call(client, bearer_headers, "server_info", {"team": "OTHER"}, id=9))
+                          .json()["result"]["content"][0]["text"])
+        assert "error" not in info, info
+        unseen = json.loads((await _tool_call(client, bearer_headers, "server_info", {"team": "NOPE"}, id=10))
+                            .json()["result"]["content"][0]["text"])
+        assert "error" in unseen
+
     async def test_a_project_hint_naming_another_project_is_refused(
         self, client, bearer_headers, test_project, test_team,
     ):

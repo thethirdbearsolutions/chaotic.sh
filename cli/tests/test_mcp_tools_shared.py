@@ -95,7 +95,9 @@ class FakeBackend:
 
     async def resolve_member_team(self, team):
         self._rec("resolve_member_team", team)
-        return "team-1"
+        if not self.capabilities.team_param:
+            return "team-1"  # like stdio: the profile's team, whatever is passed
+        return {"ops": "team-2", "team-2": "team-2"}.get((team or "").lower(), "team-1")
 
     async def resolve_named_team(self, team):
         self._rec("resolve_named_team", team)
@@ -1336,13 +1338,13 @@ async def test_server_info_reports_the_deploy_not_the_asset_hashes(fake):
 
 class TestIssueCreateAssignee:
     async def test_assignee_is_resolved_in_the_projects_team_before_the_create(self, fake):
-        result = await _tools(fake)["issue_create"](title="T", assignee="Look")
+        result = await _tools(fake)["issue_create"](title="T", assignee="Alex")
         assert fake.calls_to("resolve_assignee") == [
-            (("Look", "team-1"), {"project_id": "proj-1", "purpose": "assign"})
+            (("Alex", "team-1"), {"project_id": "proj-1", "purpose": "assign"})
         ]
         (create,) = fake.calls_to("create_issue")
-        assert create[1]["assignee_id"] == "user-Look"
-        assert result["assignee_id"] == "user-Look"
+        assert create[1]["assignee_id"] == "user-Alex"
+        assert result["assignee_id"] == "user-Alex"
         names = [n for n, _, _ in fake.calls]
         assert names.index("resolve_assignee") < names.index("create_issue")
 
@@ -1417,12 +1419,12 @@ async def _call(session, name, arguments):
 
 class TestUnknownArgumentsAreRefused:
     """Before CHT-1951 the SDK's argument model dropped any argument a tool
-    did not declare, so `issue_create(assignee="Look")` made an unassigned
+    did not declare, so `issue_create(assignee="Alex")` made an unassigned
     issue and said nothing."""
 
     async def test_issue_create_names_the_unknown_argument_and_creates_nothing(self, fake):
         async with _session(fake) as session:
-            result = await _call(session, "issue_create", {"title": "T", "asignee": "Look"})
+            result = await _call(session, "issue_create", {"title": "T", "asignee": "Alex"})
         error = result["error"]
         assert error["error_code"] == "unknown_argument"
         assert error["message"].startswith(
@@ -1525,6 +1527,53 @@ class TestUnknownArgumentsAreRefused:
             result = await _call(session, "issue_view", {"identifier": "CHT-1", "team": "NOPE"})
         assert result["error"]["error_code"] == "tool_input"
         assert "NOPE" in result["error"]["message"]
+
+    async def test_every_issue_of_several_must_agree(self):
+        """The `identifiers` anchor: one issue outside the hinted team is
+        enough to refuse, before any of them is moved."""
+        fake = FakeBackend(team_param=True)
+        fake.issues["OPS-1"] = {"id": "i9", "identifier": "OPS-1", "project_id": "proj-OPS", "labels": []}
+        async with _session(fake) as session:
+            result = await _call(session, "sprint_remove", {"identifiers": ["OPS-1", "CHT-1"], "project": "OPS"})
+            assert result["error"]["error_code"] == "scope_mismatch"
+            assert "issue CHT-1" in result["error"]["message"]
+            agreeing = await _call(session, "sprint_remove", {"identifiers": ["CHT-1", "CHT-2"], "project": "CHT"})
+            assert "error" not in agreeing, agreeing
+        assert [a[0] for a, _ in fake.calls_to("update_issue")] == ["i1", "i2"]
+
+    async def test_a_link_agrees_with_either_end(self, fake):
+        """doc_link joins an issue and a document: a `project` naming the
+        project of either describes the call; one naming neither does not."""
+        async def get_document(document_id):
+            return {"id": document_id, "team_id": "team-1", "project_id": "proj-DOCS"}
+
+        fake.get_document = get_document
+        async with _session(fake) as session:
+            by_doc = await _call(session, "doc_link", {"document_id": "d", "identifier": "CHT-1", "project": "DOCS"})
+            assert "error" not in by_doc, by_doc
+            by_issue = await _call(session, "doc_link", {"document_id": "d", "identifier": "CHT-1", "project": "CHT"})
+            assert "error" not in by_issue, by_issue
+            neither = await _call(session, "doc_link", {"document_id": "d", "identifier": "CHT-1", "project": "X"})
+            assert neither["error"]["error_code"] == "scope_mismatch"
+
+    async def test_a_tool_without_scope_takes_its_team_from_the_hint(self):
+        """server_info and inbox_mark_read act in no team of their own: a
+        `team` the caller passes picks the team the check uses, rather than
+        a default that a caller in several teams does not have (review
+        delta 2, finding 1)."""
+        fake = FakeBackend(team_param=True)
+        async with _session(fake) as session:
+            info = await _call(session, "server_info", {"team": "OPS"})
+            assert "error" not in info, info
+            marked = await _call(session, "inbox_mark_read", {"entry_id": "in-1", "team": "OPS"})
+            assert "error" not in marked, marked
+        assert ("OPS",) in [a for a, _ in fake.calls_to("resolve_member_team")]
+
+    async def test_the_checked_issue_is_not_fetched_again(self, fake):
+        async with _session(fake) as session:
+            viewed = await _call(session, "issue_view", {"identifier": "CHT-1", "project": "CHT"})
+        assert viewed["identifier"] == "CHT-1"
+        assert len(fake.calls_to("get_issue")) == 1
 
     def test_a_server_without_a_middleware_chain_is_refused_at_startup(self):
         """No public hook, no guard: registration fails loudly rather than

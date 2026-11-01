@@ -102,9 +102,9 @@ class TestScope:
 
     async def test_resolve_assignee_uses_the_team_it_is_given(self, backend, monkeypatch):
         from cli.main import client
-        monkeypatch.setattr(client, "get_team_members", MagicMock(return_value=[{"user_id": "u-1", "user_name": "Look"}]))
+        monkeypatch.setattr(client, "get_team_members", MagicMock(return_value=[{"user_id": "u-1", "user_name": "Alex"}]))
         monkeypatch.setattr(client, "get_team_agents", MagicMock(return_value=[]))
-        assert await backend.resolve_assignee("Look", "team-b") == "u-1"
+        assert await backend.resolve_assignee("Alex", "team-b") == "u-1"
         client.get_team_members.assert_called_once_with("team-b")
 
     async def test_no_team_selected_and_none_accessible(self, backend, monkeypatch):
