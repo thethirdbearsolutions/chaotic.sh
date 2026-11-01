@@ -114,7 +114,7 @@
                         </a>
                     </div>
                     <div class="nav-group" role="group" aria-labelledby="nav-group-workspace">
-                        <div class="nav-group-label" id="nav-group-workspace">Workspace</div>
+                        <div class="nav-group-label" aria-hidden="true" id="nav-group-workspace">Workspace</div>
                         <a href="/issues" class="nav-item" data-view="issues">
                             <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
                                 <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/>
@@ -160,7 +160,7 @@
                         </a>
                     </div>
                     <div class="nav-group" role="group" aria-labelledby="nav-group-process">
-                        <div class="nav-group-label" id="nav-group-process">Process</div>
+                        <div class="nav-group-label" aria-hidden="true" id="nav-group-process">Process</div>
                         <a href="/approvals" class="nav-item" data-view="approvals">
                             <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
@@ -607,7 +607,7 @@
                     <div class="view-header">
                         <h2>Query</h2>
                         <div class="view-actions">
-                            <select id="query-project-filter" aria-label="Scope">
+                            <select id="query-project-filter" data-picker aria-label="Scope">
                                 <option value="">All projects</option>
                             </select>
                             <div id="query-columns-picker" class="query-columns-picker">

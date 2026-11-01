@@ -2981,10 +2981,6 @@ input[type="checkbox"] {
         gap: 0;
     }
 
-    .main-content:has(> #issues-view:not(.hidden)) {
-        padding-top: 1rem;
-    }
-
     #issues-view .view-header {
         align-items: center;
         margin-bottom: 6px;
@@ -4880,11 +4876,6 @@ input[type="checkbox"] {
 
     .view-header {
         gap: 0.75rem;
-        margin-bottom: 1rem;
-    }
-
-    .view-header h2 {
-        font-size: 1.25rem;
     }
 
     .epic-table th,
@@ -10087,5 +10078,54 @@ body.theme-light .picker-popover {
     }
     .view-header h2 {
         font-size: 1.125rem;
+    }
+}
+
+/* Tablets keep the narrower 200px sidebar from the 1024px breakpoint. */
+@media (min-width: 769px) and (max-width: 1024px) {
+    :root {
+        --sidebar-width: 200px;
+    }
+}
+
+@media (min-width: 769px) {
+    /* The board fills what the shorter header gives back. */
+    .kanban-board {
+        min-height: calc(100vh - 126px);
+    }
+    .kanban-column {
+        max-height: calc(100vh - 126px);
+    }
+    /* Header search boxes and selects match the 32px header row. */
+    .view-header-controls .search-box {
+        padding: 4px 10px;
+    }
+    .view-header-controls .search-box input {
+        padding: 0;
+        height: 22px;
+    }
+    /* Only the nav scrolls on a short window; header and footer stay put. */
+    .sidebar {
+        overflow: hidden;
+    }
+    .sidebar-nav {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+    }
+}
+
+@media (max-width: 768px) {
+    .nav-group-label {
+        padding: 4px 16px;
+    }
+    .nav-group + .nav-group {
+        margin-top: 8px;
+    }
+}
+
+@media (pointer: coarse) {
+    .nav-item {
+        min-height: 44px;
     }
 }
