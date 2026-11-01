@@ -39,8 +39,10 @@ from app.api import labels as labels_api
 from app.api import projects as projects_api
 from app.api import rituals as rituals_api
 from app.api import sprints as sprints_api
+from app.api import teams as teams_api
+from app.api import users as users_api
 from app.enums import IssuePriority, IssueRelationType, IssueStatus, IssueType, SprintStatus
-from app.api.deps import can_access_document
+from app.api.deps import can_access_document, check_not_app_session
 from app.api.visibility import can_see_project
 from app.auth.access import Access, access_of, authorize
 from app.mcp_server import scope
@@ -50,6 +52,7 @@ from app.schemas.issue import (
     AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate, IssueUpdate,
 )
 from app.schemas.ritual import RitualAttestationCreate, RitualRejectCreate
+from app.schemas.user import UserUpdate
 from app.services.project_service import ProjectService
 
 
@@ -589,6 +592,19 @@ class InProcessBackend:
     @_translated(inbox_api.mark_all_inbox_read)
     async def mark_all_inbox_read(self, team_id: str | None) -> dict:
         return _dump(await inbox_api.mark_all_inbox_read(current_user=self._user, team_id=team_id))
+
+    # -- team roster and your own profile (CHT-1982) ------------------------------
+
+    @_translated(teams_api.team_roster)
+    async def get_team_roster(self, team_id: str, *, include_idle: bool) -> list:
+        return _dump_list(await teams_api.team_roster(team_id=team_id, current_user=self._user, include_idle=include_idle))
+
+    @_translated(users_api.update_me)
+    async def update_me(self, **fields) -> dict:
+        # The route refuses a built-in app's session (NotAppSession); so
+        # does this, before it builds the body.
+        check_not_app_session(get_current_mcp_principal())
+        return _dump(await users_api.update_me(UserUpdate(**fields), self._user, None))
 
     @_translated(issues_api.list_team_activities)
     async def list_activities(self, team_id: str, *, limit: int, project_id) -> list:

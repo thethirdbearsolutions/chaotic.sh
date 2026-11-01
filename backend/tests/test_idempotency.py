@@ -55,8 +55,10 @@ async def _comments(issue) -> list:
 
 
 # The routes the Android write queue sends (CHT-1613): inbox actions'
-# paths (CHT-1607) and the issue routes.
+# paths (CHT-1607) and the issue routes; and creating an issue, which the
+# CLI resends after a lost answer (CHT-1957).
 EXPECTED_ROUTES = {
+    ("POST", "/api/projects/{project_id}/issues"),
     ("POST", "/api/inbox/{entry_id}/read"),
     ("POST", "/api/inbox/{entry_id}/archive"),
     ("POST", "/api/rituals/{ritual_id}/complete-issue/{issue_id}"),
@@ -92,6 +94,21 @@ class TestWiring:
                 found.add((method, rc.path))
         assert found == EXPECTED_ROUTES
 
+    def test_the_cli_resends_on_exactly_these_routes(self):
+        # The CLI resends a write whose answer it lost only where the
+        # server answers once per key (CHT-1957): a route missing from
+        # its list loses that, and one too many could post twice.
+        # Compared as the regexes the CLI matches paths with, so a
+        # placeholder named differently on either side still agrees, and
+        # one the CLI could not turn into a pattern would not.
+        from cli.client import _IDEMPOTENT_PATTERNS, route_pattern
+
+        cli_side = {(m, p.pattern) for m, p in _IDEMPOTENT_PATTERNS}
+        server_side = {(m, route_pattern(path.removeprefix("/api"))) for m, path in EXPECTED_ROUTES}
+        assert cli_side == server_side
+        for _, pattern in cli_side:
+            assert "{" not in pattern, f"a placeholder was left literal: {pattern}"
+
     def test_an_unmarked_route_on_an_idempotent_router_is_plain(self):
         [route] = [
             rc.original_route for rc in _route_contexts()
@@ -106,6 +123,43 @@ class TestWiring:
         route = IdempotentRoute("/x", create_comment, methods=["POST"])
         again = IdempotentRoute("/x", create_comment, methods=["POST"], dependencies=route.dependencies)
         assert [d.dependency for d in again.dependencies].count(_idempotency_scope) == 1
+
+
+class TestIssueCreate:
+    """CHT-1957: the CLI resends a create whose answer it lost."""
+
+    async def _create(self, client, headers, project, title="Once", key=None):
+        if key is not None:
+            headers = _keyed(headers, key)
+        return await client.post(f"/api/projects/{project.id}/issues", json={"title": title}, headers=headers)
+
+    async def test_a_resend_creates_one_issue_and_answers_with_it(self, client, auth_headers, test_project):
+        first = await self._create(client, auth_headers, test_project, key="c-1")
+        again = await self._create(client, auth_headers, test_project, key="c-1")
+
+        assert first.status_code == again.status_code == 201
+        assert again.json() == first.json()
+        assert again.headers[REPLAYED_HEADER] == "true"
+        assert await OxydeIssue.objects.filter(project_id=test_project.id).count() == 1
+
+    async def test_a_new_key_is_a_new_issue(self, client, auth_headers, test_project):
+        a = await self._create(client, auth_headers, test_project, key="c-1")
+        b = await self._create(client, auth_headers, test_project, key="c-2")
+        assert a.json()["identifier"] != b.json()["identifier"]
+        assert await OxydeIssue.objects.filter(project_id=test_project.id).count() == 2
+
+    async def test_the_key_for_a_different_issue_is_refused(self, client, auth_headers, test_project):
+        await self._create(client, auth_headers, test_project, title="First", key="c-1")
+        other = await self._create(client, auth_headers, test_project, title="Second", key="c-1")
+        assert other.status_code == 422
+        assert other.json()["detail"]["error_code"] == "idempotency_key_reused"
+        assert await OxydeIssue.objects.filter(project_id=test_project.id).count() == 1
+
+    async def test_without_the_header_nothing_changes(self, client, auth_headers, test_project):
+        await self._create(client, auth_headers, test_project)
+        await self._create(client, auth_headers, test_project)
+        assert await OxydeIssue.objects.filter(project_id=test_project.id).count() == 2
+        assert await OxydeIdempotencyRecord.objects.count() == 0
 
 
 class TestCommentCreate:
@@ -504,19 +558,39 @@ async def _claim_row(user, key: str, path: str, *, claimed_minutes_ago: float) -
     )
 
 
-@pytest_asyncio.fixture
-async def pool_of_four(client):
-    """The production shape: several connections, so a keyed request and
-    others meet on SQLite's locks rather than on a busy pool. A short
-    busy timeout makes a wait on the write lock fail fast."""
+async def _pool(busy_timeout_ms: int):
     from oxyde import AsyncDatabase, PoolSettings
 
     from app.config import get_settings
 
     url = get_settings().database_url.replace("sqlite+aiosqlite:///", "sqlite:///")
-    pool = AsyncDatabase(url, overwrite=True, settings=PoolSettings(max_connections=4, sqlite_busy_timeout=300))
+    pool = AsyncDatabase(
+        url, overwrite=True, settings=PoolSettings(max_connections=4, sqlite_busy_timeout=busy_timeout_ms),
+    )
     await pool.connect()
     return pool
+
+
+@pytest_asyncio.fixture
+async def pool_of_four(client):
+    """The production shape: several connections, so a keyed request and
+    others meet on SQLite's locks rather than on a busy pool, with the
+    production busy timeout (Oxyde's 5000 ms).
+
+    The tests that wait on the write lock hold it for a deliberate 0.1 to
+    0.15 s plus the rest of a request, about 0.15 s in all on a quiet
+    machine. They used a 300 ms busy timeout, which left a loaded CI
+    runner (coverage tracing, sharded workers) too little margin: the
+    wait ran out, and the resend got the 503 it is designed to give then
+    (PR #502's CI). The 503 itself is checked with `pool_of_four_impatient`."""
+    return await _pool(5000)
+
+
+@pytest_asyncio.fixture
+async def pool_of_four_impatient(client):
+    """As `pool_of_four`, with a short busy timeout, so a wait on the
+    write lock that cannot succeed fails fast."""
+    return await _pool(300)
 
 
 def _slow_comment(entered: asyncio.Event, seconds: float, *, before_write: bool):
@@ -643,7 +717,7 @@ class TestConcurrentResend:
         assert len(await _comments(test_issue)) == 1
 
     async def test_a_claim_that_cannot_get_the_lock_is_a_retryable_503(
-        self, pool_of_four, client, auth_headers, test_issue,
+        self, pool_of_four_impatient, client, auth_headers, test_issue,
     ):
         """Another writer holds SQLite's write lock past the busy timeout:
         the claim cannot be made, and the answer says to retry."""

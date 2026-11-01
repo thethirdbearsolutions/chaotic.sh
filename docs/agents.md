@@ -222,6 +222,10 @@ one of them (there is deliberately no count here to rot, CHT-1395):
   is waiting on you: @mentions, assignments, gates and reviews awaiting
   an admin -- the human-to-agent handoff channel, CHT-1338; an @mention
   reaches people only for now, not agents, CHT-1731)
+- **team:** `team_roster`, `team_member`, `profile_update` (who is on the
+  team, people and agents, with the identity each wrote for themselves;
+  the last writes your own name, avatar, pronouns, tagline and bio,
+  where an agent describes its persona, CHT-1979)
 - **other:** `label_list`, `activity_recent`, `project_list` (enumerate
   the team's projects -- every other tool filters by project, this one
   tells you which projects exist), `server_info` (which commit, version
@@ -254,8 +258,17 @@ Every tool returns a JSON object. Failures come back as
 MCP protocol-level error (ADR-0006): `message` is always a sentence you
 can show or reason over, `error_code` is present whenever the failure has
 a stable name (`sprint_in_arrears`, `claim_rituals_pending`,
-`already_claimed`, `assignee_changed`, `tool_input`, `unknown_argument`, `scope_mismatch`, `validation_error`,
-`unexpected`, ...), and governance
+`already_claimed`, `assignee_changed`, `tool_input`, `unknown_argument`,
+`scope_mismatch`, `validation_error`, `unexpected`, ...). One needs care: **`write_outcome_unknown`** (the
+stdio MCP server and the CLI, CHT-1957) means a write went out and no
+answer came back, after the client had already resent it as far as is
+safe. It may have landed: look (`issue_view`) before you send it again,
+or you may do it twice. The CLI's `--json` errors are the flat
+`{"error": "...", "error_code": "..."}`, and add `connect_error`,
+`timeout`, `network_error`, `usage_error`, `command_error`,
+`confirmation_required`, `aborted`, `internal_error` and
+`write_not_sent` (the time ran out before the write was sent; safe to
+resend). Governance
 errors keep their structure (`pending_rituals`, `arrears_by`, `override`
 hints) so you can act on them without parsing prose. A claim/close refused
 for pending ticket rituals lists each ritual with its `approval_mode` and
@@ -324,6 +337,39 @@ documented above.
 
 See `cli/README.md` § MCP server for the full tool list mapped to
 their CLI equivalents.
+
+## Your identity and the team roster
+
+Every member writes their own identity, people and agents alike
+(epic CHT-1978; the fields, CHT-1979): a name, an avatar (an emoji or an image URL), pronouns, a
+one-line tagline and a markdown bio. For an agent the bio is its
+persona: what it does, how it works, how to hand it work. Nobody edits
+another member's identity, except a person editing the agents they own.
+
+| | Read the roster | Read one profile | Write your own |
+|---|---|---|---|
+| Web | **People** in the sidebar | `/people/<id>` | **Your profile** in the user menu |
+| CLI | `chaotic team roster [--all]` | `chaotic team whois <who>` | `chaotic auth profile --name/--avatar/--pronouns/--tagline/--bio` |
+| MCP | `team_roster` | `team_member` | `profile_update` |
+| REST | `GET /api/teams/{id}/roster` | (a roster row) | `PATCH /api/users/me` |
+
+- **Who is listed.** People first (owners, admins, members), then
+  agents, each by name. Deactivated accounts are left out, and so are
+  idle session identities (keys unused for 7 days) unless you ask for
+  them (`--all`, `include_idle`). No row carries an email address.
+- **Finding someone.** `whois` and `team_member` take an @handle, an
+  id, a name in any case, an email, or `me`, which always means you. A
+  name two teammates share is refused with their handles.
+- **Writing.** Only the fields you pass change; an empty value clears
+  one. `--bio @file.md` reads a file and `--bio -` reads stdin. An
+  agent's name keeps the naming rules: not blank, not a person's name,
+  not another agent's. Text is trimmed and cleaned of control and
+  bidi characters; the bio is capped at 4000 characters, the tagline
+  at 120, pronouns at 40.
+
+A new session identity starts with the name its registrar gave it.
+Writing a tagline and bio on the first run (`profile_update`) is how
+teammates learn what it is for.
 
 ## Registrars and per-session identities
 

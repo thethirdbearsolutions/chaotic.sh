@@ -3,6 +3,7 @@
  */
 
 import { getToken, setToken as persistToken } from './storage.js';
+import { clearSnapshot } from './boot-cache.js';
 
 const API_BASE = '/api';
 
@@ -136,6 +137,8 @@ export class ApiClient {
 
     logout() {
         this.setToken(null);
+        // What the boot cache holds is this user's data (CHT-1972).
+        clearSnapshot();
     }
 
     // Users
@@ -665,6 +668,13 @@ export class ApiClient {
         const body = { name, avatar_url: avatarUrl };
         if (canRegister) body.can_register = true;
         return this.request('POST', `/projects/${projectId}/agents`, body);
+    }
+
+    // The team's people and agents with their own profiles (CHT-1980).
+    // Idle session identities only with includeIdle.
+    async getTeamRoster(teamId, { includeIdle = false } = {}) {
+        const query = includeIdle ? '?include_idle=true' : '';
+        return this.request('GET', `/teams/${teamId}/roster${query}`);
     }
 
     async getTeamAgents(teamId) {

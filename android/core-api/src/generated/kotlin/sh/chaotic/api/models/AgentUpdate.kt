@@ -39,8 +39,8 @@ import kotlinx.serialization.encoding.Encoder
  * @param bio 
  * @param pronouns 
  * @param tagline 
- * @param name 
  * @param avatarUrl 
+ * @param name 
  * @param canRegister 
  */
 @Serializable
@@ -56,11 +56,11 @@ data class AgentUpdate (
     @SerialName(value = "tagline")
     val tagline: kotlin.String? = null,
 
-    @SerialName(value = "name")
-    val name: kotlin.String? = null,
-
     @SerialName(value = "avatar_url")
     val avatarUrl: kotlin.String? = null,
+
+    @SerialName(value = "name")
+    val name: kotlin.String? = null,
 
     @SerialName(value = "can_register")
     val canRegister: kotlin.Boolean? = null

@@ -25,6 +25,14 @@ export function getAgents() {
 }
 
 /**
+ * Set the team's agents (the boot cache, CHT-1972).
+ * @param {Array} list
+ */
+export function setAgents(list) {
+  agents = Array.isArray(list) ? list : [];
+}
+
+/**
  * Check if an avatar URL is an image (vs emoji)
  * @param {string} avatar - Avatar URL or emoji
  * @returns {boolean}
@@ -75,7 +83,10 @@ export async function loadTeamAgentsQuiet(teamId) {
   if (!teamId) return;
 
   try {
-    agents = await api.getTeamAgents(teamId);
+    const list = await api.getTeamAgents(teamId);
+    // A response for a team switched away from is dropped.
+    if (getCurrentTeam()?.id !== teamId) return;
+    agents = list;
     buildAssignees(getMembers, getAgents);
     updateAssigneeFilter();
   } catch (e) {

@@ -33,6 +33,12 @@ COMPACT_INBOX_FIELDS = (
     "id", "kind", "title", "issue_identifier", "document_title", "source_user_name",
     "source_user", "created_at", "read_at",
 )
+# team_roster rows (CHT-1982): who someone is at a glance. The bio, which
+# can run to 4000 chars each, is in team_member or with detail=true.
+COMPACT_ROSTER_FIELDS = (
+    "user_id", "name", "mention_handle", "pronouns", "tagline", "is_agent", "role",
+    "kind", "owner_name", "idle",
+)
 # Long free text in list/feed rows is cut to this many chars with an
 # explicit `...(+N chars)` marker: project descriptions in project_list,
 # old_value/new_value in activity_recent (an issue-description edit
@@ -55,6 +61,7 @@ RESPONSE_SHAPES = {
     "compact_document_fields": list(COMPACT_DOCUMENT_FIELDS),
     "compact_project_fields": list(COMPACT_PROJECT_FIELDS),
     "compact_inbox_fields": list(COMPACT_INBOX_FIELDS),
+    "compact_roster_fields": list(COMPACT_ROSTER_FIELDS),
     "text_preview_chars": TEXT_PREVIEW_CHARS,
     "issue_view_comment_cap": ISSUE_VIEW_COMMENT_CAP,
     "issue_view_fetch_limit": ISSUE_VIEW_FETCH_LIMIT,

@@ -1287,6 +1287,8 @@ class TestNoLeakedEnumNames:
             "project_list": await tools.project_list(),
             "inbox_list": await tools.inbox_list(detail=True),
             "server_info": await tools.server_info(),
+            "team_roster": await tools.team_roster(detail=True),
+            "team_member": await tools.team_member(who="me"),
         }
 
         # A tool that raised comes back as {"error": ...} and would sweep
@@ -1360,6 +1362,9 @@ class TestNoLeakedInternalFields:
             "inbox_list": await tools.inbox_list(detail=True),
             "activity_recent": await tools.activity_recent(),
             "project_list": await tools.project_list(),
+            "team_roster": await tools.team_roster(detail=True),
+            "team_member": await tools.team_member(who="me"),
+            "profile_update": await tools.profile_update(tagline="Sweeping"),
             "sprint_current": await tools.sprint_current(),
             "sprint_list": await tools.sprint_list(),
             "label_list": await tools.label_list(),
@@ -1711,6 +1716,7 @@ class TestSweepCoverage:
         "sprint_add", "sprint_remove", "sprint_close",
         "ritual_attest", "ritual_complete", "ritual_reject",
         "inbox_mark_read", "inbox_mark_all_read",  # swept via inbox_list
+        "profile_update",  # swept via team_member, and for fields in TestNoLeakedInternalFields
         # read tools whose shape is asserted in their own tests
         "issue_view", "sprint_transactions",
     }
@@ -2233,3 +2239,76 @@ class TestErrorEnvelope:
                             missing.append(f"{path.name}:{node.lineno}")
         assert not missing, f"structured HTTPException details without a message: {missing}"
 
+
+
+class TestProfileUpdate:
+    """profile_update writes the caller's own identity (CHT-1982)."""
+
+    async def test_a_project_agent_finds_a_sibling_projects_agent_by_name(self, test_user, test_team, test_project):
+        """team_member finds by name whom team_roster shows the caller,
+        a sibling project's agent included (PR #516 review)."""
+        from app.oxyde_models.project import OxydeProject
+        from app.schemas.agent import AgentCreate
+        from app.services.agent_service import AgentService
+        from .mcp_principal import acting_as
+
+        sibling = await OxydeProject.objects.create(team_id=test_team.id, name="Sibling", key="SIBR")
+        service = AgentService()
+        local, _, _ = await service.create(AgentCreate(name="Local"), test_user, test_team.id, project_id=test_project.id)
+        await service.create(AgentCreate(name="Deployer"), test_user, test_team.id, project_id=sibling.id)
+
+        with acting_as(local):
+            listed = await tools.team_roster()
+            found = await tools.team_member(who="Deployer")
+
+        assert "Deployer" in {r["name"] for r in listed["members"]}
+        assert found.get("name") == "Deployer", found
+
+    async def test_writes_and_returns_only_the_profile(self, test_user):
+        result = await tools.profile_update(bio="I review migrations.", pronouns="they/them")
+
+        assert result == {
+            "user_id": test_user.id, "name": test_user.name, "avatar_url": None, "pronouns": "they/them",
+            "tagline": None, "bio": "I review migrations.", "is_agent": False,
+        }
+
+    async def test_a_blank_name_is_an_envelope_not_a_crash(self):
+        result = await tools.profile_update(name="   ")
+
+        assert set(result) == {"error"}
+        assert result["error"]["error_code"] != "unexpected", result
+
+    async def test_a_too_long_bio_is_an_envelope(self):
+        result = await tools.profile_update(bio="x" * 5000)
+
+        assert set(result) == {"error"} and result["error"]["error_code"] != "unexpected", result
+
+    async def test_an_agent_may_not_take_a_teammates_name(self, agent_user, test_user):
+        from .mcp_principal import acting_as
+
+        with acting_as(agent_user):
+            result = await tools.profile_update(name=test_user.name)
+
+        assert result["error"]["error_code"] == "name_matches_member", result
+
+    async def test_an_agent_writes_its_own(self, agent_user):
+        from .mcp_principal import acting_as
+
+        with acting_as(agent_user):
+            result = await tools.profile_update(tagline="Night shift")
+
+        assert result["tagline"] == "Night shift" and result["is_agent"] is True
+
+    async def test_an_app_session_is_refused(self, test_user):
+        from app.auth.credentials import CredentialKind, Principal
+        from app.enums import HolderVia
+        from .mcp_principal import acting_as
+
+        app_session = Principal(
+            user=test_user, holder_user_id=test_user.id, kind=CredentialKind.OAUTH_ACCESS,
+            scopes=frozenset({"chaotic:read", "chaotic:write"}), holder_via=HolderVia.APP,
+        )
+        with acting_as(app_session):
+            result = await tools.profile_update(bio="x")
+
+        assert result["error"]["error_code"] == "app_session_refused", result

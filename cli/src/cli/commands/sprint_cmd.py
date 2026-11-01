@@ -464,7 +464,8 @@ def register(cli):
                 # per-issue results accumulated so far by escaping to the
                 # outer handle_error (CHT-1222).
                 console.print(f"[red]Failed to add {esc(identifier)}: {escape(str(e))}[/red]")
-                results.append({"identifier": identifier, "success": False, "error": str(e)})
+                # error_code too: a lost update says write_outcome_unknown (CHT-1957).
+                results.append({"identifier": identifier, "success": False, **m.error_fields(e)})
 
         any_failed = any(not r["success"] for r in results)
         if m.is_json_output():
@@ -502,7 +503,8 @@ def register(cli):
                 # See sprint_add: transport errors also get per-issue
                 # reporting instead of aborting the batch (CHT-1222).
                 console.print(f"[red]Failed to remove {esc(identifier)}: {escape(str(e))}[/red]")
-                results.append({"identifier": identifier, "success": False, "error": str(e)})
+                # error_code too: a lost update says write_outcome_unknown (CHT-1957).
+                results.append({"identifier": identifier, "success": False, **m.error_fields(e)})
 
         any_failed = any(not r["success"] for r in results)
         if m.is_json_output():

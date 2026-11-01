@@ -75,6 +75,7 @@ def confirm_action(prompt: str, **kwargs) -> bool:
         output_json({
             "error": f"Confirmation required: {prompt} "
                      "Pass --yes to proceed under --json (prompts are disabled in JSON mode).",
+            "error_code": "confirmation_required",
         })
         raise SystemExit(2)
     kwargs.setdefault("err", True)
@@ -423,14 +424,50 @@ def require_project(f):
     return wrapper
 
 
+def error_fields(e: Exception) -> dict:
+    """The `--json` error object for a failure: `{"error": message}`,
+    plus `error_code` (CHT-1957). The server's code when it gave one;
+    `write_outcome_unknown` for a write that may have landed;
+    `connect_error`/`timeout`/`network_error` for the transport;
+    `usage_error`/`command_error` for a ClickException. Also what a
+    batch command puts in each failed item's result."""
+    if isinstance(e, APIError):
+        detail = getattr(e, "detail", None)
+        code = detail.get("error_code") if isinstance(detail, dict) else None
+        return {"error": str(e), **({"error_code": code} if code else {})}
+    if isinstance(e, click.UsageError):
+        return {"error": e.format_message(), "error_code": "usage_error"}
+    if isinstance(e, click.ClickException):
+        return {"error": e.format_message(), "error_code": "command_error"}
+    if isinstance(e, httpx.ConnectError):
+        return {
+            "error": f"Could not connect to server at {get_api_url()}"
+                     + (f" ({e})" if str(e) else "") + ". Is the server running?",
+            "error_code": "connect_error",
+        }
+    if isinstance(e, httpx.TimeoutException):
+        # A write that may have landed is a WriteOutcomeUnknown (an
+        # APIError, above); this is a read, or a write never sent.
+        return {
+            "error": "Request timed out. The server may be overloaded or unreachable.",
+            "error_code": "timeout",
+        }
+    if isinstance(e, httpx.HTTPError):
+        return {"error": f"Network error: {e}", "error_code": "network_error"}
+    return {"error": f"Unexpected error: {type(e).__name__}: {e}", "error_code": "internal_error"}
+
+
 def handle_error(f):
-    """Decorator to handle API errors, httpx errors, and ClickExceptions."""
+    """Decorator to handle API errors, httpx errors, and ClickExceptions.
+
+    Under --json every failure it catches is one JSON object on stdout,
+    `error_fields(e)`."""
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
         except APIError as e:
             if is_json_output():
-                output_json({"error": str(e)})
+                output_json(error_fields(e))
             else:
                 # Server text (issue titles, rejection reasons) is not
                 # markup: escape it so a `[/]` cannot crash the print or
@@ -439,34 +476,37 @@ def handle_error(f):
             raise SystemExit(1)
         except click.ClickException as e:
             if is_json_output():
-                output_json({"error": e.format_message()})
+                output_json(error_fields(e))
                 # Preserve whatever exit code the non-JSON path would have
                 # produced (UsageError/BadParameter use 2, everything else
                 # ClickException's default of 1) instead of collapsing
                 # every ClickException to 1 under --json (CHT-1222).
                 raise SystemExit(getattr(e, "exit_code", 1)) from e
             raise
-        except httpx.ConnectError:
-            msg = f"Could not connect to server at {get_api_url()}. Is the server running?"
-            if is_json_output():
-                output_json({"error": msg})
-            else:
-                console.print(f"[red]{esc(msg)}[/red]")
-            raise SystemExit(1)
-        except httpx.TimeoutException:
-            msg = "Request timed out. The server may be overloaded or unreachable."
-            if is_json_output():
-                output_json({"error": msg})
-            else:
-                console.print(f"[red]{esc(msg)}[/red]")
-            raise SystemExit(1)
         except httpx.HTTPError as e:
-            msg = f"Network error: {e}"
             if is_json_output():
-                output_json({"error": msg})
+                output_json(error_fields(e))
             else:
-                console.print(f"[red]{esc(msg)}[/red]")
+                console.print(f"[red]{esc(error_fields(e)['error'])}[/red]")
             raise SystemExit(1)
+        except click.exceptions.Abort:
+            # SIGINT / EOF on a prompt: what ProfileGroup.main answers too.
+            if not is_json_output():
+                raise
+            output_json({"error": "Aborted.", "error_code": "aborted"})
+            click.echo("Aborted!", err=True)
+            raise SystemExit(1)
+        except click.exceptions.Exit:
+            raise  # ctx.exit(): not a failure
+        except Exception as e:
+            # Anything else still answers --json with JSON, never a
+            # traceback alone (CHT-1957); without --json it is a bug to see.
+            if not is_json_output():
+                raise
+            import traceback
+            traceback.print_exc(file=sys.stderr)  # stdout stays one JSON value
+            output_json(error_fields(e))
+            raise SystemExit(1) from e
     wrapper.__name__ = f.__name__
     wrapper.__doc__ = f.__doc__
     return wrapper
@@ -681,12 +721,12 @@ class ProfileGroup(click.Group):
             # Parse-time UsageError/BadParameter (or a body-level
             # ClickException re-raised by handle_error's non-JSON branch —
             # unreachable here since --json is set, but harmless).
-            output_json({"error": e.format_message()})
+            output_json(error_fields(e))
             e.show()  # usage + error text; writes to stderr
             sys.exit(e.exit_code)
         except click.exceptions.Abort:
             # SIGINT / EOF on a prompt. Keep the one-JSON-value contract.
-            output_json({"error": "Aborted."})
+            output_json({"error": "Aborted.", "error_code": "aborted"})
             click.echo("Aborted!", err=True)
             sys.exit(1)
         else:
