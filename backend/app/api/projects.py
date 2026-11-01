@@ -155,6 +155,27 @@ async def _lifted_by_update(project, project_in: ProjectUpdate) -> list[str]:
     return lifted
 
 
+def _agent_expect(project, project_in: ProjectUpdate) -> dict:
+    """What an agent's write is conditional on (CHT-1926): the values its
+    gate check decided on, so a person tightening one meanwhile wins.
+
+    Only what the request could loosen is pinned: a gate it sets to
+    False (off when read, or the check would have refused it; pinned
+    still, since a person may turn it on meanwhile) and the default
+    budget when it sends one. A setting the request leaves alone cannot
+    be loosened by it, and pinning it would turn an unrelated edit into
+    a 409 whenever a person changes that setting (PR #487 review 3).
+    """
+    sent = project_in.model_fields_set
+    expect = {
+        name: getattr(project, name) for name in GATE_SETTINGS
+        if name in sent and getattr(project_in, name) is False
+    }
+    if "default_sprint_budget" in sent:
+        expect["default_sprint_budget"] = project.default_sprint_budget
+    return expect
+
+
 @router.patch("/{project_id}", response_model=ProjectResponse)
 @writes
 async def update_project(
@@ -172,15 +193,13 @@ async def update_project(
     await _validate_lead(project_in.lead_id, project.team_id, project.id, project.lead_id)
     await _validate_default_epic(project_in.default_epic_id, project.id, project.default_epic_id)
 
-    # An agent's write is conditional on the gate values it was checked
-    # against, so a person tightening one meanwhile wins (CHT-1926).
-    expect = (
-        {name: getattr(project, name) for name in (*GATE_SETTINGS, "default_sprint_budget")}
-        if current_user.is_agent else None
-    )
+    expect = _agent_expect(project, project_in) if current_user.is_agent else None
     try:
         project = await project_service.update(project, project_in, expect=expect)
     except ProjectChangedError as e:
+        # A project deleted meanwhile answers like any missing one
+        # (CHT-1785), not as a conflict.
+        await visible_project(current_user, project_id)
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     response = ProjectResponse.model_validate(project, from_attributes=True)
     await broadcast_project_event(project.team_id, "updated", response.model_dump(mode="json"), project_id=project.id)

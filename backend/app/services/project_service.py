@@ -7,7 +7,8 @@ from oxyde import F, IntegrityError
 from app.services.credential_events import revoking
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
-from app.services.sprint_service import SprintService
+from app.services.sprint_service import SprintService, default_change_loosens
+from app.db.transactions import atomic
 from app.oxyde_models.document import (
     OxydeDocument, OxydeDocumentComment, OxydeDocumentActivity,
     OxydeDocumentIssue, OxydeDocumentLabel,
@@ -33,9 +34,9 @@ GATE_SETTINGS = (
 )
 
 
-
 class ProjectChangedError(Exception):
     """A conditional project update found the row changed (CHT-1926)."""
+
 
 class ProjectService:
     """Service for project operations."""
@@ -98,7 +99,9 @@ class ProjectService:
         columns still hold those values, else ProjectChangedError and
         nothing is written. The agent gate check uses it (CHT-1926): it
         decided on the values it read, and a person turning a gate on in
-        between must not be undone by the agent's write."""
+        between must not be undone by the agent's write. On that path a
+        new default budget that would raise a planned sprint's budget is
+        refused the same way (``_update_conditionally``)."""
         update_data = project_in.model_dump(exclude_unset=True)
         # These columns are NOT NULL: an explicit null means "leave it"
         # rather than a failed write (PR #462 review 7).
@@ -118,11 +121,41 @@ class ProjectService:
             and update_data["default_sprint_budget"] != project.default_sprint_budget
         )
         now = datetime.now(timezone.utc)
-        if expect:
-            conditions = {
-                (f"{name}__isnull" if value is None else name): (True if value is None else value)
-                for name, value in expect.items()
-            }
+        if expect is not None:
+            await self._update_conditionally(project, update_data, expect, now, default_changed)
+        else:
+            for field, value in update_data.items():
+                setattr(project, field, value)
+            project.updated_at = now
+            await project.save(update_fields=set(update_data.keys()) | {"updated_at"})
+            if default_changed:
+                # Planned sprints follow the default until budgeted by
+                # hand (CHT-1495).
+                await SprintService().adopt_default_budget(project.id)
+        await project.refresh()
+        return project
+
+    async def _update_conditionally(
+        self, project: OxydeProject, update_data: dict, expect: dict, now: datetime,
+        default_changed: bool,
+    ) -> None:
+        """The ``expect`` path of ``update``, in one transaction.
+
+        The conditional UPDATE goes first, so on SQLite it takes the
+        write lock before anything else is read: from then on no sprint
+        can rotate under the request. A new default budget reaches the
+        planned sprints that follow it, which the caller's check read
+        earlier and nothing pinned; a person closing the active sprint
+        in between can create one with a lower carried budget (CHT-1495).
+        So the check runs again here, under the lock, against the old
+        default that ``expect`` held, and a loosening rolls the write
+        back (PR #487 review 1).
+        """
+        conditions = {
+            (f"{name}__isnull" if value is None else name): (True if value is None else value)
+            for name, value in expect.items()
+        }
+        async with atomic():
             matched = await OxydeProject.objects.filter(id=project.id, **conditions).update(
                 **update_data, updated_at=now,
             )
@@ -130,17 +163,14 @@ class ProjectService:
                 raise ProjectChangedError(
                     "The project's settings changed while this request ran; read them again and retry."
                 )
-        else:
-            for field, value in update_data.items():
-                setattr(project, field, value)
-            project.updated_at = now
-            await project.save(update_fields=set(update_data.keys()) | {"updated_at"})
-        if default_changed:
-            # Planned sprints follow the default until budgeted by hand
-            # (CHT-1495).
-            await SprintService().adopt_default_budget(project.id)
-        await project.refresh()
-        return project
+            if default_changed:
+                if await default_change_loosens(
+                    project.id, project.default_sprint_budget, update_data["default_sprint_budget"],
+                ):
+                    raise ProjectChangedError(
+                        "The project's sprints changed while this request ran; read them again and retry."
+                    )
+                await SprintService().adopt_default_budget(project.id)
 
     async def delete(self, project: OxydeProject, *, actor_id: str | None = None) -> None:
         """Delete a project and cascade to child records.
