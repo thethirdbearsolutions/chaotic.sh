@@ -336,6 +336,10 @@ class TestOverHTTP:
         assert "error" in failed and f"retired on {DATE}" in failed["notice"]
         created = await _payload(client, headers, "issue_create", {"title": "still works"})
         assert created["title"] == "still works" and "notice" in created
+        # A call refused before any tool runs (CHT-1951) carries it as well.
+        refused = await _payload(client, headers, "issue_view", {"identifier": "NOPE-1", "bogus": 1})
+        assert refused["error"]["error_code"] == "unknown_argument"
+        assert f"retired on {DATE}" in refused["notice"]
 
     async def test_the_capability_url_gets_it_too(self, client, legacy_settings, shared_key, test_project):
         key_id, full_key = shared_key
