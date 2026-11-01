@@ -274,23 +274,28 @@ registerViews({
     'query': () => {
         loadQueryView();
     },
+    // Entering a view paints what it showed last time, then refreshes
+    // (CHT-1973).
     'epics': () => {
-        loadEpics();
+        loadEpics({ fromMemory: true });
     },
     'board': () => {
-        loadBoard();
+        loadBoard({ fromMemory: true });
     },
     'projects': () => {
+        // The team's projects are in memory from boot: paint them at once,
+        // then refresh (CHT-1973).
+        renderProjects();
         loadProjects().then(renderProjects);
     },
     'sprints': () => {
-        loadSprints();
+        loadSprints({ fromMemory: true });
     },
     'rituals': () => {
         loadRitualsView();
     },
     'documents': () => {
-        loadDocuments();
+        loadDocuments(null, null, { fromMemory: true });
     },
     'team': () => {
         loadTeamMembers();

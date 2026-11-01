@@ -12,6 +12,7 @@ import { viewIssue } from './issue-detail-view.js';
 import { getCurrentProject, getCurrentView, subscribe, getSelectedBoardIndex, setSelectedBoardIndex, setDetailNavContext } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { getProjects } from './projects.js';
+import { lastResult, rememberResult, resultKey, sameResult } from './last-result.js';
 
 // Board status configuration
 export const BOARD_STATUSES = [
@@ -24,6 +25,9 @@ export const BOARD_STATUSES = [
 
 // Module state
 let boardIssues = [];
+// The team|project key boardIssues were loaded for (CHT-1973), so a
+// re-render remembers them under their own key, not a newer project's.
+let boardKey = null;
 let draggingIssueId = null;
 // Monotonic request id — lets loadBoard() drop a response from a superseded
 // request (rapid project switches) instead of overwriting newer data with
@@ -63,8 +67,12 @@ subscribe((key) => {
 
 /**
  * Load board issues for the current project
+ * @param {Object} [options]
+ * @param {boolean} [options.fromMemory] - entering the view: paint what it
+ *   showed last time for this team and project at once (CHT-1973). Off for
+ *   a reload after a change, which would repaint the state before it.
  */
-export async function loadBoard() {
+export async function loadBoard({ fromMemory = false } = {}) {
     // CHT-1215 (review finding 3): loadBoard() runs on view entry and
     // project switch, and its skeleton wipe below destroys the
     // .keyboard-selected card before renderBoard() can re-find it by id —
@@ -104,7 +112,16 @@ export async function loadBoard() {
     }
 
     const board = document.getElementById('kanban-board');
-    if (board) {
+    // A revisit paints the board it showed last time for this project at
+    // once, and the request below refreshes it (CHT-1973).
+    const key = resultKey();
+    const shown = fromMemory ? lastResult('board', key) : undefined;
+    if (shown) {
+        boardIssues = shown;
+        boardKey = key;
+        if (getCurrentView() === 'board') setDetailNavContext(boardIssues);
+        renderBoard();
+    } else if (board) {
         board.innerHTML = Array(4).fill(0).map(() => `
             <div class="kanban-column" style="opacity: 0.5;">
                 <div class="kanban-column-header">
@@ -120,7 +137,11 @@ export async function loadBoard() {
         const issues = await api.getIssues({ project_id: projectId });
         if (requestId !== loadBoardRequestId) return; // a newer loadBoard() has since started — drop this stale response
 
+        // Unchanged since the paint above: skip a second render.
+        const unchanged = shown && sameResult(boardIssues, issues);
         boardIssues = issues;
+        boardKey = key;
+        rememberResult('board', key, issues);
         // Prev/next issue-detail nav context (CHT-1211 item 2) — issues
         // opened from the Board should page through the board's own list,
         // not the Issues-view-only global issues array. The request id only
@@ -131,7 +152,7 @@ export async function loadBoard() {
         if (getCurrentView() === 'board') {
             setDetailNavContext(boardIssues);
         }
-        renderBoard();
+        if (!unchanged) renderBoard();
     } catch (e) {
         if (requestId !== loadBoardRequestId) return;
         // CHT-1224: the copy said "try again" but shipped no button — add the
@@ -164,6 +185,9 @@ export function renderBoard() {
     // remote-event re-render calls); full reloads go through loadBoard(),
     // which resets the cursor instead (review finding 3).
     const selectedCardId = board.querySelector('.kanban-card.keyboard-selected')?.dataset.id;
+    // A drag or a live update re-renders in place: what shows now is what
+    // a revisit should paint (CHT-1973).
+    if (boardKey) rememberResult('board', boardKey, boardIssues);
 
     board.innerHTML = BOARD_STATUSES.map(status => {
         const columnIssues = boardIssues.filter(i => i.status === status.key);

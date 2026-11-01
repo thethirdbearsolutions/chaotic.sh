@@ -5,7 +5,7 @@ from app.api.deps import (
     CurrentUser, is_in_team_directory, can_read_team_data,
     is_eligible_project_member, is_project_scoped_agent,
 )
-from app.api.visibility import team_hidden, visible_project
+from app.api.visibility import team_hidden, visible_project, team_data_refused
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.services.project_service import GATE_SETTINGS, ProjectChangedError, ProjectService
 from app.services.team_service import TeamService
@@ -81,7 +81,7 @@ async def create_project(
     project_service = ProjectService()
 
     if not await can_read_team_data(current_user, team_id):
-        raise team_hidden()
+        raise await team_data_refused(current_user, team_id)
 
     existing_project = await project_service.get_by_key(team_id, project_in.key)
     if existing_project:
@@ -122,7 +122,7 @@ async def list_projects(
         return [ProjectResponse.model_validate(project) for project in confined[skip:skip + limit]]
 
     if not await can_read_team_data(current_user, team_id):
-        raise team_hidden()
+        raise await team_data_refused(current_user, team_id)
 
     projects = await project_service.list_by_team(team_id, skip, limit)
     return [ProjectResponse.model_validate(project) for project in projects]

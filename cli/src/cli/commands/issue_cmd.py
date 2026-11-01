@@ -259,11 +259,16 @@ def _issue_query(m, *, where, status, priority, sprint, no_sprint, epic, label,
         exclude_labels=_csv(exclude_label),
     )
     text = where[0] if len(where) == 1 else " ".join(f"({w})" for w in where)
-    result = _client().query_issues(
-        project_id=project_id, team_id=team_id, where=text,
-        filter_json=json.dumps({"match": "all", "rows": rows}) if rows else None,
-        order=order_text, skip=skip or None, limit=limit,
-    )
+    def run(confined_to):
+        return _client().query_issues(
+            project_id=confined_to or project_id, team_id=None if confined_to else team_id, where=text,
+            filter_json=json.dumps({"match": "all", "rows": rows}) if rows else None,
+            order=order_text, skip=skip or None, limit=limit,
+        )
+
+    # --all-projects reads team-wide, which a project-scoped agent is
+    # refused: it gets every project it can see, its own (CHT-1955).
+    result = team_wide_or_agent_project(team_id, run) if team_id else run(None)
     _print_issue_list(
         m, result["issues"], all_projects=all_projects, project_id=project_id,
         team_id=team_id, limit=limit, skip=skip, total=result["total"],
@@ -403,16 +408,21 @@ def register(cli):
             sprint_id = m.resolve_sprint_id(sprint, project_id)
         else:
             sprint_id = None
-        issues = _client().get_issues(
-            project_id=project_id, team_id=team_id, status=status, priority=priority,
-            sprint_id=sprint_id, limit=limit, parent_id=parent_id,
-            sort_by=sort_by, order=order, label=label, search=search,
-            skip=skip or None, assignee_id=assignee_id,
-            exclude_label=exclude_label, exclude_status=exclude_status,
-            exclude_priority=exclude_priority,
-            exclude_issue_type=exclude_issue_type,
-            exclude_assignee_id=exclude_assignee_id,
-        )
+        def listing(confined_to):
+            return _client().get_issues(
+                project_id=confined_to or project_id, team_id=None if confined_to else team_id,
+                status=status, priority=priority,
+                sprint_id=sprint_id, limit=limit, parent_id=parent_id,
+                sort_by=sort_by, order=order, label=label, search=search,
+                skip=skip or None, assignee_id=assignee_id,
+                exclude_label=exclude_label, exclude_status=exclude_status,
+                exclude_priority=exclude_priority,
+                exclude_issue_type=exclude_issue_type,
+                exclude_assignee_id=exclude_assignee_id,
+            )
+
+        # --all-projects for a project-scoped agent: its own project (CHT-1955).
+        issues = team_wide_or_agent_project(team_id, listing) if team_id else listing(None)
 
         _print_issue_list(
             m, issues, all_projects=all_projects, project_id=project_id,
@@ -528,10 +538,14 @@ def register(cli):
             )
 
         if all_projects:
-            issues = _client().get_ready_issues(
-                team_id=m.get_current_team(), mine=mine,
-                include_assigned=include_assigned, limit=limit,
-            )
+            # Team-wide; a project-scoped agent gets its own project (CHT-1955).
+            def ready(confined_to):
+                scope = {"project_id": confined_to} if confined_to else {"team_id": m.get_current_team()}
+                return _client().get_ready_issues(
+                    **scope, mine=mine, include_assigned=include_assigned, limit=limit,
+                )
+
+            issues = team_wide_or_agent_project(m.get_current_team(), ready)
         else:
             issues = _client().get_ready_issues(
                 project_id=m.get_current_project(), mine=mine,
@@ -597,12 +611,19 @@ def register(cli):
         m = _main()
         project_id = None if search_all else m.get_current_project()
 
-        issues = _client().search_issues(m.get_current_team(), query, project_id, limit=limit, status=status)
+        team_id = m.get_current_team()
+
+        def search(confined_to):
+            return _client().search_issues(team_id, query, confined_to or project_id, limit=limit, status=status)
+
+        # Without a project the search is team-wide; a project-scoped
+        # agent gets its own project (CHT-1955).
+        issues = search(None) if project_id else team_wide_or_agent_project(team_id, search)
         if m.is_json_output():
             m.output_json(issues or [])
             return
         if not issues:
-            scope = "" if search_all else " in current project"
+            scope = " in current project" if project_id else ""
             console.print(f"[yellow]No issues found matching '{esc(query)}'{esc(scope)}.[/yellow]")
             return
 
@@ -1723,7 +1744,13 @@ def register(cli):
         """Show recent team activity (comments, status changes, etc.)."""
         m = _main()
         team_id = m.get_current_team()
-        activities = _client().get_team_activities(team_id, limit=limit)
+        # The team's feed; a project-scoped agent gets its own project's
+        # (CHT-1955), as `await` already does.
+        activities = team_wide_or_agent_project(
+            team_id, lambda confined_to: _client().get_team_activities(
+                team_id, limit=limit, **({"project_id": confined_to} if confined_to else {}),
+            ),
+        )
 
         if m.is_json_output():
             m.output_json(activities or [])

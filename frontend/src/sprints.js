@@ -18,6 +18,7 @@ import { approveRitual, completeGateRitual } from './rituals-view.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { viewIssue } from './issue-detail-view.js';
 import { viewDocument, showCreateSprintDocumentModal } from './documents.js';
+import { lastResult, rememberResult, resultKey, sameResult } from './last-result.js';
 
 // State
 let sprints = [];
@@ -69,8 +70,10 @@ let loadSprintsRequestId = 0;
 
 // Resolves false when the sprints could not be fetched (the list then shows
 // its own error state); anything else means the list is current or a newer
-// load superseded this one.
-export async function loadSprints() {
+// load superseded this one. `fromMemory`: entering the view, paint what it
+// showed last time for this project at once (CHT-1973); off for a reload
+// after a change, which would repaint the state before it.
+export async function loadSprints({ fromMemory = false } = {}) {
     // Reset the keyboard cursor before the skeleton wipe destroys the selected
     // card — a stale index would positionally clamp into the re-rendered list
     // and Enter could open the wrong sprint (CHT-1291 review; mirrors loadBoard).
@@ -93,9 +96,16 @@ export async function loadSprints() {
 
     invalidateSprintCache();
 
-    // Show loading skeleton (CHT-1160)
+    // A revisit paints the sprints shown last time for this project at
+    // once, and the requests below refresh them (CHT-1973). Else the
+    // loading skeleton (CHT-1160).
     const list = document.getElementById('sprints-list');
-    if (list) {
+    const key = resultKey();
+    const shown = fromMemory ? lastResult('sprints', key) : undefined;
+    if (shown) {
+        sprints = shown;
+        renderSprints();
+    } else if (list) {
         list.innerHTML = Array(3).fill(0).map(() => `
             <div class="skeleton-list-item">
                 <div style="flex: 1">
@@ -107,12 +117,23 @@ export async function loadSprints() {
     }
 
     try {
-        await api.getCurrentSprint(projectId);
-        const fetched = await api.getSprints(projectId);
+        // GET /current creates the project's sprints when it has none; the
+        // list does not. Both go out at once, and only a list without an
+        // active sprint (the first visit to a new project) is asked for
+        // again: in series they cost a round trip every visit (CHT-1973).
+        const [, firstList] = await Promise.all([
+            api.getCurrentSprint(projectId),
+            api.getSprints(projectId),
+        ]);
+        const fetched = firstList.some(s => s.status === 'active')
+            ? firstList
+            : await api.getSprints(projectId);
         if (requestId !== loadSprintsRequestId) return; // a newer loadSprints() has since started — drop this stale response
 
+        const unchanged = shown && sameResult(sprints, fetched);
         sprints = fetched;
-        renderSprints();
+        rememberResult('sprints', key, fetched);
+        if (!unchanged) renderSprints();
         await loadLimboStatus();
     } catch (e) {
         if (requestId !== loadSprintsRequestId) return;

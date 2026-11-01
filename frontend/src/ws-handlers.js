@@ -21,6 +21,7 @@ import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { api } from './api.js';
 import { showAuthScreen } from './auth.js';
+import { forgetResults, forgetResultsUnlessOpen } from './last-result.js';
 import { loadGateApprovals } from './gate-approvals.js';
 import { loadInbox, refreshInboxUnreadCount, isInboxEventAlreadyApplied, recordInboxEvent } from './inbox.js';
 
@@ -148,6 +149,8 @@ function handleLiveFeedForbidden() {
 }
 
 function handleIssueCreated(data) {
+    // A closed view's remembered result is stale now (CHT-1973).
+    forgetResultsUnlessOpen(getCurrentView(), 'board', 'sprints', 'epics');
     // Check for duplicates - by real ID OR by optimistic temp ID with matching title
     const currentIssues = getIssues();
     const existingIndex = currentIssues.findIndex(i => i.id === data.id);
@@ -219,6 +222,8 @@ function handleIssueCreated(data) {
 }
 
 function handleIssueUpdated(data) {
+    // A closed view's remembered result is stale now (CHT-1973).
+    forgetResultsUnlessOpen(getCurrentView(), 'board', 'sprints', 'epics');
     // Every cached list holding this issue reads its row from the store
     // (CHT-1894), so one write keeps them all current.
     upsertIssue(data);
@@ -269,6 +274,8 @@ function handleIssueUpdated(data) {
 }
 
 function handleIssueDeleted(data) {
+    // A closed view's remembered result is stale now (CHT-1973).
+    forgetResultsUnlessOpen(getCurrentView(), 'board', 'sprints', 'epics');
     removeIssue(data.id);
     // Remove from local arrays
     setIssues(getIssues().filter(i => i.id !== data.id));
@@ -406,6 +413,7 @@ function handleComment(data) {
  * navigates away instead (mirrors handleIssueDeleted below).
  */
 function handleDocument(data, { type } = {}) {
+    forgetResultsUnlessOpen(getCurrentView(), 'documents'); // CHT-1973
     refreshDocumentsListIfActive();
     if (type === 'deleted') {
         handleRemoteDocumentDeleted(data.id, data.title);
@@ -491,6 +499,7 @@ function refreshSprintView() {
 }
 
 function handleSprint(data, { type } = {}) {
+    forgetResultsUnlessOpen(getCurrentView(), 'sprints'); // CHT-1973
     // Another client completing/rotating a sprint changes which sprint is
     // "current" — drop the cached ids unconditionally (cheap, safe on any
     // view) so an Issues view filtering by Current Sprint re-resolves
@@ -523,6 +532,9 @@ function handleSprint(data, { type } = {}) {
  */
 function handleReconnected() {
     const view = getCurrentView();
+    // Events missed while disconnected may have changed any view: keep
+    // only the open one, which is refetched below (CHT-1973).
+    forgetResults();
     // The unread badge is visible from every view, not just 'inbox', so
     // refresh it unconditionally on any reconnect (cheap: one count query).
     refreshInboxUnreadCount();

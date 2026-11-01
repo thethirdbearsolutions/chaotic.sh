@@ -99,6 +99,10 @@ import {
     setCachedCurrentSprintId,
     clearCachedCurrentSprintIds,
 } from './sprints.js';
+import { forgetResults } from './last-result.js';
+
+// Each test starts with no remembered view results (CHT-1973).
+beforeEach(() => forgetResults());
 
 // Actions registered at module import time — capture before vi.clearAllMocks wipes them
 const sprintsActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
@@ -234,6 +238,48 @@ describe('loadSprints', () => {
         expect(api.getCurrentSprint).toHaveBeenCalledWith('p1');
         expect(api.getSprints).toHaveBeenCalledWith('p1');
         expect(getSprints()).toHaveLength(1);
+    });
+
+    // CHT-1973: /current and the list went out in series on every visit.
+    it('asks for /current and the list at once', async () => {
+        api.getCurrentSprint.mockReturnValue(new Promise(() => {}));
+        api.getSprints.mockReturnValue(new Promise(() => {}));
+        setState('currentProject', 'p1');
+        loadSprints();
+        await Promise.resolve();
+        expect(api.getCurrentSprint).toHaveBeenCalledWith('p1');
+        expect(api.getSprints).toHaveBeenCalledWith('p1');
+    });
+
+    it('asks for the list again when the first had no active sprint', async () => {
+        api.getCurrentSprint.mockResolvedValue({ id: 's1' });
+        api.getSprints
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ id: 's1', name: 'Sprint 1', status: 'active' }]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+        setState('currentProject', 'p1');
+        await loadSprints();
+        expect(api.getSprints).toHaveBeenCalledTimes(2);
+        expect(getSprints()).toHaveLength(1);
+    });
+
+    it('paints the last sprints at once on entry, and only then', async () => {
+        api.getCurrentSprint.mockResolvedValue({ id: 's1' });
+        api.getSprints.mockResolvedValue([{ id: 's1', name: 'Cached sprint', status: 'active' }]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+        setState('currentProject', 'p1');
+        await loadSprints();
+
+        api.getCurrentSprint.mockReturnValue(new Promise(() => {}));
+        loadSprints({ fromMemory: true });
+        const list = document.getElementById('sprints-list');
+        expect(list.textContent).toContain('Cached sprint');
+        expect(list.innerHTML).not.toContain('skeleton');
+
+        // A reload after a change (sprint close) shows the skeleton, not
+        // the sprints before the change.
+        loadSprints();
+        expect(list.textContent).not.toContain('Cached sprint');
     });
 
     it('resets the keyboard cursor on (re)load (CHT-1291 review)', async () => {

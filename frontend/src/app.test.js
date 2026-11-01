@@ -241,7 +241,7 @@ import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { viewDocument } from './documents.js';
 import { viewSprintByPath, viewSprint } from './sprints.js';
-import { viewProjectSettings, clearProjectSettingsState, setOnRitualsChanged } from './projects.js';
+import { viewProjectSettings, clearProjectSettingsState, setOnRitualsChanged, loadProjects, renderProjects } from './projects.js';
 import { setCurrentUser, setCurrentDetailIssue, setCurrentDetailSprints, setCurrentProject } from './state.js';
 import { loadGateApprovals } from './gate-approvals.js';
 import { loadEpics } from './epics.js';
@@ -425,6 +425,29 @@ describe('app.js view registrations', () => {
         expect(showCachedIssuesOrSkeleton).toHaveBeenCalled();
         expect(loadFiltersFromUrl.mock.invocationCallOrder[0])
             .toBeLessThan(showCachedIssuesOrSkeleton.mock.invocationCallOrder[0]);
+    });
+
+    // CHT-1973: entering these views paints the last result first; their
+    // other callers (reloads after a change) must not.
+    it('entering Board, Sprints, Epics or Documents asks for the last result', () => {
+        registeredViews['board']();
+        registeredViews['sprints']();
+        registeredViews['epics']();
+        registeredViews['documents']();
+        expect(loadBoard).toHaveBeenCalledWith({ fromMemory: true });
+        expect(loadSprints).toHaveBeenCalledWith({ fromMemory: true });
+        expect(loadEpics).toHaveBeenCalledWith({ fromMemory: true });
+        expect(loadDocuments).toHaveBeenCalledWith(null, null, { fromMemory: true });
+    });
+
+    // CHT-1973: the projects are in memory from boot; paint them before
+    // the refresh answers.
+    it('projects view paints the known projects at once, then refreshes', async () => {
+        loadProjects.mockReturnValueOnce(new Promise(() => {}));
+        renderProjects.mockClear();
+        registeredViews['projects']();
+        expect(renderProjects).toHaveBeenCalledTimes(1);
+        expect(loadProjects).toHaveBeenCalled();
     });
 
     it('team view loads members, agents, and invitations', () => {

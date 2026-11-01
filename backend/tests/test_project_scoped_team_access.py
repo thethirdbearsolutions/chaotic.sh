@@ -15,6 +15,7 @@ document listing.
 import pytest
 import pytest_asyncio
 
+from app.api.visibility import PROJECT_SCOPED_TEAM_DATA_DETAIL, TEAM_HIDDEN_DETAIL
 from app.mcp_server import context, tools
 from app.oxyde_models.document import OxydeDocument, OxydeDocumentComment
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueComment
@@ -68,11 +69,27 @@ class TestRefused:
         "/api/issues/comments?team_id={team}",
         "/api/teams/{team}/documents",
         "/api/teams/{team}/templates",
+        "/api/teams/{team}/issues/query",
     ])
     async def test_team_wide_read(self, client, proj_agent, test_team, path):
         _, headers = proj_agent
         response = await client.get(path.format(team=test_team.id), headers=headers)
         assert response.status_code == 403, response.text
+        # Its own team: told why, not "Not authorized to access this team",
+        # which sent session identities looking for a membership problem
+        # (CHT-1955).
+        assert response.json()["detail"] == PROJECT_SCOPED_TEAM_DATA_DETAIL
+
+    async def test_another_team_keeps_the_generic_refusal(self, client, proj_agent, db):
+        """A team it is not in answers as before, one text for every team
+        (CHT-1842): the reason is given only where it reveals nothing."""
+        other = await OxydeTeam.objects.create(name="Other", key="OTH")
+        _, headers = proj_agent
+        for path in (f"/api/teams/{other.id}/templates", f"/api/issues/activities?team_id={other.id}",
+                     "/api/teams/no-such-team/templates"):
+            response = await client.get(path, headers=headers)
+            assert response.status_code == 403, path
+            assert response.json()["detail"] == TEAM_HIDDEN_DETAIL, path
 
     async def test_sibling_project_filters(self, client, proj_agent, test_team, sibling):
         _, headers = proj_agent
@@ -128,12 +145,14 @@ class TestRefused:
             f"/api/teams/{test_team.id}/projects", json={"name": "Rogue", "key": "ROG"}, headers=headers,
         )
         assert response.status_code == 403
+        assert response.json()["detail"] == PROJECT_SCOPED_TEAM_DATA_DETAIL
 
     async def test_update_label(self, client, proj_agent, test_label):
         # A rename changes the label on every project's issues.
         _, headers = proj_agent
         response = await client.patch(f"/api/labels/{test_label.id}", json={"name": "Renamed"}, headers=headers)
         assert response.status_code == 403
+        assert response.json()["detail"] == PROJECT_SCOPED_TEAM_DATA_DETAIL
 
     async def test_assignee_query_is_confined(self, client, proj_agent, test_project, sibling, test_user):
         # `issue mine` queries by assignee alone; that used to cover the team.
