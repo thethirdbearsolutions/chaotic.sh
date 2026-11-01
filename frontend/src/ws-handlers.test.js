@@ -918,6 +918,14 @@ describe('ws-handlers.js', () => {
             expect(loadInbox).toHaveBeenCalledWith({ background: true });
         });
 
+        it('reloads the inbox list when entries were resolved elsewhere (CHT-1927)', () => {
+            getCurrentUser.mockReturnValue({ id: 'user-1' });
+            getCurrentView.mockReturnValue('inbox');
+            dispatch({ type: 'resolved', entity: 'inbox', data: { id: 'entry-1', recipient_user_id: 'user-1' } });
+            expect(loadInbox).toHaveBeenCalledWith({ background: true });
+            expect(refreshInboxUnreadCount).toHaveBeenCalled();
+        });
+
         it('skips the reload for an event this client already shows (our own read echo)', () => {
             getCurrentUser.mockReturnValue({ id: 'user-1' });
             getCurrentView.mockReturnValue('inbox');

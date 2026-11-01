@@ -772,6 +772,17 @@ class InboxService:
             from app.services.push_sender import push_resolved
 
             await push_resolved(settling)
+            # An open inbox page drops the settled rows without a refetch
+            # of its own (CHT-1927). The web client reloads its list on
+            # any event addressed to it, so one per recipient is enough;
+            # a bulk resolve (a deleted project) must not send one reload
+            # per entry.
+            told: set[tuple[str, str]] = set()
+            for entry in settling:
+                key = (entry.team_id, entry.recipient_user_id)
+                if entry.team_id and key not in told:
+                    told.add(key)
+                    await self._broadcast(entry.team_id, "resolved", entry)
         return unread
 
     async def _mark_read_for_resolve(self, filters: dict) -> int:
