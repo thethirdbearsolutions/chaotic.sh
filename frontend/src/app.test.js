@@ -170,6 +170,8 @@ vi.mock('./dashboard.js', () => ({
     loadDashboardActivity: vi.fn(),
     loadSprintStatus: vi.fn(),
     filterMyIssues: vi.fn(),
+    getSelectedMyIssueIndex: vi.fn(() => -1),
+    setSelectedMyIssueIndex: vi.fn(),
 }));
 vi.mock('./board.js', () => ({ loadBoard: vi.fn() }));
 vi.mock('./issue-detail-view.js', () => ({
@@ -798,9 +800,17 @@ describe('app.js keyboard handler wiring', () => {
         expect(sidebarNavCallCount).toBe(1);
     });
 
-    it('creates simple list-nav handlers for the sprints and epics views (CHT-1291)', () => {
-        expect(simpleNavCallCount).toBe(2);
-        expect(simpleNavViews).toEqual(expect.arrayContaining(['sprints', 'epics']));
+    it('creates simple list-nav handlers for the sprints, epics and dashboard views (CHT-1291, CHT-1963)', () => {
+        expect(simpleNavCallCount).toBe(3);
+        expect(simpleNavViews).toEqual(expect.arrayContaining(['sprints', 'epics', 'my-issues']));
+    });
+
+    it('dashboard open() clicks the row title, the same path as a pointer click (CHT-1963)', () => {
+        const cfg = simpleNavConfigs.find((c) => c.view === 'my-issues');
+        expect(cfg.selector).toBe('#my-issues-list .issue-row');
+        const click = vi.fn();
+        cfg.open({ querySelector: (sel) => (sel === '.issue-title' ? { click } : null) });
+        expect(click).toHaveBeenCalled();
     });
 
     it('sprints open() calls viewSprint with the row sprint id (CHT-1291)', () => {

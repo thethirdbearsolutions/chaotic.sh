@@ -38,7 +38,7 @@
     --bg-hover: #30363d;
     --text-primary: #f0f6fc;
     --text-secondary: #8b949e;
-    --text-muted: #6e7681;
+    --text-muted: #7d8590; /* 4.5:1+ on the dark surfaces (CHT-1988 review) */
     --border-color: #30363d;
     --accent-color: #6366f1;
     --accent-hover: #5558e3;
@@ -2960,16 +2960,16 @@ input[type="checkbox"] {
    size keeps the scrollbar right for rows it has not laid out yet.
    ======================================== */
 
-#issues-list .issue-row {
+:is(#issues-list, #my-issues-list) .issue-row {
     content-visibility: auto;
     contain-intrinsic-size: auto 44px;
 }
 
-#issues-list .issue-row:hover {
+:is(#issues-list, #my-issues-list) .issue-row:hover {
     background: var(--row-hover);
 }
 
-#issues-list .issue-row.keyboard-selected {
+:is(#issues-list, #my-issues-list) .issue-row.keyboard-selected {
     background: var(--row-cursor);
     outline: none;
     box-shadow: inset 3px 0 0 var(--row-cursor-edge);
@@ -2977,7 +2977,7 @@ input[type="checkbox"] {
 
 /* Desktop: one line per row. Phones keep their two-line rows. */
 @media (min-width: 769px) {
-    #issues-list.list {
+    :is(#issues-list, #my-issues-list).list {
         gap: 0;
     }
 
@@ -3036,7 +3036,7 @@ input[type="checkbox"] {
         margin-bottom: 0;
     }
 
-    #issues-list .issue-row {
+    :is(#issues-list, #my-issues-list) .issue-row {
         min-height: 0;
         height: var(--row-height);
         padding: 0 10px 0 12px;
@@ -3046,52 +3046,52 @@ input[type="checkbox"] {
         contain-intrinsic-size: auto var(--row-height);
     }
 
-    #issues-list .issue-row-left {
+    :is(#issues-list, #my-issues-list) .issue-row-left {
         min-height: 0;
         gap: 6px;
     }
 
-    #issues-list .issue-row-right {
+    :is(#issues-list, #my-issues-list) .issue-row-right {
         flex-wrap: nowrap;
         gap: 4px;
     }
 
-    #issues-list .issue-icon-btn {
+    :is(#issues-list, #my-issues-list) .issue-icon-btn {
         width: 22px;
         height: 22px;
     }
 
     /* These two hold text badges: they size to it (CHT-1914; the fixed
        width above clipped "Sprint 132" to its first letter). */
-    #issues-list .issue-icon-btn.sprint-btn,
-    #issues-list .issue-icon-btn.estimate-btn {
+    :is(#issues-list, #my-issues-list) .issue-icon-btn.sprint-btn,
+    :is(#issues-list, #my-issues-list) .issue-icon-btn.estimate-btn {
         width: auto;
         min-width: 22px;
         padding: 0 2px;
     }
 
-    #issues-list .issue-row .issue-identifier {
+    :is(#issues-list, #my-issues-list) .issue-row .issue-identifier {
         font-size: 12.5px;
         min-width: 62px;
     }
 
-    #issues-list .issue-row .issue-title {
+    :is(#issues-list, #my-issues-list) .issue-row .issue-title {
         font-size: var(--font-base);
         font-weight: 450;
     }
 
-    #issues-list .issue-row .issue-type-badge {
+    :is(#issues-list, #my-issues-list) .issue-row .issue-type-badge {
         font-size: 10.5px;
         padding: 0 5px;
         line-height: 16px;
     }
 
     /* Task is the default type: only the others earn a badge */
-    #issues-list .issue-row[data-issue-type="task"] .issue-type-badge {
+    :is(#issues-list, #my-issues-list) .issue-row[data-issue-type="task"] .issue-type-badge {
         display: none;
     }
 
-    #issues-list .issue-row .issue-date {
+    :is(#issues-list, #my-issues-list) .issue-row .issue-date {
         font-size: 12px;
         color: var(--text-muted);
         font-variant-numeric: tabular-nums;
@@ -3099,7 +3099,7 @@ input[type="checkbox"] {
         text-align: right;
     }
 
-    #issues-list .issue-row .issue-label {
+    :is(#issues-list, #my-issues-list) .issue-row .issue-label {
         font-size: 11px;
         padding: 0 6px;
         line-height: 16px;
@@ -3114,12 +3114,12 @@ input[type="checkbox"] {
    the title about 80px at 769px. Up to 1100px the labels and the date
    give way, and the sprint name is capped, so the title keeps the room. */
 @media (min-width: 769px) and (max-width: 1100px) {
-    #issues-list .issue-row .issue-labels,
-    #issues-list .issue-row .issue-date {
+    :is(#issues-list, #my-issues-list) .issue-row .issue-labels,
+    :is(#issues-list, #my-issues-list) .issue-row .issue-date {
         display: none;
     }
 
-    #issues-list .issue-row .sprint-badge {
+    :is(#issues-list, #my-issues-list) .issue-row .sprint-badge {
         max-width: 72px;
     }
 }
@@ -3127,14 +3127,14 @@ input[type="checkbox"] {
 /* Phones keep two-line rows, about 72-88px tall: estimate that, so the
    scrollbar doesn't jump as rows off screen are laid out (CHT-1914). */
 @media (max-width: 768px) {
-    #issues-list .issue-row {
+    :is(#issues-list, #my-issues-list) .issue-row {
         contain-intrinsic-size: auto 80px;
     }
 }
 
 /* content-visibility clips paint to the row, so a focus ring drawn
    outside it would be cut off: draw focus rings inside the row. */
-#issues-list .issue-row :focus-visible {
+:is(#issues-list, #my-issues-list) .issue-row :focus-visible {
     outline-offset: -2px;
 }
 
@@ -4012,7 +4012,7 @@ input[type="checkbox"] {
 
 .sprint-status-project {
     font-size: var(--font-xs);
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -4074,7 +4074,7 @@ input[type="checkbox"] {
 
 .sprint-status-points {
     font-size: var(--font-xs);
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     white-space: nowrap;
 }
 
@@ -4110,7 +4110,7 @@ input[type="checkbox"] {
 
 .sprint-count-label {
     font-size: 11px;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
 }
 
 .sprint-count-label.status-done { color: var(--success, #22c55e); }
@@ -6375,7 +6375,7 @@ input[type="checkbox"] {
 }
 
 .attestation-note-header .attestation-time {
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-size: var(--font-sm);
 }
 
@@ -6686,7 +6686,7 @@ input[type="checkbox"] {
 }
 
 .ticket-ritual-attestation .attestation-time {
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     margin-left: 8px;
     font-size: var(--font-sm);
 }
@@ -6707,7 +6707,7 @@ input[type="checkbox"] {
 }
 
 .ticket-ritual-meta {
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-size: var(--font-sm);
     margin-top: 4px;
 }
@@ -6736,7 +6736,7 @@ input[type="checkbox"] {
     font-size: var(--font-xs);
     font-weight: 700;
     letter-spacing: 0.5px;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
 }
 
 .sprint-now .sprint-card-label {
@@ -6830,7 +6830,7 @@ input[type="checkbox"] {
 }
 
 .sprint-history-budget {
-    color: var(--text-tertiary);
+    color: var(--text-muted);
 }
 
 .sprint-burndown-card {
@@ -6868,7 +6868,7 @@ input[type="checkbox"] {
     display: block;
     margin-top: 4px;
     font-size: var(--font-sm);
-    color: var(--text-tertiary);
+    color: var(--text-muted);
 }
 
 
@@ -6948,7 +6948,7 @@ input[type="checkbox"] {
 
 .agent-meta {
     font-size: var(--font-sm);
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -9809,4 +9809,186 @@ body.theme-light .picker-popover {
 @media (pointer: coarse) {
     .picker-btn { height: 40px; }
     .picker-option { padding: 10px 8px; }
+}
+
+/* ========================================
+   Dashboard (CHT-1963): your work first. "Assigned to me" is the main
+   column, grouped by status in workflow order with the dense rows of the
+   Issues view; active sprints and recent activity sit in a side rail.
+   Phones stack them, the list still first.
+   ======================================== */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 24px;
+    align-items: start;
+}
+.dashboard-main > .section-header,
+.dashboard-rail .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 0 0 8px;
+}
+.dashboard-main > .section-header h3,
+.dashboard-rail .section-header h3 {
+    font-size: var(--font-sm);
+    letter-spacing: 0.3px;
+}
+.section-count {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+#my-issues-list.list {
+    gap: 0;
+}
+.dash-group + .dash-group {
+    border-top: 1px solid var(--border-color);
+}
+.dash-group-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 0 12px;
+    height: 32px;
+    background: var(--bg-tertiary);
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.dash-group-count {
+    font-weight: 400;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+.dash-group-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-muted);
+}
+.dash-group-dot.status-in_progress { background: var(--warning-color); }
+.dash-group-dot.status-in_review { background: #8b5cf6; }
+.dash-group-dot.status-todo { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-secondary); }
+.dash-group-dot.status-backlog { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-muted); }
+.dash-group-dot.status-done { background: var(--success-color); }
+#my-issues-list .issue-row {
+    border-bottom: 0;
+}
+.dash-group-more {
+    display: block;
+    width: 100%;
+    height: 32px;
+    padding: 0 12px;
+    border: 0;
+    border-top: 1px solid var(--border-color);
+    background: none;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--font-sm);
+    text-align: left;
+    cursor: pointer;
+}
+.dash-group-more:hover {
+    background: var(--row-hover);
+    color: var(--text-primary);
+}
+.dash-group-more:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
+}
+/* The list column is narrower than the Issues view: drop row metadata by
+   the column's width, not the window's. */
+.dashboard-main {
+    container-type: inline-size;
+    min-width: 0;
+}
+@container (max-width: 640px) {
+    #my-issues-list .issue-row .issue-labels,
+    #my-issues-list .issue-row .issue-date {
+        display: none;
+    }
+    #my-issues-list .issue-row .sprint-badge {
+        max-width: 72px;
+    }
+}
+#my-issues-list .issue-row + .issue-row {
+    border-top: 1px solid var(--border-color);
+}
+
+/* Rail: compact sprint cards and a one-line-per-entry activity feed */
+.dashboard-rail .dashboard-sprint-status {
+    margin-bottom: 20px;
+}
+.dashboard-rail .sprint-status-cards {
+    grid-template-columns: 1fr;
+    gap: 8px;
+}
+.dashboard-rail .sprint-status-card {
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+}
+.dashboard-rail .dashboard-activity {
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: 0;
+}
+.dashboard-rail .activity-list {
+    gap: 0;
+}
+.dashboard-rail .activity-item {
+    gap: 8px;
+    padding: 6px 0;
+    align-items: baseline;
+}
+.dashboard-rail .activity-icon {
+    width: 16px;
+    height: 16px;
+    font-size: 12px;
+    align-self: center;
+}
+.dashboard-rail .activity-content {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0 8px;
+    min-width: 0;
+}
+.dashboard-rail .activity-text {
+    grid-column: 1;
+    font-size: var(--font-sm);
+    line-height: 1.4;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+.dashboard-rail .activity-actor {
+    grid-column: 1;
+    grid-row: 2;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+.dashboard-rail .activity-time {
+    grid-column: 2;
+    grid-row: 1;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1280px) {
+    .dashboard-grid {
+        grid-template-columns: minmax(0, 1fr) 280px;
+        gap: 16px;
+    }
+}
+@media (max-width: 1024px) {
+    .dashboard-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }

@@ -77,6 +77,9 @@ import {
     renderDashboardActivity,
     showMyIssuesLoadingSkeleton,
     filterMyIssues,
+    groupMyIssues,
+    getSelectedMyIssueIndex,
+    setSelectedMyIssueIndex,
 } from './dashboard.js';
 
 // Actions registered at module import time — capture before vi.clearAllMocks wipes them
@@ -147,6 +150,16 @@ describe('dashboard module', () => {
             await loadMyIssues();
 
             expect(setDetailNavContext).toHaveBeenCalledWith(mockIssues);
+        });
+
+        it('holds issues in rendered (grouped) order, so prev/next and j/k walk the list as shown', async () => {
+            api.getTeamIssues.mockResolvedValue([
+                { id: 'b', status: 'backlog' }, { id: 'p', status: 'in_progress' }, { id: 't', status: 'todo' },
+            ]);
+            getCurrentView.mockReturnValue('my-issues');
+            await loadMyIssues();
+            expect(getMyIssues().map(i => i.id)).toEqual(['p', 't', 'b']);
+            expect(setDetailNavContext.mock.calls.at(-1)[0].map(i => i.id)).toEqual(['p', 't', 'b']);
         });
 
         // CHT-1211 review #2: a slow loadMyIssues() response landing after
@@ -510,6 +523,106 @@ describe('dashboard module', () => {
 
             // Should not throw
             renderMyIssues();
+        });
+
+        it('groups rows under status headers in workflow order (CHT-1963)', () => {
+            setMyIssues([
+                { id: 'a', title: 'A', status: 'backlog' },
+                { id: 'b', title: 'B', status: 'in_progress' },
+                { id: 'c', title: 'C', status: 'done' },
+                { id: 'd', title: 'D', status: 'in_progress' },
+            ]);
+            renderMyIssues();
+            const headers = [...document.querySelectorAll('.dash-group-header')].map(h => h.textContent.replace(/\s+/g, ' ').trim());
+            expect(headers).toEqual(['In progress 2', 'Backlog 1', 'Done 1']);
+            const sections = document.querySelectorAll('.dash-group[role="group"]');
+            expect(sections[0].getAttribute('aria-labelledby')).toBe('dash-group-in_progress');
+            expect(sections[0].querySelectorAll('.issue-row').length).toBe(2);
+        });
+
+        it('shows the total in the section count and resets the keyboard cursor', () => {
+            document.body.insertAdjacentHTML('beforeend', '<span id="my-issues-count"></span>');
+            setSelectedMyIssueIndex(3);
+            setMyIssues([{ id: 'a', title: 'A', status: 'todo' }, { id: 'b', title: 'B', status: 'todo' }]);
+            renderMyIssues();
+            expect(document.getElementById('my-issues-count').textContent).toBe('2');
+            expect(getSelectedMyIssueIndex()).toBe(-1);
+            setMyIssues([]);
+            renderMyIssues();
+            expect(document.getElementById('my-issues-count').textContent).toBe('');
+        });
+    });
+
+    describe('keyboard cursor and order across re-renders (CHT-1963 review)', () => {
+        beforeEach(() => {
+            renderIssueRow.mockImplementation((issue) => `<div class="issue-row" data-issue-id="${issue.id}">${issue.title}</div>`);
+        });
+
+        it('puts the cursor back on the same issue after a re-render that moved it', () => {
+            setMyIssues([{ id: 'a', title: 'A', status: 'todo' }, { id: 'b', title: 'B', status: 'todo' }]);
+            renderMyIssues();
+            setSelectedMyIssueIndex(1); // on b
+            setMyIssues([{ id: 'a', title: 'A', status: 'todo' }, { id: 'b', title: 'B', status: 'in_progress' }]);
+            renderMyIssues();
+            expect(getSelectedMyIssueIndex()).toBe(0);
+            expect(document.querySelector('.keyboard-selected').dataset.issueId).toBe('b');
+        });
+
+        it('drops the cursor when its issue is gone, and Escape-style -1 forgets it', () => {
+            setMyIssues([{ id: 'a', title: 'A', status: 'todo' }]);
+            renderMyIssues();
+            setSelectedMyIssueIndex(0);
+            setMyIssues([{ id: 'z', title: 'Z', status: 'todo' }]);
+            renderMyIssues();
+            expect(getSelectedMyIssueIndex()).toBe(-1);
+            setSelectedMyIssueIndex(-1);
+            setMyIssues([{ id: 'a', title: 'A', status: 'todo' }]);
+            renderMyIssues();
+            expect(document.querySelector('.keyboard-selected')).toBeNull();
+        });
+
+        it('normalises any writer (a live prepend) to grouped order and updates the nav context', () => {
+            getCurrentView.mockReturnValue('my-issues');
+            setMyIssues([{ id: 'new', title: 'N', status: 'backlog' }, { id: 'p', title: 'P', status: 'in_progress' }]);
+            renderMyIssues();
+            expect(getMyIssues().map(i => i.id)).toEqual(['p', 'new']);
+            expect(setDetailNavContext.mock.calls.at(-1)[0].map(i => i.id)).toEqual(['p', 'new']);
+        });
+
+        it('gives focus back to the same control on the rebuilt row', () => {
+            renderIssueRow.mockImplementation((issue) => `<div class="issue-row" data-issue-id="${issue.id}"><button data-dropdown-type="status">s</button><a class="issue-title" href="#">${issue.title}</a></div>`);
+            setMyIssues([{ id: 'a', title: 'A', status: 'todo' }, { id: 'b', title: 'B', status: 'todo' }]);
+            renderMyIssues();
+            document.querySelector('[data-issue-id="b"] [data-dropdown-type="status"]').focus();
+            setMyIssues([{ id: 'a', title: 'A', status: 'todo' }, { id: 'b', title: 'B', status: 'done' }]);
+            renderMyIssues();
+            expect(document.activeElement.closest('.issue-row').dataset.issueId).toBe('b');
+            expect(document.activeElement.dataset.dropdownType).toBe('status');
+        });
+
+        it('shows five Done rows with a Show all button that expands the group', () => {
+            const done = Array.from({ length: 8 }, (_, i) => ({ id: `d${i}`, title: `D${i}`, status: 'done' }));
+            setMyIssues(done);
+            renderMyIssues();
+            expect(document.querySelectorAll('.issue-row').length).toBe(5);
+            const more = document.querySelector('.dash-group-more');
+            expect(more.textContent).toBe('Show all 8');
+            dashboardActions['dash-show-all'](new Event('click'), { status: 'done' });
+            expect(document.querySelectorAll('.issue-row').length).toBe(8);
+            expect(document.querySelector('.dash-group-more')).toBeNull();
+        });
+    });
+
+    describe('groupMyIssues', () => {
+        it('orders groups by workflow, drops empty ones, and keeps unknown statuses last', () => {
+            const groups = groupMyIssues([
+                { id: 1, status: 'todo' },
+                { id: 2, status: 'weird' },
+                { id: 3, status: 'in_review' },
+                { id: 4, status: 'canceled' },
+            ]);
+            expect(groups.map(g => g.status)).toEqual(['in_review', 'todo', 'canceled', 'other']);
+            expect(groups[3].issues.map(i => i.id)).toEqual([2]);
         });
     });
 
