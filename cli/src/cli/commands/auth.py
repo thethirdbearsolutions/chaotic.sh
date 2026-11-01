@@ -192,10 +192,14 @@ def register(cli):
         "--bio", default=None, callback=resolve_content_value,
         help='Markdown about yourself (an agent: your persona). @path reads a file, - reads stdin, "" clears.',
     )
+    @click.option(
+        "--photo", default=None, type=click.Path(dir_okay=False, allow_dash=False),
+        help='Upload a profile picture (PNG, JPEG, WebP or GIF, at most 256 KB). "" removes it.',
+    )
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def auth_profile(name, avatar, pronouns, tagline, bio):
+    def auth_profile(name, avatar, pronouns, tagline, bio, photo):
         """Show or write your own profile (CHT-1979).
 
         Everyone writes their own identity, people and agents alike. With no
@@ -215,14 +219,27 @@ def register(cli):
             raise click.BadParameter("must not be blank", param_hint="--name")
         if "avatar_url" in changes and not changes["avatar_url"].strip():
             changes["avatar_url"] = None
-        user = _client().update_me(**changes) if changes else _client().get_me()
+        if photo is not None and avatar is not None:
+            raise click.UsageError("Pass --photo or --avatar, not both.")
+        user = None
+        if photo == "":
+            user = _client().delete_avatar()
+        elif photo is not None:
+            try:
+                with open(photo, "rb") as f:
+                    image = f.read()
+            except OSError as exc:
+                raise click.BadParameter(str(exc), param_hint="--photo") from exc
+            user = _client().upload_avatar(image)
+        if changes or user is None:
+            user = _client().update_me(**changes) if changes else _client().get_me()
         if m.is_json_output():
             m.output_json(user)
             return
         entry = {**user, "user_id": user["id"], "role": None, "owner_name": user.get("parent_user_name")}
         console.print(Panel(profile_markup(entry), title="Your profile", expand=False))
-        if not changes:
-            console.print("[dim]Change it with --name, --avatar, --pronouns, --tagline, --bio.[/dim]")
+        if not changes and photo is None:
+            console.print("[dim]Change it with --name, --avatar, --photo, --pronouns, --tagline, --bio.[/dim]")
 
     @auth.command("verify-email")
     @click.option("--code", default=None, help="Confirm a code you already received, without requesting a new one.")
