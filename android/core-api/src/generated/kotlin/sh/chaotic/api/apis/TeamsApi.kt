@@ -513,7 +513,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * GET /api/teams/{team_id}/roster
         * Team Roster
-        * Everyone on the team, people and agents, each with the identity they wrote for themselves (CHT-1980): name, avatar, pronouns, tagline, bio and @handle. People first (owners, admins, members), then agents, each by name. Deactivated accounts are left out.  Readable by anyone in the team directory (CHT-1780), project-scoped agents included; anyone else gets the missing team&#39;s 404 (CHT-1785). No addresses: the roster is who people are, not how to mail them.
+        * Everyone on the team, people and agents, each with the identity they wrote for themselves (CHT-1980): name, avatar, pronouns, tagline, bio and @handle. People first (owners, admins, members), then agents, each by name. Deactivated accounts are left out.  Readable by anyone in the team directory (CHT-1780), project-scoped agents included; anyone else gets the missing team&#39;s 404 (CHT-1785), through &#x60;&#x60;visible_team&#x60;&#x60; as its sibling &#x60;&#x60;/teams/{id}/agents&#x60;&#x60; does, so the roster and the agent list answer an outsider alike. No addresses: the roster is who people are, not how to mail them. An agent&#39;s owner is named even when deactivated: it is who made it.
          * @param teamId  
          * @param hideIdle Leave out idle session identities (keys unused for 7 days). (optional, default to false)
          * @return kotlin.collections.List<RosterEntry>

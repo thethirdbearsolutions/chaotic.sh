@@ -648,7 +648,7 @@
           "teams"
         ],
         "summary": "Team Roster",
-        "description": "Everyone on the team, people and agents, each with the identity\nthey wrote for themselves (CHT-1980): name, avatar, pronouns,\ntagline, bio and @handle. People first (owners, admins, members),\nthen agents, each by name. Deactivated accounts are left out.\n\nReadable by anyone in the team directory (CHT-1780), project-scoped\nagents included; anyone else gets the missing team's 404 (CHT-1785).\nNo addresses: the roster is who people are, not how to mail them.",
+        "description": "Everyone on the team, people and agents, each with the identity\nthey wrote for themselves (CHT-1980): name, avatar, pronouns,\ntagline, bio and @handle. People first (owners, admins, members),\nthen agents, each by name. Deactivated accounts are left out.\n\nReadable by anyone in the team directory (CHT-1780), project-scoped\nagents included; anyone else gets the missing team's 404 (CHT-1785),\nthrough ``visible_team`` as its sibling ``/teams/{id}/agents`` does,\nso the roster and the agent list answer an outsider alike. No\naddresses: the roster is who people are, not how to mail them.\nAn agent's owner is named even when deactivated: it is who made it.",
         "operationId": "team_roster_api_teams__team_id__roster_get",
         "security": [
           {
