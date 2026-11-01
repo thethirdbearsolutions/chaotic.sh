@@ -2373,6 +2373,15 @@ describe('Leaving the sidebar for the content (CHT-1959)', () => {
         }
     });
 
+    it('leaves modified j/k to the sidebar and the palette', () => {
+        const link = document.querySelector('.nav-item');
+        link.focus();
+        expect(yieldsToSidebar({ key: 'k', metaKey: true, target: link })).toBe(true);
+        expect(yieldsToSidebar({ key: 'k', ctrlKey: true, target: link })).toBe(true);
+        expect(yieldsToSidebar({ key: 'j', altKey: true, target: link })).toBe(true);
+        expect(document.activeElement).toBe(link);
+    });
+
     it('never yields when focus is outside the sidebar', () => {
         const list = document.getElementById('issues-list');
         expect(yieldsToSidebar({ key: 'ArrowDown', target: list })).toBe(false);

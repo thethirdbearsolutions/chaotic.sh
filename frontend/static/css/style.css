@@ -2285,7 +2285,10 @@ select:focus-visible {
     outline: none;
     color: var(--text-primary);
     background: var(--bg-hover);
-    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
+    /* A full-height edge plus a hairline ring, so focus reads apart from
+       both hover and the active link's short marker. */
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge),
+                inset 0 0 0 1px var(--row-cursor-edge);
 }
 
 /* Navigation parks focus on the content region so j/k work at once
@@ -2299,6 +2302,8 @@ select:focus-visible {
    drew a second box inside it (CHT-1960). */
 .inbox-row.keyboard-selected .inbox-row-toggle:focus-visible {
     outline: none;
+    box-shadow: 0 0 0 1px var(--row-cursor-edge);
+    border-radius: 4px;
 }
 
 /* Smooth hover for grid items */
@@ -2744,6 +2749,7 @@ input[type="checkbox"] {
 .kanban-card.keyboard-selected {
     border-color: var(--row-cursor-edge);
     background: var(--row-cursor);
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
 }
 
 .kanban-card-title {

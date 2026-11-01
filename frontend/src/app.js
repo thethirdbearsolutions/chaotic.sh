@@ -482,7 +482,10 @@ function initSidebarNav() {
             e.preventDefault();
             navigateTo(item.dataset.view);
             // Leave the sidebar so j/k drive the new view at once (CHT-1959).
-            focusMainContent();
+            // Only for a pointer click: Enter on a focused link (detail 0)
+            // keeps focus in the sidebar for arrow roving (CHT-1289); j/k
+            // from there still reach the list through yieldsToSidebar.
+            if (e.detail > 0) focusMainContent();
         });
     });
 

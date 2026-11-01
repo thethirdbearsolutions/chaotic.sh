@@ -292,7 +292,9 @@ export function focusMainContent() {
  */
 export function yieldsToSidebar(e) {
     if (!e.target.closest?.('.sidebar-nav')) return false;
-    if (e.key === 'j' || e.key === 'k') {
+    // Only a bare j/k is taken: Cmd/Ctrl+K belongs to the palette.
+    const bare = !e.metaKey && !e.ctrlKey && !e.altKey;
+    if (bare && (e.key === 'j' || e.key === 'k')) {
         focusMainContent();
         return false;
     }

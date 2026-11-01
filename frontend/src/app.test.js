@@ -897,8 +897,18 @@ describe('initSidebarNav DOM bindings', () => {
     // CHT-1959: focus left on the link made the list ignore j/k until a click.
     it('nav click moves focus off the sidebar into the content', () => {
         focusMainContent.mockClear();
-        container.querySelector('[data-view="issues"]').click();
+        const link = container.querySelector('[data-view="issues"]');
+        link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
         expect(focusMainContent).toHaveBeenCalled();
+    });
+
+    it('Enter on a focused nav link keeps focus in the sidebar (CHT-1289)', () => {
+        focusMainContent.mockClear();
+        const link = container.querySelector('[data-view="issues"]');
+        // Keyboard activation dispatches a click with detail 0.
+        link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }));
+        expect(navigateTo).toHaveBeenCalledWith('issues');
+        expect(focusMainContent).not.toHaveBeenCalled();
     });
 
     it('modified nav click leaves focus alone', () => {
