@@ -116,7 +116,7 @@ class TestWaitForServiceSettled:
 _COMMITS = ("19ae385deployed", "ab71cd5newer")
 
 
-def _upgrade(args=("--no-backup",), **overrides):
+def _upgrade(args=("--no-backup",), yes=True, **overrides):
     """Run `system upgrade --yes` with every collaborator mocked. Default:
     a forward upgrade of a running server where everything succeeds."""
     commits = iter(_COMMITS)
@@ -149,7 +149,7 @@ def _upgrade(args=("--no-backup",), **overrides):
     patches.update(overrides)
     with ExitStack() as stack:
         mocks = {name: stack.enter_context(patch(f"cli.system.{name}", **kw)) for name, kw in patches.items()}
-        result = CliRunner().invoke(system.system, ["upgrade", "--yes", *args])
+        result = CliRunner().invoke(system.system, ["upgrade", *(["--yes"] if yes else []), *args])
     return result, mocks
 
 
@@ -346,7 +346,7 @@ class TestUpgradeFromStopped:
 def _migrate_fails(message="Migration failed:\n0030 boom", started=True, raises=None):
     """A run_migrations stand-in that records how far it got, as the real
     one does, then fails (or raises)."""
-    def run(fake_initial=False, progress=None):
+    def run(fake_initial=False, progress=None, reinstall=True):
         if progress is not None:
             progress["migrate_started"] = started
         if raises is not None:
@@ -545,7 +545,7 @@ class TestFailedMigrationRealRestore:
         backup = tmp_path / "chaotic.db.backup-20261014-000000"
         backup.write_bytes(db.read_bytes())
 
-        def half_migrate(fake_initial=False, progress=None):
+        def half_migrate(fake_initial=False, progress=None, reinstall=True):
             progress["migrate_started"] = True
             _sqlite_db(db, 3)  # what a migration that failed partway left behind
             return False, "Migration failed:\n0030 boom"
@@ -602,7 +602,7 @@ class TestFailedMigrationRealRestore:
         db = tmp_path / "chaotic.db"
         holder = {}
 
-        def half_migrate_and_hang_on(fake_initial=False, progress=None):
+        def half_migrate_and_hang_on(fake_initial=False, progress=None, reinstall=True):
             progress["migrate_started"] = True
             _sqlite_db(db, 3)
             conn = sqlite3.connect(db, isolation_level=None)
@@ -818,10 +818,10 @@ class TestRollbackResync:
             ("resync", {"reinstall": False, "abandoned_commit": _COMMITS[1]}), ("start",),
         ]
         out = _flat(result.output)
-        # The upgrade's CLI was installed and verified: it stays.
+        # The CLI is reinstalled only after a healthy start (CHT-2000), so
+        # a health failure never touched it.
         assert "Re-syncing dependencies for the previous version" in out
-        assert "CLI: keeping the version this upgrade installed and verified" in out
-        assert "re-run the upgrade rather than 'chaotic system reconfigure'" in out
+        assert "CLI: unchanged (the upgrade never reinstalled it)" in out
         assert "may not match" not in out
         assert "Rolled back to previous version" in out
 
@@ -830,7 +830,7 @@ class TestRollbackResync:
         """A run_migrations that records progress as the real one does and
         fails at `stage`: "sync" (before the CLI reinstall), "reinstall"
         (it started and did not verify) or "migrate" (after it verified)."""
-        def run(fake_initial=False, progress=None):
+        def run(fake_initial=False, progress=None, reinstall=True):
             progress.update(
                 cli_reinstall_started=stage in ("reinstall", "migrate"),
                 cli_installed=stage == "migrate",
@@ -906,8 +906,8 @@ class TestRollbackResync:
         out = _flat(result.output)
         assert "Dependency sync failed: error: no network" in out
         assert "its virtualenv may not match the code. Starting it anyway" in out
-        assert "just sync-backend" in out and "uv tool install" not in out  # the verified new CLI stays
-        assert "CLI: keeping the version this upgrade installed" in out
+        assert "just sync-backend" in out and "uv tool install" not in out  # the CLI was never touched
+        assert "CLI: unchanged (the upgrade never reinstalled it)" in out
         # No second rollback: one checkout back, one re-sync, one restart.
         assert [c.args for c in m["checkout_version"].call_args_list] == [(_COMMITS[1],), (_COMMITS[0],)]
         m["resync_checkout"].assert_called_once()
@@ -1465,11 +1465,13 @@ class TestUpgradeRepeatsThePathWarning:
     behind the migrations and the restart."""
 
     def test_the_last_lines_carry_the_warning(self):
-        def migrate(fake_initial=False, progress=None):
+        # The CLI is reinstalled after the start (CHT-2000); that step is
+        # what records the warning now, not run_migrations.
+        def reinstall(progress):
             progress.update(cli_installed=True, cli_path_warning="`chaotic` on this shell's PATH is /opt/x")
-            return True, "Migrations applied"
+            return True, "CLI reinstalled", False
 
-        result, _ = _upgrade(run_migrations=dict(side_effect=migrate))
+        result, _ = _upgrade(_reinstall_cli_after_upgrade=dict(side_effect=reinstall))
         assert result.exit_code == 0, result.output
         tail = result.output[result.output.index("Upgraded to"):]
         assert "Warning: `chaotic` on this shell's PATH is /opt/x" in _flat(tail)

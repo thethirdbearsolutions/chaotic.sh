@@ -21,6 +21,16 @@ and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) version
   directives); a unit it cannot rewrite stays as it is, see `chaotic
   system config adopt`. `system stop` still closes the port. This needs
   `flock` (util-linux). macOS is unchanged (CHT-1970).
+- **A shorter upgrade window.** `system upgrade` now reinstalls the CLI
+  after the new server is up and answering, not while it is stopped. A
+  reinstall that fails there leaves the upgraded server running and exits
+  non-zero, saying how to reinstall. uvicorn's graceful drain on stop is
+  3s, down from 10s, and the health check polls every 0.2s. "Server was
+  down for" now counts from before the stop and lists each step's share.
+  The post-start reinstall runs under `nice`, and on Linux the upgrade
+  reports connections the kernel dropped at a full listen queue during the
+  window, since their clients retry with backoff well past the restart
+  (CHT-2000).
 
 ## [0.1.2] - 2026-11-01
 

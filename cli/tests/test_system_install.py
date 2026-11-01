@@ -103,7 +103,7 @@ class TestSystemInstallRepeatsThePathWarning:
     installed is repeated in the closing summary."""
 
     def test_summary_carries_the_warning(self, tmp_path):
-        def migrate(fake_initial=False, progress=None):
+        def migrate(fake_initial=False, progress=None, reinstall=True):
             progress.update(cli_installed=True, cli_path_warning="`chaotic` is not on this shell's PATH")
             return True, "Migrations applied"
 

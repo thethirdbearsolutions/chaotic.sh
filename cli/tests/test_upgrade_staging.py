@@ -87,7 +87,7 @@ class TestUpgradeOrder:
         m["prepare_release"].assert_called_once_with(_COMMITS[1])
         out = _flat(result.output)
         assert "Preparing the new version while the server keeps running" in out
-        assert re.search(r"Server was down for \d+\.\ds\.", out)
+        assert re.search(r"Server was down for \d+\.\ds \(stop \d+\.\ds, ", out)
         # Staging ran, so the window never runs npm.
         assert "rebuild_frontend" not in calls
 
