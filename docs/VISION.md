@@ -2,7 +2,7 @@
 
 ## The One-Liner
 
-**Chaotic is agent-first project infrastructure: sprints and rituals give agents and people a shared rhythm, where spending a budget closes the sprint and closing it starts a reflection.**
+**Chaotic is agent-first project infrastructure: sprints and rituals give agents and people a shared rhythm, where a spent budget calls for a close and the close starts a reflection.**
 
 ---
 
@@ -63,11 +63,11 @@ Close the current sprint to continue; a spent budget ends a sprint, not a date.
 
 So whoever is working closes the sprint. Closing is where the reflection happens: it may run the project's rituals before the next sprint starts.
 
-**Why this matters**: Agents don't have a natural sense of "enough". A budget gives the work a beat. Spending it ends the sprint, and the close is the moment for the agent's own reflection and for people to look in.
+**Why this matters**: Agents reach for reflection but have no natural moment for it. A budget gives the work a beat and supplies that moment. Spending it calls for a close, and the close is the moment for the agent's own reflection and for people to look in.
 
 ### 3. Rituals & Limbo
 
-When a sprint closes, it can enter **limbo**: the sprint is done but the next one hasn't started. Limbo ends when the sprint's **rituals** are answered.
+When a sprint closes, it can enter **limbo**: the sprint is done but the next one hasn't started. Limbo ends when the sprint's **rituals** are attested, and approved where a ritual's mode asks for a person (section 4).
 
 Order matters: sprint-level (`every_sprint`) rituals can only be attested
 *after* the sprint has been closed and entered limbo, not before. This is
@@ -93,7 +93,7 @@ The agent answers each ritual via the CLI:
 chaotic ritual attest "reprioritize-backlog" --note "Moved CHT-45 to top, deprioritized CHT-12"
 ```
 
-Once every ritual is answered, the next sprint starts.
+Once every ritual is attested (and approved, where its mode asks for that), the next sprint starts.
 
 **Why this matters**: Rituals are the retro. Instead of plowing from one sprint into the next, the agent stops to reprioritize, test, document or simply reflect, and leaves a record people can read. The interruption is the feature.
 
@@ -113,8 +113,7 @@ This creates a spectrum you can dial up or down per-project, per-ritual:
 
 The agent experiences this as CLI behavior. For `auto` rituals, attestation succeeds and work continues. For `review` rituals:
 ```
-Error: Ritual 'architecture-review' is pending human approval.
-Check back later or notify your human.
+Ritual 'architecture-review' attested, pending human approval.
 ```
 
 The power is in the optionality. Agents can run the whole loop themselves, and people can add a review exactly where they want one.
@@ -210,7 +209,7 @@ Same as above, but step 1 the human configured "run-tests" with `review` mode:
 8. **Agent** checks again, limbo clears, next sprint is active
 9. **Agent** continues working
 
-From the agent's side, some rituals clear at once and some wait for a person's review; the CLI says which, and the agent can keep working elsewhere meanwhile.
+From the agent's side, some rituals clear at once and some wait for a person's review; the CLI says which. While limbo lasts, nobody in the project can claim or close tickets, so the agent can work in other projects meanwhile.
 
 ---
 
@@ -237,7 +236,7 @@ They could even complement each other: Beads for the agent's working memory duri
 
 Linear is excellent human-first project management. But:
 
-1. **No rhythm**: Linear's cycles are calendar boxes. In Chaotic a spent budget ends the sprint, and arrears makes closing it the next step for everyone.
+1. **No work-driven rhythm**: Linear's cycles are calendar boxes. In Chaotic a spent budget calls for a close, and arrears makes closing it the next step for everyone.
 
 2. **No ritual system**: Linear has no concept of "answer these questions at the close before the next sprint starts."
 
@@ -255,9 +254,9 @@ Use Chaotic if agents do much of the work and you want a shared rhythm without g
 
 1. **CLI is the agent's world.** Every rule and ritual shows up as CLI (and MCP) behavior, with the next step spelled out. The agent doesn't need the web UI to know where it stands.
 
-2. **Errors are directions.** When the team sets a rule, an agent meets it as a message that says what to do next, never a bare refusal.
+2. **Errors are directions.** When the team sets a rule, an agent meets it as a message that says what to do next.
 
-3. **Interruption is the feature.** Budgets, arrears, limbo, rituals: they all exist to create natural stopping points. Agents don't stop on their own; the loop gives them a place to.
+3. **Interruption is the feature.** Budgets, arrears, limbo, rituals: they all exist to create natural stopping points. Agents have no natural moment to stop; the loop gives them one.
 
 4. **Opinions are features.** Now/Next, mandatory budgets, ritual attestation - these are opinionated. That's the point. For a shared loop, structure beats flexibility.
 
@@ -280,6 +279,6 @@ Use Chaotic if agents do much of the work and you want a shared rhythm without g
 
 Chaotic is infrastructure for a loop that agents and people share. Agents work in the CLI and over MCP; people work in the web UI and can join in anywhere.
 
-Sprint budgets set the rhythm. Spending one ends the sprint, and arrears makes closing it the next step. The close starts the retro: rituals give agents a time and a place for the reflection they already reach for. People add their review where they want it.
+Sprint budgets set the rhythm. Spending one calls for a close, and arrears makes closing it the next step. The close starts the retro: rituals give agents a time and a place for the reflection they already reach for. People add their review where they want it.
 
 The agent experiences all of this as plain CLI behavior: commands that work, and messages that say what comes next.
