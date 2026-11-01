@@ -236,14 +236,21 @@ class RestBackend:
         return None, team_id
 
     async def team_for_project(self, project_id: str | None) -> str:
-        # The profile's (or the key's only) team is the only team this
-        # server can see.
-        return await self._require_team()
+        # The profile's (or the key's only, CHT-1687) team owns the current
+        # project. Any other project -- a `project` argument, a parent's --
+        # can be in another team the key sees, and names are looked up
+        # there (CHT-1951, as the CLI does for labels since CHT-1709).
+        if not project_id or project_id == _main().get_current_project():
+            return await self._require_team()
+        return (await self._call(self._client().get_project, project_id))["team_id"]
 
     async def resolve_assignee(
         self, value: str, team_id: str, project_id: str | None = None, purpose: str = "assign",
     ) -> str:
-        return await self._call(_main().resolve_assignee_id, value)
+        # Among the members and agents of `team_id`, the team the caller
+        # resolved (team_for_project / resolve_team, which apply the
+        # CHT-1687 only-team fallback), not the profile's current team.
+        return await self._call(_main().resolve_assignee_id, value, team_id or await self._require_team())
 
     async def resolve_sprint(self, value: str, project_id: str) -> str:
         return await self._call(_main().resolve_sprint_id, value, project_id)

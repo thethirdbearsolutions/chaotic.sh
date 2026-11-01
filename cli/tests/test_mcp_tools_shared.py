@@ -13,10 +13,12 @@ either transport.
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import json
 import pathlib
 import re
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -1356,14 +1358,52 @@ class TestIssueCreateAssignee:
         assert fake.calls_to("create_issue") == []
 
 
-def _server(backend):
+    async def test_the_assignee_is_looked_up_in_the_projects_team_not_the_default(self, fake):
+        """The project's team (team_for_project), not the caller's default
+        team (resolve_team): a project or parent can be in another team the
+        key sees, and a name can mean someone else there (PR #497 review)."""
+        async def team_for_project(project_id):
+            fake._rec("team_for_project", project_id)
+            return "team-of-the-project"
+
+        fake.team_for_project = team_for_project
+        await _tools(fake)["issue_create"](title="T", assignee="Sam")
+        assert fake.calls_to("resolve_assignee") == [
+            (("Sam", "team-of-the-project"), {"project_id": "proj-1", "purpose": "assign"})
+        ]
+
+
+@asynccontextmanager
+async def _session(backend):
+    """A real ClientSession against a real MCPServer carrying the tools
+    bound to `backend`, over in-memory streams: the guard is server
+    middleware, which only a request through the protocol reaches."""
+    import anyio
+    from mcp.client.session import ClientSession
     from mcp.server.mcpserver import MCPServer
+    from mcp.shared.memory import create_client_server_memory_streams
 
     from chaotic_mcp_tools import add_tools
 
     mcp = MCPServer(name="t")
     add_tools(mcp, bind_all(backend))
-    return mcp
+    async with create_client_server_memory_streams() as ((client_read, client_write), (server_read, server_write)):
+        lowlevel = mcp._lowlevel_server
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(
+                functools.partial(lowlevel.run, raise_exceptions=True),
+                server_read, server_write, lowlevel.create_initialization_options(),
+            )
+            async with ClientSession(client_read, client_write) as session:
+                await session.initialize()
+                yield session
+            tg.cancel_scope.cancel()
+
+
+async def _call(session, name, arguments):
+    result = await session.call_tool(name, arguments)
+    assert result.is_error is not True
+    return json.loads(result.content[0].text)
 
 
 class TestUnknownArgumentsAreRefused:
@@ -1372,65 +1412,76 @@ class TestUnknownArgumentsAreRefused:
     issue and said nothing."""
 
     async def test_issue_create_names_the_unknown_argument_and_creates_nothing(self, fake):
-        from mcp.server.mcpserver.exceptions import ToolError
-
-        with pytest.raises(ToolError) as exc:
-            await _server(fake).call_tool("issue_create", {"title": "T", "asignee": "Look"})
-        message = str(exc.value)
-        assert "does not take the argument 'asignee' (did you mean 'assignee'?)" in message
-        assert "nothing was done" in message and "It accepts: assignee, description," in message
+        async with _session(fake) as session:
+            result = await _call(session, "issue_create", {"title": "T", "asignee": "Look"})
+        error = result["error"]
+        assert error["error_code"] == "unknown_argument"
+        assert error["message"].startswith(
+            "issue_create does not take the argument 'asignee' (did you mean 'assignee'?); nothing was done. "
+            "It accepts: assignee, description,"
+        )
+        assert error["unknown_arguments"] == ["asignee"]
+        assert "title" in error["accepted_arguments"]
         assert fake.calls == []
 
     async def test_several_unknown_arguments_are_all_named(self, fake):
-        from mcp.server.mcpserver.exceptions import ToolError
-
-        with pytest.raises(ToolError) as exc:
-            await _server(fake).call_tool("issue_create", {"title": "T", "labels": ["x"], "blocks": ["CHT-1"]})
-        assert "does not take the arguments 'blocks', 'labels'" in str(exc.value)
+        async with _session(fake) as session:
+            result = await _call(session, "issue_create", {"title": "T", "labels": ["x"], "blocks": ["CHT-1"]})
+        assert "does not take the arguments 'blocks', 'labels'" in result["error"]["message"]
+        assert result["error"]["unknown_arguments"] == ["blocks", "labels"]
         assert fake.calls == []
 
     async def test_known_arguments_still_work(self, fake):
-        result = await _server(fake).call_tool("issue_create", {"title": "T", "assignee": "me"})
-        assert result.is_error is not True
-        assert fake.calls_to("create_issue")[0][1]["assignee_id"] == "user-me"
+        async with _session(fake) as session:
+            result = await _call(session, "issue_create", {"title": "T", "assignee": "me"})
+        assert result["assignee_id"] == "user-me"
 
-    async def test_every_tool_refuses_an_unknown_argument_and_says_so_in_its_schema(self):
-        from mcp.server.mcpserver.exceptions import ToolError
-
+    async def test_every_tool_refuses_an_unknown_argument(self):
         for team_param in (False, True):
             fake = FakeBackend(team_param=team_param)
-            mcp = _server(fake)
-            tools = await mcp.list_tools()
-            assert len(tools) == len(ALL_TOOLS)
-            for tool in tools:
-                assert tool.input_schema.get("additionalProperties") is False, tool.name
-                with pytest.raises(ToolError, match="'not_a_parameter'"):
-                    await mcp.call_tool(tool.name, {"not_a_parameter": 1})
+            async with _session(fake) as session:
+                names = [t.name for t in (await session.list_tools()).tools]
+                assert sorted(names) == sorted(t.__name__ for t in ALL_TOOLS)
+                for name in names:
+                    result = await _call(session, name, {"not_a_parameter": 1})
+                    assert result["error"]["error_code"] == "unknown_argument", name
+                    assert "'not_a_parameter'" in result["error"]["message"], name
             assert fake.calls == []
 
-    async def test_team_is_unknown_where_it_is_not_advertised(self):
-        """The stdio server does not advertise `team`; a caller passing it
-        there is told, rather than having it ignored."""
-        from mcp.server.mcpserver.exceptions import ToolError
+    @pytest.mark.parametrize("team_param", [False, True])
+    async def test_team_and_project_are_scope_hints_every_tool_tolerates(self, team_param):
+        """Agents pass `team`/`project` on every call, and the stdio server
+        always ignored `team` (PR #497 review, finding 4). A tool that does
+        not declare one gets the call without it; one that does gets it."""
+        fake = FakeBackend(team_param=team_param)
+        async with _session(fake) as session:
+            viewed = await _call(session, "issue_view", {"identifier": "CHT-1", "team": "ENG", "project": "CHT"})
+            assert viewed["identifier"] == "CHT-1"
+            created = await _call(session, "issue_create", {"title": "T", "team": "ENG", "project": "CHT"})
+            assert "error" not in created
+        assert fake.calls_to("resolve_project") == [(("CHT", "ENG" if team_param else None), {})]
 
-        fake = FakeBackend(team_param=False)
-        with pytest.raises(ToolError, match="'team'"):
-            await _server(fake).call_tool("issue_create", {"title": "T", "team": "ENG"})
-
-    def test_a_server_without_the_sdk_internals_still_registers(self, caplog):
-        """If a future SDK moves the tool manager, registration still
-        succeeds (with a warning) rather than taking the server down."""
+    def test_a_server_without_a_middleware_chain_is_refused_at_startup(self):
+        """No public hook, no guard: registration fails loudly rather than
+        serving tools that drop arguments they do not recognise."""
         from chaotic_mcp_tools import add_tools
 
         class BareServer:
-            def __init__(self):
-                self.added = []
-
             def add_tool(self, fn, description):
-                self.added.append(fn.__name__)
+                raise AssertionError("must refuse before registering anything")
 
-        server = BareServer()
-        with caplog.at_level("WARNING"):
-            add_tools(server, bind_all(FakeBackend()))
-        assert len(server.added) == len(ALL_TOOLS)
-        assert "could not make it refuse unknown arguments" in caplog.text
+        with pytest.raises(RuntimeError, match="cannot refuse unknown arguments"):
+            add_tools(BareServer(), bind_all(FakeBackend()))
+
+    async def test_one_guard_however_many_registrations(self, fake):
+        from mcp.server.mcpserver import MCPServer
+
+        from chaotic_mcp_tools import add_tools
+        from chaotic_mcp_tools.registry import UnknownArgumentGuard
+
+        mcp = MCPServer(name="t")
+        tools = bind_all(fake)
+        add_tools(mcp, tools[:3])
+        add_tools(mcp, tools[3:])
+        guards = [m for m in mcp.middleware if isinstance(m, UnknownArgumentGuard)]
+        assert len(guards) == 1 and len(guards[0].accepted) == len(ALL_TOOLS)

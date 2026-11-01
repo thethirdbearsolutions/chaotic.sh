@@ -254,7 +254,7 @@ Every tool returns a JSON object. Failures come back as
 MCP protocol-level error (ADR-0006): `message` is always a sentence you
 can show or reason over, `error_code` is present whenever the failure has
 a stable name (`sprint_in_arrears`, `claim_rituals_pending`,
-`already_claimed`, `assignee_changed`, `tool_input`, `validation_error`,
+`already_claimed`, `assignee_changed`, `tool_input`, `unknown_argument`, `validation_error`,
 `unexpected`, ...), and governance
 errors keep their structure (`pending_rituals`, `arrears_by`, `override`
 hints) so you can act on them without parsing prose. A claim/close refused
@@ -277,16 +277,16 @@ no tool ever returns a `notice` of its own. (The CLI's own `--json` mode keeps i
 flat `{"error": "..."}` string -- that contract is for shells and exit
 codes, this one is for models.)
 
-Arguments are checked against the tool's `inputSchema` before the tool
-runs, and that check is the one failure that is not the envelope: it
-comes back as a tool result with `isError: true` and the validator's
-text. That covers a wrong type or an enum value off the list, and, since
-CHT-1951, an argument the tool does not take: every schema says
-`additionalProperties: false`, and a call with an unknown argument is
-refused, naming it (with the closest accepted name, when there is one)
-and listing what the tool does accept. Nothing is done. Before, it was
-dropped without a word, so `issue_create(assignee=...)` made unassigned
-issues.
+An argument the tool does not take is refused before the tool runs
+(CHT-1951), with `error_code: unknown_argument`, `unknown_arguments` and
+`accepted_arguments`; the message names each one, with the closest
+accepted name when there is one. Nothing is done. Before, it was dropped
+without a word, so `issue_create(assignee=...)` made unassigned issues.
+`team` and `project` are the exception: any tool takes them, and one
+that does not declare them ignores them, as a scope hint its other
+arguments already settle. (A wrong type, or an enum value off the list,
+is still the SDK's own check: a result with `isError: true` and the
+validator's text, not the envelope.)
 
 **List tools return compact rows.** `issue_list`, `issue_ready`, `doc_list`
 and `project_list` return a projection of each row (for issues:

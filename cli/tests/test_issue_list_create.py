@@ -719,6 +719,18 @@ class TestIssueCreate:
         assert result.exit_code == 0, result.output
         assert client.create_issue.call_args.kwargs["assignee_id"] == "u-me"
 
+    def test_create_with_unassigned_is_the_default(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_members = MagicMock()
+        client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "CHT-2", "title": "X"})
+
+        result = cli_runner.invoke(cli, ['issue', 'create', 'X', '--assignee', 'Unassigned'])
+
+        assert result.exit_code == 0, result.output
+        assert "assignee_id" not in client.create_issue.call_args.kwargs
+        client.get_team_members.assert_not_called()
+
     def test_create_with_an_unknown_assignee_creates_nothing(self, cli_runner):
         from cli.main import cli, client
 

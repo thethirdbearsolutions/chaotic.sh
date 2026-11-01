@@ -790,6 +790,29 @@ class TestToolsCall:
         assert payload["comments"] == []
         assert payload["sub_issues"] == []
 
+    async def test_unknown_argument_is_refused_with_the_envelope(self, client, bearer_headers, test_project):
+        """CHT-1951 over the real /mcp app: an argument the tool does not
+        take is refused before it runs, as the usual error envelope."""
+        resp = await _tool_call(client, bearer_headers, "issue_create", {"title": "Nope", "asignee": "me"})
+        result = resp.json()["result"]
+        assert result.get("isError") is not True
+        error = json.loads(result["content"][0]["text"])["error"]
+        assert error["error_code"] == "unknown_argument"
+        assert error["unknown_arguments"] == ["asignee"]
+        listed = await _tool_call(client, bearer_headers, "issue_list", id=2)
+        assert json.loads(listed.json()["result"]["content"][0]["text"])["count"] == 0
+
+    async def test_scope_hints_are_tolerated_and_the_assignee_lands(
+        self, client, bearer_headers, test_project, test_user,
+    ):
+        resp = await _tool_call(client, bearer_headers, "issue_create",
+                                {"title": "Mine", "assignee": "me", "project": test_project.key})
+        created = json.loads(resp.json()["result"]["content"][0]["text"])
+        assert created["assignee_id"] == test_user.id, created
+        resp = await _tool_call(client, bearer_headers, "issue_view",
+                                {"identifier": created["identifier"], "project": test_project.key}, id=2)
+        assert json.loads(resp.json()["result"]["content"][0]["text"])["identifier"] == created["identifier"]
+
     async def test_issue_create_then_list_finds_it(self, client, bearer_headers, test_project):
         await _tool_call(client, bearer_headers, "issue_create", {"title": "Findable"})
         resp = await _tool_call(client, bearer_headers, "issue_list", id=2)

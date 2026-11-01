@@ -96,7 +96,6 @@
     "activity_recent": {
       "description": "Show recent team activity: comments, status changes, assignments, etc.\n\n`old_value`/`new_value` are cut to a 200-char preview (an edited\ndescription would otherwise ship two full bodies per row); use\nissue_view for the current text. Includes `count` and `truncated`.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "limit": {
             "default": 20,
@@ -127,7 +126,6 @@
     "doc_create": {
       "description": "Create a new document.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "content": {
             "anyOf": [
@@ -190,7 +188,6 @@
     "doc_link": {
       "description": "Link a document to an issue.\n\nThe link shows up in doc_view's `linked_issues`. Linking a pair\nthat's already linked is a no-op rather than an error.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "document_id": {
             "description": "Document id, exact title, or id prefix.",
@@ -214,7 +211,6 @@
     "doc_list": {
       "description": "List documents (project-scoped by default, team-wide with all_projects=true).\n\nCompact rows plus `count` and `truncated`; detail=true for full rows.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "all_projects": {
             "default": false,
@@ -270,7 +266,6 @@
     "doc_revision": {
       "description": "Fetch one revision snapshot of a document: its full title and content at that version.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "document_id": {
             "description": "Document id, exact title, or id prefix.",
@@ -295,7 +290,6 @@
     "doc_revisions": {
       "description": "List a document's revision history, newest first (CHT-1335).\n\nEvery doc_update that changes the title or content snapshots the\nPREVIOUS text as a revision, so this is what you check before\noverwriting a document you did not write, and how you recover text\nyou clobbered. Rows are light (version, title, author, created_at);\ndoc_revision fetches one snapshot's full content.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "document_id": {
             "description": "Document id, exact title, or id prefix.",
@@ -321,7 +315,6 @@
     "doc_unlink": {
       "description": "Remove the link between a document and an issue.\n\nRemoves only the association -- neither the document nor the issue\nis deleted.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "document_id": {
             "description": "Document id, exact title, or id prefix.",
@@ -345,7 +338,6 @@
     "doc_update": {
       "description": "Update a document's title, content, icon, or project.\n\nOnly the fields you pass are changed; omitted ones are left alone.\nEditing the title or content appends a new revision snapshot, so the\nprior version stays readable in the document's history -- an edit\nnever destroys what it replaced.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "content": {
             "anyOf": [
@@ -421,7 +413,6 @@
     "doc_view": {
       "description": "Show a document's content, comments, and linked issues.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "document_id": {
             "description": "Document id, exact title, or id prefix.",
@@ -439,7 +430,6 @@
     "inbox_list": {
       "description": "List the calling identity's inbox: what is waiting on YOU, newest first.\n\nThis is the human-to-agent handoff channel: an @mention of you in a\ncomment, an assignment, a GATE ritual an admin must complete, a\nREVIEW attestation awaiting approval. Check it when you start work\nand between tasks; nothing else on this surface delivers it. Rows\ncarry `kind`, a `title`, and the issue identifier / document title\nthey point at; `read_at` is null until inbox_mark_read.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "detail": {
             "default": false,
@@ -469,7 +459,6 @@
     "inbox_mark_all_read": {
       "description": "Mark every unread inbox entry for the calling identity as read.\n\nReturns `marked_count`. Read the entries first (inbox_list) -- this\nis how you acknowledge them, not how you find out what they said.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {},
         "title": "inbox_mark_all_readArguments",
         "type": "object"
@@ -478,7 +467,6 @@
     "inbox_mark_read": {
       "description": "Mark one inbox entry as read. Returns the updated entry; marking an\nentry that is already read is a no-op that returns it unchanged.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Inbox entry id, from inbox_list.",
@@ -496,7 +484,6 @@
     "issue_block": {
       "description": "Relate two issues: by default, `identifier` blocks `blocked`.\n\nDirection matters for `blocks` -- the issue named first is the one\nholding the other up, and it's the second one that stops showing up\nin issue_ready.\n\nFor closing a duplicate there is no single MCP tool: the CLI's\n`chaotic issue duplicate DUP ORIGINAL` does it in one step. Over MCP,\nrelate with relation_type='duplicates', then issue_comment, then\nissue_update status='canceled'.\n\nRe-relating an already-related pair is a no-op that returns the\nEXISTING relation -- including when you pass a different\nrelation_type, which is silently not applied. To change the type,\nissue_unblock the pair first, then relate it again.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "blocked": {
             "description": "The identifier of the issue on the other end of the relation, e.g. CHT-456.",
@@ -531,7 +518,6 @@
     "issue_comment": {
       "description": "Add a comment to an issue, optionally assigning it in the same call.\n\nAn @handle that reached nobody (unknown, or ambiguous: it names\nseveral principals) is reported back in `warnings`, an ambiguous one\nwith the unique handles to use instead (absent otherwise).",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "assign_to": {
             "anyOf": [
@@ -568,7 +554,6 @@
     "issue_create": {
       "description": "Create a new issue (optionally as a sub-issue of `parent`).\n\nAn `estimate` off the project's declared estimate_scale is stored as\ngiven and reported back in `warnings` (absent otherwise).",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "assignee": {
             "anyOf": [
@@ -684,7 +669,6 @@
     "issue_label": {
       "description": "Add and/or remove labels on an issue.\n\nAdditive and subtractive rather than replacing the whole set, so\nlabelling an issue never silently drops someone else's label. Labels\nmust already exist -- this does not create them, and no MCP tool\ndoes: create one with the CLI, `chaotic label create NAME`. Use\nlabel_list to see them, or pass a label id directly if your key is\nproject-scoped (label_list is team-scoped and needs a team-scoped key).\n\nAdding a label the issue already has, or removing one it doesn't\nhave, is a no-op rather than an error, so the same call is safe to\nrepeat.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "add": {
             "anyOf": [
@@ -734,7 +718,6 @@
     "issue_list": {
       "description": "List issues in a project (or team-wide with all_projects=true), with filters.\n\nReturns compact rows plus `count` and `truncated`; truncated=true means\n`limit` cut the list -- narrow the filter rather than assume you saw\neverything. Pass detail=true for full rows. With `where`, the result\nalso carries `total` (every match) and `where` (the query as the\nserver read it).",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "all_projects": {
             "default": false,
@@ -926,7 +909,6 @@
     "issue_ready": {
       "description": "List issues that are open, unblocked, and unclaimed -- what you can start right now.\n\nOpen + not-started (backlog/todo) only; excludes anything already\nin_progress/in_review/done/canceled, and excludes issues with an\nunresolved blocking relation. Priority-sorted (urgent first), then\noldest first. Unassigned by default -- `mine` restricts to your own\nassigned-but-not-started work, `include_assigned` widens to every\nnot-started issue regardless of assignee.\n\nPrefer this over issue_list when the question is \"what should I pick\nup\"; issue_list can filter by status and assignee but cannot express\n\"has no unresolved blocker\".\n\nScope is never widened silently: with no `project` and no current\nproject this refuses and says so, rather than answering with the\nwhole team's work. Pass `all_projects=true` to ask for that.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "all_projects": {
             "default": false,
@@ -981,7 +963,6 @@
     "issue_relations": {
       "description": "Show an issue's relations: what it blocks, what blocks it, duplicates, and related work.\n\nEach relation carries a `direction` (\"outgoing\"/\"incoming\") and its\nown `id` -- pass that id to issue_unblock to remove it. Incoming\n`blocks` edges are reported as `blocked_by`, so the relation_type\nalways reads from the perspective of the issue you asked about.\n\nWorth calling before issue_start: issue_view does not report\nblockers, so an issue can look startable there while being blocked.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "identifier": {
             "description": "Issue identifier, e.g. CHT-123.",
@@ -999,7 +980,6 @@
     "issue_revision": {
       "description": "Fetch one description-revision snapshot of an issue: the full text at that version.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "identifier": {
             "description": "Issue identifier, e.g. CHT-123.",
@@ -1024,7 +1004,6 @@
     "issue_revisions": {
       "description": "List an issue's description revisions, newest first (CHT-1335).\n\nEvery description edit snapshots the PREVIOUS text, so this is how you\nsee what an issue used to say before overwriting it, and how to recover\na description you clobbered. Rows are light (version, author,\ncreated_at); issue_revision fetches one snapshot's full text.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "identifier": {
             "description": "Issue identifier, e.g. CHT-123.",
@@ -1050,7 +1029,6 @@
     "issue_start": {
       "description": "Claim an issue: assign it to yourself and move it to in_progress.\n\nEquivalent to `chaotic issue start` (itself an alias for `issue\nclaim`). Re-claiming a ticket you already hold extends the lease.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "attest": {
             "anyOf": [
@@ -1098,7 +1076,6 @@
     "issue_unblock": {
       "description": "Remove a relation between two issues.\n\nName the other issue with `related` and the relation is looked up\nfor you; pass `relation_id` from issue_relations when the two issues\nare connected by more than one relation.\n\nRemoves only the relation -- neither issue is touched.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "identifier": {
             "description": "Issue identifier the relation hangs off, e.g. CHT-123.",
@@ -1142,7 +1119,6 @@
     "issue_update": {
       "description": "Update an issue's status, priority, estimate, assignee, title, description, type, and/or parent.\n\n`parent` re-parents an existing issue (or makes it a sub-issue);\n`no_parent` detaches it. `issue_type` changes the type, e.g. to\npromote a task with children to an epic (CHT-1885). Labels go\nthrough issue_label, relations through issue_block/issue_unblock,\nand sprint membership through sprint_add/sprint_remove.\n\nAn `estimate` off the project's declared estimate_scale is stored as\ngiven and reported back in `warnings` (absent otherwise).\n\nOnly fields explicitly passed are changed. Returns the updated issue.\nPass `attest` to satisfy pending close/claim rituals in the same call.\n\nClosing a ticket can add `parent_prompt`: it was the last open child\nof an open parent, which never closes itself, so ask the user whether\nto close that parent or add more. `open_children` means the closed\nticket still has open sub-issues. An epic's status follows its\nchildren until set by hand; `follow_children` undoes that.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "assignee": {
             "anyOf": [
@@ -1307,7 +1283,6 @@
     "issue_view": {
       "description": "Show full issue detail: fields, description, the newest comments\n(up to 20, with `comment_count`), and compact rows for its sub-issues\n(with `sub_issue_count`).",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "identifier": {
             "description": "Issue identifier, e.g. CHT-123.",
@@ -1325,7 +1300,6 @@
     "label_list": {
       "description": "List the team's labels: id, name, and color.\n\nThe lookup that makes issue_list's `label` filter usable -- without\nit a caller has to already know the taxonomy to filter by it, or\nguess. Also the source of the names issue_label accepts.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {},
         "title": "label_listArguments",
         "type": "object"
@@ -1334,7 +1308,6 @@
     "project_list": {
       "description": "List the projects in your team: key, name, issue count, and the\nbudget/ritual settings that govern work in each.\n\nThe one call that answers \"what projects exist\" -- every other tool\ntakes a `project` filter but none enumerate them. Scoped to the\ncurrent team (`chaotic status`); the HTTP transport adds a `team`\nparameter for API keys that can see more than one.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "detail": {
             "default": false,
@@ -1350,7 +1323,6 @@
     "ritual_attest": {
       "description": "Attest a ritual -- confirm you did the thing it asks about.\n\nDispatches on the ritual's own trigger, so you don't have to know\nwhether it's sprint-scoped or ticket-scoped: pass `identifier` when\nattesting a ticket's close/claim gate, omit it for a sprint ritual.\n\nIf the ritual's approval_mode is `auto` this clears it outright.\nUnder `review` it records the attestation and leaves it pending a\nhuman; `approved` in the result says which happened.\n\nUnder `gate` this is REFUSED -- gate rituals are human-completion\nonly and the server rejects an attestation outright rather than\nrecording one. Use ritual_complete for those, and ritual_list to see\neach ritual's approval_mode before choosing.\n\nA ritual with an `artifact` (see ritual_list) binds the attestation\nto it: pass `document` (a document you wrote for it) or `url`. The\nserver verifies a document is yours and written for this sprint or\nticket; a note alone no longer clears such a ritual (CHT-1359).",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "document": {
             "anyOf": [
@@ -1433,7 +1405,6 @@
     "ritual_complete": {
       "description": "Complete a GATE-mode ritual.\n\nDistinct from ritual_attest: gate rituals are the ones a human is\nsupposed to sign off, and the server enforces that -- expect a\npermission error rather than success if the calling identity isn't\nallowed to. Attesting is the normal path; this is for the rare case\nwhere you legitimately hold that role.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "document": {
             "anyOf": [
@@ -1516,7 +1487,6 @@
     "ritual_list": {
       "description": "List a project's configured rituals: name, trigger, prompt, and approval mode.\n\n`trigger` tells you which scope a ritual belongs to -- ticket_close\nand ticket_claim gate individual tickets, everything else gates the\nsprint. ritual_attest works that out for you.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "include_inactive": {
             "default": false,
@@ -1545,7 +1515,6 @@
     "ritual_pending": {
       "description": "Show which rituals are currently blocking you, and what each one asks.\n\nWithout `identifier`: the project's pending SPRINT rituals -- what a\nsprint sitting in limbo after sprint_close is waiting on.\nWith `identifier`: the pending close/claim rituals gating that ticket.\n\nThis is the lookup that makes attestation possible at all: rituals\nare addressed by name, and nothing else on this surface tells you\nwhat those names are or what each one is asking for. Each entry\ncarries its `prompt` (the question your note must answer),\n`approval_mode`, and any existing `attestation`.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "identifier": {
             "anyOf": [
@@ -1581,7 +1550,6 @@
     "ritual_reject": {
       "description": "Reject a ticket's GATE request or REVIEW attestation, with a reason.\n\nThe counterpart of approving: a human team admin sends the ritual back\ninstead. The gate stays pending and the ticket does not move. A REVIEW\nattestation is withdrawn, so the attester attests again; a GATE\nrequest stays open until the requester asks again. The reason reaches\nthe attester (and an agent's owner) in the inbox, the ticket's\nactivity, and ritual_pending's `last_rejection`.\n\nLike ritual_complete, the server allows this only for a human team\nadmin: expect a permission error otherwise. A ritual already approved\nor already rejected is a conflict naming who decided it and when.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "identifier": {
             "description": "Issue identifier of the ticket the ritual gates, e.g. CHT-123.",
@@ -1624,7 +1592,6 @@
     "server_info": {
       "description": "Which server this surface is talking to: git commit, app version,\nMCP toolset fingerprint and tool count, beside this client's own.\n\nCall it when a field looks stale or a tool is missing. The check\nthat needs no checkout: compare `mcp_tool_count` with\n`client_tool_count` (the tools this client was built with) and with\nthe number of Chaotic tools you were actually given; a mismatch\nmeans a client cached an older toolset and must reconnect\n(CHT-1364). With a checkout, compare `git_sha` against the branch\nyou deploy from (`git rev-parse origin/main` by default); `git_dirty`\ntrue means the deployed tree has uncommitted edits. The fingerprint\nchanges whenever the toolset's shape does, so it also catches\nsame-count schema changes. A null field means the server predates it\nor could not compute it (CHT-1401).",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {},
         "title": "server_infoArguments",
         "type": "object"
@@ -1633,7 +1600,6 @@
     "sprint_add": {
       "description": "Add issues to a sprint.\n\nSprint membership does not by itself charge budget -- only closing a\nticket does, and it charges whichever sprint is active at that\nmoment.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "identifiers": {
             "description": "Issue identifiers to add, e.g. ['CHT-12', 'CHT-13'].",
@@ -1680,7 +1646,6 @@
     "sprint_close": {
       "description": "Close a sprint and rotate to the next planned one.\n\nThis is the remedy for `sprint_in_arrears`: budget is only released\nby closing, not by editing tickets. Pass the refusal's `project_id`\nas `project`, its `team_id` as `team` and its `sprint_id` as\n`sprint`: closing another project's sprint releases nothing, one\nclose of the right one is enough, and naming the sprint makes a\nrepeated close fail instead of closing the fresh sprint (CHT-1270).\n\nIf the project has per-sprint rituals, closing enters LIMBO instead\nof rotating -- the result has `entered_limbo: true`, `now_active`\nis null, and `limbo_pending` lists the rituals the rotation is\nwaiting on (the same rows ritual_pending returns: name, prompt,\napproval_mode, any attestation) with the not-yet-attested names in\n`unattested`, so the next step -- ritual_attest / ritual_complete --\nneeds no second lookup. Check `entered_limbo` rather than assuming\nthe rotation happened. The close itself is the write; the follow-up\nlookups (`now_active`, `limbo_pending`) are advisory, so if one fails\nafter a successful close the result still reports the close, with\nthose fields null and the failure under `lookup_error`.\n\nRotating sprints is a project-wide state change that affects\neveryone's budget accounting, so prefer sprint_current first and\nclose deliberately.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "project": {
             "anyOf": [
@@ -1716,7 +1681,6 @@
     "sprint_current": {
       "description": "Show the active sprint: budget, points spent, limbo and arrears state.\n\nCall this when a write is refused with `sprint_in_arrears` or\n`sprint_in_limbo` -- it reports what's actually blocking, which\nnothing else on this surface does. Pass the refusal's `project_id`\nas `project` (and its `team_id` as `team`): arrears and limbo belong\nto the refused ticket's project, which need not be the current one.\n\nOnly closed tickets accrue budget: completing an issue charges the\nproject's currently-active sprint (estimate points, or 1 point if\nunestimated), whichever sprint the ticket itself belonged to.\nGoing over budget blocks moving any ticket to in_progress/done/\ncanceled project-wide until the sprint is closed.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "project": {
             "anyOf": [
@@ -1739,7 +1703,6 @@
     "sprint_list": {
       "description": "List a project's sprints, with each one's budget state.\n\nA planned sprint's `budget_follows_default` says whether its budget\nfollows the project's default_sprint_budget (true) or was set by\nhand (false); it is null for active and completed sprints, whose\nbudget never follows the default.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "project": {
             "anyOf": [
@@ -1780,7 +1743,6 @@
     "sprint_remove": {
       "description": "Remove issues from whatever sprint they're in (leaves them unscheduled).",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "identifiers": {
             "description": "Issue identifiers to remove from their sprint.",
@@ -1801,7 +1763,6 @@
     "sprint_transactions": {
       "description": "Show a sprint's budget transactions -- the audit trail behind points_spent.\n\nOne row per ticket completion charged to this sprint. Use it to\nreconcile a points_spent number that looks wrong before assuming a\nbug: closing older work after a rotation charges the *new* active\nsprint by design.",
       "inputSchema": {
-        "additionalProperties": false,
         "properties": {
           "project": {
             "anyOf": [

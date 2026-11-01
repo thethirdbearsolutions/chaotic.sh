@@ -414,10 +414,13 @@ def resolve_assignee_id(assignee_value: str, team_id: str | None = None) -> str:
         )
 
     if len(candidates) > 1:
-        console.print(f"[red]Ambiguous assignee '{esc(assignee_value)}':[/red]")
-        for _, label in candidates:
-            console.print(f"  - {esc(label)}")
-        raise click.ClickException("Please be more specific.")
+        # In the message, not printed: `chaotic mcp` calls this too, and its
+        # stdout is the protocol channel (CHT-1951).
+        raise click.ClickException(
+            f"Ambiguous assignee '{assignee_value}': it matches "
+            + "; ".join(label for _, label in candidates)
+            + ". Please be more specific: pass an ID or an email."
+        )
 
     return candidates[0][0]
 

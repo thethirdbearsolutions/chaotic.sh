@@ -9,16 +9,15 @@ before it follows ``__wrapped__``. So one body declaring
 ``team: str | None = None`` can be registered with or without that
 parameter depending on ``backend.capabilities.team_param`` -- the HTTP
 server advertises it, the stdio server does not, and there is still
-exactly one implementation (CHT-1374; verified against mcp 2.1.1).
+exactly one implementation (CHT-1374; verified against mcp 2.1.1, and 2.3.0 for CHT-1951).
 """
 from __future__ import annotations
 
+import dataclasses
 import difflib
 import functools
 import inspect
-import logging
-
-from pydantic import ConfigDict, model_validator
+import json
 
 from .backend import Backend
 from .errors import (
@@ -36,13 +35,34 @@ def add_tools(mcp, tools) -> None:
     cleandoc'd (CHT-1699). `add_tool` would otherwise send the raw
     `__doc__`, which keeps its source indentation before Python 3.13 and
     loses it from 3.13 on, so clients saw different text depending on
-    the server's interpreter, and paid tokens for the indentation."""
+    the server's interpreter, and paid tokens for the indentation.
+
+    Also installs the unknown-argument guard (CHT-1951) on the server's
+    public middleware chain. A server without one cannot have the guard,
+    and is refused here, at startup, rather than quietly serving tools
+    that drop what they do not recognise."""
+    chain = getattr(mcp, "middleware", None)
+    if not isinstance(chain, list):
+        raise RuntimeError(
+            "This MCP SDK's server has no middleware chain (MCPServer.middleware), so chaotic's "
+            "tools cannot refuse unknown arguments; refusing to start. Install a newer mcp 2.x."
+        )
+    guard = next((m for m in chain if isinstance(m, UnknownArgumentGuard)), None)
+    if guard is None:
+        guard = UnknownArgumentGuard()
+        chain.append(guard)
     for tool in tools:
         mcp.add_tool(tool, description=inspect.cleandoc(tool.__doc__ or ""))
-        _forbid_unknown_arguments(mcp, tool.__name__)
+        guard.accepted[tool.__name__] = tuple(inspect.signature(tool).parameters)
 
 
-logger = logging.getLogger(__name__)
+# Arguments every tool takes without complaint, whether or not it declares
+# them. Agents pass these on every call "to be safe", the HTTP server's
+# instructions say to pass them to disambiguate, and the stdio server
+# always ignored `team`. Where a tool does not declare one, it is dropped:
+# a scope hint that the call's own arguments (an identifier, an id)
+# already settle. Anything else undeclared is refused.
+SCOPE_HINTS = frozenset({"team", "project"})
 
 
 def unknown_arguments_message(tool_name: str, unknown: list[str], accepted: list[str]) -> str:
@@ -59,45 +79,47 @@ def unknown_arguments_message(tool_name: str, unknown: list[str], accepted: list
     )
 
 
-def _strict_arg_model(tool_name: str, arg_model: type) -> type:
-    """A subclass of the SDK's argument model that refuses arguments it has
-    no field for, instead of pydantic's default of dropping them (CHT-1951).
-    A dropped argument is a call the caller believes did something it did
-    not: `issue_create(assignee=...)` created unassigned tickets."""
-    accepted = sorted(f.alias or name for name, f in arg_model.model_fields.items())
-    accepted_set = frozenset(accepted)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _refuse_unknown(cls, data):
-        if isinstance(data, dict):
-            unknown = sorted(k for k in data if k not in accepted_set)
-            if unknown:
-                raise ValueError(unknown_arguments_message(tool_name, unknown, accepted))
-        return data
-
-    return type(arg_model.__name__, (arg_model,), {
-        "__module__": arg_model.__module__,
-        "model_config": ConfigDict(extra="forbid"),
-        "_refuse_unknown": _refuse_unknown,
-    })
+def tool_result(payload: dict) -> dict:
+    """A tools/call result on the wire carrying `payload`, the way the SDK
+    sends an object a tool returned: one text block of indented JSON."""
+    return {
+        "content": [{"type": "text", "text": json.dumps(payload, indent=2, ensure_ascii=False)}],
+        "isError": False,
+    }
 
 
-def _forbid_unknown_arguments(mcp, name: str) -> None:
-    """Make the registered tool `name` refuse unknown arguments, and say so
-    in its inputSchema (`additionalProperties: false`). The SDK has no
-    public switch for this (its argument model ignores extras), so this
-    reaches the registered Tool through the server's tool manager. If a
-    future SDK moves that, the server still starts, with the old
-    behaviour and a logged warning; the tests that pin the refusal fail."""
-    manager = getattr(mcp, "_tool_manager", None)
-    registered = manager.get_tool(name) if manager is not None else None
-    metadata = getattr(registered, "fn_metadata", None)
-    if metadata is None or not hasattr(metadata, "arg_model"):
-        logger.warning("MCP tool %s: could not make it refuse unknown arguments (SDK internals moved)", name)
-        return
-    metadata.arg_model = _strict_arg_model(name, metadata.arg_model)
-    registered.parameters = {**registered.parameters, "additionalProperties": False}
+class UnknownArgumentGuard:
+    """``ServerMiddleware`` (the SDK's public hook) that refuses a
+    tools/call naming an argument the tool does not take (CHT-1951).
+
+    The SDK's argument model ignores undeclared keys, so before this an
+    `issue_create(assignee=...)` made an unassigned issue and said
+    nothing. The refusal is the usual ``{"error": ...}`` result (ADR-0006,
+    ``error_code: unknown_argument``), sent before the tool runs, so
+    nothing is done. `SCOPE_HINTS` are let through, and dropped where the
+    tool does not declare them. A call to a tool it was not told about
+    passes through untouched."""
+
+    def __init__(self):
+        self.accepted: dict[str, tuple[str, ...]] = {}
+
+    async def __call__(self, ctx, call_next):
+        params = ctx.params
+        if ctx.method == "tools/call" and isinstance(params, dict):
+            name, arguments = params.get("name"), params.get("arguments")
+            accepted = self.accepted.get(name) if isinstance(name, str) else None
+            if accepted is not None and isinstance(arguments, dict):
+                extra = [k for k in arguments if k not in accepted]
+                unknown = sorted(k for k in extra if k not in SCOPE_HINTS)
+                if unknown:
+                    return tool_result(error_envelope(
+                        unknown_arguments_message(name, unknown, sorted(accepted)), "unknown_argument",
+                        unknown_arguments=unknown, accepted_arguments=sorted(accepted),
+                    ))
+                if extra:
+                    kept = {k: v for k, v in arguments.items() if k in accepted}
+                    ctx = dataclasses.replace(ctx, params={**params, "arguments": kept})
+        return await call_next(ctx)
 
 
 async def call_guarded(tool, backend: Backend, *args, **kwargs) -> dict:

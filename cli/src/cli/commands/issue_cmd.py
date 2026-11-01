@@ -642,7 +642,7 @@ def register(cli):
     @click.option("--label", "labels", multiple=True, help="Label name(s) to assign (can be used multiple times)")
     @click.option("--blocked-by", "blocked_by", multiple=True, help="Issue identifier(s) that block this issue (can be used multiple times)")
     @click.option("--relates-to", "relates_to", multiple=True, help="Related issue identifier(s) (can be used multiple times)")
-    @click.option("--assignee", help="Assign the new issue: 'me', a user/agent ID, or a name/email")
+    @click.option("--assignee", help="Assign the new issue: 'me', a user/agent ID, or a name/email ('unassigned' for none, the default)")
     @click.option("--project", "project_key", help="Project (ID, key, or name) - overrides current project")
     @_main().json_option
     @_main().require_team
@@ -689,6 +689,8 @@ def register(cli):
         # Labels and the assignee are looked up in the team of the project
         # the issue is created in (CHT-1709): a parent or --project can name
         # a project in another team than the current one.
+        if assignee and assignee.strip().lower() == "unassigned":
+            assignee = None  # issue_update's word for no assignee; here, the default
         team_id = None
         if assignee or labels:
             team_id = (
