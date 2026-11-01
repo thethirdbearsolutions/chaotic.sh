@@ -1745,3 +1745,12 @@ async def test_profile_update_a_blank_avatar_clears_it():
     await _tools(backend)["profile_update"](avatar_url="   ")
 
     assert ("update_me", (), {"avatar_url": None}) in backend.calls
+
+
+async def test_team_member_me_is_the_caller_even_beside_a_teammate_named_me():
+    backend = FakeBackend()
+    backend.roster[1] = {**backend.roster[1], "name": "Me", "mention_handle": "me"}
+
+    entry = await _tools(backend)["team_member"](who="me")
+
+    assert entry["user_id"] == "user-me"

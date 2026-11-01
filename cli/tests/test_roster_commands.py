@@ -214,3 +214,26 @@ def test_profile_a_blank_avatar_clears_it(cli_runner):
 
     assert result.exit_code == 0, result.output
     client.update_me.assert_called_once_with(avatar_url=None)
+
+
+def test_whois_me_is_you_even_beside_a_teammate_named_me(cli_runner):
+    from cli.main import cli, client
+    client.get_team_roster = MagicMock(return_value=[ROSTER[0], {**ROSTER[1], "name": "Me", "mention_handle": "me"}])
+    client.get_me = MagicMock(return_value={"id": "u-ada-1111"})
+
+    result = cli_runner.invoke(cli, ["team", "whois", "me", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["user_id"] == "u-ada-1111"
+
+
+def test_whois_an_ambiguous_id_prefix_says_so(cli_runner):
+    from cli.main import cli, client
+    client.get_team_roster = MagicMock(return_value=ROSTER)
+    client.get_team_members = MagicMock(return_value=[{"user_id": "abcd-1", "user_name": "X"}])
+    client.get_team_agents = MagicMock(return_value=[{"id": "abcd-2", "name": "Y"}])
+
+    result = cli_runner.invoke(cli, ["team", "whois", "abcd"])
+
+    assert result.exit_code != 0
+    assert "not on this team's roster" not in result.output

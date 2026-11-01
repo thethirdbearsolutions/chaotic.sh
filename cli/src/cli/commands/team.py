@@ -414,7 +414,8 @@ def register(cli):
         roster = _client().get_team_roster(m.get_current_team(), include_idle=True)
         from chaotic_mcp_tools.tools.team import ambiguous_message, roster_lookup
 
-        hits = roster_lookup(roster, who)
+        # `me` is always the caller, even beside a teammate named "Me".
+        hits = [] if who.strip().casefold() == "me" else roster_lookup(roster, who)
         if len(hits) > 1:
             raise click.ClickException(ambiguous_message(who, hits))
         entry = hits[0] if hits else None
@@ -422,8 +423,12 @@ def register(cli):
             # An email, `me` or an id prefix: the resolver knows those.
             try:
                 user_id = m.resolve_assignee_id(who)
-            except click.ClickException:
-                user_id = None  # answered below, as a teammate, not an assignee
+            except click.ClickException as e:
+                # Not found is answered below, as a teammate, not an
+                # assignee; anything else (an ambiguous id prefix) stands.
+                if "not found" not in e.message:
+                    raise
+                user_id = None
             entry = next((e for e in roster if e["user_id"] == user_id), None)
         if entry is None:
             raise click.ClickException(f"{who!r} is not on this team's roster.")

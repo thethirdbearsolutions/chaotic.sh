@@ -170,6 +170,7 @@ async def test_another_teams_agent_with_a_membership_is_listed(client, auth_head
     row = next(r for r in roster if r["user_id"] == guest.id)
     assert row["is_agent"] is True and row["role"] == "member"
     assert row["owner_name"] == test_user2.name
+    assert row["project_id"] is None
 
 
 async def test_handles_match_the_members_list(client, auth_headers, test_team):

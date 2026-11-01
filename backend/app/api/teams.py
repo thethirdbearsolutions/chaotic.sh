@@ -240,7 +240,9 @@ async def team_roster(
             agent, role=membership.role if membership else None, kind=agent.kind,
             owner_id=agent.parent_user_id,
             owner_name=owner.name if owner else None,
-            project_id=agent.agent_project_id, idle=idle, joined_at=agent.created_at,
+            # A guest's project is in its own team: not this roster's to show.
+            project_id=agent.agent_project_id if agent.id in own else None,
+            idle=idle, joined_at=agent.created_at,
         ))
     return roster
 

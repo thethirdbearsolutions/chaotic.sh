@@ -96,7 +96,8 @@ async def team_member(
     """
     team_id = await backend.resolve_member_team(team)
     roster = await backend.get_team_roster(team_id, include_idle=True)
-    hits = roster_lookup(roster, who)
+    # 'me' is always the caller, even beside a teammate named "Me".
+    hits = [] if who.strip().casefold() == "me" else roster_lookup(roster, who)
     if len(hits) > 1:
         raise ToolInputError(ambiguous_message(who, hits))
     entry = hits[0] if hits else None
