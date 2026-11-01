@@ -215,3 +215,15 @@ object IssueFields {
     val STATUSES = listOf("backlog", "todo", "in_progress", "in_review", "done", "canceled")
     val PRIORITIES = listOf("no_priority", "low", "medium", "high", "urgent")
 }
+
+/**
+ * At most [maxChars] UTF-16 units of this string, never ending on half of
+ * a surrogate pair: a code point at the cut is dropped whole, not split
+ * into an unpaired surrogate the server would refuse or mangle (CHT-1685).
+ * Only code points are kept whole: a cluster such as a flag or a ZWJ
+ * emoji can still be cut between its code points.
+ */
+fun String.takeWhole(maxChars: Int): String {
+    val cut = take(maxChars)
+    return if (cut.length < length && cut.isNotEmpty() && cut.last().isHighSurrogate()) cut.dropLast(1) else cut
+}

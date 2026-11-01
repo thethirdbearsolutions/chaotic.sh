@@ -51,7 +51,9 @@ class NotificationDecisionsTest {
     private val session = CacheSession(store) { sessions.cacheOwner() }
     private val notifier = AndroidNotifier(context) { sessions.cacheOwner() }
     private val queue = WriteQueue(remote, session)
-    private val decisions = NotificationDecisions(context, sessions, queue, InboxSyncer(remote, session), notifier)
+    private val records = DecisionRecords(context)
+    private val decisions =
+        NotificationDecisions(context, sessions, queue, InboxSyncer(remote, session), notifier, records)
 
     private val gate = entry("g1", kind = "gate_pending").copy(
         issueId = "i1",
@@ -226,16 +228,68 @@ class NotificationDecisionsTest {
     }
 
     @Test
-    fun aSwipeUndoneInTheAppLeavesTheNotificationAsItIs() = runTest {
+    fun aTapTakesTheButtonsAwayAtOnceBehindASendingNotice() {
+        decisions.tapped(approve)
+
+        assertFalse(entryShown())
+        assertEquals("Approving…", text(decision()))
+    }
+
+    @Test
+    fun aTapStepRunAgainAfterTheServerTookItNeverSaysNothingWasSent() = runTest {
+        cache(gate)
+        assertNull(decisions.process(approve))
+        assertEquals("Approved", text(decision()))
+
+        // The same step again (process death, a retry after an error), or a second tap.
+        assertNull(decisions.process(approve))
+
+        assertEquals(1, remote.writesSent.size)
+        assertFalse("Nothing was sent" in text(decision()))
+        assertEquals("Approved", text(decision()))
+    }
+
+    @Test
+    fun aTapStepRunAgainAfterARefusalDoesNotQueueItAgain() = runTest {
+        cache(gate)
+        remote.answerWrite = {
+            Remote.HttpError(409, "ritual_already_resolved", message = "Already approved by Grace.")
+        }
+        assertNull(decisions.process(approve))
+
+        assertNull(decisions.process(approve))
+
+        assertEquals(1, remote.writesSent.size)
+        assertEquals("Already approved by Grace.", text(decision()))
+    }
+
+    @Test
+    fun aDecisionTheQueueNoLongerKnowsIsNotCalledUnsent() = runTest {
+        cache(gate)
+        assertNull(decisions.process(approve))
+        // As after the process died: the queue no longer knows the write was taken.
+        records.put(ownerOf(ADA), "g1", DecisionRecords.Recorded(WriteKind.APPROVE, "an-earlier-process"))
+        remote.syncAnswers += Remote.Ok(page(teams = setOf(TEAM_A)))
+
+        assertNull(decisions.process(approve))
+
+        assertEquals(1, remote.writesSent.size)
+        assertTrue("No longer queued" in text(decision()))
+    }
+
+    @Test
+    fun aSwipeUndoneAfterATapSaysNothingIsKnownToBeSent() = runTest {
         cache(gate)
         val key = assertNotNull(queue.approve(gate))
+        decisions.tapped(approve)
         val step = assertNotNull(decisions.process(approve))
         queue.undo(key)
 
         assertNull(decisions.process(step.job))
 
-        assertTrue(entryShown())
-        assertNull(decision())
+        // The buttons went at the tap, so the notice cannot just vanish as if it had been sent.
+        assertTrue("not known to be sent" in text(decision()))
+        assertFalse(entryShown())
         assertTrue(remote.writesSent.isEmpty())
     }
 
