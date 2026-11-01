@@ -41,9 +41,10 @@ import { loadQueryView } from './query-view.js';
 import { loadInbox, toggleInboxEntryElementExpand, collapseInboxExpand, archiveInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive, focusMainContent } from './keyboard.js';
 import { showInlineDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { isQuoteTooltipVisible } from './quote-comment.js';
+import { initSelectPickers } from './select-picker.js';
 import './revisions.js';
 import {
     toggleTeamDropdown,
@@ -481,6 +482,11 @@ function initSidebarNav() {
             if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
             e.preventDefault();
             navigateTo(item.dataset.view);
+            // Leave the sidebar so j/k drive the new view at once (CHT-1959).
+            // Only for a pointer click: Enter on a focused link (detail 0)
+            // keeps focus in the sidebar for arrow roving (CHT-1289); j/k
+            // from there still reach the list through yieldsToSidebar.
+            if (e.detail > 0) focusMainContent();
         });
     });
 
@@ -570,6 +576,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initProjectSettings();
     initDocumentsView();
     initThemeToggle();
+    initSelectPickers();
     initIssueLinkHandler();
     initIssueTooltip({ api });
     registerWsHandlers();

@@ -98,7 +98,11 @@ class TestInboxList:
         from unittest.mock import patch
         from cli.main import cli
 
-        with patch('cli.main.get_current_team', return_value=None):
+        teamless = MagicMock()
+        teamless.get_teams.return_value = []  # nothing to default to (CHT-1950)
+        teamless.get_me.return_value = {"id": "u-1", "is_agent": False}
+        with patch('cli.main.get_current_team', return_value=None), \
+             patch('cli.main.client', teamless):
             result = cli_runner.invoke(cli, ['inbox', 'list'])
 
         assert result.exit_code != 0

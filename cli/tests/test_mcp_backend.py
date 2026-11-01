@@ -157,8 +157,8 @@ class TestProjectScopedKey:
         assert await backend.optional_project(None, None) == ("p-1", "t-1")
         self.me.side_effect = None
         self.project.side_effect = APIError("boom", status_code=502)
-        from cli import mcp_backend
-        mcp_backend._key_projects.clear()
+        from cli import config
+        config._key_projects.clear()
         assert await backend.optional_project(None, None) == (None, "t-1")
 
     async def test_a_deleted_project_says_so(self, backend):
@@ -404,14 +404,14 @@ class TestCallShapes:
         assert seen["thread"] is not threading.main_thread()
 
 
-def test_only_the_mcp_backend_sets_the_process_team():
-    """The plain CLI never picks a team on its own: `chaotic team use` is
-    how it gets one. Only the stdio MCP server falls back to the key's
-    only team (CHT-1687 review L4)."""
+def test_only_the_scope_defaults_set_the_process_team():
+    """Only the stdio MCP server's default team (CHT-1687) and the CLI's
+    require_team default (CHT-1950) pick a team for the process; nothing
+    else does, session identity included (CHT-1687 review L4)."""
     from pathlib import Path
     src = Path(__file__).resolve().parent.parent / "src"
     callers = sorted(
         str(p.relative_to(src)) for p in src.rglob("*.py")
         if "set_process_team(" in p.read_text() and p.name != "config.py"
     )
-    assert callers == ["cli/mcp_backend.py"]
+    assert callers == ["cli/main.py", "cli/mcp_backend.py"]

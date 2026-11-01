@@ -195,7 +195,7 @@
             <div class="sidebar-backdrop"></div>
 
             <!-- Main content -->
-            <main class="main-content">
+            <main class="main-content" aria-label="Main content">
                 <!-- Mobile header -->
                 <div class="mobile-header">
                     <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle sidebar" aria-expanded="false">
@@ -212,10 +212,10 @@
                     <div class="view-header">
                         <h2>Dashboard</h2>
                         <div class="view-actions">
-                            <select id="dashboard-project-filter" data-action="set-current-project">
+                            <select id="dashboard-project-filter" data-picker aria-label="Project" data-action="set-current-project">
                                 <option value="">All Projects</option>
                             </select>
-                            <select id="my-issues-status-filter">
+                            <select id="my-issues-status-filter" data-picker aria-label="Status">
                                 <option value="">All Statuses</option>
                                 <option value="backlog">Backlog</option>
                                 <option value="todo">Todo</option>
@@ -243,7 +243,7 @@
                     <div class="view-header">
                         <h2>Approvals</h2>
                         <div class="view-actions">
-                            <select id="approvals-project-filter" data-action="set-current-project">
+                            <select id="approvals-project-filter" data-picker aria-label="Project" data-action="set-current-project">
                                 <option value="">All Projects</option>
                             </select>
                         </div>
@@ -253,11 +253,17 @@
 
                 <!-- Inbox view (CHT-1250): gates awaiting you, mentions, assignments, review requests -->
                 <div id="inbox-view" class="view hidden">
-                    <div class="view-header">
-                        <h2>Inbox</h2>
+                    <div class="view-header inbox-header">
+                        <div class="inbox-title">
+                            <h2>Inbox</h2>
+                            <span id="inbox-header-count" class="inbox-header-count"></span>
+                        </div>
                         <div class="view-actions">
-                            <button id="inbox-unread-toggle" class="btn btn-secondary" data-action="toggle-inbox-unread-filter">Unread only</button>
-                            <button class="btn btn-secondary" data-action="mark-all-inbox-read">Mark all read</button>
+                            <div class="segmented" role="group" aria-label="Show">
+                                <button type="button" class="segmented-btn active" data-action="set-inbox-filter" data-filter="all" aria-pressed="true">All</button>
+                                <button type="button" class="segmented-btn" data-action="set-inbox-filter" data-filter="unread" aria-pressed="false">Unread</button>
+                            </div>
+                            <button class="btn btn-secondary btn-sm" data-action="mark-all-inbox-read">Mark all read</button>
                         </div>
                     </div>
                     <div id="inbox-list" class="list"></div>
@@ -490,7 +496,7 @@
                     <div class="view-header">
                         <h2>Board</h2>
                         <div class="view-actions">
-                            <select id="board-project-filter" data-action="set-current-project">
+                            <select id="board-project-filter" data-picker aria-label="Project" data-action="set-current-project">
                                 <option value="">Select Project</option>
                             </select>
                         </div>
@@ -502,7 +508,7 @@
                     <div class="view-header">
                         <h2>Epics</h2>
                         <div class="view-actions">
-                            <select id="epics-project-filter" data-action="set-current-project">
+                            <select id="epics-project-filter" data-picker aria-label="Project" data-action="set-current-project">
                                 <option value="">All Projects</option>
                             </select>
                             <button class="btn btn-primary" data-action="showCreateEpicModal">+ New Epic</button>
@@ -523,7 +529,7 @@
                     <div class="view-header">
                         <h2>Sprints</h2>
                         <div class="view-actions">
-                            <select id="sprint-project-filter" data-action="set-current-project">
+                            <select id="sprint-project-filter" data-picker aria-label="Project" data-action="set-current-project">
                                 <option value="">Select Project</option>
                             </select>
                         </div>
@@ -538,10 +544,10 @@
                             <div class="search-box">
                                 <input type="text" id="doc-search" placeholder="Search documents...">
                             </div>
-                            <select id="doc-project-filter" class="filter-select" aria-label="Filter by project" data-action="set-current-project">
+                            <select id="doc-project-filter" data-picker class="filter-select" aria-label="Filter by project" data-action="set-current-project">
                                 <option value="">All Projects</option>
                             </select>
-                            <select id="doc-sort" class="filter-select" aria-label="Sort by">
+                            <select id="doc-sort" data-picker class="filter-select" aria-label="Sort by">
                                 <option value="updated_desc">Newest first</option>
                                 <option value="updated_asc">Oldest first</option>
                                 <option value="title_asc">Title A-Z</option>
@@ -609,7 +615,7 @@
                     <div class="view-header">
                         <h2>Rituals</h2>
                         <div class="view-actions">
-                            <select id="rituals-project-filter" data-action="set-current-project">
+                            <select id="rituals-project-filter" data-picker aria-label="Project" data-action="set-current-project">
                                 <option value="">Select a project</option>
                             </select>
                         </div>

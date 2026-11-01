@@ -29,7 +29,7 @@ vi.mock('./ui.js', () => ({
 }));
 
 import { setCurrentTeam, setCurrentProject, getSelectedEpicIndex, setSelectedEpicIndex } from './state.js';
-import { loadEpics, renderEpics, renderSprintStrip, getCurrentEpics, resetEpicsViewState } from './epics.js';
+import { loadEpics, renderEpics, renderSprintStrip, getCurrentEpics, resetEpicsViewState, renderSummary, pctLabel } from './epics.js';
 import { api } from './api.js';
 import { navigateToEpicByIdentifier } from './router.js';
 import { showApiError } from './ui.js';
@@ -159,7 +159,7 @@ describe('renderEpics', () => {
 
     it('renders the progress table', () => {
         renderEpics(response([epic()]), container);
-        expect(container.querySelectorAll('th').length).toBe(7);
+        expect(container.querySelectorAll('thead th').length).toBe(6);
         const row = container.querySelector('.epic-row');
         expect(row.querySelector('.epic-progress-text').textContent).toBe('2/4');
         expect(row.querySelector('.epic-progress-fill').style.width).toBe('50%');
@@ -261,6 +261,92 @@ describe('renderEpics', () => {
         expect(row.getAttribute('onclick')).toBeNull();
         row.click();
         expect(navigateToEpicByIdentifier).toHaveBeenCalledWith('CHT-10');
+    });
+});
+
+describe('Epics progress readout (CHT-1964)', () => {
+    let container;
+    beforeEach(() => {
+        setupDom();
+        vi.clearAllMocks();
+        resetEpicsViewState();
+        container = document.getElementById('epics-list');
+    });
+    const kids = (done, total, extra = {}) => ({
+        total, backlog: 0, todo: total - done, in_progress: 0, in_review: 0, done, canceled: 0, ...extra,
+    });
+
+    it('groups by state in reading order, in_review with In progress', () => {
+        renderEpics(response([
+            epic({ id: 'b', identifier: 'CHT-2', status: 'backlog', children: kids(0, 2) }),
+            epic({ id: 'r', identifier: 'CHT-3', status: 'in_review' }),
+            epic({ id: 't', identifier: 'CHT-4', status: 'todo', children: kids(0, 1) }),
+        ]), container);
+        const headers = [...container.querySelectorAll('.epic-state-row th')].map(th => th.childNodes[1].textContent);
+        expect(headers).toEqual(['In progress', 'Todo', 'Backlog']);
+        expect(container.querySelector('.epic-state-row th').getAttribute('scope')).toBe('colgroup');
+    });
+
+    it('sorts by movement this sprint, then percent, empty epics last; prev/next follows the rows', () => {
+        renderEpics(response([
+            epic({ id: 'empty', identifier: 'CHT-5', children: kids(0, 0), points_this_sprint: 9, closed_this_sprint: 1 }),
+            epic({ id: 'slow', identifier: 'CHT-6', children: kids(1, 4), points_this_sprint: 0, closed_this_sprint: 0 }),
+            epic({ id: 'far', identifier: 'CHT-7', children: kids(3, 4), points_this_sprint: 0, closed_this_sprint: 0 }),
+            epic({ id: 'moved', identifier: 'CHT-8', children: kids(1, 4), points_this_sprint: 5, closed_this_sprint: 2 }),
+        ]), container);
+        const rows = [...container.querySelectorAll('.epic-row')].map(r => r.dataset.identifier);
+        expect(rows).toEqual(['CHT-8', 'CHT-7', 'CHT-6', 'CHT-5']);
+        expect(getCurrentEpics().map(e => e.identifier)).toEqual(rows);
+        expect(container.querySelector('[data-identifier="CHT-5"]').classList.contains('epic-row-empty')).toBe(true);
+    });
+
+    it('keeps prev/next in row order across projects', () => {
+        renderEpics(response([
+            epic({ id: 'w', identifier: 'WEB-1', project_id: 'p2', project_key: 'WEB' }),
+            epic({ id: 'c', identifier: 'CHT-1', status: 'backlog', children: kids(0, 1) }),
+            epic({ id: 'c2', identifier: 'CHT-2' }),
+        ]), container);
+        const rows = [...container.querySelectorAll('.epic-row')].map(r => r.dataset.identifier);
+        expect(getCurrentEpics().map(e => e.identifier)).toEqual(rows);
+    });
+
+    it('shows a floored ticket percent that only reads 100% when done', () => {
+        expect(pctLabel(199, 200)).toBe('99%');
+        expect(pctLabel(200, 200)).toBe('100%');
+        expect(pctLabel(0, 0)).toBe('-');
+        renderEpics(response([epic()]), container);
+        expect(container.querySelector('.epic-progress-pct').textContent).toBe('50%');
+    });
+
+    it('summarises open epics by tickets and counts untracked closes this sprint', () => {
+        const html = renderSummary(
+            [
+                epic({ children: kids(2, 4), closed_this_sprint: 1, points_this_sprint: 3 }),
+                epic({ id: 'e2', children: kids(0, 4), closed_this_sprint: 0, points_this_sprint: 0 }),
+                epic({ id: 'e3', status: 'done', children: kids(5, 5), closed_this_sprint: 1, points_this_sprint: 2 }),
+            ],
+            [untracked({ open: 3, closed_this_sprint: 2, points_this_sprint: 2 })],
+        );
+        const el = document.createElement('div');
+        el.innerHTML = html;
+        const stats = [...el.querySelectorAll('.epic-stat')].map(s => s.textContent.replace(/\s+/g, ' ').trim());
+        expect(stats[0]).toBe('1 / 2 open epics moved this sprint');
+        expect(stats[1]).toBe('25% of their tickets done (2/8)');
+        expect(stats[2]).toBe('+4 tickets closed this sprint (7 pts)');
+        expect(stats[3]).toBe('3 open tickets under no epic');
+    });
+
+    it('keeps sprint movement in the summary when every epic is closed', () => {
+        const html = renderSummary([epic({ status: 'done', closed_this_sprint: 1, points_this_sprint: 1 })], []);
+        expect(html).toContain('ticket closed this sprint');
+        expect(html).not.toContain('open epics');
+        expect(renderSummary([epic({ status: 'done', closed_this_sprint: 0 })], [])).toBe('');
+    });
+
+    it('marks a canceled epic apart from a done one', () => {
+        renderEpics(response([epic({ id: 'x', status: 'canceled' }), epic({ id: 'y', identifier: 'CHT-11', status: 'done' })]), container);
+        container.querySelector('[data-epics-toggle-closed]').click();
+        expect(container.querySelectorAll('.epic-canceled-tag').length).toBe(1);
     });
 });
 

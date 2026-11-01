@@ -108,6 +108,18 @@ async def create_document(
             current_user, document_in.project_id, team_id,
             detail="Project not found in this team", status_code=status.HTTP_400_BAD_REQUEST,
         )
+    elif current_user.is_agent and current_user.agent_project_id:
+        # A team-level document is team-wide data, which a project-scoped
+        # agent may never write (CHT-1780). Say that, rather than the
+        # generic team refusal: it is about the caller, not the team, so
+        # it reveals nothing about team_id (CHT-1952).
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "A project-scoped identity can only create documents in its project: "
+                "pass its project_id (--project in the CLI), not a team-level document"
+            ),
+        )
     elif not await can_read_team_data(current_user, team_id):
         raise team_hidden()
 
@@ -115,7 +127,7 @@ async def create_document(
     if current_user.is_agent and not document_in.icon:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Documents created by agents must include an emoji icon (--icon)",
+            detail="Documents created by agents must include an emoji icon (the icon field; --icon in the CLI)",
         )
 
     # Validate sprint belongs to document's project

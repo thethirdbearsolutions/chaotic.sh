@@ -206,10 +206,194 @@ def require_auth(f):
     return wrapper
 
 
+def _as_configured() -> bool:
+    """Whether scope lookups go with the configured key itself: yes,
+    except when a proxy supplies the registrar key (CHT-1906), when the
+    session identity, an agent in the registrar's team, answers them."""
+    from cli import session_identity
+
+    return session_identity.proxied_ref() is None
+
+
+def _team_options(teams: list) -> str:
+    return ", ".join(f"{t.get('name')} ({t.get('key')})" for t in teams)
+
+
+def resolve_env_team() -> str:
+    """The team CHAOTIC_TEAM names (an id, key or name), looked up once
+    per process with the key the default team is asked with, and
+    recorded so get_current_team answers it (CHT-1950)."""
+    from . import config
+
+    value = config.env_team()
+    teams = client.get_teams(as_configured=_as_configured()) or []
+    lowered = value.lower()
+    for field in ("id", "key", "name"):
+        matches = [t for t in teams if (t.get(field) or "").lower() == lowered]
+        if len(matches) == 1:
+            config.set_env_team(matches[0]["id"])
+            return matches[0]["id"]
+    seen = f" Teams this key can see: {_team_options(teams)}." if teams else ""
+    raise click.ClickException(
+        f"{config.TEAM_ENV}={value!r} matches no single team.{seen} Set it to a team key, or unset it."
+    )
+
+
+def resolve_env_project() -> str:
+    """The project CHAOTIC_PROJECT names (an id, key or name), in the
+    current team (CHT-1950)."""
+    from . import config
+
+    value = config.env_project()
+    try:
+        project = resolve_project(value)
+    except click.ClickException as exc:
+        raise click.ClickException(f"{config.PROJECT_ENV}={value!r}: {exc.format_message()}") from exc
+    config.set_env_project(project["id"])
+    return project["id"]
+
+
+def key_project() -> dict | None:
+    """The project the key is confined to when it is a project-scoped
+    agent's (a session identity registered by one inherits it), else
+    None; asked once per process, for the CLI and the stdio MCP server
+    alike (CHT-1690, CHT-1950). A project that no longer exists says so;
+    other failures raise and are asked again next time."""
+    from . import config
+
+    slot = config._team_slot(get_api_url(), config.lookup_credential() or "")
+    if slot in config._key_projects:
+        return config._key_projects[slot]
+    me = client.get_me(as_configured=_as_configured()) or {}
+    project = None
+    if me.get("is_agent") and me.get("agent_project_id"):
+        try:
+            project = client.get_project(me["agent_project_id"])
+        except APIError as exc:
+            if getattr(exc, "status_code", None) == 404:
+                raise click.ClickException(config.PROJECT_SCOPE_GONE) from exc
+            raise
+    config._key_projects[slot] = project
+    return project
+
+
+def _key_project() -> dict | None:
+    """key_project, with a failed lookup (5xx, network) counted as "not
+    project-scoped" for this call. A deleted project still says so."""
+    try:
+        return key_project()
+    except (APIError, httpx.HTTPError):
+        return None
+
+
+def default_team() -> str:
+    """The team to use when none is configured (CHT-1950): what
+    CHAOTIC_TEAM names, else the key's only team (as `chaotic mcp` does,
+    CHT-1687). Kept for this
+    process only, never written to a config file. Several teams, or none,
+    is an error that says what to run."""
+    from . import config
+
+    if config.env_team():
+        return resolve_env_team()
+    teams = config.accessible_teams(
+        get_api_url(), config.lookup_credential() or "",
+        functools.partial(client.get_teams, as_configured=_as_configured()),
+    ) or []
+    if len(teams) == 1:
+        config.set_process_team(teams[0]["id"])
+        return teams[0]["id"]
+    if not teams:
+        # The server lists an agent's own team, a project-scoped one's
+        # included, so none means no team to default to, as for `chaotic
+        # mcp`.
+        raise click.ClickException(
+            "No team selected. Run 'chaotic team list' to see available teams, "
+            "or 'chaotic quickstart' if you don't have one yet."
+        )
+    raise click.ClickException(
+        f"No team selected, and this key has access to several teams ({_team_options(teams)}). "
+        f"Run 'chaotic team use <key>', or set {config.TEAM_ENV}=<key>."
+    )
+
+
+def default_project() -> str | None:
+    """The project to use when none is configured (CHT-1950): what
+    CHAOTIC_PROJECT names, else a project-scoped key's own project when
+    it is in the current team. None when neither applies."""
+    from . import config
+
+    if config.env_project():
+        return resolve_env_project()
+    project = _key_project()
+    if project and project.get("team_id") == get_current_team():
+        config.set_process_project(project["id"])
+        return project["id"]
+    return None
+
+
+def warn_env_override(kind: str) -> None:
+    """After `team use` / `project use` (and create, which switch too):
+    say so when CHAOTIC_TEAM / CHAOTIC_PROJECT is set, since it overrides
+    the config file just written (CHT-1953)."""
+    from . import config
+
+    name, value = ((config.TEAM_ENV, config.env_team()) if kind == "team"
+                   else (config.PROJECT_ENV, config.env_project()))
+    if value:
+        console.print(
+            f"[yellow]Warning: {esc(name)}={esc(value)} is set and overrides this, so it takes effect "
+            f"only once {esc(name)} is unset.[/yellow]"
+        )
+
+
+def _register_env_resolvers() -> None:
+    """Let config's getters resolve CHAOTIC_TEAM / CHAOTIC_PROJECT on
+    first use (CHT-1950), through this module's names so a patched
+    client applies."""
+    from . import config
+
+    config.set_env_resolvers(lambda: resolve_env_team(), lambda: resolve_env_project())
+
+
+_register_env_resolvers()
+
+
+def _defaulting(fn):
+    """Run a default-scope lookup with handle_error's reporting: it runs
+    in require_team/require_project, outside the command's own."""
+    return handle_error(fn)()
+
+
+def _default_scope() -> None:
+    """require_team's lookups. The getters resolve CHAOTIC_TEAM /
+    CHAOTIC_PROJECT themselves; this adds the key's defaults. The
+    project is looked up when the environment names a team or project,
+    or no config file names a team, since many commands read the project
+    without requiring it."""
+    from . import config
+
+    if not get_current_team():
+        default_team()
+    if not get_current_project() and (
+            config.env_project() or config.env_team() or not load_config().get("current_team")):
+        try:
+            default_project()
+        except click.ClickException as exc:
+            # A deleted scoped project: commands that need a project say
+            # so through require_project; team-only ones still run.
+            if exc.format_message() != config.PROJECT_SCOPE_GONE:
+                raise
+
+
 def require_team(f):
-    """Decorator to require current team."""
+    """Decorator to require current team. With none configured, the
+    default team is looked up first, and on a setup with no team in its
+    config files, or with CHAOTIC_PROJECT set, the default project too,
+    since many commands read the project without requiring it (CHT-1950)."""
     @require_auth
     def wrapper(*args, **kwargs):
+        _defaulting(_default_scope)
         if not get_current_team():
             console.print(
                 "[red]No team selected.[/red] Run 'chaotic team list' to see available teams, "
@@ -226,6 +410,7 @@ def require_project(f):
     """Decorator to require current project."""
     @require_team
     def wrapper(*args, **kwargs):
+        _defaulting(lambda: get_current_project() or default_project())
         if not get_current_project():
             console.print(
                 "[red]No project selected.[/red] Run 'chaotic project list' to see available "

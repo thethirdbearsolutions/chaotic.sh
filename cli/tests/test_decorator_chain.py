@@ -14,6 +14,15 @@ def _flat(output: str) -> str:
     return ' '.join(output.split())
 
 
+def _teamless_client():
+    """A client whose key sees no team and is not project-scoped, so the
+    default-team lookup (CHT-1950) finds nothing to use."""
+    client = MagicMock()
+    client.get_teams.return_value = []
+    client.get_me.return_value = {"id": "u-1", "is_agent": False}
+    return client
+
+
 # Local _FakeAPIError: must be defined here (not imported from conftest) because
 # handle_error's except clause needs the SAME class that's set on mock_mod.APIError,
 # and pytest's conftest loading may create a different class than a direct import.
@@ -94,10 +103,12 @@ class TestRequireTeam:
     """Tests for the require_team decorator (includes auth check)."""
 
     def test_no_team_shows_error(self, cli_runner):
-        """Commands requiring team show error when no team selected."""
+        """Commands requiring team show error when no team selected and
+        the key has none to default to (CHT-1950)."""
         with patch('cli.main.get_token', return_value='fake-token'), \
              patch('cli.main.get_api_key', return_value=None), \
-             patch('cli.main.get_current_team', return_value=None):
+             patch('cli.main.get_current_team', return_value=None), \
+             patch('cli.main.client', _teamless_client()):
             from cli.main import cli
             result = cli_runner.invoke(cli, ['team', 'show'])
 
@@ -160,7 +171,8 @@ class TestRequireProject:
         with patch('cli.main.get_token', return_value='fake-token'), \
              patch('cli.main.get_api_key', return_value=None), \
              patch('cli.main.get_current_team', return_value=None), \
-             patch('cli.main.get_current_project', return_value=None):
+             patch('cli.main.get_current_project', return_value=None), \
+             patch('cli.main.client', _teamless_client()):
             from cli.main import cli
             result = cli_runner.invoke(cli, ['issue', 'list'])
 

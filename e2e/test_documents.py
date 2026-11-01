@@ -181,3 +181,64 @@ class TestDocumentRevisions:
         doc = api_client.create_document(test_team["id"], "x")
         with pytest.raises(APIError):
             api_client.get_document_revision(doc["id"], 99)
+
+
+class TestProjectScopedAgentDocumentCommands:
+    """CHT-1947, CHT-1949: a project-scoped agent (a session identity is
+    usually one) can show, update and comment on its project's documents
+    through the `doc` commands. Each resolved its argument through the
+    team-wide listing, which the server refuses such an agent (CHT-1780),
+    so every one failed with "Not authorized to access this team". The
+    current project is deliberately unset: a fresh session identity has
+    none (CHT-1950)."""
+
+    def _doc(self, key, team_id, *args):
+        from unittest.mock import patch
+        from click.testing import CliRunner
+        from cli.main import cli as chaotic_cli
+        from conftest import TEST_BASE_URL
+
+        with patch("cli.client.get_api_url", return_value=TEST_BASE_URL), \
+             patch("cli.client.get_token", return_value=None), \
+             patch("cli.client.get_api_key", return_value=key), \
+             patch("cli.main.get_token", return_value=None), \
+             patch("cli.main.get_api_key", return_value=key), \
+             patch("cli.main.get_current_team", return_value=team_id), \
+             patch("cli.main.get_current_project", return_value=None):
+            return CliRunner().invoke(chaotic_cli, ["doc", *args])
+
+    def test_show_update_and_comment_by_prefix_and_title(self, api_client, test_team, test_project):
+        agent = api_client.create_project_agent(test_project["id"], "Weir")
+        key, team_id = agent["api_key"], test_team["id"]
+        # A team-level document the agent may not see, sharing the prefix
+        # space: it must not make the prefix ambiguous or leak its title.
+        api_client.create_document(team_id, "Team only")
+
+        created = self._doc(key, team_id, "create", "Crew playbook", "--icon", "🌊",
+                            "--project", test_project["id"], "--content", "v1", "--json")
+        assert created.exit_code == 0, created.output
+        doc = api_client.get_documents(team_id, project_id=test_project["id"])[0]
+        prefix = doc["id"][:8]
+
+        shown = self._doc(key, team_id, "show", prefix, "--json")
+        assert shown.exit_code == 0, shown.output
+        assert "Crew playbook" in shown.output and "Not authorized" not in shown.output
+
+        updated = self._doc(key, team_id, "update", doc["id"], "--content", "v2")
+        assert updated.exit_code == 0, updated.output
+        assert api_client.get_document(doc["id"])["content"] == "v2"
+
+        commented = self._doc(key, team_id, "comment", "Crew playbook", "looks right")
+        assert commented.exit_code == 0, commented.output
+        assert [c["content"] for c in api_client.get_document_comments(doc["id"])] == ["looks right"]
+
+        # `doc list` with no current project, and `--all`, are team-wide:
+        # the agent lists its own project instead (CHT-1949).
+        for args in ([], ["--all"]):
+            listed = self._doc(key, team_id, "list", *args, "--json")
+            assert listed.exit_code == 0, listed.output
+            assert "Crew playbook" in listed.output and "Team only" not in listed.output
+
+        missing = self._doc(key, team_id, "show", "Team only")
+        assert missing.exit_code != 0
+        assert "not found" in missing.output and "Not authorized" not in missing.output

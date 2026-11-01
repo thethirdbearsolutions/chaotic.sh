@@ -2277,6 +2277,48 @@ select:focus-visible {
     outline-offset: 2px;
 }
 
+/* Text for screen readers only. */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Quiet focus for full-width rows (CHT-1960). An offset ring around a
+   sidebar link drew two heavy purple bars across the whole sidebar; a
+   focused link now looks like the hover state plus the active marker's
+   left edge. Buttons and form controls keep the ring above. */
+.nav-item:focus-visible {
+    outline: none;
+    color: var(--text-primary);
+    background: var(--bg-hover);
+    /* A full-height edge plus a hairline ring, so focus reads apart from
+       both hover and the active link's short marker. */
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge),
+                inset 0 0 0 1px var(--row-cursor-edge);
+}
+
+/* Navigation parks focus on the content region so j/k work at once
+   (CHT-1959); it is a programmatic target, never a visible one. */
+.main-content:focus,
+.main-content:focus-visible {
+    outline: none;
+}
+
+/* The selected inbox row already shows the cursor; a ring on its toggle
+   drew a second box inside it (CHT-1960). */
+.inbox-row.keyboard-selected .inbox-row-toggle:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 1px var(--row-cursor-edge);
+    border-radius: 4px;
+}
+
 /* Smooth hover for grid items */
 .grid-item {
     transform: translateY(0);
@@ -2530,8 +2572,8 @@ select:focus-visible {
 
 /* Keyboard navigation highlight */
 .list-item.keyboard-selected {
-    background: var(--bg-tertiary);
-    border-color: var(--accent-color);
+    background: var(--row-cursor);
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
 }
 
 /* Compact mode for lists */
@@ -2718,9 +2760,9 @@ input[type="checkbox"] {
 
 /* Keyboard navigation highlight (CHT-1215), matching .issue-row.keyboard-selected */
 .kanban-card.keyboard-selected {
-    border-color: var(--accent-color);
-    outline: 2px solid var(--accent-color);
-    outline-offset: -2px;
+    border-color: var(--row-cursor-edge);
+    background: var(--row-cursor);
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
 }
 
 .kanban-card-title {
@@ -3118,9 +3160,11 @@ input[type="checkbox"] {
 }
 
 .issue-row.keyboard-selected {
-    background: var(--bg-tertiary);
-    outline: 2px solid var(--accent-color);
-    outline-offset: -2px;
+    /* One cursor look everywhere (CHT-1960): the tint and left edge the
+       issues list uses, not a 2px ring around the whole row. */
+    background: var(--row-cursor);
+    outline: none;
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
 }
 
 .issue-row-right {
@@ -5084,7 +5128,9 @@ input[type="checkbox"] {
     .epic-untracked-row,
     .epic-untracked-row td,
     .epic-group-row,
-    .epic-group-row th {
+    .epic-group-row th,
+    .epic-state-row,
+    .epic-state-row th {
         display: block;
     }
 
@@ -5093,6 +5139,7 @@ input[type="checkbox"] {
     .epic-table .epic-group-row th {
         border-bottom: none;
         padding: 2px 0;
+        height: auto;
     }
 
     .epic-table .epic-untracked-row td:empty {
@@ -5136,6 +5183,42 @@ input[type="checkbox"] {
 
     .epic-status {
         display: inline-block;
+    }
+
+    /* Phone epic rows (CHT-1964): ID and title on one line, then the
+       bar with its points; the per-sprint strip stays on desktop. */
+    .epic-table .epic-row {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        column-gap: 10px;
+        row-gap: 6px;
+        align-items: center;
+        padding: 10px 4px;
+    }
+    .epic-table .epic-row td {
+        height: auto;
+    }
+    .epic-row .epic-identifier { grid-column: 1; width: auto; }
+    .epic-row .epic-title { grid-column: 2 / 4; margin: 0; }
+    .epic-row .epic-progress { grid-column: 1 / 3; width: auto; }
+    .epic-row .epic-points { grid-column: 3; text-align: right; }
+    .epic-row .epic-sprint { grid-column: 1 / 4; }
+    .epic-row .epic-sprint:has(> .text-muted:only-child),
+    .epic-row .epic-sprints {
+        display: none;
+    }
+    /* The row is a grid here: paint the row, not its cells. */
+    .epic-table .epic-row:hover,
+    .epic-table .epic-row:hover td,
+    .epic-table .epic-row.keyboard-selected td,
+    .epic-table .epic-row.keyboard-selected td:first-child {
+        background: transparent;
+        box-shadow: none;
+    }
+    .epic-table .epic-row:hover { background: var(--row-hover); }
+    .epic-table .epic-row.keyboard-selected {
+        background: var(--row-cursor);
+        box-shadow: inset 3px 0 0 var(--row-cursor-edge);
     }
 
     /* Constrain filter selects on mobile */
@@ -7496,9 +7579,93 @@ input[type="checkbox"] {
    Inbox (CHT-1250)
    ============================================================================ */
 
+/* The inbox is a triage list, not a stack of cards (CHT-1962): one-line
+   rows grouped by day, the cursor's tint, actions on hover. */
+.inbox-header {
+    align-items: center;
+}
+.inbox-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+.inbox-header-count {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+
+.segmented {
+    display: inline-flex;
+    padding: 2px;
+    gap: 2px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+.segmented-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--font-sm);
+    padding: 3px 10px;
+    border-radius: calc(var(--radius-md) - 2px);
+    cursor: pointer;
+}
+.segmented-btn:hover {
+    color: var(--text-primary);
+}
+.segmented-btn.active {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+/* Light: a white pill on a grey track, not a grey pill on white. */
+body.theme-light .segmented {
+    background: var(--bg-tertiary);
+}
+body.theme-light .segmented-btn.active {
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+#inbox-list.list {
+    gap: 0;
+}
+
+.inbox-group + .inbox-group {
+    margin-top: 16px;
+}
+.inbox-group-header {
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: none;
+    letter-spacing: 0.01em;
+    padding: 0 12px 6px;
+    margin: 0;
+}
+
 .inbox-row {
-    align-items: flex-start;
+    display: flex;
+    align-items: center;
     justify-content: space-between;
+    gap: 12px;
+    padding: 0 12px;
+    min-height: 40px;
+    border-bottom: 1px solid var(--border-color);
+    background: transparent;
+    transition: background 0.1s ease;
+}
+.inbox-group .inbox-row:first-of-type {
+    border-top: 1px solid var(--border-color);
+}
+.inbox-row:hover {
+    background: var(--row-hover);
+}
+.inbox-row.keyboard-selected {
+    background: var(--row-cursor);
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
 }
 
 .inbox-row-main {
@@ -7509,8 +7676,11 @@ input[type="checkbox"] {
 /* The row's expand/collapse toggle: a real <button> styled as plain row
    content (CHT-1320, PR #260 review finding 2). */
 .inbox-row-toggle {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 10px;
     width: 100%;
+    min-height: 40px;
     padding: 0;
     margin: 0;
     border: none;
@@ -7519,31 +7689,15 @@ input[type="checkbox"] {
     font: inherit;
     text-align: left;
     cursor: pointer;
+    white-space: nowrap;
 }
 .inbox-row-toggle:focus {
     outline: none;
 }
 .inbox-row-toggle:focus-visible {
     outline: 2px solid var(--accent-color);
-    outline-offset: 2px;
+    outline-offset: -2px;
     border-radius: 4px;
-}
-.inbox-row-title,
-.inbox-row-body {
-    display: block;
-}
-
-.inbox-row-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.inbox-row-source {
-    font-size: var(--font-sm);
-    color: var(--text-muted);
-    font-weight: 500;
 }
 
 .inbox-row-unread-dot {
@@ -7553,23 +7707,80 @@ input[type="checkbox"] {
     background: var(--accent-color);
     flex-shrink: 0;
 }
+.inbox-row-dot-spacer {
+    width: 7px;
+    flex-shrink: 0;
+}
 
+.inbox-row-avatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent-color);
+}
+.inbox-row:not(.inbox-row-unread) .inbox-row-avatar {
+    opacity: 0.6;
+}
+
+.inbox-row-header {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    /* A fixed column, so titles line up whatever the kind label. */
+    width: 180px;
+    min-width: 0;
+    overflow: hidden;
+}
+.inbox-row-header .badge {
+    font-size: var(--font-xs);
+    padding: 1px 6px;
+}
+.inbox-row-source {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.inbox-row-text {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+}
 .inbox-row-title {
     font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
-    font-weight: 500;
+    font-weight: 400;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+    max-width: 60%;
 }
-
 .inbox-row-unread .inbox-row-title {
-    font-weight: 600;
+    font-weight: 500;
+    color: var(--text-primary);
 }
-
 .inbox-row-body {
     font-size: var(--font-sm);
     color: var(--text-muted);
-    margin-top: 4px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
 }
 
 .inbox-row-meta {
@@ -7579,39 +7790,53 @@ input[type="checkbox"] {
     white-space: nowrap;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+}
+.inbox-row-time {
+    min-width: 52px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
 }
 
-/* Archive (clear) button — subtle, surfaces on row hover/selection (CHT-1250 UX) */
-.inbox-row-archive {
+/* Row actions surface on hover, on the cursor row, or when tabbed to. */
+.inbox-row-hover-actions {
+    display: inline-flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.1s;
+}
+.inbox-row:hover .inbox-row-hover-actions,
+.inbox-row.keyboard-selected .inbox-row-hover-actions,
+.inbox-row-hover-actions:focus-within {
+    opacity: 1;
+}
+.inbox-row-action {
     border: none;
     background: transparent;
     color: var(--text-muted);
-    font-size: 18px;
-    line-height: 1;
+    line-height: 0;
     cursor: pointer;
-    padding: 2px 6px;
+    padding: 5px;
     border-radius: 4px;
-    opacity: 0;
-    transition: opacity 0.1s, background 0.1s, color 0.1s;
+    transition: background 0.1s, color 0.1s;
 }
-.inbox-row:hover .inbox-row-archive,
-.inbox-row.keyboard-selected .inbox-row-archive,
-.inbox-row-archive:focus {
-    opacity: 1;
-}
-.inbox-row-archive:hover {
+.inbox-row-action:hover {
     background: var(--bg-hover, rgba(255,255,255,0.08));
     color: var(--text-primary);
 }
 
 /* Expanded reading pane + action bar (CHT-1320) */
 .inbox-row-expanded {
-    background: var(--bg-hover, rgba(255,255,255,0.04));
+    align-items: flex-start;
+    background: var(--row-cursor);
+    padding-bottom: 12px;
+}
+.inbox-row-expanded .inbox-row-meta {
+    min-height: 40px;
 }
 
 .inbox-row-expanded-panel {
-    margin-top: 8px;
+    margin: 0 0 0 37px;
 }
 
 .inbox-expanded-source {
@@ -7654,15 +7879,53 @@ input[type="checkbox"] {
     cursor: progress;
 }
 
+/* Phones: two lines (meta over title), the excerpt drops. */
+@media (max-width: 768px) {
+    .inbox-row {
+        padding: 8px 12px;
+        align-items: flex-start;
+    }
+    .inbox-row-toggle {
+        display: grid;
+        grid-template-columns: 7px 20px 1fr;
+        grid-template-rows: auto auto;
+        column-gap: 10px;
+        row-gap: 4px;
+        min-height: 0;
+        white-space: normal;
+    }
+    .inbox-row-unread-dot,
+    .inbox-row-dot-spacer { grid-row: 1 / span 2; align-self: center; }
+    .inbox-row-avatar { grid-row: 1 / span 2; align-self: center; }
+    .inbox-row-header { grid-column: 3; }
+    .inbox-row-text { grid-column: 3; display: block; }
+    .inbox-row-title {
+        display: block;
+        max-width: none;
+        white-space: nowrap;
+    }
+    .inbox-row-body { display: none; }
+    .inbox-row-expanded-panel { margin-left: 0; margin-top: 8px; }
+    .inbox-row-meta { padding-top: 2px; }
+    .inbox-header { align-items: stretch; }
+    .inbox-row-header { width: auto; }
+    /* Phones keep one-tap archive; mark read stays in the expanded row. */
+    .inbox-row-hover-actions { opacity: 1; }
+    .inbox-row-action[data-action="mark-inbox-read"] { display: none; }
+}
+
 /* Touch: 44px targets for the inbox's own buttons (PR #260 review 11). */
 @media (pointer: coarse) {
     .inbox-action-btn,
-    .inbox-row-archive {
+    .inbox-row-action {
         min-height: 44px;
         min-width: 44px;
     }
-    .inbox-row-archive {
+    .inbox-row-hover-actions {
         opacity: 1;
+    }
+    .inbox-row-action[data-action="mark-inbox-read"] {
+        display: none;
     }
 }
 
@@ -7689,12 +7952,6 @@ input[type="checkbox"] {
 .badge-inbox-mention {
     background: #164e3f;
     color: #6ee7b7;
-}
-
-#inbox-unread-toggle.active {
-    background: var(--accent-color);
-    color: #fff;
-    border-color: var(--accent-color);
 }
 
 /* ============================================================================
@@ -8432,23 +8689,112 @@ button.stat-card-link:hover .stat-note {
 
 .epic-table th {
     text-align: left;
-    padding: 8px 12px;
-    font-size: var(--font-sm);
-    font-weight: 600;
+    padding: 6px 12px;
+    font-size: var(--font-xs);
+    font-weight: 500;
     color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
     border-bottom: 1px solid var(--border-color);
 }
 
 .epic-table td {
-    padding: 10px 12px;
+    padding: 6px 12px;
+    height: 40px;
     border-bottom: 1px solid var(--border-color);
     font-size: var(--font-md);
 }
 
-.epic-row:hover {
+.epic-row {
+    cursor: pointer;
+}
+.epic-row:hover td {
+    background: var(--row-hover);
+}
+/* The keyboard cursor (CHT-1964): the epics list had none, so j/k moved
+   an invisible selection. */
+.epic-row.keyboard-selected td {
+    background: var(--row-cursor);
+}
+.epic-row.keyboard-selected td:first-child {
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
+}
+.epic-row-empty .epic-title,
+.epic-row-empty .epic-progress-text {
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+/* Progress readout above the table (CHT-1964). */
+.epic-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+.epic-stat {
+    flex: 1 1 160px;
+    padding: 10px 14px;
     background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+.epic-stat-value {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+}
+.epic-stat-of {
+    font-size: var(--font-md);
+    font-weight: 400;
+    color: var(--text-muted);
+}
+.epic-stat-label {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+.epic-stat-up .epic-stat-value {
+    color: var(--success-color);
+}
+.epic-stat-warn .epic-stat-value {
+    color: var(--warning-color);
+}
+.epic-canceled-tag {
+    margin-left: 6px;
+    padding: 0 6px;
+    font-size: var(--font-xs);
+    font-weight: 500;
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+}
+
+/* State groups: In progress, Todo, Backlog, Closed. */
+.epic-table .epic-state-row th {
+    padding: 14px 12px 6px;
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: transparent;
+}
+.epic-state-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+    background: var(--text-muted);
+    vertical-align: 1px;
+}
+.epic-state-active .epic-state-dot { background: #f59e0b; }
+.epic-state-todo .epic-state-dot { background: var(--text-secondary); }
+.epic-state-backlog .epic-state-dot { background: transparent; border: 1px dashed var(--text-muted); }
+.epic-state-closed .epic-state-dot { background: #22c55e; }
+.epic-state-count {
+    margin-left: 8px;
+    font-weight: 400;
+    color: var(--text-muted);
 }
 
 .epic-identifier {
@@ -8465,7 +8811,16 @@ button.stat-card-link:hover .stat-note {
 }
 
 .epic-progress {
-    width: 180px;
+    width: 240px;
+}
+
+.epic-progress-pct {
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    min-width: 34px;
+    text-align: right;
 }
 
 .epic-progress-bar-container {
@@ -8499,6 +8854,7 @@ button.stat-card-link:hover .stat-note {
     color: var(--text-muted);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+    min-width: 40px;
 }
 
 /* Progress toward goals (CHT-1902) */
@@ -8560,8 +8916,10 @@ button.stat-card-link:hover .stat-note {
     background: var(--bg-secondary);
 }
 
-.epic-group-row th {
-    padding-top: 16px;
+.epic-table .epic-group-row th {
+    padding-top: 20px;
+    font-size: var(--font-md);
+    font-weight: 600;
     color: var(--text-primary);
 }
 
@@ -9322,4 +9680,133 @@ button.stat-card-link:hover .stat-note {
     .query-where-input {
         flex-basis: 100%;
     }
+}
+
+/* ============================================================================
+   Select picker (CHT-1961): a compact button + searchable popover in front
+   of a native <select>, which stays as the source of truth.
+   ============================================================================ */
+select.picker-native {
+    display: none !important;
+}
+
+.picker-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    max-width: 220px;
+    padding: 0 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--font-sm);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s;
+}
+.picker-btn:hover,
+.picker-btn.open {
+    background: var(--bg-tertiary);
+}
+.picker-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+.picker-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.picker-chevron {
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.picker-popover {
+    position: fixed;
+    z-index: 1200;
+    display: flex;
+    flex-direction: column;
+    max-width: min(320px, calc(100vw - 16px));
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+}
+body.theme-light .picker-popover {
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+}
+.picker-popover:focus {
+    outline: none;
+}
+.picker-search {
+    margin: 0;
+    padding: 8px 10px;
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 0;
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--font-sm);
+}
+.picker-search:focus,
+.picker-search:focus-visible {
+    outline: none;
+    border-bottom-color: var(--accent-color);
+}
+.picker-list {
+    list-style: none;
+    margin: 0;
+    padding: 4px;
+    overflow-y: auto;
+}
+.picker-list:focus,
+.picker-list:focus-visible {
+    outline: none;
+}
+.picker-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.picker-option-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.picker-option.active {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.picker-option[aria-selected="true"] {
+    color: var(--text-primary);
+}
+.picker-option.disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+.picker-check {
+    display: inline-flex;
+    color: var(--accent-color);
+}
+.picker-empty {
+    padding: 8px;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+
+@media (pointer: coarse) {
+    .picker-btn { height: 40px; }
+    .picker-option { padding: 10px 8px; }
 }

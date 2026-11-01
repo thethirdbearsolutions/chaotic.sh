@@ -159,6 +159,7 @@ def register(cli):
             return
         console.print(f"[green]Project created: {esc(result['name'])} ({esc(result['key'])})[/green]")
         console.print(f"[dim]Set as current project[/dim]")
+        m.warn_env_override("project")
         if report is not None:
             created = sum(1 for c in report["rituals"] if c["action"] == "create")
             set_count = sum(1 for c in report["settings"] if c["action"] == "set")
@@ -179,6 +180,7 @@ def register(cli):
         p = m.resolve_project(identifier)
         m.set_current_project(p["id"])
         console.print(f"[green]Switched to project: {esc(p['name'])}[/green]")
+        m.warn_env_override("project")
 
     @project.command("show")
     @click.argument("identifier", required=False)
