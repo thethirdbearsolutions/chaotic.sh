@@ -17,6 +17,13 @@ vi.mock('./ui.js', () => ({
 
 vi.mock('./projects.js', () => ({
     getProjects: vi.fn(() => []),
+    formatEstimate: vi.fn((v) => `${v} pts`),
+    isOutOfScale: vi.fn((v) => v === 99),
+}));
+
+vi.mock('./assignees.js', () => ({
+    getAssigneeById: vi.fn((id) => (id === 'u1' ? { id: 'u1', name: 'Ada' } : null)),
+    formatAssigneeName: vi.fn((a) => a?.name || null),
 }));
 
 vi.mock('./url-helpers.js', () => ({
@@ -431,6 +438,56 @@ describe('board', () => {
 
             const columnStatuses = Array.from(columns).map(c => c.dataset.status);
             expect(columnStatuses).toEqual(['backlog', 'todo', 'in_progress', 'in_review', 'done']);
+        });
+
+        it('cards carry the list row data: priority icon, estimate, labels, assignee (CHT-1766)', () => {
+            setBoardIssues([
+                { id: '1', title: 'Full', status: 'todo', identifier: 'TEST-1', priority: 'high',
+                  estimate: 3, assignee_id: 'u1',
+                  labels: [{ name: 'web', color: '#ff0000' }, { name: 'ux', color: '#00ff00' }, { name: 'extra', color: '#0000ff' }] },
+                { id: '2', title: 'Bare', status: 'todo', identifier: 'TEST-2', priority: 'no_priority', estimate: null },
+                { id: '3', title: 'Zero', status: 'todo', identifier: 'TEST-3', priority: 'low', estimate: 0 },
+            ]);
+            renderBoard();
+            const [full, bare, zero] = document.querySelectorAll('.kanban-card');
+            expect(full.querySelector('.kanban-card-priority svg.priority-high')).not.toBeNull();
+            expect(full.querySelector('.estimate-badge').textContent).toBe('3 pts');
+            expect([...full.querySelectorAll('.issue-label')].map(l => l.textContent)).toEqual(['web', 'ux']);
+            expect(full.querySelector('.kanban-card-assignee').title).toBe('Ada');
+            expect(full.querySelector('.badge')).toBeNull();
+            expect(bare.querySelector('.estimate-badge')).toBeNull();
+            expect(bare.querySelector('.kanban-card-assignee')).toBeNull();
+            expect(bare.querySelector('.issue-label')).toBeNull();
+            // A zero-point estimate is a real estimate (CHT-1397).
+            expect(zero.querySelector('.estimate-badge').textContent).toBe('0 pts');
+        });
+
+        it('cards escape every interpolated value and survive odd data (CHT-1766)', async () => {
+            const utils = await import('./utils.js');
+            const real = await vi.importActual('./utils.js');
+            utils.escapeHtml.mockImplementation(real.escapeHtml);
+            utils.escapeAttr.mockImplementation(real.escapeAttr);
+            const evil = '<img src=x onerror="window.__xss=1">';
+            setBoardIssues([
+                { id: '1', title: evil, status: 'todo', identifier: evil, priority: 'bogus',
+                  estimate: 99, assignee_id: 'missing',
+                  labels: [{ name: evil, color: 'red;background:url(x)' }] },
+            ]);
+            renderBoard();
+            const card = document.querySelector('.kanban-card');
+            expect(card.querySelector('img')).toBeNull();
+            expect(card.querySelector('.kanban-card-title').textContent).toBe(evil);
+            expect(card.querySelector('.kanban-card-identifier').textContent).toBe(evil);
+            expect(card.querySelector('.issue-label').textContent).toBe(evil);
+            expect(card.querySelector('.issue-label').getAttribute('style')).not.toContain('url(');
+            // An unknown assignee renders no avatar rather than throwing.
+            expect(card.querySelector('.kanban-card-assignee')).toBeNull();
+            // An off-scale estimate is flagged as in the list.
+            expect(card.querySelector('.estimate-badge').classList.contains('out-of-scale')).toBe(true);
+            // An unknown priority falls back to an icon, not raw text.
+            expect(card.querySelector('.kanban-card-priority svg')).not.toBeNull();
+            utils.escapeHtml.mockImplementation((t) => t);
+            utils.escapeAttr.mockImplementation((t) => t);
         });
 
         it('renders issues in correct columns with card content', () => {
