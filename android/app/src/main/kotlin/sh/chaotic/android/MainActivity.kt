@@ -12,6 +12,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import sh.chaotic.android.live.LiveUpdates
 import sh.chaotic.android.push.NotificationTap
 import sh.chaotic.android.push.PushController
 import sh.chaotic.android.ui.ChaoticApp
@@ -26,6 +27,8 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var sessions: SessionManager
 
     @Inject lateinit var push: PushController
+
+    @Inject lateinit var live: LiveUpdates
 
     private val taps: NotificationTaps by viewModels()
 
@@ -44,8 +47,18 @@ class MainActivity : ComponentActivity() {
         // Picking a distributor can need an activity, so it starts here.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                sessions.state.collectLatest { state ->
-                    if (state is AuthState.SignedIn) push.onAppOpen(this@MainActivity)
+                try {
+                    sessions.state.collectLatest { state ->
+                        if (state is AuthState.SignedIn) {
+                            // The live feed while on screen (CHT-1655), for whoever is signed in now.
+                            live.start(state.person.id + "@" + state.baseUrl)
+                            push.onAppOpen(this@MainActivity)
+                        } else {
+                            live.stopNow()
+                        }
+                    }
+                } finally {
+                    live.stop()
                 }
             }
         }
