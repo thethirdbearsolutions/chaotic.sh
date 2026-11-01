@@ -271,6 +271,35 @@ export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = I
 }
 
 /**
+ * Move focus to the main content region without scrolling or drawing a ring
+ * (CHT-1959). Clicking a sidebar link left native focus on that link, and
+ * every list handler leaves keys to the sidebar while one is focused, so j/k
+ * did nothing until you clicked into the page. Navigating now parks focus
+ * here instead, where the list handlers act on the first keypress.
+ */
+export function focusMainContent() {
+    const main = document.querySelector('.main-content');
+    if (!main) return;
+    if (!main.hasAttribute('tabindex')) main.setAttribute('tabindex', '-1');
+    main.focus({ preventScroll: true });
+}
+
+/**
+ * Whether a list handler should leave this keypress to the sidebar's roving
+ * focus (CHT-1289): arrows, Home/End and Enter while a nav link is focused.
+ * j and k are never sidebar keys, so they pull focus into the content and
+ * fall through to the list (CHT-1959).
+ */
+export function yieldsToSidebar(e) {
+    if (!e.target.closest?.('.sidebar-nav')) return false;
+    if (e.key === 'j' || e.key === 'k') {
+        focusMainContent();
+        return false;
+    }
+    return true;
+}
+
+/**
  * Creates a handler for j/k (or arrow keys)/Enter/e list navigation in the issues view.
  *
  * @param {Object} actions
@@ -325,7 +354,7 @@ export function createListNavigationHandler(actions) {
         // Yield to the sidebar's own roving-focus handler while a nav link is
         // focused — these list handlers register earlier and would otherwise
         // ALSO move the list cursor on the same arrow press (CHT-1289 review).
-        if (e.target.closest?.('.sidebar-nav')) return;
+        if (yieldsToSidebar(e)) return;
         // A focused group header takes Enter/Space itself (CHT-1932);
         // every other key still drives the list.
         if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('.issue-group-header')) return;
@@ -420,7 +449,7 @@ export function createDocListNavigationHandler(actions) {
         // Yield to the sidebar's own roving-focus handler while a nav link is
         // focused — these list handlers register earlier and would otherwise
         // ALSO move the list cursor on the same arrow press (CHT-1289 review).
-        if (e.target.closest?.('.sidebar-nav')) return;
+        if (yieldsToSidebar(e)) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
 
@@ -517,7 +546,7 @@ export function createInboxNavigationHandler(actions) {
         // Yield to the sidebar's own roving-focus handler while a nav link is
         // focused — these list handlers register earlier and would otherwise
         // ALSO move the list cursor on the same arrow press (CHT-1289 review).
-        if (e.target.closest?.('.sidebar-nav')) return;
+        if (yieldsToSidebar(e)) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
         // CHT-1231 / CHT-1320: this handler registers before the global one,
@@ -642,7 +671,7 @@ export function createBoardNavigationHandler(actions) {
         // Yield to the sidebar's own roving-focus handler while a nav link is
         // focused — these list handlers register earlier and would otherwise
         // ALSO move the list cursor on the same arrow press (CHT-1289 review).
-        if (e.target.closest?.('.sidebar-nav')) return;
+        if (yieldsToSidebar(e)) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
 
@@ -760,7 +789,7 @@ export function createSimpleListNavigationHandler(config) {
         if (config.getCurrentView() !== view) return;
         if (config.isDetailViewActive?.()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-        if (e.target.closest?.('.sidebar-nav')) return;
+        if (yieldsToSidebar(e)) return;
         if (config.isModalOpen()) return;
         if (config.isCommandPaletteOpen()) return;
 

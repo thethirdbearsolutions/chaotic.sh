@@ -110,6 +110,7 @@ vi.mock('./keyboard.js', () => ({
     createSimpleListNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     updateKeyboardSelection: vi.fn(),
     isAnyDetailViewActive: vi.fn(() => false),
+    focusMainContent: vi.fn(),
 }));
 vi.mock('./teams.js', () => ({
     toggleTeamDropdown: vi.fn(),
@@ -248,7 +249,7 @@ import { closeSidebar } from './sidebar.js';
 import { hideTooltip } from './issue-tooltip.js';
 import { navigateTo, navigateToEpicByIdentifier } from './router.js';
 import { isQuoteTooltipVisible } from './quote-comment.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive, focusMainContent } from './keyboard.js';
 import { initEventDelegation } from './event-delegation.js';
 import { initAuth } from './auth.js';
 import { showAuthScreen } from './auth.js';
@@ -891,6 +892,20 @@ describe('initSidebarNav DOM bindings', () => {
     it('nav items call navigateTo with view', () => {
         container.querySelector('[data-view="issues"]').click();
         expect(navigateTo).toHaveBeenCalledWith('issues');
+    });
+
+    // CHT-1959: focus left on the link made the list ignore j/k until a click.
+    it('nav click moves focus off the sidebar into the content', () => {
+        focusMainContent.mockClear();
+        container.querySelector('[data-view="issues"]').click();
+        expect(focusMainContent).toHaveBeenCalled();
+    });
+
+    it('modified nav click leaves focus alone', () => {
+        focusMainContent.mockClear();
+        const link = container.querySelector('[data-view="issues"]');
+        link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+        expect(focusMainContent).not.toHaveBeenCalled();
     });
 
     // CHT-1183: real hrefs on nav items; modified clicks fall through to the browser

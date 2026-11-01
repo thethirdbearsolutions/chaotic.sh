@@ -41,7 +41,7 @@ import { loadQueryView } from './query-view.js';
 import { loadInbox, toggleInboxEntryElementExpand, collapseInboxExpand, archiveInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive, focusMainContent } from './keyboard.js';
 import { showInlineDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { isQuoteTooltipVisible } from './quote-comment.js';
 import './revisions.js';
@@ -481,6 +481,8 @@ function initSidebarNav() {
             if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
             e.preventDefault();
             navigateTo(item.dataset.view);
+            // Leave the sidebar so j/k drive the new view at once (CHT-1959).
+            focusMainContent();
         });
     });
 
