@@ -276,6 +276,17 @@ class Backend(Protocol):
 
     async def list_activities(self, team_id: str, *, limit: int, project_id: str | None) -> list: ...
 
+    # -- team roster and your own profile (CHT-1982) ------------------------------
+
+    async def get_team_roster(self, team_id: str, *, hide_idle: bool) -> list:
+        """``GET /teams/{id}/roster``: people and agents with their
+        self-written identities (CHT-1980)."""
+
+    async def update_me(self, **fields) -> dict:
+        """``PATCH /users/me``: the caller's own name, avatar_url,
+        pronouns, tagline, bio (CHT-1979). Only the passed fields change;
+        an explicit None clears one."""
+
     # -- inbox (CHT-1338) ------------------------------------------------------
 
     async def list_inbox(self, team_id: str | None, *, unread: bool, limit: int) -> list: ...

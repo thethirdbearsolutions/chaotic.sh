@@ -214,7 +214,7 @@ async def team_roster(
             agent, role=membership.role if membership else None, kind=agent.kind,
             owner_id=agent.parent_user_id,
             owner_name=agent.parent_user.name if agent.parent_user else None,
-            agent_project_id=agent.agent_project_id, idle=idle, joined_at=agent.created_at,
+            project_id=agent.agent_project_id, idle=idle, joined_at=agent.created_at,
         ))
     return roster
 

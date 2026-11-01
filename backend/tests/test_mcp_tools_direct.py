@@ -1287,6 +1287,8 @@ class TestNoLeakedEnumNames:
             "project_list": await tools.project_list(),
             "inbox_list": await tools.inbox_list(detail=True),
             "server_info": await tools.server_info(),
+            "team_roster": await tools.team_roster(detail=True),
+            "team_member": await tools.team_member(who="me"),
         }
 
         # A tool that raised comes back as {"error": ...} and would sweep
@@ -1360,6 +1362,9 @@ class TestNoLeakedInternalFields:
             "inbox_list": await tools.inbox_list(detail=True),
             "activity_recent": await tools.activity_recent(),
             "project_list": await tools.project_list(),
+            "team_roster": await tools.team_roster(detail=True),
+            "team_member": await tools.team_member(who="me"),
+            "profile_update": await tools.profile_update(tagline="Sweeping"),
             "sprint_current": await tools.sprint_current(),
             "sprint_list": await tools.sprint_list(),
             "label_list": await tools.label_list(),
@@ -1711,6 +1716,7 @@ class TestSweepCoverage:
         "sprint_add", "sprint_remove", "sprint_close",
         "ritual_attest", "ritual_complete", "ritual_reject",
         "inbox_mark_read", "inbox_mark_all_read",  # swept via inbox_list
+        "profile_update",  # swept via team_member, and for fields in TestNoLeakedInternalFields
         # read tools whose shape is asserted in their own tests
         "issue_view", "sprint_transactions",
     }

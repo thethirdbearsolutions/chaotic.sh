@@ -79,6 +79,14 @@ class FakeBackend:
         ]
         self.list_result: list = []
         self.query_total = 0
+        self.roster = [
+            {"user_id": "user-me", "name": "Ada", "mention_handle": "ada", "pronouns": "she/her",
+             "tagline": "Founder", "bio": "Long bio.", "is_agent": False, "role": "owner",
+             "kind": None, "owner_name": None, "idle": False, "avatar_url": None},
+            {"user_id": "user-piper", "name": "Piper", "mention_handle": "piper", "pronouns": None,
+             "tagline": "Reviews", "bio": None, "is_agent": True, "role": None,
+             "kind": "session", "owner_name": "Ada", "idle": False, "avatar_url": "🦉"},
+        ]
 
     def _rec(self, name, *args, **kwargs):
         self.calls.append((name, args, kwargs))
@@ -336,6 +344,14 @@ class FakeBackend:
         entry["read_at"] = "now"
         return dict(entry)
 
+    async def get_team_roster(self, team_id, *, hide_idle):
+        self._rec("get_team_roster", team_id, hide_idle=hide_idle)
+        return [dict(r) for r in self.roster]
+
+    async def update_me(self, **fields):
+        self._rec("update_me", **fields)
+        return {"id": "user-me", "name": "Ada", "email": "ada@example.com", **fields}
+
     async def mark_all_inbox_read(self, team_id):
         self._rec("mark_all_inbox_read", team_id)
         n = sum(1 for e in self.inbox if e["read_at"] is None)
@@ -499,6 +515,8 @@ class TestBoundary:
         "ritual_attest": {"ritual": "retro", "note": "n"},
         "ritual_complete": {"ritual": "retro"},
         "ritual_reject": {"ritual": "close-gate", "identifier": "CHT-1", "note": "n"},
+        "team_member": {"who": "@ada"},
+        "profile_update": {"bio": "b"},
     }
 
     def test_every_tool_is_guarded(self):
@@ -1633,3 +1651,53 @@ class TestUnknownArgumentsAreRefused:
         add_tools(mcp, tools[3:])
         guards = [m for m in mcp.middleware if isinstance(m, UnknownArgumentGuard)]
         assert len(guards) == 1 and len(guards[0].accepted) == len(ALL_TOOLS)
+
+
+# -- team roster and your own profile (CHT-1982) -----------------------------------
+
+
+async def test_team_roster_rows_are_compact_unless_detail():
+    backend = FakeBackend()
+    compact = await _tools(backend)["team_roster"](hide_idle=True)
+    full = await _tools(backend)["team_roster"](detail=True)
+
+    assert compact["count"] == 2 and compact["truncated"] is False
+    assert "bio" not in compact["members"][0] and compact["members"][0]["tagline"] == "Founder"
+    assert full["members"][0]["bio"] == "Long bio."
+    assert ("get_team_roster", ("team-1",), {"hide_idle": True}) in backend.calls
+
+
+@pytest.mark.parametrize("who", ["@piper", "Piper", "user-piper", "piper"])
+async def test_team_member_by_handle_name_or_id(who):
+    entry = await _tools(FakeBackend())["team_member"](who=who)
+
+    assert entry["name"] == "Piper" and entry["owner_name"] == "Ada"
+
+
+async def test_team_member_me_goes_through_the_resolver():
+    backend = FakeBackend()
+    entry = await _tools(backend)["team_member"](who="me")
+
+    assert entry["bio"] == "Long bio."
+    assert any(c[0] == "resolve_assignee" and c[2]["purpose"] == "filter" for c in backend.calls)
+
+
+async def test_team_member_not_on_the_roster_is_a_tool_input_error():
+    result = await _tools(FakeBackend())["team_member"](who="nobody")
+
+    assert result["error"]["error_code"] == "tool_input"
+
+
+async def test_profile_update_sends_only_what_was_passed():
+    backend = FakeBackend()
+    result = await _tools(backend)["profile_update"](bio="I review PRs.", pronouns="", avatar_url="")
+
+    assert ("update_me", (), {"pronouns": "", "bio": "I review PRs.", "avatar_url": None}) in backend.calls
+    assert result["bio"] == "I review PRs."
+    assert "email" not in result
+
+
+async def test_profile_update_with_nothing_is_a_tool_input_error():
+    result = await _tools(FakeBackend())["profile_update"]()
+
+    assert result["error"]["error_code"] == "tool_input"

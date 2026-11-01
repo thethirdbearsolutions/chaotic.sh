@@ -561,7 +561,7 @@ class TestRegisterOnly:
             "list_issue_description_revisions", "list_issues", "list_labels", "list_projects",
             "list_ready_issues", "list_relations", "list_rituals", "list_sprints", "list_sub_issues",
             "query_issues",
-            "list_transactions", "server_info",
+            "list_transactions", "server_info", "get_team_roster",
         }
 
     def test_every_authenticated_route_is_classified(self):

@@ -59,6 +59,9 @@ EXPECTED_TOOLS: dict[str, bool] = {
     "sprint_list": True,
     "sprint_remove": False,
     "sprint_transactions": True,
+    "team_member": True,
+    "team_roster": True,
+    "profile_update": False,
 }
 
 EXPECTED_TEAM_SCOPED: frozenset[str] = frozenset(n for n, takes_team in EXPECTED_TOOLS.items() if takes_team)
@@ -68,8 +71,11 @@ EXPECTED_TEAM_SCOPED: frozenset[str] = frozenset(n for n, takes_team in EXPECTED
 # A name whose prefix is not a group and which is not listed in
 # OTHER_TOOLS has no group: adding a new subject is a conscious decision
 # made here, not a row silently filed under "other".
-GROUP_ORDER: tuple[str, ...] = ("issues", "docs", "sprints", "rituals", "inbox", "other")
-_PREFIX_TO_GROUP = {"issue": "issues", "doc": "docs", "sprint": "sprints", "ritual": "rituals", "inbox": "inbox"}
+GROUP_ORDER: tuple[str, ...] = ("issues", "docs", "sprints", "rituals", "inbox", "team", "other")
+_PREFIX_TO_GROUP = {
+    "issue": "issues", "doc": "docs", "sprint": "sprints", "ritual": "rituals", "inbox": "inbox",
+    "team": "team", "profile": "team",
+}
 OTHER_TOOLS: frozenset[str] = frozenset({"label_list", "activity_recent", "project_list", "server_info"})
 
 

@@ -732,6 +732,9 @@ registers them; the canonical descriptions and schemas are in
 | `inbox_list` | `inbox list` |
 | `inbox_mark_read` | `inbox mark-read` |
 | `inbox_mark_all_read` | `inbox mark-all-read` |
+| `team_roster` | `team roster` |
+| `team_member` | `team whois` |
+| `profile_update` | `auth profile` (with options) |
 | `label_list` | `label list` |
 | `activity_recent` | `activity` |
 | `project_list` | `project list` |

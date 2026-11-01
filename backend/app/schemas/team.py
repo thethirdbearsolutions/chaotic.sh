@@ -107,7 +107,7 @@ class RosterEntry(BaseModel):
     kind: AgentKind | None = None
     owner_id: str | None = None
     owner_name: str | None = None
-    agent_project_id: str | None = None
+    project_id: str | None = None
     # A session identity's key unused for 7 days (CHT-1501).
     idle: bool = False
     # When they joined: a person's membership, an agent's creation.

@@ -642,6 +642,70 @@
         }
       }
     },
+    "/api/teams/{team_id}/roster": {
+      "get": {
+        "tags": [
+          "teams"
+        ],
+        "summary": "Team Roster",
+        "description": "Everyone on the team, people and agents, each with the identity\nthey wrote for themselves (CHT-1980): name, avatar, pronouns,\ntagline, bio and @handle. People first (owners, admins, members),\nthen agents, each by name. Deactivated accounts are left out.\n\nReadable by anyone in the team directory (CHT-1780), project-scoped\nagents included; anyone else gets the missing team's 404 (CHT-1785).\nNo addresses: the roster is who people are, not how to mail them.",
+        "operationId": "team_roster_api_teams__team_id__roster_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          },
+          {
+            "name": "hide_idle",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Leave out idle session identities (keys unused for 7 days).",
+              "default": false,
+              "title": "Hide Idle"
+            },
+            "description": "Leave out idle session identities (keys unused for 7 days)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RosterEntry"
+                  },
+                  "title": "Response Team Roster Api Teams  Team Id  Roster Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/teams/{team_id}/members/{user_id}": {
       "patch": {
         "tags": [
@@ -16320,6 +16384,149 @@
         "type": "object",
         "title": "RitualUpdate",
         "description": "Schema for updating a ritual."
+      },
+      "RosterEntry": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "pronouns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pronouns"
+          },
+          "tagline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tagline"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "mention_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mention Handle"
+          },
+          "is_agent": {
+            "type": "boolean",
+            "title": "Is Agent",
+            "default": false
+          },
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Id"
+          },
+          "owner_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Name"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "idle": {
+            "type": "boolean",
+            "title": "Idle",
+            "default": false
+          },
+          "joined_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Joined At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "name",
+          "joined_at"
+        ],
+        "title": "RosterEntry",
+        "description": "One teammate on ``GET /teams/{id}/roster`` (CHT-1980): a person or\nan agent, with the identity they wrote for themselves (CHT-1979)."
       },
       "SelectionMode": {
         "type": "string",
