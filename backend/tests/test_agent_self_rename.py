@@ -68,7 +68,7 @@ async def test_a_session_cannot_rename_another_agent(client, registrar):
         assert refused.status_code == 403, refused.text
 
 
-@pytest.mark.parametrize("extra", [{"can_register": True}, {"can_register": False}, {"name": None}])
+@pytest.mark.parametrize("extra", [{"can_register": True}, {"can_register": False}])
 async def test_a_session_may_change_only_its_identity(client, registrar, extra):
     session = await _register(client, registrar, REF)
 

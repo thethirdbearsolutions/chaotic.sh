@@ -1,4 +1,5 @@
 """User schemas."""
+import unicodedata
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from app.enums import AgentKind
@@ -15,16 +16,47 @@ class UserCreate(BaseModel):
 
 # The longest each self-written profile field may be (CHT-1979).
 PROFILE_LIMITS = {"bio": 4000, "pronouns": 40, "tagline": 120}
+# Room for an image as a data: URI, which the web shows as an avatar,
+# without letting one ride megabytes on every roster (CHT-1979 review).
+AVATAR_URL_MAX = 100_000
 # The fields a member writes about themselves. Every member may set their
 # own, people and agents alike (CHT-1979); an agent's name is held to the
 # naming rules on the way in (app.api.agents.check_own_agent_name).
 IDENTITY_FIELDS = frozenset({"name", "avatar_url", "bio", "pronouns", "tagline"})
 
+# Bidi embeddings, overrides and isolates: they make a line read other
+# than it is written, so no self-written text keeps them.
+_BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+
+
+def _clean_text(v: str, keep: str = "") -> str:
+    """Drop control characters (all but those in ``keep``) and bidi
+    controls. Joiners and other format characters stay: emoji need them."""
+    return "".join(
+        c for c in v
+        if c in keep or (unicodedata.category(c) != "Cc" and c not in _BIDI_CONTROLS)
+    )
+
+
+def clean_name(v):
+    """A chosen name, trimmed and cleaned like a tagline; a null name or
+    one with nothing visible in it (spaces, zero-width characters) is
+    refused, for people and agents alike."""
+    if v is None:
+        raise ValueError("name may not be null; leave it out to keep the current name")
+    if isinstance(v, str):
+        v = " ".join(_clean_text(v).split())
+        visible = "".join(c for c in unicodedata.normalize("NFKC", v) if unicodedata.category(c) != "Cf")
+        if not visible.strip():
+            raise ValueError("A name must not be blank.")
+    return v
+
 
 class ProfileFields(BaseModel):
     """``bio`` (markdown), ``pronouns`` and ``tagline`` (one line each),
-    as written by the member (CHT-1979). Each is trimmed, and blank means
-    cleared: it is stored as null."""
+    as written by the member (CHT-1979). Each is trimmed and cleaned of
+    control and bidi characters, and blank means cleared: it is stored
+    as null."""
 
     bio: str | None = Field(default=None, max_length=PROFILE_LIMITS["bio"])
     pronouns: str | None = Field(default=None, max_length=PROFILE_LIMITS["pronouns"])
@@ -34,7 +66,7 @@ class ProfileFields(BaseModel):
     @classmethod
     def _trim_bio(cls, v):
         if isinstance(v, str):
-            v = v.strip()
+            v = _clean_text(v, keep="\n\t").strip()
             return v or None
         return v
 
@@ -43,7 +75,7 @@ class ProfileFields(BaseModel):
     def _one_line(cls, v):
         # One line: any run of whitespace, newlines included, becomes one space.
         if isinstance(v, str):
-            v = " ".join(v.split())
+            v = " ".join(_clean_text(v).split())
             return v or None
         return v
 
@@ -57,19 +89,12 @@ class UserUpdate(ProfileFields):
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    avatar_url: str | None = None
+    avatar_url: str | None = Field(default=None, max_length=AVATAR_URL_MAX)
 
     @field_validator("name", mode="before")
     @classmethod
-    def _name_not_blank(cls, v):
-        # Trimmed; a blank or null name is refused (a name is required).
-        if v is None:
-            raise ValueError("name may not be null; leave it out to keep the current name")
-        if isinstance(v, str):
-            v = v.strip()
-            if not v:
-                raise ValueError("A name must not be blank.")
-        return v
+    def _clean_name(cls, v):
+        return clean_name(v)
 
 
 class UserResponse(BaseModel):
