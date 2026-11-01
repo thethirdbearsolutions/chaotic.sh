@@ -55,9 +55,71 @@ async def test_a_person_can_raise_a_budget(client, auth_headers, test_project, d
 
 
 @pytest.mark.asyncio
-async def test_a_closed_sprint_is_not_guarded(client, agent_headers, test_project, db):
-    sprint = await _sprint(test_project.id, status=SprintStatus.COMPLETED)
-    r = await _patch_sprint(client, agent_headers, sprint.id, budget=50)
+@pytest.mark.parametrize("to", ["active", "planned"])
+async def test_agent_cannot_reopen_a_closed_sprint(client, agent_headers, test_project, to, db):
+    """Review 1: a reopened sprint is a second active one, and the arrears
+    check could read it instead of the one in arrears."""
+    active = await _sprint(test_project.id, budget=5)
+    await OxydeSprint.objects.filter(id=active.id).update(points_spent=9)
+    closed = await _sprint(test_project.id, status=SprintStatus.COMPLETED, name="Old")
+    r = await _patch_sprint(client, agent_headers, closed.id, status=to, budget=None)
+    assert r.status_code == 403, r.text
+    await closed.refresh()
+    assert closed.status == SprintStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_status_null_leaves_the_status(client, auth_headers, test_project, db):
+    """Review 3: an explicit null was written and failed NOT NULL (500)."""
+    sprint = await _sprint(test_project.id)
+    r = await _patch_sprint(client, auth_headers, sprint.id, status=None, name=None, description="d")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_budget_and_status_together_are_refused(client, agent_headers, test_project, db):
+    sprint = await _sprint(test_project.id)
+    r = await _patch_sprint(client, agent_headers, sprint.id, status="completed", budget=3)
+    assert r.status_code == 403, r.text
+
+
+@pytest.mark.asyncio
+async def test_a_non_member_agent_is_refused_too(client, test_project, test_team, db):
+    """Review 5: production agents have no team membership row."""
+    from app.oxyde_models.user import OxydeUser
+    from app.utils.security import create_access_token, get_password_hash
+    agent = await OxydeUser.objects.create(
+        email="plain-agent@example.com", hashed_password=get_password_hash("x" * 12),
+        name="Plain agent", is_agent=True, agent_team_id=test_team.id,
+    )
+    headers = {"Authorization": f"Bearer {create_access_token(data={'sub': agent.id})}"}
+    sprint = await _sprint(test_project.id)
+    r = await _patch_sprint(client, headers, sprint.id, budget=50)
+    assert r.status_code == 403, r.text
+    from app.oxyde_models.project import OxydeProject
+    await OxydeProject.objects.filter(id=test_project.id).update(default_sprint_budget=10)
+    r = await client.patch(f"/api/projects/{test_project.id}", headers=headers,
+                           json={"default_sprint_budget": None})
+    assert r.status_code == 403, r.text
+
+
+@pytest.mark.asyncio
+async def test_agent_cannot_raise_a_carried_budget_by_setting_a_default(client, agent_headers, test_project, db):
+    """Review 2: while the default is null a planned sprint carries a
+    budget of its own; a number set now would raise it."""
+    from app.oxyde_models.project import OxydeProject
+    await OxydeProject.objects.filter(id=test_project.id).update(default_sprint_budget=None)
+    planned = await _sprint(test_project.id, status=SprintStatus.PLANNED)
+    await OxydeSprint.objects.filter(id=planned.id).update(budget_explicit=False)
+    r = await client.patch(f"/api/projects/{test_project.id}", headers=agent_headers,
+                           json={"default_sprint_budget": 1000})
+    assert r.status_code == 403, r.text
+    await planned.refresh()
+    assert planned.budget == 10
+    # A number at or under what it carries is fine.
+    r = await client.patch(f"/api/projects/{test_project.id}", headers=agent_headers,
+                           json={"default_sprint_budget": 10})
     assert r.status_code == 200, r.text
 
 
@@ -127,3 +189,22 @@ async def test_agent_cannot_loosen_the_default_through_a_template(client, auth_h
                           json={"project_id": test_project.id})
     assert r.status_code == 403, r.text
     assert "default_sprint_budget" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_agent_cannot_raise_the_default_through_a_template(client, auth_headers, agent_headers, test_project, test_team, db):
+    from app.oxyde_models.ritual import OxydeRitual
+    assert (await client.patch(f"/api/projects/{test_project.id}", headers=auth_headers,
+                               json={"default_sprint_budget": 10})).status_code == 200
+    r = await client.post(
+        f"/api/teams/{test_team.id}/templates", headers=auth_headers,
+        json={"name": "bigger", "body": {"version": 1, "sections": {
+            "settings": {"default_sprint_budget": 40},
+            "rituals": [{"name": "tpl-r", "prompt": "Did you?", "trigger": "ticket_close", "approval_mode": "auto"}],
+        }}},
+    )
+    assert r.status_code in (200, 201), r.text
+    r = await client.post(f"/api/templates/{r.json()['id']}/apply", headers=agent_headers,
+                          json={"project_id": test_project.id})
+    assert r.status_code == 403, r.text
+    assert await OxydeRitual.objects.filter(project_id=test_project.id, name="tpl-r").count() == 0

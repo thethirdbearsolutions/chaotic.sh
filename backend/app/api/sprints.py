@@ -1,11 +1,11 @@
 """Sprint API routes."""
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, budget_loosened
+from app.api.deps import CurrentUser
 from app.api.visibility import visible_project, visible_sprint
 from app.schemas.sprint import SprintCreate, SprintUpdate, SprintResponse
 from app.schemas.budget_transaction import BudgetTransactionResponse
-from app.services.sprint_service import SprintNotPlannedError, SprintService
+from app.services.sprint_service import SprintNotPlannedError, SprintService, budget_loosened
 from app.enums import SprintStatus
 from app.oxyde_models.issue import OxydeBudgetTransaction
 from app.websocket import broadcast_sprint_event
@@ -99,9 +99,11 @@ async def _refuse_agent_loosening(sprint, project, sprint_in: SprintUpdate) -> N
     may not loosen it (CHT-1924): raise or clear the budget of an open
     sprint, point a planned one at a looser project default, or move a
     sprint's status by hand, which skips the close and its rituals. It
-    may lower a budget, rename, or close through POST .../close."""
-    if sprint.status == SprintStatus.COMPLETED:
-        return
+    may lower a budget, rename, or close through POST .../close.
+
+    A closed sprint is guarded too: reopening one would make a second
+    active sprint, and the arrears check could read that one (CHT-1924
+    review)."""
     fields = sprint_in.model_fields_set
     if "status" in fields and sprint_in.status is not None and sprint_in.status != sprint.status:
         raise HTTPException(

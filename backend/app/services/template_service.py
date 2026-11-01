@@ -47,7 +47,7 @@ from app.schemas.template import (
 )
 from app.services.project_service import GATE_SETTINGS
 from app.services.ritual_service import RitualService
-from app.services.sprint_service import SprintService
+from app.services.sprint_service import SprintService, default_change_loosens
 
 # Ritual fields a template pins. group/conditions/weight/percentage are
 # deliberately not part of the portable snapshot (they reference
@@ -306,11 +306,10 @@ class TemplateService:
                 ]
                 # A looser default budget reaches every planned sprint
                 # (CHT-1924): a higher number, or none where there was one.
-                if "default_sprint_budget" in to_set:
-                    old_budget = project.default_sprint_budget
-                    new_budget = to_set["default_sprint_budget"]
-                    if old_budget is not None and (new_budget is None or new_budget > old_budget):
-                        lifted.append("default_sprint_budget")
+                if "default_sprint_budget" in to_set and await default_change_loosens(
+                    project.id, project.default_sprint_budget, to_set["default_sprint_budget"],
+                ):
+                    lifted.append("default_sprint_budget")
                 refuse_lifting(lifted)
 
             if to_set and not dry_run:
