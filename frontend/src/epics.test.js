@@ -159,7 +159,7 @@ describe('renderEpics', () => {
 
     it('renders the progress table', () => {
         renderEpics(response([epic()]), container);
-        expect(container.querySelectorAll('th').length).toBe(7);
+        expect(container.querySelectorAll('thead th').length).toBe(6);
         const row = container.querySelector('.epic-row');
         expect(row.querySelector('.epic-progress-text').textContent).toBe('2/4');
         expect(row.querySelector('.epic-progress-fill').style.width).toBe('50%');

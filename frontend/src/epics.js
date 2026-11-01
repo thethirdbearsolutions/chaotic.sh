@@ -115,10 +115,6 @@ export async function loadEpics() {
     }
 }
 
-function formatStatusLabel(status) {
-    return (status || 'backlog').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
 function plural(n, word) {
     return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
@@ -145,6 +141,7 @@ function renderProgress(epic) {
                 <div class="epic-progress-fill${complete ? ' epic-progress-complete' : ''}" style="width: ${donePct}%"></div>
                 <div class="epic-progress-active" style="width: ${Math.min(activePct, 100 - donePct)}%"></div>
             </div>
+            <span class="epic-progress-pct">${Math.round(((c.done || 0) / total) * 100)}%</span>
             <span class="epic-progress-text">${c.done || 0}/${total}</span>
         </div>
     `;
@@ -174,22 +171,21 @@ function renderThisSprint(closed, points) {
 }
 
 function renderEpicRow(epic) {
-    const statusClass = `status-${(epic.status || 'backlog').replace(/_/g, '-')}`;
     const pinned = epic.status_pinned && !CLOSED.has(epic.status)
-        ? ' <span class="epic-status-pinned-mark" title="Set by hand, so it no longer follows its tickets">✎</span>'
+        ? ' <span class="epic-status-pinned-mark" title="Status set by hand, so it no longer follows its tickets">✎</span>'
         : '';
     const points = (epic.points_total || 0) > 0
         ? `${epic.points_done || 0}/${epic.points_total} pts`
         : '-';
+    const empty = ticketTotal(epic) <= 0;
     return `
-        <tr class="epic-row${CLOSED.has(epic.status) ? ' epic-row-closed' : ''}" data-identifier="${escapeAttr(epic.identifier)}" style="cursor: pointer;">
+        <tr class="epic-row${CLOSED.has(epic.status) ? ' epic-row-closed' : ''}${empty ? ' epic-row-empty' : ''}" data-identifier="${escapeAttr(epic.identifier)}">
             <td class="epic-identifier">${escapeHtml(epic.identifier)}</td>
-            <td class="epic-title">${escapeHtml(epic.title)}</td>
+            <td class="epic-title">${escapeHtml(epic.title)}${pinned}</td>
             <td class="epic-progress">${renderProgress(epic)}</td>
             <td class="epic-points">${points}</td>
             <td class="epic-sprint">${renderThisSprint(epic.closed_this_sprint, epic.points_this_sprint)}</td>
             <td class="epic-sprints">${renderSprintStrip(epic.sprints)}</td>
-            <td class="epic-status"><span class="status-badge ${statusClass}">${formatStatusLabel(epic.status)}</span>${pinned}</td>
         </tr>
     `;
 }
@@ -206,13 +202,93 @@ function renderUntrackedRow(u) {
             <td class="epic-points"></td>
             <td class="epic-sprint">${renderThisSprint(u.closed_this_sprint, u.points_this_sprint)}</td>
             <td class="epic-sprints">${renderSprintStrip(u.sprints)}</td>
-            <td class="epic-status"></td>
         </tr>
     `;
 }
 
+function ticketTotal(epic) {
+    const c = epic.children || {};
+    return (c.total || 0) - (c.canceled || 0);
+}
+
+function donePct(epic) {
+    const total = ticketTotal(epic);
+    return total > 0 ? (epic.children?.done || 0) / total : 0;
+}
+
+// The state groups, in reading order (CHT-1964). An epic's status is
+// derived from its tickets (CHT-1901), so these read as "moving",
+// "queued", "not started" and "finished".
+const STATUS_GROUPS = [
+    { key: 'active', label: 'In progress', statuses: ['in_progress', 'in_review'] },
+    { key: 'todo', label: 'Todo', statuses: ['todo'] },
+    { key: 'backlog', label: 'Backlog', statuses: ['backlog'] },
+    { key: 'closed', label: 'Closed', statuses: ['done', 'canceled'] },
+];
+
+function statusGroupOf(epic) {
+    const status = epic.status || 'backlog';
+    return STATUS_GROUPS.find(g => g.statuses.includes(status)) || STATUS_GROUPS[2];
+}
+
 /**
- * Render the epics table: progress toward each goal (CHT-1902).
+ * Order inside a state group: what moved this sprint first, then the
+ * furthest along; epics with no tickets last.
+ */
+function compareEpics(a, b) {
+    const emptyA = ticketTotal(a) <= 0;
+    const emptyB = ticketTotal(b) <= 0;
+    if (emptyA !== emptyB) return emptyA ? 1 : -1;
+    const moved = (b.points_this_sprint || 0) - (a.points_this_sprint || 0);
+    if (moved) return moved;
+    const closed = (b.closed_this_sprint || 0) - (a.closed_this_sprint || 0);
+    if (closed) return closed;
+    return donePct(b) - donePct(a);
+}
+
+/**
+ * Epics of one project (or of everything, in a single-project view) in
+ * state groups, each sorted by compareEpics. Returns [{group, epics}].
+ */
+function groupByState(epics) {
+    return STATUS_GROUPS
+        .map(group => ({ group, epics: epics.filter(e => statusGroupOf(e) === group).sort(compareEpics) }))
+        .filter(g => g.epics.length);
+}
+
+/**
+ * The readout above the table: how the open goals stand and what this
+ * sprint moved (CHT-1964). Counts open epics only.
+ */
+function renderSummary(all, untracked) {
+    const open = all.filter(e => !CLOSED.has(e.status));
+    if (!open.length) return '';
+    const moving = open.filter(e => statusGroupOf(e).key === 'active').length;
+    const ptsTotal = open.reduce((n, e) => n + (e.points_total || 0), 0);
+    const ptsDone = open.reduce((n, e) => n + (e.points_done || 0), 0);
+    const pct = ptsTotal ? Math.round((ptsDone / ptsTotal) * 100) : 0;
+    const sprintClosed = all.reduce((n, e) => n + (e.closed_this_sprint || 0), 0);
+    const sprintPts = all.reduce((n, e) => n + (e.points_this_sprint || 0), 0);
+    const loose = untracked.reduce((n, u) => n + (u.open || 0), 0);
+    const stat = (value, label, extra = '') => `
+        <div class="epic-stat${extra}">
+            <div class="epic-stat-value">${value}</div>
+            <div class="epic-stat-label">${label}</div>
+        </div>`;
+    return `
+        <div class="epic-summary" role="group" aria-label="Progress summary">
+            ${stat(`${moving}<span class="epic-stat-of"> / ${open.length}</span>`, 'open epics moving')}
+            ${stat(ptsTotal ? `${pct}%` : '-', ptsTotal ? `of points done (${ptsDone}/${ptsTotal})` : 'no estimated tickets')}
+            ${stat(sprintClosed ? `+${sprintClosed}` : '0', `closed this sprint (${sprintPts} pts)`, sprintClosed ? ' epic-stat-up' : '')}
+            ${loose ? stat(String(loose), plural(loose, 'open ticket').replace(/^\d+ /, '') + ' under no epic', ' epic-stat-warn') : ''}
+        </div>`;
+}
+
+const COLS = 6;
+
+/**
+ * Render the epics readout: a summary, then each project's epics grouped
+ * by state with progress, points and sprint movement (CHT-1902, CHT-1964).
  * Uses data attributes + event delegation instead of inline onclick to avoid XSS.
  * @param {{epics: Array, untracked: Array}} progress - GET .../epics response
  */
@@ -221,23 +297,31 @@ export function renderEpics(progress, container) {
     const untracked = progress?.untracked || [];
     const closedCount = all.filter(e => CLOSED.has(e.status)).length;
     const shown = showClosed ? all : all.filter(e => !CLOSED.has(e.status));
-    // Prev/next on the epic page walks the rows as shown.
-    currentEpics = shown;
 
     const projectKeys = [...new Set([...all.map(e => e.project_key), ...untracked.map(u => u.project_key)])];
     const grouped = projectKeys.length > 1;
+    const ordered = [];
     const body = projectKeys.map(key => {
-        const rows = shown.filter(e => e.project_key === key).map(renderEpicRow).join('');
+        const groups = groupByState(shown.filter(e => e.project_key === key));
+        const rows = groups.map(({ group, epics }) => {
+            ordered.push(...epics);
+            return `<tr class="epic-state-row epic-state-${group.key}"><th colspan="${COLS}">`
+                + `<span class="epic-state-dot" aria-hidden="true"></span>${group.label}`
+                + `<span class="epic-state-count">${epics.length}</span></th></tr>`
+                + epics.map(renderEpicRow).join('');
+        }).join('');
         const gap = renderUntrackedRow(untracked.find(u => u.project_key === key));
         if (!rows && !gap) return '';
         const header = grouped
-            ? `<tr class="epic-group-row"><th colspan="7">${escapeHtml(key)}</th></tr>`
+            ? `<tr class="epic-group-row"><th colspan="${COLS}">${escapeHtml(key)}</th></tr>`
             : '';
         return header + rows + gap;
     }).join('');
+    // Prev/next on the epic page walks the rows as shown.
+    currentEpics = ordered;
 
     const emptyNote = !body.trim() && closedCount > 0
-        ? `<tr class="epic-empty-row"><td colspan="7" class="text-muted">Every epic here is closed.</td></tr>`
+        ? `<tr class="epic-empty-row"><td colspan="${COLS}" class="text-muted">Every epic here is closed.</td></tr>`
         : '';
 
     const toggle = closedCount > 0
@@ -245,6 +329,7 @@ export function renderEpics(progress, container) {
         : '';
 
     container.innerHTML = `
+        ${renderSummary(all, untracked)}
         <table class="epic-table">
             <thead>
                 <tr>
@@ -254,7 +339,6 @@ export function renderEpics(progress, container) {
                     <th>Points</th>
                     <th title="Closed while the current sprint is active">This sprint</th>
                     <th title="Points closed in each recent sprint, oldest first">Sprints</th>
-                    <th>Status</th>
                 </tr>
             </thead>
             <tbody>
