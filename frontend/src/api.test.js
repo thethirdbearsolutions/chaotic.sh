@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+vi.mock('./boot-cache.js', () => ({ clearSnapshot: vi.fn(() => Promise.resolve()) }));
+
 import { ApiClient } from './api.js';
+import { clearSnapshot } from './boot-cache.js';
 
 describe('ApiClient', () => {
   let client;
@@ -62,6 +65,12 @@ describe('ApiClient', () => {
       it('removes token from localStorage when set to falsy value', () => {
         client.setToken('');
         expect(localStorageMock.removeItem).toHaveBeenCalledWith('chaotic_token');
+      });
+
+      it('deletes the boot cache (CHT-1972)', () => {
+        clearSnapshot.mockClear();
+        client.logout();
+        expect(clearSnapshot).toHaveBeenCalled();
       });
     });
 

@@ -6,8 +6,9 @@ import { appendPendingRows } from './issue-list.js';
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
 import { closeModal, isModalOpen, showToast, closeInlineDropdownsFromEscape, isModalDirty, focusModalFirstField } from './ui.js';
-import { showAuthScreen, logout, initAuth } from './auth.js';
+import { showAuthScreen, logout, initAuth, updateUserInfo } from './auth.js';
 import { initApp, showSignedOut } from './init.js';
+import { readSnapshot, userIdFromToken, clearSnapshot } from './boot-cache.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal, showEditDocumentModal, setDocViewMode, enterSelectionMode, filterDocuments, debounceDocSearch } from './documents.js';
 import { loadAgents, showCreateAgentModal } from './agents.js';
 import { showCreateIssueModal } from './issue-creation.js';
@@ -579,8 +580,34 @@ async function bootApp() {
     primeRoute();
     const teamsRequest = api.getMyTeams();
     teamsRequest.catch(() => {}); // a 401 is reported by /auth/me below
+    const meRequest = api.getMe();
+    // What this user saw last time (CHT-1972), read while /auth/me and
+    // /teams are in flight. With it, the app paints at once and those
+    // requests confirm the session and refresh behind the paint.
+    const snapshot = await readSnapshot(userIdFromToken(api.getToken()));
+    if (snapshot) {
+        meRequest.then((user) => {
+            setCurrentUser(user);
+            updateUserInfo();
+        }, async (e) => {
+            if (e?.status === 401 || e?.status === 403) {
+                // The session ended: drop what was painted from the cache
+                // and boot again, signed out.
+                api.logout();
+                await clearSnapshot();
+                window.location.reload();
+                return;
+            }
+            console.error('Failed to confirm the session on boot:', e);
+            // What shows is the saved copy; say so (PR #517 review M3).
+            showToast('Showing saved data — check your connection and reload', 'error');
+        });
+        setCurrentUser(snapshot.user);
+        await initApp({ teamsRequest, snapshot });
+        return;
+    }
     try {
-        const user = await api.getMe();
+        const user = await meRequest;
         setCurrentUser(user);
         await initApp({ teamsRequest });
     } catch (e) {

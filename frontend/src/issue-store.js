@@ -126,6 +126,17 @@ function putEntity(issue) {
     entities.set(issue.id, issue);
 }
 
+const writeListeners = new Set();
+
+/**
+ * Call `fn` after each writeQuery(): the boot cache saves a moment later
+ * (CHT-1972). Returns a function that removes it.
+ */
+export function onQueryWritten(fn) {
+    writeListeners.add(fn);
+    return () => writeListeners.delete(fn);
+}
+
 /** Save a query's result. `meta` keeps whatever it had unless given. */
 export function writeQuery(key, issues, meta) {
     if (!Array.isArray(issues)) return;
@@ -133,6 +144,7 @@ export function writeQuery(key, issues, meta) {
     rows.forEach(putEntity);
     const previous = queries.get(key);
     touch(key, { ids: rows.map(i => i.id), meta: meta ?? previous?.meta ?? {} });
+    writeListeners.forEach(fn => { try { fn(key); } catch (e) { console.error(e); } });
 }
 
 /** Replace a cached query's extra values, leaving its rows alone. */
@@ -181,6 +193,45 @@ export function rememberView(viewKey, key) {
 export function queryForView(viewKey) {
     const key = views.get(viewKey);
     return key && queries.has(key) ? key : null;
+}
+
+/**
+ * The most recently used lists, as plain data for the boot cache
+ * (CHT-1972): `maxQueries` queries, the rows they hold, and the views that
+ * point at them.
+ * @param {{maxQueries?: number}} [options]
+ */
+export function exportIssueStore({ maxQueries = 3 } = {}) {
+    const recent = [...queries.entries()].slice(-maxQueries);
+    const kept = new Set(recent.map(([key]) => key));
+    const ids = new Set();
+    recent.forEach(([, entry]) => entry.ids.forEach(id => ids.add(id)));
+    return {
+        queries: recent.map(([key, entry]) => [key, { ids: [...entry.ids], meta: entry.meta || {} }]),
+        entities: [...ids].map(id => entities.get(id)).filter(Boolean),
+        views: [...views.entries()].filter(([, key]) => kept.has(key)),
+    };
+}
+
+/**
+ * Load lists saved by exportIssueStore(), under whatever this session has
+ * loaded already: a row the store has a newer copy of keeps it, and a
+ * query or view it already holds is left alone.
+ * @param {ReturnType<typeof exportIssueStore>} snapshot
+ */
+export function importIssueStore(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.queries)) return;
+    const rows = new Map((snapshot.entities || []).filter(r => r?.id).map(r => [r.id, r]));
+    snapshot.queries.forEach(([key, entry]) => {
+        if (queries.has(key) || !Array.isArray(entry?.ids)) return;
+        // Each query's rows go in just before it: touch() prunes rows no
+        // query holds yet.
+        entry.ids.forEach(id => { if (rows.has(id)) putEntity(rows.get(id)); });
+        touch(key, { ids: entry.ids.filter(id => entities.has(id)), meta: entry.meta || {} });
+    });
+    (snapshot.views || []).forEach(([viewKey, key]) => {
+        if (!views.has(viewKey) && queries.has(key)) rememberView(viewKey, key);
+    });
 }
 
 // What a row shows beyond its own version: labels (a rename edits only

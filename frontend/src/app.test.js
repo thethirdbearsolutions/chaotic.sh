@@ -52,6 +52,12 @@ vi.mock('./auth.js', () => ({
     showAuthScreen: vi.fn(),
     logout: vi.fn(),
     initAuth: vi.fn(),
+    updateUserInfo: vi.fn(),
+}));
+vi.mock('./boot-cache.js', () => ({
+    readSnapshot: vi.fn(() => Promise.resolve(null)),
+    userIdFromToken: vi.fn(() => 'user-1'),
+    clearSnapshot: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('./init.js', () => ({ initApp: vi.fn(), showSignedOut: vi.fn() }));
 vi.mock('./documents.js', () => ({
@@ -242,6 +248,8 @@ import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { viewDocument } from './documents.js';
 import { viewSprintByPath, viewSprint } from './sprints.js';
 import { viewProjectSettings, clearProjectSettingsState, setOnRitualsChanged, loadProjects, renderProjects } from './projects.js';
+import { readSnapshot, clearSnapshot } from './boot-cache.js';
+import { updateUserInfo } from './auth.js';
 import { setCurrentUser, setCurrentDetailIssue, setCurrentDetailSprints, setCurrentProject } from './state.js';
 import { loadGateApprovals } from './gate-approvals.js';
 import { loadEpics } from './epics.js';
@@ -942,6 +950,60 @@ describe('app.js DOMContentLoaded initialization', () => {
         await domReadyCallback();
         expect(api.logout).not.toHaveBeenCalled();
         expect(showToast).toHaveBeenCalledWith(expect.stringContaining('check your connection and retry'), 'error');
+    });
+
+    // CHT-1972: with a snapshot, the app paints from it and /auth/me
+    // confirms the session behind the paint.
+    describe('boot cache (CHT-1972)', () => {
+        afterEach(() => {
+            readSnapshot.mockResolvedValue(null);
+            vi.unstubAllGlobals();
+        });
+
+        it('boots on the snapshot without waiting for /auth/me', async () => {
+            const snapshot = { user: { id: 'user-1', name: 'Cached' }, teams: [] };
+            readSnapshot.mockResolvedValue(snapshot);
+            api.getToken.mockReturnValue('valid-token');
+            let answerMe;
+            api.getMe.mockReturnValue(new Promise((r) => { answerMe = r; }));
+            const teams = Promise.resolve([]);
+            api.getMyTeams.mockReturnValue(teams);
+            await domReadyCallback();
+            expect(setCurrentUser).toHaveBeenCalledWith(snapshot.user);
+            expect(initApp).toHaveBeenCalledWith({ teamsRequest: teams, snapshot });
+            answerMe({ id: 'user-1', name: 'Fresh' });
+            await new Promise((r) => setTimeout(r, 0));
+            expect(setCurrentUser).toHaveBeenLastCalledWith({ id: 'user-1', name: 'Fresh' });
+            expect(updateUserInfo).toHaveBeenCalled();
+        });
+
+        it('a 401 behind the snapshot signs out, drops it and reloads', async () => {
+            const reload = vi.fn();
+            vi.stubGlobal('location', { ...window.location, reload });
+            readSnapshot.mockResolvedValue({ user: { id: 'user-1' }, teams: [] });
+            api.getToken.mockReturnValue('expired-token');
+            api.getMe.mockRejectedValue(Object.assign(new Error('no'), { status: 401 }));
+            await domReadyCallback();
+            await new Promise((r) => setTimeout(r, 0));
+            expect(api.logout).toHaveBeenCalled();
+            expect(clearSnapshot).toHaveBeenCalled();
+            expect(reload).toHaveBeenCalled();
+        });
+
+        it('a network error behind the snapshot keeps the session', async () => {
+            const reload = vi.fn();
+            vi.stubGlobal('location', { ...window.location, reload });
+            readSnapshot.mockResolvedValue({ user: { id: 'user-1' }, teams: [] });
+            api.getToken.mockReturnValue('valid-token');
+            api.getMe.mockRejectedValue(Object.assign(new Error('net'), { isNetworkError: true }));
+            const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+            await domReadyCallback();
+            await new Promise((r) => setTimeout(r, 0));
+            expect(api.logout).not.toHaveBeenCalled();
+            expect(reload).not.toHaveBeenCalled();
+            expect(showToast).toHaveBeenCalledWith(expect.stringContaining('saved data'), 'error');
+            err.mockRestore();
+        });
     });
 
     it('does NOT log out on a 5xx error during boot (retains the token)', async () => {
