@@ -298,6 +298,8 @@ def handle_error(f):
             # traceback alone (CHT-1957); without --json it is a bug to see.
             if not is_json_output():
                 raise
+            import traceback
+            traceback.print_exc(file=sys.stderr)  # stdout stays one JSON value
             output_json({"error": f"Unexpected error: {type(e).__name__}: {e}", "error_code": "internal_error"})
             raise SystemExit(1) from e
     wrapper.__name__ = f.__name__

@@ -481,7 +481,14 @@ def _retrying(call, what: str):
         try:
             return call()
         except Exception as exc:  # noqa: BLE001 - re-raised unless transient
-            if not _is_transient(exc):
+            # Narrower than _is_transient: an APIError with no status is
+            # also a local failure (session identity misconfigured, say),
+            # which waiting never fixes; here it still exits 1 at once.
+            transient = (
+                isinstance(exc, _TRANSIENT_HTTPX_ERRORS)
+                or (isinstance(exc, APIError) and exc.status_code is not None and _is_transient(exc))
+            )
+            if not transient:
                 raise
             if deadline is not None and time.time() >= deadline:
                 _stderr("await: timeout")

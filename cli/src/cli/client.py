@@ -243,7 +243,13 @@ class Client:
                         unanswered = exc
                     else:
                         asked = _retry_after(response)
-                        if asked is None or last or asked > MAX_RETRY_AFTER:
+                        if asked is None:
+                            return response
+                        if last or asked > MAX_RETRY_AFTER:
+                            if unanswered is not None:
+                                # Still in flight, or busy, after an attempt
+                                # that may have landed: as unknown as that.
+                                raise WriteOutcomeUnknown(method, path, unanswered)
                             return response
                         wait = asked
                     self._sleep(wait)

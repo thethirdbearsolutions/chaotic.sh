@@ -179,6 +179,20 @@ class TestBoundedResend:
         assert len(set(fake.keys())) == 1
         assert http.sleeps == [1.0, 3.0]
 
+    def test_still_in_flight_at_the_last_attempt_may_have_landed(self, http):
+        in_flight = Response(409, {"detail": {"error_code": "idempotency_in_flight", "message": "still"}})
+        http(_timeout(), in_flight, in_flight)
+        with pytest.raises(WriteOutcomeUnknown):
+            Client().create_comment("i1", "hi")
+
+    def test_busy_with_nothing_sent_before_is_the_answer(self, http):
+        busy = Response(503, {"detail": {"error_code": "idempotency_busy", "message": "busy"}})
+        http(*[busy for _ in range(WRITE_ATTEMPTS)])
+        with pytest.raises(APIError) as exc:
+            Client().create_comment("i1", "hi")
+        assert not isinstance(exc.value, WriteOutcomeUnknown)
+        assert exc.value.status_code == 503
+
     def test_a_busy_server_is_asked_again(self, http):
         busy = Response(503, {"detail": {"error_code": "idempotency_busy", "message": "busy"}})
         fake = http(busy, Response(201, COMMENT))
@@ -287,6 +301,7 @@ class TestJsonFailures:
         assert result.exit_code == 1
         body = json.loads(result.stdout)
         assert body["error_code"] == "internal_error" and "boom" in body["error"]
+        assert "Traceback" in result.stderr
 
     def test_without_json_the_message_says_check_first(self, cli_with):
         result = cli_with(
@@ -349,6 +364,23 @@ class TestAwaitSurvivesReadTimeout:
         result = CliRunner().invoke(self._root(), ["await", "team", "--timeout", "2m"])
         assert result.exit_code == 124, result.output
         assert "await: timeout" in result.stderr
+
+    def test_a_local_failure_is_not_waited_out(self, monkeypatch):
+        # An APIError with no status (session identity misconfigured) is
+        # not transient here: exit 1 at once, not retry forever.
+        client = MagicMock()
+        client.get_me.side_effect = APIError("no registrar key", status_code=None)
+        self._patch(monkeypatch, client)
+        result = CliRunner().invoke(self._root(), ["await", "team"])
+        assert result.exit_code == 1
+        assert client.get_me.call_count == 1
+
+    def test_a_5xx_lookup_is_retried(self, monkeypatch):
+        client = MagicMock()
+        client.get_me.side_effect = [APIError("bad gateway", status_code=502), {"id": "me"}]
+        self._patch(monkeypatch, client)
+        result = CliRunner().invoke(self._root(), ["await", "team", "--json"])
+        assert result.exit_code == 0, result.output
 
     def test_a_refusal_is_still_exit_1(self, monkeypatch):
         client = MagicMock()
