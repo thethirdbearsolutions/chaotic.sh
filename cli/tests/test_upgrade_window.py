@@ -260,7 +260,12 @@ class TestQueueAfterTheStart:
 
     def test_drops_during_the_window_are_reported(self):
         counts = iter([7, 19])
-        result, _ = _upgrade(_listen_drops=dict(side_effect=lambda: next(counts)))
+        result, _ = _upgrade(
+            _listen_drops=dict(side_effect=lambda: next(counts)),
+            socket_mode_installed=dict(return_value=True),
+            _justfile_serves_socket=dict(return_value=True),
+            hold_deploy_gate=dict(return_value=True),
+        )
 
         assert result.exit_code == 0, result.output
         assert "12 connection(s) were dropped at a full listen queue" in _flat(result.output)
@@ -296,3 +301,22 @@ class TestQueueAfterTheStart:
         first, second = (c.args[0] for c in run.call_args_list)
         assert first[:3] == ["/usr/bin/nice", "-n", "10"] and first[3] == "uv"
         assert second[0] == "uv"
+
+    def test_without_the_socket_drops_are_not_counted(self):
+        result, m = _upgrade(_listen_drops=dict(side_effect=[1, 50]))
+
+        assert result.exit_code == 0, result.output
+        assert "dropped" not in result.output
+        m["_listen_drops"].assert_not_called()
+
+    def test_ctrl_c_after_a_verified_retry_reinstall_exits_130(self, monkeypatch):
+        _with_real_after_upgrade(monkeypatch)
+        monkeypatch.setattr(system, "_installed_cli_is_stale", lambda: True)
+        result, _ = _upgrade(
+            resolve_commit=dict(return_value=_COMMITS[0]),
+            reinstall_cli=dict(return_value=(True, "CLI reinstalled (verified against the checkout)")),
+            _print_path_cli_warning=dict(side_effect=KeyboardInterrupt),
+        )
+
+        assert result.exit_code == 130
+        assert "Already on the latest version" in result.output

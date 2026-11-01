@@ -3468,6 +3468,9 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                 raise SystemExit(130 if interrupted else 1)
             console.print(f"  [dim]{escape(message)}[/dim]")
             _print_closing_path_cli_warning(progress)
+            if interrupted:  # after it verified: as on the main path
+                console.print("\n[green]Already on the latest version.[/green]")
+                raise SystemExit(130)
         console.print("\n[green]Already on the latest version.[/green]")
         raise SystemExit(0)
 
@@ -3531,7 +3534,9 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     # before the stop: the drain is part of the window (CHT-2000). Each
     # step's share is reported too, so a slow one shows up.
     down_since = time.monotonic() if must_stop else None
-    drops_before = _listen_drops() if must_stop else None
+    # Only behind chaotic.socket do requests queue through the window; a
+    # classic unit's closed port refuses them instead (PR #520 re-review).
+    drops_before = _listen_drops() if must_stop and gated else None
     window_steps: list[tuple[str, float]] = []
     lap_started = [down_since]
 
@@ -3771,14 +3776,14 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     if down_since is not None:
         steps = ", ".join(f"{step} {seconds:.1f}s" for step, seconds in window_steps)
         console.print(f"[dim]Server was down for {time.monotonic() - down_since:.1f}s ({esc(steps)}).[/dim]")
-        drops_after = _listen_drops()
+        drops_after = _listen_drops() if drops_before is not None else None
         if drops_before is not None and drops_after is not None and drops_after > drops_before:
             # Host-wide counter: anything else listening here counts too.
             console.print(
                 f"[yellow]{esc(drops_after - drops_before)} connection(s) were dropped at a full listen queue "
                 "during the window (TcpExt ListenDrops, host-wide). Their clients retry with backoff, "
                 "so they can wait well past the restart. If this recurs, raise net.core.somaxconn "
-                "(chaotic.socket's backlog follows it).[/yellow]"
+                "(it caps chaotic.socket's backlog) or set a larger Backlog= in the socket unit.[/yellow]"
             )
 
     # The CLI last (CHT-2000): the server does not need it, so it no
