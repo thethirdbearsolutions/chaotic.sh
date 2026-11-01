@@ -195,6 +195,8 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)
+    // OkHttpLiveConnectorTest: a real WebSocket handshake (CHT-1655).
+    testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.robolectric)
     testImplementation(libs.tink)
     testImplementation(libs.androidx.test.core)
