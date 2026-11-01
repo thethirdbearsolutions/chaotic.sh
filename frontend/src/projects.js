@@ -188,9 +188,13 @@ export function getEstimateScaleHint(projectId) {
  * Load projects for the current team
  */
 export async function loadProjects() {
-  if (!getCurrentTeam()) return;
+  const teamId = getCurrentTeam()?.id;
+  if (!teamId) return;
   try {
-    projects = await api.getProjects(getCurrentTeam().id);
+    const list = await api.getProjects(teamId);
+    // A response for a team switched away from is dropped.
+    if (getCurrentTeam()?.id !== teamId) return;
+    projects = list;
     updateProjectFilters();
     chooseCurrentProject();
   } catch (e) {

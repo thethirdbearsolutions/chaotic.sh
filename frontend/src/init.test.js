@@ -5,11 +5,16 @@ vi.mock('./auth.js', () => ({
 }));
 vi.mock('./teams.js', () => ({
     getTeams: vi.fn(() => []), loadTeams: vi.fn(), selectTeam: vi.fn(), setTeams: vi.fn(), getMembers: vi.fn(() => []),
+    teamDataLoadedFor: vi.fn(() => null),
 }));
 vi.mock('./projects.js', () => ({ getProjects: vi.fn(() => []) }));
 vi.mock('./agents.js', () => ({ getAgents: vi.fn(() => []) }));
 vi.mock('./issue-store.js', () => ({ exportIssueStore: vi.fn(() => ({})), onQueryWritten: vi.fn() }));
-vi.mock('./boot-cache.js', () => ({ clearSnapshot: vi.fn(() => Promise.resolve()), writeSnapshot: vi.fn(() => Promise.resolve()) }));
+vi.mock('./boot-cache.js', () => ({
+    clearSnapshot: vi.fn(() => Promise.resolve()), writeSnapshot: vi.fn(() => Promise.resolve()),
+    userIdFromToken: vi.fn((t) => t),
+}));
+vi.mock('./storage.js', () => ({ getToken: vi.fn(() => null) }));
 vi.mock('./onboarding.js', () => ({ showOnboarding: vi.fn(), hasCompletedOnboarding: vi.fn(() => true) }));
 vi.mock('./router.js', () => ({ initRouter: vi.fn(), primeRoute: vi.fn() }));
 vi.mock('./oauth-consent.js', async (importOriginal) => ({
@@ -25,13 +30,15 @@ vi.mock('./invite.js', async (importOriginal) => ({
 vi.mock('./ui.js', () => ({ showToast: vi.fn() }));
 vi.mock('./api.js', () => ({ api: { logout: vi.fn() } }));
 
-import { initApp, openInvite, showSignedOut, saveSnapshot, startSavingSnapshots, resetSnapshotSaving } from './init.js';
-import { setTeams, getMembers } from './teams.js';
+import { initApp, openInvite, showSignedOut, saveSnapshot, startSavingSnapshots, resetSnapshotSaving, discardSnapshot } from './init.js';
+import { setTeams, getMembers, teamDataLoadedFor } from './teams.js';
+import { getToken } from './storage.js';
+import { userIdFromToken } from './boot-cache.js';
 import { getProjects } from './projects.js';
 import { getAgents } from './agents.js';
 import { exportIssueStore, onQueryWritten } from './issue-store.js';
 import { clearSnapshot, writeSnapshot } from './boot-cache.js';
-import { setCurrentTeam, setLabels } from './state.js';
+import { setCurrentTeam, setLabels, getCurrentTeam } from './state.js';
 import { showMainScreen, showAuthScreen, showLogin, showSignup } from './auth.js';
 import { showInvite, hideInvite, showMissingToken, forgetInviteToken } from './invite.js';
 import { showToast } from './ui.js';
@@ -300,6 +307,10 @@ describe('boot cache (CHT-1972)', () => {
         hasCompletedOnboarding.mockReturnValue(true);
         clearSnapshot.mockResolvedValue();
         writeSnapshot.mockResolvedValue();
+        // Signed in as u1, with team t2's data loaded.
+        userIdFromToken.mockImplementation((t) => t);
+        getToken.mockReturnValue('u1');
+        teamDataLoadedFor.mockReturnValue('t2');
         history.replaceState(null, '', '/');
         reload = vi.fn();
         vi.stubGlobal('location', { ...window.location, pathname: '/', reload });
@@ -333,6 +344,24 @@ describe('boot cache (CHT-1972)', () => {
         await new Promise((r) => setTimeout(r, 0));
         expect(clearSnapshot).toHaveBeenCalled();
         expect(reload).toHaveBeenCalled();
+        // The pagehide of that reload does not write it back (review I1).
+        setCurrentUser({ id: 'u1' });
+        setCurrentTeam({ id: 't2' });
+        window.dispatchEvent(new Event('pagehide'));
+        expect(writeSnapshot).not.toHaveBeenCalled();
+        setCurrentTeam(null);
+        setCurrentUser(null);
+    });
+
+    it('shows a renamed team under its new name', async () => {
+        setCurrentTeam({ id: 't2', name: 'Old' });
+        document.body.innerHTML = '<span id="current-team-name">Old</span>';
+        await initApp({ teamsRequest: Promise.resolve([{ id: 't2', name: 'New' }]), snapshot });
+        await new Promise((r) => setTimeout(r, 0));
+        expect(getCurrentTeam()).toEqual({ id: 't2', name: 'New' });
+        expect(document.getElementById('current-team-name').textContent).toBe('New');
+        setCurrentTeam(null);
+        document.body.innerHTML = '';
     });
 
     it('ignores a snapshot whose team is not in its list, and an explicit team', async () => {
@@ -363,6 +392,27 @@ describe('boot cache (CHT-1972)', () => {
         setCurrentTeam(null);
         await saveSnapshot();
         expect(writeSnapshot).toHaveBeenCalledTimes(1);
+        setCurrentUser(null);
+    });
+
+    // PR #517 review C1 and I1.
+    it('saves nothing while the team data is loading, or for another signed-in user', async () => {
+        setCurrentUser({ id: 'u1' });
+        setCurrentTeam({ id: 't2' });
+        teamDataLoadedFor.mockReturnValue(null);
+        await saveSnapshot();
+        teamDataLoadedFor.mockReturnValue('t2');
+        getToken.mockReturnValue('u2'); // another tab signed in as someone else
+        await saveSnapshot();
+        getToken.mockReturnValue(null); // another tab signed out
+        await saveSnapshot();
+        expect(writeSnapshot).not.toHaveBeenCalled();
+        getToken.mockReturnValue('u1');
+        await discardSnapshot();
+        expect(clearSnapshot).toHaveBeenCalled();
+        await saveSnapshot();
+        expect(writeSnapshot).not.toHaveBeenCalled();
+        setCurrentTeam(null);
         setCurrentUser(null);
     });
 

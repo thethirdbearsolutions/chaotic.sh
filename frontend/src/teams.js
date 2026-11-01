@@ -101,6 +101,7 @@ export function renderTeamList() {
  *   as a load without it refresh them behind the paint.
  */
 export async function selectTeam(team, isInitialLoad = false, { seed = null } = {}) {
+  loadedTeamId = null;
   setCurrentTeam(team);
   document.getElementById('current-team-name').textContent = team.name;
   const mobileTeamName = document.getElementById('mobile-team-name');
@@ -115,28 +116,28 @@ export async function selectTeam(team, isInitialLoad = false, { seed = null } = 
   // Connect to WebSocket for real-time updates
   connectWebSocket(team.id);
 
-  if (seed) {
-    applyTeamSeed(seed);
-    if (isInitialLoad) handleRoute();
-    else navigateTo(getCurrentView() || 'my-issues');
-    Promise.all([
-      loadProjects(),
-      loadLabels(),
-      loadTeamMembersQuiet(),
-      loadTeamAgentsQuiet(),
-      refreshInboxUnreadCount(),
-    ]).catch(e => console.error('Failed to refresh team data:', e));
-    return;
+  if (seed && seedCoversUrl(seed)) {
+    let painted = false;
+    try {
+      applyTeamSeed(seed);
+      loadedTeamId = team.id;
+      if (isInitialLoad) handleRoute();
+      else navigateTo(getCurrentView() || 'my-issues');
+      painted = true;
+    } catch (e) {
+      // A snapshot that cannot be painted is ignored: load from the
+      // network as if there were none (PR #517 review I4).
+      console.error('Failed to paint from the boot cache:', e);
+      loadedTeamId = null;
+    }
+    if (painted) {
+      loadTeamData(team).catch(e => console.error('Failed to refresh team data:', e));
+      return;
+    }
   }
 
   // Load team data (including members for assignee dropdown)
-  await Promise.all([
-    loadProjects(),
-    loadLabels(),
-    loadTeamMembersQuiet(),
-    loadTeamAgentsQuiet(),
-    refreshInboxUnreadCount(),
-  ]);
+  await loadTeamData(team);
 
   // On initial load, handle the URL route; otherwise navigate to current view
   if (isInitialLoad) {
@@ -144,6 +145,44 @@ export async function selectTeam(team, isInitialLoad = false, { seed = null } = 
   } else {
     navigateTo(getCurrentView() || 'my-issues');
   }
+}
+
+let loadedTeamId = null;
+
+/**
+ * The team whose projects, labels, members and agents are all loaded
+ * (from the network or the boot cache), or null while a team switch is
+ * loading. The boot cache saves only then, so a snapshot never pairs one
+ * team with another's data (PR #517 review C1).
+ */
+export function teamDataLoadedFor() {
+  return loadedTeamId && loadedTeamId === getCurrentTeam()?.id ? loadedTeamId : null;
+}
+
+/** Test hook. */
+export function resetTeamDataLoaded() {
+  loadedTeamId = null;
+}
+
+async function loadTeamData(team) {
+  await Promise.all([
+    loadProjects(),
+    loadLabels(),
+    loadTeamMembersQuiet(),
+    loadTeamAgentsQuiet(),
+    refreshInboxUnreadCount(),
+  ]);
+  if (getCurrentTeam()?.id === team.id) loadedTeamId = team.id;
+}
+
+/**
+ * False when the URL names a project the snapshot does not have (one
+ * created since it was saved): painting would pick another project and
+ * overwrite the link's (PR #517 review I2).
+ */
+function seedCoversUrl(seed) {
+  const urlProject = new URLSearchParams(window.location.search).get('project');
+  return !urlProject || (Array.isArray(seed.projects) && seed.projects.some(p => p.id === urlProject));
 }
 
 /**
@@ -180,9 +219,13 @@ export function toggleUserDropdown() {
  * Load team members quietly (no UI feedback)
  */
 export async function loadTeamMembersQuiet() {
-  if (!getCurrentTeam()) return;
+  const teamId = getCurrentTeam()?.id;
+  if (!teamId) return;
   try {
-    members = await api.getTeamMembers(getCurrentTeam().id);
+    const list = await api.getTeamMembers(teamId);
+    // A response for a team switched away from is dropped.
+    if (getCurrentTeam()?.id !== teamId) return;
+    members = list;
     buildAssignees(getMembers, getAgents);
     updateAssigneeFilter();
   } catch (e) {
@@ -855,9 +898,11 @@ export async function handleUpdateTeam(event) {
  * Load labels for the current team
  */
 export async function loadLabels() {
-    if (!getCurrentTeam()) return;
+    const teamId = getCurrentTeam()?.id;
+    if (!teamId) return;
     try {
-        const labels = await api.getLabels(getCurrentTeam().id);
+        const labels = await api.getLabels(teamId);
+        if (getCurrentTeam()?.id !== teamId) return;
         setLabels(labels);
     } catch (e) {
         // CHT-1224: was console.error-only — silently broke every label

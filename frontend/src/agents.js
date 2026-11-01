@@ -83,7 +83,10 @@ export async function loadTeamAgentsQuiet(teamId) {
   if (!teamId) return;
 
   try {
-    agents = await api.getTeamAgents(teamId);
+    const list = await api.getTeamAgents(teamId);
+    // A response for a team switched away from is dropped.
+    if (getCurrentTeam()?.id !== teamId) return;
+    agents = list;
     buildAssignees(getMembers, getAgents);
     updateAssigneeFilter();
   } catch (e) {

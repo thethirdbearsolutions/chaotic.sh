@@ -203,6 +203,17 @@ describe('loadProjects', () => {
     expect(api.getProjects).not.toHaveBeenCalled();
   });
 
+  // PR #517 review I3.
+  it('drops an answer for a team switched away from', async () => {
+    let answer;
+    api.getProjects.mockReturnValue(new Promise((r) => { answer = r; }));
+    const loading = loadProjects();
+    setCurrentTeam({ id: 'team-2' });
+    answer([{ id: 'old', name: 'Old' }]);
+    await loading;
+    expect(getProjects()).toEqual([]);
+  });
+
   it('fetches projects and updates filters', async () => {
     const projects = [{ id: 'proj-1', name: 'Test Project' }];
     api.getProjects.mockResolvedValue(projects);

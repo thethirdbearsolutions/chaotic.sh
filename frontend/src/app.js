@@ -599,6 +599,8 @@ async function bootApp() {
                 return;
             }
             console.error('Failed to confirm the session on boot:', e);
+            // What shows is the saved copy; say so (PR #517 review M3).
+            showToast('Showing saved data — check your connection and reload', 'error');
         });
         setCurrentUser(snapshot.user);
         await initApp({ teamsRequest, snapshot });

@@ -28,6 +28,7 @@ import {
   showEditTeamModal,
   handleCreateTeam,
   handleUpdateTeam,
+  teamDataLoadedFor,
 } from './teams.js';
 import { api } from './api.js';
 import { showApiError, showModal, closeModal, showToast, isModalOpen } from './ui.js';
@@ -228,6 +229,61 @@ describe('selectTeam', () => {
     expect(api.getTeamMembers).toHaveBeenCalled();
     expect(mockLoadTeamAgentsQuiet).toHaveBeenCalled();
     finishProjects();
+  });
+
+  // PR #517 review I2: a link to a project the snapshot lacks loads
+  // from the network instead of opening another project.
+  it('ignores a seed without the linked project', async () => {
+    history.replaceState(null, '', '/issues?project=p9');
+    try {
+      await selectTeam({ id: 'team-1', name: 'T' }, true, { seed: { projects: [{ id: 'p1' }] } });
+      expect(mockSetProjects).not.toHaveBeenCalled();
+      expect(mockLoadProjects).toHaveBeenCalled();
+      expect(mockHandleRoute).toHaveBeenCalled();
+    } finally {
+      history.replaceState(null, '', '/');
+    }
+  });
+
+  // PR #517 review I4: a seed that fails to paint falls back to the network.
+  it('loads from the network when the seed fails to paint', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockHandleRoute.mockImplementationOnce(() => { throw new Error('render'); });
+    await selectTeam({ id: 'team-1', name: 'T' }, true, { seed: { projects: [] } });
+    expect(mockLoadProjects).toHaveBeenCalled();
+    expect(mockHandleRoute).toHaveBeenCalledTimes(2);
+    expect(teamDataLoadedFor()).toBe('team-1');
+    err.mockRestore();
+  });
+
+  // PR #517 review C1: the boot cache saves only once a team's data is in.
+  it('marks the team loaded only once its data is', async () => {
+    let finishProjects;
+    mockLoadProjects.mockReturnValue(new Promise((r) => { finishProjects = r; }));
+    const selecting = selectTeam({ id: 'team-1', name: 'T' }, true);
+    expect(teamDataLoadedFor()).toBeNull();
+    finishProjects();
+    await selecting;
+    expect(teamDataLoadedFor()).toBe('team-1');
+    mockLoadProjects.mockReturnValue(new Promise(() => {}));
+    selectTeam({ id: 'team-2', name: 'U' }, true);
+    expect(teamDataLoadedFor()).toBeNull();
+    await selectTeam({ id: 'team-3', name: 'V' }, true, { seed: { projects: [] } });
+    expect(teamDataLoadedFor()).toBe('team-3');
+  });
+
+  // PR #517 review I3: a late answer for the previous team is dropped.
+  it("drops a late labels or members answer for a team switched away from", async () => {
+    let answerLabels, answerMembers;
+    api.getLabels = vi.fn().mockReturnValueOnce(new Promise((r) => { answerLabels = r; })).mockResolvedValue([]);
+    api.getTeamMembers.mockReturnValueOnce(new Promise((r) => { answerMembers = r; })).mockResolvedValue([]);
+    selectTeam({ id: 'team-1', name: 'T' }, true);
+    await selectTeam({ id: 'team-2', name: 'U' }, true);
+    answerLabels([{ id: 'old' }]);
+    answerMembers([{ id: 'old-member' }]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getLabels()).toEqual([]);
+    expect(getMembers()).toEqual([]);
   });
 
   it('sets currentTeam and updates UI', async () => {

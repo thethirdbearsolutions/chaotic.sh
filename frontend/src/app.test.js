@@ -1001,6 +1001,7 @@ describe('app.js DOMContentLoaded initialization', () => {
             await new Promise((r) => setTimeout(r, 0));
             expect(api.logout).not.toHaveBeenCalled();
             expect(reload).not.toHaveBeenCalled();
+            expect(showToast).toHaveBeenCalledWith(expect.stringContaining('saved data'), 'error');
             err.mockRestore();
         });
     });

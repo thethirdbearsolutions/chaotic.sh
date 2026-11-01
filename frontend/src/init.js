@@ -12,11 +12,12 @@
 
 import { api } from './api.js';
 import { showAuthScreen, showLogin, showSignup, showMainScreen, updateUserInfo } from './auth.js';
-import { getTeams, getMembers, loadTeams, selectTeam, setTeams } from './teams.js';
+import { getTeams, getMembers, loadTeams, selectTeam, setTeams, teamDataLoadedFor } from './teams.js';
 import { getProjects } from './projects.js';
 import { getAgents } from './agents.js';
 import { exportIssueStore, onQueryWritten } from './issue-store.js';
-import { clearSnapshot, writeSnapshot } from './boot-cache.js';
+import { clearSnapshot, writeSnapshot, userIdFromToken } from './boot-cache.js';
+import { getToken } from './storage.js';
 import { showOnboarding, hasCompletedOnboarding } from './onboarding.js';
 import { consentRequestId, showConsent } from './oauth-consent.js';
 import { hideInvite, isInviteAddress, showInvite, showMissingToken, takeInviteToken } from './invite.js';
@@ -155,9 +156,17 @@ async function bootFromSnapshot(snapshot, team, teamsRequest) {
     Promise.resolve(teamsRequest || loadTeams().then(getTeams)).then(async (teams) => {
         if (!Array.isArray(teams)) return;
         setTeams(teams);
-        if (!teams.some((t) => t.id === team.id)) {
-            await clearSnapshot();
+        const fresh = teams.find((t) => t.id === team.id);
+        if (!fresh) {
+            await discardSnapshot();
             window.location.reload();
+            return;
+        }
+        // A renamed team shows its new name (PR #517 review M1).
+        if (getCurrentTeam()?.id === fresh.id && fresh.name !== getCurrentTeam().name) {
+            setCurrentTeam(fresh);
+            const name = document.getElementById('current-team-name');
+            if (name) name.textContent = fresh.name;
         }
     }, (e) => console.error('Failed to refresh teams:', e));
 }
@@ -165,14 +174,36 @@ async function bootFromSnapshot(snapshot, team, teamsRequest) {
 const SAVE_DELAY_MS = 2000;
 let saveTimer = null;
 let savingStarted = false;
+let discarded = false;
 
-/** Save what the app shows now, for the next load (CHT-1972). */
+/**
+ * Delete the snapshot and save no other from this page, which is about
+ * to reload: a pagehide save would otherwise write it back (PR #517
+ * review I1).
+ */
+export function discardSnapshot() {
+    discarded = true;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    return clearSnapshot();
+}
+
+/**
+ * Save what the app shows now, for the next load (CHT-1972). Only when
+ * the signed-in token (read from storage, so a sign-out in another tab
+ * counts) names the current user, and the current team's data has
+ * finished loading, so a snapshot never pairs one user or team with
+ * another's data (PR #517 review C1, I1).
+ */
 export function saveSnapshot() {
     clearTimeout(saveTimer);
     saveTimer = null;
+    if (discarded) return Promise.resolve();
     const user = getCurrentUser();
     const team = getCurrentTeam();
     if (!user?.id || !team?.id) return Promise.resolve();
+    if (userIdFromToken(getToken()) !== user.id) return Promise.resolve();
+    if (teamDataLoadedFor() !== team.id) return Promise.resolve();
     return writeSnapshot(user.id, {
         user,
         teams: getTeams(),
@@ -216,4 +247,5 @@ export function resetSnapshotSaving() {
     clearTimeout(saveTimer);
     saveTimer = null;
     savingStarted = false;
+    discarded = false;
 }

@@ -46,7 +46,15 @@ function openDb() {
             return;
         }
         request.onupgradeneeded = () => request.result.createObjectStore(STORE);
-        request.onsuccess = () => resolve(request.result);
+        request.onsuccess = () => {
+            const db = request.result;
+            // Let a newer page's upgrade through instead of blocking it.
+            db.onversionchange = () => {
+                db.close();
+                dbPromise = null;
+            };
+            resolve(db);
+        };
         request.onerror = () => reject(request.error);
         request.onblocked = () => reject(new Error('IndexedDB blocked'));
     });

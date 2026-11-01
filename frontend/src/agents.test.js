@@ -150,6 +150,17 @@ describe('loadTeamAgentsQuiet', () => {
     expect(api.getTeamAgents).toHaveBeenCalledWith('team-2');
   });
 
+  // PR #517 review I3.
+  it('drops an answer for a team switched away from', async () => {
+    let answer;
+    api.getTeamAgents.mockReturnValue(new Promise((r) => { answer = r; }));
+    const loading = loadTeamAgentsQuiet();
+    setCurrentTeam({ id: 'team-2' });
+    answer([{ id: 'old-agent' }]);
+    await loading;
+    expect(mockBuildAssignees).not.toHaveBeenCalled();
+  });
+
   it('falls back to currentTeam.id', async () => {
     api.getTeamAgents.mockResolvedValue([]);
     await loadTeamAgentsQuiet();
