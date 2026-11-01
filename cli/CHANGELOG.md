@@ -5,6 +5,20 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
+## [Unreleased]
+
+### Changed
+
+- **`chaotic system upgrade` keeps the server up while it prepares.**
+  The slow steps used to run with the server stopped: the dependency
+  sync, `npm ci` and the frontend build. They now run first, in a
+  staging checkout at `~/.chaotic/staging` (a git worktree of the server
+  checkout), while the old server keeps serving. The stopped window is
+  then the checkout, a warm-cache sync, the CLI reinstall, migrations,
+  copying in the built bundle and the start. A dependency sync that fails
+  in staging ends the upgrade before anything is stopped. The upgrade
+  prints how long the server was down (CHT-1969).
+
 ## [0.1.1] - 2026-11-01
 
 A CLI fix for project-scoped agents and session identities (#495; #493
