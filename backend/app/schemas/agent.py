@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.enums import AgentKind
-from app.schemas.user import AVATAR_URL_MAX, ProfileFields, clean_name
+from app.schemas.user import ProfileFields, clean_name
 from app.utils import DateTimeUTC
 
 
@@ -11,7 +11,6 @@ class AgentCreate(ProfileFields):
     """Schema for creating an agent, optionally with its profile (CHT-1979)."""
 
     name: str = Field(min_length=1, max_length=255)
-    avatar_url: str | None = Field(default=None, max_length=AVATAR_URL_MAX)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -27,7 +26,6 @@ class AgentUpdate(ProfileFields):
     profile fields, CHT-1979), or its registrar capability."""
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    avatar_url: str | None = Field(default=None, max_length=AVATAR_URL_MAX)
 
     # Trimmed; null or blank refused, for a manager's rename too (CHT-1979 review).
     @field_validator("name", mode="before")

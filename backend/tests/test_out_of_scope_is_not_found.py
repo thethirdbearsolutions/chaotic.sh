@@ -377,6 +377,7 @@ ROUTES = [
     ("PATCH", "/api/teams/{team}", {"name": "x"}, "team"),
     ("DELETE", "/api/teams/{team}", None, "team"),
     ("GET", "/api/teams/{team}/agents", None, "team"),
+    ("GET", "/api/teams/{team}/roster", None, "team"),
     ("POST", "/api/teams/{team}/agents", {"name": "x"}, "team"),
     ("GET", "/api/teams/{team}/members", None, "team"),
     ("GET", "/api/teams/{team}/activity", None, "team"),
@@ -1019,6 +1020,14 @@ MCP_PROBES = [
             *extra,
         )
     ],
+    # team_member reads the roster, which is the team directory: every
+    # agent of the team, a sibling project's included (CHT-1780). It finds
+    # whom the roster shows by handle, id and name alike (PR #516 review),
+    # so the sibling's agent is in scope there and not probed.
+    *[
+        ("team_member", {"who": "{" + placeholder + "}"}, placeholder)
+        for placeholder in ("user", "user_email", "user_name", "agent", "agent_email", "agent_name")
+    ],
     ("issue_list", {"label": "{label_name}"}, "label_name"),
     ("issue_list", {"sprint": "{sprint}"}, "sprint"),
     ("issue_list", {"sprint": "{sprint_name}"}, "sprint_name"),
@@ -1083,6 +1092,7 @@ MCP_PROBES = [
             ("inbox_list", {}), ("inbox_mark_all_read", {}),
             ("ritual_attest", {"ritual": "NOPE"}), ("ritual_complete", {"ritual": "NOPE"}),
             ("ritual_reject", {"ritual": "NOPE", "identifier": "NOPE-9999", "note": "x"}),
+            ("team_roster", {}), ("team_member", {"who": "me"}),
         ]
         for placeholder in ("team", "team_key")
     ],
@@ -1123,6 +1133,10 @@ MCP_NOT_ROW_KEYED = {
     ("inbox_mark_read", "entry_id"): _OWN_INBOX,
     ("activity_recent", "limit"): _MCP_PAGING,
     ("project_list", "detail"): _MCP_PAGING,
+    ("team_roster", "include_idle"): _MCP_VALUE,
+    ("team_roster", "detail"): _MCP_PAGING,
+    # Your own profile (CHT-1982): values written to the caller's own row.
+    **{("profile_update", a): _MCP_VALUE for a in ("name", "avatar_url", "pronouns", "tagline", "bio")},
 }
 
 # MCP_PROBES entries, keyed (tool, placeholder, argument), that succeed

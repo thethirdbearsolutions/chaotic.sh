@@ -53,7 +53,7 @@ def clean_name(v):
 
 
 class ProfileFields(BaseModel):
-    """``bio`` (markdown), ``pronouns`` and ``tagline`` (one line each),
+    """``bio`` (markdown), ``pronouns``, ``tagline`` and ``avatar_url`` (one line each),
     as written by the member (CHT-1979). Each is trimmed and cleaned of
     control and bidi characters, and blank means cleared: it is stored
     as null."""
@@ -61,6 +61,10 @@ class ProfileFields(BaseModel):
     bio: str | None = Field(default=None, max_length=PROFILE_LIMITS["bio"])
     pronouns: str | None = Field(default=None, max_length=PROFILE_LIMITS["pronouns"])
     tagline: str | None = Field(default=None, max_length=PROFILE_LIMITS["tagline"])
+    # An emoji or an image URL. Cleaned like a tagline, so no control
+    # character reaches a teammate's terminal, and blank clears it
+    # (PR #516 review).
+    avatar_url: str | None = Field(default=None, max_length=AVATAR_URL_MAX)
 
     @field_validator("bio", mode="before")
     @classmethod
@@ -70,7 +74,7 @@ class ProfileFields(BaseModel):
             return v or None
         return v
 
-    @field_validator("pronouns", "tagline", mode="before")
+    @field_validator("pronouns", "tagline", "avatar_url", mode="before")
     @classmethod
     def _one_line(cls, v):
         # One line: any run of whitespace, newlines included, becomes one space.
@@ -89,7 +93,6 @@ class UserUpdate(ProfileFields):
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    avatar_url: str | None = Field(default=None, max_length=AVATAR_URL_MAX)
 
     @field_validator("name", mode="before")
     @classmethod

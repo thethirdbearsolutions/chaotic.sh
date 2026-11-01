@@ -27,6 +27,7 @@ import sh.chaotic.api.models.HTTPValidationError
 import sh.chaotic.api.models.InvitationAccept
 import sh.chaotic.api.models.InvitationPreviewResponse
 import sh.chaotic.api.models.InvitationVerificationCodeResponse
+import sh.chaotic.api.models.RosterEntry
 import sh.chaotic.api.models.TeamActivityAction
 import sh.chaotic.api.models.TeamActivityResponse
 import sh.chaotic.api.models.TeamCreate
@@ -497,6 +498,42 @@ import io.ktor.http.ParametersBuilder
             val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.DELETE,
             "/api/teams/{team_id}/members/{user_id}".replace("{" + "team_id" + "}", "$teamId").replace("{" + "user_id" + "}", "$userId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * GET /api/teams/{team_id}/roster
+        * Team Roster
+        * Everyone on the team, people and agents, each with the identity they wrote for themselves (CHT-1980): name, avatar, pronouns, tagline, bio and @handle. People first (owners, admins, members), then agents, each by name. Deactivated accounts are left out, and so are idle session identities unless &#x60;&#x60;include_idle&#x60;&#x60;: a roster is who to ask, and sessions pile up (PR #516 review).  Readable by anyone in the team directory (CHT-1780), project-scoped agents included; anyone else gets the missing team&#39;s 404 (CHT-1785), through &#x60;&#x60;visible_team&#x60;&#x60; as its sibling &#x60;&#x60;/teams/{id}/agents&#x60;&#x60; does, so the roster and the agent list answer an outsider alike. No addresses: the roster is who people are, not how to mail them. An agent&#39;s owner is named even when deactivated: it is who made it.
+         * @param teamId  
+         * @param includeIdle Also list idle session identities (keys unused for 7 days); left out by default. (optional, default to false)
+         * @return kotlin.collections.List<RosterEntry>
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun teamRosterApiTeamsTeamIdRosterGet(teamId: kotlin.String, includeIdle: kotlin.Boolean? = false): HttpResponse<kotlin.collections.List<RosterEntry>> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+            includeIdle?.apply { localVariableQuery["include_idle"] = listOf("$includeIdle") }
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/api/teams/{team_id}/roster".replace("{" + "team_id" + "}", "$teamId"),
             query = localVariableQuery,
             headers = localVariableHeaders,
             requiresAuthentication = true,

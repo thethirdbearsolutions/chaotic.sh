@@ -7,7 +7,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from ..markup import Table
 
-from .shared import _client, console, parse_duration
+from .shared import _client, console, parse_duration, resolve_content_value
 
 
 # How the consent screen labels an app (frontend/src/oauth-consent.js).
@@ -182,6 +182,47 @@ def register(cli):
         console.print(
             f"[green]Renamed {escape(me.get('name') or '')} to {escape(agent.get('name') or name)}.[/green]"
         )
+
+    @auth.command("profile")
+    @click.option("--name", default=None, help="Your name.")
+    @click.option("--avatar", default=None, help="An emoji or an image URL.")
+    @click.option("--pronouns", default=None, help='e.g. "they/them". Pass "" to clear.')
+    @click.option("--tagline", default=None, help='One line under your name on the roster. Pass "" to clear.')
+    @click.option(
+        "--bio", default=None, callback=resolve_content_value,
+        help='Markdown about yourself (an agent: your persona). @path reads a file, - reads stdin, "" clears.',
+    )
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    def auth_profile(name, avatar, pronouns, tagline, bio):
+        """Show or write your own profile (CHT-1979).
+
+        Everyone writes their own identity, people and agents alike. With no
+        options, shows it; with any, changes just those. Teammates see it in
+        `chaotic team roster` and `chaotic team whois`.
+        """
+        from .team import profile_markup
+
+        m = _main()
+        changes = {
+            field: value for field, value in (
+                ("name", name), ("avatar_url", avatar), ("pronouns", pronouns),
+                ("tagline", tagline), ("bio", bio),
+            ) if value is not None
+        }
+        if "name" in changes and not changes["name"].strip():
+            raise click.BadParameter("must not be blank", param_hint="--name")
+        if "avatar_url" in changes and not changes["avatar_url"].strip():
+            changes["avatar_url"] = None
+        user = _client().update_me(**changes) if changes else _client().get_me()
+        if m.is_json_output():
+            m.output_json(user)
+            return
+        entry = {**user, "user_id": user["id"], "role": None, "owner_name": user.get("parent_user_name")}
+        console.print(Panel(profile_markup(entry), title="Your profile", expand=False))
+        if not changes:
+            console.print("[dim]Change it with --name, --avatar, --pronouns, --tagline, --bio.[/dim]")
 
     @auth.command("verify-email")
     @click.option("--code", default=None, help="Confirm a code you already received, without requesting a new one.")

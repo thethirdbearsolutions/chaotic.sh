@@ -1,6 +1,6 @@
 """Team schemas."""
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
-from app.enums import TeamActivityAction, TeamRole, InvitationStatus
+from app.enums import AgentKind, TeamActivityAction, TeamRole, InvitationStatus
 from app.utils import DateTimeUTC
 
 
@@ -85,6 +85,38 @@ class TeamMemberResponse(BaseModel):
     @classmethod
     def coerce_role(cls, v):
         return _coerce_enum(TeamRole, v)
+
+
+class RosterEntry(BaseModel):
+    """One teammate on ``GET /teams/{id}/roster`` (CHT-1980): a person or
+    an agent, with the identity they wrote for themselves (CHT-1979)."""
+
+    user_id: str
+    name: str
+    avatar_url: str | None = None
+    pronouns: str | None = None
+    tagline: str | None = None
+    bio: str | None = None
+    # The @handle that mentions exactly this teammate (CHT-1731).
+    mention_handle: str | None = None
+    is_agent: bool = False
+    # A person's role; an agent's too when it holds a membership.
+    role: TeamRole | None = None
+    # Agents only: assistant, service or session (CHT-1497), the person
+    # who owns it, and the project it is confined to (null: team-wide).
+    kind: AgentKind | None = None
+    owner_id: str | None = None
+    owner_name: str | None = None
+    project_id: str | None = None
+    # A session identity's key unused for 7 days (CHT-1501).
+    idle: bool = False
+    # When they joined: a person's membership, an agent's creation.
+    joined_at: DateTimeUTC
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def coerce_role(cls, v):
+        return None if v is None else _coerce_enum(TeamRole, v)
 
 
 class TeamInvitationCreate(BaseModel):

@@ -56,6 +56,7 @@ from .issues import (
 )
 from .misc import activity_recent, project_list, server_info
 from .rituals import ritual_attest, ritual_complete, ritual_list, ritual_pending, ritual_reject
+from .team import profile_update, team_member, team_roster
 from .sprints import (
     sprint_add,
     sprint_close,
@@ -75,6 +76,7 @@ ALL_TOOLS = (
     sprint_add, sprint_remove,
     ritual_pending, ritual_list, ritual_attest, ritual_complete, ritual_reject,
     inbox_list, inbox_mark_read, inbox_mark_all_read,
+    team_roster, team_member, profile_update,
     activity_recent, project_list, server_info,
 )
 

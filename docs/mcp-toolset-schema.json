@@ -51,6 +51,18 @@
         "require_estimate_on_claim",
         "human_rituals_required"
       ],
+      "compact_roster_fields": [
+        "user_id",
+        "name",
+        "mention_handle",
+        "pronouns",
+        "tagline",
+        "is_agent",
+        "role",
+        "kind",
+        "owner_name",
+        "idle"
+      ],
       "error_envelope": {
         "always": [
           "message"
@@ -89,7 +101,9 @@
       "sprint_close",
       "sprint_current",
       "sprint_list",
-      "sprint_transactions"
+      "sprint_transactions",
+      "team_member",
+      "team_roster"
     ]
   },
   "tools": {
@@ -1305,6 +1319,80 @@
         "type": "object"
       }
     },
+    "profile_update": {
+      "description": "Write your own profile: the identity teammates see on the roster.\n\nYours to write, person or agent. Only the fields you pass change;\npass an empty string to clear one. Returns your updated profile.",
+      "inputSchema": {
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "An emoji or an image URL. Empty string clears it.",
+            "title": "Avatar Url"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Markdown about yourself: for an agent, your persona and how you work. Empty string clears it.",
+            "title": "Bio"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Your name. An agent may not take a teammate's name.",
+            "title": "Name"
+          },
+          "pronouns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "e.g. \"they/them\". Empty string clears it.",
+            "title": "Pronouns"
+          },
+          "tagline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "One line under your name on the roster. Empty string clears it.",
+            "title": "Tagline"
+          }
+        },
+        "title": "profile_updateArguments",
+        "type": "object"
+      }
+    },
     "project_list": {
       "description": "List the projects in your team: key, name, issue count, and the\nbudget/ritual settings that govern work in each.\n\nThe one call that answers \"what projects exist\" -- every other tool\ntakes a `project` filter but none enumerate them. Scoped to the\ncurrent team (`chaotic status`); the HTTP transport adds a `team`\nparameter for API keys that can see more than one.",
       "inputSchema": {
@@ -1792,6 +1880,44 @@
           }
         },
         "title": "sprint_transactionsArguments",
+        "type": "object"
+      }
+    },
+    "team_member": {
+      "description": "Show one teammate's full profile: name, @handle, pronouns, tagline,\nbio, role (an agent: kind and owner).\n\nRead it before working with someone for the first time: the bio is\nwhat they wrote about how they work. 'me' shows your own.",
+      "inputSchema": {
+        "properties": {
+          "who": {
+            "description": "Who: an @handle, a name, an email, a user/agent id, or 'me'.",
+            "title": "Who",
+            "type": "string"
+          }
+        },
+        "required": [
+          "who"
+        ],
+        "title": "team_memberArguments",
+        "type": "object"
+      }
+    },
+    "team_roster": {
+      "description": "List everyone on the team, people and agents, with the identity\neach wrote for themselves: name, @handle, pronouns, tagline, role (an\nagent: its kind and owner).\n\nWho to ask, who to assign, who to @mention. People come first by\nrole, then agents, each by name. Write your own with profile_update.",
+      "inputSchema": {
+        "properties": {
+          "detail": {
+            "default": false,
+            "description": "Return every field of each teammate (bio, avatar_url, owner and project ids, joined_at) instead of the compact row. Compact rows carry: user_id, name, mention_handle, pronouns, tagline, is_agent, role, kind, owner_name, idle. Use team_member for one teammate in full.",
+            "title": "Detail",
+            "type": "boolean"
+          },
+          "include_idle": {
+            "default": false,
+            "description": "Also list idle session identities (keys unused for 7 days); left out by default.",
+            "title": "Include Idle",
+            "type": "boolean"
+          }
+        },
+        "title": "team_rosterArguments",
         "type": "object"
       }
     }
