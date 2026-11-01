@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import (
     CurrentUser, is_in_team_directory, can_read_team_data,
-    is_eligible_project_member, is_project_scoped_agent, refuse_agent_lifting_gates,
+    is_eligible_project_member, is_project_scoped_agent, refuse_agent_lifting_gates, budget_loosened,
 )
 from app.api.visibility import team_hidden, visible_project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
@@ -140,12 +140,18 @@ async def get_project(project_id: str, current_user: CurrentUser) -> ProjectResp
 
 
 def _lifted_by_update(project, project_in: ProjectUpdate) -> list[str]:
-    return [
+    lifted = [
         name for name in GATE_SETTINGS
         if name in project_in.model_fields_set
         and getattr(project_in, name) is False
         and getattr(project, name)
     ]
+    # A looser default budget reaches every planned sprint (CHT-1924).
+    if "default_sprint_budget" in project_in.model_fields_set and budget_loosened(
+        project.default_sprint_budget, project_in.default_sprint_budget,
+    ):
+        lifted.append("default_sprint_budget")
+    return lifted
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)

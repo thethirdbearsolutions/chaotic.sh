@@ -416,6 +416,15 @@ async def refuse_app_session(principal: CurrentPrincipal) -> None:
 NotAppSession = Annotated[None, Depends(refuse_app_session)]
 
 
+def budget_loosened(old: int | None, new: int | None) -> bool:
+    """Whether a sprint budget going from ``old`` to ``new`` lets more
+    work close before arrears: a higher number, or none (unlimited) where
+    there was one (CHT-1924)."""
+    if old is None:
+        return False
+    return new is None or new > old
+
+
 def refuse_agent_lifting_gates(current_user, lifted: list[str]) -> None:
     """403 when an agent would switch off project gate settings that are
     on (``project_service.GATE_SETTINGS``, CHT-1905). Used by the
@@ -425,7 +434,7 @@ def refuse_agent_lifting_gates(current_user, lifted: list[str]) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Agents cannot turn off "
+                "Agents cannot loosen "
                 + ", ".join(lifted)
                 + "; a person has to change it."
             ),
