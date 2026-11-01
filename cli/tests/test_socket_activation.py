@@ -425,3 +425,55 @@ class TestReviewFindings:
         assert result.exit_code == 0, result.output
         stop.assert_called_once_with()
         start.assert_called_once_with()
+
+
+class TestReReviewFindings:
+    """PR #510 re-review."""
+
+    def test_a_cancelled_gated_upgrade_leaves_no_hold(self, monkeypatch):
+        monkeypatch.setattr(system, "socket_mode_installed", lambda: True)
+        monkeypatch.setattr(system, "_justfile_serves_socket", lambda commit=None: True)
+        commits = iter(["19ae385deployed", "ab71cd5newer"])
+        with patch("cli.system.is_server_installed", return_value=True), \
+             patch("cli.system.get_current_version", return_value="v1"), \
+             patch("cli.system.get_current_commit", side_effect=lambda: next(commits, "ab71cd5newer")), \
+             patch("cli.system.fetch_updates", return_value=True), \
+             patch("cli.system.resolve_commit", return_value="ab71cd5newer"), \
+             patch("cli.system.upgrade_direction", return_value="forward"), \
+             patch("cli.system._print_commit_list"), \
+             patch("cli.system.service_state", return_value="inactive"), \
+             patch("cli.system.is_service_running", return_value=False), \
+             patch("cli.system.load_server_json", return_value={"port": PORT}), \
+             patch("cli.system._print_service_state"), \
+             patch("cli.system.stop_service") as stop:
+            result = CliRunner().invoke(system.system, ["upgrade", "--version", "origin/main"], input="n\n")
+
+        assert result.exit_code == 0, result.output
+        assert "Cancelled" in result.output
+        stop.assert_not_called()
+        assert system._deploy_gate_fd is None
+        assert not system.DEPLOY_HOLD.exists()
+
+    def test_removing_the_socket_unit_stops_it_first(self, linux):
+        unit_dir, run = linux
+        _install_socket_mode(unit_dir)
+        system._remove_socket_file()
+        cmds = _commands(run)
+        assert cmds.index(["systemctl", "--user", "stop", SYSTEMD_SOCKET]) < \
+            cmds.index(["systemctl", "--user", "disable", SYSTEMD_SOCKET])
+
+    @pytest.mark.skipif(shutil.which("flock") is None, reason="needs flock(1)")
+    def test_another_upgrades_hold_is_not_removed(self):
+        system.DEPLOY_HOLD.write_text("theirs")
+        holder = subprocess.Popen(["flock", "-o", str(system.DEPLOY_GATE), "sleep", "30"],
+                                  start_new_session=True)
+        try:
+            for _ in range(50):
+                if subprocess.run(["flock", "-n", str(system.DEPLOY_GATE), "true"]).returncode:
+                    break
+                subprocess.run(["sleep", "0.05"])
+            system.release_deploy_gate()
+            assert system.DEPLOY_HOLD.read_text() == "theirs"
+        finally:
+            os.killpg(holder.pid, signal.SIGKILL)
+            holder.wait()

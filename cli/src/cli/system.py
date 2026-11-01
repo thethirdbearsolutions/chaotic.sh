@@ -993,6 +993,9 @@ def _remove_socket_file() -> None:
     if not socket_path.exists():
         return
     try:
+        # Stopped as well: a deleted unit file leaves a running socket
+        # listening, unmanaged (PR #510 re-review).
+        run_command(["systemctl", "--user", "stop", SYSTEMD_SOCKET], check=False, timeout=SERVICE_STOP_TIMEOUT)
         run_command(["systemctl", "--user", "disable", SYSTEMD_SOCKET], check=False, timeout=30)
     except (subprocess.TimeoutExpired, OSError):
         pass
@@ -1077,12 +1080,14 @@ def release_deploy_gate() -> None:
     start goes through here (start_service), so a gate left closed by a
     crashed upgrade is opened by the next `chaotic system start`."""
     global _deploy_gate_fd
+    if _deploy_gate_fd is None and not hold_deploy_gate():
+        # Another process's upgrade is in its window: its hold file is
+        # not ours to remove (PR #510 re-review). Its flock still gates.
+        return
     try:
         DEPLOY_HOLD.unlink(missing_ok=True)
     except OSError:
         pass
-    if _deploy_gate_fd is None:
-        return
     fd, _deploy_gate_fd = _deploy_gate_fd, None
     try:
         os.close(fd)  # closing the only descriptor drops the flock
@@ -2918,12 +2923,14 @@ def system_reconfigure(host, port, yes, force):
     # Regenerate service file
     if backup is not None:
         console.print(f"Previous service file kept at {esc(backup)}")
+    # Whether to restart, decided before the rewrite: an idle socket counts
+    # (still bound to the old address; `start` on an active socket does not
+    # re-bind it), and the rewrite may remove its unit (CHT-1970).
+    was_running = is_service_running() or _socket_active()
     service_path = write_service_file(new_port, secret_key, new_host, server_settings.valid_settings(server_info))
     console.print(f"Regenerated service file: {esc(service_path)}")
 
-    # Restart if running. An idle socket counts: it is still bound to the
-    # old address, and `start` on an active socket does not re-bind it.
-    was_running = is_service_running() or _socket_active()
+    # Restart if running.
     if was_running:
         console.print("Restarting server...")
         if not stop_service():
@@ -3213,6 +3220,26 @@ def _cli_state(progress: dict) -> str:
     return "partial" if progress.get("cli_reinstall_started") else "unchanged"
 
 
+def _opens_gate_on_handled_exit(func):
+    """An upgrade that ends on its own terms (a cancel, a refused backup, a
+    rollback) has put the server back as it found it, so it must not leave
+    the deploy gate's hold file closing the server to the next request
+    (PR #510 re-review). Paths that start the server open it already; this
+    covers the ones that exit with the server left as it was. A crash or
+    Ctrl-C mid-window is not a handled exit and keeps the hold."""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except SystemExit:
+            if _deploy_gate_fd is not None:
+                release_deploy_gate()
+            raise
+    return wrapper
+
+
 @system.command("upgrade")
 @click.option("--version", "target_version", default=None, help="Version to upgrade to (default: latest)")
 @click.option("--no-backup", is_flag=True, help="Skip database backup (not recommended)")
@@ -3223,6 +3250,7 @@ def _cli_state(progress: dict) -> str:
     help="Permit a target that is older than (or diverged from) the deployed commit. "
          "Off by default: an upgrade must never move a server backwards by accident (CHT-1357).",
 )
+@_opens_gate_on_handled_exit
 def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade):
     """Upgrade to a new version.
 
