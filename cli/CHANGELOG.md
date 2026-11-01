@@ -9,6 +9,18 @@ and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) version
 
 ### Changed
 
+- **Linux servers run behind a systemd socket (`chaotic.socket`).**
+  The socket holds the port, and uvicorn serves it (`--fd 3` in `just
+  serve-prod`), so a restart no longer closes the port. A request that
+  arrives while an upgrade has the server down waits and is answered by
+  the new version, where it used to get a 502 from the proxy. A deploy
+  gate (`~/.chaotic/deploy.lock`, a flock the upgrade holds from its stop
+  to its start) keeps such a request from starting a half-upgraded server.
+  `system install` and `reconfigure` write the socket. `system upgrade`
+  adds it when it can rewrite the unit (the rewrite only adds
+  directives); a unit it cannot rewrite stays as it is, see `chaotic
+  system config adopt`. `system stop` still closes the port. This needs
+  `flock` (util-linux). macOS is unchanged (CHT-1970).
 - **`chaotic system upgrade` keeps the server up while it prepares.**
   The slow steps used to run with the server stopped: the dependency
   sync, `npm ci` and the frontend build. They now run first, in a

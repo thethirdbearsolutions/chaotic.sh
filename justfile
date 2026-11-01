@@ -42,8 +42,12 @@ serve:
 # --no-proxy-headers (CHT-1586): the app itself applies X-Forwarded-For from the
 # proxies in FORWARDED_ALLOW_IPS (backend/app/config.py, validated: never "*"), so
 # uvicorn must not apply its own copy of that list as well.
+# ${LISTEN_FDS:+--fd 3} (CHT-1970): started by chaotic.socket, systemd passes the
+# listening socket as fd 3 and uvicorn serves it instead of binding HOST:PORT
+# itself, so the port stays open across restarts. Unset otherwise (launchd, a
+# unit without the socket), and then uvicorn binds as before.
 serve-prod:
-    cd backend && uv run --frozen uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267} --timeout-graceful-shutdown 10 --no-proxy-headers
+    cd backend && uv run --frozen uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267} ${LISTEN_FDS:+--fd 3} --timeout-graceful-shutdown 10 --no-proxy-headers
 
 # Run all test suites (backend, frontend, CLI)
 test-all: test-backend test-frontend test-cli
