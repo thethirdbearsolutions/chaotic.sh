@@ -132,8 +132,8 @@ class TestReconcile:
         assert (unit_dir / SYSTEMD_SOCKET).read_text() == old
 
     def test_a_blocked_rewrite_writes_no_socket(self, linux):
-        """Prod's case: a hand-set line the rewrite would drop. The unit
-        stays classic, so a socket beside it would only take its port."""
+        """A hand-set line the rewrite would drop: the unit stays classic,
+        so a socket beside it would only take its port."""
         unit_dir, run = linux
         classic = generate_systemd_service(PORT, SECRET, HOST, socket=False)
         hand_set = classic.replace("[Install]", "Environment=CORS_ORIGINS=https://x.example\n[Install]")
