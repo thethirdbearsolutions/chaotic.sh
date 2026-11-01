@@ -73,7 +73,7 @@ vi.mock('./api.js', () => ({
 import { api } from './api.js';
 import { getIssues, getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setDetailNavContext, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject, setCurrentProject, getCurrentView } from './state.js';
 import { getProjects } from './projects.js';
-import { getMembers } from './teams.js';
+import { buildAssignees, resetAssignees } from './assignees.js';
 import { getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { withEditsInFlight } from './inline-dropdown.js';
@@ -139,6 +139,7 @@ describe('issues-view', () => {
     let replaceStateSpy;
 
     beforeEach(() => {
+        resetAssignees();
         vi.clearAllMocks();
         clearIssueStore();
         replaceStateSpy = vi.spyOn(history, 'replaceState').mockImplementation(() => {});
@@ -398,16 +399,60 @@ describe('issues-view', () => {
         });
 
         it('renders assignee options with team members', () => {
-            getMembers.mockReturnValue([
-                { user_id: 'u-1', name: 'Alice', email: 'alice@example.com' },
-                { user_id: 'u-2', name: 'Bob', email: 'bob@example.com' },
-            ]);
+            // The real member shape: user_name / user_email (CHT-1983)
+            buildAssignees(() => [
+                { user_id: 'u-1', user_name: 'Alice', user_email: 'alice@example.com' },
+                { user_id: 'u-2', user_name: 'Bob', user_email: 'bob@example.com' },
+            ], () => []);
             showFilterCategoryOptions('assignee');
             const container = document.getElementById('filter-menu-options');
             expect(container.innerHTML).toContain('Alice');
             expect(container.innerHTML).toContain('Bob');
             expect(container.innerHTML).toContain('Assigned to me');
             expect(container.innerHTML).toContain('Unassigned');
+            const labels = [...container.querySelectorAll('.filter-option-label')].map(l => l.textContent.trim());
+            expect(labels.every(Boolean)).toBe(true);
+        });
+
+        it('renders agents, registrars and their session identities as assignees (CHT-1983)', () => {
+            buildAssignees(() => [
+                { user_id: 'u-1', user_name: 'Alice', user_email: 'alice@example.com' },
+            ], () => [
+                { id: 'a-reg', name: 'Registrar', parent_user_id: 'u-1', parent_user_name: 'Alice', kind: 'service' },
+                { id: 'a-s1', name: 'Session One', parent_user_id: 'u-1', parent_user_name: 'Alice', kind: 'session', registered_by_id: 'a-reg' },
+                { id: 'a-idle', name: 'Idle Session', parent_user_id: 'u-1', kind: 'session', registered_by_id: 'a-reg', idle: true },
+            ]);
+            showFilterCategoryOptions('assignee');
+            const container = document.getElementById('filter-menu-options');
+            const values = [...container.querySelectorAll('.filter-option')].map(l => l.dataset.value);
+            expect(values).toEqual(['', 'me', 'unassigned', 'u-1', 'a-reg', 'a-s1']);
+            expect(container.innerHTML).toContain('Registrar');
+            expect(container.innerHTML).toContain('Session One');
+            expect(container.innerHTML).not.toContain('Idle Session');
+        });
+
+        it('keeps the selected idle session identity listed and checked', () => {
+            buildAssignees(() => [], () => [
+                { id: 'a-idle', name: 'Idle Session', kind: 'session', idle: true },
+            ]);
+            const select = document.getElementById('assignee-filter');
+            select.innerHTML = '<option value="a-idle">Idle Session</option>';
+            select.value = 'a-idle';
+            showFilterCategoryOptions('assignee');
+            const container = document.getElementById('filter-menu-options');
+            expect(container.querySelector('input[value="a-idle"]').checked).toBe(true);
+        });
+
+        it('names an agent in the assignee filter chip (CHT-1983)', () => {
+            buildAssignees(() => [], () => [
+                { id: 'a-s1', name: 'Session One', kind: 'session' },
+            ]);
+            const select = document.getElementById('assignee-filter');
+            select.innerHTML = '<option value="a-s1">Session One</option>';
+            select.value = 'a-s1';
+            updateFilterChips();
+            expect(document.body.innerHTML).toContain('Session One');
+            expect(document.body.innerHTML).not.toContain('Unknown');
         });
 
         it('renders project options', () => {
