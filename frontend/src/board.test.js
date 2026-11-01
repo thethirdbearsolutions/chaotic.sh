@@ -17,6 +17,12 @@ vi.mock('./ui.js', () => ({
 
 vi.mock('./projects.js', () => ({
     getProjects: vi.fn(() => []),
+    formatEstimate: vi.fn((v) => `${v} pts`),
+}));
+
+vi.mock('./assignees.js', () => ({
+    getAssigneeById: vi.fn((id) => (id === 'u1' ? { id: 'u1', name: 'Ada' } : null)),
+    formatAssigneeName: vi.fn((a) => a?.name || null),
 }));
 
 vi.mock('./url-helpers.js', () => ({
@@ -431,6 +437,28 @@ describe('board', () => {
 
             const columnStatuses = Array.from(columns).map(c => c.dataset.status);
             expect(columnStatuses).toEqual(['backlog', 'todo', 'in_progress', 'in_review', 'done']);
+        });
+
+        it('cards carry the list row data: priority icon, estimate, labels, assignee (CHT-1766)', () => {
+            setBoardIssues([
+                { id: '1', title: 'Full', status: 'todo', identifier: 'TEST-1', priority: 'high',
+                  estimate: 3, assignee_id: 'u1',
+                  labels: [{ name: 'web', color: '#ff0000' }, { name: 'ux', color: '#00ff00' }, { name: 'extra', color: '#0000ff' }] },
+                { id: '2', title: 'Bare', status: 'todo', identifier: 'TEST-2', priority: 'no_priority', estimate: null },
+                { id: '3', title: 'Zero', status: 'todo', identifier: 'TEST-3', priority: 'low', estimate: 0 },
+            ]);
+            renderBoard();
+            const [full, bare, zero] = document.querySelectorAll('.kanban-card');
+            expect(full.querySelector('.kanban-card-priority svg.priority-high')).not.toBeNull();
+            expect(full.querySelector('.estimate-badge').textContent).toBe('3 pts');
+            expect([...full.querySelectorAll('.issue-label')].map(l => l.textContent)).toEqual(['web', 'ux']);
+            expect(full.querySelector('.kanban-card-assignee').title).toBe('Ada');
+            expect(full.querySelector('.badge')).toBeNull();
+            expect(bare.querySelector('.estimate-badge')).toBeNull();
+            expect(bare.querySelector('.kanban-card-assignee')).toBeNull();
+            expect(bare.querySelector('.issue-label')).toBeNull();
+            // A zero-point estimate is a real estimate (CHT-1397).
+            expect(zero.querySelector('.estimate-badge').textContent).toBe('0 pts');
         });
 
         it('renders issues in correct columns with card content', () => {

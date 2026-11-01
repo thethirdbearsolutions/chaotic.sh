@@ -10129,3 +10129,60 @@ body.theme-light .picker-popover {
         min-height: 44px;
     }
 }
+
+/* Board cards carry the list's data in the list's style (CHT-1766). */
+.kanban-card {
+    padding: 10px 12px;
+}
+.kanban-card:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: var(--text-muted);
+}
+.kanban-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 20px;
+    margin-bottom: 4px;
+    font-size: var(--font-xs);
+}
+.kanban-card-identifier {
+    color: var(--text-muted);
+}
+.kanban-card-title {
+    margin-bottom: 8px;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.kanban-card-meta {
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 18px;
+}
+.kanban-card-priority {
+    display: inline-flex;
+    color: var(--text-muted);
+}
+.kanban-card-meta .issue-label {
+    font-size: var(--font-xs);
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+}
+
+/* Five columns share the width instead of overflowing it: at 1440px every
+   column is on screen. Narrower windows scroll from a 220px floor. */
+@media (min-width: 769px) {
+    .kanban-board {
+        gap: 12px;
+    }
+    .kanban-column {
+        flex: 1 1 0;
+        min-width: 220px;
+    }
+    .kanban-column-header {
+        padding: 8px 12px;
+    }
+}
