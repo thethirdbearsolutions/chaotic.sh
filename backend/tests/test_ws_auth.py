@@ -327,7 +327,9 @@ class TestEndpoint:
         """PR #359 review, 1: the access log shows a refused handshake as
         accepted, so the app logs the refusal: code, reason, client and
         team, never the token."""
-        secret = "ck_" + "ab" * 24
+        # Not hex: the line carries the team's random UUID, which a hex
+        # fragment of the secret could match by chance.
+        secret = "ck_" + "zq" * 24
         ws = FakeWebSocket(headers={"Authorization": f"Bearer {secret}"})
         ws.client = ("203.0.113.7", 51234)
         with caplog.at_level(logging.INFO, logger="app.ws_auth"):
@@ -338,7 +340,7 @@ class TestEndpoint:
         assert "code=4001" in line
         assert "203.0.113.7:51234" in line
         assert repr(test_team.id) in line
-        assert secret not in caplog.text and "abab" not in caplog.text
+        assert secret not in caplog.text and "zqzq" not in caplog.text
 
     def test_the_refusal_line_reaches_the_output_under_uvicorns_logging(self, tmp_path):
         """PR #359 re-review, 1: caplog adds its own handler, so the test
