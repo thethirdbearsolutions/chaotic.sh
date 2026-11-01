@@ -17,6 +17,7 @@ import { getProjects, getSavedProjectId } from './projects.js';
 import { renderCommentContent, renderDescriptionContent } from './rich-text.js';
 import { marked } from 'marked';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
+import { lastResult, rememberResult, sameResult } from './last-result.js';
 import { navigateTo, saveScrollPosition } from './router.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
 import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
@@ -292,6 +293,7 @@ export async function fetchDocumentsForCurrentProject() {
   try {
     const fetched = await api.getDocuments(teamId, projectFilter);
     if (requestId !== loadDocumentsRequestId) return; // a newer documents load has since started — drop this stale response
+    rememberResult('documents', `${teamId}|${projectFilter ?? ''}`, fetched);
     documents = fetched;
     filterDocuments();
   } catch (e) {
@@ -324,8 +326,12 @@ subscribe((key) => {
  * Load documents for the current team/project
  * @param {string} teamId - Team ID
  * @param {string} projectId - Project ID (optional, filters by project)
+ * @param {Object} [options]
+ * @param {boolean} [options.fromMemory] - entering the view: paint what it
+ *   showed last time for this team and project at once (CHT-1973). Off for
+ *   a reload after a change, which would repaint the state before it.
  */
-export async function loadDocuments(teamId, projectId = null) {
+export async function loadDocuments(teamId, projectId = null, { fromMemory = false } = {}) {
   if (!teamId) {
     // Fall back to getCurrentTeam() for backward compat
     teamId = getCurrentTeam()?.id;
@@ -337,9 +343,21 @@ export async function loadDocuments(teamId, projectId = null) {
 
   const requestId = ++loadDocumentsRequestId;
 
-  // Show loading skeleton (CHT-1047)
+  // Use current project from state if not explicitly specified
+  if (projectId === null) {
+    projectId = getCurrentProject() || null;
+  }
+
+  // A revisit paints the documents shown last time for this team and
+  // project at once, and the request below refreshes them (CHT-1973).
+  // Else the loading skeleton (CHT-1047).
+  const key = `${teamId}|${projectId ?? ''}`;
+  const shown = fromMemory ? lastResult('documents', key) : undefined;
   const listEl = document.getElementById('documents-list');
-  if (listEl) {
+  if (shown) {
+    documents = shown;
+    filterDocuments();
+  } else if (listEl) {
     listEl.innerHTML = Array(4).fill(0).map(() => `
         <div class="skeleton-list-item">
             <div style="width: 24px"><div class="skeleton" style="width: 24px; height: 24px; border-radius: 4px;"></div></div>
@@ -351,14 +369,12 @@ export async function loadDocuments(teamId, projectId = null) {
     `).join('');
   }
 
-  // Use current project from state if not explicitly specified
-  if (projectId === null) {
-    projectId = getCurrentProject() || null;
-  }
-
   try {
     const fetched = await api.getDocuments(teamId, projectId);
     if (requestId !== loadDocumentsRequestId) return; // a newer documents load has since started — drop this stale response
+    rememberResult('documents', key, fetched);
+    // Unchanged since the paint above: skip a second render.
+    const unchanged = shown && sameResult(documents, fetched);
     documents = fetched;
 
     // Initialize view toggle button states
@@ -369,7 +385,7 @@ export async function loadDocuments(teamId, projectId = null) {
       gridBtn.classList.toggle('active', currentViewMode === 'grid');
     }
 
-    filterDocuments();  // Apply search/sort and render
+    if (!unchanged) filterDocuments();  // Apply search/sort and render
   } catch (e) {
     if (requestId !== loadDocumentsRequestId) return;
     // CHT-1224: was clearing the skeleton to '' (CHT-1047) — worse than the

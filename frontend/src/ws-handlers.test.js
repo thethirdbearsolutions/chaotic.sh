@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock state.js
+vi.mock('./last-result.js', () => ({ forgetResults: vi.fn(), forgetResultsUnlessOpen: vi.fn() }));
 vi.mock('./issue-store.js', () => ({
     upsertIssue: vi.fn(),
     removeIssue: vi.fn(),
@@ -135,6 +136,7 @@ import { showToast } from './ui.js';
 import { api } from './api.js';
 import { showAuthScreen } from './auth.js';
 import { setCurrentUser, setCurrentTeam } from './state.js';
+import { forgetResults, forgetResultsUnlessOpen } from './last-result.js';
 import { dispatch as rawDispatch, resetWsState } from './ws.js';
 import { registerWsHandlers, resetDetailRefreshes, DETAIL_REFRESH_DELAY_MS, DETAIL_REFRESH_RETRY_MS } from './ws-handlers.js';
 
@@ -280,6 +282,13 @@ describe('ws-handlers.js', () => {
 
     describe('issue:updated', () => {
         const updatedIssue = { id: 'issue-1', title: 'Updated' };
+
+        // CHT-1973: a closed view's remembered result is stale after this.
+        it.each(['created', 'updated', 'deleted'])('issue %s forgets the closed issue views', (type) => {
+            getCurrentView.mockReturnValue('issues');
+            dispatch({ type, entity: 'issue', data: updatedIssue });
+            expect(forgetResultsUnlessOpen).toHaveBeenCalledWith('issues', 'board', 'sprints', 'epics');
+        });
 
         it('updates issue in issues list', () => {
             getIssues.mockReturnValue([{ id: 'issue-1', title: 'Old' }]);
@@ -1002,6 +1011,13 @@ describe('ws-handlers.js', () => {
     });
 
     describe('connection:reconnected', () => {
+        // CHT-1973: events missed while disconnected may touch any view.
+        it('forgets every remembered view result', () => {
+            getCurrentView.mockReturnValue('board');
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(forgetResults).toHaveBeenCalled();
+        });
+
         it('refreshes the inbox unread badge regardless of current view', () => {
             getCurrentView.mockReturnValue('issues');
             dispatch({ type: 'reconnected', entity: 'connection', data: {} });

@@ -33,6 +33,10 @@ import { loadEpics, renderEpics, renderSprintStrip, getCurrentEpics, resetEpicsV
 import { api } from './api.js';
 import { navigateToEpicByIdentifier } from './router.js';
 import { showApiError } from './ui.js';
+import { forgetResults } from './last-result.js';
+
+// Each test starts with no remembered view results (CHT-1973).
+beforeEach(() => forgetResults());
 
 function setupDom() {
     document.body.innerHTML = '<div id="epics-list"></div>';
@@ -76,6 +80,37 @@ describe('loadEpics', () => {
         setSelectedEpicIndex(5);
         await loadEpics();
         expect(getSelectedEpicIndex()).toBe(-1);
+    });
+
+    // CHT-1973: a revisit painted a skeleton for a round trip.
+    it('paints the last epics at once on entry, then shows a failed refresh', async () => {
+        api.getTeamEpicProgress.mockResolvedValue(response([epic({ title: 'Cached Epic' })]));
+        await loadEpics();
+        api.getTeamEpicProgress.mockRejectedValue(new Error('down'));
+        const loading = loadEpics({ fromMemory: true });
+        const el = document.getElementById('epics-list');
+        expect(el.textContent).toContain('Cached Epic');
+        expect(el.innerHTML).not.toContain('skeleton');
+        await loading;
+        expect(el.innerHTML).toContain('retry-load-epics');
+    });
+
+    it('paints the skeleton without fromMemory', async () => {
+        api.getTeamEpicProgress.mockResolvedValue(response([epic({ title: 'Cached Epic' })]));
+        await loadEpics();
+        api.getTeamEpicProgress.mockReturnValue(new Promise(() => {}));
+        loadEpics();
+        expect(document.getElementById('epics-list').textContent).not.toContain('Cached Epic');
+    });
+
+    it('keeps the DOM when the refresh is unchanged', async () => {
+        api.getTeamEpicProgress.mockResolvedValue(response([epic({ title: 'Same Epic' })]));
+        await loadEpics();
+        const loading = loadEpics({ fromMemory: true });
+        const el = document.getElementById('epics-list');
+        const first = el.firstElementChild;
+        await loading;
+        expect(el.firstElementChild).toBe(first);
     });
 
     it('shows empty state when no epics exist', async () => {

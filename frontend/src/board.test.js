@@ -63,6 +63,10 @@ import {
     handleDragOver,
     handleCardDragOver,
 } from './board.js';
+import { forgetResults } from './last-result.js';
+
+// Each test starts with no remembered view results (CHT-1973).
+beforeEach(() => forgetResults());
 
 // Actions registered at module import time — capture before vi.clearAllMocks wipes them
 const boardActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
@@ -133,6 +137,66 @@ describe('board', () => {
             await loadBoard();
 
             expect(showApiError).toHaveBeenCalledWith('load board', expect.objectContaining({ message: 'API Error' }));
+        });
+
+        // CHT-1973: a revisit painted a skeleton for a round trip.
+        describe('revisit (CHT-1973)', () => {
+            const first = [{ id: '1', title: 'Cached one', status: 'todo' }];
+            beforeEach(async () => {
+                setState('currentProject', 'project-123');
+                api.getIssues.mockResolvedValue(first);
+                await loadBoard();
+            });
+
+            it('paints the last board at once, before the request answers', async () => {
+                let answer;
+                api.getIssues.mockReturnValue(new Promise((r) => { answer = r; }));
+                const loading = loadBoard({ fromMemory: true });
+                const board = document.getElementById('kanban-board');
+                expect(board.textContent).toContain('Cached one');
+                expect(board.innerHTML).not.toContain('skeleton');
+                answer([{ id: '2', title: 'Fresh two', status: 'todo' }]);
+                await loading;
+                expect(board.textContent).toContain('Fresh two');
+                expect(board.textContent).not.toContain('Cached one');
+            });
+
+            it('keeps the DOM when the refresh is unchanged', async () => {
+                api.getIssues.mockResolvedValue(JSON.parse(JSON.stringify(first)));
+                const loading = loadBoard({ fromMemory: true });
+                const card = document.querySelector('.kanban-card');
+                await loading;
+                expect(document.querySelector('.kanban-card')).toBe(card);
+            });
+
+            // Review: a reload after a change must not repaint the state
+            // before it.
+            it('paints a skeleton, not the last board, without fromMemory', () => {
+                api.getIssues.mockReturnValue(new Promise(() => {}));
+                loadBoard();
+                const board = document.getElementById('kanban-board');
+                expect(board.textContent).not.toContain('Cached one');
+                expect(board.innerHTML).toContain('skeleton');
+            });
+
+            // Review: CHT-1224's lasting error + Retry holds on a revisit too.
+            it('shows the error and Retry when the refresh fails', async () => {
+                api.getIssues.mockRejectedValue(new Error('down'));
+                await loadBoard({ fromMemory: true });
+                expect(document.getElementById('kanban-board').innerHTML).toContain('retry-load-board');
+            });
+
+            it('paints a skeleton, not another project\'s board', () => {
+                api.getIssues.mockReturnValue(new Promise(() => {}));
+                setState('currentProject', 'project-456');
+                loadBoard({ fromMemory: true });
+                const board = document.getElementById('kanban-board');
+                expect(board.textContent).not.toContain('Cached one');
+                expect(board.innerHTML).toContain('skeleton');
+                api.getIssues.mockReset();
+                api.getIssues.mockResolvedValue([]);
+                setState('currentProject', 'project-123');
+            });
         });
 
         // CHT-1224: the error copy said "try again" but shipped no button.
