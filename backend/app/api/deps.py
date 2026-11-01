@@ -417,16 +417,17 @@ NotAppSession = Annotated[None, Depends(refuse_app_session)]
 
 
 def refuse_agent_lifting_gates(current_user, lifted: list[str]) -> None:
-    """403 when an agent would switch off project gate settings that are
-    on (``project_service.GATE_SETTINGS``, CHT-1905). Used by the
+    """403 when an agent would loosen project settings that gate it:
+    switch off a gate setting that is on (``project_service.GATE_SETTINGS``,
+    CHT-1905), or loosen the default sprint budget (CHT-1924). Used by the
     project PATCH and by template apply, the two ways a project's
     settings change. A person may change them freely."""
     if current_user.is_agent and lifted:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Agents cannot turn off "
+                "Agents cannot loosen these project settings: "
                 + ", ".join(lifted)
-                + "; a person has to change it."
+                + "; a person has to change them."
             ),
         )
