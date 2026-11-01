@@ -739,6 +739,7 @@ document.addEventListener('keydown', createSimpleListNavigationHandler({
     getCurrentView,
     getSelectedIndex: getSelectedMyIssueIndex,
     setSelectedIndex: setSelectedMyIssueIndex,
+    isInlineDropdownOpen,
     isModalOpen,
     isCommandPaletteOpen,
     isDetailViewActive: isAnyDetailViewActive,

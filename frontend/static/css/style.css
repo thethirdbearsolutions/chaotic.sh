@@ -38,7 +38,7 @@
     --bg-hover: #30363d;
     --text-primary: #f0f6fc;
     --text-secondary: #8b949e;
-    --text-muted: #6e7681;
+    --text-muted: #7d8590; /* 4.5:1+ on the dark surfaces (CHT-1988 review) */
     --border-color: #30363d;
     --accent-color: #6366f1;
     --accent-hover: #5558e3;
@@ -9859,9 +9859,8 @@ body.theme-light .picker-popover {
     color: var(--text-primary);
 }
 .dash-group-count {
-    margin-left: 2px;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
 }
 .dash-group-dot {
@@ -9869,7 +9868,7 @@ body.theme-light .picker-popover {
     height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
-    background: var(--text-quaternary, #6b7280);
+    background: var(--text-muted);
 }
 .dash-group-dot.status-in_progress { background: var(--warning-color); }
 .dash-group-dot.status-in_review { background: #8b5cf6; }
@@ -9878,6 +9877,43 @@ body.theme-light .picker-popover {
 .dash-group-dot.status-done { background: var(--success-color); }
 #my-issues-list .issue-row {
     border-bottom: 0;
+}
+.dash-group-more {
+    display: block;
+    width: 100%;
+    height: 32px;
+    padding: 0 12px;
+    border: 0;
+    border-top: 1px solid var(--border-color);
+    background: none;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--font-sm);
+    text-align: left;
+    cursor: pointer;
+}
+.dash-group-more:hover {
+    background: var(--row-hover);
+    color: var(--text-primary);
+}
+.dash-group-more:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
+}
+/* The list column is narrower than the Issues view: drop row metadata by
+   the column's width, not the window's. */
+.dashboard-main {
+    container-type: inline-size;
+    min-width: 0;
+}
+@container (max-width: 640px) {
+    #my-issues-list .issue-row .issue-labels,
+    #my-issues-list .issue-row .issue-date {
+        display: none;
+    }
+    #my-issues-list .issue-row .sprint-badge {
+        max-width: 72px;
+    }
 }
 #my-issues-list .issue-row + .issue-row {
     border-top: 1px solid var(--border-color);
@@ -9945,13 +9981,13 @@ body.theme-light .picker-popover {
     font-variant-numeric: tabular-nums;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
     .dashboard-grid {
-        grid-template-columns: minmax(0, 1fr) 260px;
+        grid-template-columns: minmax(0, 1fr) 280px;
         gap: 16px;
     }
 }
-@media (max-width: 900px) {
+@media (max-width: 1024px) {
     .dashboard-grid {
         grid-template-columns: minmax(0, 1fr);
     }

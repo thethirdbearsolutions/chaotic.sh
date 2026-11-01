@@ -2252,6 +2252,27 @@ describe('Simple List Navigation Handler (CHT-1291)', () => {
             handler(makeEvent('j'));
             expect(config.setSelectedIndex).not.toHaveBeenCalled();
         });
+
+        it('yields every key to an open inline dropdown (CHT-1963 review)', () => {
+            config.isInlineDropdownOpen = vi.fn().mockReturnValue(true);
+            handler = createSimpleListNavigationHandler(config);
+            const enter = makeEvent('Enter');
+            handler(makeEvent('j'));
+            handler(enter);
+            expect(config.setSelectedIndex).not.toHaveBeenCalled();
+            expect(config.open).not.toHaveBeenCalled();
+            expect(enter.preventDefault).not.toHaveBeenCalled();
+        });
+
+        it('leaves Enter on a focused button or link to that control', () => {
+            config.getSelectedIndex.mockReturnValue(0);
+            const btn = document.createElement('button');
+            document.body.appendChild(btn);
+            const event = makeEvent('Enter', { target: btn });
+            handler(event);
+            expect(config.open).not.toHaveBeenCalled();
+            expect(event.preventDefault).not.toHaveBeenCalled();
+        });
     });
 
     describe('movement', () => {

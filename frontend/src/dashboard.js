@@ -17,6 +17,15 @@ import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 let myIssues = [];
 let dashboardActivities = [];
 let selectedMyIssueIndex = -1;
+// The cursor is kept by issue id, so a re-render (a remote update, a status
+// change moving the row to another group, coming back from the detail
+// view) puts it back on the same issue rather than dropping it.
+let selectedMyIssueId = null;
+// Done and Canceled can hold years of work: they show DONE_PREVIEW rows
+// until expanded, so the rest of the page stays reachable on a phone.
+const DONE_PREVIEW = 5;
+const COLLAPSIBLE = new Set(['done', 'canceled']);
+const expandedGroups = new Set();
 
 /** Keyboard cursor index in the Assigned to me list (CHT-1963). */
 export function getSelectedMyIssueIndex() {
@@ -25,6 +34,8 @@ export function getSelectedMyIssueIndex() {
 
 export function setSelectedMyIssueIndex(i) {
     selectedMyIssueIndex = i;
+    const row = i >= 0 ? document.querySelectorAll('#my-issues-list .issue-row')[i] : null;
+    selectedMyIssueId = row?.dataset.issueId ?? null;
 }
 
 // Assigned-to-me groups, in the order work moves through them (CHT-1963).
@@ -235,7 +246,7 @@ export function renderDashboardActivity() {
             <div class="activity-icon" aria-hidden="true">${getActivityIcon(activity.activity_type)}</div>
             <div class="activity-content">
                 <span class="activity-text">${formatActivityText(activity)}${targetLink}</span>
-                <span class="activity-actor">${escapeHtml(actor)}</span>
+                <span class="activity-actor">by ${escapeHtml(actor)}</span>
                 <time class="activity-time" datetime="${escapeAttr(activity.created_at || '')}">${formatTimeAgo(activity.created_at)}</time>
             </div>
         </div>
@@ -275,6 +286,11 @@ export function renderMyIssues() {
     const list = document.getElementById('my-issues-list');
     if (!list) return;
     list.classList.add('issue-list-linear');
+    // Every writer (load, inline edits, live updates) lands here: hold the
+    // issues in the order they render, so detail prev/next matches.
+    const groups = groupMyIssues(myIssues);
+    myIssues = groups.flatMap(g => g.issues);
+    if (getCurrentView() === 'my-issues') setDetailNavContext(myIssues);
     selectedMyIssueIndex = -1;
     const count = document.getElementById('my-issues-count');
     if (count) count.textContent = myIssues.length ? String(myIssues.length) : '';
@@ -288,14 +304,41 @@ export function renderMyIssues() {
         return;
     }
 
-    list.innerHTML = groupMyIssues(myIssues).map(g => `
-        <section class="dash-group" aria-labelledby="dash-group-${g.status}">
+    // A live update must not strand the keyboard user: note which row
+    // control had focus and give it back after the rebuild (CHT-1293).
+    const active = document.activeElement;
+    const focusRowId = list.contains(active) ? active.closest('.issue-row')?.dataset.issueId : null;
+    const focusType = focusRowId ? active.dataset?.dropdownType : null;
+
+    list.innerHTML = groups.map(g => {
+        const capped = COLLAPSIBLE.has(g.status) && !expandedGroups.has(g.status) && g.issues.length > DONE_PREVIEW;
+        const shown = capped ? g.issues.slice(0, DONE_PREVIEW) : g.issues;
+        return `
+        <div class="dash-group" role="group" aria-labelledby="dash-group-${g.status}">
             <h4 class="dash-group-header" id="dash-group-${g.status}">
                 <span class="dash-group-dot status-${g.status}" aria-hidden="true"></span>
-                ${escapeHtml(g.label)}<span class="dash-group-count">${g.issues.length}</span>
+                ${escapeHtml(g.label)} <span class="dash-group-count">${g.issues.length}</span>
             </h4>
-            ${g.issues.map(issue => renderIssueRow(issue)).join('')}
-        </section>`).join('');
+            ${shown.map(issue => renderIssueRow(issue)).join('')}
+            ${capped ? `<button type="button" class="dash-group-more" data-action="dash-show-all" data-status="${g.status}">Show all ${g.issues.length}</button>` : ''}
+        </div>`;
+    }).join('');
+
+    if (focusRowId) {
+        const row = [...list.querySelectorAll('.issue-row')].find(r => r.dataset.issueId === focusRowId);
+        const el = row && (focusType ? row.querySelector(`[data-dropdown-type="${focusType}"]`) : row.querySelector('.issue-title'));
+        el?.focus({ preventScroll: true });
+    }
+
+    // Put the keyboard cursor back on the issue it was on.
+    if (selectedMyIssueId) {
+        const rows = [...list.querySelectorAll('.issue-row')];
+        const i = rows.findIndex(r => r.dataset.issueId === selectedMyIssueId);
+        if (i !== -1) {
+            rows[i].classList.add('keyboard-selected');
+            selectedMyIssueIndex = i;
+        }
+    }
 }
 
 // ========================================
@@ -456,6 +499,10 @@ registerActions({
         navigateToIssueByIdentifier(dataset.identifier);
     },
     'retry-load-my-issues': () => loadMyIssues(),
+    'dash-show-all': (event, dataset) => {
+        expandedGroups.add(dataset.status);
+        renderMyIssues();
+    },
     'retry-load-sprint-status': () => loadSprintStatus(),
     // view-document action is registered in documents.js
 });
