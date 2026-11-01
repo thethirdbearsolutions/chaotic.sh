@@ -55,6 +55,22 @@ def _staging_in_tmp(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _no_socket_activation_by_default(monkeypatch, tmp_path_factory):
+    """Service-file tests written before socket activation (CHT-1970)
+    expect the classic unit whether or not this machine has flock(1).
+    tests/test_socket_activation.py opts in."""
+    from cli import system
+    monkeypatch.setattr(system, "socket_activation_supported", lambda: False)
+    gate_dir = tmp_path_factory.mktemp("gate")
+    monkeypatch.setattr(system, "DEPLOY_GATE", gate_dir / "deploy.lock")
+    monkeypatch.setattr(system, "DEPLOY_HOLD", gate_dir / "deploy.hold")
+    # A developer's own socket-activated install must not make older
+    # tests take the gated paths (PR #510 review).
+    monkeypatch.setattr(system, "get_socket_file_path", lambda: gate_dir / "no-such.socket")
+    system.release_deploy_gate()
+
+
+@pytest.fixture(autouse=True)
 def _no_staging_by_default(monkeypatch):
     """Upgrade tests written before staging (CHT-1969) see the old
     behaviour, everything in the stopped window, whatever this machine

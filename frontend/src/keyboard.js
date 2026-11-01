@@ -794,6 +794,9 @@ export function createSimpleListNavigationHandler(config) {
         if (yieldsToSidebar(e)) return;
         if (config.isModalOpen()) return;
         if (config.isCommandPaletteOpen()) return;
+        // A row's status/priority dropdown owns the keys while it is open
+        // (CHT-1963 review, as the Issues list does since CHT-1290).
+        if (config.isInlineDropdownOpen?.()) return;
 
         const items = document.querySelectorAll(selector);
         if (items.length === 0) return;
@@ -811,6 +814,9 @@ export function createSimpleListNavigationHandler(config) {
                 updateKeyboardSelection(selectedIndex - 1, config.setSelectedIndex, selector);
                 break;
             case 'Enter':
+                // Enter on a focused control (a row's trigger, a link, a
+                // button) is that control's own; only otherwise does it open.
+                if (e.target.closest?.('button, a[href], [role="button"]')) break;
                 if (selectedIndex >= 0 && items[selectedIndex]) {
                     e.preventDefault();
                     open(items[selectedIndex]);

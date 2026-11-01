@@ -6,7 +6,7 @@
 import { handleCloseFollowups } from './epic-prompt.js';
 import { api } from './api.js';
 import { getIssues, setIssues, getLabels, setLabels, getCurrentTeam, getCurrentProject, getCurrentDetailIssue, setCurrentDetailIssue, getCurrentDetailSprints } from './state.js';
-import { getMyIssues, setMyIssues } from './dashboard.js';
+import { getMyIssues, setMyIssues, renderMyIssues } from './dashboard.js';
 import { upsertIssue, getStoredIssue } from './issue-store.js';
 import { getGroupByValue } from './issues-filter.js';
 import { closeAllDropdowns, registerDropdownClickOutside, setDropdownKeyHandler, showToast, showApiError, markModalDirty } from './ui.js';
@@ -905,6 +905,10 @@ function rerenderIssueRow(issueId, field, issue, { focus }) {
         // (CHT-1915). renderIssues keeps the keyboard selection, and only
         // paints the rows on screen straight away.
         renderIssues();
+    } else if (field === 'status' && row.closest('#my-issues-list')) {
+        // The Dashboard groups by status: the row moves group at once
+        // (CHT-1963). renderMyIssues keeps the keyboard cursor by id.
+        renderMyIssues();
     } else {
         const wasSelected = row.classList.contains('keyboard-selected');
         row.outerHTML = renderIssueRow(issue);
@@ -1025,6 +1029,10 @@ export function updateDetailViewField(field, updatedIssue) {
 // Register delegated event handlers (CHT-1062)
 registerActions({
     'update-issue-field': (event, data) => {
+        // Enter/Space on the option already ran this on keydown: stop the
+        // browser's own click, which would land on the trigger the choice
+        // just focused and re-open the menu (CHT-1993).
+        if (event.type === 'keydown') event.preventDefault();
         const value = data.value === '__null__' ? null : data.value;
         const field = data.field;
         // estimate field needs numeric conversion
@@ -1035,6 +1043,7 @@ registerActions({
         }
     },
     'toggle-issue-label': (event, data, target) => {
+        if (event.type === 'keydown') event.preventDefault(); // CHT-1993: no second, native click
         toggleIssueLabel(data.issueId, data.labelId, target);
     },
     'create-label-from-dropdown': (event, data) => {

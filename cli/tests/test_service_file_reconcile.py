@@ -34,13 +34,13 @@ HOST = "127.0.0.1"
 TIMEOUT_LINE = f"TimeoutStopSec={SYSTEMD_TIMEOUT_STOP_SEC}\n"
 
 
-def _current_unit(port=PORT, secret=SECRET, host=HOST):
-    return generate_systemd_service(port, secret, host)
+def _current_unit(port=PORT, secret=SECRET, host=HOST, socket=None):
+    return generate_systemd_service(port, secret, host, socket=socket)
 
 
 def _unit_before_cht_1474(port=PORT, secret=SECRET, host=HOST):
     """cb5cc62..cfc4ee9: today's unit without TimeoutStopSec."""
-    unit = _current_unit(port, secret, host)
+    unit = _current_unit(port, secret, host, socket=False)  # older than CHT-1970 too
     assert TIMEOUT_LINE in unit
     return unit.replace(TIMEOUT_LINE, "")
 

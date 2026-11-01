@@ -30,6 +30,7 @@ vi.mock('./api.js', () => ({
     api: {
         getToken: vi.fn().mockReturnValue(null),
         getMe: vi.fn(),
+        getMyTeams: vi.fn(() => Promise.resolve([])),
         logout: vi.fn(),
     },
 }));
@@ -89,6 +90,8 @@ vi.mock('./issues-view.js', () => ({
     filterIssues: vi.fn(),
     updateGroupBy: vi.fn(),
     showCachedIssuesOrSkeleton: vi.fn(),
+    getSelectedLabels: vi.fn(() => []),
+    getExcludedLabels: vi.fn(() => []),
 }));
 vi.mock('./gate-approvals.js', () => ({ loadGateApprovals: vi.fn() }));
 vi.mock('./inbox.js', () => ({
@@ -167,6 +170,8 @@ vi.mock('./dashboard.js', () => ({
     loadDashboardActivity: vi.fn(),
     loadSprintStatus: vi.fn(),
     filterMyIssues: vi.fn(),
+    getSelectedMyIssueIndex: vi.fn(() => -1),
+    setSelectedMyIssueIndex: vi.fn(),
 }));
 vi.mock('./board.js', () => ({ loadBoard: vi.fn() }));
 vi.mock('./issue-detail-view.js', () => ({
@@ -209,6 +214,7 @@ vi.mock('./router.js', () => ({
     configureRouter: vi.fn((cfg) => { routerConfig = cfg; }),
     registerViews: vi.fn((views) => { registeredViews = views; }),
     initRouter: vi.fn(),
+    primeRoute: vi.fn(),
 }));
 vi.mock('./ws-handlers.js', () => ({ registerWsHandlers: vi.fn() }));
 vi.mock('./sidebar.js', () => ({ toggleSidebar: vi.fn(), closeSidebar: vi.fn() }));
@@ -227,7 +233,7 @@ vi.mock('./utils.js', () => ({
 
 // Import mocked modules so we can assert on them
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
-import { initFilterBar, loadIssues, loadFiltersFromUrl, populateLabelFilter, updateSprintFilter, showCachedIssuesOrSkeleton } from './issues-view.js';
+import { initFilterBar, loadIssues, loadFiltersFromUrl, populateLabelFilter, updateSprintFilter, showCachedIssuesOrSkeleton, getSelectedLabels, getExcludedLabels } from './issues-view.js';
 import { loadTeamMembers, loadTeamAgents, loadTeamInvitations } from './teams.js';
 import { loadApiKeys } from './api-keys.js';
 import { loadAgents } from './agents.js';
@@ -253,7 +259,7 @@ import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHa
 import { initEventDelegation } from './event-delegation.js';
 import { initAuth } from './auth.js';
 import { showAuthScreen } from './auth.js';
-import { initRouter } from './router.js';
+import { initRouter, primeRoute } from './router.js';
 import { registerWsHandlers } from './ws-handlers.js';
 import { api } from './api.js';
 import { closeModal, showToast } from './ui.js';
@@ -322,6 +328,85 @@ describe('app.js view registrations', () => {
         expect(loadFiltersFromUrl).toHaveBeenCalled();
         expect(initFilterBar).toHaveBeenCalled();
         await vi.waitFor(() => expect(loadIssues).toHaveBeenCalled());
+    });
+
+    // CHT-1971: the issues waited on the sprint options, a round trip on
+    // every entry to the view, though the request only needs them for a
+    // sprint or label filter.
+    describe('issues view: when loadIssues waits for the filter options', () => {
+        let original;
+        beforeEach(() => {
+            original = window.location.href;
+            document.body.insertAdjacentHTML('beforeend', '<select id="sprint-filter"><option value="">All</option><option value="s1">S1</option></select>');
+        });
+        afterEach(() => {
+            history.replaceState(null, '', original);
+            document.getElementById('sprint-filter')?.remove();
+        });
+
+        it('loads at once with no sprint or label filter', () => {
+            history.replaceState(null, '', '/issues?status=todo');
+            populateLabelFilter.mockReturnValueOnce(new Promise(() => {}));
+            updateSprintFilter.mockReturnValueOnce(new Promise(() => {}));
+            loadIssues.mockClear();
+            registeredViews['issues']();
+            expect(loadIssues).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+            ['a sprint in the address', '/issues?sprint=s1'],
+            ['a label in the address', '/issues?label=l1'],
+            ['an excluded label in the address', '/issues?exclude_label=l1'],
+        ])('waits for the options with %s', async (_name, url) => {
+            history.replaceState(null, '', url);
+            let releaseLabels;
+            let releaseSprints;
+            populateLabelFilter.mockReturnValueOnce(new Promise((r) => { releaseLabels = r; }));
+            updateSprintFilter.mockReturnValueOnce(new Promise((r) => { releaseSprints = r; }));
+            loadIssues.mockClear();
+            registeredViews['issues']();
+            expect(loadIssues).not.toHaveBeenCalled();
+            releaseSprints();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(loadIssues).not.toHaveBeenCalled();
+            releaseLabels();
+            await vi.waitFor(() => expect(loadIssues).toHaveBeenCalledTimes(1));
+        });
+
+        // PR #506 review I1: Back from Board keeps a label-free query
+        // string while the dropdown still has labels checked.
+        it.each([
+            ['a checked label', () => getSelectedLabels.mockReturnValueOnce(['l1'])],
+            ['a checked excluded label', () => getExcludedLabels.mockReturnValueOnce(['l1'])],
+        ])('waits for the options with %s and none in the address', async (_name, check) => {
+            history.replaceState(null, '', '/issues?project=p1');
+            check();
+            populateLabelFilter.mockReturnValueOnce(new Promise(() => {}));
+            loadIssues.mockClear();
+            registeredViews['issues']();
+            await Promise.resolve();
+            expect(loadIssues).not.toHaveBeenCalled();
+        });
+
+        // PR #506 review I2: a failed option load must not strand the list.
+        it('still loads the issues when an option load fails', async () => {
+            history.replaceState(null, '', '/issues?label=l1');
+            populateLabelFilter.mockReturnValueOnce(Promise.reject(new Error('labels down')));
+            loadIssues.mockClear();
+            registeredViews['issues']();
+            await vi.waitFor(() => expect(loadIssues).toHaveBeenCalledTimes(1));
+        });
+
+        it('waits for the options when a sprint is already picked', async () => {
+            history.replaceState(null, '', '/issues');
+            document.getElementById('sprint-filter').value = 's1';
+            updateSprintFilter.mockReturnValueOnce(new Promise(() => {}));
+            loadIssues.mockClear();
+            registeredViews['issues']();
+            await Promise.resolve();
+            expect(loadIssues).not.toHaveBeenCalled();
+        });
     });
 
     // CHT-1211 item 8: the previous project/view's rows used to stay in
@@ -715,9 +800,17 @@ describe('app.js keyboard handler wiring', () => {
         expect(sidebarNavCallCount).toBe(1);
     });
 
-    it('creates simple list-nav handlers for the sprints and epics views (CHT-1291)', () => {
-        expect(simpleNavCallCount).toBe(2);
-        expect(simpleNavViews).toEqual(expect.arrayContaining(['sprints', 'epics']));
+    it('creates simple list-nav handlers for the sprints, epics and dashboard views (CHT-1291, CHT-1963)', () => {
+        expect(simpleNavCallCount).toBe(3);
+        expect(simpleNavViews).toEqual(expect.arrayContaining(['sprints', 'epics', 'my-issues']));
+    });
+
+    it('dashboard open() clicks the row title, the same path as a pointer click (CHT-1963)', () => {
+        const cfg = simpleNavConfigs.find((c) => c.view === 'my-issues');
+        expect(cfg.selector).toBe('#my-issues-list .issue-row');
+        const click = vi.fn();
+        cfg.open({ querySelector: (sel) => (sel === '.issue-title' ? { click } : null) });
+        expect(click).toHaveBeenCalled();
     });
 
     it('sprints open() calls viewSprint with the row sprint id (CHT-1291)', () => {
@@ -768,6 +861,32 @@ describe('app.js DOMContentLoaded initialization', () => {
         expect(setCurrentUser).toHaveBeenCalledWith(fakeUser);
         expect(initApp).toHaveBeenCalled();
         expect(showAuthScreen).not.toHaveBeenCalled();
+    });
+
+    // CHT-1971: /teams goes out beside /auth/me, not after it, and the
+    // routed view's shell shows before either answers.
+    it('asks for the teams before /auth/me answers, and primes the route', async () => {
+        api.getToken.mockReturnValue('valid-token');
+        let answerMe;
+        api.getMe.mockReturnValue(new Promise((r) => { answerMe = r; }));
+        const teams = Promise.resolve([{ id: 't1' }]);
+        api.getMyTeams.mockReturnValue(teams);
+        const booting = domReadyCallback();
+        await Promise.resolve();
+        expect(api.getMyTeams).toHaveBeenCalled();
+        expect(primeRoute).toHaveBeenCalled();
+        expect(initApp).not.toHaveBeenCalled();
+        answerMe({ id: 'user-1' });
+        await booting;
+        expect(initApp).toHaveBeenCalledWith({ teamsRequest: teams });
+    });
+
+    it('a failed /teams beside a 401 is not an unhandled rejection', async () => {
+        api.getToken.mockReturnValue('valid-token');
+        api.getMe.mockRejectedValue(Object.assign(new Error('no'), { status: 401 }));
+        api.getMyTeams.mockReturnValue(Promise.reject(Object.assign(new Error('no'), { status: 401 })));
+        await domReadyCallback();
+        expect(initApp).not.toHaveBeenCalled();
     });
 
     // CHT-1224: only a real auth failure (401/403, matching api.js's error

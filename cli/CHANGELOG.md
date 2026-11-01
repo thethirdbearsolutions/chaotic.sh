@@ -5,6 +5,23 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
+## [Unreleased]
+
+### Changed
+
+- **Linux servers run behind a systemd socket (`chaotic.socket`).**
+  The socket holds the port, and uvicorn serves it (`--fd 3` in `just
+  serve-prod`), so a restart no longer closes the port. A request that
+  arrives while an upgrade has the server down waits and is answered by
+  the new version, where it used to get a 502 from the proxy. A deploy
+  gate (`~/.chaotic/deploy.lock`, a flock the upgrade holds from its stop
+  to its start) keeps such a request from starting a half-upgraded server.
+  `system install` and `reconfigure` write the socket. `system upgrade`
+  adds it when it can rewrite the unit (the rewrite only adds
+  directives); a unit it cannot rewrite stays as it is, see `chaotic
+  system config adopt`. `system stop` still closes the port. This needs
+  `flock` (util-linux). macOS is unchanged (CHT-1970).
+
 ## [0.1.2] - 2026-11-01
 
 Session identities find their team and project on their own, and
@@ -81,8 +98,7 @@ CLI first (`uv tool install --force chaotic-cli==0.1.0`), then run
 `chaotic system upgrade --version v0.1.0`, which backs up the
 database, stops the server, checks out the new code and migrates before
 restarting. If a migration fails, it restores the backup, checks the
-previous code out again and restarts the server on it. chaotic.thirdbearsolutions.com has run this code since
-2026-10-31 (5701ed09).
+previous code out again and restarts the server on it.
 
 ### Upgrade notes
 
