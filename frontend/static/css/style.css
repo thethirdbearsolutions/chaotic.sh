@@ -9681,3 +9681,132 @@ button.stat-card-link:hover .stat-note {
         flex-basis: 100%;
     }
 }
+
+/* ============================================================================
+   Select picker (CHT-1961): a compact button + searchable popover in front
+   of a native <select>, which stays as the source of truth.
+   ============================================================================ */
+select.picker-native {
+    display: none !important;
+}
+
+.picker-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    max-width: 220px;
+    padding: 0 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--font-sm);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s;
+}
+.picker-btn:hover,
+.picker-btn.open {
+    background: var(--bg-tertiary);
+}
+.picker-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+.picker-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.picker-chevron {
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.picker-popover {
+    position: fixed;
+    z-index: 1200;
+    display: flex;
+    flex-direction: column;
+    max-width: min(320px, calc(100vw - 16px));
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+}
+body.theme-light .picker-popover {
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+}
+.picker-popover:focus {
+    outline: none;
+}
+.picker-search {
+    margin: 0;
+    padding: 8px 10px;
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 0;
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--font-sm);
+}
+.picker-search:focus,
+.picker-search:focus-visible {
+    outline: none;
+    border-bottom-color: var(--accent-color);
+}
+.picker-list {
+    list-style: none;
+    margin: 0;
+    padding: 4px;
+    overflow-y: auto;
+}
+.picker-list:focus,
+.picker-list:focus-visible {
+    outline: none;
+}
+.picker-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.picker-option-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.picker-option.active {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.picker-option[aria-selected="true"] {
+    color: var(--text-primary);
+}
+.picker-option.disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+.picker-check {
+    display: inline-flex;
+    color: var(--accent-color);
+}
+.picker-empty {
+    padding: 8px;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+
+@media (pointer: coarse) {
+    .picker-btn { height: 40px; }
+    .picker-option { padding: 10px 8px; }
+}
