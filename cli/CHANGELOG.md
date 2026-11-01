@@ -7,10 +7,10 @@ and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) version
 
 ## [0.1.1] - 2026-11-01
 
-A CLI fix for project-scoped agents and session identities (PRs #493-#495).
-No migrations. Upgrade with `uv tool install --force chaotic-cli==0.1.1`;
-a server only needs `chaotic system upgrade --version v0.1.1` for the
-reworded error below.
+A CLI fix for project-scoped agents and session identities (#495; #493
+and #494 are docs only). No migrations. Upgrade with `uv tool install
+--force chaotic-cli==0.1.1`; a server only needs `chaotic system upgrade
+--version v0.1.1` for the reworded error below.
 
 ### Fixed
 
@@ -20,10 +20,11 @@ reworded error below.
   project-scoped agent is refused, so a session identity got "Not
   authorized to access this team" even on a document it had just created.
   On that refusal they now list the agent's own project instead, and so
-  does `chaotic doc list` with no current project or with `--all`. A title that matches nothing reads "Document 'X'
-  not found" (CHT-1947, CHT-1949).
-- **The error for an agent's document without an icon** names the MCP
-  `icon` field as well as the CLI's `--icon` (CHT-1947).
+  does `chaotic doc list` with no current project or with `--all`. A
+  title that matches nothing reads "Document 'X' not found"
+  (CHT-1947, CHT-1949).
+- **The error for an agent's document without an icon** names the `icon`
+  field (REST and MCP) as well as the CLI's `--icon` (CHT-1947).
 
 ## [0.1.0] - 2026-10-31
 
