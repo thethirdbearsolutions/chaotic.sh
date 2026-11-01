@@ -377,7 +377,13 @@ def _default_scope() -> None:
         default_team()
     if not get_current_project() and (
             config.env_project() or config.env_team() or not load_config().get("current_team")):
-        default_project()
+        try:
+            default_project()
+        except click.ClickException as exc:
+            # A deleted scoped project: commands that need a project say
+            # so through require_project; team-only ones still run.
+            if exc.format_message() != config.PROJECT_SCOPE_GONE:
+                raise
 
 
 def require_team(f):

@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 
@@ -430,7 +431,15 @@ def _env_choice(memo: dict, *parts) -> str | None:
 
 
 _env_resolvers: dict[str, object] = {}
-_env_resolving: set[str] = set()
+# Lookups in progress on this thread: an error path that asks for the
+# current team inside its own lookup gets None rather than recursing.
+# Per thread, since the stdio MCP server runs calls in worker threads; a
+# lookup on another thread is waited for under _env_lock instead.
+_env_local = threading.local()
+_env_lock = threading.RLock()
+# A value that matched nothing, per (server, credential, kind, value...):
+# the message, raised again without asking (PR #496 re-review m1).
+_env_failures: dict[tuple, str] = {}
 
 
 def set_env_resolvers(team, project) -> None:
@@ -440,19 +449,45 @@ def set_env_resolvers(team, project) -> None:
     _env_resolvers.update(team=team, project=project)
 
 
+def _resolving_here() -> set:
+    active = getattr(_env_local, "kinds", None)
+    if active is None:
+        active = _env_local.kinds = set()
+    return active
+
+
 def _env_resolved(kind: str, memo: dict, *parts) -> str | None:
-    """The id the environment names, looked up on first use. None with
-    no credential to ask with, no resolver registered, or while the
-    lookup itself is running (an error path that asks for the current
-    team must not start it again)."""
+    """The id the environment names, looked up on first use, once per
+    process: concurrent readers wait for the one lookup and get its
+    answer. None with no credential to ask with, no resolver registered,
+    or inside this thread's own lookup. A value that matches nothing
+    fails the same way on every later read without asking again."""
+    import click
+
     found = _env_choice(memo, *parts)
-    if found or not _process_team_slot() or kind in _env_resolving or kind not in _env_resolvers:
+    slot = _process_team_slot()
+    if found or not slot or kind not in _env_resolvers:
         return found
-    _env_resolving.add(kind)
-    try:
-        return _env_resolvers[kind]()
-    finally:
-        _env_resolving.discard(kind)
+    active = _resolving_here()
+    if kind in active:
+        return None
+    failure_key = (slot, kind, *parts)
+    with _env_lock:
+        found = _env_choice(memo, *parts)
+        if found:
+            return found
+        if failure_key in _env_failures:
+            raise click.ClickException(_env_failures[failure_key])
+        active.add(kind)
+        try:
+            return _env_resolvers[kind]()
+        except click.ClickException as exc:
+            # No match: an answer. A server or network error is not, and
+            # is asked again.
+            _env_failures[failure_key] = exc.format_message()
+            raise
+        finally:
+            active.discard(kind)
 
 
 def set_env_team(team_id: str) -> None:

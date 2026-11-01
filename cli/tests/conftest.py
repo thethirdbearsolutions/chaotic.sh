@@ -40,7 +40,7 @@ def _no_process_team(monkeypatch):
     monkeypatch.setattr(config, "_key_projects", {})
     monkeypatch.setattr(config, "_env_teams", {})
     monkeypatch.setattr(config, "_env_projects", {})
-    monkeypatch.setattr(config, "_env_resolving", set())
+    monkeypatch.setattr(config, "_env_failures", {})
     monkeypatch.delenv(config.TEAM_ENV, raising=False)
     monkeypatch.delenv(config.PROJECT_ENV, raising=False)
 

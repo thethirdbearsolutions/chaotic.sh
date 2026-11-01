@@ -1438,11 +1438,19 @@ class TestCliDefaultScope:
         assert mode.issue_queries == []
 
     def test_a_deleted_scoped_project_says_so(self, mode, monkeypatch):
-        """Review M2: the CLI says what `chaotic mcp` says."""
+        """Review M2: the CLI says what `chaotic mcp` says, for a command
+        that needs the project."""
         mode.project_scope = "proj-gone"
-        result = self._cli(monkeypatch, "issue", "list")
+        result = self._cli(monkeypatch, "sprint", "list")
         assert result.exit_code != 0
         assert "scoped project no longer exists" in " ".join(result.output.split())
+
+    def test_a_deleted_scoped_project_does_not_block_team_commands(self, mode, monkeypatch):
+        """Re-review m2: a team-wide command still runs."""
+        mode.project_scope = "proj-gone"
+        result = self._cli(monkeypatch, "issue", "list", "--all-projects")
+        assert result.exit_code == 0, result.output
+        assert mode.issue_queries[-1][0].get("team_id") == "team-eng"
 
     def test_status_and_config_readers_see_chaotic_team(self, mode, monkeypatch):
         """Review I2(b): a reader outside require_team gets the team the
@@ -1487,3 +1495,82 @@ class TestCliDefaultScope:
         assert await RestBackend().resolve_project(None, None) == ("proj-oth", "team-eng")
         # Looked up once per process.
         assert len([r for r in mode.requests if r[1] == "/teams"]) == 1
+
+
+class TestEnvResolution:
+    """The CHAOTIC_TEAM lookup inside config's getters (PR #496
+    re-review N1, N2, m1): once per process, waited for by concurrent
+    readers, never recursing, and a value that matches nothing is not
+    asked again."""
+
+    @pytest.fixture
+    def env(self, home, monkeypatch):
+        _set_profile(monkeypatch, team=None)
+        monkeypatch.setattr("cli.config.get_current_team", _REAL_GET_CURRENT_TEAM)
+        monkeypatch.setenv(cli_config.TEAM_ENV, "ENG")
+        calls = []
+        monkeypatch.setattr(cli_config, "_env_resolvers", {})
+        return calls
+
+    def _resolver(self, calls, body):
+        def resolve():
+            calls.append(threading.get_ident())
+            return body()
+        cli_config.set_env_resolvers(resolve, lambda: None)
+
+    def test_a_lookup_that_reads_the_team_does_not_recurse(self, env):
+        seen = []
+
+        def body():
+            seen.append(cli_config.get_current_team())  # e.g. an error hint
+            cli_config.set_env_team("team-eng")
+            return "team-eng"
+
+        self._resolver(env, body)
+        assert cli_config.get_current_team() == "team-eng"
+        assert seen == [None] and len(env) == 1
+
+    def test_concurrent_readers_wait_for_the_one_lookup(self, env):
+        started, release = threading.Event(), threading.Event()
+
+        def body():
+            started.set()
+            release.wait(5)
+            cli_config.set_env_team("team-eng")
+            return "team-eng"
+
+        self._resolver(env, body)
+        results = []
+        threads = [threading.Thread(target=lambda: results.append(cli_config.get_current_team()))
+                   for _ in range(8)]
+        threads[0].start()
+        assert started.wait(5)
+        for t in threads[1:]:
+            t.start()
+        release.set()
+        for t in threads:
+            t.join(5)
+        assert results == ["team-eng"] * 8
+        assert len(env) == 1
+
+    def test_a_value_that_matches_nothing_is_not_asked_again(self, env):
+        import click
+
+        def body():
+            raise click.ClickException("CHAOTIC_TEAM='ENG' matches no single team.")
+
+        self._resolver(env, body)
+        for _ in range(3):
+            with pytest.raises(click.ClickException, match="matches no single team"):
+                cli_config.get_current_team()
+        assert len(env) == 1
+
+    def test_a_server_error_is_asked_again(self, env):
+        def body():
+            raise APIError("boom", status_code=503)
+
+        self._resolver(env, body)
+        for _ in range(2):
+            with pytest.raises(APIError):
+                cli_config.get_current_team()
+        assert len(env) == 2
