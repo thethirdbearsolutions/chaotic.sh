@@ -9992,3 +9992,100 @@ body.theme-light .picker-popover {
         grid-template-columns: minmax(0, 1fr);
     }
 }
+
+/* ========================================
+   App shell (CHT-1965): a quieter, denser sidebar. Links are grouped
+   (your work, Workspace, Process, then Team and Settings at the foot),
+   rows are 30px pills at body size, and the header, New Issue button
+   and user menu are tightened to match. Phones keep their 44px drawer
+   rows (CHT-872); only the grouping applies there.
+   ======================================== */
+.nav-group {
+    display: flex;
+    flex-direction: column;
+}
+.nav-group + .nav-group {
+    margin-top: 12px;
+}
+.nav-group-label {
+    padding: 4px 12px;
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.2px;
+}
+
+@media (min-width: 769px) {
+    :root {
+        --sidebar-width: 220px;
+    }
+    .sidebar-header {
+        padding: 8px;
+    }
+    .team-selector {
+        font-size: var(--font-base);
+        font-weight: 600;
+        padding: 6px 8px;
+    }
+    .sidebar-create-btn {
+        width: calc(100% - 16px);
+        margin: 4px 8px 8px;
+        padding: 6px 12px;
+        font-size: var(--font-sm);
+    }
+    .sidebar-nav {
+        display: flex;
+        flex-direction: column;
+        padding: 4px 8px 8px;
+    }
+    .nav-group {
+        gap: 1px;
+    }
+    .nav-group-label {
+        padding: 4px 8px 2px;
+    }
+    .nav-group.nav-group-bottom {
+        margin-top: auto;
+        padding-top: 12px;
+    }
+    .nav-item {
+        font-size: var(--font-base);
+        gap: 8px;
+        height: 30px;
+        padding: 0 8px;
+        border-radius: var(--radius-md);
+        transition: background 0.1s, color 0.1s;
+    }
+    .nav-item .icon {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+    }
+    .nav-item.active::before {
+        height: 16px;
+    }
+    .sidebar-footer {
+        padding: 8px;
+    }
+    .user-menu {
+        font-size: var(--font-base);
+        padding: 6px 8px;
+    }
+}
+
+/* One compact view header everywhere (CHT-1965), the one the Issues view
+   got in CHT-1896: a 1.125rem title on the same line as the controls, so
+   content starts near the top of the window instead of 90px down. */
+@media (min-width: 769px) {
+    .main-content {
+        padding-top: 1rem;
+    }
+    .view-header {
+        align-items: center;
+        min-height: 32px;
+        margin-bottom: 12px;
+    }
+    .view-header h2 {
+        font-size: 1.125rem;
+    }
+}
