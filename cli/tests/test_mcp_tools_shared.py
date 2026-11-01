@@ -1344,6 +1344,11 @@ class TestIssueCreateAssignee:
         assert fake.calls_to("resolve_assignee") == []
         assert fake.calls_to("create_issue")[0][1]["assignee_id"] is None
 
+    async def test_unassigned_is_the_default_not_a_name(self, fake):
+        await _tools(fake)["issue_create"](title="T", assignee="Unassigned")
+        assert fake.calls_to("resolve_assignee") == []
+        assert fake.calls_to("create_issue")[0][1]["assignee_id"] is None
+
     async def test_an_assignee_that_does_not_resolve_creates_nothing(self):
         fake = FakeBackend(fail_on={"resolve_assignee": ToolInputError("No member or agent named 'Nobody'.")})
         result = await _tools(fake)["issue_create"](title="T", assignee="Nobody")

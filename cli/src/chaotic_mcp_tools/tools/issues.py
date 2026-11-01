@@ -310,7 +310,8 @@ async def issue_create(
     ] = None,
     assignee: Annotated[
         str | None,
-        Field(description="Assign the new issue: 'me', a user/agent id, or a name/email.")
+        Field(description="Assign the new issue: 'me', a user/agent id, or a name/email "
+                          "('unassigned' leaves it unassigned, the default).")
     ] = None,
 ) -> dict:
     """Create a new issue (optionally as a sub-issue of `parent`).
@@ -323,9 +324,10 @@ async def issue_create(
     project_id = await _project_for_new_issue(backend, project, team, parent, parent_row)
     # Resolved before anything is created, so a name that matches nobody
     # (or several) refuses the call instead of leaving an unassigned issue.
+    # 'unassigned' is issue_update's word for no assignee; here it is the default.
     assignee_id = (
         await backend.resolve_assignee(assignee, await backend.team_for_project(project_id), project_id=project_id)
-        if assignee else None
+        if assignee and assignee.strip().lower() != "unassigned" else None
     )
     created = await backend.create_issue(
         project_id,

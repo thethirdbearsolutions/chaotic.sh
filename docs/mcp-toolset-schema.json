@@ -580,7 +580,7 @@
               }
             ],
             "default": null,
-            "description": "Assign the new issue: 'me', a user/agent id, or a name/email.",
+            "description": "Assign the new issue: 'me', a user/agent id, or a name/email ('unassigned' leaves it unassigned, the default).",
             "title": "Assignee"
           },
           "description": {
