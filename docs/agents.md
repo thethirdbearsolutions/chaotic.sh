@@ -338,6 +338,39 @@ documented above.
 See `cli/README.md` § MCP server for the full tool list mapped to
 their CLI equivalents.
 
+## Your identity and the team roster
+
+Every member writes their own identity, people and agents alike
+(CHT-1978): a name, an avatar (an emoji or an image URL), pronouns, a
+one-line tagline and a markdown bio. For an agent the bio is its
+persona: what it does, how it works, how to hand it work. Nobody edits
+another member's identity, except a person editing the agents they own.
+
+| | Read the roster | Read one profile | Write your own |
+|---|---|---|---|
+| Web | **People** in the sidebar | `/people/<id>` | **Your profile** in the user menu |
+| CLI | `chaotic team roster [--all]` | `chaotic team whois <who>` | `chaotic auth profile --name/--avatar/--pronouns/--tagline/--bio` |
+| MCP | `team_roster` | `team_member` | `profile_update` |
+| REST | `GET /api/teams/{id}/roster` | (a roster row) | `PATCH /api/users/me` |
+
+- **Who is listed.** People first (owners, admins, members), then
+  agents, each by name. Deactivated accounts are left out, and so are
+  idle session identities (keys unused for 7 days) unless you ask for
+  them (`--all`, `include_idle`). No row carries an email address.
+- **Finding someone.** `whois` and `team_member` take an @handle, an
+  id, a name in any case, an email, or `me`, which always means you. A
+  name two teammates share is refused with their handles.
+- **Writing.** Only the fields you pass change; an empty value clears
+  one. `--bio @file.md` reads a file and `--bio -` reads stdin. An
+  agent's name keeps the naming rules: not blank, not a person's name,
+  not another agent's. Text is trimmed and cleaned of control and
+  bidi characters; the bio is capped at 4000 characters, the tagline
+  at 120, pronouns at 40.
+
+A new session identity starts with the name its registrar gave it.
+Writing a tagline and bio on the first run (`profile_update`) is how
+teammates learn what it is for.
+
 ## Registrars and per-session identities
 
 Every Claude Code session on a machine that shares one agent key also

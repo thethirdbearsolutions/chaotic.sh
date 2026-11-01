@@ -670,6 +670,13 @@ export class ApiClient {
         return this.request('POST', `/projects/${projectId}/agents`, body);
     }
 
+    // The team's people and agents with their own profiles (CHT-1980).
+    // Idle session identities only with includeIdle.
+    async getTeamRoster(teamId, { includeIdle = false } = {}) {
+        const query = includeIdle ? '?include_idle=true' : '';
+        return this.request('GET', `/teams/${teamId}/roster${query}`);
+    }
+
     async getTeamAgents(teamId) {
         return this.request('GET', `/teams/${teamId}/agents`);
     }

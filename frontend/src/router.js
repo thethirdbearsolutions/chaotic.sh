@@ -96,6 +96,7 @@ const detailRouteSection = {
     sprint: 'sprints',
     document: 'documents',
     projects: 'projects',
+    people: 'people',
 };
 
 /**

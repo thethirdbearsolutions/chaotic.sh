@@ -59,6 +59,7 @@ import {
     showEditTeamModal,
     loadTeamAgents,
 } from './teams.js';
+import { loadPeople, viewPerson } from './people.js';
 import {
     getProjects,
     loadProjects,
@@ -170,6 +171,10 @@ configureRouter({
             viewSprintByPath(parts[1]);
             return true;
         }
+        if (parts[0] === 'people' && parts[1]) {
+            viewPerson(decodeURIComponent(parts[1]), false);
+            return true;
+        }
         if (parts[0] === 'projects' && parts[1] && parts[2] === 'settings') {
             viewProjectSettings(parts[1]);
             return true;
@@ -182,6 +187,7 @@ configureRouter({
         if (state.identifier) { viewIssueByPath(state.identifier); return true; }
         if (state.documentId) { viewDocument(state.documentId, false); return true; }
         if (state.sprintId) { viewSprint(state.sprintId, false); return true; }
+        if (state.personId) { viewPerson(state.personId, false); return true; }
         return false;
     },
     restoreProject: () => {
@@ -298,6 +304,7 @@ registerViews({
     'documents': () => {
         loadDocuments(null, null, { fromMemory: true });
     },
+    'people': loadPeople,
     'team': () => {
         loadTeamMembers();
         loadTeamAgents();

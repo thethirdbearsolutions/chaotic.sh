@@ -9984,6 +9984,57 @@ body.theme-light .picker-popover {
     }
 }
 
+/* ============================================================================
+   PEOPLE: the team roster and profile pages (CHT-1984)
+   ============================================================================ */
+#people-view .people-intro { color: var(--text-secondary); margin: 0 0 var(--space-2xl); }
+.people-idle-toggle { display: flex; align-items: center; gap: var(--space-sm); color: var(--text-secondary); font-size: 0.875rem; }
+.people-section-header { display: flex; align-items: center; justify-content: space-between; margin: var(--space-2xl) 0 var(--space-lg); }
+.people-section-header:first-child { margin-top: 0; }
+.people-section-header h3 { margin: 0; }
+.people-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-lg); }
+.people-empty { color: var(--text-muted); }
+.person-card {
+    display: flex; gap: var(--space-lg); align-items: flex-start;
+    padding: var(--space-xl); border: 1px solid var(--border-color); border-radius: var(--radius-lg);
+    background: var(--bg-secondary); color: inherit; text-decoration: none; min-width: 0;
+}
+.person-card:hover, .person-card:focus-visible { background: var(--bg-tertiary); border-color: var(--accent-color); }
+.person-card-idle { opacity: 0.6; }
+.person-card-skeleton { min-height: 72px; }
+.person-avatar { width: 44px; height: 44px; flex-shrink: 0; font-size: 1.25rem; }
+.person-card-agent .person-avatar { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+.person-card-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.person-name { font-weight: 600; overflow-wrap: anywhere; }
+.person-pronouns { margin-left: var(--space-sm); font-weight: 400; font-size: 0.8125rem; color: var(--text-secondary); }
+.person-handle { font-size: 0.8125rem; color: var(--text-secondary); }
+.person-tagline { font-size: 0.875rem; overflow-wrap: anywhere; }
+.person-role { font-size: 0.75rem; color: var(--text-muted); }
+.person-back { color: var(--text-secondary); text-decoration: none; }
+.person-back:hover { color: var(--text-primary); }
+.person-profile { display: flex; gap: var(--space-2xl); align-items: center; margin: var(--space-xl) 0 var(--space-2xl); }
+.person-avatar-large { width: 96px; height: 96px; flex-shrink: 0; font-size: 2.75rem; }
+.person-profile-body { min-width: 0; display: flex; flex-direction: column; gap: var(--space-xs); }
+.person-profile-name { margin: 0; overflow-wrap: anywhere; }
+.person-profile .person-tagline { font-size: 1rem; }
+.person-bio { max-width: 72ch; }
+.person-bio-empty { color: var(--text-muted); }
+@media (max-width: 600px) {
+    .person-profile { flex-direction: column; align-items: flex-start; gap: var(--space-lg); }
+    .people-grid { grid-template-columns: 1fr; }
+}
+.person-bio ul, .person-bio ol { padding-left: 1.25rem; }
+.person-work { margin-top: var(--space-2xl); max-width: 72ch; }
+.person-work h3 { margin: 0 0 var(--space-lg); }
+.person-issues { display: flex; flex-direction: column; border: 1px solid var(--border-color); border-radius: var(--radius-lg); overflow: hidden; }
+.person-issues > p, .person-issues > .skeleton { margin: var(--space-lg); }
+.person-issue { display: flex; gap: var(--space-lg); align-items: baseline; padding: var(--space-md) var(--space-lg); color: inherit; text-decoration: none; border-top: 1px solid var(--border-color); }
+.person-issue:first-child { border-top: none; }
+.person-issue:hover, .person-issue:focus-visible { background: var(--bg-tertiary); }
+.person-issue-id { color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.person-issue-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.person-issue-status { color: var(--text-secondary); font-size: 0.75rem; text-transform: capitalize; flex-shrink: 0; }
+=======
 /* ========================================
    App shell (CHT-1965): a quieter, denser sidebar. Links are grouped
    (your work, Workspace, Process, then Team and Settings at the foot),
@@ -10129,3 +10180,5 @@ body.theme-light .picker-popover {
         min-height: 44px;
     }
 }
+
+/* =====================================================================
