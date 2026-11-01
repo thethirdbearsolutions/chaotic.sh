@@ -16,7 +16,9 @@ Before the index, duplicates already written are resolved, keeping the
 oldest open entry of each (recipient, parent); otherwise the index could
 not be built. As InboxService._resolve does, each also gets read_at if it
 had none, and its updated_at moves, so the sync scan (CHT-1607)
-hands the change to clients. Nothing is deleted.
+hands the change to clients. Nothing is deleted. No push withdraws the
+notification a device may already show for one; it stays until
+dismissed (a one-off, cosmetic).
 
 The downgrade drops the index; resolved duplicates stay resolved.
 

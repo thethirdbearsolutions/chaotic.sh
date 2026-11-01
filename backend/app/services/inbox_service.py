@@ -342,9 +342,13 @@ class InboxService:
                             f"Close the {noun}, or add more."
                         ),
                     )
-            except IntegrityError:
+            except IntegrityError as e:
                 # Another close wrote it between the check and here; the
-                # partial unique index keeps one (CHT-1928).
+                # partial unique index keeps one (CHT-1928). Any other
+                # constraint (a recipient deleted meanwhile) still raises,
+                # to the caller's logging (PR #490 review 1).
+                if "UNIQUE" not in str(e):
+                    raise
                 continue
             created.append(entry)
             await self._broadcast(project.team_id, "created", entry)
