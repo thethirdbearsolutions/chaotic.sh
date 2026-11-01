@@ -13,7 +13,7 @@ import { registerActions } from './event-delegation.js';
 import { viewIssue } from './issue-detail-view.js';
 import { getCurrentProject, getCurrentView, subscribe, getSelectedBoardIndex, setSelectedBoardIndex, setDetailNavContext } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
-import { getProjects, formatEstimate } from './projects.js';
+import { getProjects, formatEstimate, isOutOfScale } from './projects.js';
 import { lastResult, rememberResult, resultKey, sameResult } from './last-result.js';
 
 // Board status configuration
@@ -225,6 +225,7 @@ export function renderBoardCard(issue) {
     const assignee = issue.assignee_id ? getAssigneeById(issue.assignee_id) : null;
     const assigneeName = assignee ? formatAssigneeName(assignee) : null;
     const estimate = issue.estimate != null ? formatEstimate(issue.estimate, issue.project_id) : '';
+    const outOfScale = isOutOfScale(issue.estimate, issue.project_id);
     const labels = (issue.labels || []).slice(0, 2);
     return `
         <div class="kanban-card" draggable="true" data-action="board-card" data-id="${escapeAttr(issue.id)}" data-identifier="${escapeAttr(issue.identifier)}">
@@ -235,8 +236,8 @@ export function renderBoardCard(issue) {
             <div class="kanban-card-title">${escapeHtml(issue.title)}</div>
             <div class="kanban-card-meta">
                 <span class="kanban-card-priority" title="Priority: ${escapeAttr(formatPriority(issue.priority))}">${getPriorityIcon(issue.priority)}</span>
-                ${estimate ? `<span class="estimate-badge">${escapeHtml(estimate)}</span>` : ''}
-                ${labels.map(label => `<span class="issue-label" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>`).join('')}
+                ${estimate ? `<span class="estimate-badge${outOfScale ? ' out-of-scale' : ''}"${outOfScale ? ' title="Estimate outside current scale"' : ''}>${escapeHtml(estimate)}</span>` : ''}
+                ${labels.map(label => `<span class="issue-label" title="${escapeAttr(label.name)}" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>`).join('')}
             </div>
         </div>
     `;

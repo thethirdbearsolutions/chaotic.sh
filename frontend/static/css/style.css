@@ -4865,10 +4865,6 @@ input[type="checkbox"] {
         padding: 1rem;
     }
 
-    .kanban-column {
-        flex: 0 0 240px;
-    }
-
     .settings-content {
         max-width: 100%;
         padding: 16px;
@@ -10134,10 +10130,17 @@ body.theme-light .picker-popover {
 .kanban-card {
     padding: 10px 12px;
 }
-.kanban-card:hover {
+.kanban-card:not(.keyboard-selected):not(.drag-over):not(.dragging):hover {
     transform: none;
     box-shadow: none;
     border-color: var(--text-muted);
+}
+.kanban-card,
+.kanban-card-meta {
+    min-width: 0;
+}
+.kanban-card img {
+    pointer-events: none;
 }
 .kanban-card-top {
     display: flex;
@@ -10152,6 +10155,7 @@ body.theme-light .picker-popover {
 }
 .kanban-card-title {
     margin-bottom: 8px;
+    overflow-wrap: anywhere;
     display: -webkit-box;
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
@@ -10167,20 +10171,24 @@ body.theme-light .picker-popover {
     color: var(--text-muted);
 }
 .kanban-card-meta .issue-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-size: var(--font-xs);
     padding: 1px 6px;
     border-radius: var(--radius-pill);
 }
 
-/* Five columns share the width instead of overflowing it: at 1440px every
-   column is on screen. Narrower windows scroll from a 220px floor. */
+/* Five columns share the width instead of overflowing it: every column
+   is on screen from about 1280px. Narrower windows scroll from a 180px
+   floor. */
 @media (min-width: 769px) {
     .kanban-board {
         gap: 12px;
     }
     .kanban-column {
         flex: 1 1 0;
-        min-width: 220px;
+        min-width: 180px;
     }
     .kanban-column-header {
         padding: 8px 12px;
