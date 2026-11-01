@@ -18,6 +18,7 @@ from .shared import (
     parse_duration,
     print_ritual_prompt,
     resolve_content_value,
+    team_wide_or_agent_project,
 )
 
 
@@ -1763,10 +1764,16 @@ def register(cli):
     @_main().require_team
     @_main().handle_error
     def comments_list(limit):
-        """Show recent team comments (across issues and documents)."""
+        """Show recent team comments (across issues and documents).
+
+        A project-scoped identity sees its own project's comments: the
+        team-wide feed is refused to it (CHT-1952).
+        """
         m = _main()
         team_id = m.get_current_team()
-        comments = _client().get_team_comments(team_id, limit=limit)
+        comments = team_wide_or_agent_project(
+            lambda project_id: _client().get_team_comments(team_id, limit=limit, project_id=project_id),
+        )
 
         if m.is_json_output():
             m.output_json(comments or [])

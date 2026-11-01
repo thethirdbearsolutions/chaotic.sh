@@ -16,8 +16,8 @@ import pytest
 import pytest_asyncio
 
 from app.mcp_server import context, tools
-from app.oxyde_models.document import OxydeDocument
-from app.oxyde_models.issue import OxydeIssue
+from app.oxyde_models.document import OxydeDocument, OxydeDocumentComment
+from app.oxyde_models.issue import OxydeIssue, OxydeIssueComment
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.team import OxydeTeam
 from app.schemas.agent import AgentCreate
@@ -79,6 +79,7 @@ class TestRefused:
         for path in (
             f"/api/issues/search?team_id={test_team.id}&q=x&project_id={sibling.id}",
             f"/api/issues/activities?team_id={test_team.id}&project_id={sibling.id}",
+            f"/api/issues/comments?team_id={test_team.id}&project_id={sibling.id}",
             f"/api/teams/{test_team.id}/documents?project_id={sibling.id}",
         ):
             assert (await client.get(path, headers=headers)).status_code == 403, path
@@ -97,8 +98,12 @@ class TestRefused:
             f"/api/issues/activities?team_id={other.id}&project_id={test_project.id}",
         ):
             assert (await client.get(path, headers=headers)).status_code == 404, path
-        listed = await client.get(f"/api/teams/{other.id}/documents?project_id={test_project.id}", headers=headers)
-        assert listed.status_code == 200 and listed.json() == []
+        for path in (
+            f"/api/teams/{other.id}/documents?project_id={test_project.id}",
+            f"/api/issues/comments?team_id={other.id}&project_id={test_project.id}",
+        ):
+            listed = await client.get(path, headers=headers)
+            assert listed.status_code == 200 and listed.json() == [], path
         assert (await client.get(f"/api/teams/{other.id}/projects", headers=headers)).status_code == 403
 
     async def test_team_level_document(self, client, proj_agent, test_document):
@@ -106,6 +111,17 @@ class TestRefused:
         # Out of scope answers like a missing document (CHT-1785).
         assert (await client.get(f"/api/documents/{test_document.id}", headers=headers)).status_code == 404
         assert (await client.delete(f"/api/documents/{test_document.id}", headers=headers)).status_code == 404
+
+    async def test_team_level_document_create_says_why(self, client, proj_agent, test_team):
+        # Refused by design (CHT-1780), but the generic team message read
+        # like a broken key; it names the way that works (CHT-1952).
+        _, headers = proj_agent
+        response = await client.post(
+            f"/api/teams/{test_team.id}/documents", json={"title": "Global", "icon": "📝"}, headers=headers,
+        )
+        assert response.status_code == 403
+        assert "project-scoped identity can only create documents in its project" in response.json()["detail"]
+        assert await OxydeDocument.objects.filter(title="Global").count() == 0
 
     async def test_create_project(self, client, proj_agent, test_team):
         _, headers = proj_agent
@@ -180,6 +196,38 @@ class TestPreserved:
         ready = await client.get(f"/api/projects/{test_project.id}/issues/ready", headers=headers)
         assert ready.status_code == 200
 
+    async def test_own_project_comment_feed(self, client, proj_agent, test_team, test_project, sibling, test_user):
+        # The project filter is the comment feed's project-confined path
+        # (CHT-1952): its own issues' and documents' comments, nothing of
+        # the sibling project's or of team-level documents.
+        _, headers = proj_agent
+        own, sib = await _issue(test_project, 1, test_user.id), await _issue(sibling, 1, test_user.id)
+        own_doc = await OxydeDocument.objects.create(
+            team_id=test_team.id, project_id=test_project.id, author_id=test_user.id, title="Own doc",
+        )
+        sib_doc = await OxydeDocument.objects.create(
+            team_id=test_team.id, project_id=sibling.id, author_id=test_user.id, title="Sib doc",
+        )
+        team_doc = await OxydeDocument.objects.create(team_id=test_team.id, author_id=test_user.id, title="Team doc")
+        await OxydeIssueComment.objects.create(issue_id=own.id, author_id=test_user.id, content="own issue")
+        await OxydeIssueComment.objects.create(issue_id=sib.id, author_id=test_user.id, content="sib issue")
+        for doc, text in ((own_doc, "own doc"), (sib_doc, "sib doc"), (team_doc, "team doc")):
+            await OxydeDocumentComment.objects.create(document_id=doc.id, author_id=test_user.id, content=text)
+
+        feed = await client.get(
+            f"/api/issues/comments?team_id={test_team.id}&project_id={test_project.id}", headers=headers,
+        )
+        assert feed.status_code == 200, feed.text
+        assert sorted(c["content"] for c in feed.json()) == ["own doc", "own issue"]
+        by_source = {c["source_type"]: c for c in feed.json()}
+        assert by_source["issue"]["issue_identifier"] == own.identifier
+        assert by_source["document"]["document_title"] == "Own doc"
+        # The sibling's feed stays refused, as the unfiltered one does.
+        sib_feed = await client.get(
+            f"/api/issues/comments?team_id={test_team.id}&project_id={sibling.id}", headers=headers,
+        )
+        assert sib_feed.status_code == 403
+
     async def test_own_project_documents(self, client, proj_agent, test_team, test_project):
         agent, headers = proj_agent
         created = await client.post(
@@ -209,6 +257,7 @@ class TestPreserved:
             f"/api/issues?team_id={test_team.id}",
             f"/api/issues/search?team_id={test_team.id}&q=x&project_id={test_project.id}",
             f"/api/issues/activities?team_id={test_team.id}&project_id={test_project.id}",
+            f"/api/issues/comments?team_id={test_team.id}&project_id={test_project.id}",
             f"/api/teams/{test_team.id}/documents?project_id={test_project.id}",
         ):
             assert (await client.get(path, headers=auth_headers)).status_code == 200, path

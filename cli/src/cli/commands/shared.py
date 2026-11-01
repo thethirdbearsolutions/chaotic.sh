@@ -405,6 +405,36 @@ def resolve_sprint_id(sprint_value: str, project_id: str) -> str:
     raise click.ClickException(f"Sprint '{sprint_value}' not found. Use 'chaotic sprint list' to see available sprints.")
 
 
+def team_wide_or_agent_project(fetch):
+    """``fetch(None)``, a team-wide read; for a project-scoped agent, which
+    the server refuses team-wide data (CHT-1780), ``fetch(project_id)``
+    with the agent's own project instead.
+
+    A session identity is usually such an agent, so without this a
+    team-wide command failed for it with "Not authorized to access this
+    team" where a project-confined form exists (CHT-1952; CHT-1947 does
+    the same for document resolution). The 403 is the cue rather than a
+    ``/auth/me`` call up front, so nobody else pays an extra request;
+    anyone else, or a failed lookup, keeps the 403.
+    """
+    # The class cli.main's handle_error catches, late-bound like _client().
+    APIError = sys.modules['cli.main'].APIError
+
+    try:
+        return fetch(None)
+    except APIError as refused:
+        if refused.status_code != 403:
+            raise
+        try:
+            me = _client().get_me() or {}
+        except APIError:
+            raise refused from None
+        project_id = me.get("agent_project_id") if me.get("is_agent") else None
+        if not project_id:
+            raise
+        return fetch(project_id)
+
+
 def resolve_document_id(doc_value: str, team_id: str) -> str:
     """Resolve a document value to a document ID.
 

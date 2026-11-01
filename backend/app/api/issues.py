@@ -10,8 +10,8 @@ from app.api.deps import (
     confined_project_id, is_eligible_project_member,
 )
 from app.api.visibility import (
-    can_see_label, can_see_project, not_found, project_filter_in_team, shown_emails, team_hidden,
-    visible_issue, visible_issue_by_identifier, visible_project, visible_sprint,
+    can_see_label, can_see_project, not_found, project_filter_in_team, project_filter_in_team_or_none,
+    shown_emails, team_hidden, visible_issue, visible_issue_by_identifier, visible_project, visible_sprint,
 )
 from app.utils import ensure_utc
 
@@ -1116,21 +1116,33 @@ async def list_team_activities(
 async def list_team_comments(
     team_id: str,
     current_user: CurrentUser,
+    project_id: str | None = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
-):
-    """List recent comments for a team (both issue and document comments)."""
+) -> list[TeamCommentResponse]:
+    """List recent comments for a team (both issue and document comments).
+
+    ``project_id`` narrows the feed to one project's issues and documents.
+    That is the project-confined path, as in ``list_documents``: project
+    access is enough, so a project-scoped agent (refused the team-wide
+    feed, CHT-1780) can read its own project's comments, and a project the
+    caller sees in another team lists nothing (CHT-1952).
+    """
     issue_service = IssueService()
     document_service = DocumentService()
 
-    if not await can_read_team_data(current_user, team_id):
+    if project_id:
+        project = await project_filter_in_team_or_none(current_user, project_id, team_id)
+        if project is None:
+            return []
+    elif not await can_read_team_data(current_user, team_id):
         raise team_hidden()
 
     # Fetch skip + limit from each source to handle worst case where
     # all top results come from one source
     fetch_count = skip + limit
-    issue_comments = await issue_service.list_team_comments(team_id, 0, fetch_count)
-    doc_comments = await document_service.list_team_comments(team_id, 0, fetch_count)
+    issue_comments = await issue_service.list_team_comments(team_id, 0, fetch_count, project_id=project_id)
+    doc_comments = await document_service.list_team_comments(team_id, 0, fetch_count, project_id=project_id)
 
     # Convert to unified response format
     issue_responses = [
