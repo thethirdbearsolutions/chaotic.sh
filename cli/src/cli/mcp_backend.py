@@ -47,11 +47,6 @@ def _main():
     return sys.modules['cli.main']
 
 
-# The project a project-scoped agent key is confined to, or None for any
-# other key, per (server, key) (CHT-1690). A key's scope does not change,
-# so /auth/me is asked once per process; a failed lookup is not kept.
-_key_projects: dict[tuple[str, str], dict | None] = {}
-
 # The HTTP /mcp's words for a project-scoped key without a team. Such a
 # key cannot authenticate today (it is always issued in its project's
 # team), so this is a safeguard against "No team selected" advice that
@@ -63,8 +58,9 @@ PROJECT_SCOPED_TEAM_WIDE = (
     "instead, or use a team-scoped or human API key."
 )
 
-# The HTTP /mcp's words for a project-scoped key whose project was deleted.
-PROJECT_SCOPE_GONE = "This API key's scoped project no longer exists."
+# The HTTP /mcp's words for a project-scoped key whose project was deleted
+# (the CLI says the same, CHT-1950).
+from .config import PROJECT_SCOPE_GONE  # noqa: E402,F401
 
 
 
@@ -108,13 +104,12 @@ class RestBackend:
         answer is kept for this process only (config.set_process_team),
         so the CLI resolvers and session identity see it too."""
         self._require_auth()
-        team_id = _main().get_current_team()
+        # Through _call: CHAOTIC_TEAM, which overrides the configured
+        # team, is looked up on first read (CHT-1950).
+        team_id = await self._call(_main().get_current_team)
         if team_id:
             return team_id
         from . import config
-        if config.env_team():
-            # CHAOTIC_TEAM overrides the configured team (CHT-1950).
-            return await self._call(_main().resolve_env_team)
         # One lookup per (server, key) shared with session identity, which
         # may already have listed them for a person registrar (CHT-1691).
         # Keyed like the process team (config._process_team_slot).
@@ -141,37 +136,19 @@ class RestBackend:
         )
 
     async def _current_project(self) -> str | None:
-        """The configured current project, or what CHAOTIC_PROJECT names,
-        which overrides it and is looked up once per process (CHT-1950)."""
-        project_id = _main().get_current_project()
-        if project_id:
-            return project_id
-        from . import config
-        if config.env_project():
-            return await self._call(_main().resolve_env_project)
-        return None
+        """The current project: what CHAOTIC_PROJECT names, which is
+        looked up on first read (CHT-1950), else the configured one."""
+        return await self._call(_main().get_current_project)
 
     async def _key_project(self) -> dict | None:
         """The project the configured key is confined to when it is a
         project-scoped agent key (/auth/me: an agent with a project),
         else None (CHT-1690). Asked only when no project was passed or
         configured, and once per process, so a set-up profile never
-        pays for it."""
-        from . import config
-        slot = config._team_slot(config.get_api_url(), config.lookup_credential() or "")
-        if slot in _key_projects:
-            return _key_projects[slot]
-        me = await self._call(functools.partial(self._client().get_me, as_configured=_as_configured())) or {}
-        project = None
-        if me.get("is_agent") and me.get("agent_project_id"):
-            try:
-                project = await self._call(self._client().get_project, me["agent_project_id"])
-            except BackendError as e:
-                if e.http_status == 404:
-                    raise ToolInputError(PROJECT_SCOPE_GONE) from e
-                raise
-        _key_projects[slot] = project
-        return project
+        pays for it. The lookup and its memo are the CLI's
+        (cli.main.key_project), so both say the same of a deleted
+        project."""
+        return await self._call(_main().key_project)
 
     async def _key_project_or_none(self) -> dict | None:
         """_key_project for callers that have a pre-CHT-1690 answer to

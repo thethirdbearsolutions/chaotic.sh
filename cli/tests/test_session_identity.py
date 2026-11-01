@@ -847,9 +847,20 @@ class TestMcpDefaultTeam:
         teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
         teams_server.teams.append({"id": "team-2", "name": "Beta", "key": "BET"})
         monkeypatch.setenv(cli_config.TEAM_ENV, "bet")
-        assert m.resolve_env_team() == "team-2"
-        Client()._request("GET", "/issues")
+        # No require_team first (issue view, MCP issue_view): the getter
+        # resolves the variable itself (review I2).
+        assert m.get_current_team is _REAL_GET_CURRENT_TEAM
+        Client()._request("GET", "/issues/identifier/BET-1")
         assert teams_server.registrations[0]["team_id"] == "team-2"
+        assert cli_config.get_current_team() == "team-2"
+
+    async def test_an_mcp_first_call_that_needs_no_team_uses_chaotic_team(self, auto, teams_server, monkeypatch):
+        from cli.mcp_backend import RestBackend
+
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        teams_server.teams.append({"id": "team-2", "name": "Beta", "key": "BET"})
+        monkeypatch.setenv(cli_config.TEAM_ENV, "BET")
+        assert (await RestBackend().get_issue("BET-1"))["as"] == "sess-1-team-2"
 
     def test_the_plain_cli_registers_in_the_only_team_without_adopting_it(self, auto, teams_server):
         teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
@@ -1391,6 +1402,71 @@ class TestCliDefaultScope:
         assert result.exit_code == 0, result.output
         assert mode.issue_queries[-1][0]["project_id"] == "proj-oth"
         assert not [r for r in mode.requests if r[1] == "/teams"]
+
+    def test_chaotic_team_alone_drops_a_project_configured_for_another_team(self, mode, monkeypatch):
+        """Review I1: the configured project belongs to the configured
+        team; with CHAOTIC_TEAM naming another, it is not used."""
+        mode.teams.append({"id": "team-ops", "name": "Operations", "key": "OPS"})
+        monkeypatch.setattr(cli_config, "load_local_config",
+                            lambda: {"current_team": "team-ops", "current_project": "proj-ops"})
+        monkeypatch.setenv(cli_config.TEAM_ENV, "ENG")
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code != 0
+        assert "No project selected" in result.output
+        assert mode.issue_queries == []
+        result = self._cli(monkeypatch, "issue", "list", "--all-projects")
+        assert result.exit_code == 0, result.output
+        assert mode.issue_queries[-1][0].get("team_id") == "team-eng"
+        assert "project_id" not in mode.issue_queries[-1][0]
+
+    def test_chaotic_team_naming_the_configured_team_keeps_its_project(self, mode, monkeypatch):
+        monkeypatch.setattr(cli_config, "load_local_config",
+                            lambda: {"current_team": "team-eng", "current_project": "proj-oth"})
+        monkeypatch.setenv(cli_config.TEAM_ENV, "eng")
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code == 0, result.output
+        assert mode.issue_queries[-1][0]["project_id"] == "proj-oth"
+
+    def test_a_scoped_project_in_another_team_is_not_the_default(self, mode, monkeypatch):
+        """Review I3: the key's project is used only in its own team."""
+        mode.project_scope = "proj-czy"  # in ENG
+        mode.teams.append({"id": "team-ops", "name": "Operations", "key": "OPS"})
+        monkeypatch.setenv(cli_config.TEAM_ENV, "OPS")
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code != 0
+        assert "No project selected" in result.output
+        assert mode.issue_queries == []
+
+    def test_a_deleted_scoped_project_says_so(self, mode, monkeypatch):
+        """Review M2: the CLI says what `chaotic mcp` says."""
+        mode.project_scope = "proj-gone"
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code != 0
+        assert "scoped project no longer exists" in " ".join(result.output.split())
+
+    def test_status_and_config_readers_see_chaotic_team(self, mode, monkeypatch):
+        """Review I2(b): a reader outside require_team gets the team the
+        environment names, not None."""
+        mode.teams.append({"id": "team-ops", "name": "Operations", "key": "OPS"})
+        monkeypatch.setattr(cli_config, "load_local_config", lambda: {"current_team": "team-eng"})
+        monkeypatch.setenv(cli_config.TEAM_ENV, "OPS")
+        self._cli(monkeypatch, "auth", "whoami")  # registers cli.main's resolvers, patches its client
+        assert cli_config.get_current_team() == "team-ops"
+        assert cli_config.configured_team() == "team-ops"
+
+    def test_team_use_warns_while_chaotic_team_overrides_it(self, mode, monkeypatch):
+        """CHT-1953: the switch is written but the environment still wins."""
+        monkeypatch.setattr(cli_config, "save_local_config", lambda config: None)
+        monkeypatch.setattr("cli.client.Client.get_team", lambda self, team_id: {"id": team_id, "name": "Engineering"},
+                            raising=False)
+        monkeypatch.setenv(cli_config.TEAM_ENV, "ENG")
+        result = self._cli(monkeypatch, "team", "use", "team-eng")
+        assert result.exit_code == 0, result.output
+        flat = " ".join(result.output.split())
+        assert "CHAOTIC_TEAM=ENG is set and overrides this" in flat
+        monkeypatch.delenv(cli_config.TEAM_ENV)
+        result = self._cli(monkeypatch, "team", "use", "team-eng")
+        assert "overrides" not in result.output
 
     async def test_chaotic_mcp_honours_the_environment_too(self, mode, monkeypatch):
         """The stdio MCP server reads the same variables, so the CLI and

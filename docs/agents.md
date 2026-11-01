@@ -376,9 +376,19 @@ key, name or id (`CHAOTIC_TEAM=ENG CHAOTIC_PROJECT=CZY`), for the CLI and
 `chaotic mcp` alike. Like `CHAOTIC_API_KEY`, they override the profile
 and a repository `.chaotic`. Set them where a key sees several teams, or
 a team-scoped key should land in one project, and every new machine or
-container starts there with no `use` step. The value is looked up once
-per process; one that matches nothing fails with the teams the key can
-see (or the project's error), naming the variable.
+container starts there with no `use` step. The value is looked up the
+first time anything reads the team or project, once per process; one
+that matches nothing fails with the teams the key can see (or the
+project's error), naming the variable. With `CHAOTIC_TEAM` alone naming
+another team than the configured one, the configured project (which
+belongs to that other team) is not used. `team use` / `project use`
+warn while the variable overrides them.
+
+The lookups cost a request or two (`GET /teams`, `GET /auth/me`, and
+the scoped project) in every CLI process on a setup with no team in its
+config files, since each command is a new process. Run `chaotic team
+use` / `project use` once on a machine that keeps its config to skip
+them.
 
 From then on, inside a Claude Code session (which sets
 `CLAUDE_CODE_SESSION_ID`), the CLI and `chaotic mcp` both:

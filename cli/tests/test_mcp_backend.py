@@ -157,8 +157,8 @@ class TestProjectScopedKey:
         assert await backend.optional_project(None, None) == ("p-1", "t-1")
         self.me.side_effect = None
         self.project.side_effect = APIError("boom", status_code=502)
-        from cli import mcp_backend
-        mcp_backend._key_projects.clear()
+        from cli import config
+        config._key_projects.clear()
         assert await backend.optional_project(None, None) == (None, "t-1")
 
     async def test_a_deleted_project_says_so(self, backend):
