@@ -19,6 +19,43 @@ and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) version
   in staging ends the upgrade before anything is stopped. The upgrade
   prints how long the server was down (CHT-1969).
 
+## [0.1.2] - 2026-11-01
+
+Session identities find their team and project on their own, and
+`chaotic system upgrade` keeps the server up while it prepares a release
+(PRs #496, #501, #503 and #504). No migrations. Upgrade with `uv tool
+install --force chaotic-cli==0.1.2`, then `chaotic system upgrade
+--version v0.1.2`: the upgrade runs the installed CLI, so installing
+0.1.2 first gets the new flow below.
+
+### Added
+
+- **`CHAOTIC_TEAM` and `CHAOTIC_PROJECT`** name a team or project by key,
+  name or id and override the config files, for the CLI and `chaotic mcp`
+  alike. They are resolved once per process and never written to a
+  config file. `team use`, `team create`, `project use` and `project
+  create` warn while one of them overrides the choice (CHT-1950,
+  CHT-1953).
+
+### Changed
+
+- **A fresh session identity defaults its team and project.** With no
+  current team, the CLI takes the key's only team (as `chaotic mcp` has
+  since CHT-1687), or a project-scoped key's project's team; with no
+  current project, a project-scoped registrar's project, which its
+  session identities inherit. Several teams fail with their names and
+  `chaotic team use <key>` (CHT-1950).
+- **`chaotic system upgrade` prepares the release before stopping the
+  server.** It syncs dependencies and builds the frontend in a staging
+  worktree (`~/.chaotic/staging`) while the old server keeps serving, and
+  a failed sync there aborts before the stop. The stopped window is now
+  checkout, a warm-cache sync, the CLI reinstall, migrations, copying in
+  the built bundle, and the start; the upgrade reports how long the
+  server was down (CHT-1969).
+- **Web UI**: the inbox is a triage list (one-line rows grouped by day,
+  hover actions, All/Unread), and Epics is a progress readout (summary,
+  state groups, percent, row cursor) (CHT-1962, CHT-1964).
+
 ## [0.1.1] - 2026-11-01
 
 A CLI fix for project-scoped agents and session identities (#495; #493
