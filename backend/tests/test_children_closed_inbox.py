@@ -195,3 +195,133 @@ async def test_a_closed_epic_is_not_asked_about(client, auth_headers, test_proje
     assert (await client.patch(f"/api/issues/{epic['id']}", headers=auth_headers, json={"status": "done"})).status_code == 200
     await IssueService().apply_intent_transition(child["id"], LimboType.CLOSE, agent_user.id)
     assert await _entries(epic["id"]) == []
+
+
+# --- CHT-1928: two closes racing past the exists check
+
+async def _race_setup(client, auth_headers, test_project):
+    from app.oxyde_models.issue import OxydeIssue
+    from app.oxyde_models.project import OxydeProject
+
+    epic, _child = await _epic_with_child(client, auth_headers, test_project)
+    parent = await OxydeIssue.objects.get(id=epic["id"])
+    project = await OxydeProject.objects.get(id=test_project.id)
+    return epic, parent, project
+
+
+def _blind_exists_check(monkeypatch):
+    """Both racers pass the service's exists check."""
+    real_filter = OxydeInboxEntry.objects.filter
+
+    class _Blind:
+        async def exists(self):
+            return False
+
+    def blind_filter(*args, **kwargs):
+        if kwargs.get("kind") == InboxEntryKind.CHILDREN_CLOSED.name and "resolved_at" in kwargs:
+            return _Blind()
+        return real_filter(*args, **kwargs)
+
+    monkeypatch.setattr(OxydeInboxEntry.objects, "filter", blind_filter)
+
+
+def _record_announcements(monkeypatch, service):
+    broadcast, pushed = [], []
+    real_broadcast, real_push = service._broadcast, service._push
+
+    async def record_broadcast(team_id, event, entry):
+        broadcast.append(entry.id)
+        await real_broadcast(team_id, event, entry)
+
+    async def record_push(entries, actor_id):
+        pushed.extend(e.id for e in entries)
+        await real_push(entries, actor_id)
+
+    monkeypatch.setattr(service, "_broadcast", record_broadcast)
+    monkeypatch.setattr(service, "_push", record_push)
+    return broadcast, pushed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("in_transaction", [True, False])
+async def test_a_racing_second_entry_is_skipped_not_raised(client, auth_headers, test_project, test_user, agent_user, monkeypatch, db, in_transaction):
+    """The exists check passes for both racers; the partial unique index
+    lets one through and the other is skipped, announced to nobody. In
+    production the call runs after the change committed (no outer
+    transaction); inside one, the savepoint keeps it writable."""
+    from app.db.transactions import atomic
+    from app.oxyde_models.issue import OxydeIssue
+    from app.services.inbox_service import InboxService
+
+    epic, parent, project = await _race_setup(client, auth_headers, test_project)
+    service = InboxService()
+    await service.notify_children_closed(parent=parent, project=project, actor_id=agent_user.id, how="was deleted")
+
+    _blind_exists_check(monkeypatch)
+    broadcast, pushed = _record_announcements(monkeypatch, service)
+    if in_transaction:
+        async with atomic():
+            await service.notify_children_closed(parent=parent, project=project, actor_id=agent_user.id, how="was deleted")
+            # The caller's transaction is still usable after the skipped insert.
+            await OxydeIssue.objects.filter(id=parent.id).update(title="Still writable")
+    else:
+        await service.notify_children_closed(parent=parent, project=project, actor_id=agent_user.id, how="was deleted")
+    monkeypatch.undo()
+    assert [e.recipient_user_id for e in await _entries(epic["id"])] == [test_user.id]
+    assert (broadcast, pushed) == ([], [])
+    if in_transaction:
+        assert (await OxydeIssue.objects.get(id=parent.id)).title == "Still writable"
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_duplicate_keeps_the_new_entry_beside_it(client, auth_headers, test_project, test_user, agent_user, monkeypatch, db):
+    """An agent assignee is new, its owner already has one: the agent's
+    entry is written and announced, the owner's duplicate is skipped."""
+    from app.oxyde_models.issue import OxydeIssue
+    from app.oxyde_models.user import OxydeUser
+    from app.services.inbox_service import InboxService
+
+    await OxydeUser.objects.filter(id=agent_user.id).update(parent_user_id=test_user.id)
+    epic, parent, project = await _race_setup(client, auth_headers, test_project)
+    service = InboxService()
+    await service.notify_children_closed(parent=parent, project=project, actor_id=None, how="was deleted")
+    await OxydeIssue.objects.filter(id=parent.id).update(assignee_id=agent_user.id)
+    parent = await OxydeIssue.objects.get(id=parent.id)
+
+    _blind_exists_check(monkeypatch)
+    broadcast, pushed = _record_announcements(monkeypatch, service)
+    await service.notify_children_closed(parent=parent, project=project, actor_id=None, how="was deleted")
+    monkeypatch.undo()
+    entries = await _entries(epic["id"])
+    assert sorted(e.recipient_user_id for e in entries) == sorted([test_user.id, agent_user.id])
+    [agent_entry] = [e for e in entries if e.recipient_user_id == agent_user.id]
+    assert broadcast == [agent_entry.id] and pushed == [agent_entry.id]
+
+
+@pytest.mark.asyncio
+async def test_another_constraint_failure_still_raises(client, auth_headers, test_project, monkeypatch, db):
+    """Review 1: only the unique index is a skipped duplicate."""
+    from oxyde import IntegrityError
+    from app.services.inbox_service import InboxService
+
+    _epic, parent, project = await _race_setup(client, auth_headers, test_project)
+
+    async def fk_failure(**kwargs):
+        raise IntegrityError("FOREIGN KEY constraint failed")
+
+    monkeypatch.setattr(OxydeInboxEntry.objects, "create", fk_failure)
+    with pytest.raises(IntegrityError):
+        await InboxService().notify_children_closed(parent=parent, project=project, actor_id=None, how="was deleted")
+
+
+@pytest.mark.asyncio
+async def test_a_resolved_entry_does_not_block_a_new_one(client, auth_headers, test_project, test_user, agent_user, db):
+    from datetime import datetime, timezone
+
+    epic, child = await _epic_with_child(client, auth_headers, test_project)
+    await IssueService().apply_intent_transition(child["id"], LimboType.CLOSE, agent_user.id)
+    await OxydeInboxEntry.objects.filter(issue_id=epic["id"]).update(resolved_at=datetime.now(timezone.utc))
+    other = await _create(client, auth_headers, test_project.id, title="Another", parent_id=epic["id"])
+    await IssueService().apply_intent_transition(other["id"], LimboType.CLOSE, agent_user.id)
+    assert len(await _entries(epic["id"])) == 2
+    assert len(await _entries(epic["id"], resolved_at=None)) == 1

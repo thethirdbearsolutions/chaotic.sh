@@ -79,4 +79,13 @@ class OxydeInboxEntry(Model):
             # in bulk when a project is deleted (CHT-1626).
             Index(("issue_id",), name="inbox_entries_issue_id_idx"),
             Index(("document_id",), name="inbox_entries_document_id_idx"),
+            # One open "nothing is left open under X" entry per recipient
+            # and parent (CHT-1928): two closes racing past the service's
+            # exists check would otherwise both write one.
+            Index(
+                ("recipient_user_id", "issue_id"),
+                name="inbox_entries_open_children_closed_uq",
+                unique=True,
+                where="kind = 'CHILDREN_CLOSED' AND resolved_at IS NULL",
+            ),
         ]
