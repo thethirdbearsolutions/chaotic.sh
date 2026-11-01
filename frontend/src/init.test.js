@@ -5,7 +5,7 @@ vi.mock('./auth.js', () => ({
 }));
 vi.mock('./teams.js', () => ({ getTeams: vi.fn(() => []), loadTeams: vi.fn(), selectTeam: vi.fn() }));
 vi.mock('./onboarding.js', () => ({ showOnboarding: vi.fn(), hasCompletedOnboarding: vi.fn(() => true) }));
-vi.mock('./router.js', () => ({ initRouter: vi.fn() }));
+vi.mock('./router.js', () => ({ initRouter: vi.fn(), primeRoute: vi.fn() }));
 vi.mock('./oauth-consent.js', async (importOriginal) => ({
     ...(await importOriginal()),
     showConsent: vi.fn(),
@@ -24,10 +24,10 @@ import { showMainScreen, showAuthScreen, showLogin, showSignup } from './auth.js
 import { showInvite, hideInvite, showMissingToken, forgetInviteToken } from './invite.js';
 import { showToast } from './ui.js';
 import { api } from './api.js';
-import { getCurrentUser, setCurrentUser } from './state.js';
+import { getCurrentUser, setCurrentUser, setCurrentView, getCurrentView } from './state.js';
 import { loadTeams, getTeams, selectTeam } from './teams.js';
 import { showConsent } from './oauth-consent.js';
-import { initRouter } from './router.js';
+import { initRouter, primeRoute } from './router.js';
 import { showOnboarding, hasCompletedOnboarding } from './onboarding.js';
 
 describe('initApp', () => {
@@ -54,6 +54,15 @@ describe('initApp', () => {
         expect(showConsent).not.toHaveBeenCalled();
         expect(showMainScreen).toHaveBeenCalled();
         expect(selectTeam).toHaveBeenCalledWith({ id: 't1' }, true);
+    });
+
+    // CHT-1971: the routed view's shell shows before the team loads.
+    it('primes the route before loading the team', async () => {
+        getTeams.mockReturnValue([{ id: 't1' }]);
+        await initApp();
+        expect(primeRoute).toHaveBeenCalled();
+        expect(primeRoute.mock.invocationCallOrder[0])
+            .toBeLessThan(loadTeams.mock.invocationCallOrder.at(-1));
     });
 
     describe('popstate listener (CHT-1697)', () => {
@@ -84,6 +93,15 @@ describe('initApp', () => {
             await initApp();
             expect(selectTeam).not.toHaveBeenCalled();
             expect(initRouter).toHaveBeenCalledTimes(1);
+        });
+
+        // PR #506 review M3: nothing routes without a team, so the view
+        // primeRoute() cleared must not stay null.
+        it('leaves the Dashboard current with no team', async () => {
+            getTeams.mockReturnValue([]);
+            setCurrentView(null);
+            await initApp();
+            expect(getCurrentView()).toBe('my-issues');
         });
 
         it('waits while onboarding, which calls initApp again', async () => {

@@ -35,8 +35,33 @@ def _no_process_team(monkeypatch):
     from cli import config
     monkeypatch.setattr(config, "_process_teams", {})
     monkeypatch.setattr(config, "_only_teams", {})
-    from cli import mcp_backend
-    monkeypatch.setattr(mcp_backend, "_key_projects", {})
+    # The CLI's defaults and the environment's choice (CHT-1950) neither.
+    monkeypatch.setattr(config, "_process_projects", {})
+    monkeypatch.setattr(config, "_key_projects", {})
+    monkeypatch.setattr(config, "_env_teams", {})
+    monkeypatch.setattr(config, "_env_projects", {})
+    monkeypatch.setattr(config, "_env_failures", {})
+    monkeypatch.delenv(config.TEAM_ENV, raising=False)
+    monkeypatch.delenv(config.PROJECT_ENV, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _staging_in_tmp(monkeypatch, tmp_path_factory):
+    """`system upgrade` prepares the target in a staging checkout
+    (CHT-1969). No test may reach the real ~/.chaotic/staging, which
+    prepare_release() may delete and recreate."""
+    from cli import system
+    monkeypatch.setattr(system, "STAGING_DIR", tmp_path_factory.mktemp("staging-root") / "staging")
+
+
+@pytest.fixture(autouse=True)
+def _no_staging_by_default(monkeypatch):
+    """Upgrade tests written before staging (CHT-1969) see the old
+    behaviour, everything in the stopped window, whatever this machine
+    has on PATH. tests/test_upgrade_staging.py opts in."""
+    from cli import system
+    monkeypatch.setattr(system, "prepare_release",
+                        lambda target_commit: system.PreparedRelease(True, "staging off in tests"))
 
 
 @pytest.fixture

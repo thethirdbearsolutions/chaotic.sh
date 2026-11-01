@@ -2070,7 +2070,7 @@
           "issues"
         ],
         "summary": "List Team Comments",
-        "description": "List recent comments for a team (both issue and document comments).",
+        "description": "List recent comments for a team (both issue and document comments).\n\n``project_id`` narrows the feed to one project's issues and documents.\nThat is the project-confined path, as in ``list_documents``: project\naccess is enough, so a project-scoped agent (refused the team-wide\nfeed, CHT-1780) can read its own project's comments (CHT-1952). A\nproject the caller sees in another team answers 404, as on the\nactivity feed beside it.",
         "operationId": "list_team_comments_api_issues_comments_get",
         "security": [
           {
@@ -2085,6 +2085,22 @@
             "schema": {
               "type": "string",
               "title": "Team Id"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
             }
           },
           {

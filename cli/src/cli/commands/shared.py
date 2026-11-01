@@ -405,28 +405,43 @@ def resolve_sprint_id(sprint_value: str, project_id: str) -> str:
     raise click.ClickException(f"Sprint '{sprint_value}' not found. Use 'chaotic sprint list' to see available sprints.")
 
 
-def agent_project_after_refusal(refused) -> str | None:
-    """The project a project-scoped agent key is confined to, when
-    ``refused`` is the 403 the server gives such a key for a team-wide
-    read (CHT-1780); else None, and the caller re-raises ``refused``.
+def team_wide_or_agent_project(team_id: str, fetch):
+    """``fetch(None)``, a read of ``team_id``'s team-wide data; for a
+    project-scoped agent of that team, which the server refuses team-wide
+    data (CHT-1780), ``fetch(project_id)`` with the one project its key
+    can see instead.
 
-    A session identity is usually project-scoped, so this is how a
-    command that reads team-wide falls back to the one project the key
-    can see (CHT-1947, CHT-1949). The refusal is the cue rather than an
-    ``/auth/me`` call up front, so nobody else pays an extra request.
-    ``get_me`` goes out with the same credential that was refused.
+    A session identity is usually such an agent, so without this a
+    team-wide command failed for it with "Not authorized to access this
+    team" where a project-confined form exists (CHT-1947, CHT-1949,
+    CHT-1952). The 403 is the cue rather than an ``/auth/me`` call up
+    front, so nobody else pays an extra request; ``get_me`` goes out with
+    the same credential that was refused. Anyone else, another error, or
+    a failed lookup keeps the original error, and so does an agent whose
+    project is in another team: the CLI's current team is stale, and the
+    refusal says so where its project's feed there would be silently
+    empty (PR #498 review I1).
     """
-    from ..client import APIError
+    # The class cli.main's handle_error catches, late-bound like _client():
+    # the same class as cli.client's in production, but the unit tests
+    # patch cli.client, and only this one is certain to match.
+    APIError = sys.modules['cli.main'].APIError
 
-    if getattr(refused, "status_code", None) != 403:
-        return None
     try:
-        me = _client().get_me()
-    except APIError:
-        return None
-    if not isinstance(me, dict) or not me.get("is_agent"):
-        return None
-    return me.get("agent_project_id") or None
+        return fetch(None)
+    except APIError as refused:
+        if getattr(refused, "status_code", None) != 403:
+            raise
+        try:
+            me = _client().get_me()
+        except APIError:
+            raise refused from None
+        if not (isinstance(me, dict) and me.get("is_agent") and me.get("agent_team_id") == team_id):
+            raise
+        project_id = me.get("agent_project_id")
+        if not project_id:
+            raise
+        return fetch(project_id)
 
 
 def list_documents_or_own_project(team_id: str, **filters) -> list:
@@ -434,15 +449,11 @@ def list_documents_or_own_project(team_id: str, **filters) -> list:
     agent refused the team-wide listing gets its own project's documents,
     which are all the documents it can see. Pass no ``project_id``: a
     project filter is never refused for being team-wide."""
-    from ..client import APIError
+    def listing(project_id):
+        confined = {"project_id": project_id} if project_id else {}
+        return _client().get_documents(team_id, **filters, **confined)
 
-    try:
-        return _client().get_documents(team_id, **filters)
-    except APIError as refused:
-        project_id = agent_project_after_refusal(refused)
-        if not project_id:
-            raise
-        return _client().get_documents(team_id, project_id=project_id, **filters)
+    return team_wide_or_agent_project(team_id, listing)
 
 
 def resolve_document_id(doc_value: str, team_id: str) -> str:
@@ -459,8 +470,8 @@ def resolve_document_id(doc_value: str, team_id: str) -> str:
     """
     documents = list_documents_or_own_project(team_id, limit=10000)
     if not documents:
-        # Not "no documents exist" for a project-scoped agent whose
-        # configured team is not its own: it just sees none here.
+        # Not "no documents exist" for a project-scoped agent: an empty
+        # project does not mean the team has none, only none it can see.
         raise click.ClickException(
             f"Document '{doc_value}' not found: no documents are visible in the current team. "
             "Create one with 'chaotic doc create'."

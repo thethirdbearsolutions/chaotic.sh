@@ -35,6 +35,8 @@ import {
     filterIssues,
     updateGroupBy,
     showCachedIssuesOrSkeleton,
+    getSelectedLabels,
+    getExcludedLabels,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
 import { loadQueryView } from './query-view.js';
@@ -44,6 +46,7 @@ import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive, focusMainContent } from './keyboard.js';
 import { showInlineDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { isQuoteTooltipVisible } from './quote-comment.js';
+import { initSelectPickers } from './select-picker.js';
 import './revisions.js';
 import {
     toggleTeamDropdown,
@@ -117,6 +120,7 @@ import {
     navigateToEpicByIdentifier,
     configureRouter,
     registerViews,
+    primeRoute,
 } from './router.js';
 import { registerWsHandlers } from './ws-handlers.js';
 import { toggleSidebar, closeSidebar } from './sidebar.js';
@@ -212,11 +216,24 @@ registerViews({
         showCachedIssuesOrSkeleton();
         // Initialize filter bar chips and badge
         initFilterBar();
-        // Populate label filter dropdown
-        populateLabelFilter().then(() => {
+        // The label and sprint options load beside the issues. The issues
+        // wait for them only when the address filters by a label or a
+        // sprint, or a sprint is already picked: the request is built from
+        // those options then. Otherwise the wait was a round trip on every
+        // entry to the view, boot included (CHT-1971).
+        const urlParams = new URLSearchParams(window.location.search);
+        const labelIds = urlParams.getAll('label');
+        const excludeLabelIds = urlParams.getAll('exclude_label');
+        const urlSprint = urlParams.get('sprint');
+        // Checked labels count even with none in the address: Back from
+        // Board keeps this view's query string, and the dropdown keeps its
+        // checks until populateLabelFilter() rebuilds it (PR #506 review I1).
+        const needsOptions = labelIds.length > 0 || excludeLabelIds.length > 0 || !!urlSprint
+            || !!document.getElementById('sprint-filter')?.value
+            || getSelectedLabels().length > 0 || getExcludedLabels().length > 0;
+        if (!needsOptions) loadIssues();
+        const labelsReady = populateLabelFilter().then(() => {
             // Re-apply label filter from URL after options are loaded
-            const urlParams = new URLSearchParams(window.location.search);
-            const labelIds = urlParams.getAll('label');
             if (labelIds.length > 0) {
                 const dropdown = document.getElementById('label-filter-dropdown');
                 if (dropdown) {
@@ -227,7 +244,6 @@ registerViews({
                     updateLabelFilterLabel();
                 }
             }
-            const excludeLabelIds = urlParams.getAll('exclude_label');
             if (excludeLabelIds.length > 0) {
                 const dropdown = document.getElementById('exclude-label-filter-dropdown');
                 if (dropdown) {
@@ -239,17 +255,21 @@ registerViews({
                 }
             }
         });
-        // Update sprint filter based on selected project, then load issues
-        updateSprintFilter().then(() => {
+        // Update sprint filter based on selected project
+        const sprintsReady = updateSprintFilter().then(() => {
             // Re-apply sprint filter from URL after options are loaded
-            const urlParams = new URLSearchParams(window.location.search);
-            const sprint = urlParams.get('sprint');
-            if (sprint) {
+            if (urlSprint) {
                 const sprintFilter = document.getElementById('sprint-filter');
-                if (sprintFilter) sprintFilter.value = sprint;
+                if (sprintFilter) sprintFilter.value = urlSprint;
             }
-            loadIssues();
         });
+        // A failed option load still loads the issues (review I2).
+        if (needsOptions) {
+            Promise.allSettled([labelsReady, sprintsReady]).then(() => loadIssues());
+        } else {
+            labelsReady.catch((e) => console.error('Failed to populate label filter:', e));
+            sprintsReady.catch((e) => console.error('Failed to update sprint filter:', e));
+        }
     },
     'query': () => {
         loadQueryView();
@@ -547,10 +567,17 @@ async function bootApp() {
         await showSignedOut();
         return;
     }
+    // The teams are asked for beside /auth/me, not after it: the two are
+    // independent, and in series they were a round trip of every boot.
+    // The routed view's shell shows at once, not the page HTML's
+    // Dashboard (CHT-1971).
+    primeRoute();
+    const teamsRequest = api.getMyTeams();
+    teamsRequest.catch(() => {}); // a 401 is reported by /auth/me below
     try {
         const user = await api.getMe();
         setCurrentUser(user);
-        await initApp();
+        await initApp({ teamsRequest });
     } catch (e) {
         if (e?.status === 401 || e?.status === 403) {
             api.logout();
@@ -575,6 +602,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initProjectSettings();
     initDocumentsView();
     initThemeToggle();
+    initSelectPickers();
     initIssueLinkHandler();
     initIssueTooltip({ api });
     registerWsHandlers();

@@ -164,3 +164,11 @@ def test_accept_invitation_with_a_code(sent):
     """CHT-1828: the code travels in the body."""
     Client().accept_invitation("tok", "123456")
     assert _call(sent) == ("POST", "/teams/invitations/tok/accept", {"code": "123456"})
+
+
+def test_team_comments_send_project_id_only_when_given(sent):
+    """CHT-1952: the project-confined comment feed."""
+    Client().get_team_comments("t1", limit=5)
+    assert _call(sent)[1] == "/issues/comments?team_id=t1&skip=0&limit=5"
+    Client().get_team_comments("t1", limit=5, project_id="p1")
+    assert _call(sent)[1] == "/issues/comments?team_id=t1&skip=0&limit=5&project_id=p1"
