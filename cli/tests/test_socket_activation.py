@@ -27,7 +27,7 @@ from cli.system import (
 
 from test_service_stop_start import _flat, _upgrade
 
-SECRET = "s3cr3t-0123456789abcdef"
+SECRET = "s3cr3t-0123456789abcdef"  # gitleaks:allow (test fixture)
 PORT = 24267
 HOST = "127.0.0.1"
 
