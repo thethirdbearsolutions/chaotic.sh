@@ -1692,7 +1692,6 @@ async def test_an_agent_can_raise_a_sprint_budget(client, agent_headers, test_pr
 @pytest.mark.asyncio
 async def test_an_agent_can_change_a_sprint_status_by_hand(client, agent_headers, test_project, db):
     """CHT-1924 reverted (PR #492 review 4)."""
-    from datetime import datetime, timezone
 
     await OxydeSprint.objects.filter(project_id=test_project.id).delete()
     sprint = await OxydeSprint.objects.create(
