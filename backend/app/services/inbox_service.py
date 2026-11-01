@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 from oxyde import IntegrityError, execute_raw
 
-from app.db.transactions import atomic, on_commit
+from app.db.transactions import atomic, on_commit, on_commit_collect
 from app.enums import ActivityType, ApprovalMode, InboxEntryKind, IssueType, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
@@ -82,6 +82,10 @@ def _ambiguous_mention_warning(token: str, handles: list[str]) -> str:
     return f"@{token} is ambiguous; nobody was notified. Use one of: {shown}."
 
 
+# How many settled ids a 'resolved' event names; ``count`` gives the total.
+_RESOLVED_IDS_CAP = 100
+
+
 class InboxService:
     """Writes and reads InboxEntry rows."""
 
@@ -130,6 +134,38 @@ class InboxService:
         except RuntimeError:  # inside oxyde.atomic(): nothing would call it later
             logger.exception("Inbox event %s for entry=%s broadcast before commit", event_type, entry.id)
             await send()
+
+    async def _broadcast_resolved(self, settling: list) -> None:
+        """Tell each recipient's sockets that entries of theirs were
+        settled (CHT-1927), so an open inbox refetches: its unread count
+        and the rows' read state change. One event per recipient per
+        transaction, however many entries and however many ``_resolve``
+        calls it took: a project delete settles in chunks of 500 and must
+        not send a refetch per chunk (PR #491 review 1). The payload names
+        the settled ids (up to ``_RESOLVED_IDS_CAP``) and their count, so
+        a client never mistakes one id for all of them (review 3)."""
+        by_recipient: dict[tuple[str, str], list[str]] = {}
+        for entry in settling:
+            by_recipient.setdefault((entry.team_id, entry.recipient_user_id), []).append(entry.id)
+
+        for (team_id, recipient_user_id), ids in by_recipient.items():
+            async def flush(batches: list[list[str]], team_id=team_id, recipient_user_id=recipient_user_id) -> None:
+                settled = [i for batch in batches for i in batch]
+                try:
+                    from app.websocket import broadcast_inbox_event
+                    await broadcast_inbox_event(team_id, "resolved", {
+                        "recipient_user_id": recipient_user_id,
+                        "ids": settled[:_RESOLVED_IDS_CAP],
+                        "count": len(settled),
+                    }, recipient_user_id=recipient_user_id)
+                except Exception:
+                    logger.exception("Failed to broadcast inbox resolved for user=%s", recipient_user_id)
+
+            try:
+                await on_commit_collect(("inbox.resolved", team_id, recipient_user_id), ids, flush)
+            except RuntimeError:  # inside oxyde.atomic(): nothing would call it later
+                logger.exception("Inbox resolved event for user=%s broadcast before commit", recipient_user_id)
+                await flush([ids])
 
     async def _push(self, entries: list, actor_id: str | None = None) -> None:
         """Push the new entries to their recipients' devices (CHT-1605),
@@ -772,6 +808,7 @@ class InboxService:
             from app.services.push_sender import push_resolved
 
             await push_resolved(settling)
+            await self._broadcast_resolved(settling)
         return unread
 
     async def _mark_read_for_resolve(self, filters: dict) -> int:
