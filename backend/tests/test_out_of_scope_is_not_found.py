@@ -34,7 +34,7 @@ from fastapi.routing import APIWebSocketRoute, iter_route_contexts
 from pydantic import BaseModel
 from starlette.routing import Mount, WebSocketRoute, compile_path
 
-from app.api.visibility import TEAM_HIDDEN_DETAIL
+from app.api.visibility import PROJECT_SCOPED_TEAM_DATA_DETAIL, TEAM_HIDDEN_DETAIL
 from app.enums import ApprovalMode, RitualArtifact, RitualTrigger, TeamRole
 from app.mcp_server import tools
 from app.oxyde_models.document import OxydeDocument, OxydeDocumentComment
@@ -483,13 +483,13 @@ REFUSED_ALIKE = {
         "team_b_human": {"error_code": "not_a_member", "message": "Not a member of team {team}."},
     },
     # A project-scoped agent gets no team-wide data (CHT-1780), refused
-    # from the team id alone.
+    # from the team id alone, and told why in its own team (CHT-1955).
     ("GET", "/api/teams/{own_team}/documents?sprint_id={sprint}", "sprint"): _alike(
-        {"project_agent"}, "Not authorized to access this team"),
+        {"project_agent"}, PROJECT_SCOPED_TEAM_DATA_DETAIL),
     # A team-level document says why, since the refusal is about the
     # caller and not the team (CHT-1952).
     ("POST", "/api/teams/{own_team}/documents", "sprint"): _alike({"project_agent"}, _TEAM_LEVEL_DOC_REFUSAL),
-    ("POST", "/api/teams/{own_team}/projects", "user"): _alike({"project_agent"}, "Not authorized to access this team"),
+    ("POST", "/api/teams/{own_team}/projects", "user"): _alike({"project_agent"}, PROJECT_SCOPED_TEAM_DATA_DETAIL),
     # Team routes that refuse anyone outside the team (or below admin)
     # from the team id alone, before loading the team or any row under
     # it: the check is a membership query, which a missing team fails the

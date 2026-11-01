@@ -71,6 +71,26 @@ def team_hidden() -> HTTPException:
     return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=TEAM_HIDDEN_DETAIL)
 
 
+PROJECT_SCOPED_TEAM_DATA_DETAIL = (
+    "This identity is scoped to one project and cannot use team-wide data. "
+    "Ask for its own project's data instead, or use a team-scoped key"
+)
+
+
+async def team_data_refused(user, team_id: str | None) -> HTTPException:
+    """The answer for a caller ``can_read_team_data`` refuses for
+    ``team_id``: ``team_hidden()``, except for a project-scoped agent in
+    that team's directory, which is told why (CHT-1955). It already knows
+    the team is there (its own project is in it), so naming the reason
+    leaks nothing, and "Not authorized to access this team" sent session
+    identities looking for a membership problem they did not have
+    (CHT-1947). The status stays 403, which is what the CLI's fallback to
+    the agent's own project keys on."""
+    if is_project_scoped_agent(user) and team_id and await is_in_team_directory(user, team_id):
+        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=PROJECT_SCOPED_TEAM_DATA_DETAIL)
+    return team_hidden()
+
+
 async def can_see_project(user, project) -> bool:
     """``project`` (a row or None) exists and ``user`` may read it."""
     return project is not None and await check_user_project_access(user, project)

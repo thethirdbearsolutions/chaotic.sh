@@ -1531,6 +1531,13 @@ class TestSignalAndPipeHandling:
         assert self._run(monkeypatch, lambda *a, **kw: None) == 124
 
 
+def _key_project(me):
+    """What cli.main.key_project answers for a get_me of ``me``."""
+    if me.get("is_agent") and me.get("agent_project_id"):
+        return {"id": me["agent_project_id"], "team_id": me.get("agent_team_id")}
+    return None
+
+
 class TestDocScopeForProjectScopedKeys:
     """`await doc`/`await docs` ask the project feed when that is all the
     key can read (CHT-1780): the team feed refuses a project-scoped key."""
@@ -1558,6 +1565,8 @@ class TestDocScopeForProjectScopedKeys:
         monkeypatch.setattr(await_cmd, "_main", lambda: type("M", (), {
             "get_current_team": staticmethod(lambda: "team_1"),
             "get_current_project": staticmethod(lambda: None),
+            "key_project": staticmethod(lambda: _key_project(me or {})),
+            "resolve_team_id": staticmethod(lambda value: value),
         }))
 
         @click.group()
@@ -1585,3 +1594,20 @@ class TestDocScopeForProjectScopedKeys:
         assert self._run(monkeypatch, ["docs"], me={"is_agent": False})["project_id"] is None
         team_agent = {"is_agent": True, "agent_project_id": None, "agent_team_id": "team_1"}
         assert self._run(monkeypatch, ["docs"], me=team_agent)["project_id"] is None
+
+    def test_team_uses_a_project_scoped_keys_project_in_its_own_team(self, monkeypatch):
+        """`await team` narrows like `await docs` (CHT-1955)."""
+        me = {"is_agent": True, "agent_project_id": "p9", "agent_team_id": "team_1"}
+        assert self._run(monkeypatch, ["team"], me=me)["project_id"] == "p9"
+        assert self._run(monkeypatch, ["team", "team_1"], me=me)["project_id"] == "p9"
+
+    def test_team_named_explicitly_in_another_team_keeps_the_team_feed(self, monkeypatch):
+        me = {"is_agent": True, "agent_project_id": "p9", "agent_team_id": "team_1"}
+        assert self._run(monkeypatch, ["team", "team_2"], me=me)["project_id"] is None
+
+    def test_team_keeps_the_team_feed_for_another_team(self, monkeypatch):
+        """A project in another team would answer "Project not found";
+        the team feed's own refusal says what is wrong."""
+        me = {"is_agent": True, "agent_project_id": "p9", "agent_team_id": "team_2"}
+        assert self._run(monkeypatch, ["team"], me=me)["project_id"] is None
+        assert self._run(monkeypatch, ["docs"], me=me)["project_id"] is None

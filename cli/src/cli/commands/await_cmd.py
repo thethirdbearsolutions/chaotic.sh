@@ -681,16 +681,21 @@ def _document_project_id(document_id: str) -> str | None:
         return None
 
 
-def _key_project_id() -> str | None:
-    """The project a project-scoped agent key is confined to, else None
-    (CHT-1780). `await docs` watches that project's documents for such a
-    key, since the team feed refuses it; a failed lookup keeps the team
-    feed."""
+def _key_project_id(team_id: str) -> str | None:
+    """The project a project-scoped agent key is confined to, when it is
+    in ``team_id``; else None (CHT-1780). `await docs` and `await team`
+    watch that project's feed for such a key, since the team feed refuses
+    it (CHT-1955). Another team keeps the team feed, so a stale current
+    team gets the server's team refusal rather than a confusing "Project
+    not found". A failed lookup keeps the team feed too. The lookup is
+    cli.main's key_project, asked once per process."""
     try:
-        me = _client().get_me() or {}
+        project = _main().key_project()
     except Exception:
         return None
-    return me.get("agent_project_id") if me.get("is_agent") else None
+    if project and project.get("team_id") == team_id:
+        return project["id"]
+    return None
 
 
 def _require_current_team() -> str:
@@ -947,7 +952,7 @@ def register(cli):
         """
         team_id = _require_current_team()
         _await_event(
-            team_id=team_id, project_id=_key_project_id(), scope={},
+            team_id=team_id, project_id=_key_project_id(team_id), scope={},
             type_spec=type_spec, include_self=include_self,
             timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
@@ -1011,13 +1016,15 @@ def register(cli):
     @click.argument("team_id_arg", required=False)
     @_common_options
     def await_team(team_id_arg, type_spec, include_self, timeout_spec, json_output, until_cmd):
-        """Wait on any activity on a team (defaults to current team)."""
+        """Wait on any activity on a team (defaults to current team).
+        A project-scoped key, refused the team's feed, waits on its own
+        project's (CHT-1955), as `await docs` does."""
         team_id = (
             _resolve_team_arg(team_id_arg)
             if team_id_arg else _require_current_team()
         )
         _await_event(
-            team_id=team_id, project_id=None, scope={},
+            team_id=team_id, project_id=_key_project_id(team_id), scope={},
             type_spec=type_spec, include_self=include_self,
             timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,

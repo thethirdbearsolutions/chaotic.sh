@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, is_in_team_directory, can_read_team_data
-from app.api.visibility import team_hidden, visible_label
+from app.api.visibility import team_hidden, visible_label, team_data_refused
 from app.schemas.issue import LabelCreate, LabelUpdate, LabelResponse
 from app.services.issue_service import IssueService
 from app.services.team_service import TeamService
@@ -80,7 +80,7 @@ async def update_label(
     # label on every project's issues, so a project-scoped agent may not
     # (CHT-1780).
     if not await can_read_team_data(current_user, label.team_id):
-        raise team_hidden()
+        raise await team_data_refused(current_user, label.team_id)
 
     label = await issue_service.update_label(label, label_in)
     return LabelResponse.model_validate(label)
