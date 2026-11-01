@@ -921,7 +921,7 @@ describe('ws-handlers.js', () => {
         it('reloads the inbox list when entries were resolved elsewhere (CHT-1927)', () => {
             getCurrentUser.mockReturnValue({ id: 'user-1' });
             getCurrentView.mockReturnValue('inbox');
-            dispatch({ type: 'resolved', entity: 'inbox', data: { id: 'entry-1', recipient_user_id: 'user-1' } });
+            dispatch({ type: 'resolved', entity: 'inbox', data: { recipient_user_id: 'user-1', ids: ['entry-1', 'entry-2'], count: 2 } });
             expect(loadInbox).toHaveBeenCalledWith({ background: true });
             expect(refreshInboxUnreadCount).toHaveBeenCalled();
         });
