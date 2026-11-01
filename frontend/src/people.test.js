@@ -590,6 +590,38 @@ describe('profile photos', () => {
     expect(api.updateAgent).not.toHaveBeenCalled();
   });
 
+  it('your own form opened during an upload waits for it, then shows it', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    const input = document.getElementById('profile-photo');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'me.png')], configurable: true });
+    let finish;
+    api.uploadAvatar.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+    const pending = handlePickPhoto(input, vi.fn().mockResolvedValue(new Blob(['y'])));
+    await new Promise(r => setTimeout(r, 0));
+
+    await showEditProfileModal('u-ada');
+    expect(document.getElementById('profile-photo-remove').disabled).toBe(true);
+    finish({ id: 'u-ada', avatar_url: `/api/avatars/${SHA}` });
+    await pending;
+
+    expect(document.getElementById('profile-avatar').value).toBe(`/api/avatars/${SHA}`);
+    expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('profile-photo-remove').disabled).toBe(false);
+  });
+
+  it('redraws your profile page with the new picture though the roster is not cached', async () => {
+    await viewPerson('u-ada');
+    api.uploadAvatar.mockResolvedValue({ id: 'u-ada', avatar_url: `/api/avatars/${SHA}` });
+    await showEditProfileModal('u-ada');
+    const input = document.getElementById('profile-photo');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'me.png')], configurable: true });
+
+    await handlePickPhoto(input, vi.fn().mockResolvedValue(new Blob(['y'])));
+
+    expect(document.querySelector('.person-profile img').getAttribute('src')).toBe(`/api/avatars/${SHA}`);
+  });
+
   it('runs one photo change at a time', async () => {
     await loadPeople();
     await showEditProfileModal('u-ada');
@@ -629,7 +661,7 @@ describe('profile photos', () => {
 
 describe('resizePhoto', () => {
   function fakeCanvas(types) {
-    const ctx = { drawImage: vi.fn() };
+    const ctx = { drawImage: vi.fn(), fillRect: vi.fn() };
     return {
       width: 0, height: 0,
       getContext: () => ctx,
@@ -652,10 +684,23 @@ describe('resizePhoto', () => {
     expect(canvas.ctx.drawImage).toHaveBeenCalledWith(expect.anything(), 50, 0, 300, 300, 0, 0, 256, 256);
   });
 
-  it('falls back to JPEG where WebP is not encoded (it answers PNG)', async () => {
-    vi.spyOn(document, 'createElement').mockReturnValueOnce(fakeCanvas(['image/jpeg', 'png']));
+  it('falls back to JPEG on white where WebP is not encoded (it answers PNG)', async () => {
+    const canvas = fakeCanvas(['image/jpeg', 'png']);
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(canvas);
 
     expect((await resizePhoto(new File(['x'], 'me.png'))).type).toBe('image/jpeg');
+    expect(canvas.ctx.fillStyle).toBe('#fff');
+    expect(canvas.ctx.globalCompositeOperation).toBe('destination-over');
+    expect(canvas.ctx.fillRect).toHaveBeenCalledWith(0, 0, 256, 256);
+  });
+
+  it('keeps WebP transparent: no fill', async () => {
+    const canvas = fakeCanvas(['image/webp']);
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(canvas);
+
+    await resizePhoto(new File(['x'], 'me.png'));
+
+    expect(canvas.ctx.fillRect).not.toHaveBeenCalled();
   });
 
   it('says so when the browser cannot encode at all', async () => {

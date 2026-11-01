@@ -166,3 +166,12 @@ async def test_deleting_an_account_deletes_its_agents_pictures(client, auth_head
 
     assert deleted.status_code == 204, deleted.text
     assert await OxydeUserAvatar.objects.count() == 0
+
+
+async def test_a_patch_keeping_the_upload_url_keeps_the_picture(client, auth_headers):
+    url = (await _upload(client, auth_headers, PNG)).json()["avatar_url"]
+
+    kept = await client.patch("/api/users/me", json={"avatar_url": url}, headers=auth_headers)
+
+    assert kept.status_code == 200, kept.text
+    assert (await client.get(url)).status_code == 200

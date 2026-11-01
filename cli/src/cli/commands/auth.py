@@ -11,10 +11,10 @@ from ..markup import Table
 from .shared import _client, console, parse_duration, resolve_content_value
 
 
-# How the consent screen labels an app (frontend/src/oauth-consent.js).
 # The server's cap on an uploaded profile picture (CHT-1992).
 PHOTO_MAX_BYTES = 256 * 1024
 
+# How the consent screen labels an app (frontend/src/oauth-consent.js).
 TRUST_LABELS = {
     "builtin": "built-in sign-in",
     "recognized": "recognized",

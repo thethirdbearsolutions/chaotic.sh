@@ -10,8 +10,8 @@ class OxydeUserAvatar(Model):
     """A member's uploaded profile picture: one per user, replaced on each
     upload. Served without a credential at ``/api/avatars/{sha256}``: the
     address is the image's own hash, which only someone shown the
-    member's ``avatar_url`` knows, and it never changes for an image, so
-    it caches forever. No foreign key (provenance tables here avoid the
+    member's ``avatar_url`` knows. Cached privately for an hour, so a
+    removed picture stops showing soon. No foreign key (provenance tables here avoid the
     hand-written rebuild one needs on SQLite); UserService.delete and
     AgentService delete the row with the account."""
 

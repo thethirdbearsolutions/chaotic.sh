@@ -52,6 +52,8 @@ export function resetPeople() {
     editingInitial = null;
     editingEntry = null;
     saving = false;
+    shownEntry = null;
+    photoBusy = false;
 }
 
 /**
@@ -180,6 +182,8 @@ async function findEntry(teamId, userId, { fresh = false } = {}) {
 }
 
 let viewRequestId = 0;
+// The entry the profile page shows, to redraw it with a change.
+let shownEntry = null;
 
 /** `/people/{id}`: one member's profile page. */
 export async function viewPerson(userId, pushHistory = true) {
@@ -243,6 +247,7 @@ export function renderPerson(entry, { withIssues = true } = {}) {
     const view = personView();
     view.classList.remove('hidden');
     view.dataset.userId = entry.user_id;
+    shownEntry = entry;
     const id = escapeAttr(entry.user_id);
     const editable = canEditProfile(entry);
     const self = entry.user_id === getCurrentUser()?.id;
@@ -376,8 +381,8 @@ export async function showEditProfileModal(userId) {
             ${self ? `<div class="form-group">
                 <label for="profile-photo">Photo</label>
                 <div class="profile-photo-row">
-                    <input type="file" id="profile-photo" accept="image/png,image/jpeg,image/webp,image/gif" data-action="pick-profile-photo">
-                    <button type="button" class="btn btn-secondary btn-small${UPLOADED_AVATAR_RE.test(entry.avatar_url || '') ? '' : ' hidden'}" id="profile-photo-remove" data-action="remove-profile-photo">Remove photo</button>
+                    <input type="file" id="profile-photo" accept="image/png,image/jpeg,image/webp,image/gif" data-action="pick-profile-photo"${photoBusy ? ' disabled' : ''}>
+                    <button type="button" class="btn btn-secondary btn-small${UPLOADED_AVATAR_RE.test(entry.avatar_url || '') ? '' : ' hidden'}" id="profile-photo-remove" data-action="remove-profile-photo"${photoBusy ? ' disabled' : ''}>Remove photo</button>
                 </div>
                 <p class="form-help">Uploads at once, cropped square and resized to ${PHOTO_SIZE}px.</p>
             </div>` : ''}
@@ -492,7 +497,7 @@ export async function handleSaveProfile(event) {
 export const PHOTO_SIZE = 256;
 
 /** Crop `file` to its centre square and scale it to PHOTO_SIZE, as a
- * WebP (or PNG where the browser can't encode WebP). */
+ * WebP (or a JPEG on white where the browser can't encode WebP). */
 export async function resizePhoto(file, size = PHOTO_SIZE) {
     const bitmap = await createImageBitmap(file);
     const side = Math.min(bitmap.width, bitmap.height);
@@ -507,7 +512,15 @@ export async function resizePhoto(file, size = PHOTO_SIZE) {
     // WebP where the browser can encode it; else JPEG, which stays well
     // under the server's cap where a PNG of a photo may not (Safari).
     const webp = await encode('image/webp');
-    const blob = webp && webp.type === 'image/webp' ? webp : await encode('image/jpeg');
+    let blob = webp && webp.type === 'image/webp' ? webp : null;
+    if (!blob) {
+        // JPEG has no transparency: put the picture on white, not black.
+        const ctx = canvas.getContext('2d');
+        ctx.globalCompositeOperation = 'destination-over';
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, size, size);
+        blob = await encode('image/jpeg');
+    }
     if (!blob) throw new Error('This browser could not convert the picture. Try a PNG or JPEG file.');
     return blob;
 }
@@ -525,18 +538,17 @@ function setPhotoControlsDisabled(disabled) {
 
 /**
  * Your own profile picture changed: the roster, the header, your profile
- * page, and the form if it is still the one the change started from
- * (`token`); a form opened since, perhaps an agent's, is left alone.
+ * page if it is on screen, and your edit form if one is open; a form
+ * opened since for someone else (an agent you own) is left alone.
  */
-function applyMyAvatar(saved, token) {
+function applyMyAvatar(saved) {
     const me = getCurrentUser();
     if (!me || !saved || (saved.id && saved.id !== me.id)) return;
     const avatar = saved.avatar_url ?? null;
     roster = roster.map(r => (r.user_id === me.id ? { ...r, avatar_url: avatar } : r));
     setCurrentUser({ ...me, avatar_url: avatar });
     updateUserInfo();
-    const sameForm = token === formToken && editingId === me.id && editingInitial;
-    if (sameForm) {
+    if (editingId === me.id && editingInitial) {
         const field = document.getElementById('profile-avatar');
         if (field) field.value = avatar || '';
         // The upload is saved already: Save sends the avatar only if it
@@ -545,19 +557,15 @@ function applyMyAvatar(saved, token) {
         editingEntry = { ...editingEntry, avatar_url: avatar };
         document.getElementById('profile-photo-remove')?.classList.toggle('hidden', !UPLOADED_AVATAR_RE.test(avatar || ''));
     }
-    if (showingProfileOf(me.id)) {
-        const shown = sameForm ? editingEntry : roster.find(r => r.user_id === me.id);
-        if (shown) rerenderProfile({ ...shown, avatar_url: avatar });
-    }
+    if (shownEntry && showingProfileOf(me.id)) rerenderProfile({ ...shownEntry, avatar_url: avatar });
 }
 
 async function changePhoto(request, done, failed) {
     if (photoBusy) return;
     photoBusy = true;
-    const token = formToken;
     setPhotoControlsDisabled(true);
     try {
-        applyMyAvatar(await request(), token);
+        applyMyAvatar(await request());
         showToast(done, 'success');
     } catch (e) {
         showApiError(failed, e);

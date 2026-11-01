@@ -89,11 +89,15 @@ class AvatarService:
         return user
 
     @staticmethod
-    async def drop_if_left(user_id: str, old_url: str | None, new_url: str | None) -> None:
-        """An avatar_url just moved off the upload (to an emoji, a URL or
-        nothing): delete the stored picture, so it is not still served at
-        its address with no way left to remove it (PR #522 review)."""
-        if is_uploaded_avatar_url(old_url) and new_url != old_url:
+    async def drop_unless_pointed(user_id: str, new_url: str | None) -> None:
+        """An avatar_url was just set: delete the member's stored picture
+        unless that is what it now points at, so a picture they moved
+        off (to an emoji, a URL or nothing) is not still served with no
+        way left to remove it (PR #522 review). It reads the row, not the
+        old avatar_url, so an upload that landed meanwhile counts too;
+        call it in the same transaction as the save."""
+        row = await OxydeUserAvatar.objects.filter(user_id=user_id).first()
+        if row is not None and new_url != avatar_url_for(row.sha256):
             await OxydeUserAvatar.objects.filter(user_id=user_id).delete()
 
     @staticmethod
