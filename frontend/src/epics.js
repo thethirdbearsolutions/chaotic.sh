@@ -123,6 +123,13 @@ function plural(n, word) {
  * Progress bar: done, then in progress or review, out of every ticket
  * that is not canceled.
  */
+/** Whole percent, never 100% until everything is done. */
+export function pctLabel(done, total) {
+    if (total <= 0) return '-';
+    if (done >= total) return '100%';
+    return `${Math.floor((done / total) * 100)}%`;
+}
+
 function renderProgress(epic) {
     const c = epic.children || {};
     const total = (c.total || 0) - (c.canceled || 0);
@@ -141,7 +148,7 @@ function renderProgress(epic) {
                 <div class="epic-progress-fill${complete ? ' epic-progress-complete' : ''}" style="width: ${donePct}%"></div>
                 <div class="epic-progress-active" style="width: ${Math.min(activePct, 100 - donePct)}%"></div>
             </div>
-            <span class="epic-progress-pct">${Math.round(((c.done || 0) / total) * 100)}%</span>
+            <span class="epic-progress-pct" title="Tickets done">${pctLabel(c.done || 0, total)}</span>
             <span class="epic-progress-text">${c.done || 0}/${total}</span>
         </div>
     `;
@@ -172,8 +179,9 @@ function renderThisSprint(closed, points) {
 
 function renderEpicRow(epic) {
     const pinned = epic.status_pinned && !CLOSED.has(epic.status)
-        ? ' <span class="epic-status-pinned-mark" title="Status set by hand, so it no longer follows its tickets">✎</span>'
+        ? ' <span class="epic-status-pinned-mark" title="Status set by hand, so it no longer follows its tickets">✎<span class="sr-only"> (status set by hand)</span></span>'
         : '';
+    const canceled = epic.status === 'canceled' ? ' <span class="epic-canceled-tag">Canceled</span>' : '';
     const points = (epic.points_total || 0) > 0
         ? `${epic.points_done || 0}/${epic.points_total} pts`
         : '-';
@@ -181,7 +189,7 @@ function renderEpicRow(epic) {
     return `
         <tr class="epic-row${CLOSED.has(epic.status) ? ' epic-row-closed' : ''}${empty ? ' epic-row-empty' : ''}" data-identifier="${escapeAttr(epic.identifier)}">
             <td class="epic-identifier">${escapeHtml(epic.identifier)}</td>
-            <td class="epic-title">${escapeHtml(epic.title)}${pinned}</td>
+            <td class="epic-title">${escapeHtml(epic.title)}${pinned}${canceled}</td>
             <td class="epic-progress">${renderProgress(epic)}</td>
             <td class="epic-points">${points}</td>
             <td class="epic-sprint">${renderThisSprint(epic.closed_this_sprint, epic.points_this_sprint)}</td>
@@ -260,16 +268,20 @@ function groupByState(epics) {
  * The readout above the table: how the open goals stand and what this
  * sprint moved (CHT-1964). Counts open epics only.
  */
-function renderSummary(all, untracked) {
+export function renderSummary(all, untracked) {
     const open = all.filter(e => !CLOSED.has(e.status));
-    if (!open.length) return '';
-    const moving = open.filter(e => statusGroupOf(e).key === 'active').length;
-    const ptsTotal = open.reduce((n, e) => n + (e.points_total || 0), 0);
-    const ptsDone = open.reduce((n, e) => n + (e.points_done || 0), 0);
-    const pct = ptsTotal ? Math.round((ptsDone / ptsTotal) * 100) : 0;
-    const sprintClosed = all.reduce((n, e) => n + (e.closed_this_sprint || 0), 0);
-    const sprintPts = all.reduce((n, e) => n + (e.points_this_sprint || 0), 0);
+    // Moved = closed a ticket while this sprint is active. "In progress"
+    // alone would count an epic whose last close was months ago (CHT-1901).
+    const moved = open.filter(e => (e.closed_this_sprint || 0) > 0).length;
+    // Tickets, like each row's percent, so the two agree.
+    const tDone = open.reduce((n, e) => n + (e.children?.done || 0), 0);
+    const tTotal = open.reduce((n, e) => n + ticketTotal(e), 0);
+    // Everything closed this sprint, epic or not, as the budget counts it.
+    const sources = [...all, ...untracked];
+    const sprintClosed = sources.reduce((n, x) => n + (x.closed_this_sprint || 0), 0);
+    const sprintPts = sources.reduce((n, x) => n + (x.points_this_sprint || 0), 0);
     const loose = untracked.reduce((n, u) => n + (u.open || 0), 0);
+    if (!open.length && !sprintClosed && !loose) return '';
     const stat = (value, label, extra = '') => `
         <div class="epic-stat${extra}">
             <div class="epic-stat-value">${value}</div>
@@ -277,10 +289,10 @@ function renderSummary(all, untracked) {
         </div>`;
     return `
         <div class="epic-summary" role="group" aria-label="Progress summary">
-            ${stat(`${moving}<span class="epic-stat-of"> / ${open.length}</span>`, 'open epics moving')}
-            ${stat(ptsTotal ? `${pct}%` : '-', ptsTotal ? `of points done (${ptsDone}/${ptsTotal})` : 'no estimated tickets')}
-            ${stat(sprintClosed ? `+${sprintClosed}` : '0', `closed this sprint (${sprintPts} pts)`, sprintClosed ? ' epic-stat-up' : '')}
-            ${loose ? stat(String(loose), plural(loose, 'open ticket').replace(/^\d+ /, '') + ' under no epic', ' epic-stat-warn') : ''}
+            ${open.length ? stat(`${moved}<span class="epic-stat-of"> / ${open.length}</span>`, 'open epics moved this sprint') : ''}
+            ${open.length ? stat(pctLabel(tDone, tTotal), tTotal ? `of their tickets done (${tDone}/${tTotal})` : 'no tickets yet') : ''}
+            ${stat(sprintClosed ? `+${sprintClosed}` : '0', `${sprintClosed === 1 ? 'ticket' : 'tickets'} closed this sprint (${sprintPts} pts)`, sprintClosed ? ' epic-stat-up' : '')}
+            ${loose ? stat(String(loose), `open ${loose === 1 ? 'ticket' : 'tickets'} under no epic`, ' epic-stat-warn') : ''}
         </div>`;
 }
 
@@ -305,7 +317,7 @@ export function renderEpics(progress, container) {
         const groups = groupByState(shown.filter(e => e.project_key === key));
         const rows = groups.map(({ group, epics }) => {
             ordered.push(...epics);
-            return `<tr class="epic-state-row epic-state-${group.key}"><th colspan="${COLS}">`
+            return `<tr class="epic-state-row epic-state-${group.key}"><th colspan="${COLS}" scope="colgroup">`
                 + `<span class="epic-state-dot" aria-hidden="true"></span>${group.label}`
                 + `<span class="epic-state-count">${epics.length}</span></th></tr>`
                 + epics.map(renderEpicRow).join('');
@@ -313,7 +325,7 @@ export function renderEpics(progress, container) {
         const gap = renderUntrackedRow(untracked.find(u => u.project_key === key));
         if (!rows && !gap) return '';
         const header = grouped
-            ? `<tr class="epic-group-row"><th colspan="${COLS}">${escapeHtml(key)}</th></tr>`
+            ? `<tr class="epic-group-row"><th colspan="${COLS}" scope="colgroup">${escapeHtml(key)}</th></tr>`
             : '';
         return header + rows + gap;
     }).join('');

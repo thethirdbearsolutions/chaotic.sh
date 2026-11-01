@@ -2277,6 +2277,19 @@ select:focus-visible {
     outline-offset: 2px;
 }
 
+/* Text for screen readers only. */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 /* Quiet focus for full-width rows (CHT-1960). An offset ring around a
    sidebar link drew two heavy purple bars across the whole sidebar; a
    focused link now looks like the hover state plus the active marker's
@@ -5193,6 +5206,19 @@ input[type="checkbox"] {
     .epic-row .epic-sprint:has(> .text-muted:only-child),
     .epic-row .epic-sprints {
         display: none;
+    }
+    /* The row is a grid here: paint the row, not its cells. */
+    .epic-table .epic-row:hover,
+    .epic-table .epic-row:hover td,
+    .epic-table .epic-row.keyboard-selected td,
+    .epic-table .epic-row.keyboard-selected td:first-child {
+        background: transparent;
+        box-shadow: none;
+    }
+    .epic-table .epic-row:hover { background: var(--row-hover); }
+    .epic-table .epic-row.keyboard-selected {
+        background: var(--row-cursor);
+        box-shadow: inset 3px 0 0 var(--row-cursor-edge);
     }
 
     /* Constrain filter selects on mobile */
@@ -8671,7 +8697,7 @@ button.stat-card-link:hover .stat-note {
 }
 
 .epic-table td {
-    padding: 0 12px;
+    padding: 6px 12px;
     height: 40px;
     border-bottom: 1px solid var(--border-color);
     font-size: var(--font-md);
@@ -8729,10 +8755,19 @@ button.stat-card-link:hover .stat-note {
     margin-top: 2px;
 }
 .epic-stat-up .epic-stat-value {
-    color: #22c55e;
+    color: var(--success-color);
 }
 .epic-stat-warn .epic-stat-value {
-    color: #f59e0b;
+    color: var(--warning-color);
+}
+.epic-canceled-tag {
+    margin-left: 6px;
+    padding: 0 6px;
+    font-size: var(--font-xs);
+    font-weight: 500;
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
 }
 
 /* State groups: In progress, Todo, Backlog, Closed. */
@@ -8881,8 +8916,10 @@ button.stat-card-link:hover .stat-note {
     background: var(--bg-secondary);
 }
 
-.epic-group-row th {
-    padding-top: 16px;
+.epic-table .epic-group-row th {
+    padding-top: 20px;
+    font-size: var(--font-md);
+    font-weight: 600;
     color: var(--text-primary);
 }
 
