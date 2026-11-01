@@ -81,8 +81,7 @@ CLI first (`uv tool install --force chaotic-cli==0.1.0`), then run
 `chaotic system upgrade --version v0.1.0`, which backs up the
 database, stops the server, checks out the new code and migrates before
 restarting. If a migration fails, it restores the backup, checks the
-previous code out again and restarts the server on it. chaotic.thirdbearsolutions.com has run this code since
-2026-10-31 (5701ed09).
+previous code out again and restarts the server on it.
 
 ### Upgrade notes
 
