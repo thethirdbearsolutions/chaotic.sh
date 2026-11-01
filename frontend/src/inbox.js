@@ -148,6 +148,8 @@ export function renderInboxBadge() {
     const count = getInboxUnreadCount();
     badge.textContent = count > 99 ? '99+' : String(count);
     badge.classList.toggle('hidden', count === 0);
+    const headerCount = document.getElementById('inbox-header-count');
+    if (headerCount) headerCount.textContent = count > 0 ? `${count} unread` : '';
 }
 
 /**
@@ -304,7 +306,10 @@ function applyBackgroundRefresh(fresh, archivedIds) {
         // here or in another tab really is gone (CHT-1514).
         if (kept && showUnreadOnly && !archivedIds.has(expandedEntryId)) {
             next = [...fresh];
-            next.splice(Math.min(old.indexOf(kept), next.length), 0, kept);
+            // By time, not by its old position: newer entries may have
+            // arrived, and the day groups need the list in order (CHT-1962).
+            const at = next.findIndex(e => e.created_at < kept.created_at);
+            next.splice(at === -1 ? next.length : at, 0, kept);
         } else {
             expandedEntryId = null; // archived elsewhere: it really is gone
         }
@@ -480,6 +485,31 @@ function markEntryReadOptimistic(entryId) {
 }
 
 /**
+ * The row's Mark read action (CHT-1962). Under the Unread filter the row
+ * leaves the list now, as archive does, rather than vanishing under the
+ * reader at the next background refresh.
+ */
+export function markInboxEntryRead(entryId) {
+    const entries = getInboxEntries();
+    const idx = entries.findIndex(e => e.id === entryId);
+    if (idx === -1) return;
+    markEntryReadOptimistic(entryId);
+    if (showUnreadOnly) {
+        if (expandedEntryId === entryId) expandedEntryId = null;
+        setInboxEntries(getInboxEntries().filter(e => e.id !== entryId));
+        renderInbox();
+        selectInboxRow(idx);
+    } else {
+        rerenderInboxRows([entryId]);
+        // Its button is gone; keep focus on the row rather than <body>.
+        if (!document.activeElement || document.activeElement === document.body) {
+            const row = inboxRowById(entryId);
+            row?.querySelector('.inbox-row-toggle')?.focus({ preventScroll: true });
+        }
+    }
+}
+
+/**
  * Collapse any expanded row (j/k cursor moves and Escape use this). Returns
  * true if something was actually collapsed, so callers can decide whether a
  * key press was "consumed" by the collapse. Focus that was inside the row
@@ -543,10 +573,30 @@ export async function reassignInboxEntry(entryId) {
  * Toggle the unread-only filter and reload.
  */
 export function toggleInboxUnreadFilter() {
-    showUnreadOnly = !showUnreadOnly;
-    const btn = document.getElementById('inbox-unread-toggle');
-    if (btn) btn.classList.toggle('active', showUnreadOnly);
+    setInboxUnreadFilter(!showUnreadOnly);
+}
+
+/**
+ * Show all entries or only unread ones (CHT-1962: an All / Unread
+ * segmented control). Choosing the current filter again does nothing.
+ */
+export function setInboxUnreadFilter(unreadOnly) {
+    if (unreadOnly === showUnreadOnly) return;
+    showUnreadOnly = unreadOnly;
+    document.querySelectorAll('[data-action="set-inbox-filter"]').forEach(btn => {
+        const on = (btn.dataset.filter === 'unread') === showUnreadOnly;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
     loadInbox({ focusFirst: true });
+}
+
+const CHECK_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg>';
+const ARCHIVE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="3" rx="1"/><path d="M3 6v6.5a1 1 0 001 1h8a1 1 0 001-1V6M6.5 9h3"/></svg>';
+
+function avatarInitial(name) {
+    const ch = [...(name || '').trim()][0]; // whole code point, not half a pair
+    return ch ? ch.toUpperCase() : '•';
 }
 
 function renderInboxRow(entry) {
@@ -567,26 +617,33 @@ function renderInboxRow(entry) {
     // region, so the action-bar buttons are not nested inside another
     // interactive element (PR #260 review finding 2: axe nested-interactive).
     return `
-        <div class="inbox-row list-item${isUnread ? ' inbox-row-unread' : ''}${isExpanded ? ' inbox-row-expanded' : ''}"
+        <div class="inbox-row${isUnread ? ' inbox-row-unread' : ''}${isExpanded ? ' inbox-row-expanded' : ''}"
              ${dataAttrs}>
             <div class="inbox-row-main">
                 <button type="button" class="inbox-row-toggle" data-action="toggle-inbox-expand"
                         data-entry-id="${escapeAttr(entry.id)}"
                         aria-expanded="${isExpanded ? 'true' : 'false'}"${isExpanded ? ` aria-controls="${escapeAttr(panelId)}"` : ''}>
+                    ${isUnread ? '<span class="inbox-row-unread-dot" title="Unread"></span>' : '<span class="inbox-row-dot-spacer" aria-hidden="true"></span>'}
+                    <span class="inbox-row-avatar" aria-hidden="true">${escapeHtml(avatarInitial(entry.source_user_name))}</span>
                     <span class="inbox-row-header">
                         <span class="badge badge-inbox-${escapeAttr(entry.kind)}">${escapeHtml(kindLabel)}</span>
                         ${sourceRef ? `<span class="inbox-row-source">${escapeHtml(sourceRef)}</span>` : ''}
-                        ${isUnread ? '<span class="inbox-row-unread-dot" title="Unread"></span>' : ''}
                     </span>
-                    <span class="inbox-row-title">${escapeHtml(entry.title)}</span>
-                    ${!isExpanded && entry.body ? `<span class="inbox-row-body">${escapeHtml(entry.body)}</span>` : ''}
+                    <span class="inbox-row-text">
+                        <span class="inbox-row-title">${escapeHtml(entry.title)}</span>
+                        ${!isExpanded && entry.body ? `<span class="inbox-row-body">${escapeHtml(entry.body)}</span>` : ''}
+                    </span>
                 </button>
                 ${isExpanded ? renderExpandedPanel(entry, sourceRef, panelId) : ''}
             </div>
             <div class="inbox-row-meta">
+                <span class="inbox-row-hover-actions">
+                    ${isUnread ? `<button type="button" class="inbox-row-action" data-action="mark-inbox-read"
+                        data-entry-id="${escapeAttr(entry.id)}" title="Mark read" aria-label="Mark read">${CHECK_ICON}</button>` : ''}
+                    <button type="button" class="inbox-row-archive inbox-row-action" data-action="archive-inbox-entry"
+                        data-entry-id="${escapeAttr(entry.id)}" title="Archive (e)" aria-label="Archive">${ARCHIVE_ICON}</button>
+                </span>
                 <span class="inbox-row-time">${escapeHtml(formatRelativeTime(entry.created_at))}</span>
-                <button type="button" class="inbox-row-archive" data-action="archive-inbox-entry"
-                        data-entry-id="${escapeAttr(entry.id)}" title="Archive (e)" aria-label="Archive">&times;</button>
             </div>
         </div>
     `;
@@ -649,7 +706,45 @@ export function renderInbox() {
         return;
     }
 
-    container.innerHTML = entries.map(entry => renderInboxRow(entry)).join('');
+    container.innerHTML = renderInboxGroups(entries);
+}
+
+/**
+ * Which day bucket an entry falls in (CHT-1962): Today, Yesterday, Last 7
+ * days or Older, by the reader's local calendar day.
+ */
+export function inboxDayGroup(iso, now = new Date()) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return 'Older';
+    const dayStart = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const days = Math.round((dayStart(now) - dayStart(d)) / 86400000);
+    if (days <= 0) return 'Today';
+    if (days === 1) return 'Yesterday';
+    if (days < 7) return 'Last 7 days';
+    return 'Older';
+}
+
+/**
+ * The rows under day headers (CHT-1962). Entries keep the server's order
+ * (newest first), so each bucket is one contiguous run and the cursor's
+ * row index still equals the entry index: headers are not `.inbox-row`s.
+ * Labels are computed at render, so a tab left open past midnight shows
+ * yesterday as Today until the next load or refresh.
+ */
+function renderInboxGroups(entries) {
+    const groups = [];
+    for (const entry of entries) {
+        const label = inboxDayGroup(entry.created_at);
+        const last = groups[groups.length - 1];
+        if (last && last.label === label) last.entries.push(entry);
+        else groups.push({ label, entries: [entry] });
+    }
+    return groups.map((g, i) => `
+        <section class="inbox-group" aria-labelledby="inbox-group-${i}">
+            <h3 class="inbox-group-header" id="inbox-group-${i}">${escapeHtml(g.label)}</h3>
+            ${g.entries.map(entry => renderInboxRow(entry)).join('')}
+        </section>
+    `).join('');
 }
 
 /**
@@ -803,6 +898,11 @@ registerActions({
         if (data.entryId) archiveInboxEntry(data.entryId);
     },
     'toggle-inbox-unread-filter': () => toggleInboxUnreadFilter(),
+    'set-inbox-filter': (event, data) => setInboxUnreadFilter(data.filter === 'unread'),
+    'mark-inbox-read': (event, data) => {
+        event.preventDefault();
+        if (data.entryId) markInboxEntryRead(data.entryId);
+    },
     'mark-all-inbox-read': () => markAllInboxRead(),
     'retry-load-inbox': () => loadInbox({ focusFirst: true }),
 });

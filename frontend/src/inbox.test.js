@@ -63,6 +63,7 @@ import {
     markAllInboxRead, toggleInboxUnreadFilter,
     archiveInboxEntry, focusFirstInboxRow,
     toggleInboxEntryExpand, collapseInboxExpand, reassignInboxEntry,
+    inboxDayGroup,
 } from './inbox.js';
 import { registerActions } from './event-delegation.js';
 
@@ -240,10 +241,19 @@ describe('markAllInboxRead', () => {
 describe('toggleInboxUnreadFilter', () => {
     it('reloads the inbox with the unread filter toggled on', async () => {
         api.getInbox.mockResolvedValue([]);
-        document.body.innerHTML += '<button id="inbox-unread-toggle"></button>';
+        document.body.innerHTML += `
+            <button data-action="set-inbox-filter" data-filter="all" class="active"></button>
+            <button data-action="set-inbox-filter" data-filter="unread"></button>`;
         await toggleInboxUnreadFilter();
         expect(api.getInbox).toHaveBeenCalledWith('team-1', expect.objectContaining({ unread: true }));
-        expect(document.getElementById('inbox-unread-toggle').classList.contains('active')).toBe(true);
+        const unread = document.querySelector('[data-filter="unread"]');
+        const all = document.querySelector('[data-filter="all"]');
+        expect(unread.classList.contains('active')).toBe(true);
+        expect(unread.getAttribute('aria-pressed')).toBe('true');
+        expect(all.classList.contains('active')).toBe(false);
+        // Toggling back restores All (CHT-1962 segmented control).
+        await toggleInboxUnreadFilter();
+        expect(all.classList.contains('active')).toBe(true);
     });
 });
 
@@ -474,5 +484,105 @@ describe('reassignInboxEntry (CHT-1320: PATCH-first, archive on success)', () =>
         // The whole point of PATCH-first: a failed reassign must not orphan the
         // entry by archiving it (archive persists server-side, CHT-1316).
         expect(api.archiveInbox).not.toHaveBeenCalled();
+    });
+});
+
+describe('Inbox triage list (CHT-1962)', () => {
+    const NOW = new Date(2026, 10, 1, 15, 0, 0); // Nov 1, local time
+
+    it('buckets entries by local calendar day', () => {
+        expect(inboxDayGroup(new Date(2026, 10, 1, 0, 5).toISOString(), NOW)).toBe('Today');
+        expect(inboxDayGroup(new Date(2026, 9, 31, 23, 59).toISOString(), NOW)).toBe('Yesterday');
+        expect(inboxDayGroup(new Date(2026, 9, 27, 9, 0).toISOString(), NOW)).toBe('Last 7 days');
+        expect(inboxDayGroup(new Date(2026, 9, 20, 9, 0).toISOString(), NOW)).toBe('Older');
+        expect(inboxDayGroup('not a date', NOW)).toBe('Older');
+        // A clock a little ahead of ours still reads as today.
+        expect(inboxDayGroup(new Date(2026, 10, 1, 15, 1).toISOString(), NOW)).toBe('Today');
+    });
+
+    it('renders one header per contiguous day, keeping row order', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        try {
+            getInboxEntries.mockReturnValue([
+                { ...ENTRY, id: 'a', created_at: new Date(2026, 10, 1, 9).toISOString() },
+                { ...ENTRY, id: 'b', created_at: new Date(2026, 10, 1, 8).toISOString() },
+                { ...ENTRY, id: 'c', created_at: new Date(2026, 9, 31, 8).toISOString() },
+                { ...ENTRY, id: 'd', created_at: new Date(2026, 8, 1, 8).toISOString() },
+            ]);
+            renderInbox();
+        } finally {
+            vi.useRealTimers();
+        }
+        const headers = [...document.querySelectorAll('.inbox-group-header')].map(h => h.textContent);
+        expect(headers).toEqual(['Today', 'Yesterday', 'Older']);
+        // Headers are not rows: the cursor's row index still equals the entry index.
+        const ids = [...document.querySelectorAll('#inbox-list .inbox-row')].map(r => r.dataset.entryId);
+        expect(ids).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    it('shows a mark-read action only on unread rows, and no nested buttons', () => {
+        getInboxEntries.mockReturnValue([
+            ENTRY,
+            { ...ENTRY, id: 'read-1', read_at: '2026-07-06T13:00:00Z' },
+        ]);
+        renderInbox();
+        const rows = document.querySelectorAll('.inbox-row');
+        expect(rows[0].querySelector('[data-action="mark-inbox-read"]')).not.toBeNull();
+        expect(rows[1].querySelector('[data-action="mark-inbox-read"]')).toBeNull();
+        expect(document.querySelector('button button')).toBeNull();
+    });
+
+    it('mark-inbox-read marks the entry read and drops its dot', async () => {
+        const entry = { ...ENTRY };
+        getInboxEntries.mockReturnValue([entry]);
+        getInboxUnreadCount.mockReturnValue(1);
+        api.markInboxRead.mockResolvedValue({});
+        renderInbox();
+        const preventDefault = vi.fn();
+        inboxActions['mark-inbox-read']({ preventDefault }, { entryId: 'entry-1' });
+        expect(preventDefault).toHaveBeenCalled();
+        expect(api.markInboxRead).toHaveBeenCalledWith('entry-1');
+        expect(setInboxUnreadCount).toHaveBeenCalledWith(0);
+        expect(document.querySelector('.inbox-row-unread-dot')).toBeNull();
+    });
+
+    it('set-inbox-filter reloads only when the filter changes', async () => {
+        api.getInbox.mockResolvedValue([]);
+        document.body.innerHTML += `
+            <button data-action="set-inbox-filter" data-filter="all" class="active"></button>
+            <button data-action="set-inbox-filter" data-filter="unread"></button>`;
+        inboxActions['set-inbox-filter']({}, { filter: 'all' });
+        expect(api.getInbox).not.toHaveBeenCalled();
+        inboxActions['set-inbox-filter']({}, { filter: 'unread' });
+        expect(api.getInbox).toHaveBeenCalledWith('team-1', expect.objectContaining({ unread: true }));
+        inboxActions['set-inbox-filter']({}, { filter: 'all' }); // reset module state
+    });
+
+    it('mark read under the Unread filter takes the row out of the list now', async () => {
+        api.getInbox.mockResolvedValue([]);
+        await toggleInboxUnreadFilter(); // Unread on
+        let list = [{ ...ENTRY, id: 'u1' }, { ...ENTRY, id: 'u2' }];
+        getInboxEntries.mockImplementation(() => list);
+        setInboxEntries.mockImplementation((next) => { list = next; });
+        api.markInboxRead.mockResolvedValue({});
+        renderInbox();
+        inboxActions['mark-inbox-read']({ preventDefault: vi.fn() }, { entryId: 'u1' });
+        const ids = [...document.querySelectorAll('.inbox-row')].map(r => r.dataset.entryId);
+        expect(ids).toEqual(['u2']);
+        expect(document.querySelector('.inbox-row.keyboard-selected').dataset.entryId).toBe('u2');
+        await toggleInboxUnreadFilter(); // back to All
+        getInboxEntries.mockReset();
+        setInboxEntries.mockReset();
+    });
+
+    it('the header shows the unread count', () => {
+        document.body.innerHTML += '<span id="inbox-header-count"></span>';
+        getInboxUnreadCount.mockReturnValue(7);
+        renderInboxBadge();
+        expect(document.getElementById('inbox-header-count').textContent).toBe('7 unread');
+        getInboxUnreadCount.mockReturnValue(0);
+        renderInboxBadge();
+        expect(document.getElementById('inbox-header-count').textContent).toBe('');
     });
 });

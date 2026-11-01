@@ -368,6 +368,27 @@ describe('finding 1: background refreshes keep the open row (blocking)', () => {
         }
     });
 
+    it('a kept open entry goes back in time order, behind newer arrivals (CHT-1962)', async () => {
+        api.getInbox.mockResolvedValueOnce([{ ...UNREAD }, { ...OTHER, read_at: null }]);
+        toggleInboxUnreadFilter();
+        try {
+            await flush();
+            await flush();
+            selectInboxRow(0);
+            key(toggleOf(row()), 'Enter');
+            const NEWER = { ...OTHER, id: 'newer', created_at: '2999-01-01T00:00:00Z', read_at: null };
+            api.getInbox.mockResolvedValueOnce([NEWER, { ...OTHER, read_at: null }]);
+            dispatch({ type: 'created', entity: 'inbox', data: { id: 'newer', recipient_user_id: 'me' } });
+            await flush();
+            const ids = [...document.querySelectorAll('.inbox-row')].map(r => r.dataset.entryId);
+            expect(ids.indexOf('newer')).toBeLessThan(ids.indexOf('assign-1'));
+        } finally {
+            api.getInbox.mockResolvedValue([]);
+            toggleInboxUnreadFilter();
+            await flush();
+        }
+    });
+
     it('a failed background refresh keeps the list on screen', async () => {
         key(toggleOf(row()), 'Enter');
         api.getInbox.mockRejectedValueOnce(new Error('offline'));
