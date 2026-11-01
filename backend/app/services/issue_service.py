@@ -1980,7 +1980,7 @@ class IssueService:
         return activities
 
     async def list_team_comments(
-        self, team_id: str, skip: int = 0, limit: int = 50
+        self, team_id: str, skip: int = 0, limit: int = 50, project_id: str | None = None
     ) -> list[tuple]:
         """List recent issue comments for a team.
 
@@ -1992,8 +1992,9 @@ class IssueService:
             "JOIN issues i ON ic.issue_id = i.id "
             "JOIN projects p ON i.project_id = p.id "
             "WHERE p.team_id = ? "
-            "ORDER BY ic.created_at DESC LIMIT ? OFFSET ?",
-            [team_id, limit, skip],
+            + ("AND i.project_id = ? " if project_id else "")
+            + "ORDER BY ic.created_at DESC LIMIT ? OFFSET ?",
+            [team_id, *([project_id] if project_id else []), limit, skip],
         )
         if not rows:
             return []
