@@ -21,11 +21,9 @@ Project = OxydeProject
 
 
 
-# Project settings that gate a ticket's claim or close (CHT-1905). An
-# agent may turn one on but never off. The require_* ones hold agents to
-# a rule, so the agent being held cannot be the one to lift it;
-# human_rituals_required holds people, and an agent should not be able
-# to let people skip their rituals either.
+# Project settings that gate a ticket's claim or close. A write that
+# turns one off is conditional on it still being off as read, so a person
+# turning it on meanwhile is not silently undone (CHT-1926).
 GATE_SETTINGS = (
     "human_rituals_required",
     "require_estimate_on_claim",
@@ -139,10 +137,9 @@ class ProjectService:
     ) -> None:
         """The ``expect`` path of ``update``: the conditional write and the
         planned sprints' adoption of a new default, in one transaction."""
-        conditions = {
-            (f"{name}__isnull" if value is None else name): (True if value is None else value)
-            for name, value in expect.items()
-        }
+        # The gate settings are NOT NULL bools, so a plain equality is
+        # the whole condition (PR #492 review 2).
+        conditions = dict(expect)
         async with atomic():
             matched = await OxydeProject.objects.filter(id=project.id, **conditions).update(
                 **update_data, updated_at=now,

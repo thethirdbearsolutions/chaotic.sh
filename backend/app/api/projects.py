@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import (
     CurrentUser, is_in_team_directory, can_read_team_data,
-    is_eligible_project_member, is_project_scoped_agent, refuse_agent_lifting_gates,
+    is_eligible_project_member, is_project_scoped_agent,
 )
 from app.api.visibility import team_hidden, visible_project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
@@ -139,31 +139,18 @@ async def get_project(project_id: str, current_user: CurrentUser) -> ProjectResp
     return ProjectResponse.model_validate(project)
 
 
-def _lifted_by_update(project, project_in: ProjectUpdate) -> list[str]:
-    return [
-        name for name in GATE_SETTINGS
-        if name in project_in.model_fields_set
-        and getattr(project_in, name) is False
-        and getattr(project, name)
-    ]
-
-
-def _agent_expect(project, project_in: ProjectUpdate) -> dict:
-    """What an agent's write is conditional on (CHT-1926): the values its
-    gate check decided on, so a person tightening one meanwhile wins.
-
-    Only what the request could loosen is pinned: a gate it sets to
-    False (off when read, or the check would have refused it; pinned
-    still, since a person may turn it on meanwhile). A setting the request leaves alone cannot
-    be loosened by it, and pinning it would turn an unrelated edit into
-    a 409 whenever a person changes that setting (PR #487 review 3).
-    """
+def _gate_expect(project, project_in: ProjectUpdate) -> dict | None:
+    """What a write is conditional on (CHT-1926): each gate the request
+    turns off, at the value it was read with, so someone turning that
+    gate on meanwhile gets a 409 instead of being silently undone. A
+    setting the request leaves alone is not pinned (PR #487 review 3).
+    None when nothing is pinned: the write is unconditional."""
     sent = project_in.model_fields_set
     expect = {
         name: getattr(project, name) for name in GATE_SETTINGS
         if name in sent and getattr(project_in, name) is False
     }
-    return expect
+    return expect or None
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
@@ -178,11 +165,10 @@ async def update_project(
 
     # A project the caller cannot see answers like a missing one (CHT-1785).
     project = await visible_project(current_user, project_id)
-    refuse_agent_lifting_gates(current_user, _lifted_by_update(project, project_in))
     await _validate_lead(project_in.lead_id, project.team_id, project.id, project.lead_id)
     await _validate_default_epic(project_in.default_epic_id, project.id, project.default_epic_id)
 
-    expect = _agent_expect(project, project_in) if current_user.is_agent else None
+    expect = _gate_expect(project, project_in)
     try:
         project = await project_service.update(project, project_in, expect=expect)
     except ProjectChangedError as e:

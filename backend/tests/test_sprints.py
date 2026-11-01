@@ -1687,3 +1687,17 @@ async def test_an_agent_can_raise_a_sprint_budget(client, agent_headers, test_pr
     r = await client.patch(f"/api/sprints/{sprint.id}", headers=agent_headers, json={"budget": 50})
     assert r.status_code == 200, r.text
     assert r.json()["budget"] == 50
+
+
+@pytest.mark.asyncio
+async def test_an_agent_can_change_a_sprint_status_by_hand(client, agent_headers, test_project, db):
+    """CHT-1924 reverted (PR #492 review 4)."""
+    from datetime import datetime, timezone
+
+    await OxydeSprint.objects.filter(project_id=test_project.id).delete()
+    sprint = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Next", status=SprintStatus.PLANNED, budget=10, budget_explicit=True,
+    )
+    r = await client.patch(f"/api/sprints/{sprint.id}", headers=agent_headers, json={"status": "active"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "active"

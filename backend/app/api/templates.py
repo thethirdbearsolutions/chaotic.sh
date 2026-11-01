@@ -12,7 +12,7 @@ is admin-only everywhere else.
 from fastapi import APIRouter, HTTPException, status
 
 from app.auth.access import reads, writes
-from app.api.deps import CurrentUser, can_read_team_data, refuse_agent_lifting_gates
+from app.api.deps import CurrentUser, can_read_team_data
 from app.api.visibility import can_see_project, team_hidden, visible_project_in_team, visible_template
 from app.schemas.template import (
     TemplateApplyReport,
@@ -162,10 +162,6 @@ async def apply_template(
             update_rituals=apply_in.update_rituals,
             update_all=apply_in.update_all,
             dry_run=apply_in.dry_run,
-            # Checked inside the apply's transaction, against the values
-            # it is about to overwrite (CHT-1905). Defense in depth: the
-            # route already wants a team admin, which agents are not.
-            refuse_lifting=lambda lifted: refuse_agent_lifting_gates(current_user, lifted),
         )
     except ValueError as e:
         raise HTTPException(
