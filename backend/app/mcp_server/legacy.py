@@ -114,6 +114,15 @@ def current_notice() -> str | None:
     return notice_for(principal)
 
 
+def add_notice(payload: dict) -> dict:
+    """``payload`` with the in-flight request's notice, if it has one. The
+    unknown-argument guard refuses a call before any tool runs, so
+    ``with_notice`` never sees it; ``add_tools`` applies this to those
+    refusals instead (CHT-1951)."""
+    notice = current_notice()
+    return payload if notice is None else {**payload, NOTICE_KEY: notice}
+
+
 def with_notice(tool):
     """Wrap a bound tool so its result carries the notice when the
     request's credential is a listed legacy key. ``functools.wraps``

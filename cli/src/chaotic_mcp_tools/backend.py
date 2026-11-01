@@ -67,6 +67,13 @@ class Backend(Protocol):
         gets its own project's team; the server confines what it reads
         there (CHT-1780)."""
 
+    async def resolve_named_team(self, team: str) -> str:
+        """The id of the team `team` names (an id, key or name), among the
+        teams this key can see; unknown -> ToolInputError. Unlike
+        ``resolve_team``, the stdio side does not answer with its profile's
+        team whatever is passed: a scope hint is checked against this
+        (CHT-1951)."""
+
     async def resolve_project(self, project: str | None, team: str | None) -> tuple[str, str]:
         """``(project_id, team_id)`` for a project-scoped tool. A project
         MUST result: an explicit ``project`` is resolved (id, key, or

@@ -46,7 +46,7 @@ from chaotic_mcp_tools import (  # noqa: F401 - re-exported for tests
     with_budget_state as _with_budget_state,
 )
 
-from app.mcp_server.legacy import LegacyNoticeMiddleware, with_notice
+from app.mcp_server.legacy import LegacyNoticeMiddleware, add_notice, with_notice
 from app.mcp_server.backend import (  # noqa: F401 - re-exported for tests
     InProcessBackend,
     _resolve_document_id,
@@ -148,5 +148,5 @@ def build_server() -> MCPServer:
             ),
             middleware=[LegacyNoticeMiddleware()],
         )
-    add_tools(mcp, ALL_TOOLS)
+    add_tools(mcp, ALL_TOOLS, decorate_refusal=add_notice)
     return mcp

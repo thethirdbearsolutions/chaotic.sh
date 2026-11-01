@@ -41,7 +41,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from app.config import get_settings
-from app.mcp_server.legacy import LegacyNoticeMiddleware
+from app.mcp_server.legacy import LegacyNoticeMiddleware, add_notice
 from app.mcp_server.auth import BearerHeaderAuth, CapabilityPathRedaction, CapabilityURLAuth
 from app.mcp_server.tools import ALL_TOOLS, preserve_root_logger
 
@@ -129,7 +129,7 @@ def get_fastmcp() -> MCPServer:
                 # these instructions (legacy.py, CHT-1720); others see them as is.
                 middleware=[LegacyNoticeMiddleware()],
             )
-        add_tools(_fastmcp, ALL_TOOLS)
+        add_tools(_fastmcp, ALL_TOOLS, decorate_refusal=add_notice)
         # streamable_http_app() is what builds the session manager, and in
         # mcp 2.x it is also where the transport settings live (they were
         # constructor arguments in 1.x). Its *returned* Starlette app is

@@ -82,6 +82,24 @@ class TestScope:
         assert await backend.team_for_project("p-b") == "team-b"
         client.get_project.assert_called_once_with("p-b")
 
+    async def test_resolve_named_team(self, backend, monkeypatch):
+        """CHT-1951: a `team` hint is checked against a real lookup, not
+        the profile's team that resolve_team answers with whatever is
+        passed."""
+        from chaotic_mcp_tools import ToolInputError
+        from cli.main import client
+        teams = MagicMock(return_value=[
+            {"id": "test-team-123", "key": "ENG", "name": "Engineering"},
+            {"id": "t-ops", "key": "OPS", "name": "Operations"},
+        ])
+        monkeypatch.setattr(client, "get_teams", teams)
+        assert await backend.resolve_named_team("test-team-123") == "test-team-123"
+        teams.assert_not_called()
+        assert await backend.resolve_named_team("ops") == "t-ops"
+        assert await backend.resolve_named_team("Engineering") == "test-team-123"
+        with pytest.raises(ToolInputError, match="'NOPE' not found"):
+            await backend.resolve_named_team("NOPE")
+
     async def test_resolve_assignee_uses_the_team_it_is_given(self, backend, monkeypatch):
         from cli.main import client
         monkeypatch.setattr(client, "get_team_members", MagicMock(return_value=[{"user_id": "u-1", "user_name": "Look"}]))

@@ -199,6 +199,10 @@ class InProcessBackend:
         return await scope.resolve_member_team(self._user, team)
 
     @_translated(Access.READ)
+    async def resolve_named_team(self, team: str) -> str:
+        return await scope.resolve_member_team(self._user, team)
+
+    @_translated(Access.READ)
     async def resolve_project(self, project: str | None, team: str | None) -> tuple[str, str]:
         return await scope.resolve_project(self._user, project, team)
 

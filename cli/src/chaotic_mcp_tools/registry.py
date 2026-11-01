@@ -18,6 +18,7 @@ import difflib
 import functools
 import inspect
 import json
+from collections.abc import Mapping
 
 from .backend import Backend
 from .errors import (
@@ -27,10 +28,11 @@ from .errors import (
     backend_error_payload,
     error_envelope,
 )
+from .hints import SCOPE_HINTS, current_hints, reset_hints, scope_hint_refusal, set_hints
 from .tools import ALL_TOOLS
 
 
-def add_tools(mcp, tools) -> None:
+def add_tools(mcp, tools, *, decorate_refusal=None) -> None:
     """Register `tools` on `mcp`, each described by its docstring
     cleandoc'd (CHT-1699). `add_tool` would otherwise send the raw
     `__doc__`, which keeps its source indentation before Python 3.13 and
@@ -38,9 +40,12 @@ def add_tools(mcp, tools) -> None:
     the server's interpreter, and paid tokens for the indentation.
 
     Also installs the unknown-argument guard (CHT-1951) on the server's
-    public middleware chain. A server without one cannot have the guard,
-    and is refused here, at startup, rather than quietly serving tools
-    that drop what they do not recognise."""
+    public middleware chain. A server without one, or whose chain does
+    not keep what is appended to it, cannot have the guard, and is
+    refused here, at startup, rather than quietly serving tools that drop
+    what they do not recognise. `decorate_refusal`, when given, is
+    applied to each refusal payload the guard sends (the HTTP server adds
+    its legacy-key notice there, as it does to every tool result)."""
     chain = getattr(mcp, "middleware", None)
     if not isinstance(chain, list):
         raise RuntimeError(
@@ -51,18 +56,17 @@ def add_tools(mcp, tools) -> None:
     if guard is None:
         guard = UnknownArgumentGuard()
         chain.append(guard)
+        if not any(m is guard for m in getattr(mcp, "middleware", ())):
+            raise RuntimeError(
+                "This MCP SDK's MCPServer.middleware did not keep the unknown-argument guard "
+                "appended to it (a copy?), so chaotic's tools cannot refuse unknown arguments; "
+                "refusing to start."
+            )
+    if decorate_refusal is not None:
+        guard.decorate_refusal = decorate_refusal
     for tool in tools:
         mcp.add_tool(tool, description=inspect.cleandoc(tool.__doc__ or ""))
         guard.accepted[tool.__name__] = tuple(inspect.signature(tool).parameters)
-
-
-# Arguments every tool takes without complaint, whether or not it declares
-# them. Agents pass these on every call "to be safe", the HTTP server's
-# instructions say to pass them to disambiguate, and the stdio server
-# always ignored `team`. Where a tool does not declare one, it is dropped:
-# a scope hint that the call's own arguments (an identifier, an id)
-# already settle. Anything else undeclared is refused.
-SCOPE_HINTS = frozenset({"team", "project"})
 
 
 def unknown_arguments_message(tool_name: str, unknown: list[str], accepted: list[str]) -> str:
@@ -96,30 +100,42 @@ class UnknownArgumentGuard:
     `issue_create(assignee=...)` made an unassigned issue and said
     nothing. The refusal is the usual ``{"error": ...}`` result (ADR-0006,
     ``error_code: unknown_argument``), sent before the tool runs, so
-    nothing is done. `SCOPE_HINTS` are let through, and dropped where the
-    tool does not declare them. A call to a tool it was not told about
-    passes through untouched."""
+    nothing is done. A `team` or `project` the tool does not declare is
+    a scope hint (``hints.py``): taken out of the arguments and handed to
+    the bound tool, which checks it against where it will act and refuses
+    on a mismatch. A call to a tool it was not told about passes through
+    untouched."""
 
     def __init__(self):
         self.accepted: dict[str, tuple[str, ...]] = {}
+        self.decorate_refusal = None
 
     async def __call__(self, ctx, call_next):
         params = ctx.params
-        if ctx.method == "tools/call" and isinstance(params, dict):
+        hints = None
+        if ctx.method == "tools/call" and isinstance(params, Mapping):
             name, arguments = params.get("name"), params.get("arguments")
             accepted = self.accepted.get(name) if isinstance(name, str) else None
-            if accepted is not None and isinstance(arguments, dict):
+            if accepted is not None and isinstance(arguments, Mapping):
                 extra = [k for k in arguments if k not in accepted]
                 unknown = sorted(k for k in extra if k not in SCOPE_HINTS)
                 if unknown:
-                    return tool_result(error_envelope(
+                    payload = error_envelope(
                         unknown_arguments_message(name, unknown, sorted(accepted)), "unknown_argument",
                         unknown_arguments=unknown, accepted_arguments=sorted(accepted),
-                    ))
+                    )
+                    if self.decorate_refusal is not None:
+                        payload = self.decorate_refusal(payload)
+                    return tool_result(payload)
                 if extra:
+                    hints = {k: str(arguments[k]) for k in extra if arguments[k] not in (None, "")}
                     kept = {k: v for k, v in arguments.items() if k in accepted}
-                    ctx = dataclasses.replace(ctx, params={**params, "arguments": kept})
-        return await call_next(ctx)
+                    ctx = dataclasses.replace(ctx, params={**dict(params), "arguments": kept})
+        token = set_hints(hints or None)
+        try:
+            return await call_next(ctx)
+        finally:
+            reset_hints(token)
 
 
 async def call_guarded(tool, backend: Backend, *args, **kwargs) -> dict:
@@ -171,11 +187,24 @@ def bind(tool, backend: Backend):
     async def bound(*args, **kwargs):
         if not caps.team_param:
             kwargs.pop("team", None)
+        hints = current_hints()
+        if hints:
+            # A `team`/`project` this tool does not take (hints.py): acted
+            # on only once it agrees with where the tool will act.
+            arguments = bound.__signature__.bind_partial(*args, **kwargs).arguments
+            return await call_guarded(_hinted, backend, tool, hints, arguments, *args, **kwargs)
         return await call_guarded(tool, backend, *args, **kwargs)
 
     bound.__signature__ = sig.replace(parameters=params)
     bound.__mcp_backend__ = backend
     return bound
+
+
+async def _hinted(backend: Backend, tool, hints, arguments, *args, **kwargs) -> dict:
+    refusal = await scope_hint_refusal(tool.__name__, backend, hints, arguments)
+    if refusal is not None:
+        return refusal
+    return await tool(backend, *args, **kwargs)
 
 
 def bind_all(backend: Backend, tools=ALL_TOOLS) -> list:

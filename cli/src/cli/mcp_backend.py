@@ -203,6 +203,19 @@ class RestBackend:
         # server confines what such a key reads there (CHT-1780).
         return await self._require_team()
 
+    async def resolve_named_team(self, team: str) -> str:
+        # The profile's team needs no lookup (and covers a key that cannot
+        # list teams); any other is matched among the teams the key sees.
+        current = await self._require_team()
+        if team == current:
+            return current
+        teams = await self._call(functools.partial(self._client().get_teams, as_configured=_as_configured())) or []
+        wanted = team.strip().lower()
+        for row in teams:
+            if row.get("id") == team or wanted in {(row.get("key") or "").lower(), (row.get("name") or "").lower()}:
+                return row["id"]
+        raise ToolInputError(f"Team '{team}' not found among the teams this key can see.")
+
     async def resolve_project(self, project: str | None, team: str | None) -> tuple[str, str]:
         team_id = await self._require_team()
         if project:

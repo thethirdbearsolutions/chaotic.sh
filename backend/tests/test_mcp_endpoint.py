@@ -813,6 +813,32 @@ class TestToolsCall:
                                 {"identifier": created["identifier"], "project": test_project.key}, id=2)
         assert json.loads(resp.json()["result"]["content"][0]["text"])["identifier"] == created["identifier"]
 
+    async def test_a_project_hint_on_a_team_wide_tool_is_refused(self, client, bearer_headers, test_project):
+        """inbox_mark_all_read is team-wide: a `project` would have marked
+        the whole team's inbox read (PR #497 delta review, finding A2)."""
+        resp = await _tool_call(client, bearer_headers, "inbox_mark_all_read", {"project": test_project.key})
+        error = json.loads(resp.json()["result"]["content"][0]["text"])["error"]
+        assert error["error_code"] == "scope_mismatch"
+        assert error["acts_in"]["project"] is None
+
+    async def test_a_project_hint_naming_another_project_is_refused(
+        self, client, bearer_headers, test_project, test_team,
+    ):
+        from app.oxyde_models.project import OxydeProject
+
+        await OxydeProject.objects.create(name="Other", key="OTH", team_id=test_team.id)
+        created = json.loads((await _tool_call(client, bearer_headers, "issue_create",
+                                               {"title": "Here", "project": test_project.key})).json()
+                             ["result"]["content"][0]["text"])
+        resp = await _tool_call(client, bearer_headers, "issue_update",
+                                {"identifier": created["identifier"], "title": "Moved?", "project": "OTH"}, id=2)
+        error = json.loads(resp.json()["result"]["content"][0]["text"])["error"]
+        assert error["error_code"] == "scope_mismatch"
+        viewed = json.loads((await _tool_call(client, bearer_headers, "issue_view",
+                                              {"identifier": created["identifier"]}, id=3)).json()
+                            ["result"]["content"][0]["text"])
+        assert viewed["title"] == "Here"
+
     async def test_issue_create_then_list_finds_it(self, client, bearer_headers, test_project):
         await _tool_call(client, bearer_headers, "issue_create", {"title": "Findable"})
         resp = await _tool_call(client, bearer_headers, "issue_list", id=2)

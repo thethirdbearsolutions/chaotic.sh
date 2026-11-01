@@ -1918,20 +1918,30 @@ class TestMCPProtocolLoop:
         client.create_issue.assert_not_called()
 
     def test_assignee_and_team_hint_over_protocol(self, mcp_mod, mock_issue):
-        """The stdio server never advertised `team`, and still takes it as
-        a scope hint it ignores; the assignee reaches the create."""
+        """The stdio server never advertised `team`. It takes one naming
+        the profile's team as a scope hint, and the assignee reaches the
+        create; one naming another team is refused, and nothing is
+        created (PR #497 delta review, finding A)."""
         from cli.main import client
 
         client.get_me = MagicMock(return_value={"id": "u-me"})
+        client.get_teams = MagicMock(return_value=[
+            {"id": "test-team-123", "key": "ENG", "name": "Engineering"},
+            {"id": "t-ops", "key": "OPS", "name": "Operations"},
+        ])
         client.create_issue = MagicMock(return_value=mock_issue)
 
-        async def run():
+        async def run(team):
             server = mcp_mod.build_server()
             async with _connected_session(server) as session:
-                return await session.call_tool("issue_create", {"title": "T", "assignee": "me", "team": "ENG"})
+                result = await session.call_tool("issue_create", {"title": "T", "assignee": "me", "team": team})
+            return json.loads(next(c.text for c in result.content if c.type == "text"))
 
-        result = asyncio.run(run())
-        payload = json.loads(next(c.text for c in result.content if c.type == "text"))
+        refused = asyncio.run(run("OPS"))
+        assert refused["error"]["error_code"] == "scope_mismatch", refused
+        client.create_issue.assert_not_called()
+
+        payload = asyncio.run(run("ENG"))
         assert "error" not in payload, payload
         assert client.create_issue.call_args.kwargs["assignee_id"] == "u-me"
 
