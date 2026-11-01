@@ -1,6 +1,6 @@
 """User schemas."""
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from app.enums import AgentKind
 from app.utils import DateTimeUTC
 
@@ -13,16 +13,63 @@ class UserCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
 
 
-class UserUpdate(BaseModel):
-    """Schema for updating a user.
+# The longest each self-written profile field may be (CHT-1979).
+PROFILE_LIMITS = {"bio": 4000, "pronouns": 40, "tagline": 120}
+# The fields a member writes about themselves. Every member may set their
+# own, people and agents alike (CHT-1979); an agent's name is held to the
+# naming rules on the way in (app.api.agents.check_own_agent_name).
+IDENTITY_FIELDS = frozenset({"name", "avatar_url", "bio", "pronouns", "tagline"})
+
+
+class ProfileFields(BaseModel):
+    """``bio`` (markdown), ``pronouns`` and ``tagline`` (one line each),
+    as written by the member (CHT-1979). Each is trimmed, and blank means
+    cleared: it is stored as null."""
+
+    bio: str | None = Field(default=None, max_length=PROFILE_LIMITS["bio"])
+    pronouns: str | None = Field(default=None, max_length=PROFILE_LIMITS["pronouns"])
+    tagline: str | None = Field(default=None, max_length=PROFILE_LIMITS["tagline"])
+
+    @field_validator("bio", mode="before")
+    @classmethod
+    def _trim_bio(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            return v or None
+        return v
+
+    @field_validator("pronouns", "tagline", mode="before")
+    @classmethod
+    def _one_line(cls, v):
+        # One line: any run of whitespace, newlines included, becomes one space.
+        if isinstance(v, str):
+            v = " ".join(v.split())
+            return v or None
+        return v
+
+
+class UserUpdate(ProfileFields):
+    """Schema for updating a user: your own name, avatar and profile.
 
     No ``email`` on purpose: a change of address takes the password and
     clears ``email_verified_at`` (``POST /api/auth/email``,
     UserService.change_email, CHT-1827).
     """
 
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
     avatar_url: str | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name_not_blank(cls, v):
+        # Trimmed; a blank or null name is refused (a name is required).
+        if v is None:
+            raise ValueError("name may not be null; leave it out to keep the current name")
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("A name must not be blank.")
+        return v
 
 
 class UserResponse(BaseModel):
@@ -32,6 +79,10 @@ class UserResponse(BaseModel):
     email: str
     name: str
     avatar_url: str | None
+    # Self-written profile (CHT-1979); null until set.
+    bio: str | None = None
+    pronouns: str | None = None
+    tagline: str | None = None
     is_active: bool
     is_agent: bool = False
     parent_user_name: str | None = None

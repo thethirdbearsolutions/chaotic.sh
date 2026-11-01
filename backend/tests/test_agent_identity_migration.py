@@ -106,7 +106,8 @@ NEW = {"kind", "external_ref", "registered_by_id", "can_register"}
 # Added to users by later migrations on the way to head, unrelated to
 # 0023: email_verified_at (0032, CHT-1790), never backfilled, and
 # email_folded with its unique index (0034, CHT-1804), backfilled.
-LATER = {"email_verified_at", "email_folded"}
+# bio, pronouns and tagline (0045, CHT-1979), never backfilled.
+LATER = {"email_verified_at", "email_folded", "bio", "pronouns", "tagline"}
 LATER_INDEXES = {"ux_users_email_folded"}
 
 

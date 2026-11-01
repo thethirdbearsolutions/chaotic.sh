@@ -1,8 +1,8 @@
-"""A session identity may rename itself, and nothing more (CHT-1918).
+"""A session identity may rename itself (CHT-1918), and since CHT-1979
+every agent may change its own identity: name, avatar and profile.
 
-`PATCH /agents/{own id}` with only `name` is allowed for a registered
-session identity on itself; anything else it sends, any other agent, and
-any agent that is not a registered identity still answer 403 as before.
+`PATCH /agents/{own id}` with identity fields only is allowed for any
+agent on itself; `can_register` and any other agent still answer 403.
 """
 import pytest
 
@@ -68,8 +68,8 @@ async def test_a_session_cannot_rename_another_agent(client, registrar):
         assert refused.status_code == 403, refused.text
 
 
-@pytest.mark.parametrize("extra", [{"avatar_url": "https://example.com/a.png"}, {"avatar_url": None}, {"can_register": True}, {"name": None}])
-async def test_a_session_may_change_only_its_name(client, registrar, extra):
+@pytest.mark.parametrize("extra", [{"can_register": True}, {"can_register": False}, {"name": None}])
+async def test_a_session_may_change_only_its_identity(client, registrar, extra):
     session = await _register(client, registrar, REF)
 
     refused = await client.patch(
@@ -82,6 +82,21 @@ async def test_a_session_may_change_only_its_name(client, registrar, extra):
     assert me.json()["name"] != "Piper"
 
 
+@pytest.mark.parametrize("extra", [{"avatar_url": "https://example.com/a.png"}, {"avatar_url": None}])
+async def test_a_session_may_change_its_avatar_with_its_name(client, registrar, extra):
+    """Since CHT-1979 a session's avatar and profile are its own too."""
+    session = await _register(client, registrar, REF)
+
+    renamed = await client.patch(
+        f"/api/agents/{session['agent']['id']}", json={"name": "Piper", **extra},
+        headers=_bearer(session["api_key"]),
+    )
+
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == "Piper"
+    assert renamed.json()["avatar_url"] == extra["avatar_url"]
+
+
 async def test_a_session_still_may_not_take_a_persons_name(client, registrar, test_user):
     session = await _register(client, registrar, REF)
 
@@ -92,12 +107,16 @@ async def test_a_session_still_may_not_take_a_persons_name(client, registrar, te
     assert refused.status_code == 422, refused.text
 
 
-async def test_a_hand_made_agent_still_cannot_rename_itself(client, registrar):
-    refused = await client.patch(
-        f"/api/agents/{registrar['id']}", json={"name": "Renamed"}, headers=_bearer(registrar["api_key"]),
+async def test_a_hand_made_agent_renames_itself_too(client, auth_headers, test_team):
+    """Since CHT-1979 every agent's identity is its own to write. (A
+    registrar may write nothing at all, its own name included.)"""
+    made = await client.post(f"/api/teams/{test_team.id}/agents", json={"name": "Helper"}, headers=auth_headers)
+    renamed = await client.patch(
+        f"/api/agents/{made.json()['id']}", json={"name": "Renamed"}, headers=_bearer(made.json()["api_key"]),
     )
 
-    assert refused.status_code == 403, refused.text
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == "Renamed"
 
 
 async def test_renaming_to_its_own_name_is_a_no_op(client, registrar):

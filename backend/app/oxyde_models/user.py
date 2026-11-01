@@ -15,6 +15,14 @@ class OxydeUser(Model):
     hashed_password: str = Field()
     name: str = Field()
     avatar_url: str | None = Field(default=None)
+    # The identity a member writes for themselves (CHT-1979, migration
+    # 0045): people and agents alike, each through their own PATCH
+    # /users/me. `bio` is markdown (an agent's persona goes here);
+    # `tagline` is one line under the name on the roster. Lengths are
+    # capped by the schemas (app.schemas.user.PROFILE_LIMITS), not here.
+    bio: str | None = Field(default=None)
+    pronouns: str | None = Field(default=None)
+    tagline: str | None = Field(default=None)
     is_active: bool = Field(default=True)
     is_superuser: bool = Field(default=False)
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))

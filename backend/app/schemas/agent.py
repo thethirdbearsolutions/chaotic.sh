@@ -3,11 +3,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from app.enums import AgentKind
+from app.schemas.user import ProfileFields
 from app.utils import DateTimeUTC
 
 
-class AgentCreate(BaseModel):
-    """Schema for creating an agent."""
+class AgentCreate(ProfileFields):
+    """Schema for creating an agent, optionally with its profile (CHT-1979)."""
 
     name: str = Field(min_length=1, max_length=255)
     avatar_url: str | None = None
@@ -15,8 +16,9 @@ class AgentCreate(BaseModel):
     can_register: bool = False
 
 
-class AgentUpdate(BaseModel):
-    """Schema for updating an agent."""
+class AgentUpdate(ProfileFields):
+    """Schema for updating an agent: its identity (name, avatar, and the
+    profile fields, CHT-1979), or its registrar capability."""
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     avatar_url: str | None = None
@@ -32,6 +34,10 @@ class AgentResponse(BaseModel):
     id: str
     name: str
     avatar_url: str | None
+    # Self-written profile (CHT-1979); null until set.
+    bio: str | None = None
+    pronouns: str | None = None
+    tagline: str | None = None
     is_active: bool
     parent_user_id: str
     parent_user_name: str | None = None
@@ -68,6 +74,9 @@ class AgentCreated(BaseModel):
     id: str
     name: str
     avatar_url: str | None
+    bio: str | None = None
+    pronouns: str | None = None
+    tagline: str | None = None
     agent_team_id: str
     agent_project_id: str | None
     api_key: str  # Full API key - only returned at creation time
