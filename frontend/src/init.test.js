@@ -24,7 +24,7 @@ import { showMainScreen, showAuthScreen, showLogin, showSignup } from './auth.js
 import { showInvite, hideInvite, showMissingToken, forgetInviteToken } from './invite.js';
 import { showToast } from './ui.js';
 import { api } from './api.js';
-import { getCurrentUser, setCurrentUser } from './state.js';
+import { getCurrentUser, setCurrentUser, setCurrentView, getCurrentView } from './state.js';
 import { loadTeams, getTeams, selectTeam } from './teams.js';
 import { showConsent } from './oauth-consent.js';
 import { initRouter, primeRoute } from './router.js';
@@ -93,6 +93,15 @@ describe('initApp', () => {
             await initApp();
             expect(selectTeam).not.toHaveBeenCalled();
             expect(initRouter).toHaveBeenCalledTimes(1);
+        });
+
+        // PR #506 review M3: nothing routes without a team, so the view
+        // primeRoute() cleared must not stay null.
+        it('leaves the Dashboard current with no team', async () => {
+            getTeams.mockReturnValue([]);
+            setCurrentView(null);
+            await initApp();
+            expect(getCurrentView()).toBe('my-issues');
         });
 
         it('waits while onboarding, which calls initApp again', async () => {

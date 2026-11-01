@@ -35,6 +35,8 @@ import {
     filterIssues,
     updateGroupBy,
     showCachedIssuesOrSkeleton,
+    getSelectedLabels,
+    getExcludedLabels,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
 import { loadQueryView } from './query-view.js';
@@ -222,8 +224,12 @@ registerViews({
         const labelIds = urlParams.getAll('label');
         const excludeLabelIds = urlParams.getAll('exclude_label');
         const urlSprint = urlParams.get('sprint');
+        // Checked labels count even with none in the address: Back from
+        // Board keeps this view's query string, and the dropdown keeps its
+        // checks until populateLabelFilter() rebuilds it (PR #506 review I1).
         const needsOptions = labelIds.length > 0 || excludeLabelIds.length > 0 || !!urlSprint
-            || !!document.getElementById('sprint-filter')?.value;
+            || !!document.getElementById('sprint-filter')?.value
+            || getSelectedLabels().length > 0 || getExcludedLabels().length > 0;
         if (!needsOptions) loadIssues();
         const labelsReady = populateLabelFilter().then(() => {
             // Re-apply label filter from URL after options are loaded
@@ -256,7 +262,13 @@ registerViews({
                 if (sprintFilter) sprintFilter.value = urlSprint;
             }
         });
-        if (needsOptions) Promise.all([labelsReady, sprintsReady]).then(() => loadIssues());
+        // A failed option load still loads the issues (review I2).
+        if (needsOptions) {
+            Promise.allSettled([labelsReady, sprintsReady]).then(() => loadIssues());
+        } else {
+            labelsReady.catch((e) => console.error('Failed to populate label filter:', e));
+            sprintsReady.catch((e) => console.error('Failed to update sprint filter:', e));
+        }
     },
     'query': () => {
         loadQueryView();

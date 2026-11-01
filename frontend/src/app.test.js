@@ -90,6 +90,8 @@ vi.mock('./issues-view.js', () => ({
     filterIssues: vi.fn(),
     updateGroupBy: vi.fn(),
     showCachedIssuesOrSkeleton: vi.fn(),
+    getSelectedLabels: vi.fn(() => []),
+    getExcludedLabels: vi.fn(() => []),
 }));
 vi.mock('./gate-approvals.js', () => ({ loadGateApprovals: vi.fn() }));
 vi.mock('./inbox.js', () => ({
@@ -229,7 +231,7 @@ vi.mock('./utils.js', () => ({
 
 // Import mocked modules so we can assert on them
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
-import { initFilterBar, loadIssues, loadFiltersFromUrl, populateLabelFilter, updateSprintFilter, showCachedIssuesOrSkeleton } from './issues-view.js';
+import { initFilterBar, loadIssues, loadFiltersFromUrl, populateLabelFilter, updateSprintFilter, showCachedIssuesOrSkeleton, getSelectedLabels, getExcludedLabels } from './issues-view.js';
 import { loadTeamMembers, loadTeamAgents, loadTeamInvitations } from './teams.js';
 import { loadApiKeys } from './api-keys.js';
 import { loadAgents } from './agents.js';
@@ -367,6 +369,30 @@ describe('app.js view registrations', () => {
             await Promise.resolve();
             expect(loadIssues).not.toHaveBeenCalled();
             releaseLabels();
+            await vi.waitFor(() => expect(loadIssues).toHaveBeenCalledTimes(1));
+        });
+
+        // PR #506 review I1: Back from Board keeps a label-free query
+        // string while the dropdown still has labels checked.
+        it.each([
+            ['a checked label', () => getSelectedLabels.mockReturnValueOnce(['l1'])],
+            ['a checked excluded label', () => getExcludedLabels.mockReturnValueOnce(['l1'])],
+        ])('waits for the options with %s and none in the address', async (_name, check) => {
+            history.replaceState(null, '', '/issues?project=p1');
+            check();
+            populateLabelFilter.mockReturnValueOnce(new Promise(() => {}));
+            loadIssues.mockClear();
+            registeredViews['issues']();
+            await Promise.resolve();
+            expect(loadIssues).not.toHaveBeenCalled();
+        });
+
+        // PR #506 review I2: a failed option load must not strand the list.
+        it('still loads the issues when an option load fails', async () => {
+            history.replaceState(null, '', '/issues?label=l1');
+            populateLabelFilter.mockReturnValueOnce(Promise.reject(new Error('labels down')));
+            loadIssues.mockClear();
+            registeredViews['issues']();
             await vi.waitFor(() => expect(loadIssues).toHaveBeenCalledTimes(1));
         });
 

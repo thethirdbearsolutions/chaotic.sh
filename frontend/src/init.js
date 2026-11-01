@@ -17,7 +17,7 @@ import { showOnboarding, hasCompletedOnboarding } from './onboarding.js';
 import { consentRequestId, showConsent } from './oauth-consent.js';
 import { hideInvite, isInviteAddress, showInvite, showMissingToken, takeInviteToken } from './invite.js';
 import { initRouter, primeRoute } from './router.js';
-import { getCurrentUser, setCurrentUser, setCurrentTeam } from './state.js';
+import { getCurrentUser, setCurrentUser, setCurrentTeam, setCurrentView } from './state.js';
 import { showToast } from './ui.js';
 
 /**
@@ -109,6 +109,9 @@ export async function initApp({ teamId, teamsRequest = null } = {}) {
         showOnboarding();
         return;
     }
+    // primeRoute() left no view current; with no team to load, nothing
+    // routes, so restore the old default (PR #506 review M3).
+    if (teams.length === 0) setCurrentView('my-issues');
     try {
         if (teams.length > 0) {
             const team = (teamId && teams.find((t) => t.id === teamId)) || teams[0];
