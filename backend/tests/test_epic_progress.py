@@ -187,3 +187,150 @@ async def test_a_hand_set_status_is_reported(client, interactive_headers, test_p
     await _patch(client, h, epic["id"], status="todo")
     [row] = (await client.get(f"/api/projects/{test_project.id}/epics", headers=h)).json()["epics"]
     assert row["status"] == "todo" and row["status_pinned"] is True
+
+
+# --- CHT-1922: counts computed in SQL match the per-issue walk -------------
+
+_OPEN_VALUES = ("backlog", "todo", "in_progress", "in_review")
+
+
+def _reference(rows, scope):
+    """The per-issue walk epic_progress did in Python before CHT-1922:
+    each in-scope issue's nearest epic ancestor; a cycle, or a parent
+    missing or outside the scope, ends the walk with none."""
+    by_id = {r["id"]: r for r in rows if r["project_id"] in scope}
+    owner_of, counts, untracked_open = {}, {}, {}
+    for r in by_id.values():
+        seen, cur, owner = set(), r["parent_id"], None
+        while cur is not None and cur in by_id and cur not in seen:
+            seen.add(cur)
+            if by_id[cur]["epic"]:
+                owner = cur
+                break
+            cur = by_id[cur]["parent_id"]
+        owner_of[r["id"]] = owner
+        if owner is None:
+            if not r["epic"] and r["status"] in _OPEN_VALUES:
+                untracked_open[r["project_id"]] = untracked_open.get(r["project_id"], 0) + 1
+            continue
+        c = counts.setdefault(owner, {"total": 0, "pts": 0, "pts_done": 0})
+        c["total"] += 1
+        c[r["status"]] = c.get(r["status"], 0) + 1
+        if r["status"] != "canceled":
+            pts = r["estimate"] if r["estimate"] is not None else 1
+            c["pts"] += pts
+            if r["status"] == "done":
+                c["pts_done"] += pts
+    return owner_of, counts, untracked_open
+
+
+@pytest.mark.asyncio
+async def test_sql_counts_match_the_walk_on_a_random_forest(test_project, test_team, test_user, db):
+    import random
+    from datetime import datetime, timezone
+    from app.enums import IssueStatus, IssueType
+    from app.oxyde_models.issue import OxydeBudgetTransaction, OxydeIssue
+    from app.oxyde_models.project import OxydeProject
+    from app.oxyde_models.sprint import OxydeSprint
+    from app.services.epic_progress import epic_progress
+
+    rng = random.Random(1922)
+    second = await OxydeProject.objects.create(team_id=test_team.id, name="Second", key="SEC")
+    outside = await OxydeProject.objects.create(team_id=test_team.id, name="Outside", key="OUT")
+    projects = [test_project, second, outside]
+    scope = {test_project.id, second.id}
+    sprints = {}
+    for p in (test_project, second):
+        sprints[p.id] = await OxydeSprint.objects.create(
+            project_id=p.id, name=f"{p.key} now", status=SprintStatus.ACTIVE,
+            activated_at=datetime.now(timezone.utc),
+        )
+
+    rows = []
+    for n in range(1, 201):
+        project = rng.choice(projects)
+        # Parents may be in any project, so walks cross into the second
+        # project (followed) and into the outside one (stops).
+        parent = rng.choice(rows)["id"] if rows and rng.random() < 0.8 else None
+        epic = rng.random() < 0.15
+        status = rng.choice(list(IssueStatus))
+        estimate = rng.choice([None, 0, 1, 2, 4])
+        issue = await OxydeIssue.objects.create(
+            project_id=project.id, identifier=f"{project.key}-{n}", number=n,
+            title=f"Issue {n}", status=status, estimate=estimate, parent_id=parent,
+            issue_type=IssueType.EPIC if epic else IssueType.TASK, creator_id=test_user.id,
+        )
+        rows.append({"id": issue.id, "parent_id": parent, "epic": epic, "project_id": project.id,
+                     "status": status.value, "estimate": estimate})
+
+    in_scope = [r for r in rows if r["project_id"] in scope]
+    # A cycle with no epic and children under it; another with an epic in it.
+    a, b, c, d, e = in_scope[:5]
+    for x, y in ((a, b), (b, a), (c, d), (d, e), (e, c)):
+        await OxydeIssue.objects.filter(id=x["id"]).update(parent_id=y["id"])
+        x["parent_id"] = y["id"]
+    for x, epic in ((a, False), (b, False), (c, False), (d, True), (e, False)):
+        await OxydeIssue.objects.filter(id=x["id"]).update(issue_type=IssueType.EPIC if epic else IssueType.TASK)
+        x["epic"] = epic
+    for child in in_scope[5:15]:
+        target = rng.choice((a, b, c))
+        await OxydeIssue.objects.filter(id=child["id"]).update(parent_id=target["id"])
+        child["parent_id"] = target["id"]
+
+    # Closes this sprint, for the ticks; some twice (counted once).
+    closed = rng.sample(in_scope, 40)
+    for r in closed + closed[:5]:
+        sprint = sprints[r["project_id"]]
+        pts = r["estimate"] if r["estimate"] is not None else 1
+        await OxydeBudgetTransaction.objects.create(
+            sprint_id=sprint.id, issue_id=r["id"], points=pts,
+            issue_identifier="X", issue_title="X", sprint_name=sprint.name,
+        )
+
+    owner_of, expected, expected_untracked = _reference(rows, scope)
+    got = await epic_progress([test_project.id, second.id])
+    by_id = {e.id: e for e in got.epics}
+    assert set(by_id) == {r["id"] for r in in_scope if r["epic"]}
+    fields = ("total", "backlog", "todo", "in_progress", "in_review", "done", "canceled")
+    for epic_id, e in by_id.items():
+        want = expected.get(epic_id, {})
+        assert tuple(getattr(e.children, f) for f in fields) == tuple(want.get(f, 0) for f in fields), epic_id
+        assert (e.points_total, e.points_done) == (want.get("pts", 0), want.get("pts_done", 0)), epic_id
+        # "This sprint" is the epic's own project's: a close charged to
+        # another project's sprint is in that sprint's ticks instead.
+        ticked = {r["id"]: r for r in closed
+                  if owner_of[r["id"]] == epic_id and r["project_id"] == e.project_id}
+        assert e.closed_this_sprint == len(ticked), epic_id
+        assert e.points_this_sprint == sum(
+            r["estimate"] if r["estimate"] is not None else 1 for r in ticked.values()), epic_id
+    for u in got.untracked:
+        assert u.open == expected_untracked.get(u.project_id, 0)
+        ticked = [r for r in closed if owner_of[r["id"]] is None and r["project_id"] == u.project_id]
+        assert u.closed_this_sprint == len(ticked)
+    # The cycle with an epic in it resolves to that epic.
+    assert owner_of[c["id"]] == d["id"] and by_id[d["id"]].children.total >= 2
+
+
+@pytest.mark.asyncio
+async def test_a_cycle_under_many_issues_stays_cheap(test_project, test_user, db):
+    """A corrupt cycle used to cost the depth bound for every issue on or
+    under it; UNION ends it after one lap (CHT-1922 review)."""
+    import time
+    from app.enums import IssueType
+    from app.oxyde_models.issue import OxydeIssue
+    from app.services.epic_progress import epic_progress
+
+    a = await OxydeIssue.objects.create(project_id=test_project.id, identifier="T-1", number=1,
+                                        title="a", issue_type=IssueType.TASK, creator_id=test_user.id)
+    b = await OxydeIssue.objects.create(project_id=test_project.id, identifier="T-2", number=2,
+                                        title="b", parent_id=a.id, issue_type=IssueType.TASK,
+                                        creator_id=test_user.id)
+    await OxydeIssue.objects.filter(id=a.id).update(parent_id=b.id)
+    for n in range(3, 303):
+        await OxydeIssue.objects.create(project_id=test_project.id, identifier=f"T-{n}", number=n,
+                                        title="c", parent_id=a.id, issue_type=IssueType.TASK,
+                                        creator_id=test_user.id)
+    started = time.monotonic()
+    got = await epic_progress([test_project.id])
+    assert time.monotonic() - started < 2
+    assert got.untracked[0].open == 302
