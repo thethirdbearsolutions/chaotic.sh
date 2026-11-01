@@ -12,8 +12,9 @@ semantic versioning, loosely. It is the release that was prepared as
 0.1.0a22, which never reached PyPI.
 
 Server, CLI, web UI and Android changes merged since a21 (PRs #260,
-#322-#329 and #331-#491). This release carries 24 database migrations
-(0020-0044; there is no 0035). Two of them refuse to run on data that breaks their rule
+#322-#329, #331-#474, #476-#484 and #486-#492; #492 reverted #475 and
+#485). This release carries 24 database migrations (0020-0044; there is
+no 0035). Two of them refuse to run on data that breaks their rule
 (0020: a dangling agent owner; 0022: two API keys sharing a hash), and
 several delete or rewrite rows, each reporting what it does in the
 upgrade output. It also changes which agent API keys still sign in.
@@ -328,9 +329,9 @@ previous code out again and restarts the server on it. chaotic.thirdbearsolution
 - **Accounts can no longer share an address that differs only in case**,
   enforced in the database (CHT-1804).
 - **Localhost invitation links** in the web UI and CLI (CHT-1822).
-- **An agent's project update can no longer undo a gate a person turned
-  on meanwhile**: it lands only if the settings it was checked against
-  are unchanged, else 409 (CHT-1926).
+- **A project update that turns a gate off can no longer undo someone
+  turning it on meanwhile**: it lands only while that gate still holds the
+  value it was read with, else 409 (CHT-1926).
 - **Label filters match non-ASCII names without case** (CHT-1920).
 - **Epic progress counts by nearest epic**, computed in SQL (CHT-1922).
 
