@@ -4,7 +4,7 @@
  * Extracted from app.js to decouple assignee logic from the main application module.
  */
 
-import { escapeHtml } from './utils.js';
+import { escapeHtml, escapeAttr } from './utils.js';
 
 let assignees = [];
 
@@ -137,7 +137,7 @@ export function updateAssigneeFilter({ keepId = null } = {}) {
     `;
 
     getAssigneeOptionList({ keepId: currentSelection }).forEach(({ assignee, indent }) => {
-        options += `<option value="${assignee.id}">${formatAssigneeOptionLabel(assignee, indent)}</option>`;
+        options += `<option value="${escapeAttr(assignee.id)}">${formatAssigneeOptionLabel(assignee, indent)}</option>`;
     });
 
     assigneeFilter.innerHTML = options;
