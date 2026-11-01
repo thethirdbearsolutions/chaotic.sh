@@ -513,13 +513,13 @@ import io.ktor.http.ParametersBuilder
         /**
         * GET /api/teams/{team_id}/roster
         * Team Roster
-        * Everyone on the team, people and agents, each with the identity they wrote for themselves (CHT-1980): name, avatar, pronouns, tagline, bio and @handle. People first (owners, admins, members), then agents, each by name. Deactivated accounts are left out.  Readable by anyone in the team directory (CHT-1780), project-scoped agents included; anyone else gets the missing team&#39;s 404 (CHT-1785), through &#x60;&#x60;visible_team&#x60;&#x60; as its sibling &#x60;&#x60;/teams/{id}/agents&#x60;&#x60; does, so the roster and the agent list answer an outsider alike. No addresses: the roster is who people are, not how to mail them. An agent&#39;s owner is named even when deactivated: it is who made it.
+        * Everyone on the team, people and agents, each with the identity they wrote for themselves (CHT-1980): name, avatar, pronouns, tagline, bio and @handle. People first (owners, admins, members), then agents, each by name. Deactivated accounts are left out, and so are idle session identities unless &#x60;&#x60;include_idle&#x60;&#x60;: a roster is who to ask, and sessions pile up (PR #516 review).  Readable by anyone in the team directory (CHT-1780), project-scoped agents included; anyone else gets the missing team&#39;s 404 (CHT-1785), through &#x60;&#x60;visible_team&#x60;&#x60; as its sibling &#x60;&#x60;/teams/{id}/agents&#x60;&#x60; does, so the roster and the agent list answer an outsider alike. No addresses: the roster is who people are, not how to mail them. An agent&#39;s owner is named even when deactivated: it is who made it.
          * @param teamId  
-         * @param hideIdle Leave out idle session identities (keys unused for 7 days). (optional, default to false)
+         * @param includeIdle Also list idle session identities (keys unused for 7 days); left out by default. (optional, default to false)
          * @return kotlin.collections.List<RosterEntry>
         */
             @Suppress("UNCHECKED_CAST")
-        open suspend fun teamRosterApiTeamsTeamIdRosterGet(teamId: kotlin.String, hideIdle: kotlin.Boolean? = false): HttpResponse<kotlin.collections.List<RosterEntry>> {
+        open suspend fun teamRosterApiTeamsTeamIdRosterGet(teamId: kotlin.String, includeIdle: kotlin.Boolean? = false): HttpResponse<kotlin.collections.List<RosterEntry>> {
 
             val localVariableAuthNames = listOf<String>("HTTPBearer")
 
@@ -527,7 +527,7 @@ import io.ktor.http.ParametersBuilder
                     io.ktor.client.utils.EmptyContent
 
             val localVariableQuery = mutableMapOf<String, List<String>>()
-            hideIdle?.apply { localVariableQuery["hide_idle"] = listOf("$hideIdle") }
+            includeIdle?.apply { localVariableQuery["include_idle"] = listOf("$includeIdle") }
 
             val localVariableHeaders = mutableMapOf<String, String>()
 

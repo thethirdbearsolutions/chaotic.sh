@@ -344,8 +344,8 @@ class FakeBackend:
         entry["read_at"] = "now"
         return dict(entry)
 
-    async def get_team_roster(self, team_id, *, hide_idle):
-        self._rec("get_team_roster", team_id, hide_idle=hide_idle)
+    async def get_team_roster(self, team_id, *, include_idle):
+        self._rec("get_team_roster", team_id, include_idle=include_idle)
         return [dict(r) for r in self.roster]
 
     async def update_me(self, **fields):
@@ -1658,13 +1658,13 @@ class TestUnknownArgumentsAreRefused:
 
 async def test_team_roster_rows_are_compact_unless_detail():
     backend = FakeBackend()
-    compact = await _tools(backend)["team_roster"](hide_idle=True)
+    compact = await _tools(backend)["team_roster"](include_idle=True)
     full = await _tools(backend)["team_roster"](detail=True)
 
     assert compact["count"] == 2 and compact["truncated"] is False
     assert "bio" not in compact["members"][0] and compact["members"][0]["tagline"] == "Founder"
     assert full["members"][0]["bio"] == "Long bio."
-    assert ("get_team_roster", ("team-1",), {"hide_idle": True}) in backend.calls
+    assert ("get_team_roster", ("team-1",), {"include_idle": True}) in backend.calls
 
 
 @pytest.mark.parametrize("who", ["@piper", "@PIPER", "user-piper", "piper"])
@@ -1701,3 +1701,47 @@ async def test_profile_update_with_nothing_is_a_tool_input_error():
     result = await _tools(FakeBackend())["profile_update"]()
 
     assert result["error"]["error_code"] == "tool_input"
+
+
+async def test_team_member_refuses_a_shared_name_with_the_handles():
+    backend = FakeBackend()
+    backend.roster = [{**r, "name": "Sam"} for r in backend.roster]
+
+    result = await _tools(backend)["team_member"](who="sam")
+
+    assert result["error"]["error_code"] == "tool_input"
+    assert "@ada" in result["error"]["message"] and "@piper" in result["error"]["message"]
+    assert not any(c[0] == "resolve_assignee" for c in backend.calls)
+
+
+async def test_team_member_finds_a_roster_name_without_the_resolver():
+    """A name on the roster is found on the roster, so the caller finds
+    whom team_roster showed it, whatever the filter set holds."""
+    backend = FakeBackend()
+
+    entry = await _tools(backend)["team_member"](who="piper")
+
+    assert entry["user_id"] == "user-piper"
+    assert not any(c[0] == "resolve_assignee" for c in backend.calls)
+
+
+async def test_team_member_an_unknown_handle_skips_the_resolver():
+    backend = FakeBackend()
+
+    result = await _tools(backend)["team_member"](who="@nobody")
+
+    assert result["error"]["error_code"] == "tool_input"
+    assert not any(c[0] == "resolve_assignee" for c in backend.calls)
+
+
+async def test_profile_update_returns_user_id_as_the_roster_does():
+    result = await _tools(FakeBackend())["profile_update"](tagline="Hi")
+
+    assert result["user_id"] == "user-me" and "id" not in result
+
+
+async def test_profile_update_a_blank_avatar_clears_it():
+    backend = FakeBackend()
+    await _tools(backend)["profile_update"](avatar_url="   ")
+
+    assert ("update_me", (), {"avatar_url": None}) in backend.calls

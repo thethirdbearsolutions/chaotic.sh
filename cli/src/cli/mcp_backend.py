@@ -494,8 +494,8 @@ class RestBackend:
     async def mark_all_inbox_read(self, team_id: str | None) -> dict:
         return await self._call(self._client().mark_all_inbox_read, team_id)
 
-    async def get_team_roster(self, team_id: str, *, hide_idle: bool) -> list:
-        return await self._call(self._client().get_team_roster, team_id, hide_idle=hide_idle)
+    async def get_team_roster(self, team_id: str, *, include_idle: bool) -> list:
+        return await self._call(self._client().get_team_roster, team_id, include_idle=include_idle)
 
     async def update_me(self, **fields) -> dict:
         return await self._call(self._client().update_me, **fields)

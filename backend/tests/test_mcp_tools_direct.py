@@ -2244,11 +2244,31 @@ class TestErrorEnvelope:
 class TestProfileUpdate:
     """profile_update writes the caller's own identity (CHT-1982)."""
 
+    async def test_a_project_agent_finds_a_sibling_projects_agent_by_name(self, test_user, test_team, test_project):
+        """team_member finds by name whom team_roster shows the caller,
+        a sibling project's agent included (PR #516 review)."""
+        from app.oxyde_models.project import OxydeProject
+        from app.schemas.agent import AgentCreate
+        from app.services.agent_service import AgentService
+        from .mcp_principal import acting_as
+
+        sibling = await OxydeProject.objects.create(team_id=test_team.id, name="Sibling", key="SIBR")
+        service = AgentService()
+        local, _, _ = await service.create(AgentCreate(name="Local"), test_user, test_team.id, project_id=test_project.id)
+        await service.create(AgentCreate(name="Deployer"), test_user, test_team.id, project_id=sibling.id)
+
+        with acting_as(local):
+            listed = await tools.team_roster()
+            found = await tools.team_member(who="Deployer")
+
+        assert "Deployer" in {r["name"] for r in listed["members"]}
+        assert found.get("name") == "Deployer", found
+
     async def test_writes_and_returns_only_the_profile(self, test_user):
         result = await tools.profile_update(bio="I review migrations.", pronouns="they/them")
 
         assert result == {
-            "id": test_user.id, "name": test_user.name, "avatar_url": None, "pronouns": "they/them",
+            "user_id": test_user.id, "name": test_user.name, "avatar_url": None, "pronouns": "they/them",
             "tagline": None, "bio": "I review migrations.", "is_agent": False,
         }
 

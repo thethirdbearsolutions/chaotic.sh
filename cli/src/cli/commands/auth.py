@@ -213,7 +213,7 @@ def register(cli):
         }
         if "name" in changes and not changes["name"].strip():
             raise click.BadParameter("must not be blank", param_hint="--name")
-        if "avatar_url" in changes and changes["avatar_url"] == "":
+        if "avatar_url" in changes and not changes["avatar_url"].strip():
             changes["avatar_url"] = None
         user = _client().update_me(**changes) if changes else _client().get_me()
         if m.is_json_output():

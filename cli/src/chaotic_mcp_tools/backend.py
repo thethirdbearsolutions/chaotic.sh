@@ -278,7 +278,7 @@ class Backend(Protocol):
 
     # -- team roster and your own profile (CHT-1982) ------------------------------
 
-    async def get_team_roster(self, team_id: str, *, hide_idle: bool) -> list:
+    async def get_team_roster(self, team_id: str, *, include_idle: bool) -> list:
         """``GET /teams/{id}/roster``: people and agents with their
         self-written identities (CHT-1980)."""
 

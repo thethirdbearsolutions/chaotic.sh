@@ -24,11 +24,11 @@ def test_roster_lists_people_and_agents(cli_runner):
     from cli.main import cli, client
     client.get_team_roster = MagicMock(return_value=ROSTER)
 
-    result = cli_runner.invoke(cli, ["team", "roster", "--hide-idle"])
+    result = cli_runner.invoke(cli, ["team", "roster", "--all"])
 
     assert result.exit_code == 0, result.output
     client.get_team_roster.assert_called_once()
-    assert client.get_team_roster.call_args.kwargs["hide_idle"] is True
+    assert client.get_team_roster.call_args.kwargs["include_idle"] is True
     for text in ("Ada", "@ada", "she/her", "owner", "Founder", "🦉 Piper", "agent (session), idle"):
         assert text in result.output, text
     # A teammate's own text is never Rich markup.
@@ -130,14 +130,87 @@ def test_profile_refuses_a_blank_name(cli_runner):
 
 
 def test_whois_an_ambiguous_name_is_refused_not_guessed(cli_runner):
-    """A name two teammates answer to goes to the resolver, which refuses
-    it, rather than the roster picking one."""
+    """A name two teammates answer to is refused, with their handles,
+    rather than the roster picking one."""
     from cli.main import cli, client
-    client.get_team_roster = MagicMock(return_value=ROSTER)
-    client.get_team_members = MagicMock(return_value=[{"user_id": "u-ada-1111", "user_name": "Sam"}])
-    client.get_team_agents = MagicMock(return_value=[{"id": "a-piper-2222", "name": "Sam"}])
+    client.get_team_roster = MagicMock(return_value=[{**r, "name": "Sam"} for r in ROSTER])
 
-    result = cli_runner.invoke(cli, ["team", "whois", "Sam"])
+    result = cli_runner.invoke(cli, ["team", "whois", "sam"])
 
     assert result.exit_code != 0
     assert "Profile" not in result.output
+    assert "@ada" in result.output and "@piper" in result.output
+
+
+def test_roster_default_leaves_idle_sessions_to_the_server(cli_runner):
+    from cli.main import cli, client
+    client.get_team_roster = MagicMock(return_value=ROSTER[:1])
+
+    result = cli_runner.invoke(cli, ["team", "roster"])
+
+    assert result.exit_code == 0, result.output
+    assert not client.get_team_roster.call_args.kwargs["include_idle"]
+
+
+def test_whois_an_unknown_handle_is_not_on_the_roster(cli_runner):
+    """An @handle no one on the roster has is answered as a teammate,
+    never as a missing assignee."""
+    from cli.main import cli, client
+    client.get_team_roster = MagicMock(return_value=ROSTER)
+
+    result = cli_runner.invoke(cli, ["team", "whois", "@nobody"])
+
+    assert result.exit_code != 0
+    assert "not on this team's roster" in result.output
+    assert "Assignee" not in result.output
+
+
+def test_whois_a_bare_at_sign_matches_no_one(cli_runner):
+    from cli.main import cli, client
+    client.get_team_roster = MagicMock(return_value=[{**ROSTER[0], "mention_handle": None}])
+
+    result = cli_runner.invoke(cli, ["team", "whois", "@"])
+
+    assert result.exit_code != 0
+
+
+def test_whois_an_unknown_name_is_not_called_an_assignee(cli_runner):
+    from cli.main import cli, client
+    client.get_team_roster = MagicMock(return_value=ROSTER)
+    client.get_team_members = MagicMock(return_value=[])
+    client.get_team_agents = MagicMock(return_value=[])
+
+    result = cli_runner.invoke(cli, ["team", "whois", "Nobody"])
+
+    assert result.exit_code != 0
+    assert "not on this team's roster" in result.output
+
+
+def test_a_control_character_in_an_avatar_never_reaches_the_terminal(cli_runner):
+    from cli.main import cli, client
+    client.get_team_roster = MagicMock(return_value=[{**ROSTER[1], "avatar_url": "\x1b[2J🦉"}])
+
+    result = cli_runner.invoke(cli, ["team", "roster", "--all"])
+
+    assert result.exit_code == 0, result.output
+    assert "\x1b" not in result.output and "🦉" in result.output
+
+
+def test_whois_profile_text_is_not_markup(cli_runner):
+    from cli.main import cli, client
+    client.get_team_roster = MagicMock(return_value=[{**ROSTER[0], "bio": "[bold]loud[/bold]", "pronouns": "[red]x[/red]"}])
+
+    result = cli_runner.invoke(cli, ["team", "whois", "@ada"])
+
+    assert result.exit_code == 0, result.output
+    assert "[bold]loud[/bold]" in result.output and "[red]x[/red]" in result.output
+
+
+def test_profile_a_blank_avatar_clears_it(cli_runner):
+    from cli.main import cli, client
+    client.update_me = MagicMock(return_value=ME)
+
+    result = cli_runner.invoke(cli, ["auth", "profile", "--avatar", "   "])
+
+    assert result.exit_code == 0, result.output
+    client.update_me.assert_called_once_with(avatar_url=None)

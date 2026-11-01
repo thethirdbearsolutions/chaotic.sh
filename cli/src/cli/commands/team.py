@@ -33,7 +33,9 @@ def _who(name, user_id) -> str:
 def _avatar_name(entry) -> str:
     """The name, after the avatar when the avatar is an emoji (an image
     URL cannot show in a terminal)."""
-    avatar = entry.get("avatar_url") or ""
+    # Control characters never reach the terminal, whatever was stored
+    # before the server cleaned avatars (PR #516 review).
+    avatar = "".join(c for c in entry.get("avatar_url") or "" if unicodedata.category(c) != "Cc").strip()
     if avatar and len(avatar) <= 8 and "/" not in avatar:
         return f"{avatar} {entry['name']}"
     return entry["name"]
@@ -368,18 +370,19 @@ def register(cli):
         console.print(table)
 
     @team.command("roster")
-    @click.option("--hide-idle", is_flag=True, help="Leave out idle session identities.")
+    @click.option("--all", "show_all", is_flag=True, help="Also list idle session identities.")
     @_main().json_option
     @_main().require_team
     @_main().handle_error
-    def team_roster(hide_idle):
+    def team_roster(show_all):
         """Show everyone on the team, people and agents, with their identities.
 
         Each teammate writes their own: `chaotic auth profile`. See one in
-        full with `chaotic team whois <name>`.
+        full with `chaotic team whois <name>`. Idle session identities (keys
+        unused for 7 days) are left out unless --all.
         """
         m = _main()
-        roster = _client().get_team_roster(m.get_current_team(), hide_idle=hide_idle)
+        roster = _client().get_team_roster(m.get_current_team(), include_idle=show_all)
         if m.is_json_output():
             m.output_json(roster)
             return
@@ -408,12 +411,19 @@ def register(cli):
         WHO is a name, @handle, email, user ID (or prefix), or `me`.
         """
         m = _main()
-        roster = _client().get_team_roster(m.get_current_team())
-        from chaotic_mcp_tools.tools.team import roster_match
+        roster = _client().get_team_roster(m.get_current_team(), include_idle=True)
+        from chaotic_mcp_tools.tools.team import ambiguous_message, roster_lookup
 
-        entry = roster_match(roster, who)
-        if entry is None:
-            user_id = m.resolve_assignee_id(who)
+        hits = roster_lookup(roster, who)
+        if len(hits) > 1:
+            raise click.ClickException(ambiguous_message(who, hits))
+        entry = hits[0] if hits else None
+        if entry is None and not who.strip().startswith("@"):
+            # An email, `me` or an id prefix: the resolver knows those.
+            try:
+                user_id = m.resolve_assignee_id(who)
+            except click.ClickException:
+                user_id = None  # answered below, as a teammate, not an assignee
             entry = next((e for e in roster if e["user_id"] == user_id), None)
         if entry is None:
             raise click.ClickException(f"{who!r} is not on this team's roster.")

@@ -1020,9 +1020,10 @@ MCP_PROBES = [
             *extra,
         )
     ],
-    # team_member reads the team directory, which lists every agent of the
-    # team, a sibling project's included (CHT-1780), so the sibling's
-    # agent is in scope there and not probed.
+    # team_member reads the roster, which is the team directory: every
+    # agent of the team, a sibling project's included (CHT-1780). It finds
+    # whom the roster shows by handle, id and name alike (PR #516 review),
+    # so the sibling's agent is in scope there and not probed.
     *[
         ("team_member", {"who": "{" + placeholder + "}"}, placeholder)
         for placeholder in ("user", "user_email", "user_name", "agent", "agent_email", "agent_name")
@@ -1132,7 +1133,7 @@ MCP_NOT_ROW_KEYED = {
     ("inbox_mark_read", "entry_id"): _OWN_INBOX,
     ("activity_recent", "limit"): _MCP_PAGING,
     ("project_list", "detail"): _MCP_PAGING,
-    ("team_roster", "hide_idle"): _MCP_VALUE,
+    ("team_roster", "include_idle"): _MCP_VALUE,
     ("team_roster", "detail"): _MCP_PAGING,
     # Your own profile (CHT-1982): values written to the caller's own row.
     **{("profile_update", a): _MCP_VALUE for a in ("name", "avatar_url", "pronouns", "tagline", "bio")},

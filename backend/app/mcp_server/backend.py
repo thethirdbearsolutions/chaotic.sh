@@ -596,8 +596,8 @@ class InProcessBackend:
     # -- team roster and your own profile (CHT-1982) ------------------------------
 
     @_translated(teams_api.team_roster)
-    async def get_team_roster(self, team_id: str, *, hide_idle: bool) -> list:
-        return _dump_list(await teams_api.team_roster(team_id=team_id, current_user=self._user, hide_idle=hide_idle))
+    async def get_team_roster(self, team_id: str, *, include_idle: bool) -> list:
+        return _dump_list(await teams_api.team_roster(team_id=team_id, current_user=self._user, include_idle=include_idle))
 
     @_translated(users_api.update_me)
     async def update_me(self, **fields) -> dict:

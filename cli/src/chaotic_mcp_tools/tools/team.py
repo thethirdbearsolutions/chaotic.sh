@@ -22,7 +22,8 @@ DETAIL_ROSTER_DESC = (
     "Use team_member for one teammate in full."
 )
 # What profile_update returns: the identity just written, not the account.
-PROFILE_FIELDS = ("id", "name", "avatar_url", "pronouns", "tagline", "bio", "is_agent")
+# `user_id` is the account's `id`, named as the roster names it.
+PROFILE_FIELDS = ("user_id", "name", "avatar_url", "pronouns", "tagline", "bio", "is_agent")
 # The roster of one team is small; this is a ceiling, not a page.
 ROSTER_LIMIT = 1000
 
@@ -30,7 +31,9 @@ ROSTER_LIMIT = 1000
 async def team_roster(
     backend: Backend,
     team: Annotated[str | None, Field(description=TEAM_FIELD_DESC)] = None,
-    hide_idle: Annotated[bool, Field(description="Leave out idle session identities (keys unused for 7 days).")] = False,
+    include_idle: Annotated[
+        bool, Field(description="Also list idle session identities (keys unused for 7 days); left out by default.")
+    ] = False,
     detail: Annotated[bool, Field(description=DETAIL_ROSTER_DESC)] = False,
 ) -> dict:
     """List everyone on the team, people and agents, with the identity
@@ -41,23 +44,41 @@ async def team_roster(
     role, then agents, each by name. Write your own with profile_update.
     """
     team_id = await backend.resolve_member_team(team)
-    roster = await backend.get_team_roster(team_id, hide_idle=hide_idle)
+    roster = await backend.get_team_roster(team_id, include_idle=include_idle)
     return listing("members", roster, ROSTER_LIMIT, COMPACT_ROSTER_FIELDS, detail)
 
 
-def roster_match(roster: list, who: str) -> dict | None:
-    """The entry `who` names when it is an @handle or an exact id; None
-    otherwise. A bare name goes to the assignee resolver instead, which
-    weighs names, emails and handles together and refuses an ambiguous
-    one, so this lookup can never pick one of two teammates silently.
-    Shared by the CLI's `team whois`."""
-    wanted = who.strip()
+def roster_lookup(roster: list, who: str) -> list:
+    """The roster entries `who` names: an @handle, an exact id, a name
+    (any case), or a handle typed without its @. Several entries when
+    a name is shared; the caller refuses that rather than pick one.
+
+    Matched against the roster itself, so it finds exactly whom the
+    roster shows: a sibling project's agent that a project-scoped caller
+    sees there, and never a deactivated teammate the roster leaves out
+    (PR #516 review). Shared by the CLI's `team whois`."""
+    wanted = " ".join(who.split())
+    if not wanted:
+        return []
+
+    def by_handle(handle: str) -> list:
+        handle = handle.casefold()
+        return [e for e in roster if handle and (e.get("mention_handle") or "").casefold() == handle]
+
     if wanted.startswith("@"):
-        handle = wanted[1:].lower()
-        hits = [e for e in roster if (e.get("mention_handle") or "").lower() == handle]
-    else:
-        hits = [e for e in roster if e.get("user_id") == wanted]
-    return hits[0] if len(hits) == 1 else None
+        return by_handle(wanted[1:])
+    by_id = [e for e in roster if e.get("user_id") == wanted]
+    if by_id:
+        return by_id
+    folded = wanted.casefold()
+    by_name = [e for e in roster if " ".join((e.get("name") or "").split()).casefold() == folded]
+    return by_name or by_handle(wanted)
+
+
+def ambiguous_message(who: str, hits: list) -> str:
+    """Why `who` was refused: it names several teammates, by handle."""
+    handles = ", ".join(f"@{e['mention_handle']}" for e in hits if e.get("mention_handle"))
+    return f"{who!r} names {len(hits)} teammates; use one of their handles: {handles}."
 
 
 async def team_member(
@@ -74,9 +95,13 @@ async def team_member(
     what they wrote about how they work. 'me' shows your own.
     """
     team_id = await backend.resolve_member_team(team)
-    roster = await backend.get_team_roster(team_id, hide_idle=False)
-    entry = roster_match(roster, who)
-    if entry is None:
+    roster = await backend.get_team_roster(team_id, include_idle=True)
+    hits = roster_lookup(roster, who)
+    if len(hits) > 1:
+        raise ToolInputError(ambiguous_message(who, hits))
+    entry = hits[0] if hits else None
+    if entry is None and not who.strip().startswith("@"):
+        # An email, 'me' or an id prefix: the resolver knows those.
         user_id = await backend.resolve_assignee(who, team_id, purpose="filter")
         entry = next((e for e in roster if e.get("user_id") == user_id), None)
     if entry is None:
@@ -112,7 +137,8 @@ async def profile_update(
     }
     if not fields:
         raise ToolInputError("Pass at least one of name, avatar_url, pronouns, tagline, bio.")
-    if fields.get("avatar_url") == "":
+    if "avatar_url" in fields and not fields["avatar_url"].strip():
         fields["avatar_url"] = None
     me = await backend.update_me(**fields)
-    return {key: me.get(key) for key in PROFILE_FIELDS}
+    # `user_id`, as on the roster rows, so the two compare (PR #516 review).
+    return {"user_id": me.get("id"), **{key: me.get(key) for key in PROFILE_FIELDS[1:]}}

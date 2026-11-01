@@ -422,10 +422,11 @@ class Client:
     def get_team_members(self, team_id: str, skip: int | None = None, limit: int | None = None) -> list:
         return self._request("GET", self._with_query(f"/teams/{team_id}/members", skip=skip, limit=limit))
 
-    def get_team_roster(self, team_id: str, hide_idle: bool | None = None) -> list:
+    def get_team_roster(self, team_id: str, include_idle: bool | None = None) -> list:
         """Everyone on the team, people and agents, with the identity each
-        wrote for themselves (CHT-1980)."""
-        return self._request("GET", self._with_query(f"/teams/{team_id}/roster", hide_idle=hide_idle or None))
+        wrote for themselves (CHT-1980). Idle session identities only with
+        `include_idle`."""
+        return self._request("GET", self._with_query(f"/teams/{team_id}/roster", include_idle=include_idle or None))
 
     def remove_member(self, team_id: str, user_id: str):
         return self._request("DELETE", f"/teams/{team_id}/members/{user_id}")

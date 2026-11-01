@@ -1910,10 +1910,10 @@
             "title": "Detail",
             "type": "boolean"
           },
-          "hide_idle": {
+          "include_idle": {
             "default": false,
-            "description": "Leave out idle session identities (keys unused for 7 days).",
-            "title": "Hide Idle",
+            "description": "Also list idle session identities (keys unused for 7 days); left out by default.",
+            "title": "Include Idle",
             "type": "boolean"
           }
         },

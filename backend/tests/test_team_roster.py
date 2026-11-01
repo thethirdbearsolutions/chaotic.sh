@@ -76,12 +76,13 @@ async def test_idle_sessions_are_marked_and_can_be_hidden(client, auth_headers, 
     await OxydeAPIKey.objects.filter(principal_user_id=session_id).update(last_used_at=long_ago, created_at=long_ago)
     await OxydeUser.objects.filter(id=session_id).update(created_at=long_ago)
 
-    full = await client.get(f"/api/teams/{test_team.id}/roster", headers=auth_headers)
-    hidden = await client.get(f"/api/teams/{test_team.id}/roster?hide_idle=true", headers=auth_headers)
+    full = await client.get(f"/api/teams/{test_team.id}/roster?include_idle=true", headers=auth_headers)
+    default = await client.get(f"/api/teams/{test_team.id}/roster", headers=auth_headers)
 
     session = next(r for r in full.json() if r["user_id"] == session_id)
     assert session["idle"] is True and session["kind"] == "session"
-    assert session_id not in {r["user_id"] for r in hidden.json()}
+    # Left out unless asked for: sessions pile up (PR #516 review).
+    assert session_id not in {r["user_id"] for r in default.json()}
 
 
 async def test_an_outsider_gets_the_missing_teams_404(client, auth_headers2, test_team):
@@ -120,7 +121,7 @@ async def test_no_row_carries_an_address_or_session_ref(client, auth_headers, te
     registrar = await _agent(client, auth_headers, test_team, "Registrar", can_register=True)
     await client.post("/api/agents/register", json={"external_ref": REF}, headers=_bearer(registrar["api_key"]))
 
-    roster = await client.get(f"/api/teams/{test_team.id}/roster", headers=auth_headers)
+    roster = await client.get(f"/api/teams/{test_team.id}/roster?include_idle=true", headers=auth_headers)
 
     assert len(roster.json()) == 3
     for row in roster.json():
@@ -133,3 +134,64 @@ async def test_an_agent_holding_a_membership_shows_its_role(client, auth_headers
 
     row = next(r for r in roster.json() if r["user_id"] == agent_user.id)
     assert row["is_agent"] is True and row["role"] == "owner"
+
+
+# Review of #516: order, guests, handles, avatars.
+
+
+async def test_teammates_of_one_name_keep_their_order(client, auth_headers, test_team):
+    for i in range(3):
+        await _agent(client, auth_headers, test_team, f"Twin {i}")
+    # Same name in the database: the rule against it guards the API.
+    await OxydeUser.objects.filter(name__startswith="Twin").update(name="Twin")
+
+    orders = {
+        tuple(r["user_id"] for r in (await client.get(f"/api/teams/{test_team.id}/roster", headers=auth_headers)).json())
+        for _ in range(3)
+    }
+
+    assert len(orders) == 1
+    twins = [r["user_id"] for r in (await client.get(f"/api/teams/{test_team.id}/roster", headers=auth_headers)).json() if r["name"] == "Twin"]
+    assert twins == sorted(twins)
+
+
+async def test_another_teams_agent_with_a_membership_is_listed(client, auth_headers, test_team, test_user2):
+    from app.oxyde_models.team import OxydeTeam
+
+    other = await OxydeTeam.objects.create(name="Other", key="OTHR")
+    guest = await OxydeUser.objects.create(
+        email="visitor@agents.example.com", hashed_password="x", name="Visitor", is_agent=True,
+        agent_team_id=other.id, parent_user_id=test_user2.id,
+    )
+    await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=guest.id, role=TeamRole.MEMBER)
+
+    roster = (await client.get(f"/api/teams/{test_team.id}/roster", headers=auth_headers)).json()
+
+    row = next(r for r in roster if r["user_id"] == guest.id)
+    assert row["is_agent"] is True and row["role"] == "member"
+    assert row["owner_name"] == test_user2.name
+
+
+async def test_handles_match_the_members_list(client, auth_headers, test_team):
+    await _agent(client, auth_headers, test_team, "Scout")
+
+    roster = (await client.get(f"/api/teams/{test_team.id}/roster", headers=auth_headers)).json()
+    members = (await client.get(f"/api/teams/{test_team.id}/members", headers=auth_headers)).json()
+
+    by_member = {m["user_id"]: m["mention_handle"] for m in members}
+    for row in roster:
+        if row["user_id"] in by_member:
+            assert row["mention_handle"] == by_member[row["user_id"]]
+        assert row["mention_handle"]
+
+
+async def test_avatars_are_cleaned_and_blank_clears(client, auth_headers):
+    cleaned = await client.patch("/api/users/me", json={"avatar_url": "\x1b[2J🦉"}, headers=auth_headers)
+    assert cleaned.json()["avatar_url"] == "[2J🦉"
+
+    cleared = await client.patch("/api/users/me", json={"avatar_url": "   "}, headers=auth_headers)
+    assert cleared.json()["avatar_url"] is None
+
+    await client.patch("/api/users/me", json={"avatar_url": "🦉"}, headers=auth_headers)
+    nulled = await client.patch("/api/users/me", json={"avatar_url": None}, headers=auth_headers)
+    assert nulled.json()["avatar_url"] is None

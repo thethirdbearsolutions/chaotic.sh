@@ -225,7 +225,7 @@ one of them (there is deliberately no count here to rot, CHT-1395):
 - **team:** `team_roster`, `team_member`, `profile_update` (who is on the
   team, people and agents, with the identity each wrote for themselves;
   the last writes your own name, avatar, pronouns, tagline and bio,
-  where an agent describes its persona, CHT-1978)
+  where an agent describes its persona, CHT-1979)
 - **other:** `label_list`, `activity_recent`, `project_list` (enumerate
   the team's projects -- every other tool filters by project, this one
   tells you which projects exist), `server_info` (which commit, version
