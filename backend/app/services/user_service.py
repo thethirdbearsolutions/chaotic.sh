@@ -356,7 +356,14 @@ class UserService:
         for field, value in update_data.items():
             setattr(user, field, value)
         user.updated_at = datetime.now(timezone.utc)
-        await user.save(update_fields=set(update_data.keys()) | {"updated_at"})
+        if "avatar_url" in update_data:
+            from app.db.transactions import atomic
+            from app.services.avatar_service import AvatarService
+            async with atomic():
+                await user.save(update_fields=set(update_data.keys()) | {"updated_at"})
+                await AvatarService.drop_unless_pointed(user.id, user.avatar_url)
+        else:
+            await user.save(update_fields=set(update_data.keys()) | {"updated_at"})
         if "name" in update_data:
             # Inbox entries show who triggered them (CHT-1607).
             from app.services.inbox_service import InboxService
@@ -533,6 +540,9 @@ class UserService:
             # agents (CHT-1537).
             await OxydeAPIKey.objects.filter(principal_user_id=user.id).delete()
             await OxydeAPIKey.objects.filter(holder_user_id=user.id).delete()
+            # Their pictures, and their agents' (CHT-1992).
+            from app.services.avatar_service import AvatarService
+            await AvatarService.forget([user.id, *(agent.id for agent in agents)])
             await user.delete()
         # Their address is free now: an account 0034 left without one,
         # at the same address ignoring case, takes it (CHT-1827).

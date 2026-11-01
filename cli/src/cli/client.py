@@ -304,6 +304,7 @@ class Client:
 
     def _request(
         self, method: str, path: str, data: dict = None, *, as_configured: bool = False,
+        content: bytes | None = None,
     ) -> dict | None:
         """Make API request.
 
@@ -353,6 +354,10 @@ class Client:
                     kwargs["json"] = data
                 if timeout is not None:
                     kwargs["timeout"] = timeout
+                if content is not None:
+                    # A raw body (a profile picture, CHT-1992).
+                    kwargs["content"] = content
+                    kwargs["headers"] = {**kwargs["headers"], "Content-Type": "application/octet-stream"}
                 return send(url, **kwargs)
 
             # One write's attempts, the key and the deadline included,
@@ -636,6 +641,14 @@ class Client:
 
     def update_me(self, **kwargs) -> dict:
         return self._request("PATCH", "/users/me", kwargs)
+
+    def upload_avatar(self, data: bytes) -> dict:
+        """Upload your own profile picture (CHT-1992)."""
+        return self._request("PUT", "/users/me/avatar", content=data)
+
+    def delete_avatar(self) -> dict:
+        """Remove your uploaded profile picture (CHT-1992)."""
+        return self._request("DELETE", "/users/me/avatar")
 
     def delete_me(self):
         return self._request("DELETE", "/users/me")

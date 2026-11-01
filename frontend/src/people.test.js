@@ -10,6 +10,9 @@ import {
   showEditProfileModal,
   profilePayload,
   handleSaveProfile,
+  handlePickPhoto,
+  handleRemovePhoto,
+  resizePhoto,
   getRoster,
   resetPeople,
 } from './people.js';
@@ -24,6 +27,8 @@ vi.mock('./api.js', () => ({
     updateMe: vi.fn(),
     updateAgent: vi.fn(),
     getTeamIssues: vi.fn(),
+    uploadAvatar: vi.fn(),
+    deleteAvatar: vi.fn(),
   },
 }));
 
@@ -498,5 +503,209 @@ describe('loadPersonIssues', () => {
     await viewPerson('u-sam');
     await new Promise(r => setTimeout(r, 0));
     expect(document.getElementById('person-issues').textContent).toContain('Couldn’t load');
+  });
+});
+
+describe('profile photos', () => {
+  const SHA = 'a'.repeat(64);
+
+  it('offers photo controls on your own form only', async () => {
+    await loadPeople();
+
+    await showEditProfileModal('a-piper');
+    expect(document.getElementById('profile-photo')).toBeNull();
+
+    await showEditProfileModal('u-ada');
+    expect(document.getElementById('profile-photo')).not.toBeNull();
+    expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(true);
+  });
+
+  it('uploads the resized picture and shows it everywhere', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    const input = document.getElementById('profile-photo');
+    const file = new File(['x'], 'me.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    const resized = new Blob(['y'], { type: 'image/webp' });
+    const resize = vi.fn().mockResolvedValue(resized);
+    api.uploadAvatar.mockResolvedValue({ id: 'u-ada', avatar_url: `/api/avatars/${SHA}` });
+
+    await handlePickPhoto(input, resize);
+
+    expect(resize).toHaveBeenCalledWith(file);
+    expect(api.uploadAvatar).toHaveBeenCalledWith(resized);
+    expect(getCurrentUser().avatar_url).toBe(`/api/avatars/${SHA}`);
+    expect(updateUserInfo).toHaveBeenCalled();
+    expect(document.getElementById('profile-avatar').value).toBe(`/api/avatars/${SHA}`);
+    expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(false);
+    expect(getRoster().find(r => r.user_id === 'u-ada').avatar_url).toBe(`/api/avatars/${SHA}`);
+  });
+
+  it('does not resend the uploaded picture when the form is saved after', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    const input = document.getElementById('profile-photo');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'me.png')], configurable: true });
+    api.uploadAvatar.mockResolvedValue({ id: 'u-ada', avatar_url: `/api/avatars/${SHA}` });
+    await handlePickPhoto(input, vi.fn().mockResolvedValue(new Blob(['y'])));
+    document.getElementById('profile-tagline').value = 'Builder';
+    api.updateMe.mockResolvedValue({ id: 'u-ada', name: 'Ada', avatar_url: `/api/avatars/${SHA}`, tagline: 'Builder' });
+
+    await handleSaveProfile({ preventDefault: vi.fn(), target: document.querySelector('#modal-content form') });
+
+    expect(api.updateMe).toHaveBeenCalledWith({ tagline: 'Builder' });
+  });
+
+  it('reports a refused upload and keeps the old avatar', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    const input = document.getElementById('profile-photo');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'big.png')], configurable: true });
+    api.uploadAvatar.mockRejectedValue(Object.assign(new Error('Too large'), { status: 413 }));
+
+    await handlePickPhoto(input, vi.fn().mockResolvedValue(new Blob(['y'])));
+
+    expect(showApiError).toHaveBeenCalled();
+    expect(getCurrentUser().avatar_url).toBeNull();
+    expect(input.disabled).toBe(false);
+  });
+
+  it('leaves a form opened during the upload alone, and still updates you', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    const input = document.getElementById('profile-photo');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'me.png')], configurable: true });
+    let finish;
+    api.uploadAvatar.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+    const pending = handlePickPhoto(input, vi.fn().mockResolvedValue(new Blob(['y'])));
+    await new Promise(r => setTimeout(r, 0));
+
+    await showEditProfileModal('a-piper');
+    finish({ id: 'u-ada', avatar_url: `/api/avatars/${SHA}` });
+    await pending;
+
+    expect(document.getElementById('profile-avatar').value).toBe('🦉');
+    expect(getCurrentUser().avatar_url).toBe(`/api/avatars/${SHA}`);
+    await handleSaveProfile({ preventDefault: vi.fn(), target: document.querySelector('#modal-content form') });
+    expect(api.updateAgent).not.toHaveBeenCalled();
+  });
+
+  it('your own form opened during an upload waits for it, then shows it', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    const input = document.getElementById('profile-photo');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'me.png')], configurable: true });
+    let finish;
+    api.uploadAvatar.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+    const pending = handlePickPhoto(input, vi.fn().mockResolvedValue(new Blob(['y'])));
+    await new Promise(r => setTimeout(r, 0));
+
+    await showEditProfileModal('u-ada');
+    expect(document.getElementById('profile-photo-remove').disabled).toBe(true);
+    finish({ id: 'u-ada', avatar_url: `/api/avatars/${SHA}` });
+    await pending;
+
+    expect(document.getElementById('profile-avatar').value).toBe(`/api/avatars/${SHA}`);
+    expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('profile-photo-remove').disabled).toBe(false);
+  });
+
+  it('redraws your profile page with the new picture though the roster is not cached', async () => {
+    await viewPerson('u-ada');
+    api.uploadAvatar.mockResolvedValue({ id: 'u-ada', avatar_url: `/api/avatars/${SHA}` });
+    await showEditProfileModal('u-ada');
+    const input = document.getElementById('profile-photo');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'me.png')], configurable: true });
+
+    await handlePickPhoto(input, vi.fn().mockResolvedValue(new Blob(['y'])));
+
+    expect(document.querySelector('.person-profile img').getAttribute('src')).toBe(`/api/avatars/${SHA}`);
+  });
+
+  it('runs one photo change at a time', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    let finish;
+    api.deleteAvatar.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+
+    const first = handleRemovePhoto();
+    await handleRemovePhoto();
+    finish({ id: 'u-ada', avatar_url: null });
+    await first;
+
+    expect(api.deleteAvatar).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the photo', async () => {
+    setCurrentUser({ id: 'u-ada', name: 'Ada', avatar_url: `/api/avatars/${SHA}` });
+    api.getTeamRoster.mockResolvedValue([{ ...ADA, avatar_url: `/api/avatars/${SHA}` }]);
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(false);
+    api.deleteAvatar.mockResolvedValue({ id: 'u-ada', avatar_url: null });
+
+    await handleRemovePhoto();
+
+    expect(getCurrentUser().avatar_url).toBeNull();
+    expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(true);
+  });
+
+  it('renders an uploaded picture as an image', async () => {
+    api.getTeamRoster.mockResolvedValue([{ ...ADA, avatar_url: `/api/avatars/${SHA}` }]);
+
+    await loadPeople();
+
+    expect(document.querySelector('.person-card img').getAttribute('src')).toBe(`/api/avatars/${SHA}`);
+  });
+});
+
+describe('resizePhoto', () => {
+  function fakeCanvas(types) {
+    const ctx = { drawImage: vi.fn(), fillRect: vi.fn() };
+    return {
+      width: 0, height: 0,
+      getContext: () => ctx,
+      toBlob: (cb, type) => cb(types.includes(type) ? new Blob(['z'], { type }) : (types.includes('png') ? new Blob(['p'], { type: 'image/png' }) : null)),
+      ctx,
+    };
+  }
+
+  beforeEach(() => {
+    globalThis.createImageBitmap = vi.fn().mockResolvedValue({ width: 400, height: 300, close: vi.fn() });
+  });
+
+  it('centre-crops to a square and prefers WebP', async () => {
+    const canvas = fakeCanvas(['image/webp']);
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(canvas);
+
+    const blob = await resizePhoto(new File(['x'], 'me.png'));
+
+    expect(blob.type).toBe('image/webp');
+    expect(canvas.ctx.drawImage).toHaveBeenCalledWith(expect.anything(), 50, 0, 300, 300, 0, 0, 256, 256);
+  });
+
+  it('falls back to JPEG on white where WebP is not encoded (it answers PNG)', async () => {
+    const canvas = fakeCanvas(['image/jpeg', 'png']);
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(canvas);
+
+    expect((await resizePhoto(new File(['x'], 'me.png'))).type).toBe('image/jpeg');
+    expect(canvas.ctx.fillStyle).toBe('#fff');
+    expect(canvas.ctx.globalCompositeOperation).toBe('destination-over');
+    expect(canvas.ctx.fillRect).toHaveBeenCalledWith(0, 0, 256, 256);
+  });
+
+  it('keeps WebP transparent: no fill', async () => {
+    const canvas = fakeCanvas(['image/webp']);
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(canvas);
+
+    await resizePhoto(new File(['x'], 'me.png'));
+
+    expect(canvas.ctx.fillRect).not.toHaveBeenCalled();
+  });
+
+  it('says so when the browser cannot encode at all', async () => {
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(fakeCanvas([]));
+
+    await expect(resizePhoto(new File(['x'], 'me.png'))).rejects.toThrow('could not convert');
   });
 });

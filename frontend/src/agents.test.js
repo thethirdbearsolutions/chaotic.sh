@@ -93,6 +93,12 @@ describe('renderAgentAvatar', () => {
     expect(html).toContain('src="data:image/png;base64,abc123"');
   });
 
+  it('renders an uploaded profile picture as an image', () => {
+    const url = `/api/avatars/${'a'.repeat(64)}`;
+    const html = renderAgentAvatar({ name: 'Owl', avatar_url: url });
+    expect(html).toContain(`src="${url}"`);
+  });
+
   it('escapes HTML in name', () => {
     const agent = { name: '<script>xss</script>' };
     const html = renderAgentAvatar(agent);

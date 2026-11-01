@@ -77,6 +77,72 @@ import io.ktor.http.ParametersBuilder
             }
 
         /**
+        * DELETE /api/users/me/avatar
+        * Delete My Avatar
+        * Remove your uploaded profile picture (CHT-1992). Your avatar_url is cleared if it pointed at the upload; an emoji or URL stays.
+         * @return UserResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun deleteMyAvatarApiUsersMeAvatarDelete(): HttpResponse<UserResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.DELETE,
+            "/api/users/me/avatar",
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * GET /api/avatars/{sha256}
+        * Get Avatar
+        * An uploaded profile picture, by its sha256. No credential: an &#x60;&lt;img&gt;&#x60; sends none, and the address is the image&#39;s own hash, which only someone shown a member&#39;s avatar_url knows. Cached privately for an hour, so a removed picture stops showing soon. Unknown answers 404.
+         * @param sha256  
+         * @return void
+        */
+        open suspend fun getAvatarApiAvatarsSha256Get(sha256: kotlin.String): HttpResponse<Unit> {
+
+            val localVariableAuthNames = listOf<String>()
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/api/avatars/{sha256}".replace("{" + "sha256" + "}", "$sha256"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = false,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
         * GET /api/users/{user_id}
         * Get User
         * Get user by ID.
@@ -137,6 +203,39 @@ import io.ktor.http.ParametersBuilder
             )
 
             return jsonRequest(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * PUT /api/users/me/avatar
+        * Upload My Avatar
+        * Upload your own profile picture (CHT-1992): the raw image as the request body (PNG, JPEG, WebP or GIF, at most 256 KB), recognised by its bytes. Replaces any earlier upload and points your avatar_url at &#x60;&#x60;/api/avatars/{sha256}&#x60;&#x60;. Every member may, people and agents alike.
+         * @return UserResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun uploadMyAvatarApiUsersMeAvatarPut(): HttpResponse<UserResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.PUT,
+            "/api/users/me/avatar",
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
             localVariableConfig,
             localVariableBody,
             localVariableAuthNames

@@ -460,6 +460,12 @@ describe('logout', () => {
 });
 
 describe('isImageAvatar', () => {
+  it('treats an uploaded picture as an image, and nothing else under /api (CHT-1992)', () => {
+    expect(isImageAvatar('/api/avatars/' + 'a'.repeat(64))).toBe(true);
+    expect(isImageAvatar('/api/avatars/../users/me')).toBe(false);
+    expect(isImageAvatar('/api/users/me')).toBe(false);
+  });
+
   it('returns true for http URLs', () => {
     expect(isImageAvatar('http://example.com/image.png')).toBe(true);
   });

@@ -1,5 +1,5 @@
 """User API routes."""
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, NotAppSession
 from app.enums import AgentKind
@@ -48,6 +48,42 @@ async def update_me(user_in: UserUpdate, current_user: CurrentUser, _app_session
     user_service = UserService()
     user = await user_service.update(current_user, user_in)
     return UserResponse.model_validate(user)
+
+
+@router.put("/me/avatar", response_model=UserResponse)
+@writes
+async def upload_my_avatar(
+    request: Request, current_user: CurrentUser, _app_session: NotAppSession,
+) -> UserResponse:
+    """Upload your own profile picture (CHT-1992): the raw image as the
+    request body (PNG, JPEG, WebP or GIF, at most 256 KB), recognised by
+    its bytes. Replaces any earlier upload and points your avatar_url at
+    ``/api/avatars/{sha256}``. Every member may, people and agents alike."""
+    from app.services.avatar_service import AVATAR_MAX_BYTES, AvatarRefused, AvatarService
+
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > AVATAR_MAX_BYTES:
+            break  # refused below; no need to read the rest
+    try:
+        user = await AvatarService().set(current_user, bytes(data))
+    except AvatarRefused as refused:
+        code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE if refused.error_code == "avatar_too_large" else 422
+        raise HTTPException(
+            status_code=code, detail={"error_code": refused.error_code, "message": str(refused)},
+        ) from refused
+    return UserResponse.model_validate(user)
+
+
+@router.delete("/me/avatar", response_model=UserResponse)
+@writes
+async def delete_my_avatar(current_user: CurrentUser, _app_session: NotAppSession) -> UserResponse:
+    """Remove your uploaded profile picture (CHT-1992). Your avatar_url is
+    cleared if it pointed at the upload; an emoji or URL stays."""
+    from app.services.avatar_service import AvatarService
+
+    return UserResponse.model_validate(await AvatarService().clear(current_user))
 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)

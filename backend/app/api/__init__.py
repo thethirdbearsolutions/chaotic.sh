@@ -1,11 +1,12 @@
 """API routes."""
 from fastapi import APIRouter
-from app.api import auth, users, teams, projects, issues, sprints, documents, labels, api_keys, rituals, agents, nested, inbox, templates, oauth, push
+from app.api import auth, avatars, users, teams, projects, issues, sprints, documents, labels, api_keys, rituals, agents, nested, inbox, templates, oauth, push
 
 api_router = APIRouter()
 
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(avatars.router, prefix="/avatars", tags=["users"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(issues.router, prefix="/issues", tags=["issues"])

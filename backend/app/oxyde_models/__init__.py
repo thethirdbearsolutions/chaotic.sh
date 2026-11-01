@@ -6,6 +6,7 @@
 from app import oxyde_db as _oxyde_db  # noqa: F401
 
 from app.oxyde_models.user import OxydeUser
+from app.oxyde_models.user_avatar import OxydeUserAvatar
 from app.oxyde_models.team import OxydeTeam, OxydeTeamActivity, OxydeTeamMember, OxydeTeamInvitation
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
@@ -53,6 +54,7 @@ __all__ = [
     "OxydePushDevice",
     "OxydePushPreference",
     "OxydeUser",
+    "OxydeUserAvatar",
     "OxydeTeam",
     "OxydeTeamMember",
     "OxydeTeamInvitation",
