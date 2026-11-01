@@ -5,28 +5,40 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
-## [0.1.0a22] - 2026-10-13
+## [0.1.0] - 2026-10-31
 
-Server, CLI and web UI changes merged since a21 (PRs #260, #322-#329).
-This release carries one database migration (0020) that refuses to run
-on a database with a dangling agent owner, and it changes which agent API
-keys still sign in. **Run both preflight checks below before upgrading.**
-Install the new CLI first (`uv tool install --force chaotic-cli==0.1.0a22`),
-then run `chaotic system upgrade`, which stops the server, backs up the
-database, checks out the new code and migrates before restarting.
+The first release without an alpha tag. From here on, versions follow
+semantic versioning, loosely. It is the release that was prepared as
+0.1.0a22, which never reached PyPI.
+
+Server, CLI, web UI and Android changes merged since a21 (PRs #260,
+#322-#329, #331-#474, #476-#484 and #486-#492; #492 reverted #475 and
+#485). This release carries 24 database migrations (0020-0044; there is
+no 0035). Two of them refuse to run on data that breaks their rule
+(0020: a dangling agent owner; 0022: two API keys sharing a hash), and
+several delete or rewrite rows, each reporting what it does in the
+upgrade output. It also changes which agent API keys still sign in.
+**Run the preflight checks below before upgrading.** Install the new
+CLI first (`uv tool install --force chaotic-cli==0.1.0`), then run
+`chaotic system upgrade --version v0.1.0`, which backs up the
+database, stops the server, checks out the new code and migrates before
+restarting. If a migration fails, it restores the backup, checks the
+previous code out again and restarts the server on it. chaotic.thirdbearsolutions.com has run this code since
+2026-10-31 (5701ed09).
 
 ### Upgrade notes
 
 - **Preflight 1 (required): dangling agent owners.** Migration 0020 adds
   a foreign key to `users.parent_user_id` (the human who owns an agent).
   If any row names a parent that no longer exists, 0020 stops before
-  writing anything and lists the ids. By then `chaotic system upgrade` has
-  already checked out the a22 code, and it restarts the server on it. The
-  server refuses to serve a database whose migrations are behind its code,
-  so **the server stays down** until you fix the rows and run `chaotic
-  system upgrade --yes` again. The database itself is untouched (still at
-  a21's schema), so nothing needs restoring. Check first, read-only, in its
-  own process (never from inside the running server):
+  writing anything and lists the ids. The 0.1.0 CLI's `chaotic system
+  upgrade` then rolls back to the previous code and backup and restarts
+  the server there; fix the rows and run `chaotic system upgrade --yes`
+  again. (An older CLI does not roll back: it leaves the server on the new
+  code, which refuses to serve a database whose migrations are behind it,
+  so the server stays down until the rows are fixed and the upgrade is run
+  again. Install the 0.1.0 CLI first.) Check first, read-only, in its own
+  process (never from inside the running server):
 
   ```sql
   SELECT child.id, child.is_agent, child.parent_user_id FROM users AS child
@@ -37,11 +49,11 @@ database, checks out the new code and migrates before restarting.
   for example `sqlite3 "file:/path/to/chaotic.db?mode=ro" "<query>"`. Fix
   every row it returns: point each agent at an existing human, or set
   `parent_user_id = NULL` on a row that is not an agent. Then upgrade.
-- **Preflight 2: agent keys that stop signing in at upgrade.** From a22,
+- **Preflight 2: agent keys that stop signing in at upgrade.** From 0.1.0,
   an agent key signs in only while its holder is a member of the agent's
   team (see the next two notes for who the holder is). This is checked at
   every sign-in, not only when someone is removed, so **the moment the
-  server comes up on a22, every key whose recorded holder already left
+  server comes up on 0.1.0, every key whose recorded holder already left
   the agent's team returns 401**. That includes keys a team admin minted
   for an agent whose creator has since left, because pre-release keys are
   recorded as the creator's. To list them before upgrading (read-only, as
@@ -51,7 +63,7 @@ database, checks out the new code and migrates before restarting.
   SELECT k.key_prefix, agent.id AS agent_id, agent.name AS agent,
          CASE WHEN k.user_id = agent.id THEN agent.parent_user_id ELSE k.user_id END AS holder_id
   FROM api_keys AS k
-  JOIN users AS agent ON agent.id = COALESCE(k.agent_user_id, k.user_id) AND agent.is_agent = 1
+  JOIN users AS agent ON agent.id = COALESCE(NULLIF(k.agent_user_id, ''), k.user_id) AND agent.is_agent = 1
   WHERE k.is_active = 1
     AND NOT EXISTS (SELECT 1 FROM team_members AS m
                     WHERE m.team_id = agent.agent_team_id
@@ -108,23 +120,220 @@ database, checks out the new code and migrates before restarting.
 - **New inbox kind `agent_status`**, for an agent's creator when someone
   else deactivates or reactivates it. A client that switches on inbox
   kinds will see a value it has not seen before.
-- **MCP clients should reconnect**: compact issue, document and inbox
-  rows gained `assignee`, `author` and `source_user`, and the
-  `sprint_current`/`sprint_close` descriptions changed, so a cached
-  toolset is stale (the tool count stays 38).
 - **Rolling back after a successful upgrade needs both halves.**
   `chaotic system upgrade` backs up the database before it checks out
   the new code (unless `--no-backup`); `chaotic system backup --list`
   shows the backups. The server serves only a database whose applied
   migrations match its code exactly, ahead or behind. So `chaotic system
-  backup --restore <timestamp>` on its own puts a21's database under a22
+  backup --restore <timestamp>` on its own puts a21's database under 0.1.0
   code, and the server will not start. Going back means the a21 code
   *and* the pre-upgrade backup together; there is no single command for
   that yet (CHT-1546). Do not downgrade 0020 with `oxyde migrate`
   instead: its downgrade installs 0001's ON DELETE CASCADE, even on
   databases that had no foreign key before.
+- **Preflight 3 (required): API keys sharing a hash.** Migration 0022
+  makes `api_keys.key_hash` unique, and keys are now looked up by that
+  hash instead of their display prefix. Two rows can share a hash only if
+  written by hand; 0022 refuses with their ids and deletes nothing,
+  because which to keep is your call. Check first (read-only, as above):
+
+  ```sql
+  SELECT key_hash, count(*) FROM api_keys GROUP BY key_hash HAVING count(*) > 1;
+  ```
+- **Migration 0021 deletes API keys that cannot sign in.** It splits
+  `api_keys` into explicit principal and holder columns (CHT-1537). A key
+  whose user, or whose agent key's holder, no longer exists cannot be
+  copied under the new foreign keys and is dropped (it is in the
+  pre-upgrade backup). To see them first:
+
+  ```sql
+  SELECT id, key_prefix FROM api_keys AS k WHERE NOT EXISTS
+    (SELECT 1 FROM users WHERE users.id = coalesce(nullif(k.agent_user_id, ''), k.user_id))
+    OR NOT EXISTS (SELECT 1 FROM users WHERE users.id = k.user_id);
+  ```
+- **Migration 0033 removes duplicate team memberships**, keeping one row
+  per user per team, and prints each row it deletes (CHT-1791).
+- **Migration 0034: one account per address, ignoring case** (CHT-1804).
+  Where accounts differ only in the case of their address, the oldest
+  keeps it for case-insensitive lookups; the others still log in by their
+  exact address, are listed by id in the upgrade output, and are logged
+  at every startup until resolved (`chaotic system audit shared-addresses`, CHT-1827).
+- **Migration 0036 gives every agent a team and revokes those agents'
+  keys** (CHT-1837). Project-scoped agents made without a team get their
+  project's team. Under this release's holder rule (an agent key signs in
+  only while its holder is in the agent's team) a teamless agent's keys
+  are refused, so rather than letting the backfill bring them back without
+  anyone deciding to, 0036 revokes them, **including keys that sign in
+  today on a21**. The owner or a team admin mints new ones. Agents it cannot place are left
+  as they are and listed. To count before upgrading:
+
+  ```sql
+  SELECT sum(t.id IS NOT NULL), sum(t.id IS NULL) FROM users AS u
+  LEFT JOIN projects AS p ON p.id = u.agent_project_id
+  LEFT JOIN teams AS t ON t.id = p.team_id
+  WHERE u.is_agent AND u.agent_team_id IS NULL;
+
+  SELECT count(*) FROM api_keys AS k
+  JOIN users AS u ON u.id = coalesce(nullif(k.agent_user_id, ''), k.user_id)
+  JOIN projects AS p ON p.id = u.agent_project_id JOIN teams AS t ON t.id = p.team_id
+  WHERE u.is_agent AND u.agent_team_id IS NULL AND k.is_active;
+  ```
+
+  The second counts the active keys it will revoke, on an a21 database.
+- **Migration 0031: existing sprints follow the project's default
+  budget** (CHT-1495). A planned sprint whose budget was set by hand
+  takes the default when it activates unless it is set again first:
+  re-set those with `chaotic sprint budget <id> <points>`.
+- **Migration 0032 starts every existing account unverified** (CHT-1790).
+  On a server with SMTP configured, accepting an invitation then needs a
+  verified email (`chaotic auth verify-email`).
+- **Migrations 0039 and 0040 rewrite session identities' addresses and
+  default names** so they no longer carry a piece of the identity's
+  `external_ref`, and rewrite the inbox titles that quoted the old names
+  (CHT-1864, CHT-1869). `@` handles typed with an old tail now reach
+  nobody.
+- **Migration 0042 recomputes open epics' status from their children**
+  (CHT-1901). An open epic whose status was set by hand to something its
+  children don't imply is pinned where it is; every other open epic takes
+  the derived status. Closed epics are left alone, and no activity rows
+  are written.
+- **Migration 0044 resolves duplicate "children closed" inbox
+  entries**, keeping the oldest open one per recipient and parent, before
+  it adds a unique index on them (CHT-1928). Nothing is deleted. 0043
+  only adds indexes (CHT-1935).
+- **New server settings, all off by default**: `OAUTH_ENABLED` (OAuth
+  for `/mcp` and the Android app) and `MCP_CAPABILITY_URL_ENABLED`. Set
+  them with `chaotic system config set`, which keeps them across
+  upgrades; `chaotic system config adopt` takes over values already in a
+  hand-edited service file (CHT-1592, CHT-1676). `OAUTH_ENABLED` takes a
+  restart.
+- **MCP clients should reconnect**: the toolset changed. It has 39 tools
+  (`ritual_reject` is new), compact issue, document and inbox rows gained
+  `assignee`, `author` and `source_user`, and issue lists take a `where`
+  query.
 
 ### Added
+
+- **One agent identity per Claude Code session**, opt-in. Make a
+  registrar once (`chaotic agent create --registrar`, or Agents ›
+  Create Agent › Registrar in the web app), give the machine its key and
+  run `chaotic config set-session-identity auto`. Each session then
+  registers its own identity (`POST /agents/register`) with an expiring
+  key; a registrar's key can only register. Idle session identities drop
+  out of agent lists and pickers (CHT-1498, CHT-1499, CHT-1501, CHT-1600).
+- **The registrar key as a network secret.** `POST /agents/register`
+  also takes the key in `X-Chaotic-Registrar-Key`, which nothing else
+  reads, and `CHAOTIC_REGISTRAR_KEY_VIA=header` (or `chaotic config
+  set-registrar-key-via header`) makes the CLI hold no registrar key at
+  all, so a cloud environment's proxy can inject it. Because that proxy
+  drops the client's own `Authorization` on the host, the session key
+  then goes in `X-Chaotic-Key`, which every REST route accepts like a
+  bearer API key when no `Authorization` is sent. `docs/agents.md` has
+  the recipe (CHT-1906, CHT-1913).
+- **Epics track their goal.** An open epic's status follows its
+  children until set by hand (`status_follows_children` unpins it);
+  closing an epic's last open child asks whether to close the epic too;
+  and the Epics view shows progress toward each one (CHT-1884, CHT-1901,
+  CHT-1902).
+- **Per-project epic and assignee knobs**, off by default: `chaotic
+  project update --require-assignee-on-claim`, `--require-epic-on-close`
+  and `--default-epic CHT-X`, which new parentless tickets are filed under.
+  MCP `issue_update` takes `issue_type` (CHT-1885, CHT-1900).
+- **The inbox asks an issue's owner what's next when nothing is left
+  open under it**, one entry per recipient and parent, and resolving
+  inbox entries updates the recipients' open pages (CHT-1909, CHT-1927,
+  CHT-1928).
+- **Query issues by relation**: `blocks=`, `blocked_by=` and `related=`
+  in the issue query (CHT-1903).
+- **A session identity can name itself**: `CHAOTIC_SESSION_NAME` names
+  a new session identity when the CLI registers it, and `chaotic auth
+  rename <name>` renames the session afterwards. A session identity may
+  change its own name and nothing else, and cannot take another agent's
+  (CHT-1918).
+- **OAuth for `/mcp`, behind `OAUTH_ENABLED`**: discovery, client
+  registration (CIMD and DCR), a consent page that names the app, the
+  team, the agent it acts as and its projects, token rotation with reuse
+  detection, and revocation. Settings › Connected Apps and `chaotic auth
+  connections` list and disconnect what you approved (CHT-1515 to
+  CHT-1523).
+- **Chaotic for Android** (source only, no public build): signs in
+  through OAuth, syncs the inbox, issues and sprint offline, queues
+  writes, and gets push through UnifiedPush with Approve/Reject on the
+  lock screen. The server side is generic: push device registration and
+  per-kind preferences, an inbox sync cursor with tombstones, and
+  `Idempotency-Key` on writes (CHT-1602 to CHT-1613, CHT-1621, CHT-1665).
+- **Issue queries**: one query language across the API, `chaotic issue
+  list --where`, the MCP `where` argument and a `/query` page in the web
+  app, with a vocabulary endpoint for the builder (CHT-1718, CHT-1783,
+  CHT-1810).
+- **Invitations you can deliver without SMTP**: a landing page at
+  `/invite/:token`, the accept link handed to the inviting admin, `team
+  accept-invite` taking the full link, and `team invitation-code` when
+  the verification email is failing. With SMTP on, accepting needs a
+  verified email (`auth verify-email`) (CHT-1265, CHT-1790, CHT-1794,
+  CHT-1823, CHT-1824, CHT-1828).
+- **Team ownership**: `team transfer-ownership`, stepping down and
+  leaving, never leaving a team without an owner (CHT-1848).
+- **`chaotic auth change-email`**, and listing and resolving accounts
+  that share an address (CHT-1827).
+- **Team activity log**: member and invitation actions are recorded;
+  `chaotic team activity` reads it, and `chaotic system audit
+  removed-members` audits from it (CHT-1820, CHT-1843, CHT-1845).
+- **Rejecting a gate or review with a required reason** (CHT-1606).
+- **@mentions reach agents and session identities**, unambiguously; the
+  author is warned when a handle reached nobody (CHT-1731, CHT-1735,
+  CHT-1743).
+- **`chaotic system config`** for server settings (CHT-1592).
+
+### Changed
+
+- **A ticket that was never claimed must pass its claim rituals before
+  its first close**, wherever it closes from (CHT-1672, CHT-1693).
+- **Planned sprints follow the project's default budget** until set by
+  hand; `chaotic sprint budget <id> --default` puts one back (CHT-1495,
+  CHT-1701).
+- **Out-of-scope reads answer 404 exactly like a missing row**, on REST
+  and every MCP tool argument (CHT-1785, CHT-1819, CHT-1839).
+- **Project-scoped agents are refused team-wide data**, and websocket
+  broadcasts are filtered per socket by what it can reach (CHT-1780,
+  CHT-1840).
+- **Deleting a project or team retires its agents first** (CHT-1844).
+- **Sub-issues take their parent's project** when none is given, and
+  `--label` resolves in the issue's team (CHT-1706, CHT-1709, CHT-1711).
+- **`chaotic system upgrade` forces and verifies the CLI rebuild**,
+  rolls back a failed migration, and warns when the `chaotic` on PATH is
+  not the one it rebuilt (CHT-1675, CHT-1477, CHT-1694, CHT-1695).
+- **Web UI**: an open-only issue list that renders cached rows at once,
+  polish passes against a stated bar, gzip and cache headers, dense
+  issue rows, an issue detail that paints from the loaded row, and
+  optimistic inline edits with rollback, filter changes that paint at
+  once from a cached list, dense rows on narrow screens, collapsed
+  groups and focus that survive a re-render, and approval cards and the
+  drawer on phones (CHT-1747, CHT-1755, CHT-1874, CHT-1886, CHT-1893 to
+  CHT-1899, CHT-1910, CHT-1914, CHT-1915, CHT-1921, CHT-1923, CHT-1929,
+  CHT-1932).
+- **Android** (source only): live updates over `/ws` in the foreground,
+  sync and lock-screen decision fixes (CHT-1655, CHT-1667, CHT-1671,
+  CHT-1685).
+
+### Fixed
+
+- **Credentials no longer reach uvicorn's access log** or the `/ws`
+  URL, and `/ws` closes at once when its credential is revoked
+  (CHT-1567, CHT-1590, CHT-1603, CHT-1616).
+- **Server text prints literally** in the CLI's Rich output (CHT-1526).
+- **Agent keys held by a deactivated human are refused** (CHT-1552).
+- **Assignee writes are conditional on the value read**, and an issue's
+  assignee and a project's lead share one eligibility rule (CHT-1830,
+  CHT-1832).
+- **Accounts can no longer share an address that differs only in case**,
+  enforced in the database (CHT-1804).
+- **Localhost invitation links** in the web UI and CLI (CHT-1822).
+- **A project update that turns a gate off can no longer undo someone
+  turning it on meanwhile**: it lands only while that gate still holds the
+  value it was read with, else 409 (CHT-1926).
+- **Label filters match non-ASCII names without case** (CHT-1920).
+- **Epic progress counts by nearest epic**, computed in SQL (CHT-1922).
 
 - **Retire an agent without deleting it.** `chaotic agent deactivate`
   (`POST /agents/{id}/deactivate`) revokes every key that signs in as the

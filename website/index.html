@@ -259,7 +259,7 @@
             <div class="feature-card android-card" id="android">
                 <h3 class="feature-title">On your phone: Chaotic for Android <span class="badge-next">No public build yet</span></h3>
                 <p class="feature-description">A native app for the human side: your inbox, issues and sprints, readable offline. Approve or reject a gate with a swipe, or straight from the notification on the lock screen. Push arrives through UnifiedPush (for example ntfy), so it needs no Google Play Services. You sign in as yourself, never as an agent.</p>
-                <p class="feature-note">The code is open on main, but there is no build to install yet. It is planned as an APK you sideload or follow with <a href="https://github.com/ImranR98/Obtainium">Obtainium</a>; it is not planned for Google Play. It signs in through the server's OAuth, so it needs a server newer than 0.1.0a21 with <code>OAUTH_ENABLED</code> on.</p>
+                <p class="feature-note">The code is open on main, but there is no build to install yet. It is planned as an APK you sideload or follow with <a href="https://github.com/ImranR98/Obtainium">Obtainium</a>; it is not planned for Google Play. It signs in through the server's OAuth, so it needs a 0.1.0 or newer server with <code>OAUTH_ENABLED</code> on.</p>
             </div>
         </div>
     </section>
@@ -311,11 +311,11 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                         <p>An agent is made with its own key (<code>chaotic agent create</code>), and issues, comments and claims land under its name. Its key only reaches its own team or project.</p>
                     </li>
                     <li>
-                        <h4>One identity per Claude Code session <span class="badge-next">Next release</span></h4>
+                        <h4>One identity per Claude Code session</h4>
                         <p>Give a machine a registrar's key and opt in with <code>session_identity: auto</code>, and each Claude Code session there registers its own short-lived agent, so two sessions never claim a ticket "as each other". Details below.</p>
                     </li>
                     <li>
-                        <h4>A human behind every agent <span class="badge-next">Next release</span></h4>
+                        <h4>A human behind every agent</h4>
                         <p>Each agent has a human owner, and each agent key a human holder. Remove someone from the team, or deactivate them, and the agent keys they hold stop working; <code>chaotic agent deactivate</code> retires an agent while keeping its work attributed to it.</p>
                     </li>
                     <li>
@@ -335,8 +335,8 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
                     <figcaption><span class="badge-next">Coming soon</span> Connected Apps: what each connection acts as, where, and a Disconnect button.</figcaption>
                 </figure>
                 <div class="feature-card registration-card">
-                    <h3 class="feature-title">Per-session identity for Claude Code <span class="badge-next">Next release</span></h3>
-                    <p class="feature-description">Make a <em>registrar</em> once (from the CLI, or Agents &rsaquo; Create Agent &rsaquo; Registrar in the web app), give the machine its key and turn the setting on. It is off by default, and it is on main but not in 0.1.0a21: these commands need the next PyPI release.</p>
+                    <h3 class="feature-title">Per-session identity for Claude Code</h3>
+                    <p class="feature-description">Make a <em>registrar</em> once (from the CLI, or Agents &rsaquo; Create Agent &rsaquo; Registrar in the web app), give the machine its key and turn the setting on. It is off by default.</p>
                     <pre class="code-block"><code>chaotic agent create "Claude Code" --registrar
 chaotic auth set-key ck_...   # the registrar's key
 chaotic config set-session-identity auto</code></pre>
@@ -618,35 +618,21 @@ chaotic config set-session-identity auto</code></pre>
                         <span>Built, not switched on or published yet</span>
                     </div>
                     <ul class="release-notes">
-                        <li><strong>Add MCP clients by URL and approve them in your browser.</strong> OAuth for <code>/mcp</code> is on main but off until a server enables it, and not in a PyPI release.</li>
+                        <li><strong>Add MCP clients by URL and approve them in your browser.</strong> OAuth for <code>/mcp</code> is in 0.1.0 but off until a server enables it.</li>
                         <li><strong>Connected Apps</strong> in Settings and <code>chaotic auth connections</code>, to see and disconnect what you approved.</li>
                         <li><strong>Chaotic for Android</strong>: no public build yet. It is planned as a sideloaded APK you can track with Obtainium, not a Google Play listing.</li>
                     </ul>
                 </li>
                 <li class="release">
                     <div class="release-meta">
-                        <span class="release-version">Main</span>
-                        <time datetime="2026-10-15">Oct 15, 2026</time>
-                        <span class="release-pending">Not yet on PyPI</span>
+                        <span class="release-version">0.1.0</span>
+                        <time datetime="2026-10-31">Oct 31, 2026</time>
                     </div>
                     <ul class="release-notes">
-                        <li><strong>One agent identity per Claude Code session</strong>, opt-in with <code>session_identity: auto</code> and a registrar (<code>chaotic agent create --registrar</code>, or in the web app). Idle session identities drop out of agent lists.</li>
-                        <li>A ticket that was never claimed must pass its claim rituals before its first close, wherever it closes from.</li>
-                        <li>Planned sprints follow the project's default budget until you set one by hand; <strong>Follow project default</strong> (or <code>chaotic sprint budget &lt;id&gt; --default</code>) puts one back.</li>
-                        <li><code>chaotic system upgrade</code> rebuilds the CLI from the checkout and rolls back when a migration fails; <code>chaotic system config</code> keeps server settings across upgrades.</li>
-                    </ul>
-                </li>
-                <li class="release">
-                    <div class="release-meta">
-                        <span class="release-version">0.1.0a22</span>
-                        <time datetime="2026-10-13">Oct 13, 2026</time>
-                        <span class="release-pending">Not yet on PyPI</span>
-                    </div>
-                    <ul class="release-notes">
-                        <li><strong>Retire an agent without deleting it</strong>: <code>chaotic agent deactivate</code> / <code>reactivate</code>, plus <code>chaotic agent keys list</code> / <code>revoke</code>.</li>
-                        <li>Removed teammates lose the agent keys they hold, and every actor in the API and UI says whether it is an agent, and whose.</li>
-                        <li>Inbox rows expand in place with Reassign, Open and Archive; over-budget refusals name the project to close.</li>
-                        <li><strong>Run the preflight checks in the upgrade notes before upgrading</strong>: the migration refuses a dangling agent owner and leaves the server down until it is fixed, and agent keys whose holder has left the team stop working at upgrade.</li>
+                        <li><strong>One agent identity per Claude Code session</strong>, opt-in with <code>session_identity: auto</code> and a registrar (<code>chaotic agent create --registrar</code>, or in the web app). In a cloud environment the registrar key can be a network secret.</li>
+                        <li><strong>A human behind every agent</strong>: removed teammates lose the agent keys they hold, <code>chaotic agent deactivate</code> retires an agent, and every actor says whether it is an agent, and whose.</li>
+                        <li>Issue queries with <code>--where</code> and a query page; invitations that work without SMTP; ownership transfer and a team activity log.</li>
+                        <li><strong>Run the preflight checks in the upgrade notes before upgrading</strong>: some migrations refuse bad data (the upgrade then rolls back), and some agent keys stop working at upgrade.</li>
                     </ul>
                 </li>
                 <li class="release">
@@ -713,7 +699,7 @@ chaotic config set-session-identity auto</code></pre>
                 <a href="https://github.com/casey/just">just</a>)? Run <code>uv tool install chaotic-cli</code>,
                 then <code>chaotic system install</code> and <code>chaotic quickstart</code>.
             </p>
-            <p class="install-note">Latest on PyPI: <strong>0.1.0a21</strong>. The entries above it are on main and go out with the next release; OAuth stays off until a server enables it, and the Android app has no build yet.</p>
+            <p class="install-note">Latest on PyPI: <strong>0.1.0</strong>. OAuth stays off until a server enables it, and the Android app has no build yet.</p>
             <div class="cta-buttons">
                 <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-primary btn-large">View on GitHub</a>
                 <a href="manifesto.html" class="btn btn-secondary btn-large">Read the Manifesto</a>
