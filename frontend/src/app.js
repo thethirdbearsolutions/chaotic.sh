@@ -281,6 +281,9 @@ registerViews({
         loadBoard();
     },
     'projects': () => {
+        // The team's projects are in memory from boot: paint them at once,
+        // then refresh (CHT-1973).
+        renderProjects();
         loadProjects().then(renderProjects);
     },
     'sprints': () => {

@@ -9,6 +9,7 @@ import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjects } from './projects.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setSelectedEpicIndex } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
+import { lastResult, rememberResult, resultKey, sameResult } from './last-result.js';
 
 // Last-loaded epics list, exposed so epic-detail-view.js can build prev/next
 // navigation the same way issue-detail-view.js does for issues (CHT-1211 item 6).
@@ -57,19 +58,27 @@ export async function loadEpics() {
 
     const requestId = ++loadEpicsRequestId;
 
-    // Show loading skeleton (CHT-1047)
-    listEl.innerHTML = Array(4).fill(0).map(() => `
-        <div class="skeleton-list-item">
-            <div style="flex: 1">
-                <div class="skeleton skeleton-title"></div>
-                <div style="display: flex; gap: 8px; margin-top: 4px;">
-                    <div class="skeleton skeleton-badge"></div>
-                    <div class="skeleton skeleton-badge" style="width: 100px"></div>
-                    <div class="skeleton skeleton-badge"></div>
+    // A revisit paints the epics shown last time for this team and
+    // project at once, and the request below refreshes them (CHT-1973).
+    // Else the loading skeleton (CHT-1047).
+    const key = resultKey();
+    const shown = lastResult('epics', key);
+    if (shown) {
+        paintEpics(shown, listEl);
+    } else {
+        listEl.innerHTML = Array(4).fill(0).map(() => `
+            <div class="skeleton-list-item">
+                <div style="flex: 1">
+                    <div class="skeleton skeleton-title"></div>
+                    <div style="display: flex; gap: 8px; margin-top: 4px;">
+                        <div class="skeleton skeleton-badge"></div>
+                        <div class="skeleton skeleton-badge" style="width: 100px"></div>
+                        <div class="skeleton skeleton-badge"></div>
+                    </div>
                 </div>
             </div>
-        </div>
-    `).join('');
+        `).join('');
+    }
 
     try {
         if (!getCurrentTeam()?.id) {
@@ -90,20 +99,17 @@ export async function loadEpics() {
             : await api.getTeamEpicProgress(getCurrentTeam().id);
         if (requestId !== loadEpicsRequestId) return; // a newer loadEpics() has since started — drop this stale response
 
-        if (!progress?.epics?.length) {
-            currentEpics = [];
-            listEl.innerHTML = renderEmptyState({
-                icon: EMPTY_ICONS.epics,
-                heading: 'No epics found',
-                description: 'Epics help you organize related issues into larger goals',
-                cta: { label: 'Create epic', action: 'showCreateEpicModal' },
-            });
-            return;
-        }
-
-        renderEpics(progress, listEl);
+        rememberResult('epics', key, progress);
+        // Unchanged since the paint above: keep the DOM (and the cursor).
+        if (shown && sameResult(shown, progress)) return;
+        paintEpics(progress, listEl);
     } catch (e) {
         if (requestId !== loadEpicsRequestId) return;
+        if (shown) {
+            // The epics painted from the last visit stay (CHT-1973).
+            showApiError('load epics', e);
+            return;
+        }
         listEl.innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.epics,
             heading: 'Failed to load epics',
@@ -113,6 +119,21 @@ export async function loadEpics() {
         });
         showApiError('load epics', e);
     }
+}
+
+/** The epics list for `progress`, or its empty state. */
+function paintEpics(progress, listEl) {
+    if (!progress?.epics?.length) {
+        currentEpics = [];
+        listEl.innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.epics,
+            heading: 'No epics found',
+            description: 'Epics help you organize related issues into larger goals',
+            cta: { label: 'Create epic', action: 'showCreateEpicModal' },
+        });
+        return;
+    }
+    renderEpics(progress, listEl);
 }
 
 function plural(n, word) {

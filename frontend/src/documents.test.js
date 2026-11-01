@@ -24,6 +24,10 @@ import { api } from './api.js';
 import { showToast, showMentionWarnings, showApiError } from './ui.js';
 import { getDocumentDraft, getDocumentDraftBase, setDocumentDraft, getCommentDraft, setCommentDraft } from './storage.js';
 import { registerActions } from './event-delegation.js';
+import { forgetResults } from './last-result.js';
+
+// Each test starts with no remembered view results (CHT-1973).
+beforeEach(() => forgetResults());
 
 // Mock the api module
 vi.mock('./api.js', () => ({
@@ -113,6 +117,28 @@ describe('loadDocuments', () => {
     setCurrentTeam(null);
     await loadDocuments();
     expect(api.getDocuments).not.toHaveBeenCalled();
+  });
+
+  // CHT-1973: a revisit painted a skeleton for a round trip.
+  it('paints the last documents at once on a revisit, and keeps them if the refresh fails', async () => {
+    api.getDocuments.mockResolvedValue([{ id: 'd1', title: 'Cached doc', updated_at: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z' }]);
+    await loadDocuments('team-1');
+    api.getDocuments.mockRejectedValue(new Error('down'));
+    const loading = loadDocuments('team-1');
+    const el = document.getElementById('documents-list');
+    expect(el.textContent).toContain('Cached doc');
+    expect(el.innerHTML).not.toContain('skeleton');
+    await loading;
+    expect(el.textContent).toContain('Cached doc');
+    expect(el.innerHTML).not.toContain('retry-load-documents');
+  });
+
+  it('does not paint another team\'s documents', async () => {
+    api.getDocuments.mockResolvedValue([{ id: 'd1', title: 'Team one doc', updated_at: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z' }]);
+    await loadDocuments('team-1');
+    api.getDocuments.mockReturnValue(new Promise(() => {}));
+    loadDocuments('team-2');
+    expect(document.getElementById('documents-list').textContent).not.toContain('Team one doc');
   });
 
   it('uses provided teamId', async () => {

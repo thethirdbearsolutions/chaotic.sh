@@ -12,6 +12,7 @@ import { viewIssue } from './issue-detail-view.js';
 import { getCurrentProject, getCurrentView, subscribe, getSelectedBoardIndex, setSelectedBoardIndex, setDetailNavContext } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { getProjects } from './projects.js';
+import { lastResult, rememberResult, resultKey, sameResult } from './last-result.js';
 
 // Board status configuration
 export const BOARD_STATUSES = [
@@ -24,6 +25,9 @@ export const BOARD_STATUSES = [
 
 // Module state
 let boardIssues = [];
+// The team|project key boardIssues were loaded for (CHT-1973), so a
+// re-render remembers them under their own key, not a newer project's.
+let boardKey = null;
 let draggingIssueId = null;
 // Monotonic request id — lets loadBoard() drop a response from a superseded
 // request (rapid project switches) instead of overwriting newer data with
@@ -104,7 +108,16 @@ export async function loadBoard() {
     }
 
     const board = document.getElementById('kanban-board');
-    if (board) {
+    // A revisit paints the board it showed last time for this project at
+    // once, and the request below refreshes it (CHT-1973).
+    const key = resultKey();
+    const shown = lastResult('board', key);
+    if (shown) {
+        boardIssues = shown;
+        boardKey = key;
+        if (getCurrentView() === 'board') setDetailNavContext(boardIssues);
+        renderBoard();
+    } else if (board) {
         board.innerHTML = Array(4).fill(0).map(() => `
             <div class="kanban-column" style="opacity: 0.5;">
                 <div class="kanban-column-header">
@@ -120,7 +133,11 @@ export async function loadBoard() {
         const issues = await api.getIssues({ project_id: projectId });
         if (requestId !== loadBoardRequestId) return; // a newer loadBoard() has since started — drop this stale response
 
+        // Unchanged since the paint above: keep the DOM (and the cursor).
+        const unchanged = shown && boardKey === key && sameResult(boardIssues, issues);
         boardIssues = issues;
+        boardKey = key;
+        rememberResult('board', key, issues);
         // Prev/next issue-detail nav context (CHT-1211 item 2) — issues
         // opened from the Board should page through the board's own list,
         // not the Issues-view-only global issues array. The request id only
@@ -131,12 +148,14 @@ export async function loadBoard() {
         if (getCurrentView() === 'board') {
             setDetailNavContext(boardIssues);
         }
-        renderBoard();
+        if (!unchanged) renderBoard();
     } catch (e) {
         if (requestId !== loadBoardRequestId) return;
         // CHT-1224: the copy said "try again" but shipped no button — add the
         // cta the helper already supports, wired to re-run loadBoard().
-        if (board) board.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'Failed to load board', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-board' }, variant: 'error' });
+        // The board painted from the last visit stays; the toast says the
+        // refresh failed (CHT-1973).
+        if (board && !shown) board.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'Failed to load board', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-board' }, variant: 'error' });
         showApiError('load board', e);
     }
 }
@@ -164,6 +183,9 @@ export function renderBoard() {
     // remote-event re-render calls); full reloads go through loadBoard(),
     // which resets the cursor instead (review finding 3).
     const selectedCardId = board.querySelector('.kanban-card.keyboard-selected')?.dataset.id;
+    // A drag or a live update re-renders in place: what shows now is what
+    // a revisit should paint (CHT-1973).
+    if (boardKey) rememberResult('board', boardKey, boardIssues);
 
     board.innerHTML = BOARD_STATUSES.map(status => {
         const columnIssues = boardIssues.filter(i => i.status === status.key);
