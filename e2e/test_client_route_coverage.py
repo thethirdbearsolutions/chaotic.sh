@@ -53,6 +53,7 @@ ROUTES_NOT_FOR_THE_CLIENT = {
     ("GET", "/{full_path}"): "SPA catch-all (frontend)",
     ("GET", "/health"): "operator health probe; `chaotic system` hits it with raw httpx, not Client",
     ("GET", "/cli-auth"): "browser login page the CLI opens with webbrowser, not an API call",
+    ("GET", "/api/avatars/{sha256}"): "an uploaded profile picture (CHT-1992), loaded by <img src> from avatar_url, never by the client",
     # OAuth consent (CHT-1519): the SPA's consent page only. They require a
     # human's web-login session; the CLI's API key is refused by design (I18).
     ("GET", "/api/oauth/requests/{request_id}"): "OAuth consent page (frontend); human web login only",
