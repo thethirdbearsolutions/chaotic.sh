@@ -50,9 +50,11 @@ export function setMembers(newMembers) {
 /**
  * Load teams for the current user
  */
-export async function loadTeams() {
+export async function loadTeams(request = null) {
   try {
-    teams = await api.getMyTeams();
+    // `request`: a GET /teams already in flight, so boot can ask for the
+    // teams beside /auth/me instead of after it (CHT-1971).
+    teams = await (request || api.getMyTeams());
     renderTeamList();
   } catch (e) {
     showApiError('load teams', e);
@@ -111,7 +113,7 @@ export async function selectTeam(team, isInitialLoad = false) {
   if (isInitialLoad) {
     handleRoute();
   } else {
-    navigateTo(getCurrentView());
+    navigateTo(getCurrentView() || 'my-issues');
   }
 }
 

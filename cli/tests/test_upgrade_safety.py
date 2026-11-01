@@ -109,7 +109,7 @@ class TestNoSilentDowngrade:
         assert result.exit_code == 0, result.output
         assert "Proceeding anyway because --allow-downgrade" in _flat(result.output)
         assert "Upgraded to" in _flat(result.output)
-        upgrade_patches.assert_called_once_with("v0.1.0a17", force=True)
+        upgrade_patches.assert_called_once_with("6a0ec2ctagged", force=True)  # the resolved commit, not the ref
 
     def test_diverged_target_is_refused(self, cli_runner, upgrade_patches):
         with patch("cli.system.get_current_commit", return_value="19ae385deployed"), \
@@ -129,7 +129,7 @@ class TestNoSilentDowngrade:
 
         assert result.exit_code == 0, result.output
         assert "Upgraded to" in _flat(result.output)
-        upgrade_patches.assert_called_once_with("origin/main", force=True)
+        upgrade_patches.assert_called_once_with("ab71cd5newer", force=True)  # the resolved commit, not the ref
 
     def test_same_commit_is_already_current_even_if_version_strings_differ(self, cli_runner, upgrade_patches):
         """`git describe --tags --always` says v0.1.0a18-3-gabc while the

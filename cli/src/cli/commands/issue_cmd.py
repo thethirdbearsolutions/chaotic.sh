@@ -18,6 +18,7 @@ from .shared import (
     parse_duration,
     print_ritual_prompt,
     resolve_content_value,
+    team_wide_or_agent_project,
 )
 
 
@@ -217,7 +218,7 @@ def _issue_query(m, *, where, status, priority, sprint, no_sprint, epic, label,
 
     if not all_projects and not m.get_current_project():
         raise click.ClickException(
-            "No project selected. Run 'chaotic project use <project_id>' or pass --all-projects."
+            "No project selected. Run 'chaotic project use <key>', set CHAOTIC_PROJECT=<key>, or pass --all-projects."
         )
     if sprint and no_sprint:
         raise click.UsageError("Cannot use both --sprint and --no-sprint")
@@ -342,7 +343,7 @@ def register(cli):
             )
         if not all_projects and not m.get_current_project():
             raise click.ClickException(
-                "No project selected. Run 'chaotic project use <project_id>' or pass --all-projects."
+                "No project selected. Run 'chaotic project use <key>', set CHAOTIC_PROJECT=<key>, or pass --all-projects."
             )
         # Validate status values if provided (CHT-502)
         valid_statuses = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"]
@@ -523,7 +524,7 @@ def register(cli):
             raise click.UsageError("Cannot use both --mine and --include-assigned")
         if not all_projects and not m.get_current_project():
             raise click.ClickException(
-                "No project selected. Run 'chaotic project use <project_id>' or pass --all-projects."
+                "No project selected. Run 'chaotic project use <key>', set CHAOTIC_PROJECT=<key>, or pass --all-projects."
             )
 
         if all_projects:
@@ -1763,10 +1764,17 @@ def register(cli):
     @_main().require_team
     @_main().handle_error
     def comments_list(limit):
-        """Show recent team comments (across issues and documents)."""
+        """Show recent team comments (across issues and documents).
+
+        A project-scoped identity sees its own project's comments: the
+        team-wide feed is refused to it (CHT-1952).
+        """
         m = _main()
         team_id = m.get_current_team()
-        comments = _client().get_team_comments(team_id, limit=limit)
+        comments = team_wide_or_agent_project(
+            team_id,
+            lambda project_id: _client().get_team_comments(team_id, limit=limit, project_id=project_id),
+        )
 
         if m.is_json_output():
             m.output_json(comments or [])

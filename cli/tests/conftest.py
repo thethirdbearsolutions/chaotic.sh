@@ -35,8 +35,49 @@ def _no_process_team(monkeypatch):
     from cli import config
     monkeypatch.setattr(config, "_process_teams", {})
     monkeypatch.setattr(config, "_only_teams", {})
-    from cli import mcp_backend
-    monkeypatch.setattr(mcp_backend, "_key_projects", {})
+    # The CLI's defaults and the environment's choice (CHT-1950) neither.
+    monkeypatch.setattr(config, "_process_projects", {})
+    monkeypatch.setattr(config, "_key_projects", {})
+    monkeypatch.setattr(config, "_env_teams", {})
+    monkeypatch.setattr(config, "_env_projects", {})
+    monkeypatch.setattr(config, "_env_failures", {})
+    monkeypatch.delenv(config.TEAM_ENV, raising=False)
+    monkeypatch.delenv(config.PROJECT_ENV, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _staging_in_tmp(monkeypatch, tmp_path_factory):
+    """`system upgrade` prepares the target in a staging checkout
+    (CHT-1969). No test may reach the real ~/.chaotic/staging, which
+    prepare_release() may delete and recreate."""
+    from cli import system
+    monkeypatch.setattr(system, "STAGING_DIR", tmp_path_factory.mktemp("staging-root") / "staging")
+
+
+@pytest.fixture(autouse=True)
+def _no_socket_activation_by_default(monkeypatch, tmp_path_factory):
+    """Service-file tests written before socket activation (CHT-1970)
+    expect the classic unit whether or not this machine has flock(1).
+    tests/test_socket_activation.py opts in."""
+    from cli import system
+    monkeypatch.setattr(system, "socket_activation_supported", lambda: False)
+    gate_dir = tmp_path_factory.mktemp("gate")
+    monkeypatch.setattr(system, "DEPLOY_GATE", gate_dir / "deploy.lock")
+    monkeypatch.setattr(system, "DEPLOY_HOLD", gate_dir / "deploy.hold")
+    # A developer's own socket-activated install must not make older
+    # tests take the gated paths (PR #510 review).
+    monkeypatch.setattr(system, "get_socket_file_path", lambda: gate_dir / "no-such.socket")
+    system.release_deploy_gate()
+
+
+@pytest.fixture(autouse=True)
+def _no_staging_by_default(monkeypatch):
+    """Upgrade tests written before staging (CHT-1969) see the old
+    behaviour, everything in the stopped window, whatever this machine
+    has on PATH. tests/test_upgrade_staging.py opts in."""
+    from cli import system
+    monkeypatch.setattr(system, "prepare_release",
+                        lambda target_commit: system.PreparedRelease(True, "staging off in tests"))
 
 
 @pytest.fixture

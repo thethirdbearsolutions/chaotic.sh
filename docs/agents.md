@@ -361,11 +361,34 @@ claude mcp add chaotic -- chaotic mcp
 ```
 
 No `chaotic team use` is needed when the registrar's key has exactly one
-team (a team-scoped agent key always does): with no current team,
-`chaotic mcp` uses the key's only team, and a person registrar's session
-identity is registered in it; with several teams, both say which to
-choose from. CLI commands that work in a team still want a current
-team, so run `chaotic team use <key>` too if you will use the CLI there.
+team (a team-scoped agent key always does): with no current team, the
+CLI and `chaotic mcp` use the key's only team, and a person registrar's
+session identity is registered in it. When the registrar is
+project-scoped, its sessions are too, and with no current project both
+use that project, so `chaotic issue list` works on a fresh machine's
+first call (CHT-1950). With several teams, both name them and say to run
+`chaotic team use <key>`. These defaults last for the one process and
+are never written to a config file; a team or project chosen with `team
+use` / `project use` always wins over them.
+
+**`CHAOTIC_TEAM` and `CHAOTIC_PROJECT`** name the team and project by
+key, name or id (`CHAOTIC_TEAM=ENG CHAOTIC_PROJECT=CZY`), for the CLI and
+`chaotic mcp` alike. Like `CHAOTIC_API_KEY`, they override the profile
+and a repository `.chaotic`. Set them where a key sees several teams, or
+a team-scoped key should land in one project, and every new machine or
+container starts there with no `use` step. The value is looked up the
+first time anything reads the team or project, once per process; one
+that matches nothing fails with the teams the key can see (or the
+project's error), naming the variable. With `CHAOTIC_TEAM` alone naming
+another team than the configured one, the configured project (which
+belongs to that other team) is not used. `team use` / `project use`
+warn while the variable overrides them.
+
+The lookups cost a request or two (`GET /teams`, `GET /auth/me`, and
+the scoped project) in every CLI process on a setup with no team in its
+config files, since each command is a new process. Run `chaotic team
+use` / `project use` once on a machine that keeps its config to skip
+them.
 
 From then on, inside a Claude Code session (which sets
 `CLAUDE_CODE_SESSION_ID`), the CLI and `chaotic mcp` both:
@@ -558,9 +581,13 @@ identity.
   After pointing the secret at a different registrar, delete
   `~/.chaotic/sessions/` (or wait for the key to expire) so sessions
   register under the new one.
-- `chaotic mcp` in this mode asks its default team and project scope as
-  the session identity (no key is configured to ask with), so the
-  registrar's team is found with no `chaotic team use`. A person's key as
+- The CLI and `chaotic mcp` in this mode ask their default team and
+  project scope as the session identity (no key is configured to ask
+  with), so the registrar's team, and a project-scoped registrar's
+  project, are found with no `chaotic team use` or `project use`; add
+  `CHAOTIC_TEAM` / `CHAOTIC_PROJECT` to the environment variables above
+  when the registrar sees several teams or you want one project of a
+  team (see above). A person's key as
   the secret is refused with a message saying to use an agent registrar.
 
 ### By hand: `POST /api/agents/register`

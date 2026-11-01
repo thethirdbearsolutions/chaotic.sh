@@ -29,6 +29,7 @@ vi.mock('./state.js', () => ({
 vi.mock('./dashboard.js', () => ({
     getMyIssues: vi.fn(() => []),
     setMyIssues: vi.fn(),
+    renderMyIssues: vi.fn(),
 }));
 
 vi.mock('./ui.js', () => ({
@@ -85,10 +86,11 @@ vi.mock('./issues-view.js', () => ({
 
 // Import mocked modules to get references to mock functions
 import { api } from './api.js';
+import { initEventDelegation } from './event-delegation.js';
 import { renderIssueRow, renderIssues } from './issue-list.js';
 import { upsertIssue, getStoredIssue } from './issue-store.js';
 import { getIssues, setIssues, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, getLabels } from './state.js';
-import { getMyIssues, setMyIssues } from './dashboard.js';
+import { getMyIssues, setMyIssues, renderMyIssues } from './dashboard.js';
 import { closeAllDropdowns, showToast, showApiError } from './ui.js';
 import { getAssigneeOptionList } from './assignees.js';
 import { getEstimateOptions } from './projects.js';
@@ -440,6 +442,18 @@ describe('inline-dropdown', () => {
         });
     });
 
+    describe('keyboard choice of an option (CHT-1993)', () => {
+        it('Enter on an option runs once and cancels the native click that would re-open the menu', () => {
+            initEventDelegation();
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'todo' });
+            document.body.innerHTML = '<button class="dropdown-option" data-action="update-issue-field" data-issue-id="issue-1" data-field="status" data-value="todo">Todo</button>';
+            const ev = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+            document.querySelector('button').dispatchEvent(ev);
+            expect(ev.defaultPrevented).toBe(true);
+            expect(api.updateIssue).toHaveBeenCalledTimes(1);
+        });
+    });
+
     describe('updateIssueField', () => {
         it('reports a field edit while it is in flight, and not after (CHT-1921)', async () => {
             let resolve;
@@ -600,6 +614,17 @@ describe('inline-dropdown', () => {
             renderIssues.mockClear();
             await updateIssueField('issue-1', 'status', 'done');
             expect(renderIssues).not.toHaveBeenCalled();
+            // The Dashboard groups by status: the row moves group at once (CHT-1963).
+            expect(renderMyIssues).toHaveBeenCalled();
+        });
+
+        it('swaps just the Dashboard row for a field that does not change its group', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', priority: 'high' });
+            getMyIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            document.body.innerHTML = '<div id="my-issues-view" class="view"><div id="my-issues-list"><div class="issue-row" data-issue-id="issue-1"></div></div></div>';
+            renderMyIssues.mockClear();
+            await updateIssueField('issue-1', 'priority', 'high');
+            expect(renderMyIssues).not.toHaveBeenCalled();
             expect(renderIssueRow).toHaveBeenCalled();
         });
 

@@ -4,8 +4,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock state.js
+// A one-field store, so primeRoute()'s null and handleRoute()'s fallback
+// can be observed (CHT-1971).
+let mockView = 'my-issues';
 vi.mock('./state.js', () => ({
-    setCurrentView: vi.fn(),
+    setCurrentView: vi.fn((v) => { mockView = v; }),
+    getCurrentView: vi.fn(() => mockView),
 }));
 
 // Mock url-helpers.js
@@ -13,7 +17,7 @@ vi.mock('./url-helpers.js', () => ({
     getProjectFromUrl: vi.fn(() => null),
 }));
 
-import { setCurrentView } from './state.js';
+import { setCurrentView, getCurrentView } from './state.js';
 import { getProjectFromUrl } from './url-helpers.js';
 import {
     registerViews,
@@ -26,6 +30,7 @@ import {
     initRouter,
     resetRouter,
     saveScrollPosition,
+    primeRoute,
 } from './router.js';
 
 describe('router', () => {
@@ -37,6 +42,7 @@ describe('router', () => {
         // Reset router state for test isolation
         resetRouter();
         vi.clearAllMocks();
+        mockView = 'my-issues';
 
         // Mock history
         pushStateSpy = vi.spyOn(history, 'pushState').mockImplementation(() => {});
@@ -280,6 +286,58 @@ describe('router', () => {
 
         it('does not crash if no handler registered for view', () => {
             expect(() => navigateTo('unknown-view', false)).not.toThrow();
+        });
+    });
+
+    // CHT-1971: a reload of /issues showed the Dashboard (the page HTML's
+    // default) and ran its project subscriber until the team loaded.
+    describe('primeRoute', () => {
+        let handlers;
+        beforeEach(() => {
+            handlers = { 'my-issues': vi.fn(), 'issues': vi.fn(), 'board': vi.fn() };
+            registerViews(handlers);
+            document.getElementById('my-issues-view').classList.remove('hidden');
+            document.querySelector('.nav-item[data-view="my-issues"]').classList.add('active');
+        });
+
+        it('shows the routed view, not the Dashboard, and loads nothing', () => {
+            window.location.pathname = '/issues';
+            primeRoute();
+            expect(document.getElementById('issues-view').classList.contains('hidden')).toBe(false);
+            expect(document.getElementById('my-issues-view').classList.contains('hidden')).toBe(true);
+            expect(document.querySelector('.nav-item.active').dataset.view).toBe('issues');
+            expect(getCurrentView()).toBeNull();
+            expect(Object.values(handlers).some((h) => h.mock.calls.length > 0)).toBe(false);
+        });
+
+        it('shows no view for a detail route', () => {
+            window.location.pathname = '/issue/CHT-1';
+            primeRoute();
+            expect(document.querySelectorAll('.view:not(.hidden)')).toHaveLength(0);
+            expect(document.querySelector('.nav-item.active').dataset.view).toBe('issues');
+        });
+
+        it('shows the Dashboard at /', () => {
+            window.location.pathname = '/';
+            primeRoute();
+            expect(document.getElementById('my-issues-view').classList.contains('hidden')).toBe(false);
+        });
+
+        it('handleRoute brings the old default back for a detail route', () => {
+            const detailRoute = vi.fn(() => true);
+            configureRouter({ detailRoute });
+            window.location.pathname = '/issue/CHT-1';
+            primeRoute();
+            expect(getCurrentView()).toBeNull();
+            handleRoute();
+            expect(getCurrentView()).toBe('my-issues');
+        });
+
+        it('handleRoute then routes a standard view', () => {
+            window.location.pathname = '/board';
+            primeRoute();
+            handleRoute();
+            expect(getCurrentView()).toBe('board');
         });
     });
 

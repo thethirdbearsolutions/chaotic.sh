@@ -102,6 +102,7 @@ DATABASE_PATH = DATA_DIR / "chaotic.db"
 
 # Service names
 SYSTEMD_SERVICE = "chaotic.service"
+SYSTEMD_SOCKET = "chaotic.socket"
 LAUNCHD_LABEL = "com.chaotic.server"
 
 # Shutdown budget, end to end (CHT-1474). Each layer must give the one inside
@@ -119,6 +120,30 @@ UVICORN_GRACEFUL_SHUTDOWN_SEC = 10
 SYSTEMD_TIMEOUT_STOP_SEC = 30
 SYSTEMD_DEFAULT_TIMEOUT_STOP_SEC = 90
 SERVICE_STOP_TIMEOUT = SYSTEMD_DEFAULT_TIMEOUT_STOP_SEC + 30
+
+# Socket activation (CHT-1970, Linux). chaotic.socket holds the listening
+# port and hands it to uvicorn (`--fd 3`, justfile serve-prod), so the port
+# stays open while the service restarts: a request that arrives while the
+# upgrade has the server down waits in the kernel's accept queue and is
+# answered by the new process, instead of failing at the proxy.
+#
+# A connection to a stopped socket-activated service starts it. During an
+# upgrade that would start code that is half checked out, against a
+# database half migrated, so the unit's ExecStartPre waits on DEPLOY_GATE,
+# a flock the upgrade holds from its stop until its start (start_service
+# releases it). The kernel drops a flock when its holder exits, so a
+# crashed upgrade cannot leave the server gated.
+DEPLOY_GATE = GLOBAL_CONFIG_DIR / "deploy.lock"
+# Written when the upgrade closes the gate, removed only by start_service().
+# If the CLI dies mid-window the kernel drops the flock, but this file stays
+# and the unit's second ExecStartPre refuses to start: a crashed upgrade
+# leaves the server down, as it did before CHT-1970, never running a
+# half-checked-out tree (PR #510 review). `chaotic system start` clears it.
+DEPLOY_HOLD = GLOBAL_CONFIG_DIR / "deploy.hold"
+# How long an activation may wait at the gate: the upgrade's window, with
+# room. It bounds ExecStartPre only; uvicorn's own start is not counted
+# for a Type=simple service.
+SYSTEMD_TIMEOUT_START_SEC = 900
 
 # Backup settings
 MAX_BACKUPS = 5  # Keep last N backups
@@ -359,16 +384,100 @@ def _setting_items(settings: dict[str, str] | None) -> list[tuple[str, str]]:
     return sorted(stored_settings({SETTINGS_KEY: settings or {}}).items())
 
 
+def socket_activation_supported() -> bool:
+    """Socket activation needs Linux (systemd) and flock(1), which the
+    unit's deploy gate runs (util-linux, present on every systemd distro
+    in practice). Without flock the unit stays as it was: binding the port
+    itself, with a gap on every restart."""
+    return get_os() == "linux" and shutil.which("flock") is not None
+
+
+def _socket_host_ok(host: str) -> bool:
+    """ListenStream= takes an address, not a name (uvicorn resolved
+    `localhost`; systemd would refuse the unit), and `%` is a systemd
+    specifier, so a scoped IPv6 address is left to uvicorn too."""
+    import ipaddress
+    if "%" in host:
+        return False
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return True
+
+
+def wants_socket(host: str) -> bool:
+    """Whether this CLI writes the socket-activated unit for `host`."""
+    return socket_activation_supported() and _socket_host_ok(host)
+
+
+def get_socket_file_path() -> Path:
+    return get_systemd_user_dir() / SYSTEMD_SOCKET
+
+
+def socket_mode_installed() -> bool:
+    """True when this install runs behind chaotic.socket: its socket unit
+    is on disk and the service unit has the deploy gate. A socket beside a
+    unit without the gate is not treated as gated (PR #510 review). Linux
+    only."""
+    if get_os() != "linux" or not get_socket_file_path().exists():
+        return False
+    try:
+        return str(DEPLOY_GATE) in get_service_file_path().read_text()
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def _listen_address(host: str, port: int) -> str:
+    """A ListenStream= value for host:port. An IPv6 address is bracketed;
+    `::` and `0.0.0.0` listen on every address, as uvicorn's bind did."""
+    if ":" in host:
+        return f"[{host.strip('[]')}]:{port}"
+    return f"{host}:{port}"
+
+
+def generate_systemd_socket(port: int, host: str = "127.0.0.1") -> str:
+    """The chaotic.socket unit (CHT-1970): it owns the listening port, so
+    the port is never closed by a restart of chaotic.service."""
+    return f"""[Unit]
+Description=Chaotic Server socket
+
+[Socket]
+ListenStream={_listen_address(host, port)}
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target
+"""
+
+
 def generate_systemd_service(port: int, secret_key: str, host: str = "127.0.0.1",
-                             settings: dict[str, str] | None = None) -> str:
+                             settings: dict[str, str] | None = None,
+                             socket: bool | None = None) -> str:
     """Generate systemd user service file content.
 
     Paths are quoted to handle spaces and special characters safely.
     systemd uses a minimal PATH, so we explicitly include common tool paths.
     `settings` (server.json's "settings") follow as one Environment= line
     each; with none, the unit is exactly what it was before CHT-1592.
+
+    `socket` (default: socket_activation_supported()) adds what the unit
+    needs behind chaotic.socket (CHT-1970): Requires= on the socket, the
+    deploy gate as ExecStartPre, and a start timeout that covers waiting
+    at it. These only add directives, so reconcile_service_file can move
+    an existing unit to them.
     """
+    if socket is None:
+        socket = wants_socket(host)
     setting_lines = "".join(f"Environment={name}={value}\n" for name, value in _setting_items(settings))
+    unit_socket = f"Requires={SYSTEMD_SOCKET}\n" if socket else ""
+    service_socket = ""
+    if socket:
+        flock = shutil.which("flock") or "/usr/bin/flock"
+        test = shutil.which("test") or "/usr/bin/test"
+        service_socket = (f"ExecStartPre={shlex.quote(flock)} {shlex.quote(str(DEPLOY_GATE))} true\n"
+                          f"ExecStartPre={shlex.quote(test)} ! -e {shlex.quote(str(DEPLOY_HOLD))}\n"
+                          f"TimeoutStartSec={SYSTEMD_TIMEOUT_START_SEC}\n")
     home = Path.home()
     # Quote paths for systemd (handles spaces and special chars)
     project_dir = shlex.quote(str(PROJECT_DIR))
@@ -381,11 +490,11 @@ def generate_systemd_service(port: int, secret_key: str, host: str = "127.0.0.1"
     return f"""[Unit]
 Description=Chaotic Server
 After=network.target
-
+{unit_socket}
 [Service]
 Type=simple
 WorkingDirectory={project_dir}
-ExecStart=/usr/bin/env just serve-prod
+{service_socket}ExecStart=/usr/bin/env just serve-prod
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec={SYSTEMD_TIMEOUT_STOP_SEC}
@@ -485,7 +594,15 @@ def write_service_file(port: int, secret_key: str, host: str = "127.0.0.1",
     service_path.parent.mkdir(parents=True, exist_ok=True)
 
     if os_type == "linux":
-        content = generate_systemd_service(port, secret_key, host, settings)
+        socket = wants_socket(host)
+        content = generate_systemd_service(port, secret_key, host, settings, socket=socket)
+        if socket:
+            # Before the service: its Requires= names the socket (CHT-1970).
+            _write_private_file(get_socket_file_path(), generate_systemd_socket(port, host))
+        else:
+            # A host the socket cannot listen on (reconfigure to a name):
+            # a socket left behind would hold the old address.
+            _remove_socket_file()
     elif os_type == "darwin":
         content = generate_launchd_plist(port, secret_key, host, settings)
     else:
@@ -748,6 +865,10 @@ class ServiceFileUpdate:
         self.backup = backup
         self.diff = diff or []
         self.reason = reason
+        # The socket unit (CHT-1970): "created", "updated" (then
+        # `socket_previous` is what it replaced) or None (not touched).
+        self.socket_change: str | None = None
+        self.socket_previous: str | None = None
 
 
 def _daemon_reload() -> bool:
@@ -760,7 +881,8 @@ def _daemon_reload() -> bool:
 
 def reconcile_service_file(port: int, host: str, secret_key: str,
                            settings: dict[str, str] | None = None,
-                           owned: frozenset[str] = frozenset()) -> ServiceFileUpdate:
+                           owned: frozenset[str] = frozenset(),
+                           socket_ok: bool = True) -> ServiceFileUpdate:
     """Bring an existing service file up to what this CLI generates
     (CHT-1476), so a fix to the generated unit (e.g. TimeoutStopSec)
     reaches installs made before it. Only `system install` and
@@ -799,13 +921,17 @@ def reconcile_service_file(port: int, host: str, secret_key: str,
 
     try:
         if os_type == "linux":
-            desired = generate_systemd_service(port, secret_key, host, settings)
+            use_socket = socket_ok and wants_socket(host)
+            desired = generate_systemd_service(port, secret_key, host, settings, socket=use_socket)
         else:
             desired = generate_launchd_plist(port, secret_key, host, settings)
     except Exception as e:  # noqa: BLE001 -- "never raises": upgrade must reach start_service
         return ServiceFileUpdate("skipped", path, reason=f"could not generate it ({type(e).__name__})")
     if current == desired:
-        return ServiceFileUpdate("unchanged", path)
+        update = ServiceFileUpdate("unchanged", path)
+        if os_type == "linux" and use_socket:
+            _reconcile_socket_file(port, host, update)
+        return update
 
     have = _parse_service(current, os_type)
     want = _parse_service(desired, os_type)
@@ -815,18 +941,92 @@ def reconcile_service_file(port: int, host: str, secret_key: str,
     if blockers:
         return ServiceFileUpdate("skipped", path, reason=f"{path}: {'; '.join(blockers)}")
 
+    pending = ServiceFileUpdate("skipped", path)
+    if os_type == "linux" and use_socket:
+        # The socket first: the regenerated unit Requires= it (CHT-1970).
+        _reconcile_socket_file(port, host, pending)
+        if pending.socket_change is None and not get_socket_file_path().exists():
+            return ServiceFileUpdate("skipped", path, reason=pending.reason)
     try:
         backup = _backup_service_file(path, current)
         _write_private_file(path, desired)
     except OSError as e:
+        _undo_socket_file(pending)
         return ServiceFileUpdate("skipped", path, reason=f"could not write {path}: {e}")
     except ValueError as e:  # UnicodeEncodeError: name the kind, never the text
+        _undo_socket_file(pending)
         return ServiceFileUpdate("skipped", path, reason=f"could not write {path} ({type(e).__name__})")
     if os_type == "linux" and not _daemon_reload():
         # Not fatal: start_service() runs daemon-reload again before
         # starting, and fails loudly (with a rollback) if it cannot.
         console.print("[yellow]  systemctl --user daemon-reload failed; it is retried at start.[/yellow]")
-    return ServiceFileUpdate("updated", path, backup, _redacted_diff(current, desired, path, os_type, secret_key))
+    update = ServiceFileUpdate("updated", path, backup, _redacted_diff(current, desired, path, os_type, secret_key))
+    update.socket_change, update.socket_previous = pending.socket_change, pending.socket_previous
+    return update
+
+
+def _reconcile_socket_file(port: int, host: str, update: ServiceFileUpdate) -> None:
+    """Write chaotic.socket when it is missing or differs from what this
+    CLI generates, recording what it replaced on `update` so a rollback
+    can undo it. It holds no secret and nothing an operator sets, so it is
+    simply rewritten. A failure is recorded in `update.reason`."""
+    socket_path = get_socket_file_path()
+    want = generate_systemd_socket(port, host)
+    try:
+        have = socket_path.read_text() if socket_path.exists() else None
+        if have == want:
+            return
+        _write_private_file(socket_path, want)
+    except (OSError, UnicodeDecodeError) as e:
+        update.reason = f"could not write {socket_path}: {e}"
+        return
+    update.socket_change = "created" if have is None else "updated"
+    update.socket_previous = have
+    if update.status == "unchanged":
+        _daemon_reload()
+
+
+def _remove_socket_file() -> None:
+    """Disable and delete chaotic.socket, if there is one. Disabling first
+    removes the sockets.target.wants link, which would otherwise dangle."""
+    socket_path = get_socket_file_path()
+    if not socket_path.exists():
+        return
+    try:
+        # Stopped as well: a deleted unit file leaves a running socket
+        # listening, unmanaged (PR #510 re-review).
+        run_command(["systemctl", "--user", "stop", SYSTEMD_SOCKET], check=False, timeout=SERVICE_STOP_TIMEOUT)
+        run_command(["systemctl", "--user", "disable", SYSTEMD_SOCKET], check=False, timeout=30)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    socket_path.unlink(missing_ok=True)
+
+
+def restart_socket() -> bool:
+    """Re-bind chaotic.socket to what its unit file now says. `start` on an
+    active socket does nothing, so a changed address needs this; it closes
+    the port for a moment, so only call it with the service down."""
+    try:
+        run_command(["systemctl", "--user", "daemon-reload"], timeout=30)
+        run_command(["systemctl", "--user", "restart", SYSTEMD_SOCKET], timeout=30)
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _undo_socket_file(update: ServiceFileUpdate) -> bool:
+    """Put chaotic.socket back as it was before `update` touched it."""
+    if update.socket_change is None:
+        return True
+    socket_path = get_socket_file_path()
+    try:
+        if update.socket_change == "created":
+            _remove_socket_file()
+        else:
+            _write_private_file(socket_path, update.socket_previous or "")
+    except OSError:
+        return False
+    return True
 
 
 def restore_service_file(update: ServiceFileUpdate) -> bool:
@@ -834,15 +1034,77 @@ def restore_service_file(update: ServiceFileUpdate) -> bool:
     (used by rollback, so a rolled-back server starts under the unit it
     ran with before). Returns True if there was nothing to undo or the
     undo worked."""
+    socket_ok = _undo_socket_file(update)
     if update.status != "updated" or update.path is None or update.backup is None:
-        return True
+        if update.socket_change is not None and get_os() == "linux":
+            _daemon_reload()
+        return socket_ok
     try:
         _write_private_file(update.path, update.backup.read_bytes().decode())
     except (OSError, UnicodeDecodeError):
         return False
     if get_os() == "linux":
         _daemon_reload()
+    return socket_ok
+
+
+_deploy_gate_fd: int | None = None
+
+
+def hold_deploy_gate() -> bool:
+    """Take the deploy gate (CHT-1970) without waiting. False if another
+    process holds it: another upgrade is in its window. Held until
+    release_deploy_gate() (start_service calls it) or this process exits."""
+    global _deploy_gate_fd
+    if _deploy_gate_fd is not None:
+        return True
+    import fcntl
+    DEPLOY_GATE.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(DEPLOY_GATE, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return False
+    _deploy_gate_fd = fd
+    try:
+        DEPLOY_HOLD.write_text("chaotic system upgrade is replacing the server; "
+                               "'chaotic system start' clears this.\n")
+    except OSError:
+        pass  # the flock alone still gates a live upgrade
     return True
+
+
+def release_deploy_gate() -> None:
+    """Open the gate: remove the hold marker, then drop the flock. Every
+    start goes through here (start_service), so a gate left closed by a
+    crashed upgrade is opened by the next `chaotic system start`."""
+    global _deploy_gate_fd
+    if _deploy_gate_fd is None and not hold_deploy_gate():
+        # Another process's upgrade is in its window: its hold file is
+        # not ours to remove (PR #510 re-review). Its flock still gates.
+        return
+    try:
+        DEPLOY_HOLD.unlink(missing_ok=True)
+    except OSError:
+        pass
+    fd, _deploy_gate_fd = _deploy_gate_fd, None
+    try:
+        os.close(fd)  # closing the only descriptor drops the flock
+    except OSError:
+        pass
+
+
+def _socket_active() -> bool:
+    """chaotic.socket is listening (so the port answers even with the
+    service stopped, and a connection to it starts the service)."""
+    if not socket_mode_installed():
+        return False
+    try:
+        result = run_command(["systemctl", "--user", "is-active", SYSTEMD_SOCKET], check=False, timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return result.returncode == 0
 
 
 def start_service() -> bool:
@@ -852,13 +1114,18 @@ def start_service() -> bool:
     os_type = get_os()
     try:
         if os_type == "linux":
+            # An activation waiting at the deploy gate, and this start,
+            # both need it open (CHT-1970); first, so no failure below can
+            # leave it closed.
+            release_deploy_gate()
             # Enable lingering so user services survive SSH logout
             run_command(["loginctl", "enable-linger", os.environ.get("USER", "")], check=False)
             run_command(["systemctl", "--user", "daemon-reload"])
-            run_command(["systemctl", "--user", "enable", SYSTEMD_SERVICE])
+            units = [SYSTEMD_SOCKET, SYSTEMD_SERVICE] if socket_mode_installed() else [SYSTEMD_SERVICE]
+            run_command(["systemctl", "--user", "enable", *units])
             # A start queued behind an unfinished stop waits for that stop,
             # so give it the same budget as a stop.
-            run_command(["systemctl", "--user", "start", SYSTEMD_SERVICE], timeout=SERVICE_STOP_TIMEOUT)
+            run_command(["systemctl", "--user", "start", *units], timeout=SERVICE_STOP_TIMEOUT)
         elif os_type == "darwin":
             plist_path = get_service_file_path()
             # Unload first in case it's already loaded (ignore errors)
@@ -871,7 +1138,7 @@ def start_service() -> bool:
         return False
 
 
-def stop_service() -> bool:
+def stop_service(keep_socket: bool = False) -> bool:
     """Stop the server service. Returns True on success, False on any
     failure, including the CLI's own wait running out (CHT-1474); it never
     raises. A False does not say whether the server is up: the stop may be
@@ -882,11 +1149,17 @@ def stop_service() -> bool:
     (systemd src/core/unit.c, unit_process_job: JOB_STOP finishes JOB_DONE
     on UNIT_IS_INACTIVE_OR_FAILED). Should some systemd exit non-zero
     anyway, a unit that settled to inactive or failed is stopped all the
-    same, and is reported as such."""
+    same, and is reported as such.
+
+    Behind chaotic.socket (CHT-1970) the socket is stopped too, closing
+    the port, unless `keep_socket`: then the port stays open and requests
+    queue for the next start. Only the upgrade asks for that, holding the
+    deploy gate first so a queued request cannot start the server early."""
     os_type = get_os()
     try:
         if os_type == "linux":
-            run_command(["systemctl", "--user", "stop", SYSTEMD_SERVICE], timeout=SERVICE_STOP_TIMEOUT)
+            units = [SYSTEMD_SERVICE] if keep_socket or not socket_mode_installed() else [SYSTEMD_SOCKET, SYSTEMD_SERVICE]
+            run_command(["systemctl", "--user", "stop", *units], timeout=SERVICE_STOP_TIMEOUT)
         elif os_type == "darwin":
             plist_path = get_service_file_path()
             run_command(["launchctl", "unload", str(plist_path)], timeout=SERVICE_STOP_TIMEOUT)
@@ -935,6 +1208,9 @@ def _handle_failed_stop(port: int, host: str, restart: bool = True) -> bool:
     down; if it is down and `restart`, start it again and verify /health.
     Returns True when the server is up on return."""
     console.print("[red]Failed to stop server.[/red]")
+    # Nothing has changed yet: a request waiting at a held gate may start
+    # the current code, and must, or the settle below waits on ourselves.
+    release_deploy_gate()
     state = wait_for_service_settled()
     if is_service_running():
         console.print("[yellow]The server is still RUNNING; it was not stopped.[/yellow]")
@@ -1226,6 +1502,11 @@ def database_in_use(port: int | None = None, host: str = "127.0.0.1") -> bool:
     The port check matters because the CHT-1363 failure is precisely a
     process the service unit does not own answering the port."""
     if is_service_running():
+        return True
+    # Connecting to our own listening socket would start the server
+    # against the database (PR #510 review): the socket being up is answer
+    # enough.
+    if _socket_active():
         return True
     return port is not None and is_port_in_use(port, host)
 
@@ -1924,6 +2205,165 @@ def rebuild_frontend() -> tuple[bool, str]:
         return False, "npm ci/build timed out"
 
 
+# Release staging (CHT-1969). The upgrade used to do all of its slow work
+# (dependency sync, `npm ci` and the bundle build) with the server stopped,
+# so every deploy was a minute or more of downtime. It now checks the
+# target out into a git worktree beside the server checkout and does that
+# work there first, while the old server keeps serving: the uv cache is
+# warm for the in-place sync, and the built bundle is copied in instead of
+# rebuilt. The stopped window is then checkout, sync, CLI reinstall,
+# migrate, copy, start.
+STAGING_DIR = GLOBAL_CONFIG_DIR / "staging"
+FRONTEND_BUNDLE = Path("frontend") / "static" / "js" / "app.bundle.js"
+STAGING_MARKER = ".chaotic-staging"
+
+
+class PreparedRelease:
+    """What prepare_release() did. `ok` False means the target cannot be
+    deployed (its dependency sync failed) and nothing should be stopped.
+    `staged` False with `ok` True means staging itself was unavailable and
+    the upgrade falls back to doing everything in the stopped window.
+    `bundle` is the built frontend bundle in the staging checkout, or None
+    with `frontend_message` saying why (skipped or failed: not fatal)."""
+
+    def __init__(self, ok: bool, message: str, staged: bool = False,
+                 bundle: Path | None = None, frontend_message: str = "",
+                 commit: str | None = None):
+        self.ok = ok
+        self.message = message
+        self.staged = staged
+        self.bundle = bundle
+        self.frontend_message = frontend_message
+        self.commit = commit
+
+
+def _stage_checkout(target_commit: str) -> tuple[bool, str]:
+    """Put STAGING_DIR at `target_commit`: a detached git worktree of the
+    server checkout, created on first use and reused after. Returns
+    (success, message).
+
+    Only a directory carrying STAGING_MARKER is ever deleted: STAGING_DIR
+    follows CHAOTIC_HOME, which may be a directory shared with other
+    things (PR #504 review). A worktree that cannot be reused (the server
+    was recloned, so its .git points nowhere; a killed `worktree add` left
+    it locked) is removed and made again, so one bad state does not turn
+    staging off for every later upgrade."""
+    if STAGING_DIR.exists() and not (STAGING_DIR / STAGING_MARKER).exists():
+        return False, f"{STAGING_DIR} exists and was not made by this CLI; leaving it alone"
+    try:
+        if (STAGING_DIR / ".git").exists():
+            try:
+                run_command(["git", "checkout", "--detach", "--force", target_commit],
+                            cwd=STAGING_DIR, timeout=120, own_group=True)
+                return True, ""
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                pass  # made again below
+        if STAGING_DIR.exists():
+            shutil.rmtree(STAGING_DIR)
+        # A worktree whose directory is gone is still registered; prune it,
+        # and force twice so a locked registration does not refuse the path.
+        run_command(["git", "worktree", "prune"], cwd=SERVER_DIR, timeout=30)
+        run_command(
+            ["git", "worktree", "add", "--detach", "--force", "--force", str(STAGING_DIR), target_commit],
+            cwd=SERVER_DIR, timeout=120, own_group=True,
+        )
+        (STAGING_DIR / STAGING_MARKER).write_text(
+            "Made by `chaotic system upgrade` (CHT-1969); safe to delete.\n")
+        return True, ""
+    except subprocess.CalledProcessError as e:
+        return False, _command_output(e)
+    except subprocess.TimeoutExpired:
+        return False, "git timed out"
+    except OSError as e:
+        return False, str(e)
+
+
+def _build_frontend_in(checkout: Path) -> tuple[Path | None, str]:
+    """`npm ci && npm run build` in `checkout`'s frontend (rebuild_frontend's
+    steps, run elsewhere). Returns (the built bundle, message); the bundle
+    is None when it was skipped or failed, which never stops an upgrade."""
+    if shutil.which("npm") is None or shutil.which("node") is None:
+        return None, "skipped (node/npm not on PATH; serving committed bundle)"
+    frontend_dir = checkout / "frontend"
+    if not (frontend_dir / "package.json").exists():
+        return None, "skipped (no frontend/package.json)"
+    try:
+        run_command(["npm", "ci"], cwd=frontend_dir, timeout=600, own_group=True)
+        run_command(["npm", "run", "build"], cwd=frontend_dir, timeout=180, own_group=True)
+    except subprocess.CalledProcessError as e:
+        return None, f"npm ci/build failed: {(e.stderr or '').strip()[:200]}"
+    except subprocess.TimeoutExpired:
+        return None, "npm ci/build timed out"
+    except OSError as e:
+        return None, f"npm ci/build failed: {e}"
+    finally:
+        # A few hundred MB that the next `npm ci` deletes anyway; do not
+        # hold it on the server's disk between upgrades (PR #504 review).
+        shutil.rmtree(frontend_dir / "node_modules", ignore_errors=True)
+    bundle = checkout / FRONTEND_BUNDLE
+    if not bundle.is_file():
+        return None, f"build produced no {FRONTEND_BUNDLE}"
+    return bundle, "built"
+
+
+def prepare_release(target_commit: str) -> PreparedRelease:
+    """Do the upgrade's slow, server-independent work for `target_commit`
+    before the server is stopped (CHT-1969). Never touches the server
+    checkout, its venvs or the database.
+
+    - The staging worktree cannot be made: not fatal, the upgrade does the
+      work in the stopped window as it used to (staged=False).
+    - `just sync` fails there: fatal (ok=False). The same lock would fail
+      the in-place sync with the server down, so stop before stopping.
+    - The frontend build fails: not fatal, as in rebuild_frontend.
+    """
+    ok, err = _stage_checkout(target_commit)
+    if not ok:
+        return PreparedRelease(True, f"could not create the staging checkout ({err}); "
+                                     "preparing during the stop instead")
+    try:
+        run_command(["just", "sync"], cwd=STAGING_DIR, timeout=300, own_group=True)
+    except subprocess.CalledProcessError as e:
+        return PreparedRelease(False, f"Dependency sync failed for the target version:\n{_command_output(e)}")
+    except subprocess.TimeoutExpired:
+        return PreparedRelease(False, "Dependency sync timed out for the target version")
+    except OSError as e:  # e.g. just not on this shell's PATH
+        return PreparedRelease(False, f"Could not run a command: {e}")
+    bundle, fe_message = _build_frontend_in(STAGING_DIR)
+    return PreparedRelease(True, "dependencies synced", staged=True, bundle=bundle,
+                           frontend_message=fe_message, commit=target_commit)
+
+
+def install_prepared_frontend(prepared: PreparedRelease | None) -> tuple[bool, str]:
+    """Put the frontend bundle in place in the server checkout, inside the
+    stopped window. With a bundle built in staging for the commit now
+    checked out, that is one atomic copy. Without staging, it is the old
+    in-place rebuild_frontend(). When staging ran and its build was skipped
+    or failed, nothing is rebuilt here: it would fail the same way, with
+    the server down."""
+    if prepared is None or not prepared.staged:
+        return rebuild_frontend()
+    if prepared.bundle is None:
+        return prepared.frontend_message.startswith("skipped"), prepared.frontend_message
+    head = get_current_commit()
+    if head and prepared.commit and head != prepared.commit:
+        return False, (f"staged bundle is for {prepared.commit[:7]}, not the checked-out {head[:7]}; "
+                       "serving the committed bundle")
+    dest = PROJECT_DIR / FRONTEND_BUNDLE
+    tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(prepared.bundle, tmp)
+        os.replace(tmp, dest)
+    except OSError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False, f"could not copy the built bundle: {e}"
+    return True, "built before the stop; copied in"
+
+
 # CLI Command Group
 @click.group()
 def system():
@@ -2194,6 +2634,8 @@ def system_status():
         console.print(f"  URL:      http://{esc(_display_host(host))}:{esc(port)}")
     else:
         console.print(f"  Status:   [red]stopped[/red]")
+        if _socket_active():
+            console.print(f"  Socket:   listening on port {esc(port)}; the next request starts the server")
         console.print()
         console.print("Run 'chaotic system start' to start the server.")
         return
@@ -2254,8 +2696,10 @@ def system_start():
     port = server_info.get("port", DEFAULT_PORT)
     host = server_info.get("host", "127.0.0.1")
 
-    # Check if port is already in use by another process
-    if is_port_in_use(port, host):
+    # Check if port is already in use by another process. Our own
+    # chaotic.socket answers on it too (CHT-1970), and connecting to it
+    # would start the service: not "another process".
+    if not _socket_active() and is_port_in_use(port, host):
         console.print(f"[red]Port {esc(port)} is already in use.[/red]")
         console.print(f"Another process is listening on port {esc(port)}.")
         console.print(f"\nTo use a different port: chaotic system reconfigure --port <port>")
@@ -2285,7 +2729,9 @@ def system_stop():
         console.print("[red]Chaotic server is not installed.[/red]")
         raise SystemExit(1)
 
-    if not is_service_running():
+    # An idle chaotic.socket still holds the port and starts the server on
+    # the next request (CHT-1970): stopping means closing it too.
+    if not is_service_running() and not _socket_active():
         console.print("[yellow]Server is not running.[/yellow]")
         raise SystemExit(0)
 
@@ -2477,11 +2923,14 @@ def system_reconfigure(host, port, yes, force):
     # Regenerate service file
     if backup is not None:
         console.print(f"Previous service file kept at {esc(backup)}")
+    # Whether to restart, decided before the rewrite: an idle socket counts
+    # (still bound to the old address; `start` on an active socket does not
+    # re-bind it), and the rewrite may remove its unit (CHT-1970).
+    was_running = is_service_running() or _socket_active()
     service_path = write_service_file(new_port, secret_key, new_host, server_settings.valid_settings(server_info))
     console.print(f"Regenerated service file: {esc(service_path)}")
 
-    # Restart if running
-    was_running = is_service_running()
+    # Restart if running.
     if was_running:
         console.print("Restarting server...")
         if not stop_service():
@@ -2579,6 +3028,22 @@ def _print_commit_list(rev_range: str, heading: str) -> None:
     console.print()
 
 
+def _justfile_serves_socket(commit: str | None = None) -> bool:
+    """Whether serve-prod at `commit` (default: the checkout) serves an
+    inherited socket (CHT-1970). Unknown counts as no."""
+    try:
+        if commit is None:
+            text = (PROJECT_DIR / "justfile").read_text()
+        else:
+            result = run_command(["git", "show", f"{commit}:justfile"], cwd=SERVER_DIR, check=False, timeout=30)
+            if result.returncode != 0:
+                return False
+            text = result.stdout or ""
+    except (OSError, UnicodeDecodeError, subprocess.TimeoutExpired):
+        return False
+    return isinstance(text, str) and "LISTEN_FDS" in text
+
+
 def _report_service_file_update(update: ServiceFileUpdate) -> None:
     if update.status == "updated":
         console.print(f"Updated service file {esc(update.path)} (previous kept at {esc(update.backup)}):")
@@ -2642,7 +3107,7 @@ def _roll_back(
                 f"[red]Could not check out the previous commit {esc(current_commit[:7])}"
                 f"{f': {escape(err)}' if err else ''}. The server checkout is still on the new code.[/red]"
             )
-    if service_update is not None and service_update.status == "updated":
+    if service_update is not None and (service_update.status == "updated" or service_update.socket_change):
         if checkout_failed:
             # Like the database below: the new code is what will run, so
             # it keeps the unit the upgrade wrote for it.
@@ -2755,6 +3220,26 @@ def _cli_state(progress: dict) -> str:
     return "partial" if progress.get("cli_reinstall_started") else "unchanged"
 
 
+def _opens_gate_on_handled_exit(func):
+    """An upgrade that ends on its own terms (a cancel, a refused backup, a
+    rollback) has put the server back as it found it, so it must not leave
+    the deploy gate's hold file closing the server to the next request
+    (PR #510 re-review). Paths that start the server open it already; this
+    covers the ones that exit with the server left as it was. A crash or
+    Ctrl-C mid-window is not a handled exit and keeps the hold."""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except SystemExit:
+            if _deploy_gate_fd is not None:
+                release_deploy_gate()
+            raise
+    return wrapper
+
+
 @system.command("upgrade")
 @click.option("--version", "target_version", default=None, help="Version to upgrade to (default: latest)")
 @click.option("--no-backup", is_flag=True, help="Skip database backup (not recommended)")
@@ -2765,14 +3250,19 @@ def _cli_state(progress: dict) -> str:
     help="Permit a target that is older than (or diverged from) the deployed commit. "
          "Off by default: an upgrade must never move a server backwards by accident (CHT-1357).",
 )
+@_opens_gate_on_handled_exit
 def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade):
     """Upgrade to a new version.
 
     This command:
-    1. Backs up your database (unless --no-backup)
-    2. Stops the server
-    3. Pulls and checks out the new version
-    4. Syncs dependencies and runs database migrations
+    1. Prepares the new version in a staging checkout (~/.chaotic/staging)
+       while the server keeps running: syncs its dependencies, which warms
+       the cache for step 4, and builds the frontend bundle there. If the
+       sync fails, it stops here and the server was never stopped
+    2. Stops the server and backs up your database (unless --no-backup)
+    3. Checks out the new version
+    4. Syncs dependencies, runs database migrations and copies in the
+       bundle built in step 1
     5. Regenerates the systemd unit / launchd plist when what this CLI
        would write differs and only adds settings (backing up the old
        file to ~/.chaotic/service-backups and printing a redacted
@@ -2879,6 +3369,27 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print("\n[green]Already on the latest version.[/green]")
         raise SystemExit(0)
 
+    # CHT-1969: the slow work (dependency sync, npm ci, the bundle build)
+    # runs in a staging checkout while the old server is still serving.
+    # Nothing here touches the server checkout or the database, so a
+    # failure stops the upgrade with the server never having gone down.
+    prepared = None
+    if not already_current:
+        console.print("Preparing the new version while the server keeps running...")
+        prep_started = time.monotonic()
+        try:
+            prepared = prepare_release(target_commit)
+        except KeyboardInterrupt:
+            console.print("[yellow]Interrupted. Nothing was changed and the server was not stopped.[/yellow]")
+            raise SystemExit(130)
+        if not prepared.ok:
+            console.print(f"[red]{escape(prepared.message)}[/red]")
+            console.print("Nothing was changed and the server was not stopped.")
+            raise SystemExit(1)
+        console.print(f"  [dim]{escape(prepared.message)} ({time.monotonic() - prep_started:.1f}s)[/dim]")
+        if prepared.staged:
+            console.print(f"  [dim]frontend: {escape(prepared.frontend_message)}[/dim]")
+
     # Stop server FIRST (before backup to ensure consistent db state).
     # Stop anything that is not settled-stopped (CHT-1474): a crash-looping
     # unit sits in "activating" (auto-restart) and is not "running", but
@@ -2893,9 +3404,32 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     # message can say definitively whether MCP clients must reconnect.
     version_before = get_remote_version(port, host=host) if was_running else None
     version_after = None
+    # CHT-1970: behind chaotic.socket the port stays open through the
+    # window, and the deploy gate keeps a request from starting the server
+    # before the new version is in place. start_service() releases it.
+    gated = socket_mode_installed()
+    if gated and not _justfile_serves_socket(target_commit):
+        # The target's serve-prod would bind the port chaotic.socket holds
+        # and crash-loop (PR #510 review): not something to find out with
+        # the server down.
+        console.print(
+            f"[red]{esc(describe_commit(target_commit))} predates socket activation (CHT-1970), "
+            "and this server runs behind chaotic.socket.[/red]"
+        )
+        console.print(
+            "Nothing was changed. To go back that far, first return to the classic unit: "
+            f"'chaotic system stop', delete {esc(get_socket_file_path())}, then 'chaotic system reconfigure'."
+        )
+        raise SystemExit(1)
+    if gated and not hold_deploy_gate():
+        console.print(f"[red]Another upgrade holds {esc(DEPLOY_GATE)}; wait for it to finish.[/red]")
+        console.print("Nothing was changed and the server was not stopped.")
+        raise SystemExit(1)
     if must_stop:
         console.print("Stopping server..." if was_running else f"Stopping server (service state '{esc(state)}')...")
-        if not stop_service():
+        if gated:
+            console.print("  [dim]The port stays open: requests wait for the new version instead of failing.[/dim]")
+        if not stop_service(keep_socket=gated):
             # CHT-1474: nothing has been changed yet; make sure the server
             # is back up (or say plainly that it is not) before giving up.
             _handle_failed_stop(port, host)
@@ -2903,6 +3437,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             raise SystemExit(1)
         if not wait_for_service_stop(timeout=10):
             console.print("[yellow]Warning: Service may still be stopping[/yellow]")
+    # How long the server is down, reported at the end (CHT-1969).
+    down_since = time.monotonic() if must_stop else None
 
     # Confirm action
     if not yes:
@@ -2947,7 +3483,9 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     else:
         # Checkout new version (force to handle dirty state from uv sync etc.)
         console.print(f"Checking out {esc(target_version)}...")
-        ok, err = checkout_version(target_version, force=True)
+        # The commit staging prepared, not the ref: a ref that moved since
+        # would check out code nobody synced or built (PR #504 review).
+        ok, err = checkout_version(target_commit, force=True)
         if not ok:
             console.print(f"[red]Failed to checkout version.[/red]")
             if err:
@@ -3008,10 +3546,12 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         raise SystemExit(130 if interrupted else 1)
     console.print(f"  [dim]{escape(message)}[/dim]")
 
-    # Rebuild frontend bundle so it matches the updated src/. Non-fatal: the
-    # committed bundle (if a PR remembered to commit it) is still served.
-    console.print("Rebuilding frontend...")
-    fe_ok, fe_msg = rebuild_frontend()
+    # Put the frontend bundle in place so it matches the updated src/:
+    # copied from the staging build when there is one (CHT-1969), rebuilt
+    # here otherwise. Non-fatal: the committed bundle (if a PR remembered
+    # to commit it) is still served.
+    console.print("Installing frontend bundle...")
+    fe_ok, fe_msg = install_prepared_frontend(prepared)
     if fe_ok:
         console.print(f"  [dim]{esc(fe_msg)}[/dim]")
     else:
@@ -3030,11 +3570,18 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         bad_settings = server_settings.invalid_settings(server_info)
         settings_errors, _ = server_settings.check(server_info)
         service_update = reconcile_service_file(
-            port, host, server_info.get("secret_key", ""), settings=server_settings.valid_settings(server_info))
+            port, host, server_info.get("secret_key", ""), settings=server_settings.valid_settings(server_info),
+            socket_ok=_justfile_serves_socket())
     except Exception as e:  # noqa: BLE001
         bad_settings, settings_errors = [], []
         service_update = ServiceFileUpdate("skipped", reason=f"checking server settings failed ({type(e).__name__})")
     _report_service_file_update(service_update)
+    if service_update.socket_change == "created":
+        console.print(f"  [dim]Added {esc(get_socket_file_path())}: from the next upgrade on, requests "
+                      "wait through the restart instead of failing.[/dim]")
+    elif service_update.socket_change == "updated" and _socket_active():
+        # Still bound to the old address (keep_socket left it running).
+        restart_socket()
     if bad_settings:
         console.print(f"  [yellow]Left out of the service file (invalid in server.json): "
                       f"{escape(', '.join(bad_settings))}. See 'chaotic system config check'.[/yellow]")
@@ -3097,6 +3644,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             )
         else:
             console.print("[green]OK[/green]")
+    if down_since is not None:
+        console.print(f"[dim]Server was down for {time.monotonic() - down_since:.1f}s.[/dim]")
     version_after = get_remote_version(port, host=host)
     if version_after and version_after.get("git_dirty"):
         console.print("[yellow]Warning: the server checkout has uncommitted changes (git_dirty).[/yellow]")
@@ -3161,7 +3710,8 @@ def system_backup(list_mode, restore_timestamp):
         port = server_info.get("port", DEFAULT_PORT)
         host = server_info.get("host", "127.0.0.1")
 
-        was_running = is_service_running()
+        # An idle socket would start the server mid-restore (CHT-1970).
+        was_running = is_service_running() or _socket_active()
         if was_running:
             console.print("Stopping server...")
             if not stop_service():

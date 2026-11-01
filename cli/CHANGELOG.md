@@ -5,6 +5,60 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
+## [Unreleased]
+
+### Changed
+
+- **Linux servers run behind a systemd socket (`chaotic.socket`).**
+  The socket holds the port, and uvicorn serves it (`--fd 3` in `just
+  serve-prod`), so a restart no longer closes the port. A request that
+  arrives while an upgrade has the server down waits and is answered by
+  the new version, where it used to get a 502 from the proxy. A deploy
+  gate (`~/.chaotic/deploy.lock`, a flock the upgrade holds from its stop
+  to its start) keeps such a request from starting a half-upgraded server.
+  `system install` and `reconfigure` write the socket. `system upgrade`
+  adds it when it can rewrite the unit (the rewrite only adds
+  directives); a unit it cannot rewrite stays as it is, see `chaotic
+  system config adopt`. `system stop` still closes the port. This needs
+  `flock` (util-linux). macOS is unchanged (CHT-1970).
+
+## [0.1.2] - 2026-11-01
+
+Session identities find their team and project on their own, and
+`chaotic system upgrade` keeps the server up while it prepares a release
+(PRs #496, #501, #503 and #504). No migrations. Upgrade with `uv tool
+install --force chaotic-cli==0.1.2`, then `chaotic system upgrade
+--version v0.1.2`: the upgrade runs the installed CLI, so installing
+0.1.2 first gets the new flow below.
+
+### Added
+
+- **`CHAOTIC_TEAM` and `CHAOTIC_PROJECT`** name a team or project by key,
+  name or id and override the config files, for the CLI and `chaotic mcp`
+  alike. They are resolved once per process and never written to a
+  config file. `team use`, `team create`, `project use` and `project
+  create` warn while one of them overrides the choice (CHT-1950,
+  CHT-1953).
+
+### Changed
+
+- **A fresh session identity defaults its team and project.** With no
+  current team, the CLI takes the key's only team (as `chaotic mcp` has
+  since CHT-1687), or a project-scoped key's project's team; with no
+  current project, a project-scoped registrar's project, which its
+  session identities inherit. Several teams fail with their names and
+  `chaotic team use <key>` (CHT-1950).
+- **`chaotic system upgrade` prepares the release before stopping the
+  server.** It syncs dependencies and builds the frontend in a staging
+  worktree (`~/.chaotic/staging`) while the old server keeps serving, and
+  a failed sync there aborts before the stop. The stopped window is now
+  the database backup, checkout, a warm-cache sync, the CLI reinstall,
+  migrations, copying in the built bundle, and the start; the upgrade
+  reports how long the server was down (CHT-1969).
+- **Web UI**: the inbox is a triage list (one-line rows grouped by day,
+  hover actions, All/Unread), and Epics is a progress readout (summary,
+  state groups, percent, row cursor) (CHT-1962, CHT-1964).
+
 ## [0.1.1] - 2026-11-01
 
 A CLI fix for project-scoped agents and session identities (#495; #493
@@ -44,8 +98,7 @@ CLI first (`uv tool install --force chaotic-cli==0.1.0`), then run
 `chaotic system upgrade --version v0.1.0`, which backs up the
 database, stops the server, checks out the new code and migrates before
 restarting. If a migration fails, it restores the backup, checks the
-previous code out again and restarts the server on it. chaotic.thirdbearsolutions.com has run this code since
-2026-10-31 (5701ed09).
+previous code out again and restarts the server on it.
 
 ### Upgrade notes
 

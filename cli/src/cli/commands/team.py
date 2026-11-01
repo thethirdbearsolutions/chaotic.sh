@@ -264,6 +264,7 @@ def register(cli):
             return
         console.print(f"[green]Team created: {esc(result['name'])} ({esc(result['key'])})[/green]")
         console.print(f"[dim]Set as current team[/dim]")
+        m.warn_env_override("team")
 
     @team.command("use")
     @click.argument("team_id")
@@ -281,6 +282,7 @@ def register(cli):
         m.set_current_team(team_id)
         m.set_current_project(None)  # Reset project when changing teams
         console.print(f"[green]Switched to team: {esc(t['name'])}[/green]")
+        m.warn_env_override("team")
 
     @team.command("show")
     @_main().json_option

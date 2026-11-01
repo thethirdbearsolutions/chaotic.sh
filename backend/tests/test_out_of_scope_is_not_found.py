@@ -267,6 +267,7 @@ ROUTES = [
     ("GET", "/api/issues/activities?team_id={team}", None, "team"),
     ("GET", "/api/issues/activities?team_id={own_team}&project_id={project}", None, "project"),
     ("GET", "/api/issues/comments?team_id={team}", None, "team"),
+    ("GET", "/api/issues/comments?team_id={own_team}&project_id={project}", None, "project"),
     ("GET", "/api/teams/{own_team}/documents?project_id={project}", None, "project"),
     ("GET", "/api/teams/{own_team}/documents?sprint_id={sprint}", None, "sprint"),
     ("GET", "/api/inbox?team_id={team}", None, "team"),
@@ -444,6 +445,10 @@ _NOT_A_REGISTRAR = {
     "message": "This agent cannot register identities. Its creator or a team admin can make it a "
                "registrar (PATCH /api/agents/{id} with can_register=true).",
 }
+_TEAM_LEVEL_DOC_REFUSAL = (
+    "A project-scoped identity can only create documents in its project: "
+    "pass its project_id (--project in the CLI), not a team-level document"
+)
 REFUSED_ALIKE = {
     # Refused to an agent by its role.
     ("DELETE", "/api/labels/{label}", "label"): _alike(AGENT_PRINCIPALS, "Agents cannot delete labels"),
@@ -481,7 +486,9 @@ REFUSED_ALIKE = {
     # from the team id alone.
     ("GET", "/api/teams/{own_team}/documents?sprint_id={sprint}", "sprint"): _alike(
         {"project_agent"}, "Not authorized to access this team"),
-    ("POST", "/api/teams/{own_team}/documents", "sprint"): _alike({"project_agent"}, "Not authorized to access this team"),
+    # A team-level document says why, since the refusal is about the
+    # caller and not the team (CHT-1952).
+    ("POST", "/api/teams/{own_team}/documents", "sprint"): _alike({"project_agent"}, _TEAM_LEVEL_DOC_REFUSAL),
     ("POST", "/api/teams/{own_team}/projects", "user"): _alike({"project_agent"}, "Not authorized to access this team"),
     # Team routes that refuse anyone outside the team (or below admin)
     # from the team id alone, before loading the team or any row under
@@ -510,13 +517,16 @@ REFUSED_ALIKE = {
             ("GET", "/api/teams/{team}/epics", "Not authorized to access this team"),
             ("GET", "/api/teams/{team}/templates", "Not authorized to access this team"),
             ("POST", "/api/teams/{team}/templates", "Only admins can manage templates"),
-            ("POST", "/api/teams/{team}/documents", "Not authorized to access this team"),
             ("POST", "/api/teams/{team}/templates/from-project", "Only admins can manage templates"),
             ("GET", "/api/issues?team_id={team}", "Not authorized to access this team"),
             ("GET", "/api/issues/search?q=x&team_id={team}", "Not authorized to access this team"),
             ("GET", "/api/issues/activities?team_id={team}", "Not authorized to access this team"),
             ("GET", "/api/issues/comments?team_id={team}", "Not authorized to access this team"),
         ]
+    },
+    ("POST", "/api/teams/{team}/documents", "team"): {
+        **_alike(PRINCIPALS, "Not authorized to access this team"),
+        "project_agent": _TEAM_LEVEL_DOC_REFUSAL,
     },
     # A project filter beside a URL team: a project the caller cannot see
     # gets the team's refusal, like a missing one (CHT-1807).
@@ -525,6 +535,7 @@ REFUSED_ALIKE = {
         for path, detail in [
             ("/api/issues/search?q=x&team_id={own_team}&project_id={project}", "Not authorized to access this team"),
             ("/api/issues/activities?team_id={own_team}&project_id={project}", "Not authorized to access this team"),
+            ("/api/issues/comments?team_id={own_team}&project_id={project}", "Not authorized to access this team"),
             ("/api/teams/{own_team}/documents?project_id={project}", "Not authorized to access this team"),
         ]
     },

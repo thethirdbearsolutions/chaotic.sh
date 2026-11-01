@@ -28,3 +28,4 @@ aaae3e042df406571f097cc48e772897d8980bc1:backend/tests/test_push_vectors.py:gene
 d5996583288017a5766b395d072a9fd61e3f9e43:cli/tests/test_service_file_reconcile.py:generic-api-key:24
 b5a8a95c4a501721e792ff67d3ae411ecd2228c1:frontend/src/init.test.js:generic-api-key:105
 b5a8a95c4a501721e792ff67d3ae411ecd2228c1:frontend/src/invite.test.js:generic-api-key:14
+e9acf408474232d04a6fdfe7ef0cb08b7503a939:cli/tests/test_socket_activation.py:generic-api-key:30

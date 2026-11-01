@@ -501,7 +501,7 @@ class DocumentService:
         ).join("author").order_by("created_at").offset(skip).limit(limit).all()
 
     async def list_team_comments(
-        self, team_id: str, skip: int = 0, limit: int = 50
+        self, team_id: str, skip: int = 0, limit: int = 50, project_id: str | None = None
     ) -> list[tuple]:
         """List recent document comments for a team.
 
@@ -512,8 +512,9 @@ class DocumentService:
             "SELECT dc.id, dc.document_id FROM document_comments dc "
             "JOIN documents d ON dc.document_id = d.id "
             "WHERE d.team_id = ? "
-            "ORDER BY dc.created_at DESC LIMIT ? OFFSET ?",
-            [team_id, limit, skip],
+            + ("AND d.project_id = ? " if project_id else "")
+            + "ORDER BY dc.created_at DESC LIMIT ? OFFSET ?",
+            [team_id, *([project_id] if project_id else []), limit, skip],
         )
         if not rows:
             return []
