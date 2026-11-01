@@ -30,6 +30,62 @@ def _who(name, user_id) -> str:
     return name or user_id or ""
 
 
+def _avatar_name(entry) -> str:
+    """The name, after the avatar when the avatar is an emoji (an image
+    URL cannot show in a terminal)."""
+    avatar = entry.get("avatar_url") or ""
+    if avatar and len(avatar) <= 8 and "/" not in avatar:
+        return f"{avatar} {entry['name']}"
+    return entry["name"]
+
+
+def roster_role(entry) -> str:
+    """A person's role; an agent's kind, and its idleness."""
+    if not entry.get("is_agent"):
+        return entry.get("role") or ""
+    role = f"agent ({entry.get('kind') or 'assistant'})"
+    return f"{role}, idle" if entry.get("idle") else role
+
+
+def _find_on_roster(roster, who: str):
+    """The one roster entry `who` names by @handle, exact id, or name
+    (ignoring case); None when nothing or more than one matches, for the
+    caller to resolve another way (email, id prefix, `me`)."""
+    wanted = who.strip()
+    if wanted.startswith("@"):
+        handle = wanted[1:].lower()
+        hits = [e for e in roster if (e.get("mention_handle") or "").lower() == handle]
+    else:
+        hits = [e for e in roster if e["user_id"] == wanted]
+        if not hits:
+            hits = [e for e in roster if e["name"].casefold() == wanted.casefold()]
+    return hits[0] if len(hits) == 1 else None
+
+
+def profile_markup(entry) -> str:
+    """A teammate's self-written identity (CHT-1979) as Rich markup for a
+    panel. Every value is the member's own text, so all of it is escaped."""
+    title_markup = esc(_avatar_name(entry))
+    if entry.get("pronouns"):
+        title_markup += f" [dim]({esc(entry['pronouns'])})[/dim]"
+    lines_markup = [f"[bold]{title_markup}[/bold]"]
+    if entry.get("tagline"):
+        lines_markup.append(f"[italic]{esc(entry['tagline'])}[/italic]")
+    facts_markup = []
+    if entry.get("mention_handle"):
+        facts_markup.append(f"@{esc(entry['mention_handle'])}")
+    role = roster_role(entry)
+    if role:
+        facts_markup.append(esc(role))
+    if entry.get("owner_name"):
+        facts_markup.append(f"owned by {esc(entry['owner_name'])}")
+    if facts_markup:
+        lines_markup.append("[dim]" + " · ".join(facts_markup) + "[/dim]")
+    lines_markup.append("")
+    lines_markup.append(esc(entry["bio"]) if entry.get("bio") else "[dim]No bio yet.[/dim]")
+    return "\n".join(lines_markup)
+
+
 def _main():
     """Late-bind to cli.main for test mock compatibility."""
     return sys.modules['cli.main']
@@ -325,6 +381,59 @@ def register(cli):
             table.add_row(member.get("user_name", "Unknown"), handle, member.get("user_email", ""), member["role"])
 
         console.print(table)
+
+    @team.command("roster")
+    @click.option("--hide-idle", is_flag=True, help="Leave out idle session identities.")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def team_roster(hide_idle):
+        """Show everyone on the team, people and agents, with their identities.
+
+        Each teammate writes their own: `chaotic auth profile`. See one in
+        full with `chaotic team whois <name>`.
+        """
+        m = _main()
+        roster = _client().get_team_roster(m.get_current_team(), hide_idle=hide_idle)
+        if m.is_json_output():
+            m.output_json(roster)
+            return
+        table = Table(title="Team Roster")
+        table.add_column("Name")
+        table.add_column("Handle")
+        table.add_column("Pronouns")
+        table.add_column("Role")
+        table.add_column("Tagline")
+        for entry in roster:
+            handle = f"@{entry['mention_handle']}" if entry.get("mention_handle") else ""
+            table.add_row(
+                _avatar_name(entry), handle, entry.get("pronouns") or "",
+                roster_role(entry), entry.get("tagline") or "",
+            )
+        console.print(table)
+
+    @team.command("whois")
+    @click.argument("who")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def team_whois(who):
+        """Show a teammate's profile: name, pronouns, tagline, bio.
+
+        WHO is a name, @handle, email, user ID (or prefix), or `me`.
+        """
+        m = _main()
+        roster = _client().get_team_roster(m.get_current_team())
+        entry = _find_on_roster(roster, who)
+        if entry is None:
+            user_id = m.resolve_assignee_id(who)
+            entry = next((e for e in roster if e["user_id"] == user_id), None)
+        if entry is None:
+            raise click.ClickException(f"{who!r} is not on this team's roster.")
+        if m.is_json_output():
+            m.output_json(entry)
+            return
+        console.print(Panel(profile_markup(entry), title="Profile", expand=False))
 
     @team.command("invite")
     @click.argument("email")
