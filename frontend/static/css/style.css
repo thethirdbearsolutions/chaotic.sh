@@ -2277,6 +2277,35 @@ select:focus-visible {
     outline-offset: 2px;
 }
 
+/* Quiet focus for full-width rows (CHT-1960). An offset ring around a
+   sidebar link drew two heavy purple bars across the whole sidebar; a
+   focused link now looks like the hover state plus the active marker's
+   left edge. Buttons and form controls keep the ring above. */
+.nav-item:focus-visible {
+    outline: none;
+    color: var(--text-primary);
+    background: var(--bg-hover);
+    /* A full-height edge plus a hairline ring, so focus reads apart from
+       both hover and the active link's short marker. */
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge),
+                inset 0 0 0 1px var(--row-cursor-edge);
+}
+
+/* Navigation parks focus on the content region so j/k work at once
+   (CHT-1959); it is a programmatic target, never a visible one. */
+.main-content:focus,
+.main-content:focus-visible {
+    outline: none;
+}
+
+/* The selected inbox row already shows the cursor; a ring on its toggle
+   drew a second box inside it (CHT-1960). */
+.inbox-row.keyboard-selected .inbox-row-toggle:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 1px var(--row-cursor-edge);
+    border-radius: 4px;
+}
+
 /* Smooth hover for grid items */
 .grid-item {
     transform: translateY(0);
@@ -2530,8 +2559,8 @@ select:focus-visible {
 
 /* Keyboard navigation highlight */
 .list-item.keyboard-selected {
-    background: var(--bg-tertiary);
-    border-color: var(--accent-color);
+    background: var(--row-cursor);
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
 }
 
 /* Compact mode for lists */
@@ -2718,9 +2747,9 @@ input[type="checkbox"] {
 
 /* Keyboard navigation highlight (CHT-1215), matching .issue-row.keyboard-selected */
 .kanban-card.keyboard-selected {
-    border-color: var(--accent-color);
-    outline: 2px solid var(--accent-color);
-    outline-offset: -2px;
+    border-color: var(--row-cursor-edge);
+    background: var(--row-cursor);
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
 }
 
 .kanban-card-title {
@@ -3118,9 +3147,11 @@ input[type="checkbox"] {
 }
 
 .issue-row.keyboard-selected {
-    background: var(--bg-tertiary);
-    outline: 2px solid var(--accent-color);
-    outline-offset: -2px;
+    /* One cursor look everywhere (CHT-1960): the tint and left edge the
+       issues list uses, not a 2px ring around the whole row. */
+    background: var(--row-cursor);
+    outline: none;
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
 }
 
 .issue-row-right {

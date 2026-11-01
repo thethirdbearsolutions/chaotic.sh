@@ -9,6 +9,8 @@ import {
     createSidebarNavigationHandler,
     createSimpleListNavigationHandler,
     updateKeyboardSelection,
+    yieldsToSidebar,
+    focusMainContent,
 } from './keyboard.js';
 
 function makeEvent(key, overrides = {}) {
@@ -919,8 +921,11 @@ describe('List Navigation Handler', () => {
         it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
             const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
             handler(makeEvent('ArrowDown', { target }));
-            handler(makeEvent('j', { target }));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            // j/k are never sidebar keys: they pull focus into the content
+            // and drive the list (CHT-1959).
+            handler(makeEvent('j', { target }));
+            expect(actions.setSelectedIndex).toHaveBeenCalled();
         });
 
         it('ignores when focused on TEXTAREA', () => {
@@ -1199,8 +1204,11 @@ describe('Document List Navigation Handler', () => {
         it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
             const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
             handler(makeEvent('ArrowDown', { target }));
-            handler(makeEvent('j', { target }));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            // j/k are never sidebar keys: they pull focus into the content
+            // and drive the list (CHT-1959).
+            handler(makeEvent('j', { target }));
+            expect(actions.setSelectedIndex).toHaveBeenCalled();
         });
 
         it('ignores when modal is open', () => {
@@ -1372,8 +1380,11 @@ describe('Board Navigation Handler', () => {
         it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
             const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
             handler(makeEvent('ArrowDown', { target }));
-            handler(makeEvent('j', { target }));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            // j/k are never sidebar keys: they pull focus into the content
+            // and drive the list (CHT-1959).
+            handler(makeEvent('j', { target }));
+            expect(actions.setSelectedIndex).toHaveBeenCalled();
         });
 
         it('ignores when modal is open', () => {
@@ -1712,8 +1723,11 @@ describe('Inbox Navigation Handler', () => {
         it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
             const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
             handler(makeEvent('ArrowDown', { target }));
-            handler(makeEvent('j', { target }));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            // j/k are never sidebar keys: they pull focus into the content
+            // and drive the list (CHT-1959).
+            handler(makeEvent('j', { target }));
+            expect(actions.setSelectedIndex).toHaveBeenCalled();
         });
 
         it('ignores when modal is open', () => {
@@ -2319,5 +2333,57 @@ describe('Simple List Navigation Handler (CHT-1291)', () => {
             epicHandler(makeEvent('Enter'));
             expect(epicConfig.open).toHaveBeenCalledWith(rows[0]);
         });
+    });
+});
+
+describe('Leaving the sidebar for the content (CHT-1959)', () => {
+    beforeEach(() => {
+        document.body.innerHTML = `
+            <nav class="sidebar-nav"><a href="/issues" class="nav-item">Issues</a></nav>
+            <main class="main-content"><div id="issues-list"></div></main>`;
+    });
+
+    it('focusMainContent focuses the main region without making it tabbable', () => {
+        focusMainContent();
+        const main = document.querySelector('.main-content');
+        expect(document.activeElement).toBe(main);
+        expect(main.getAttribute('tabindex')).toBe('-1');
+    });
+
+    it('focusMainContent is a no-op without a main region', () => {
+        document.body.innerHTML = '';
+        expect(() => focusMainContent()).not.toThrow();
+    });
+
+    it('yields arrows, Home/End and Enter to a focused nav link', () => {
+        const link = document.querySelector('.nav-item');
+        link.focus();
+        for (const key of ['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter']) {
+            expect(yieldsToSidebar({ key, target: link })).toBe(true);
+        }
+        expect(document.activeElement).toBe(link);
+    });
+
+    it('takes j and k from a focused nav link and moves focus to the content', () => {
+        const link = document.querySelector('.nav-item');
+        for (const key of ['j', 'k']) {
+            link.focus();
+            expect(yieldsToSidebar({ key, target: link })).toBe(false);
+            expect(document.activeElement).toBe(document.querySelector('.main-content'));
+        }
+    });
+
+    it('leaves modified j/k to the sidebar and the palette', () => {
+        const link = document.querySelector('.nav-item');
+        link.focus();
+        expect(yieldsToSidebar({ key: 'k', metaKey: true, target: link })).toBe(true);
+        expect(yieldsToSidebar({ key: 'k', ctrlKey: true, target: link })).toBe(true);
+        expect(yieldsToSidebar({ key: 'j', altKey: true, target: link })).toBe(true);
+        expect(document.activeElement).toBe(link);
+    });
+
+    it('never yields when focus is outside the sidebar', () => {
+        const list = document.getElementById('issues-list');
+        expect(yieldsToSidebar({ key: 'ArrowDown', target: list })).toBe(false);
     });
 });
