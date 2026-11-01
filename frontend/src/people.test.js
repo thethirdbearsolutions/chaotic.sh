@@ -240,6 +240,16 @@ describe('viewPerson', () => {
     expect(getRoster()).toEqual([]);
   });
 
+  it('points the address at the roster when a profile reached by address fails to load', async () => {
+    history.replaceState({}, '', '/people/u-sam');
+    api.getTeamRoster.mockRejectedValueOnce(new Error('down'));
+
+    await viewPerson('u-sam', false);
+
+    expect(window.location.pathname).toBe('/people');
+    expect(navigateTo).toHaveBeenCalledWith('people', false);
+  });
+
   it('goes back to the roster for someone not on it', async () => {
     await viewPerson('u-nobody');
 
@@ -374,6 +384,59 @@ describe('editing a profile', () => {
     await first;
 
     expect(api.updateMe).toHaveBeenCalledTimes(1);
+  });
+
+  it('never redraws another member’s page with the saved profile', async () => {
+    await viewPerson('u-sam');
+    await showEditProfileModal('a-piper');
+    document.getElementById('profile-tagline').value = 'Reviews everything';
+    api.updateAgent.mockResolvedValue({ ...PIPER, id: 'a-piper', tagline: 'Reviews everything' });
+
+    await handleSaveProfile({ preventDefault: vi.fn(), target: document.querySelector('#modal-content form') });
+
+    expect(document.querySelector('.person-profile-name').textContent).toContain('Sam');
+  });
+
+  it('drops a form whose page was left while it loaded', async () => {
+    await loadPeople();
+    let resolve;
+    api.getTeamRoster.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+    history.replaceState({}, '', '/people/a-piper');
+
+    const pending = showEditProfileModal('a-piper');
+    history.pushState({}, '', '/people/u-ada');
+    resolve([ADA, SAM, PIPER]);
+    await pending;
+
+    expect(document.getElementById('modal-content').innerHTML).toBe('');
+  });
+
+  it('a slow save leaves a form opened after it alone', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    document.getElementById('profile-tagline').value = 'Builder';
+    let finish;
+    api.updateMe.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+    const first = handleSaveProfile({ preventDefault: vi.fn(), target: document.querySelector('#modal-content form') });
+
+    await showEditProfileModal('u-ada');
+    expect(document.querySelector('#modal-content button[type="submit"]').disabled).toBe(true);
+    closeModal.mockClear();
+    finish({ id: 'u-ada', name: 'Ada', tagline: 'Builder' });
+    await first;
+
+    expect(closeModal).not.toHaveBeenCalled();
+    expect(document.querySelector('#modal-content button[type="submit"]').disabled).toBe(false);
+  });
+
+  it('does not count a CRLF or leading-newline bio as changed', async () => {
+    api.getTeamRoster.mockResolvedValue([{ ...ADA, bio: '\nLine one\r\nLine two' }, SAM, PIPER]);
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+
+    await handleSaveProfile({ preventDefault: vi.fn(), target: document.querySelector('#modal-content form') });
+
+    expect(api.updateMe).not.toHaveBeenCalled();
   });
 
   it('keeps the issue list when saving on the profile page', async () => {

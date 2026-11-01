@@ -35,6 +35,9 @@ let editingId = null;
 let editingInitial = null;
 let editingEntry = null;
 let saving = false;
+// Bumped each time the form opens: a save finishing after its form was
+// closed (and perhaps another opened) must leave the new one alone.
+let formToken = 0;
 
 export function getRoster() {
     return roster;
@@ -199,6 +202,8 @@ export async function viewPerson(userId, pushHistory = true) {
     } catch (e) {
         if (stale()) return;
         showApiError('load this profile', e);
+        // Arrived by address: leave it pointing at the roster shown.
+        if (!pushHistory) history.replaceState({ view: 'people' }, '', '/people');
         navigateTo('people', pushHistory);
         return;
     }
@@ -237,6 +242,7 @@ export function renderPerson(entry, { withIssues = true } = {}) {
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
     const view = personView();
     view.classList.remove('hidden');
+    view.dataset.userId = entry.user_id;
     const id = escapeAttr(entry.user_id);
     const editable = canEditProfile(entry);
     const self = entry.user_id === getCurrentUser()?.id;
@@ -311,9 +317,17 @@ export async function loadPersonIssues(userId) {
 
 const PROFILE_FIELDS = ['name', 'avatar_url', 'pronouns', 'tagline', 'bio'];
 
-/** A profile's editable fields as the form shows them: blank, never null. */
+/**
+ * A profile's editable fields as the form will read back: blank, never
+ * null, and a textarea's newlines (it turns CRLF into LF and drops one
+ * leading newline), so an untouched field never compares as changed.
+ */
 function formValues(entry) {
-    return Object.fromEntries(PROFILE_FIELDS.map(f => [f, entry?.[f] ?? '']));
+    const asShown = (f, v) => {
+        const text = String(v ?? '').replace(/\r\n?/g, '\n');
+        return f === 'bio' && text.startsWith('\n') ? text.slice(1) : text;
+    };
+    return Object.fromEntries(PROFILE_FIELDS.map(f => [f, asShown(f, entry?.[f])]));
 }
 
 let editRequestId = 0;
@@ -328,6 +342,7 @@ export async function showEditProfileModal(userId) {
     const team = getCurrentTeam();
     if (!me || !team) return;
     const requestId = ++editRequestId;
+    const startPath = window.location.pathname;
     let entry;
     try {
         entry = await findEntry(team.id, userId, { fresh: true });
@@ -335,13 +350,16 @@ export async function showEditProfileModal(userId) {
         if (requestId === editRequestId) showApiError('load this profile', e);
         return;
     }
-    if (requestId !== editRequestId) return;
+    // Navigated or switched team meanwhile: the form belongs to a page
+    // that is gone.
+    if (requestId !== editRequestId || window.location.pathname !== startPath
+        || getCurrentTeam()?.id !== team.id) return;
     if (!entry && userId === me.id) entry = { ...me, user_id: me.id };
     if (!entry || !canEditProfile(entry, me)) return;
     editingId = userId;
     editingEntry = entry;
     editingInitial = formValues(entry);
-    saving = false;
+    formToken++;
     const self = userId === me.id;
     const value = (v) => escapeAttr(v || '');
     document.getElementById('modal-title').textContent = self ? 'Edit your profile' : `Edit ${entry.name}`;
@@ -368,7 +386,7 @@ export async function showEditProfileModal(userId) {
                 <textarea id="profile-bio" rows="8" maxlength="${PROFILE_LIMITS.bio}" placeholder="Markdown: who you are, what you work on, how to work with you">${escapeHtml(entry.bio || '')}</textarea>
                 <p class="form-help">Leave a field blank to clear it.</p>
             </div>
-            <button type="submit" class="btn btn-primary">Save</button>
+            <button type="submit" class="btn btn-primary"${saving ? ' disabled' : ''}>Save</button>
         </form>
     `;
     showModal();
@@ -398,6 +416,21 @@ export function profilePayload(form, initial = null) {
     return payload;
 }
 
+/** Re-render the profile on screen with new fields; keep its issues and scroll. */
+function rerenderProfile(entry) {
+    const scroll = window.scrollY;
+    const issues = document.getElementById('person-issues');
+    renderPerson(entry, { withIssues: false });
+    if (issues) document.getElementById('person-issues')?.replaceWith(issues);
+    window.scrollTo(0, scroll);
+}
+
+/** Is the profile page on screen, and showing this member? */
+function showingProfileOf(userId) {
+    const detail = document.getElementById('person-detail-view');
+    return !!detail && !detail.classList.contains('hidden') && detail.dataset.userId === userId;
+}
+
 function closeProfileForm() {
     editingId = null;
     editingInitial = null;
@@ -418,6 +451,7 @@ export async function handleSaveProfile(event) {
     const me = getCurrentUser();
     const self = userId === me?.id;
     const opened = editingEntry;
+    const token = formToken;
     const submit = form.querySelector('button[type="submit"]');
     saving = true;
     if (submit) submit.disabled = true;
@@ -429,25 +463,19 @@ export async function handleSaveProfile(event) {
             setCurrentUser({ ...me, ...changes });
             updateUserInfo();
         }
-        closeProfileForm();
+        if (token === formToken) closeProfileForm();
         showToast('Profile saved', 'success');
-        const entry = { ...opened, ...changes };
-        const detail = document.getElementById('person-detail-view');
-        if (detail && !detail.classList.contains('hidden')) {
-            // Same page, same person: keep their issue list and the scroll.
-            const scroll = window.scrollY;
-            const issues = document.getElementById('person-issues');
-            renderPerson(entry, { withIssues: false });
-            if (issues) document.getElementById('person-issues')?.replaceWith(issues);
-            window.scrollTo(0, scroll);
-        } else {
-            renderPeople();
-        }
+        // Same page, same person: keep their issue list and the scroll.
+        if (showingProfileOf(userId)) rerenderProfile({ ...opened, ...changes });
+        else renderPeople();
     } catch (e) {
         showApiError('save the profile', e);
     } finally {
         saving = false;
+        // This form's button, or the one of a form opened meanwhile.
         if (submit) submit.disabled = false;
+        const current = document.querySelector('#modal-content form[data-action="save-profile"] button[type="submit"]');
+        if (current) current.disabled = false;
     }
 }
 
