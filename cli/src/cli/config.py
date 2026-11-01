@@ -337,7 +337,8 @@ def set_token(token: str | None):
 # server's default, the key's only accessible team (CHT-1687). In memory
 # only, and per (server, credential), so a key changed while the server
 # runs does not inherit the old key's team. A configured current_team
-# always wins. Only cli.mcp_backend sets it; the plain CLI never does.
+# always wins. Set by cli.mcp_backend and by the CLI's require_team
+# (cli.main.default_team, CHT-1950); session identity never sets it.
 _process_teams: dict[tuple[str, str], str] = {}
 
 
@@ -374,7 +375,7 @@ def set_process_team(team_id: str) -> None:
 # session identity's person-registrar team. Only an answer of exactly one
 # team is kept, so a person who joins a team or is given one mid-process
 # is asked again rather than told an old answer. Not the current team:
-# remembering it here never makes the plain CLI adopt it.
+# remembering it here does not make it one; only set_process_team does.
 _only_teams: dict[tuple[str, str], dict] = {}
 
 
@@ -390,9 +391,73 @@ def known_only_team(api_url: str, credential: str) -> str | None:
 
 
 def configured_team() -> str | None:
-    """The current team chosen by configuration (`chaotic team use`, a
-    repository .chaotic), never the process default."""
+    """The current team chosen by configuration (CHAOTIC_TEAM once
+    resolved, `chaotic team use`, a repository .chaotic), never the
+    process default."""
+    if env_team():
+        return _env_choice(_env_teams, env_team())
     return load_config().get("current_team")
+
+
+# CHAOTIC_TEAM / CHAOTIC_PROJECT (CHT-1950): a team or project named by
+# key, name or id in the environment, which overrides the configured one
+# (as CHAOTIC_API_KEY overrides the profile's key). A key needs a lookup
+# to become an id, so cli.main resolves the value once per process and
+# records the id here, per (server, credential, value); until then the
+# getters answer None rather than fall back to a team the environment
+# overrides. The project is also keyed on the team it was looked up in.
+TEAM_ENV = "CHAOTIC_TEAM"
+PROJECT_ENV = "CHAOTIC_PROJECT"
+_env_teams: dict[tuple, str] = {}
+_env_projects: dict[tuple, str] = {}
+
+
+def env_team() -> str | None:
+    """The CHAOTIC_TEAM value, if set and not blank."""
+    return (os.environ.get(TEAM_ENV) or "").strip() or None
+
+
+def env_project() -> str | None:
+    """The CHAOTIC_PROJECT value, if set and not blank."""
+    return (os.environ.get(PROJECT_ENV) or "").strip() or None
+
+
+def _env_choice(memo: dict, *parts) -> str | None:
+    slot = _process_team_slot()
+    return memo.get((slot, *parts)) if slot else None
+
+
+def set_env_team(team_id: str) -> None:
+    """Record what CHAOTIC_TEAM names, for this process, server and
+    credential."""
+    slot = _process_team_slot()
+    if slot and env_team():
+        _env_teams[(slot, env_team())] = team_id
+
+
+def set_env_project(project_id: str) -> None:
+    """Record what CHAOTIC_PROJECT names in the current team."""
+    slot = _process_team_slot()
+    if slot and env_project():
+        _env_projects[(slot, get_current_team(), env_project())] = project_id
+
+
+# A project-scoped key's own project, used when none is configured
+# (CHT-1950), like _process_teams for the team: in memory only, per
+# (server, credential). Set by cli.main after asking /auth/me.
+_process_projects: dict[tuple[str, str], str] = {}
+
+
+# The project scope of each (server, credential)'s key, asked once per
+# process by cli.main._key_project: a project dict, or None when the key
+# is not project-scoped.
+_key_projects: dict[tuple[str, str], dict | None] = {}
+
+
+def set_process_project(project_id: str) -> None:
+    slot = _process_team_slot()
+    if slot:
+        _process_projects[slot] = project_id
 
 
 def process_team(api_url: str, credential: str) -> str | None:
@@ -430,6 +495,8 @@ def get_current_team() -> str | None:
     """Get current team ID (prefers local, falls back to global, then to
     this process's default for the current server and credential, see
     set_process_team)."""
+    if env_team():
+        return _env_choice(_env_teams, env_team())
     config = load_config()
     team_id = config.get("current_team")
     if team_id or not _process_teams:
@@ -457,9 +524,16 @@ def set_current_team(team_id: str | None, local: bool = True):
 
 
 def get_current_project() -> str | None:
-    """Get current project ID (prefers local, falls back to global)."""
-    config = load_config()
-    return config.get("current_project")
+    """Get current project ID: what CHAOTIC_PROJECT names once resolved
+    (until then None), else local, then global config, then a
+    project-scoped key's own project (see set_process_project)."""
+    if env_project():
+        return _env_choice(_env_projects, get_current_team(), env_project())
+    project_id = load_config().get("current_project")
+    if project_id or not _process_projects:
+        return project_id
+    slot = _process_team_slot()
+    return _process_projects.get(slot) if slot else None
 
 
 def set_current_project(project_id: str | None, local: bool = True):

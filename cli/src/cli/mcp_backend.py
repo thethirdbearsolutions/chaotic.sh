@@ -112,6 +112,9 @@ class RestBackend:
         if team_id:
             return team_id
         from . import config
+        if config.env_team():
+            # CHAOTIC_TEAM overrides the configured team (CHT-1950).
+            return await self._call(_main().resolve_env_team)
         # One lookup per (server, key) shared with session identity, which
         # may already have listed them for a person registrar (CHT-1691).
         # Keyed like the process team (config._process_team_slot).
@@ -136,6 +139,17 @@ class RestBackend:
             f"No team selected, and this key has access to several teams ({options}). "
             "Run 'chaotic team use <key>' in the directory the MCP server starts in."
         )
+
+    async def _current_project(self) -> str | None:
+        """The configured current project, or what CHAOTIC_PROJECT names,
+        which overrides it and is looked up once per process (CHT-1950)."""
+        project_id = _main().get_current_project()
+        if project_id:
+            return project_id
+        from . import config
+        if config.env_project():
+            return await self._call(_main().resolve_env_project)
+        return None
 
     async def _key_project(self) -> dict | None:
         """The project the configured key is confined to when it is a
@@ -207,7 +221,7 @@ class RestBackend:
         team_id = await self._require_team()
         if project:
             return await self._call(_main().resolve_project_id, project), team_id
-        project_id = _main().get_current_project()
+        project_id = await self._current_project()
         if project_id:
             return project_id, team_id
         # Nothing passed or configured: a project-scoped key's own
@@ -224,7 +238,7 @@ class RestBackend:
         team_id = await self._require_team()
         if project:
             return await self._call(_main().resolve_project_id, project), team_id
-        project_id = _main().get_current_project()
+        project_id = await self._current_project()
         if project_id:
             return project_id, team_id
         # As in resolve_project: a project-scoped key is never team-wide.

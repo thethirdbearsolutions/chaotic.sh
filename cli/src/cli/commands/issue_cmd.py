@@ -217,7 +217,7 @@ def _issue_query(m, *, where, status, priority, sprint, no_sprint, epic, label,
 
     if not all_projects and not m.get_current_project():
         raise click.ClickException(
-            "No project selected. Run 'chaotic project use <project_id>' or pass --all-projects."
+            "No project selected. Run 'chaotic project use <key>', set CHAOTIC_PROJECT=<key>, or pass --all-projects."
         )
     if sprint and no_sprint:
         raise click.UsageError("Cannot use both --sprint and --no-sprint")
@@ -342,7 +342,7 @@ def register(cli):
             )
         if not all_projects and not m.get_current_project():
             raise click.ClickException(
-                "No project selected. Run 'chaotic project use <project_id>' or pass --all-projects."
+                "No project selected. Run 'chaotic project use <key>', set CHAOTIC_PROJECT=<key>, or pass --all-projects."
             )
         # Validate status values if provided (CHT-502)
         valid_statuses = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"]
@@ -523,7 +523,7 @@ def register(cli):
             raise click.UsageError("Cannot use both --mine and --include-assigned")
         if not all_projects and not m.get_current_project():
             raise click.ClickException(
-                "No project selected. Run 'chaotic project use <project_id>' or pass --all-projects."
+                "No project selected. Run 'chaotic project use <key>', set CHAOTIC_PROJECT=<key>, or pass --all-projects."
             )
 
         if all_projects:

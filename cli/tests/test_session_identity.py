@@ -27,6 +27,7 @@ REGISTRAR_KEY = "ck_registrar"
 SESSION_ID = "4f2a9c1e-7777-4abc-9def-000000000001"
 REF = si.REF_PREFIX + SESSION_ID
 _REAL_GET_CURRENT_TEAM = cli_config.get_current_team
+_REAL_GET_CURRENT_PROJECT = cli_config.get_current_project
 
 
 class FakeServer:
@@ -1216,3 +1217,185 @@ def test_a_persons_key_as_the_secret_is_named(proxied):
     with pytest.raises(APIError, match="needs an agent registrar's key") as refused:
         Client()._request("GET", "/issues")
     assert refused.value.status_code == 422
+
+
+class TestCliDefaultScope:
+    """CHT-1950: a fresh session identity's first `chaotic issue list`
+    works with no `team use` or `project use`. The CLI's require_team
+    takes the key's only team (as `chaotic mcp` does, CHT-1687) and a
+    project-scoped registrar's project, or what CHAOTIC_TEAM /
+    CHAOTIC_PROJECT name. Runs the real CLI, client and session identity,
+    in header mode (CHT-1906) and with the registrar key configured here."""
+
+    TEAMS = [{"id": "team-eng", "name": "Engineering", "key": "ENG"}]
+    PROJECTS = [
+        {"id": "proj-czy", "team_id": "team-eng", "key": "CZY", "name": "Cozy"},
+        {"id": "proj-oth", "team_id": "team-eng", "key": "OTH", "name": "Other"},
+        {"id": "proj-ops", "team_id": "team-ops", "key": "OPS", "name": "Ops"},
+    ]
+
+    @pytest.fixture(params=["header", "local"])
+    def mode(self, request, monkeypatch, home, server):
+        """A cloud container in either registrar mode, with no team or
+        project configured anywhere."""
+        monkeypatch.setenv(si.MODE_ENV, "auto")
+        monkeypatch.setenv(si.SESSION_ENV, SESSION_ID)
+        if request.param == "header":
+            monkeypatch.setenv(si.VIA_ENV, "header")
+            _set_profile(monkeypatch, key=None, team=None)
+            server.proxy_registrar_key = REGISTRAR_KEY
+        else:
+            monkeypatch.delenv(si.VIA_ENV, raising=False)
+            _set_profile(monkeypatch, team=None)
+        server.teams = list(self.TEAMS)
+        server.project_scope = None
+        server.issue_queries = []
+        base = server.handler
+
+        def handler(req):
+            bearer = server.presented(req)
+            path = req.url.path.removeprefix("/api")
+            if bearer not in server.live_keys and bearer not in server.registrar_keys:
+                return base(req)
+            if path == "/teams":
+                server.requests.append((req.method, path, bearer))
+                return httpx.Response(200, json=server.teams)
+            if path == "/auth/me":
+                server.requests.append((req.method, path, bearer))
+                session = bearer in server.live_keys
+                return httpx.Response(200, json={
+                    "id": server.live_keys.get(bearer, "reg-1"), "name": "Harbor", "is_agent": True,
+                    "kind": "session" if session else "service", "can_register": not session,
+                    # A registered identity inherits its registrar's project scope.
+                    "agent_project_id": server.project_scope,
+                })
+            if path.startswith("/projects/"):
+                found = [p for p in self.PROJECTS if p["id"] == path.rsplit("/", 1)[1]]
+                return httpx.Response(200, json=found[0]) if found else httpx.Response(404, json={"detail": "x"})
+            if path.startswith("/teams/") and path.endswith("/projects"):
+                team = path.split("/")[2]
+                return httpx.Response(200, json=[p for p in self.PROJECTS if p["team_id"] == team])
+            if path == "/issues" and req.method == "GET":
+                server.issue_queries.append((dict(req.url.params), bearer))
+                return httpx.Response(200, json=[])
+            return base(req)
+
+        server.handler = handler
+        server.mode = request.param
+        return server
+
+    def _cli(self, monkeypatch, *args):
+        from click.testing import CliRunner
+        import cli.main as m
+
+        monkeypatch.setattr("cli.config.get_current_team", _REAL_GET_CURRENT_TEAM)
+        monkeypatch.setattr(m, "get_current_team", _REAL_GET_CURRENT_TEAM)
+        monkeypatch.setattr(m, "get_current_project", _REAL_GET_CURRENT_PROJECT)
+        monkeypatch.setattr(m, "client", Client())
+        return CliRunner().invoke(m.cli, list(args))
+
+    def _new_process(self):
+        """What a fresh `chaotic` process starts with: nothing in memory."""
+        for memo in (cli_config._only_teams, cli_config._process_teams, cli_config._process_projects,
+                     cli_config._key_projects, cli_config._env_teams, cli_config._env_projects):
+            memo.clear()
+
+    def test_a_project_scoped_registrar_lists_issues_on_the_first_call(self, mode, monkeypatch, home):
+        mode.project_scope = "proj-czy"
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code == 0, result.output
+        params, bearer = mode.issue_queries[-1]
+        assert params["project_id"] == "proj-czy"
+        assert bearer.startswith("ck_session_")  # as the session, never the registrar
+        # The defaults are this process's: nothing went to a config file.
+        config_file = home / "config.json"
+        assert not config_file.exists() or "current_" not in config_file.read_text()
+
+    def test_lookups_go_as_the_registrar_locally_and_as_the_session_in_header_mode(self, mode, monkeypatch):
+        mode.project_scope = "proj-czy"
+        assert self._cli(monkeypatch, "issue", "list").exit_code == 0
+        lookups = [r[2] for r in mode.requests if r[1] in ("/teams", "/auth/me")]
+        assert lookups
+        if mode.mode == "local":
+            assert set(lookups) == {REGISTRAR_KEY}
+        else:
+            assert all(b.startswith("ck_session_") for b in lookups)
+
+    def test_a_team_scoped_registrar_gets_its_team_but_must_name_a_project(self, mode, monkeypatch):
+        result = self._cli(monkeypatch, "issue", "list", "--all-projects")
+        assert result.exit_code == 0, result.output
+        assert mode.issue_queries[-1][0].get("team_id") == "team-eng"
+        self._new_process()
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code != 0
+        assert "No project selected" in result.output
+
+    def test_several_teams_are_named_with_the_command(self, mode, monkeypatch):
+        mode.teams.append({"id": "team-ops", "name": "Operations", "key": "OPS"})
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code != 0
+        flat = " ".join(result.output.split())
+        assert "Engineering (ENG), Operations (OPS)" in flat
+        assert "chaotic team use <key>" in flat and "CHAOTIC_TEAM" in flat
+        assert mode.issue_queries == []
+
+    def test_the_environment_chooses_among_several_teams(self, mode, monkeypatch):
+        mode.teams.append({"id": "team-ops", "name": "Operations", "key": "OPS"})
+        monkeypatch.setenv(cli_config.TEAM_ENV, "eng")
+        monkeypatch.setenv(cli_config.PROJECT_ENV, "CZY")
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code == 0, result.output
+        assert mode.issue_queries[-1][0]["project_id"] == "proj-czy"
+
+    def test_the_environment_overrides_the_configured_team_and_project(self, mode, monkeypatch):
+        mode.teams.append({"id": "team-ops", "name": "Operations", "key": "OPS"})
+        monkeypatch.setattr(cli_config, "load_local_config",
+                            lambda: {"current_team": "team-ops", "current_project": "proj-ops"})
+        monkeypatch.setenv(cli_config.TEAM_ENV, "ENG")
+        monkeypatch.setenv(cli_config.PROJECT_ENV, "Other")
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code == 0, result.output
+        assert mode.issue_queries[-1][0]["project_id"] == "proj-oth"
+
+    def test_an_unknown_environment_team_is_named(self, mode, monkeypatch):
+        monkeypatch.setenv(cli_config.TEAM_ENV, "NOPE")
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code != 0
+        flat = " ".join(result.output.split())
+        assert "CHAOTIC_TEAM='NOPE'" in flat and "Engineering (ENG)" in flat
+
+    def test_an_unknown_environment_project_is_named(self, mode, monkeypatch):
+        monkeypatch.setenv(cli_config.PROJECT_ENV, "NOPE")
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code != 0
+        assert "CHAOTIC_PROJECT='NOPE'" in " ".join(result.output.split())
+
+    def test_a_configured_team_and_project_are_kept_and_cost_no_lookup(self, mode, monkeypatch):
+        """`team use` / `project use` still win over every default."""
+        mode.project_scope = "proj-czy"
+        monkeypatch.setattr(cli_config, "load_local_config",
+                            lambda: {"current_team": "team-eng", "current_project": "proj-oth"})
+        result = self._cli(monkeypatch, "issue", "list")
+        assert result.exit_code == 0, result.output
+        assert mode.issue_queries[-1][0]["project_id"] == "proj-oth"
+        assert not [r for r in mode.requests if r[1] == "/teams"]
+
+    async def test_chaotic_mcp_honours_the_environment_too(self, mode, monkeypatch):
+        """The stdio MCP server reads the same variables, so the CLI and
+        `chaotic mcp` in one container agree on the scope."""
+        from cli.mcp_backend import RestBackend
+        import cli.main as m
+
+        mode.teams.append({"id": "team-ops", "name": "Operations", "key": "OPS"})
+        monkeypatch.setenv(cli_config.TEAM_ENV, "ENG")
+        monkeypatch.setenv(cli_config.PROJECT_ENV, "OTH")
+        monkeypatch.setattr("cli.config.get_current_team", _REAL_GET_CURRENT_TEAM)
+        monkeypatch.setattr(m, "get_current_team", _REAL_GET_CURRENT_TEAM)
+        monkeypatch.setattr(m, "get_current_project", _REAL_GET_CURRENT_PROJECT)
+        monkeypatch.setattr(m, "get_api_key", lambda: REGISTRAR_KEY if mode.mode == "local" else None)
+        monkeypatch.setattr(m, "get_token", lambda: None)
+        monkeypatch.setattr(m, "client", Client())
+        assert await RestBackend().resolve_team(None) == "team-eng"
+        assert await RestBackend().resolve_project(None, None) == ("proj-oth", "team-eng")
+        # Looked up once per process.
+        assert len([r for r in mode.requests if r[1] == "/teams"]) == 1
