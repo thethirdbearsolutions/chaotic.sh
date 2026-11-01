@@ -11,8 +11,7 @@ from app.api.deps import (
 )
 from app.api.visibility import (
     team_data_refused,
-    can_see_label, can_see_project, not_found, project_filter_in_team, shown_emails, team_hidden,
-    visible_issue, visible_issue_by_identifier, visible_project, visible_sprint,
+    can_see_label, can_see_project, not_found, project_filter_in_team, shown_emails, visible_issue, visible_issue_by_identifier, visible_project, visible_sprint,
 )
 from app.utils import ensure_utc
 

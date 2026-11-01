@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, can_read_team_data
-from app.api.visibility import can_see_project, team_hidden, visible_project_in_team, visible_template, team_data_refused
+from app.api.visibility import can_see_project, visible_project_in_team, visible_template, team_data_refused
 from app.schemas.template import (
     TemplateApplyReport,
     TemplateApplyRequest,

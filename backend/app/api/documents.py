@@ -6,8 +6,7 @@ from app.api.deps import (
 )
 from app.api.visibility import (
     team_data_refused,
-    can_see_label, can_see_project, not_found, project_filter_in_team_or_none, team_hidden,
-    visible_document, visible_issue, visible_project_in_team, visible_sprint,
+    can_see_label, can_see_project, not_found, project_filter_in_team_or_none, visible_document, visible_issue, visible_project_in_team, visible_sprint,
 )
 from app.api.issues import ensure_utc, issues_to_responses
 from app.schemas.document import (
