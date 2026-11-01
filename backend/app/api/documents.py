@@ -5,6 +5,7 @@ from app.api.deps import (
     CurrentUser, accessible_project_ids, can_read_team_data,
 )
 from app.api.visibility import (
+    team_data_refused,
     can_see_label, can_see_project, not_found, project_filter_in_team_or_none, team_hidden,
     visible_document, visible_issue, visible_project_in_team, visible_sprint,
 )
@@ -121,7 +122,7 @@ async def create_document(
             ),
         )
     elif not await can_read_team_data(current_user, team_id):
-        raise team_hidden()
+        raise await team_data_refused(current_user, team_id)
 
     # Agents must include an emoji icon (CHT-631)
     if current_user.is_agent and not document_in.icon:
@@ -175,7 +176,7 @@ async def list_documents(
         if project is None:
             return []
     elif not await can_read_team_data(current_user, team_id):
-        raise team_hidden()
+        raise await team_data_refused(current_user, team_id)
 
     # Check sprint access if filtering by sprint
     # (a sprint the caller cannot see answers like a missing one, CHT-1785)

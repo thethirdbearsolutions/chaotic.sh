@@ -10,6 +10,7 @@ from app.api.deps import (
     confined_project_id, is_eligible_project_member,
 )
 from app.api.visibility import (
+    team_data_refused,
     can_see_label, can_see_project, not_found, project_filter_in_team, shown_emails, team_hidden,
     visible_issue, visible_issue_by_identifier, visible_project, visible_sprint,
 )
@@ -629,7 +630,7 @@ async def list_ready_issues(
         await visible_project(current_user, project_id)
     elif team_id:
         if not await can_read_team_data(current_user, team_id):
-            raise team_hidden()
+            raise await team_data_refused(current_user, team_id)
     else:
         raise HTTPException(status_code=400, detail="Must provide project_id or team_id")
 
@@ -657,7 +658,7 @@ async def _check_list_scope(
         return (await visible_project(current_user, project_id)).team_id
     if team_id:
         if not await can_read_team_data(current_user, team_id):
-            raise team_hidden()
+            raise await team_data_refused(current_user, team_id)
         return team_id
     raise HTTPException(status_code=400, detail="Must provide project_id or team_id")
 
@@ -919,7 +920,7 @@ async def search_issues(
             current_user, project_id, team_id, elsewhere_detail="Project not found in this team",
         )
     elif not await can_read_team_data(current_user, team_id):
-        raise team_hidden()
+        raise await team_data_refused(current_user, team_id)
 
     issues = await issue_service.search(team_id, q, skip, limit, project_id=project_id, status=issue_status.name if issue_status else None)
     return await issues_to_responses(issues)
@@ -1024,7 +1025,7 @@ async def list_team_activities(
             current_user, project_id, team_id, elsewhere_detail="Project not found",
         )
     elif not await can_read_team_data(current_user, team_id):
-        raise team_hidden()
+        raise await team_data_refused(current_user, team_id)
 
     # Bounded lazy lease sweep (CHT-1246, PR #217 review finding 2).
     # This is the read every waiter funnels through: `chaotic await`
@@ -1137,7 +1138,7 @@ async def list_team_comments(
             current_user, project_id, team_id, elsewhere_detail="Project not found",
         )
     elif not await can_read_team_data(current_user, team_id):
-        raise team_hidden()
+        raise await team_data_refused(current_user, team_id)
 
     # Fetch skip + limit from each source to handle worst case where
     # all top results come from one source

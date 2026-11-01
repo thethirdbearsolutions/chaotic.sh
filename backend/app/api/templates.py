@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, can_read_team_data
-from app.api.visibility import can_see_project, team_hidden, visible_project_in_team, visible_template
+from app.api.visibility import can_see_project, team_hidden, visible_project_in_team, visible_template, team_data_refused
 from app.schemas.template import (
     TemplateApplyReport,
     TemplateApplyRequest,
@@ -110,7 +110,7 @@ async def create_template_from_project(
 async def list_templates(team_id: str, current_user: CurrentUser):
     """List a team's templates."""
     if not await can_read_team_data(current_user, team_id):
-        raise team_hidden()
+        raise await team_data_refused(current_user, team_id)
     return await TemplateService().list_by_team(team_id)
 
 

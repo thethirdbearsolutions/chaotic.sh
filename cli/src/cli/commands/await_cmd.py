@@ -1011,13 +1011,15 @@ def register(cli):
     @click.argument("team_id_arg", required=False)
     @_common_options
     def await_team(team_id_arg, type_spec, include_self, timeout_spec, json_output, until_cmd):
-        """Wait on any activity on a team (defaults to current team)."""
+        """Wait on any activity on a team (defaults to current team).
+        A project-scoped key, refused the team's feed, waits on its own
+        project's (CHT-1955), as `await docs` does."""
         team_id = (
             _resolve_team_arg(team_id_arg)
             if team_id_arg else _require_current_team()
         )
         _await_event(
-            team_id=team_id, project_id=None, scope={},
+            team_id=team_id, project_id=_key_project_id(), scope={},
             type_spec=type_spec, include_self=include_self,
             timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
