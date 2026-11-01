@@ -12,6 +12,7 @@ from app.schemas.team import (
     TeamUpdate,
     TeamResponse,
     TeamMemberResponse,
+    RosterEntry,
     TeamActivityResponse,
     TeamRoleUpdate,
     TeamOwnershipTransfer,
@@ -26,7 +27,7 @@ from app.schemas.team import (
 from app.config import get_settings
 from app.oxyde_models.team import OxydeTeamMember
 from app.oxyde_models.user import OxydeUser
-from app.services.agent_service import AgentService
+from app.services.agent_service import AgentService, is_idle
 from app.services.credential_events import revoking
 from app.services.mention_handles import MentionDirectory
 from app.services.team_service import (
@@ -161,6 +162,61 @@ async def list_team_members(
         )
         for m in members
     ]
+
+
+_ROLE_ORDER = {TeamRole.OWNER: 0, TeamRole.ADMIN: 1, TeamRole.MEMBER: 2}
+
+
+@router.get("/{team_id}/roster", response_model=list[RosterEntry])
+@reads
+async def team_roster(
+    team_id: str,
+    current_user: CurrentUser,
+    hide_idle: Annotated[bool, Query(
+        description="Leave out idle session identities (keys unused for 7 days).",
+    )] = False,
+) -> list[RosterEntry]:
+    """Everyone on the team, people and agents, each with the identity
+    they wrote for themselves (CHT-1980): name, avatar, pronouns,
+    tagline, bio and @handle. People first (owners, admins, members),
+    then agents, each by name. Deactivated accounts are left out.
+
+    Readable by anyone in the team directory (CHT-1780), project-scoped
+    agents included; anyone else gets the missing team's 404 (CHT-1785).
+    No addresses: the roster is who people are, not how to mail them."""
+    await visible_team(current_user, team_id)
+
+    members = await TeamService().get_members(team_id)
+    agent_service = AgentService()
+    agents = [a for a in await agent_service.list_by_team(team_id) if a.is_active]
+    last_used = await agent_service.session_last_used(agents)
+    directory = await MentionDirectory.for_team(team_id, members=members)
+    roles = {m.user_id: m for m in members}
+
+    def entry(user, **extra) -> RosterEntry:
+        return RosterEntry(
+            user_id=user.id, name=user.name, avatar_url=user.avatar_url,
+            pronouns=user.pronouns, tagline=user.tagline, bio=user.bio,
+            mention_handle=directory.handle_for(user.id), is_agent=bool(user.is_agent), **extra,
+        )
+
+    people = sorted(
+        (m for m in members if m.user and m.user.is_active and not m.user.is_agent),
+        key=lambda m: (_ROLE_ORDER.get(m.role, 9), m.user.name.casefold()),
+    )
+    roster = [entry(m.user, role=m.role, joined_at=m.joined_at) for m in people]
+    for agent in sorted(agents, key=lambda a: a.name.casefold()):
+        idle = is_idle(last_used.get(agent.id))
+        if hide_idle and idle:
+            continue
+        membership = roles.get(agent.id)
+        roster.append(entry(
+            agent, role=membership.role if membership else None, kind=agent.kind,
+            owner_id=agent.parent_user_id,
+            owner_name=agent.parent_user.name if agent.parent_user else None,
+            agent_project_id=agent.agent_project_id, idle=idle, joined_at=agent.created_at,
+        ))
+    return roster
 
 
 @router.patch("/{team_id}/members/{user_id}", response_model=TeamMemberResponse)

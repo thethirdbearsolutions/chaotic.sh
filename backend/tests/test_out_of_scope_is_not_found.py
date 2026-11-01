@@ -377,6 +377,7 @@ ROUTES = [
     ("PATCH", "/api/teams/{team}", {"name": "x"}, "team"),
     ("DELETE", "/api/teams/{team}", None, "team"),
     ("GET", "/api/teams/{team}/agents", None, "team"),
+    ("GET", "/api/teams/{team}/roster", None, "team"),
     ("POST", "/api/teams/{team}/agents", {"name": "x"}, "team"),
     ("GET", "/api/teams/{team}/members", None, "team"),
     ("GET", "/api/teams/{team}/activity", None, "team"),
