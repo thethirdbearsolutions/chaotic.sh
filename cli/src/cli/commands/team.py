@@ -47,21 +47,6 @@ def roster_role(entry) -> str:
     return f"{role}, idle" if entry.get("idle") else role
 
 
-def _find_on_roster(roster, who: str):
-    """The one roster entry `who` names by @handle, exact id, or name
-    (ignoring case); None when nothing or more than one matches, for the
-    caller to resolve another way (email, id prefix, `me`)."""
-    wanted = who.strip()
-    if wanted.startswith("@"):
-        handle = wanted[1:].lower()
-        hits = [e for e in roster if (e.get("mention_handle") or "").lower() == handle]
-    else:
-        hits = [e for e in roster if e["user_id"] == wanted]
-        if not hits:
-            hits = [e for e in roster if e["name"].casefold() == wanted.casefold()]
-    return hits[0] if len(hits) == 1 else None
-
-
 def profile_markup(entry) -> str:
     """A teammate's self-written identity (CHT-1979) as Rich markup for a
     panel. Every value is the member's own text, so all of it is escaped."""
@@ -424,7 +409,9 @@ def register(cli):
         """
         m = _main()
         roster = _client().get_team_roster(m.get_current_team())
-        entry = _find_on_roster(roster, who)
+        from chaotic_mcp_tools.tools.team import roster_match
+
+        entry = roster_match(roster, who)
         if entry is None:
             user_id = m.resolve_assignee_id(who)
             entry = next((e for e in roster if e["user_id"] == user_id), None)

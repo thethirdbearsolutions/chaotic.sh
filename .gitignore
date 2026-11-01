@@ -18,8 +18,8 @@ __pycache__/
 *.egg
 dist/
 build/
-.venv/
-venv/
+.venv
+venv
 .eggs/
 
 # Test / Coverage

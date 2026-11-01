@@ -2239,3 +2239,56 @@ class TestErrorEnvelope:
                             missing.append(f"{path.name}:{node.lineno}")
         assert not missing, f"structured HTTPException details without a message: {missing}"
 
+
+
+class TestProfileUpdate:
+    """profile_update writes the caller's own identity (CHT-1982)."""
+
+    async def test_writes_and_returns_only_the_profile(self, test_user):
+        result = await tools.profile_update(bio="I review migrations.", pronouns="they/them")
+
+        assert result == {
+            "id": test_user.id, "name": test_user.name, "avatar_url": None, "pronouns": "they/them",
+            "tagline": None, "bio": "I review migrations.", "is_agent": False,
+        }
+
+    async def test_a_blank_name_is_an_envelope_not_a_crash(self):
+        result = await tools.profile_update(name="   ")
+
+        assert set(result) == {"error"}
+        assert result["error"]["error_code"] != "unexpected", result
+
+    async def test_a_too_long_bio_is_an_envelope(self):
+        result = await tools.profile_update(bio="x" * 5000)
+
+        assert set(result) == {"error"} and result["error"]["error_code"] != "unexpected", result
+
+    async def test_an_agent_may_not_take_a_teammates_name(self, agent_user, test_user):
+        from .mcp_principal import acting_as
+
+        with acting_as(agent_user):
+            result = await tools.profile_update(name=test_user.name)
+
+        assert result["error"]["error_code"] == "name_matches_member", result
+
+    async def test_an_agent_writes_its_own(self, agent_user):
+        from .mcp_principal import acting_as
+
+        with acting_as(agent_user):
+            result = await tools.profile_update(tagline="Night shift")
+
+        assert result["tagline"] == "Night shift" and result["is_agent"] is True
+
+    async def test_an_app_session_is_refused(self, test_user):
+        from app.auth.credentials import CredentialKind, Principal
+        from app.enums import HolderVia
+        from .mcp_principal import acting_as
+
+        app_session = Principal(
+            user=test_user, holder_user_id=test_user.id, kind=CredentialKind.OAUTH_ACCESS,
+            scopes=frozenset({"chaotic:read", "chaotic:write"}), holder_via=HolderVia.APP,
+        )
+        with acting_as(app_session):
+            result = await tools.profile_update(bio="x")
+
+        assert result["error"]["error_code"] == "app_session_refused", result

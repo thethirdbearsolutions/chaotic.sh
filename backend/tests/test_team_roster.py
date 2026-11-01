@@ -88,3 +88,48 @@ async def test_an_outsider_gets_the_missing_teams_404(client, auth_headers2, tes
     refused = await client.get(f"/api/teams/{test_team.id}/roster", headers=auth_headers2)
 
     assert refused.status_code == 404, refused.text
+
+
+# Review of the roster PR: ordering by role, who reads it, what it never carries.
+
+
+async def test_people_are_ordered_by_role_before_name(client, auth_headers, test_team, test_user2):
+    aaron = await OxydeUser.objects.create(email="aaron@example.com", hashed_password="x", name="Aaron")
+    await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=aaron.id, role=TeamRole.MEMBER)
+    await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.ADMIN)
+
+    roster = await client.get(f"/api/teams/{test_team.id}/roster", headers=auth_headers)
+
+    assert [(r["name"], r["role"]) for r in roster.json()] == [
+        ("Test User", "owner"), ("Test User 2", "admin"), ("Aaron", "member"),
+    ]
+
+
+async def test_a_project_scoped_agent_reads_its_teams_roster(client, auth_headers, test_team, test_project):
+    created = await client.post(f"/api/projects/{test_project.id}/agents", json={"name": "Local"}, headers=auth_headers)
+    agent = created.json()
+
+    roster = await client.get(f"/api/teams/{test_team.id}/roster", headers=_bearer(agent["api_key"]))
+
+    assert roster.status_code == 200, roster.text
+    me = next(r for r in roster.json() if r["user_id"] == agent["id"])
+    assert me["project_id"] == test_project.id
+
+
+async def test_no_row_carries_an_address_or_session_ref(client, auth_headers, test_team):
+    registrar = await _agent(client, auth_headers, test_team, "Registrar", can_register=True)
+    await client.post("/api/agents/register", json={"external_ref": REF}, headers=_bearer(registrar["api_key"]))
+
+    roster = await client.get(f"/api/teams/{test_team.id}/roster", headers=auth_headers)
+
+    assert len(roster.json()) == 3
+    for row in roster.json():
+        assert not {"email", "user_email", "external_ref", "registered_by_id"} & set(row), row
+        assert REF not in str(row)
+
+
+async def test_an_agent_holding_a_membership_shows_its_role(client, auth_headers, test_team, agent_user):
+    roster = await client.get(f"/api/teams/{test_team.id}/roster", headers=auth_headers)
+
+    row = next(r for r in roster.json() if r["user_id"] == agent_user.id)
+    assert row["is_agent"] is True and row["role"] == "owner"

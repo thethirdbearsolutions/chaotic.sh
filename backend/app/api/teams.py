@@ -182,8 +182,11 @@ async def team_roster(
     then agents, each by name. Deactivated accounts are left out.
 
     Readable by anyone in the team directory (CHT-1780), project-scoped
-    agents included; anyone else gets the missing team's 404 (CHT-1785).
-    No addresses: the roster is who people are, not how to mail them."""
+    agents included; anyone else gets the missing team's 404 (CHT-1785),
+    through ``visible_team`` as its sibling ``/teams/{id}/agents`` does,
+    so the roster and the agent list answer an outsider alike. No
+    addresses: the roster is who people are, not how to mail them.
+    An agent's owner is named even when deactivated: it is who made it."""
     await visible_team(current_user, team_id)
 
     members = await TeamService().get_members(team_id)

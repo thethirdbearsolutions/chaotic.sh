@@ -45,17 +45,18 @@ async def team_roster(
     return listing("members", roster, ROSTER_LIMIT, COMPACT_ROSTER_FIELDS, detail)
 
 
-def _match(roster: list, who: str) -> dict | None:
-    """The one entry `who` names by @handle, exact id or name (case
-    ignored); None when nothing or several match."""
+def roster_match(roster: list, who: str) -> dict | None:
+    """The entry `who` names when it is an @handle or an exact id; None
+    otherwise. A bare name goes to the assignee resolver instead, which
+    weighs names, emails and handles together and refuses an ambiguous
+    one, so this lookup can never pick one of two teammates silently.
+    Shared by the CLI's `team whois`."""
     wanted = who.strip()
     if wanted.startswith("@"):
         handle = wanted[1:].lower()
         hits = [e for e in roster if (e.get("mention_handle") or "").lower() == handle]
     else:
         hits = [e for e in roster if e.get("user_id") == wanted]
-        if not hits:
-            hits = [e for e in roster if (e.get("name") or "").casefold() == wanted.casefold()]
     return hits[0] if len(hits) == 1 else None
 
 
@@ -74,7 +75,7 @@ async def team_member(
     """
     team_id = await backend.resolve_member_team(team)
     roster = await backend.get_team_roster(team_id, hide_idle=False)
-    entry = _match(roster, who)
+    entry = roster_match(roster, who)
     if entry is None:
         user_id = await backend.resolve_assignee(who, team_id, purpose="filter")
         entry = next((e for e in roster if e.get("user_id") == user_id), None)

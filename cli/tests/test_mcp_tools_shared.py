@@ -1667,7 +1667,7 @@ async def test_team_roster_rows_are_compact_unless_detail():
     assert ("get_team_roster", ("team-1",), {"hide_idle": True}) in backend.calls
 
 
-@pytest.mark.parametrize("who", ["@piper", "Piper", "user-piper", "piper"])
+@pytest.mark.parametrize("who", ["@piper", "@PIPER", "user-piper", "piper"])
 async def test_team_member_by_handle_name_or_id(who):
     entry = await _tools(FakeBackend())["team_member"](who=who)
 

@@ -45,10 +45,12 @@ def test_roster_json(cli_runner):
     assert json.loads(result.stdout)[1]["name"] == "Piper"
 
 
-@pytest.mark.parametrize("who", ["@piper", "piper", "a-piper-2222"])
+@pytest.mark.parametrize("who", ["@piper", "@Piper", "piper", "a-piper-2222"])
 def test_whois_finds_by_handle_name_or_id(cli_runner, who):
     from cli.main import cli, client
     client.get_team_roster = MagicMock(return_value=ROSTER)
+    client.get_team_members = MagicMock(return_value=[])
+    client.get_team_agents = MagicMock(return_value=[{"id": "a-piper-2222", "name": "Piper"}])
 
     result = cli_runner.invoke(cli, ["team", "whois", who])
 
@@ -125,3 +127,17 @@ def test_profile_refuses_a_blank_name(cli_runner):
 
     assert result.exit_code != 0
     client.update_me.assert_not_called()
+
+
+def test_whois_an_ambiguous_name_is_refused_not_guessed(cli_runner):
+    """A name two teammates answer to goes to the resolver, which refuses
+    it, rather than the roster picking one."""
+    from cli.main import cli, client
+    client.get_team_roster = MagicMock(return_value=ROSTER)
+    client.get_team_members = MagicMock(return_value=[{"user_id": "u-ada-1111", "user_name": "Sam"}])
+    client.get_team_agents = MagicMock(return_value=[{"id": "a-piper-2222", "name": "Sam"}])
+
+    result = cli_runner.invoke(cli, ["team", "whois", "Sam"])
+
+    assert result.exit_code != 0
+    assert "Profile" not in result.output
