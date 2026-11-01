@@ -136,6 +136,12 @@ describe('loadTeams', () => {
     expect(list.innerHTML).toContain('Test Team');
   });
 
+  it('uses a request already in flight instead of asking again (CHT-1971)', async () => {
+    await loadTeams(Promise.resolve([{ id: 'team-2', name: 'Early Team' }]));
+    expect(api.getMyTeams).not.toHaveBeenCalled();
+    expect(document.getElementById('team-list').innerHTML).toContain('Early Team');
+  });
+
   it('escapes team names for XSS prevention', async () => {
     const teams = [{ id: 'team-1', name: '<script>xss</script>' }];
     api.getMyTeams.mockResolvedValue(teams);

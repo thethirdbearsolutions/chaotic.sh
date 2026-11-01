@@ -5,7 +5,7 @@
  * Uses a registration pattern so the router has zero knowledge of specific views.
  */
 
-import { setCurrentView } from './state.js';
+import { getCurrentView, setCurrentView } from './state.js';
 import { getProjectFromUrl } from './url-helpers.js';
 
 // View handler registry: { viewName: loadFunction }
@@ -182,6 +182,32 @@ export function navigateTo(view, pushHistory = true, { transition = false } = {}
 }
 
 /**
+ * Boot (CHT-1971): before the team's data loads, show the shell of the
+ * view the address routes to, and leave no view current. The page HTML
+ * shows the Dashboard, and `currentView` starts as 'my-issues', so a
+ * reload of /issues used to show the Dashboard until the team loaded and
+ * run the Dashboard's project subscriber, three requests for a view
+ * nobody asked for. With no view current, no view's project subscriber
+ * runs while the team loads; handleRoute() then loads the routed one.
+ */
+export function primeRoute() {
+    setCurrentView(null);
+    const parts = window.location.pathname.split('/').filter(Boolean);
+    const routeAliases = { 'gate-approvals': 'approvals' };
+    const first = parts.length === 0 ? 'my-issues' : (routeAliases[parts[0]] || parts[0]);
+    const isStandard = parts.length <= 1 && getValidViews().includes(first);
+    document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+    if (isStandard) {
+        document.getElementById(`${first}-view`)?.classList.remove('hidden');
+        setActiveNav(first);
+    } else {
+        // A detail route paints its own view once its row loads; until
+        // then, no view rather than the wrong one.
+        setActiveNav(detailRouteSection[parts[0]] || null);
+    }
+}
+
+/**
  * Route based on the current URL path.
  * Handles detail routes (/issue/:id, /document/:id, etc.) and standard views.
  */
@@ -191,6 +217,11 @@ export function handleRoute() {
 
     // Restore project selection from URL
     if (onRestoreProject) onRestoreProject();
+
+    // primeRoute() left no view current while the team loaded. Restore
+    // the old default before routing: a detail route keeps it, so its
+    // Back still falls back to the Dashboard (CHT-1971).
+    if (!getCurrentView()) setCurrentView('my-issues');
 
     let view = 'my-issues';
     if (parts.length === 0 || parts[0] === '') {
