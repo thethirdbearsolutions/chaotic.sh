@@ -7527,9 +7527,90 @@ input[type="checkbox"] {
    Inbox (CHT-1250)
    ============================================================================ */
 
+/* The inbox is a triage list, not a stack of cards (CHT-1962): one-line
+   rows grouped by day, the cursor's tint, actions on hover. */
+.inbox-header {
+    align-items: center;
+}
+.inbox-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+.inbox-header-count {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+
+.segmented {
+    display: inline-flex;
+    padding: 2px;
+    gap: 2px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+.segmented-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--font-sm);
+    padding: 3px 10px;
+    border-radius: calc(var(--radius-md) - 2px);
+    cursor: pointer;
+}
+.segmented-btn:hover {
+    color: var(--text-primary);
+}
+.segmented-btn.active {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+#inbox-list.list {
+    gap: 0;
+}
+
+.inbox-group + .inbox-group {
+    margin-top: 16px;
+}
+/* A day whose last row was archived disappears with it. */
+.inbox-group:not(:has(.inbox-row)) {
+    display: none;
+}
+.inbox-group-header {
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: none;
+    letter-spacing: 0.01em;
+    padding: 0 12px 6px;
+    margin: 0;
+}
+
 .inbox-row {
-    align-items: flex-start;
+    display: flex;
+    align-items: center;
     justify-content: space-between;
+    gap: 12px;
+    padding: 0 12px;
+    min-height: 40px;
+    border-bottom: 1px solid var(--border-color);
+    background: transparent;
+    cursor: pointer;
+    transition: background 0.1s ease;
+}
+.inbox-group .inbox-row:first-of-type {
+    border-top: 1px solid var(--border-color);
+}
+.inbox-row:hover {
+    background: var(--row-hover);
+}
+.inbox-row.keyboard-selected {
+    background: var(--row-cursor);
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
 }
 
 .inbox-row-main {
@@ -7540,8 +7621,11 @@ input[type="checkbox"] {
 /* The row's expand/collapse toggle: a real <button> styled as plain row
    content (CHT-1320, PR #260 review finding 2). */
 .inbox-row-toggle {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 10px;
     width: 100%;
+    min-height: 40px;
     padding: 0;
     margin: 0;
     border: none;
@@ -7550,31 +7634,15 @@ input[type="checkbox"] {
     font: inherit;
     text-align: left;
     cursor: pointer;
+    white-space: nowrap;
 }
 .inbox-row-toggle:focus {
     outline: none;
 }
 .inbox-row-toggle:focus-visible {
     outline: 2px solid var(--accent-color);
-    outline-offset: 2px;
+    outline-offset: -2px;
     border-radius: 4px;
-}
-.inbox-row-title,
-.inbox-row-body {
-    display: block;
-}
-
-.inbox-row-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.inbox-row-source {
-    font-size: var(--font-sm);
-    color: var(--text-muted);
-    font-weight: 500;
 }
 
 .inbox-row-unread-dot {
@@ -7584,23 +7652,77 @@ input[type="checkbox"] {
     background: var(--accent-color);
     flex-shrink: 0;
 }
+.inbox-row-dot-spacer {
+    width: 7px;
+    flex-shrink: 0;
+}
 
+.inbox-row-avatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent-color);
+}
+.inbox-row:not(.inbox-row-unread) .inbox-row-avatar {
+    opacity: 0.6;
+}
+
+.inbox-row-header {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    /* A fixed column, so titles line up whatever the kind label. */
+    width: 170px;
+    overflow: hidden;
+}
+.inbox-row-header .badge {
+    font-size: var(--font-xs);
+    padding: 1px 6px;
+}
+.inbox-row-source {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    min-width: 64px;
+}
+
+.inbox-row-text {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+}
 .inbox-row-title {
     font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
-    font-weight: 500;
+    font-weight: 400;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+    max-width: 60%;
 }
-
 .inbox-row-unread .inbox-row-title {
-    font-weight: 600;
+    font-weight: 500;
+    color: var(--text-primary);
 }
-
 .inbox-row-body {
     font-size: var(--font-sm);
     color: var(--text-muted);
-    margin-top: 4px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
 }
 
 .inbox-row-meta {
@@ -7610,39 +7732,53 @@ input[type="checkbox"] {
     white-space: nowrap;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+}
+.inbox-row-time {
+    min-width: 52px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
 }
 
-/* Archive (clear) button — subtle, surfaces on row hover/selection (CHT-1250 UX) */
-.inbox-row-archive {
+/* Row actions surface on hover, on the cursor row, or when tabbed to. */
+.inbox-row-hover-actions {
+    display: inline-flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.1s;
+}
+.inbox-row:hover .inbox-row-hover-actions,
+.inbox-row.keyboard-selected .inbox-row-hover-actions,
+.inbox-row-hover-actions:focus-within {
+    opacity: 1;
+}
+.inbox-row-action {
     border: none;
     background: transparent;
     color: var(--text-muted);
-    font-size: 18px;
-    line-height: 1;
+    line-height: 0;
     cursor: pointer;
-    padding: 2px 6px;
+    padding: 5px;
     border-radius: 4px;
-    opacity: 0;
-    transition: opacity 0.1s, background 0.1s, color 0.1s;
+    transition: background 0.1s, color 0.1s;
 }
-.inbox-row:hover .inbox-row-archive,
-.inbox-row.keyboard-selected .inbox-row-archive,
-.inbox-row-archive:focus {
-    opacity: 1;
-}
-.inbox-row-archive:hover {
+.inbox-row-action:hover {
     background: var(--bg-hover, rgba(255,255,255,0.08));
     color: var(--text-primary);
 }
 
 /* Expanded reading pane + action bar (CHT-1320) */
 .inbox-row-expanded {
-    background: var(--bg-hover, rgba(255,255,255,0.04));
+    align-items: flex-start;
+    background: var(--row-cursor);
+    padding-bottom: 12px;
+}
+.inbox-row-expanded .inbox-row-meta {
+    min-height: 40px;
 }
 
 .inbox-row-expanded-panel {
-    margin-top: 8px;
+    margin: 0 0 0 37px;
 }
 
 .inbox-expanded-source {
@@ -7685,15 +7821,58 @@ input[type="checkbox"] {
     cursor: progress;
 }
 
+/* Phones: two lines (meta over title), the excerpt drops. */
+@media (max-width: 768px) {
+    .inbox-row {
+        padding: 8px 12px;
+        align-items: flex-start;
+    }
+    .inbox-row-toggle {
+        display: grid;
+        grid-template-columns: 7px 20px 1fr;
+        grid-template-rows: auto auto;
+        column-gap: 10px;
+        row-gap: 4px;
+        min-height: 0;
+        white-space: normal;
+    }
+    .inbox-row-unread-dot,
+    .inbox-row-dot-spacer { grid-row: 1 / span 2; align-self: center; }
+    .inbox-row-avatar { grid-row: 1 / span 2; align-self: center; }
+    .inbox-row-header { grid-column: 3; }
+    .inbox-row-text { grid-column: 3; display: block; }
+    .inbox-row-title {
+        display: block;
+        max-width: none;
+        white-space: nowrap;
+    }
+    .inbox-row-body { display: none; }
+    .inbox-row-expanded-panel { margin-left: 0; margin-top: 8px; }
+    .inbox-row-meta { padding-top: 2px; }
+    .inbox-header { align-items: stretch; }
+    .inbox-row-header { width: auto; }
+    /* Phones triage from the expanded row's action bar. */
+    .inbox-row-hover-actions { display: none; }
+}
+
+/* In the inbox the cursor follows focus, so the selected row's tint is
+   the focus indicator; a ring on its toggle drew a box inside the row. */
+.inbox-row.keyboard-selected .inbox-row-toggle:focus-visible {
+    box-shadow: none;
+}
+
 /* Touch: 44px targets for the inbox's own buttons (PR #260 review 11). */
 @media (pointer: coarse) {
     .inbox-action-btn,
-    .inbox-row-archive {
+    .inbox-row-action {
         min-height: 44px;
         min-width: 44px;
     }
-    .inbox-row-archive {
+    .inbox-row-hover-actions {
         opacity: 1;
+    }
+    .inbox-row-action[data-action="mark-inbox-read"] {
+        display: none;
     }
 }
 
@@ -7720,12 +7899,6 @@ input[type="checkbox"] {
 .badge-inbox-mention {
     background: #164e3f;
     color: #6ee7b7;
-}
-
-#inbox-unread-toggle.active {
-    background: var(--accent-color);
-    color: #fff;
-    border-color: var(--accent-color);
 }
 
 /* ============================================================================
