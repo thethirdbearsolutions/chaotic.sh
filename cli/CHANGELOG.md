@@ -12,8 +12,8 @@ semantic versioning, loosely. It is the release that was prepared as
 0.1.0a22, which never reached PyPI.
 
 Server, CLI, web UI and Android changes merged since a21 (PRs #260,
-#322-#329 and #331-#473). This release carries 22 database migrations
-(0020-0042; there is no 0035). Two of them refuse to run on data that breaks their rule
+#322-#329 and #331-#491). This release carries 24 database migrations
+(0020-0044; there is no 0035). Two of them refuse to run on data that breaks their rule
 (0020: a dangling agent owner; 0022: two API keys sharing a hash), and
 several delete or rewrite rows, each reporting what it does in the
 upgrade output. It also changes which agent API keys still sign in.
@@ -196,6 +196,10 @@ previous code out again and restarts the server on it. chaotic.thirdbearsolution
   children don't imply is pinned where it is; every other open epic takes
   the derived status. Closed epics are left alone, and no activity rows
   are written.
+- **Migration 0044 resolves duplicate "children closed" inbox
+  entries**, keeping the oldest open one per recipient and parent, before
+  it adds a unique index on them (CHT-1928). Nothing is deleted. 0043
+  only adds indexes (CHT-1935).
 - **New server settings, all off by default**: `OAUTH_ENABLED` (OAuth
   for `/mcp` and the Android app) and `MCP_CAPABILITY_URL_ENABLED`. Set
   them with `chaotic system config set`, which keeps them across
@@ -234,6 +238,10 @@ previous code out again and restarts the server on it. chaotic.thirdbearsolution
   project update --require-assignee-on-claim`, `--require-epic-on-close`
   and `--default-epic CHT-X`, which new parentless tickets are filed under.
   MCP `issue_update` takes `issue_type` (CHT-1885, CHT-1900).
+- **The inbox asks an issue's owner what's next when nothing is left
+  open under it**, one entry per recipient and parent, and resolving
+  inbox entries updates the recipients' open pages (CHT-1909, CHT-1927,
+  CHT-1928).
 - **Query issues by relation**: `blocks=`, `blocked_by=` and `related=`
   in the issue query (CHT-1903).
 - **A session identity can name itself**: `CHAOTIC_SESSION_NAME` names
@@ -298,8 +306,14 @@ previous code out again and restarts the server on it. chaotic.thirdbearsolution
   polish passes against a stated bar, gzip and cache headers, dense
   issue rows, an issue detail that paints from the loaded row, and
   optimistic inline edits with rollback, filter changes that paint at
-  once from a cached list (CHT-1747, CHT-1755, CHT-1874, CHT-1886,
-  CHT-1893 to CHT-1899, CHT-1910).
+  once from a cached list, dense rows on narrow screens, collapsed
+  groups and focus that survive a re-render, and approval cards and the
+  drawer on phones (CHT-1747, CHT-1755, CHT-1874, CHT-1886, CHT-1893 to
+  CHT-1899, CHT-1910, CHT-1914, CHT-1915, CHT-1921, CHT-1923, CHT-1929,
+  CHT-1932).
+- **Android** (source only): live updates over `/ws` in the foreground,
+  sync and lock-screen decision fixes (CHT-1655, CHT-1667, CHT-1671,
+  CHT-1685).
 
 ### Fixed
 
@@ -314,6 +328,11 @@ previous code out again and restarts the server on it. chaotic.thirdbearsolution
 - **Accounts can no longer share an address that differs only in case**,
   enforced in the database (CHT-1804).
 - **Localhost invitation links** in the web UI and CLI (CHT-1822).
+- **An agent's project update can no longer undo a gate a person turned
+  on meanwhile**: it lands only if the settings it was checked against
+  are unchanged, else 409 (CHT-1926).
+- **Label filters match non-ASCII names without case** (CHT-1920).
+- **Epic progress counts by nearest epic**, computed in SQL (CHT-1922).
 
 - **Retire an agent without deleting it.** `chaotic agent deactivate`
   (`POST /agents/{id}/deactivate`) revokes every key that signs in as the
