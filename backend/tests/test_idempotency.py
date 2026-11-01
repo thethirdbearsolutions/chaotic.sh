@@ -558,19 +558,39 @@ async def _claim_row(user, key: str, path: str, *, claimed_minutes_ago: float) -
     )
 
 
-@pytest_asyncio.fixture
-async def pool_of_four(client):
-    """The production shape: several connections, so a keyed request and
-    others meet on SQLite's locks rather than on a busy pool. A short
-    busy timeout makes a wait on the write lock fail fast."""
+async def _pool(busy_timeout_ms: int):
     from oxyde import AsyncDatabase, PoolSettings
 
     from app.config import get_settings
 
     url = get_settings().database_url.replace("sqlite+aiosqlite:///", "sqlite:///")
-    pool = AsyncDatabase(url, overwrite=True, settings=PoolSettings(max_connections=4, sqlite_busy_timeout=300))
+    pool = AsyncDatabase(
+        url, overwrite=True, settings=PoolSettings(max_connections=4, sqlite_busy_timeout=busy_timeout_ms),
+    )
     await pool.connect()
     return pool
+
+
+@pytest_asyncio.fixture
+async def pool_of_four(client):
+    """The production shape: several connections, so a keyed request and
+    others meet on SQLite's locks rather than on a busy pool, with the
+    production busy timeout (Oxyde's 5000 ms).
+
+    The tests that wait on the write lock hold it for a deliberate 0.1 to
+    0.15 s plus the rest of a request, about 0.15 s in all on a quiet
+    machine. They used a 300 ms busy timeout, which left a loaded CI
+    runner (coverage tracing, sharded workers) too little margin: the
+    wait ran out, and the resend got the 503 it is designed to give then
+    (PR #502's CI). The 503 itself is checked with `pool_of_four_impatient`."""
+    return await _pool(5000)
+
+
+@pytest_asyncio.fixture
+async def pool_of_four_impatient(client):
+    """As `pool_of_four`, with a short busy timeout, so a wait on the
+    write lock that cannot succeed fails fast."""
+    return await _pool(300)
 
 
 def _slow_comment(entered: asyncio.Event, seconds: float, *, before_write: bool):
@@ -697,7 +717,7 @@ class TestConcurrentResend:
         assert len(await _comments(test_issue)) == 1
 
     async def test_a_claim_that_cannot_get_the_lock_is_a_retryable_503(
-        self, pool_of_four, client, auth_headers, test_issue,
+        self, pool_of_four_impatient, client, auth_headers, test_issue,
     ):
         """Another writer holds SQLite's write lock past the busy timeout:
         the claim cannot be made, and the answer says to retry."""
