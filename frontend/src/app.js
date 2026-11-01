@@ -44,6 +44,7 @@ import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive, focusMainContent } from './keyboard.js';
 import { showInlineDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { isQuoteTooltipVisible } from './quote-comment.js';
+import { initSelectPickers } from './select-picker.js';
 import './revisions.js';
 import {
     toggleTeamDropdown,
@@ -575,6 +576,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initProjectSettings();
     initDocumentsView();
     initThemeToggle();
+    initSelectPickers();
     initIssueLinkHandler();
     initIssueTooltip({ api });
     registerWsHandlers();
