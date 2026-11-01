@@ -188,7 +188,7 @@ class WriteQueue(
     /** Reject a gate or review entry with [note], which the server requires, after [undoMillis]. */
     @Suppress("ReturnCount") // each reason not to queue is an early null
     suspend fun reject(entry: InboxEntry, note: String, undoMillis: Long = UNDO_MILLIS): String? {
-        val reason = note.trim().takeIf { it.isNotEmpty() }?.take(MAX_NOTE_CHARS) ?: return null
+        val reason = note.trim().takeIf { it.isNotEmpty() }?.takeWhole(MAX_NOTE_CHARS) ?: return null
         val action = entry.action(InboxAction.REJECT) ?: return null
         return decide(entry, WriteKind.REJECT, action, reason, undoMillis)
     }
@@ -206,7 +206,7 @@ class WriteQueue(
      */
     @Suppress("ReturnCount") // each reason not to queue is an early return
     suspend fun decideFromNotification(owner: String, entryId: String, note: String? = null): NotificationDecision {
-        val reason = note?.trim()?.take(MAX_NOTE_CHARS)
+        val reason = note?.trim()?.takeWhole(MAX_NOTE_CHARS)
         // The server requires a reason to reject; the app gives a canned one when none was typed.
         if (reason != null && reason.isEmpty()) return NotificationDecision.NotOffered
         val kind = if (reason == null) WriteKind.APPROVE else WriteKind.REJECT

@@ -10,6 +10,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import sh.chaotic.android.R
+import sh.chaotic.sync.takeWhole
 
 /**
  * One tap on a gate or review notification's Approve, Reject or Reject
@@ -89,23 +90,29 @@ fun Context.decisionEntryPoint(): DecisionEntryPoint =
 
 /**
  * Where a notification's Approve and Reject buttons arrive (CHT-1665).
- * Not exported: only this app's own PendingIntents reach it. It only
- * reads the tap and hands it to [DecisionWork], whose expedited worker
- * looks the entry up, queues the decision and sends it: nothing slow
+ * Not exported: only this app's own PendingIntents reach it. It reads
+ * the tap, takes the buttons away behind a "Sending" notice
+ * ([NotificationDecisions.tapped]), and hands it to [DecisionWork],
+ * whose expedited worker looks the entry up, queues the decision and
+ * sends it: nothing slow
  * runs in the broadcast, and a tap survives the process dying, since
  * WorkManager keeps the step until it has run.
  */
 class DecisionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val tap = DecisionTap.from(intent) ?: return
-        DecisionWork.start(context, DecisionJob.of(tap, note(context, intent, tap)))
+        val job = DecisionJob.of(tap, note(context, intent, tap))
+        // The buttons go now, not when the worker runs, so a second tap cannot follow the first (CHT-1685).
+        // A notice that cannot be shown must not lose the tap itself.
+        runCatching { context.decisionEntryPoint().decisions().tapped(job) }
+        DecisionWork.start(context, job)
     }
 
     companion object {
         /**
          * The worker's input holds at most 10 KB, so a typed note is cut
          * to this many characters (the server allows more; an inline
-         * reply is rarely long).
+         * reply is rarely long), on a code-point boundary.
          */
         const val MAX_NOTE_CHARS = 3_000
 
@@ -120,7 +127,7 @@ class DecisionReceiver : BroadcastReceiver() {
             } else {
                 null
             }
-            return typed?.takeIf { it.isNotEmpty() }?.take(MAX_NOTE_CHARS)
+            return typed?.takeIf { it.isNotEmpty() }?.takeWhole(MAX_NOTE_CHARS)
                 ?: context.getString(R.string.decision_canned_note)
         }
     }

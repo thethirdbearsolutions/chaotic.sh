@@ -72,6 +72,9 @@ class DecisionReceiverTest {
         assertEquals("Rejected from phone", note("   "))
         assertEquals("Rejected from phone", note(null))
         assertEquals(DecisionReceiver.MAX_NOTE_CHARS, note("x".repeat(DecisionReceiver.MAX_NOTE_CHARS + 50))?.length)
+        // An emoji across the cut is dropped whole, never split (CHT-1685).
+        val emoji = "x".repeat(DecisionReceiver.MAX_NOTE_CHARS - 1) + "\uD83D\uDE00"
+        assertEquals("x".repeat(DecisionReceiver.MAX_NOTE_CHARS - 1), note(emoji))
     }
 
     @Test

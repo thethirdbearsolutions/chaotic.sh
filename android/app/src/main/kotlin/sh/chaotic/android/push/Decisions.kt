@@ -122,8 +122,9 @@ data class DecisionStep(val job: DecisionJob, val delayMillis: Long, val online:
  *   already decided), or that it waits for the server, looked at again
  *   later. A write that is simply gone (discarded in the app, emptied at
  *   a sign-out) is never called done.
- * - A tap while an in-app swipe on the entry can still be undone leaves
- *   the buttons, and looks again when the undo window closes.
+ * - A tap while an in-app swipe on the entry can still be undone looks
+ *   again when the undo window closes. If the swipe was undone, the
+ *   notice says nothing is known to be sent and points to the app.
  * - Nothing about another account is ever shown: a tap for someone not
  *   signed in says only that, and a step for them drops its notice.
  */
@@ -137,6 +138,7 @@ constructor(
     private val queue: WriteQueue,
     private val syncer: InboxSyncer,
     private val notifier: AndroidNotifier,
+    private val records: DecisionRecords,
 ) {
     /** Do [job]; the step after it, or null when it is settled. */
     suspend fun process(job: DecisionJob): DecisionStep? {
@@ -150,6 +152,16 @@ constructor(
         }
     }
 
+    /**
+     * A tap just arrived, in the receiver: the buttons go at once behind a
+     * "Sending" notice, so a second tap cannot follow before the worker
+     * runs (CHT-1685). Nothing is looked up here; [process] does that.
+     */
+    fun tapped(job: DecisionJob) {
+        notifier.withdraw(job.entryId)
+        notifier.showDecision(job.entryId, pending(title(job), sendingText(job.write)))
+    }
+
     /** [job] failed with an error: whatever it was, the buttons go and the person is pointed to the app. */
     fun failed(job: DecisionJob) {
         notifier.withdraw(job.entryId)
@@ -157,25 +169,41 @@ constructor(
         notifier.showDecision(job.entryId, pending(appName(), R.string.decision_failed))
     }
 
+    @Suppress("ReturnCount") // a decision already recorded is followed before anything is queued
     private suspend fun decide(job: DecisionJob): DecisionStep? {
+        // Run again, or a second tap: follow the write already queued, while the queue still knows it (CHT-1685).
+        val recorded = records.get(job.owner, job.entryId)
+        val known = recorded?.let { queue.status(it.key, job.owner) }
+        if (recorded != null && known != WriteStatus.Unknown && known != WriteStatus.SignedOut) {
+            return track(job.copy(key = recorded.key, write = recorded.kind, note = null))
+        }
         var result = queue.decideFromNotification(job.owner, job.entryId, job.note)
         if (result == NotificationDecision.Gone) {
             val synced = withTimeoutOrNull(CATCH_UP_MILLIS) { syncer.sync() }
             if (synced != null) result = queue.decideFromNotification(job.owner, job.entryId, job.note)
         }
         return when (result) {
-            is NotificationDecision.Queued -> track(job.copy(key = result.key, note = null))
+            is NotificationDecision.Queued -> {
+                remember(job, DecisionRecords.Recorded(job.write, result.key))
+                track(job.copy(key = result.key, note = null))
+            }
 
             is NotificationDecision.AlreadyQueued -> {
                 val queued = job.copy(key = result.key, write = result.kind, note = null)
                 if (result.dueInMillis > 0) {
                     DecisionStep(queued.copy(watch = true), result.dueInMillis + UNDO_SLACK_MILLIS, online = false)
                 } else {
+                    remember(job, DecisionRecords.Recorded(result.kind, result.key))
                     track(queued)
                 }
             }
 
-            NotificationDecision.Gone -> finish(job, settled(title(job), R.string.decision_gone))
+            // A decision of ours went out for it and is no longer queued: most likely taken, so never "nothing sent".
+            NotificationDecision.Gone -> if (recorded != null) {
+                finish(job, pending(title(job), R.string.decision_unknown))
+            } else {
+                finish(job, settled(title(job), R.string.decision_gone))
+            }
 
             NotificationDecision.NotOffered -> finish(job, settled(title(job), R.string.decision_not_offered))
 
@@ -184,12 +212,31 @@ constructor(
         }
     }
 
-    /** After an in-app swipe's undo window: follow it if it went, else leave the notification as it is. */
+    /**
+     * Keep what [job] queued; dropped again if [job]'s person signed out
+     * meanwhile, so a sign-out that cleared the records just before this
+     * write does not leave one behind.
+     */
+    private suspend fun remember(job: DecisionJob, recorded: DecisionRecords.Recorded) {
+        records.put(job.owner, job.entryId, recorded)
+        if (sessions.grant()?.owner != job.owner) records.remove(job.owner, job.entryId)
+    }
+
+    /** After an in-app swipe's undo window: follow it if it went, else say it is not known to be sent. */
     private suspend fun watch(job: DecisionJob, key: String): DecisionStep? =
         when (val status = queue.status(key, job.owner)) {
             WriteStatus.Waiting, WriteStatus.Stalled -> track(job.copy(watch = false))
+
             WriteStatus.Done, is WriteStatus.Refused -> finish(job, statusNotice(job, status))
-            WriteStatus.Unknown, WriteStatus.SignedOut -> null
+
+            // Undone in the app, or taken by a run the queue no longer remembers: the buttons are gone, so say so.
+            WriteStatus.Unknown -> finish(job, pending(title(job), R.string.decision_unknown))
+
+            // Not the person signed in now: nothing of theirs stays up.
+            WriteStatus.SignedOut -> {
+                notifier.cancelDecision(job.entryId)
+                null
+            }
         }
 
     /** The decision is on its way: the buttons go, a live notice says so, and the queue is sent. */
@@ -328,12 +375,13 @@ object DecisionWork {
     /**
      * Sign-out: no step of the previous person's decisions runs after it,
      * and the finished steps are pruned, so a typed note does not stay in
-     * WorkManager's own database.
+     * WorkManager's own database; what each decision queued is forgotten.
      */
     fun cancelAll(context: Context) {
         val work = WorkManager.getInstance(context)
         work.cancelAllWorkByTag(TAG)
         work.pruneWork()
+        DecisionRecords.clear(context)
     }
 
     // Appended: a step enqueued by the run before it waits for that run to end.
