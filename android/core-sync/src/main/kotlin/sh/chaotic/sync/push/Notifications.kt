@@ -29,7 +29,7 @@ enum class PushChannel(val id: String, val importance: Importance) {
         fun forKind(kind: String): PushChannel = when (kind) {
             "gate_pending", "review_requested", "gate_rejected" -> APPROVALS
             "mention" -> MENTIONS
-            "assignment" -> ASSIGNMENTS
+            "assignment", "children_closed" -> ASSIGNMENTS
             "agent_status" -> AGENTS
             "push_device_added" -> ACCOUNT
             else -> OTHER

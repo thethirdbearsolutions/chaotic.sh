@@ -60,6 +60,12 @@ class OxydeIssue(Model):
             # Partial -- only actively-leased rows carry a value.
             Index(("lease_expires_at",), name="ix_issues_lease_expires_at",
                   where="lease_expires_at IS NOT NULL"),
+            # Every project-scoped read, the parent walks (epic status,
+            # epic progress, sub-issue lists) and sprint issue lists
+            # filtered with no index until CHT-1935.
+            Index(("project_id",), name="ix_issues_project_id"),
+            Index(("parent_id",), name="ix_issues_parent_id"),
+            Index(("sprint_id",), name="ix_issues_sprint_id"),
         ]
 
 
@@ -239,3 +245,7 @@ class OxydeBudgetTransaction(Model):
     class Meta:
         is_table = True
         table_name = "budget_transactions"
+        indexes = [
+            # A sprint's transactions and the epic progress ticks (CHT-1935).
+            Index(("sprint_id",), name="ix_budget_transactions_sprint_id"),
+        ]

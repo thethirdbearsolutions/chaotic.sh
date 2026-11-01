@@ -40,6 +40,10 @@ vi.mock('./sprints.js', () => ({
     getSprintCache: vi.fn(() => ({})),
 }));
 
+vi.mock('./inline-dropdown.js', () => ({
+    withEditsInFlight: vi.fn((issue) => issue),
+}));
+
 // Mock issue-list.js
 vi.mock('./issue-list.js', () => ({
     renderIssues: vi.fn(),
@@ -72,6 +76,7 @@ import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
 import { getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
 import { renderIssues } from './issue-list.js';
+import { withEditsInFlight } from './inline-dropdown.js';
 import { showApiError } from './ui.js';
 import { clearIssueStore, getCurrentQueryKey } from './issue-store.js';
 
@@ -103,6 +108,7 @@ import {
     updateSprintFilter,
     updateSprintBudgetBar,
     loadIssues,
+    keepLocalChanges,
     showCachedIssuesOrSkeleton,
     debounceSearch,
     filterIssues,
@@ -1161,6 +1167,58 @@ describe('issues-view', () => {
                 expect(list.classList.contains('is-refreshing')).toBe(false);
             });
 
+            describe('changes made while the request runs (CHT-1921)', () => {
+                const first = [
+                    { id: 'a', project_id: 'p-1', updated_at: 't1', title: 'A', status: 'todo' },
+                    { id: 'b', project_id: 'p-1', updated_at: 't1', title: 'B', status: 'todo' },
+                ];
+                let live;
+                beforeEach(() => {
+                    live = [];
+                    getIssues.mockImplementation(() => live);
+                    setIssues.mockImplementation((v) => { live = v; });
+                });
+                afterEach(() => {
+                    getIssues.mockImplementation(() => []);
+                    setIssues.mockImplementation(() => {});
+                });
+
+                it('keeps an edit that landed on the cached rows over the older answer', async () => {
+                    api.getIssues.mockResolvedValue(first);
+                    await loadIssues();
+                    let resolve;
+                    api.getIssues.mockReturnValue(new Promise(r => { resolve = r; }));
+                    const pending = loadIssues(); // cached rows paint at once
+                    await vi.waitFor(() => expect(api.getIssues).toHaveBeenCalledTimes(2));
+                    const edited = { ...first[0], status: 'done', updated_at: 't2' };
+                    live = [edited, first[1]];
+                    resolve(first); // computed before the edit
+                    await pending;
+                    expect(live).toEqual([edited, first[1]]);
+                });
+
+                it('keeps a quick-create the answer does not have yet', async () => {
+                    api.getIssues.mockResolvedValue(first);
+                    await loadIssues();
+                    let resolve;
+                    api.getIssues.mockReturnValue(new Promise(r => { resolve = r; }));
+                    const pending = loadIssues();
+                    await vi.waitFor(() => expect(api.getIssues).toHaveBeenCalledTimes(2));
+                    const created = { id: 'temp-1', title: 'New', status: 'backlog', _isOptimistic: true };
+                    live = [created, ...live];
+                    resolve(first);
+                    await pending;
+                    expect(live.map(i => i.id)).toEqual(['temp-1', 'a', 'b']);
+                });
+
+                it('takes the answer as is when nothing was on screen for it', async () => {
+                    live = [{ id: 'z', updated_at: 't9' }];
+                    api.getIssues.mockResolvedValue(first);
+                    await loadIssues();
+                    expect(live).toEqual(first);
+                });
+            });
+
             // CHT-1910: a filter the store can answer paints at once
             describe('rows derived from a covering query', () => {
                 const mixed = [
@@ -2031,6 +2089,57 @@ describe('issues-view', () => {
             filterIssues();
             // filterIssues calls syncFiltersToUrl which calls replaceState
             expect(replaceStateSpy).toHaveBeenCalled();
+        });
+    });
+
+    describe('keepLocalChanges (CHT-1921)', () => {
+        const row = (id, extra = {}) => ({ id, updated_at: 't1', status: 'todo', ...extra });
+
+        it('keeps a newer local copy and takes the server copy otherwise', () => {
+            const local = [row('a', { updated_at: 't2', status: 'done' }), row('b', { status: 'done' })];
+            const server = [row('a'), row('b', { updated_at: 't2' })];
+            expect(keepLocalChanges(local, server, new Set(['a', 'b']))).toEqual([local[0], server[1]]);
+        });
+
+        it('keeps rows added since the request and drops rows removed since', () => {
+            const local = [row('new'), row('a')];
+            const server = [row('a'), row('gone')];
+            const merged = keepLocalChanges(local, server, new Set(['a', 'gone']));
+            expect(merged.map(i => i.id)).toEqual(['new', 'a']);
+        });
+
+        it('takes a row that only the server has, if the list never held it', () => {
+            const merged = keepLocalChanges([row('a')], [row('a'), row('b')], new Set(['a']));
+            expect(merged.map(i => i.id)).toEqual(['a', 'b']);
+        });
+
+        it('drops a quick-create placeholder whose real row the response has (review I1)', () => {
+            const temp = { id: 'temp-1', title: 'New', _isOptimistic: true };
+            const merged = keepLocalChanges([temp, row('a')], [row('real', { title: 'New' }), row('a')], new Set(['a']));
+            expect(merged.map(i => i.id)).toEqual(['real', 'a']);
+        });
+
+        it('keeps an added row only if it belongs in the list (review M1)', () => {
+            const belongs = (i) => i.status === 'todo';
+            const local = [row('n1', { status: 'backlog' }), row('n2'), row('a')];
+            const merged = keepLocalChanges(local, [row('a')], new Set(['a']), belongs);
+            expect(merged.map(i => i.id)).toEqual(['n2', 'a']);
+        });
+
+        it('compares updated_at as times, not strings (review M2)', () => {
+            const local = [row('a', { updated_at: '2026-01-01T00:00:00Z', status: 'mine' })];
+            const server = [row('a', { updated_at: '2026-01-01T00:00:00.500000Z' })];
+            expect(keepLocalChanges(local, server, new Set(['a']))[0]).toBe(server[0]);
+        });
+
+        it('applies field edits still in flight', () => {
+            withEditsInFlight.mockImplementation((i) => (i.id === 'a' ? { ...i, priority: 'urgent' } : i));
+            try {
+                const merged = keepLocalChanges([row('a')], [row('a')], new Set(['a']));
+                expect(merged[0].priority).toBe('urgent');
+            } finally {
+                withEditsInFlight.mockImplementation((i) => i);
+            }
         });
     });
 });

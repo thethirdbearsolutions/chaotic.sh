@@ -56,6 +56,15 @@ IssueDescriptionRevision = OxydeIssueDescriptionRevision
 Label = OxydeLabel
 
 
+def _issue_has_label_in(label_ids: list[str]) -> str:
+    """SQL for "the issue carries one of these labels"; the caller adds
+    the ids as params. No ids matches nothing."""
+    if not label_ids:
+        return "0"
+    placeholders = ",".join("?" for _ in label_ids)
+    return f"i.id IN (SELECT il.issue_id FROM issue_labels il WHERE il.label_id IN ({placeholders}))"
+
+
 class SprintInArrearsError(Exception):
     """Raised when sprint is in arrears and budget-consuming operations are blocked.
 
@@ -1077,6 +1086,12 @@ class IssueService:
         )
 
         await self._broadcast_issue_updated(updated_issue)
+        if new_status == IssueStatus.DONE:
+            # Nobody is waiting on this response to ask "close the
+            # parent, or add more?", so its owner's inbox asks (CHT-1909).
+            await self.notify_children_closed(
+                updated_issue.parent_id, actor_id, "was closed when its gate cleared",
+            )
 
         await self._emit_intent_event(
             issue, user_id, limbo_type, ActivityType.INTENT_CLEARED,
@@ -1243,6 +1258,7 @@ class IssueService:
             if parent_id in seen:
                 continue
             seen.add(parent_id)
+            await self._settle_children_closed(parent_id, only_if_reopened=True)
             try:
                 epic = await self.derive_epic_status(parent_id, actor_id)
             except Exception:
@@ -1252,6 +1268,54 @@ class IssueService:
                 await self._broadcast_issue_updated(epic)
                 if epic.parent_id:
                     queue.append(epic.parent_id)
+
+    async def _open_child_count(self, parent_id: str) -> int:
+        return await OxydeIssue.objects.filter(
+            parent_id=parent_id, status__in=[
+                IssueStatus.BACKLOG, IssueStatus.TODO, IssueStatus.IN_PROGRESS, IssueStatus.IN_REVIEW,
+            ],
+        ).count()
+
+    async def notify_children_closed(self, parent_id: str | None, actor_id: str | None, how: str) -> None:
+        """When ``parent_id`` is open and has no open sub-issues left after
+        a change nobody was asked about (a cleared intent's auto-close, a
+        delete), put the question in its owner's inbox (CHT-1909). A PATCH
+        close asks its caller instead (``parent_prompt``). Best-effort:
+        the change itself has already committed."""
+        if not parent_id:
+            return
+        try:
+            parent = await OxydeIssue.objects.get_or_none(id=parent_id)
+            if parent is None or parent.status in CLOSED_STATUSES:
+                return
+            if await self._open_child_count(parent_id):
+                return
+            project = await OxydeProject.objects.get_or_none(id=parent.project_id)
+            if project is None:
+                return
+            from app.services.inbox_service import InboxService
+
+            await InboxService().notify_children_closed(
+                parent=parent, project=project, actor_id=actor_id, how=how,
+            )
+        except Exception:
+            logger.exception("Failed to notify that issue=%s has no open children", parent_id)
+
+    async def _settle_children_closed(self, issue_id: str, only_if_reopened: bool = False) -> None:
+        """Resolve the "nothing is left open under it" entries of
+        ``issue_id`` once it is closed, or (``only_if_reopened``) once it
+        has an open sub-issue again (CHT-1909). Best-effort."""
+        try:
+            from app.services.inbox_service import InboxService
+
+            inbox = InboxService()
+            if not await inbox.has_unresolved_children_closed(issue_id):
+                return
+            if only_if_reopened and not await self._open_child_count(issue_id):
+                return
+            await inbox.resolve_children_closed(issue_id)
+        except Exception:
+            logger.exception("Failed to settle children-closed entries for issue=%s", issue_id)
 
     async def _get_next_issue_number_for_key(self, project_key: str) -> int:
         """Get the next issue number for a project key."""
@@ -1436,6 +1500,7 @@ class IssueService:
         # Epic status (CHT-1901): a status set by hand pins it; asking for
         # it to follow the children again unpins it and re-derives below.
         old_parent_id = issue.parent_id
+        was_open = issue.status not in CLOSED_STATUSES
         final_type = update_data.get("issue_type", issue.issue_type)
         follow_children = bool(issue_in.status_follows_children) and final_type == IssueType.EPIC
         if final_type != IssueType.EPIC and issue.status_pinned:
@@ -1762,6 +1827,13 @@ class IssueService:
             rederive.append(issue.id)
         if rederive:
             await self.rederive_parents(rederive, user_id)
+        if was_open and issue.status in CLOSED_STATUSES:
+            # Closed: a "nothing is left open under it" entry is answered.
+            await self._settle_children_closed(issue.id)
+        if was_open and old_parent_id and issue.parent_id != old_parent_id:
+            # Moving an open ticket away can empty its old parent, and the
+            # PATCH response only asks about a close (CHT-1909 review).
+            await self.notify_children_closed(old_parent_id, user_id, "moved to another parent")
 
         if new_assignee_id:
             try:
@@ -1938,7 +2010,7 @@ class IssueService:
 
         return [(c, issue_map.get(c.issue_id)) for c in comments]
 
-    async def delete(self, issue) -> None:
+    async def delete(self, issue, *, actor_id: str | None) -> None:
         """Delete an issue.
 
         The child-table deletes below are defense in depth, not a
@@ -1953,8 +2025,11 @@ class IssueService:
         a cascade.
         """
         parent_id = issue.parent_id
+        was_open = issue.status not in CLOSED_STATUSES
         await self._delete_rows(issue)
         await self.rederive_parents([parent_id])
+        if was_open:
+            await self.notify_children_closed(parent_id, actor_id, "was deleted")
 
     async def _delete_rows(self, issue) -> None:
         """delete()'s writes, in one transaction."""
@@ -1993,6 +2068,23 @@ class IssueService:
             await InboxService().resolve_for_issue(issue.id)
         except Exception:
             logger.exception("Failed to resolve inbox entries of deleted issue=%s", issue.id)
+
+    async def _label_ids_by_name(
+        self, project_id: str | None, team_id: str | None
+    ) -> dict[str, list[str]]:
+        """Lowercased label name -> ids, for the team the list is in. A
+        team can hold `Bug` and `bug` both; naming either means both."""
+        if project_id:
+            # The project's own team, whatever team_id says: a list
+            # scoped to a project matches that project's labels.
+            project = await OxydeProject.objects.get_or_none(id=project_id)
+            team_id = project.team_id if project else None
+        if not team_id:
+            return {}
+        by_name: dict[str, list[str]] = {}
+        for row in await OxydeLabel.objects.filter(team_id=team_id).values("id", "name").all():
+            by_name.setdefault(row["name"].lower(), []).append(row["id"])
+        return by_name
 
     async def list_issues(
         self,
@@ -2085,29 +2177,33 @@ class IssueService:
             pattern = f"%{search}%"
             params.extend([pattern, pattern, pattern])
 
+        # Label names match without case. SQLite's LOWER() folds only
+        # ASCII (LOWER('ÜBER') is 'Über'), so the names are resolved to
+        # ids here, folding both sides in Python (CHT-1920).
+        label_ids_by_name = (
+            await self._label_ids_by_name(project_id=project_id, team_id=team_id)
+            if label_names or exclude_label_names
+            else {}
+        )
+
         if label_names:
             if label_match == "any":
                 # OR-of-names: single IN-based subquery — the web UI's
                 # multi-select filter semantics (its pre-CHT-1212
                 # client-side .filter() used .some()), consistent with
                 # exclude_label_names' OR-of-names below.
-                placeholders = ",".join("?" for _ in label_names)
-                conditions.append(
-                    "i.id IN (SELECT il.issue_id FROM issue_labels il "
-                    f"JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) IN ({placeholders}))"
-                )
-                params.extend(name.lower() for name in label_names)
+                ids = [i for name in label_names for i in label_ids_by_name.get(name.lower(), [])]
+                conditions.append(_issue_has_label_in(ids))
+                params.extend(ids)
             else:
                 # AND-per-name (default): the CLI documents `--label a,b`
                 # as "issues must have ALL labels" and was the only
                 # server-side consumer of this param before CHT-1212 —
                 # its wire contract stays the default.
                 for label_name in label_names:
-                    conditions.append(
-                        "i.id IN (SELECT il.issue_id FROM issue_labels il "
-                        "JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) = LOWER(?))"
-                    )
-                    params.append(label_name)
+                    ids = label_ids_by_name.get(label_name.lower(), [])
+                    conditions.append(_issue_has_label_in(ids))
+                    params.extend(ids)
 
         if exclude_statuses:
             status_vals = [s.name for s in exclude_statuses]
@@ -2141,13 +2237,12 @@ class IssueService:
                 conditions.append("i.assignee_id IS NOT NULL")
 
         if exclude_label_names:
-            # Single NOT-IN subquery handles "issue has any of these labels"
-            placeholders = ",".join("?" for _ in exclude_label_names)
-            conditions.append(
-                "i.id NOT IN (SELECT il.issue_id FROM issue_labels il "
-                f"JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) IN ({placeholders}))"
-            )
-            params.extend(name.lower() for name in exclude_label_names)
+            # Drop issues carrying any of the named labels; a name no label
+            # has excludes nothing
+            ids = [i for name in exclude_label_names for i in label_ids_by_name.get(name.lower(), [])]
+            if ids:
+                conditions.append(f"NOT {_issue_has_label_in(ids)}")
+                params.extend(ids)
 
         # Build query
         if team_id and not project_id:

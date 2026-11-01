@@ -3019,6 +3019,15 @@ input[type="checkbox"] {
         height: 22px;
     }
 
+    /* These two hold text badges: they size to it (CHT-1914; the fixed
+       width above clipped "Sprint 132" to its first letter). */
+    #issues-list .issue-icon-btn.sprint-btn,
+    #issues-list .issue-icon-btn.estimate-btn {
+        width: auto;
+        min-width: 22px;
+        padding: 0 2px;
+    }
+
     #issues-list .issue-row .issue-identifier {
         font-size: 12.5px;
         min-width: 62px;
@@ -3057,6 +3066,34 @@ input[type="checkbox"] {
     #issues-list .issue-group-content {
         margin-top: 0;
     }
+}
+
+/* Narrow desktop (CHT-1914): with the sidebar open, a row's metadata left
+   the title about 80px at 769px. Up to 1100px the labels and the date
+   give way, and the sprint name is capped, so the title keeps the room. */
+@media (min-width: 769px) and (max-width: 1100px) {
+    #issues-list .issue-row .issue-labels,
+    #issues-list .issue-row .issue-date {
+        display: none;
+    }
+
+    #issues-list .issue-row .sprint-badge {
+        max-width: 72px;
+    }
+}
+
+/* Phones keep two-line rows, about 72-88px tall: estimate that, so the
+   scrollbar doesn't jump as rows off screen are laid out (CHT-1914). */
+@media (max-width: 768px) {
+    #issues-list .issue-row {
+        contain-intrinsic-size: auto 80px;
+    }
+}
+
+/* content-visibility clips paint to the row, so a focus ring drawn
+   outside it would be cut off: draw focus rings inside the row. */
+#issues-list .issue-row :focus-visible {
+    outline-offset: -2px;
 }
 
 .issue-row {
@@ -4840,14 +4877,21 @@ input[type="checkbox"] {
     }
 
     /* Mobile sidebar: off-canvas drawer */
+    /* Closed, the drawer is also visibility: hidden, so its links leave the
+       tab order and the accessibility tree instead of sitting focusable
+       off-canvas (CHT-1292). Visibility flips after the slide-out ends,
+       and at once on open, so toggleSidebar() can focus the first link. */
     .sidebar {
         transform: translateX(-100%);
-        transition: transform 0.25s ease;
+        visibility: hidden;
+        transition: transform 0.25s ease, visibility 0s linear 0.25s;
         z-index: 200;
     }
 
     body.sidebar-open .sidebar {
         transform: translateX(0);
+        visibility: visible;
+        transition: transform 0.25s ease, visibility 0s linear 0s;
     }
 
     body.sidebar-open {
@@ -7390,6 +7434,30 @@ input[type="checkbox"] {
     gap: 8px;
     flex-shrink: 0;
     align-self: center;
+}
+
+/* On a phone the actions (up to three buttons on a review) left the
+   ritual's name and prompt a ~20px column, one word per line (CHT-1892).
+   Stack them under the info instead, and let them wrap. */
+@media (max-width: 768px) {
+    .gate-ritual {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .gate-ritual-info {
+        flex: none;
+    }
+
+    .gate-ritual > .btn,
+    .gate-ritual-actions {
+        align-self: flex-start;
+    }
+
+    .gate-ritual-actions {
+        flex-wrap: wrap;
+    }
 }
 
 .gate-attestation-note {

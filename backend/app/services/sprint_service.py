@@ -437,6 +437,12 @@ class SprintService:
         dates would be outputs of two code paths and a NULL on the third.
         """
         update_data = sprint_in.model_dump(exclude_unset=True)
+        # NOT NULL columns: an explicit null means "leave it", not a
+        # failed write (CHT-1924 review 3; kept when CHT-1924 itself was
+        # reverted).
+        for field in ("name", "status"):
+            if field in update_data and update_data[field] is None:
+                del update_data[field]
         # A budget given here, a number or null for "unlimited", is a
         # deliberate choice: it stops following the project default
         # (CHT-1495).

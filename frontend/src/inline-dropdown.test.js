@@ -44,6 +44,12 @@ vi.mock('./issue-list.js', () => ({
     getStatusIcon: vi.fn(() => '<svg></svg>'),
     getPriorityIcon: vi.fn(() => '<svg></svg>'),
     renderIssueRow: vi.fn(() => '<div class="issue-row"></div>'),
+    renderIssues: vi.fn(),
+}));
+
+vi.mock('./issue-store.js', () => ({
+    upsertIssue: vi.fn(),
+    getStoredIssue: vi.fn(),
 }));
 
 vi.mock('./utils.js', () => ({
@@ -79,7 +85,8 @@ vi.mock('./issues-view.js', () => ({
 
 // Import mocked modules to get references to mock functions
 import { api } from './api.js';
-import { renderIssueRow } from './issue-list.js';
+import { renderIssueRow, renderIssues } from './issue-list.js';
+import { upsertIssue, getStoredIssue } from './issue-store.js';
 import { getIssues, setIssues, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, getLabels } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
 import { closeAllDropdowns, showToast, showApiError } from './ui.js';
@@ -94,6 +101,7 @@ import {
     isInlineDropdownOpen,
     showDetailDropdown,
     updateIssueField,
+    withEditsInFlight,
     updateDetailViewField,
     toggleIssueLabel,
     createLabelFromDropdown,
@@ -433,6 +441,18 @@ describe('inline-dropdown', () => {
     });
 
     describe('updateIssueField', () => {
+        it('reports a field edit while it is in flight, and not after (CHT-1921)', async () => {
+            let resolve;
+            api.updateIssue.mockReturnValue(new Promise(r => { resolve = r; }));
+            const row = { id: 'issue-1', status: 'todo', priority: 'low' };
+            const pending = updateIssueField('issue-1', 'status', 'done');
+            expect(withEditsInFlight(row)).toEqual({ ...row, status: 'done' });
+            expect(withEditsInFlight({ id: 'other' })).toEqual({ id: 'other' });
+            resolve({ id: 'issue-1', status: 'done' });
+            await pending;
+            expect(withEditsInFlight(row)).toBe(row);
+        });
+
         it('calls API to update issue', async () => {
             api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
             getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
@@ -532,6 +552,116 @@ describe('inline-dropdown', () => {
                 await pending;
                 expect(detail).toMatchObject({ status: 'todo', description: 'fresh from the detail' });
             });
+        });
+
+        // CHT-1915: counts, group points and grouping follow the edit at once
+        it('re-renders the whole Issues list when the edit moves the row to another group', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            document.body.innerHTML = '<select id="group-by-select"><option value="status" selected>Status</option></select>'
+                + '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1"></div></div>';
+            renderIssues.mockClear();
+            renderIssueRow.mockClear();
+            await updateIssueField('issue-1', 'status', 'done');
+            expect(renderIssues).toHaveBeenCalledTimes(2); // the guess, then the server's row
+            expect(renderIssueRow).not.toHaveBeenCalled();
+        });
+
+        it('re-renders the whole Issues list for an estimate, which the summary totals', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', estimate: 3 });
+            getIssues.mockReturnValue([{ id: 'issue-1', estimate: 1 }]);
+            document.body.innerHTML = '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1"></div></div>';
+            renderIssues.mockClear();
+            await updateIssueField('issue-1', 'estimate', 3);
+            expect(renderIssues).toHaveBeenCalledTimes(2);
+        });
+
+        it('swaps just the row when the edit leaves the list layout alone', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo', priority: 'low' }]);
+            document.body.innerHTML = '<select id="group-by-select"><option value="priority" selected>Priority</option></select>'
+                + '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1"></div></div>';
+            renderIssues.mockClear();
+            renderIssueRow.mockClear();
+            const rowHtml = '<div class="issue-row" data-issue-id="issue-1"></div>';
+            renderIssueRow.mockReturnValueOnce(rowHtml).mockReturnValueOnce(rowHtml);
+            await updateIssueField('issue-1', 'status', 'done');
+            expect(renderIssues).not.toHaveBeenCalled();
+            expect(renderIssueRow).toHaveBeenCalledTimes(2);
+        });
+
+        it('re-renders just the row elsewhere (My Issues)', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            getMyIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            document.body.innerHTML = '<select id="group-by-select"><option value="status" selected>Status</option></select>'
+                + '<div id="my-issues-view" class="view"><div id="my-issues-list"><div class="issue-row" data-issue-id="issue-1"></div></div></div>'
+                + '<div id="issues-view" class="view hidden"><div id="issues-list"><div class="issue-row" data-issue-id="issue-1"></div></div></div>';
+            renderIssues.mockClear();
+            await updateIssueField('issue-1', 'status', 'done');
+            expect(renderIssues).not.toHaveBeenCalled();
+            expect(renderIssueRow).toHaveBeenCalled();
+        });
+
+        it('edits the row on screen, not a hidden My Issues copy earlier in the page (review I1)', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            getMyIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            const rowHtml = '<div class="issue-row fresh" data-issue-id="issue-1">'
+                + '<button data-dropdown-type="status">S</button></div>';
+            renderIssueRow.mockReturnValue(rowHtml);
+            document.body.innerHTML =
+                '<div id="my-issues-view" class="view hidden"><div id="my-issues-list">'
+                + '<div class="issue-row stale" data-issue-id="issue-1"><button data-dropdown-type="status">S</button></div></div></div>'
+                + '<div id="issues-view" class="view"><div id="issues-list">'
+                + '<div class="issue-row stale" data-issue-id="issue-1"><button data-dropdown-type="status">S</button></div></div></div>';
+            try {
+                await updateIssueField('issue-1', 'status', 'done');
+                const shown = document.querySelector('#issues-list .issue-row');
+                expect(shown.classList.contains('fresh')).toBe(true);
+                expect(document.querySelector('#my-issues-list .issue-row').classList.contains('stale')).toBe(true);
+                expect(shown.contains(document.activeElement)).toBe(true);
+            } finally {
+                renderIssueRow.mockReset();
+                renderIssueRow.mockImplementation(() => '<div class="issue-row"></div>');
+            }
+        });
+
+        it('saves the guess and the rollback in the issue store', async () => {
+            api.updateIssue.mockRejectedValue(new Error('nope'));
+            let live = [{ id: 'issue-1', status: 'todo', updated_at: 't1' }];
+            getIssues.mockImplementation(() => live);
+            setIssues.mockImplementation((v) => { live = v; });
+            upsertIssue.mockClear();
+            try {
+                await updateIssueField('issue-1', 'status', 'done');
+                expect(upsertIssue.mock.calls.map(c => c[0].status)).toEqual(['done', 'todo']);
+            } finally {
+                setIssues.mockImplementation(() => {});
+            }
+        });
+
+        it('rolls the store back even when the row has left every list (review M3)', async () => {
+            let rejectUpdate;
+            api.updateIssue.mockReturnValue(new Promise((_, reject) => { rejectUpdate = reject; }));
+            let live = [{ id: 'issue-1', status: 'todo', updated_at: 't1' }];
+            let stored = { ...live[0] };
+            getIssues.mockImplementation(() => live);
+            setIssues.mockImplementation((v) => { live = v; });
+            getStoredIssue.mockImplementation(() => stored);
+            upsertIssue.mockImplementation((row) => { stored = row; });
+            try {
+                const pending = updateIssueField('issue-1', 'status', 'done');
+                expect(stored.status).toBe('done');
+                live = []; // a filter switch: the issue isn't in the list any more
+                rejectUpdate(new Error('nope'));
+                await pending;
+                expect(stored.status).toBe('todo');
+            } finally {
+                setIssues.mockImplementation(() => {});
+                getStoredIssue.mockReset();
+                upsertIssue.mockReset();
+            }
         });
 
         it('keeps the keyboard cursor on the re-rendered row', async () => {
@@ -735,6 +865,28 @@ describe('inline-dropdown', () => {
             await toggleIssueLabel('issue-1', 'label-1', null);
 
             expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { label_ids: [] });
+        });
+
+        // CHT-1921 review I2
+        it('writes into the list as it is after the request, as a newer row', async () => {
+            let live = [{ id: 'issue-1', labels: [], updated_at: '2026-01-01T00:00:00Z' }];
+            getIssues.mockImplementation(() => live);
+            setIssues.mockImplementation((v) => { live = v; });
+            let resolve;
+            api.updateIssue.mockReturnValue(new Promise(r => { resolve = r; }));
+            try {
+                const original = live[0];
+                toggleIssueLabel('issue-1', 'label-1', null);
+                await vi.waitFor(() => expect(api.updateIssue).toHaveBeenCalled());
+                live = [...live, { id: 'issue-2', labels: [] }]; // a list response landed
+                resolve({ id: 'issue-1', labels: [{ id: 'label-1' }], updated_at: '2026-01-01T00:00:05Z' });
+                await vi.waitFor(() => expect(live[0].labels).toEqual([{ id: 'label-1' }]));
+                expect(live.map(i => i.id)).toEqual(['issue-1', 'issue-2']);
+                expect(live[0].updated_at).toBe('2026-01-01T00:00:05Z');
+                expect(original.labels).toEqual([]); // not changed in place
+            } finally {
+                setIssues.mockImplementation(() => {});
+            }
         });
     });
 

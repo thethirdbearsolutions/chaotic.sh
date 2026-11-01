@@ -104,9 +104,21 @@ export function readQueryMeta(key) {
  * CHT-1893) of the same version keeps the description a search row
  * brought, so a cached search still shows its snippets.
  */
+/**
+ * Whether timestamp `a` is later than `b`. Compared as dates: the server
+ * leaves out a zero fraction ("…:00Z" vs "…:00.5Z"), which a string
+ * comparison gets wrong (CHT-1921 review M2). Missing stamps are never newer.
+ */
+export function isNewer(a, b) {
+    if (!a || !b) return false;
+    const ta = Date.parse(a);
+    const tb = Date.parse(b);
+    return Number.isNaN(ta) || Number.isNaN(tb) ? a > b : ta > tb;
+}
+
 function putEntity(issue) {
     const prev = entities.get(issue.id);
-    if (prev?.updated_at && issue.updated_at && issue.updated_at < prev.updated_at) return;
+    if (isNewer(prev?.updated_at, issue.updated_at)) return;
     if (issue.description == null && prev?.description != null && prev.updated_at === issue.updated_at) {
         entities.set(issue.id, { ...issue, description: prev.description });
         return;
@@ -176,7 +188,11 @@ export function queryForView(viewKey) {
 // snippet's source) is present.
 function rowSignature(issue) {
     const labels = (issue.labels || []).map(l => `${l.id}:${l.name}:${l.color}`).join(',');
-    return `${issue.id}|${issue.updated_at}|${issue.sprint_id ?? ''}|${labels}|${issue.description == null ? 0 : 1}`;
+    // The fields a row shows, so a guessed value that never reached the
+    // server doesn't read as the same row (CHT-1915 review M3).
+    const shown = [issue.status, issue.priority, issue.estimate, issue.assignee_id, issue.issue_type, issue.title]
+        .map(v => v ?? '').join('|');
+    return `${issue.id}|${issue.updated_at}|${issue.sprint_id ?? ''}|${labels}|${issue.description == null ? 0 : 1}|${shown}`;
 }
 
 /**
@@ -205,19 +221,16 @@ const MEANS_NULL = { assignee_id: 'unassigned', sprint_id: 'no_sprint' };
 // in ways the client can't reproduce.
 const SAME = ['scope', 'project_id', 'sort_by', 'order', 'limit'];
 
+// Folds like the server's Python str.lower() (CHT-1920). The two can
+// differ only on characters newer than Python's Unicode tables, and then
+// just until the server's rows replace the derived ones.
 const lower = (names) => (names || []).map(n => String(n).toLowerCase());
-// The server lowercases a label name in Python but the column with
-// SQLite's ASCII-only LOWER(), so a non-ASCII name matches differently
-// there than here (CHT-1920): leave such filters to the server.
-// eslint-disable-next-line no-control-regex
-const plainNames = (names) => (names || []).every(n => /^[\x00-\x7f]*$/.test(String(n)));
 
 // Whether every row `target` asks for is among the rows `source` returned
 // (given `source` was complete), so filtering `source` gives `target`.
 function covers(source, target) {
     if (source.search || target.search || target.sort_by === 'random') return false;
     if (SAME.some(k => (source[k] ?? null) !== (target[k] ?? null))) return false;
-    if (!plainNames(target.label) || !plainNames(target.exclude_label)) return false;
     // Only "any of" label matching is reproduced here (the web UI's).
     if (target.label !== undefined && target.label_match !== 'any') return false;
     for (const k of ARRAY_FILTERS) {
@@ -241,7 +254,8 @@ function covers(source, target) {
     return true;
 }
 
-function matcher(target) {
+/** A test for whether an issue belongs in the list `target` asks for. */
+export function matcher(target) {
     const wanted = target.label === undefined ? null : lower(target.label);
     const unwanted = target.exclude_label === undefined ? null : lower(target.exclude_label);
     return (issue) => {

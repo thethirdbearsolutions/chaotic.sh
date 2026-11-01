@@ -1344,7 +1344,7 @@ async def delete_issue(issue_id: str, current_user: CurrentUser):
     # Broadcast before deleting (need the ID)
     await broadcast_issue_event(project.team_id, "deleted", {"id": issue.id, "identifier": issue.identifier}, project_id=project.id)
 
-    await issue_service.delete(issue)
+    await issue_service.delete(issue, actor_id=current_user.id)
 
 
 # Labels

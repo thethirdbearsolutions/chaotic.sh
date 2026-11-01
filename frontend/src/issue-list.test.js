@@ -10,6 +10,7 @@ vi.mock('./state.js', () => {
     let _selectedIndex = -1;
     return {
         getIssues: vi.fn(() => []),
+        getCurrentUser: vi.fn(() => ({ id: 'u-1' })),
         getSelectedIssueIndex: vi.fn(() => _selectedIndex),
         setSelectedIssueIndex: vi.fn((i) => { _selectedIndex = i; }),
     };
@@ -64,6 +65,7 @@ import {
     renderIssues,
     renderIssueRow,
     toggleGroup,
+    clearCollapsedGroups,
     getPriorityIcon,
     getStatusIcon,
     sumEstimates,
@@ -76,6 +78,7 @@ import {
 } from './issue-list.js';
 
 import { getIssues, getSelectedIssueIndex, setSelectedIssueIndex } from './state.js';
+import { registerActions } from './event-delegation.js';
 import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './assignees.js';
 import { formatEstimate } from './projects.js';
 import { getSprintCache } from './sprints.js';
@@ -713,7 +716,7 @@ describe('issue-list', () => {
     describe('toggleGroup', () => {
         it('toggles collapsed class on group element', () => {
             document.body.innerHTML = `
-                <div class="issue-group" data-group="todo"></div>
+                <div id="issues-list"><div class="issue-group" data-group="todo"></div></div>
             `;
 
             toggleGroup('todo');
@@ -723,6 +726,163 @@ describe('issue-list', () => {
             expect(document.querySelector('.issue-group').classList.contains('collapsed')).toBe(false);
         });
 
+        describe('across a re-render (CHT-1923)', () => {
+            const grouped = [
+                { id: 'i1', identifier: 'T-1', title: 'One', status: 'todo', priority: 'high' },
+                { id: 'i2', identifier: 'T-2', title: 'Two', status: 'done', priority: 'low' },
+            ];
+            beforeEach(() => {
+                clearCollapsedGroups();
+                document.body.innerHTML = '<div id="issues-list"></div>';
+                setTestIssues(grouped);
+                getGroupByValue.mockReturnValue('status');
+            });
+            afterEach(() => {
+                clearCollapsedGroups();
+                getGroupByValue.mockReturnValue('');
+            });
+            const isCollapsed = (key) => document.querySelector(`.issue-group[data-group="${key}"]`).classList.contains('collapsed');
+
+            it('keeps a collapsed group collapsed', () => {
+                renderIssues();
+                toggleGroup('done');
+                renderIssues();
+                expect(isCollapsed('done')).toBe(true);
+                expect(isCollapsed('todo')).toBe(false);
+            });
+
+            it('opens it again once expanded', () => {
+                renderIssues();
+                toggleGroup('done');
+                toggleGroup('done');
+                renderIssues();
+                expect(isCollapsed('done')).toBe(false);
+            });
+
+            it('gives a collapsed group none of the first paint, and paints it on expand (review I1)', () => {
+                const many = Array.from({ length: 100 }, (_, n) => (
+                    { id: `b${n}`, identifier: `T-${n}`, title: `B${n}`, status: 'backlog', priority: 'low' }));
+                setTestIssues([...many, ...grouped]);
+                renderIssues();
+                toggleGroup('backlog');
+                renderIssues();
+                const painted = (key) => document.querySelectorAll(
+                    `.issue-group[data-group="${key}"] .issue-row`).length;
+                expect(painted('todo')).toBe(1);
+                expect(painted('done')).toBe(1);
+                expect(painted('backlog')).toBe(0);
+                toggleGroup('backlog');
+                expect(painted('backlog')).toBe(100);
+            });
+
+            it('opens a collapsed group the selected row has just moved into (review I3)', () => {
+                renderIssues();
+                toggleGroup('done');
+                document.querySelector('.issue-row[data-issue-id="i1"]').classList.add('keyboard-selected');
+                setTestIssues([{ ...grouped[0], status: 'done' }, grouped[1]]);
+                renderIssues();
+                expect(isCollapsed('done')).toBe(false);
+            });
+
+            it('keeps a group collapsed that already held the selected row', () => {
+                renderIssues();
+                document.querySelector('.issue-row[data-issue-id="i2"]').classList.add('keyboard-selected');
+                toggleGroup('done');
+                renderIssues();
+                expect(isCollapsed('done')).toBe(true);
+            });
+
+            // CHT-1932
+            it('marks headers as buttons that say whether they are open', () => {
+                renderIssues();
+                const header = () => document.querySelector('.issue-group[data-group="done"] .issue-group-header');
+                expect(header().getAttribute('role')).toBe('button');
+                expect(header().getAttribute('tabindex')).toBe('0');
+                expect(header().getAttribute('aria-expanded')).toBe('true');
+                toggleGroup('done');
+                expect(header().getAttribute('aria-expanded')).toBe('false');
+                renderIssues();
+                expect(header().getAttribute('aria-expanded')).toBe('false');
+            });
+
+            it('opens and closes a group once per Enter or Space on its header (review I1, M2)', () => {
+                renderIssues();
+                const action = registerActions.mock.calls.map(c => c[0]).find(a => a['toggle-group'])['toggle-group'];
+                const press = (key, extra = {}) => {
+                    const event = { type: 'keydown', key, preventDefault: vi.fn(), ...extra };
+                    action(event, { group: 'done' });
+                    return event;
+                };
+                // Delegation is the only path: no second keydown listener.
+                document.querySelector('.issue-group[data-group="done"] .issue-group-header')
+                    .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                expect(isCollapsed('done')).toBe(false);
+                const enter = press('Enter');
+                expect(isCollapsed('done')).toBe(true);
+                expect(enter.preventDefault).toHaveBeenCalled(); // Space must not scroll
+                press(' ', { repeat: true });
+                expect(isCollapsed('done')).toBe(true);
+                press(' ');
+                expect(isCollapsed('done')).toBe(false);
+            });
+
+            it('keeps the selection when a re-render opens the group the row moved into (review I2)', () => {
+                renderIssues();
+                toggleGroup('done');
+                document.querySelector('.issue-row[data-issue-id="i1"]').classList.add('keyboard-selected');
+                setSelectedIssueIndex(0);
+                setTestIssues([{ ...grouped[0], status: 'done' }, grouped[1]]);
+                renderIssues();
+                const selected = document.querySelectorAll('.issue-row.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.issueId).toBe('i1');
+                expect(getSelectedIssueIndex()).toBeGreaterThanOrEqual(0);
+            });
+
+            it('keeps the same row selected when a group above it opens', () => {
+                setTestIssues([...grouped, { id: 'i3', identifier: 'T-3', title: 'Three', status: 'canceled', priority: 'low' }]);
+                renderIssues();
+                toggleGroup('done');
+                document.querySelector('.issue-row[data-issue-id="i3"]').classList.add('keyboard-selected');
+                setSelectedIssueIndex(1);
+                toggleGroup('done');
+                expect(document.querySelector('.issue-row.keyboard-selected').dataset.issueId).toBe('i3');
+                expect(getSelectedIssueIndex()).toBe(2);
+            });
+
+            it('falls back to the last row shown when the cursor\'s group is the last', () => {
+                renderIssues();
+                document.querySelector('.issue-row[data-issue-id="i2"]').classList.add('keyboard-selected');
+                setSelectedIssueIndex(1);
+                toggleGroup('done');
+                expect(document.querySelector('.issue-row.keyboard-selected').dataset.issueId).toBe('i1');
+                expect(getSelectedIssueIndex()).toBe(0);
+            });
+
+            it('moves the cursor off a group as it closes, to the next row shown', () => {
+                setTestIssues([...grouped, { id: 'i3', identifier: 'T-3', title: 'Three', status: 'canceled', priority: 'low' }]);
+                renderIssues();
+                document.querySelector('.issue-row[data-issue-id="i2"]').classList.add('keyboard-selected');
+                setSelectedIssueIndex(1);
+                toggleGroup('done');
+                const selected = document.querySelectorAll('.issue-row.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.issueId).toBe('i3');
+                expect(getSelectedIssueIndex()).toBe(1);
+            });
+
+            it('remembers collapsed groups per group-by choice', () => {
+                renderIssues();
+                toggleGroup('done');
+                getGroupByValue.mockReturnValue('priority');
+                renderIssues();
+                expect(document.querySelectorAll('.issue-group.collapsed')).toHaveLength(0);
+                getGroupByValue.mockReturnValue('status');
+                renderIssues();
+                expect(isCollapsed('done')).toBe(true);
+            });
+        });
+
         it('does nothing if group not found', () => {
             document.body.innerHTML = `
                 <div class="issue-group" data-group="todo"></div>
@@ -730,6 +890,57 @@ describe('issue-list', () => {
 
             // Should not throw
             toggleGroup('nonexistent');
+        });
+    });
+
+    describe('focus across a re-render (CHT-1923)', () => {
+        beforeEach(() => {
+            document.body.innerHTML = '<div id="issues-list"></div>';
+            setTestIssues([
+                { id: 'i1', identifier: 'T-1', title: 'One', status: 'todo', priority: 'high' },
+                { id: 'i2', identifier: 'T-2', title: 'Two', status: 'todo', priority: 'low' },
+            ]);
+            getGroupByValue.mockReturnValue('');
+        });
+        const rowOf = (id) => document.querySelector(`#issues-list .issue-row[data-issue-id="${id}"]`);
+
+        it('puts focus back on the same trigger of the same issue', () => {
+            renderIssues();
+            const trigger = rowOf('i2').querySelector('[data-dropdown-type="priority"]');
+            expect(trigger).not.toBeNull();
+            trigger.focus();
+            renderIssues();
+            expect(document.activeElement).not.toBe(trigger); // a new element
+            expect(document.activeElement).toBe(rowOf('i2').querySelector('[data-dropdown-type="priority"]'));
+        });
+
+        it('puts focus back on the title link, not the first button (review I2)', () => {
+            renderIssues();
+            const title = rowOf('i2').querySelector('.issue-title');
+            title.focus();
+            renderIssues();
+            expect(document.activeElement).toBe(rowOf('i2').querySelector('.issue-title'));
+        });
+
+        it('focuses a row that was still queued once it lands (review M5)', () => {
+            renderIssues();
+            rowOf('i2').querySelector('.issue-title').focus();
+            const many = Array.from({ length: 200 }, (_, n) => (
+                { id: `x${n}`, identifier: `X-${n}`, title: `X${n}`, status: 'todo', priority: 'low' }));
+            setTestIssues([...many, { id: 'i2', identifier: 'T-2', title: 'Two', status: 'todo', priority: 'low' }]);
+            renderIssues();
+            expect(rowOf('i2')).toBeNull();
+            appendPendingRows();
+            expect(document.activeElement).toBe(rowOf('i2').querySelector('.issue-title'));
+        });
+
+        it('leaves focus alone when nothing in the list had it', () => {
+            const outside = document.createElement('input');
+            document.body.appendChild(outside);
+            outside.focus();
+            renderIssues();
+            renderIssues();
+            expect(document.activeElement).toBe(outside);
         });
     });
 

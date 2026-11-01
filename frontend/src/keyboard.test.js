@@ -864,6 +864,39 @@ describe('List Navigation Handler', () => {
         expect(actions.setSelectedIndex).toHaveBeenCalledWith(3);
     });
 
+    // CHT-1932
+    describe('collapsed groups', () => {
+        beforeEach(() => {
+            document.body.innerHTML = `
+                <div id="issues-list">
+                    <div class="issue-group" data-group="todo"><div class="issue-group-header" role="button" tabindex="0"></div>
+                        <div class="issue-group-content"><div class="issue-row" data-issue-id="t1"></div></div></div>
+                    <div class="issue-group collapsed" data-group="done"><div class="issue-group-header" role="button" tabindex="0"></div>
+                        <div class="issue-group-content"><div class="issue-row" data-issue-id="d1"></div><div class="issue-row" data-issue-id="d2"></div></div></div>
+                    <div class="issue-group" data-group="canceled"><div class="issue-group-header" role="button" tabindex="0"></div>
+                        <div class="issue-group-content"><div class="issue-row" data-issue-id="c1"></div></div></div>
+                </div>`;
+        });
+
+        it('j steps over the rows of a collapsed group', () => {
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+            expect(document.querySelector('[data-issue-id="c1"]').classList.contains('keyboard-selected')).toBe(true);
+        });
+
+        it('j on a focused header still moves the cursor (review I3)', () => {
+            const header = document.querySelector('.issue-group-header');
+            handler({ key: 'j', target: header, preventDefault: vi.fn() });
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('Enter on a focused group header is left to the header', () => {
+            const header = document.querySelector('.issue-group-header');
+            handler({ key: 'Enter', target: header, preventDefault: vi.fn() });
+            expect(actions.viewIssue).not.toHaveBeenCalled();
+        });
+    });
+
     describe('guard conditions', () => {
         it('ignores when not in issues view', () => {
             actions.getCurrentView.mockReturnValue('projects');

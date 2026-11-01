@@ -22,10 +22,10 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from oxyde import execute_raw
+from oxyde import IntegrityError, execute_raw
 
-from app.db.transactions import on_commit
-from app.enums import ActivityType, ApprovalMode, InboxEntryKind, TeamRole
+from app.db.transactions import atomic, on_commit, on_commit_collect
+from app.enums import ActivityType, ApprovalMode, InboxEntryKind, IssueType, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
 from app.services.mention_handles import MentionDirectory, legacy_first_word_handle, normalize_token
@@ -82,6 +82,10 @@ def _ambiguous_mention_warning(token: str, handles: list[str]) -> str:
     return f"@{token} is ambiguous; nobody was notified. Use one of: {shown}."
 
 
+# How many settled ids a 'resolved' event names; ``count`` gives the total.
+_RESOLVED_IDS_CAP = 100
+
+
 class InboxService:
     """Writes and reads InboxEntry rows."""
 
@@ -130,6 +134,38 @@ class InboxService:
         except RuntimeError:  # inside oxyde.atomic(): nothing would call it later
             logger.exception("Inbox event %s for entry=%s broadcast before commit", event_type, entry.id)
             await send()
+
+    async def _broadcast_resolved(self, settling: list) -> None:
+        """Tell each recipient's sockets that entries of theirs were
+        settled (CHT-1927), so an open inbox refetches: its unread count
+        and the rows' read state change. One event per recipient per
+        transaction, however many entries and however many ``_resolve``
+        calls it took: a project delete settles in chunks of 500 and must
+        not send a refetch per chunk (PR #491 review 1). The payload names
+        the settled ids (up to ``_RESOLVED_IDS_CAP``) and their count, so
+        a client never mistakes one id for all of them (review 3)."""
+        by_recipient: dict[tuple[str, str], list[str]] = {}
+        for entry in settling:
+            by_recipient.setdefault((entry.team_id, entry.recipient_user_id), []).append(entry.id)
+
+        for (team_id, recipient_user_id), ids in by_recipient.items():
+            async def flush(batches: list[list[str]], team_id=team_id, recipient_user_id=recipient_user_id) -> None:
+                settled = [i for batch in batches for i in batch]
+                try:
+                    from app.websocket import broadcast_inbox_event
+                    await broadcast_inbox_event(team_id, "resolved", {
+                        "recipient_user_id": recipient_user_id,
+                        "ids": settled[:_RESOLVED_IDS_CAP],
+                        "count": len(settled),
+                    }, recipient_user_id=recipient_user_id)
+                except Exception:
+                    logger.exception("Failed to broadcast inbox resolved for user=%s", recipient_user_id)
+
+            try:
+                await on_commit_collect(("inbox.resolved", team_id, recipient_user_id), ids, flush)
+            except RuntimeError:  # inside oxyde.atomic(): nothing would call it later
+                logger.exception("Inbox resolved event for user=%s broadcast before commit", recipient_user_id)
+                await flush([ids])
 
     async def _push(self, entries: list, actor_id: str | None = None) -> None:
         """Push the new entries to their recipients' devices (CHT-1605),
@@ -303,6 +339,96 @@ class InboxService:
         )
         await self._broadcast(project.team_id, "created", entry)
         await self._push([entry], assigned_by.id if assigned_by else None)
+
+    async def notify_children_closed(self, *, parent, project, actor_id: str | None, how: str) -> None:
+        """``parent`` is open and has no open sub-issues left, and the
+        change that did it had nobody to ask "close it, or add more?"
+        (CHT-1909): a cleared intent closed the last one, it was deleted,
+        or it moved to another parent. Tell whoever owns the parent: its
+        assignee, else its creator, and that agent's owner when it is an
+        agent, counting only people who may still work in the project
+        (active, still in the team: ``eligible_on_project_work``). The
+        person who made the change is told too, since none of these paths
+        asked them (a gate approver is the usual case); the push skips
+        them. An entry still unresolved for the parent is not repeated, even by
+        two closes at once (a partial unique index, CHT-1928).
+        """
+        recipients = await self._children_closed_recipients(parent, project)
+        noun = "epic" if parent.issue_type == IssueType.EPIC else "issue"
+        created = []
+        for recipient_id in recipients:
+            if await OxydeInboxEntry.objects.filter(
+                recipient_user_id=recipient_id, kind=InboxEntryKind.CHILDREN_CLOSED.name,
+                issue_id=parent.id, resolved_at=None,
+            ).exists():
+                continue
+            try:
+                # A savepoint, so a duplicate rolls back only itself.
+                async with atomic():
+                    entry = await OxydeInboxEntry.objects.create(
+                        recipient_user_id=recipient_id,
+                        kind=InboxEntryKind.CHILDREN_CLOSED,
+                        team_id=project.team_id,
+                        project_id=project.id,
+                        issue_id=parent.id,
+                        source_user_id=actor_id,
+                        title=f"Nothing is left open under {parent.identifier}",
+                        body=(
+                            f"The last open sub-issue of {parent.identifier} ({parent.title}) {how}. "
+                            f"Close the {noun}, or add more."
+                        ),
+                    )
+            except IntegrityError as e:
+                # Another close wrote it between the check and here; the
+                # partial unique index keeps one (CHT-1928). Any other
+                # constraint (a recipient deleted meanwhile) still raises,
+                # to the caller's logging (PR #490 review 1).
+                if "UNIQUE" not in str(e):
+                    raise
+                continue
+            created.append(entry)
+            await self._broadcast(project.team_id, "created", entry)
+        await self._push(created, actor_id)
+
+    async def _children_closed_recipients(self, parent, project) -> list[str]:
+        """The first of the parent's assignee and creator who yields
+        anyone eligible: that person, and their owner when it is an
+        agent, each only if they may still work in the project."""
+        from app.services.team_service import eligible_on_project_work
+        from app.services.user_service import UserService
+
+        users, teams = UserService(), TeamService()
+
+        async def eligible(user) -> bool:
+            is_member = (
+                user is not None and not user.is_agent
+                and await teams.get_member(project.team_id, user.id) is not None
+            )
+            return eligible_on_project_work(user, project.team_id, project.id, is_member=is_member)
+
+        for candidate_id in dict.fromkeys(i for i in (parent.assignee_id, parent.creator_id) if i):
+            candidate = await users.get_by_id(candidate_id)
+            if candidate is None:
+                continue
+            found = [candidate.id] if await eligible(candidate) else []
+            if candidate.is_agent and candidate.parent_user_id:
+                owner = await users.get_by_id(candidate.parent_user_id)
+                if owner is not None and owner.id not in found and await eligible(owner):
+                    found.append(owner.id)
+            if found:
+                return found
+        return []
+
+    async def has_unresolved_children_closed(self, issue_id: str) -> bool:
+        return await OxydeInboxEntry.objects.filter(
+            issue_id=issue_id, kind=InboxEntryKind.CHILDREN_CLOSED.name, resolved_at=None,
+        ).exists()
+
+    async def resolve_children_closed(self, issue_id: str) -> int:
+        """Settle the CHILDREN_CLOSED entries about ``issue_id``: it was
+        closed, or it has an open sub-issue again, so the question is
+        answered (CHT-1909)."""
+        return await self._resolve({"issue_id": issue_id, "kind": InboxEntryKind.CHILDREN_CLOSED.name})
 
     async def notify_agent_status(self, *, agent, actor, verb: str) -> None:
         """Someone other than its creator deactivated or reactivated an
@@ -682,6 +808,7 @@ class InboxService:
             from app.services.push_sender import push_resolved
 
             await push_resolved(settling)
+            await self._broadcast_resolved(settling)
         return unread
 
     async def _mark_read_for_resolve(self, filters: dict) -> int:

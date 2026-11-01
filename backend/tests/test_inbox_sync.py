@@ -573,7 +573,7 @@ class TestReferentsGoAway:
         self, client, db, test_issue, test_user, auth_headers, gate_claim_ritual,
     ):
         entry, cursor = await self._gate(client, auth_headers, test_issue, test_user)
-        await IssueService().delete(test_issue)
+        await IssueService().delete(test_issue, actor_id=None)
         later = await _sync(client, auth_headers, since=cursor)
         assert [(e["id"], e["state"]) for e in later["entries"]] == [(entry["id"], "resolved")]
 

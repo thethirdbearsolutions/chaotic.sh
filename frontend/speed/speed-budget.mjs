@@ -63,7 +63,9 @@ try {
     const presses = 30;
     for (let i = 0; i < presses; i++) await page.keyboard.press('j');
     await page.waitForTimeout(300);
-    const index = await page.evaluate(() => [...document.querySelectorAll('#issues-list .issue-row')]
+    // The rows j/k move over: ISSUE_NAV_ROWS in src/constants.js (CHT-1932).
+    const index = await page.evaluate(() => [...document.querySelectorAll(
+        '#issues-list > .issue-row, #issues-list .issue-group:not(.collapsed) .issue-row')]
         .findIndex((r) => r.classList.contains('keyboard-selected')));
     record(`cursor after ${presses} j presses`, index, index === presses - 1, `== ${presses - 1}`);
     for (let i = 0; i < presses; i++) await page.keyboard.press('k');

@@ -313,6 +313,7 @@ class AndroidNotifier(private val context: Context, private val owner: () -> Str
             "assignment" -> R.string.push_kind_assignment
             "agent_status" -> R.string.push_kind_agent_status
             "push_device_added" -> R.string.push_kind_push_device_added
+            "children_closed" -> R.string.push_kind_children_closed
             else -> R.string.push_kind_other
         }
     }

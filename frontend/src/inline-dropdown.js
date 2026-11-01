@@ -7,8 +7,10 @@ import { handleCloseFollowups } from './epic-prompt.js';
 import { api } from './api.js';
 import { getIssues, setIssues, getLabels, setLabels, getCurrentTeam, getCurrentProject, getCurrentDetailIssue, setCurrentDetailIssue, getCurrentDetailSprints } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
+import { upsertIssue, getStoredIssue } from './issue-store.js';
+import { getGroupByValue } from './issues-filter.js';
 import { closeAllDropdowns, registerDropdownClickOutside, setDropdownKeyHandler, showToast, showApiError, markModalDirty } from './ui.js';
-import { getStatusIcon, getPriorityIcon, renderIssueRow } from './issue-list.js';
+import { getStatusIcon, getPriorityIcon, renderIssueRow, renderIssues } from './issue-list.js';
 import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { formatEstimate, getEstimateOptions } from './projects.js';
@@ -30,6 +32,28 @@ let _labelToggleQueue = Promise.resolve();
 // completed inline edit can return focus to the right control (CHT-1293).
 // issue_type is intentionally absent: it isn't editable from a list row (it
 // renders as a static badge, no trigger button), so there's nothing to refocus.
+// The Issues list's group-by choice -> the field it groups on (CHT-1915).
+const GROUP_FIELD = {
+    status: 'status',
+    priority: 'priority',
+    type: 'issue_type',
+    assignee: 'assignee_id',
+    sprint: 'sprint_id',
+};
+
+/**
+ * The issue's row in the view on screen. Hidden views keep their rows, and
+ * My Issues comes before the Issues list in the page, so the first match
+ * in document order can be a row nobody sees (CHT-1915 review I1).
+ */
+function visibleIssueRow(issueId) {
+    const rows = document.querySelectorAll(`.issue-row[data-issue-id="${issueId}"]`);
+    for (const row of rows) {
+        if (!row.closest('.view.hidden')) return row;
+    }
+    return rows[0] || null;
+}
+
 const DROPDOWN_TYPE_FOR_FIELD = {
     status: 'status',
     priority: 'priority',
@@ -442,26 +466,31 @@ async function _doToggleIssueLabel(issueId, labelId, buttonEl) {
     try {
         const updated = await api.updateIssue(issueId, { label_ids: newLabelIds });
 
-        // Update local state
+        // Update local state, as it is now: a list response may have
+        // replaced it during the request. A new row, with the server's
+        // updated_at, so it reads as newer than an answer computed before
+        // the toggle (CHT-1921 review I2).
         const updatedLabels = updated.labels || [];
-        const issueIndex = issues.findIndex(i => i.id === issueId);
-        if (issueIndex !== -1) {
-            issues[issueIndex].labels = updatedLabels;
-            setIssues([...issues]);
+        const withLabels = (row) => ({
+            ...row, labels: updatedLabels, updated_at: updated.updated_at ?? row.updated_at,
+        });
+        const issuesNow = getIssues();
+        if (issuesNow.some(i => i.id === issueId)) {
+            setIssues(issuesNow.map(i => (i.id === issueId ? withLabels(i) : i)));
         }
-        const myIssueIndex = myIssues.findIndex(i => i.id === issueId);
-        if (myIssueIndex !== -1) {
-            myIssues[myIssueIndex].labels = updatedLabels;
-            setMyIssues([...myIssues]);
+        const myIssuesNow = getMyIssues();
+        if (myIssuesNow.some(i => i.id === issueId)) {
+            setMyIssues(myIssuesNow.map(i => (i.id === issueId ? withLabels(i) : i)));
         }
-        if (currentDetailIssue?.id === issueId) {
-            setCurrentDetailIssue({ ...currentDetailIssue, labels: updatedLabels });
+        const detailNow = getCurrentDetailIssue();
+        if (detailNow?.id === issueId) {
+            setCurrentDetailIssue(withLabels(detailNow));
         }
 
         // Re-render the row if visible
-        const row = document.querySelector(`.issue-row[data-issue-id="${issueId}"]`);
+        const row = visibleIssueRow(issueId);
         if (row && row.parentNode) {
-            const issueData = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId);
+            const issueData = getIssues().find(i => i.id === issueId) || getMyIssues().find(i => i.id === issueId);
             if (issueData) row.outerHTML = renderIssueRow(issueData);
         }
 
@@ -696,6 +725,7 @@ export async function updateIssueField(issueId, field, value) {
     // request's answer or failure leaves it alone (CHT-1895 review I4, I5).
     const seq = beginFieldEdit(issueId, field, value);
     const previousValues = fieldValues(issueId, field);
+    const previousStored = getStoredIssue(issueId)?.[field];
     const guessed = patchFieldEverywhere(issueId, field, () => value);
     if (guessed) showIssueLocally(issueId, field, { focus: true });
 
@@ -718,6 +748,8 @@ export async function updateIssueField(issueId, field, value) {
         if (isCurrentFieldEdit(issueId, field, seq)) {
             const merged = { ...updatedIssue, ...otherFieldsInFlight(issueId, field) };
             replaceIssueEverywhere(issueId, { issue: merged, myIssue: merged, detail: merged });
+            // Even if the row has left every list since the guess.
+            upsertIssue(merged);
             showIssueLocally(issueId, field, { focus: !guessed });
         }
     } catch (error) {
@@ -726,6 +758,10 @@ export async function updateIssueField(issueId, field, value) {
             patchFieldEverywhere(issueId, field, (copy, which) => (
                 copy[field] === value ? previousValues[which] : copy[field]
             ));
+            // The store took the guess; take it back there too, even if
+            // the row has left every list since (CHT-1915 review M3).
+            const stored = getStoredIssue(issueId);
+            if (stored && stored[field] === value) upsertIssue({ ...stored, [field]: previousStored });
             showIssueLocally(issueId, field, { focus: false });
         }
         return;
@@ -754,6 +790,18 @@ const DETAIL_SIDEBAR_FIELDS = new Set(['sprint_id', 'status', 'priority', 'assig
 
 // issueId -> Map(field -> { seq, value }): the inline edits in flight.
 const fieldEditsInFlight = new Map();
+
+/**
+ * The issue with every field edit still in flight applied: a list response
+ * computed before the edit must not paint the old value (CHT-1921).
+ */
+export function withEditsInFlight(issue) {
+    const edits = issue && fieldEditsInFlight.get(issue.id);
+    if (!edits?.size) return issue;
+    const out = { ...issue };
+    edits.forEach((edit, field) => { out[field] = edit.value; });
+    return out;
+}
 let fieldEditSeq = 0;
 
 function beginFieldEdit(issueId, field, value) {
@@ -835,32 +883,53 @@ function replaceIssueEverywhere(issueId, versions) {
     }
 }
 
+/**
+ * Whether an edit to `field` changes anything on the Issues list outside
+ * the row itself: the summary's points (estimate) or the row's group.
+ * Only then is the whole list re-rendered; a full render costs every
+ * painted row and resets what lives only in the DOM (CHT-1915 review M1).
+ */
+function editChangesListLayout(field) {
+    return field === 'estimate' || GROUP_FIELD[getGroupByValue()] === field;
+}
+
 function rerenderIssueRow(issueId, field, issue, { focus }) {
-    const row = document.querySelector(`.issue-row[data-issue-id="${issueId}"]`);
+    const row = visibleIssueRow(issueId);
     if (!row || !row.parentNode || !issue) return;
     // The server's answer re-renders a row the optimistic paint already
     // focused: keep the focus where it was.
     const hadFocus = row.contains(document.activeElement);
-    const wasSelected = row.classList.contains('keyboard-selected');
-    row.outerHTML = renderIssueRow(issue);
-    if (wasSelected) {
-        document.querySelector(`.issue-row[data-issue-id="${issueId}"]`)?.classList.add('keyboard-selected');
+    const onShownList = row.closest('#issues-list') && !row.closest('.view.hidden');
+    if (onShownList && editChangesListLayout(field) && getIssues().some(i => i.id === issueId)) {
+        // The summary points or the row's group follow the edit at once
+        // (CHT-1915). renderIssues keeps the keyboard selection, and only
+        // paints the rows on screen straight away.
+        renderIssues();
+    } else {
+        const wasSelected = row.classList.contains('keyboard-selected');
+        row.outerHTML = renderIssueRow(issue);
+        if (wasSelected) visibleIssueRow(issueId)?.classList.add('keyboard-selected');
     }
     if (!focus && !hadFocus) return;
     // Return focus to the field's trigger button on the fresh row
     // (CHT-1293): closeAllDropdowns + this re-render dropped the focused
     // option, stranding a keyboard user on <body>. Focus the re-rendered
     // trigger (mirrors standard menu-close focus return) so j/k and
-    // re-opening keep working.
-    const newRow = document.querySelector(`.issue-row[data-issue-id="${issueId}"]`);
+    // re-opening keep working. A row that moved group may be far off:
+    // don't scroll the page to it.
+    const newRow = visibleIssueRow(issueId);
     const dropdownType = DROPDOWN_TYPE_FOR_FIELD[field];
     const trigger = dropdownType && newRow?.querySelector(`[data-dropdown-type="${dropdownType}"]`);
-    if (trigger) trigger.focus();
+    if (trigger) trigger.focus({ preventScroll: true });
 }
 
 // Re-render the row and the detail sidebar from the state as it now is.
 function showIssueLocally(issueId, field, { focus }) {
     const row = getIssues().find(i => i.id === issueId) || getMyIssues().find(i => i.id === issueId);
+    // The store saves the Issues list only while that view is up; a guess
+    // or a rollback made from elsewhere must reach it too, or the next
+    // visit paints a value the server never had (CHT-1915).
+    if (row) upsertIssue(row);
     rerenderIssueRow(issueId, field, row, { focus });
     const detail = getCurrentDetailIssue();
     if (detail?.id === issueId && DETAIL_SIDEBAR_FIELDS.has(field)) updateDetailViewField(field, detail);

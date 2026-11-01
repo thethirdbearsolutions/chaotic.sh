@@ -5,6 +5,8 @@
  * The handler is registered as a document keydown listener.
  */
 
+import { ISSUE_NAV_ROWS } from './constants.js';
+
 /**
  * Creates a keyboard handler with the given action callbacks.
  *
@@ -253,9 +255,9 @@ export function createModifierKeyHandler(actions) {
  *
  * @param {number} newIndex - The index to select
  * @param {Function} setSelectedIndex - Setter for the selected index state
- * @param {string} [selector='#issues-list .list-item'] - CSS selector for list items
+ * @param {string} [selector=ISSUE_NAV_ROWS] - CSS selector for list items
  */
-export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = '#issues-list .issue-row') {
+export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = ISSUE_NAV_ROWS) {
     const items = document.querySelectorAll(selector);
     if (items.length === 0) return;
 
@@ -288,7 +290,8 @@ export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = '
  * @returns {Function} The keydown event handler
  */
 export function createListNavigationHandler(actions) {
-    const selector = '#issues-list .issue-row';
+    // Rows inside a collapsed group are skipped (CHT-1932).
+    const selector = ISSUE_NAV_ROWS;
 
     function getSelectedItem(selectedIndex) {
         if (selectedIndex < 0) return null;
@@ -323,6 +326,9 @@ export function createListNavigationHandler(actions) {
         // focused — these list handlers register earlier and would otherwise
         // ALSO move the list cursor on the same arrow press (CHT-1289 review).
         if (e.target.closest?.('.sidebar-nav')) return;
+        // A focused group header takes Enter/Space itself (CHT-1932);
+        // every other key still drives the list.
+        if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('.issue-group-header')) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
         // Once an inline field dropdown (opened here via s/p/a) is up, its own

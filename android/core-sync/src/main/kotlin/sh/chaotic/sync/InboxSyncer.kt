@@ -52,6 +52,9 @@ sealed interface SyncOutcome {
  *   `invalid_cursor`, after which the run starts over without a cursor.
  * - Anything cached for a team not in `team_ids` is dropped (a team left
  *   or deleted sends no tombstones).
+ * - An entry a decision the server took dropped while the page was on its
+ *   way is not brought back by it (CHT-1667): the page may predate the
+ *   decision, and its tombstone comes with a later page.
  *
  * Runs are single-flight: a pull to refresh during a poll waits for it
  * rather than racing it with the same cursor. Every page is written
@@ -87,6 +90,7 @@ class InboxSyncer(
 
     @Suppress("ReturnCount") // each way a run ends is an early return
     private suspend fun syncLocked(ticket: Long): SyncOutcome {
+        val runDrops = session.entryDrops()
         var cursor = store.inboxCursor()
         // A first sync (or one after a sign-in) brings in the whole inbox: none of it is news.
         val added = NewEntries(news = cursor != null)
@@ -94,6 +98,7 @@ class InboxSyncer(
         var clearNext = false
         var pages = 0
         while (pages < maxPages) {
+            val drops = session.entryDrops()
             val result = remote.syncInbox(cursor, pageSize)
             if (result.isInvalidCursor() && cursor != null && !restartedForBadCursor) {
                 // The server cannot read this cursor any more (a new server
@@ -108,19 +113,24 @@ class InboxSyncer(
             val clear = clearNext || page.reset
             clearNext = false
             cursor = page.nextCursor ?: if (clear) null else cursor
-            val (change, new) = merge(page, clear, cursor)
+            val (merged, new) = merge(page, clear, cursor)
             // Before the write, so nothing that sees the cleared cache takes it for complete.
             if (clear) synced.value = null
             // Signed out, or someone else signed in, while the page was on its way.
-            session.write(ticket) { applyInbox(change) } ?: return SyncOutcome.Unauthorized
-            added.record(change, new)
-            if (!page.hasMore) return SyncOutcome.Synced(pages, page.retryAfterSeconds, added = added.list())
+            val change = session.write(ticket) {
+                // Under the session's lock, so no decision is taken between this check and the write.
+                val stale = session.droppedSince(drops, merged.upserts)
+                merged.copy(upserts = merged.upserts.filter { it.id !in stale }).also { applyInbox(it) }
+            } ?: return SyncOutcome.Unauthorized
+            val kept = change.upserts.mapTo(mutableSetOf()) { it.id }
+            added.record(change, new.filter { it.id in kept })
+            if (!page.hasMore) return SyncOutcome.Synced(pages, page.retryAfterSeconds, added = added.list(runDrops))
         }
-        return SyncOutcome.Synced(pages, morePending = true, added = added.list())
+        return SyncOutcome.Synced(pages, morePending = true, added = added.list(runDrops))
     }
 
     /** What [SyncOutcome.Synced.added] reports for a run: nothing once a page cleared the inbox. */
-    private class NewEntries(private var news: Boolean) {
+    private inner class NewEntries(private var news: Boolean) {
         private val entries = linkedMapOf<String, InboxEntry>()
 
         fun record(change: InboxChange, new: List<InboxEntry>) {
@@ -131,7 +141,12 @@ class InboxSyncer(
             new.forEach { entries[it.id] = it }
         }
 
-        fun list(): List<InboxEntry> = if (news) entries.values.toList() else emptyList()
+        /** Without an entry an earlier page brought in that a decision has dropped since: it is no news. */
+        fun list(drops: Long): List<InboxEntry> {
+            if (!news) return emptyList()
+            val decided = session.droppedSince(drops, entries.values)
+            return entries.values.filter { it.id !in decided }
+        }
     }
 
     /** The page as a change to the cache, and the open entries in it the cache did not hold at all. */

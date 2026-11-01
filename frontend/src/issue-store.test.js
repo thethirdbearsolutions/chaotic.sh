@@ -178,10 +178,17 @@ describe('issue-store', () => {
         });
 
         // review I3
-        it('leaves non-ASCII label names to the server', () => {
-            expect(deriveQuery({ ...base, label: ['Über'], label_match: 'any' })).toBeNull();
-            expect(deriveQuery({ ...base, exclude_label: ['Über'] })).toBeNull();
-            expect(deriveQuery({ ...base, label: ['bug'] })).toBeNull(); // only "any of" is reproduced
+        it('only reproduces "any of" label matching', () => {
+            expect(deriveQuery({ ...base, label: ['bug'] })).toBeNull();
+        });
+
+        // The server folds non-ASCII names the same way since CHT-1920.
+        it('matches non-ASCII label names without case, like the server', () => {
+            clearIssueStore();
+            const umlaut = row('u', { labels: [{ id: 'l3', name: 'Über' }] });
+            writeQuery(queryKey(base), [...rows, umlaut]);
+            expect(ids(deriveQuery({ ...base, label: ['ÜBER'], label_match: 'any' }))).toEqual(['u']);
+            expect(ids(deriveQuery({ ...base, exclude_label: ['über'] }))).toEqual(['a', 'b', 'c']);
         });
 
         it('filters the smallest covering source', () => {
@@ -225,6 +232,14 @@ describe('issue-store', () => {
             expect(sameRows([labelled], [{ ...labelled, labels: [{ id: 'l', name: 'defect', color: '#f00' }] }])).toBe(false);
             expect(sameRows([row('a')], [row('a', { sprint_id: 's' })])).toBe(false);
             expect(sameRows([row('a', { description: null })], [row('a', { description: 'x' })])).toBe(false);
+        });
+
+        // CHT-1915 review M3: a guess the server never took, same version
+        it('sees the fields a row shows even at the same version', () => {
+            for (const [field, value] of [['status', 'done'], ['priority', 'urgent'], ['estimate', 8],
+                ['assignee_id', 'u9'], ['issue_type', 'bug'], ['title', 'Renamed']]) {
+                expect(sameRows([row('a')], [row('a', { [field]: value })])).toBe(false);
+            }
         });
     });
 

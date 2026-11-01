@@ -339,3 +339,172 @@ async def test_explicit_null_on_a_bool_knob_is_ignored(client, auth_headers, tes
     r = await _set(client, auth_headers, test_project.id, require_epic_on_close=None, require_assignee_on_claim=None)
     assert r.status_code == 200, r.text
     assert r.json()["require_epic_on_close"] is False
+
+
+# --- CHT-1905 reverted: agents may change the gate settings like anyone
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gate", (
+    "human_rituals_required", "require_estimate_on_claim", "require_assignee_on_claim", "require_epic_on_close",
+))
+async def test_agent_can_turn_a_gate_off(client, auth_headers, agent_headers, test_project, gate, db):
+    assert (await _set(client, auth_headers, test_project.id, **{gate: True})).status_code == 200
+    r = await _set(client, agent_headers, test_project.id, **{gate: False})
+    assert r.status_code == 200, r.text
+    assert r.json()[gate] is False
+
+
+# --- CHT-1926: a write turning a gate off is conditional on it being off as read
+
+@pytest.mark.asyncio
+async def test_a_gate_tightened_meanwhile_is_not_undone(test_project, db):
+    from app.oxyde_models.project import OxydeProject
+    from app.schemas.project import ProjectUpdate
+    from app.services.project_service import GATE_SETTINGS, ProjectChangedError, ProjectService
+
+    stale = await OxydeProject.objects.get(id=test_project.id)
+    expect = {name: getattr(stale, name) for name in GATE_SETTINGS}
+    # Someone turns the gate on after the request read the row.
+    await OxydeProject.objects.filter(id=test_project.id).update(require_epic_on_close=True)
+    with pytest.raises(ProjectChangedError):
+        await ProjectService().update(stale, ProjectUpdate(require_epic_on_close=False, description="x"), expect=expect)
+    fresh = await OxydeProject.objects.get(id=test_project.id)
+    assert fresh.require_epic_on_close is True
+    assert fresh.description != "x"
+
+
+@pytest.mark.asyncio
+async def test_the_conditional_write_lands_when_nothing_changed(test_project, db):
+    from app.oxyde_models.project import OxydeProject
+    from app.schemas.project import ProjectUpdate
+    from app.services.project_service import GATE_SETTINGS, ProjectService
+
+    project = await OxydeProject.objects.get(id=test_project.id)
+    expect = {name: getattr(project, name) for name in GATE_SETTINGS}
+    updated = await ProjectService().update(
+        project, ProjectUpdate(require_epic_on_close=True, estimate_scale="fibonacci", description="y"), expect=expect,
+    )
+    assert (updated.require_epic_on_close, updated.description) == (True, "y")
+    assert updated.estimate_scale.value == "fibonacci"
+
+
+@pytest.mark.asyncio
+async def test_the_conditional_write_stores_enum_names(test_project, db):
+    """CLAUDE.md: the database stores an enum's .name, and .update() must too."""
+    from oxyde import execute_raw
+    from app.oxyde_models.project import OxydeProject
+    from app.schemas.project import ProjectUpdate
+    from app.services.project_service import GATE_SETTINGS, ProjectService
+
+    project = await OxydeProject.objects.get(id=test_project.id)
+    expect = {name: getattr(project, name) for name in GATE_SETTINGS}
+    await ProjectService().update(project, ProjectUpdate(estimate_scale="fibonacci"), expect=expect)
+    [row] = await execute_raw("SELECT estimate_scale FROM projects WHERE id = ?", [test_project.id])
+    assert row["estimate_scale"] == "FIBONACCI"
+
+
+# --- PR #487 review: the race through the route
+
+def _meanwhile(monkeypatch, change):
+    """Run ``change`` after the route's gate check and before its write:
+    the window a concurrent request has (the default-epic validation
+    sits between them)."""
+    import app.api.projects as projects_api
+
+    real = projects_api._validate_default_epic
+
+    async def validate_then_change(*args, **kwargs):
+        await real(*args, **kwargs)
+        await change()
+
+    monkeypatch.setattr(projects_api, "_validate_default_epic", validate_then_change)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_agent", [False, True])
+async def test_route_lift_racing_a_tighten_is_a_409(client, auth_headers, agent_headers, test_project, monkeypatch, db, as_agent):
+    """Anyone's write turning a gate off loses to a turn-on meanwhile."""
+    from app.oxyde_models.project import OxydeProject
+
+    headers = agent_headers if as_agent else auth_headers
+
+    async def tighten():
+        await OxydeProject.objects.filter(id=test_project.id).update(require_epic_on_close=True)
+
+    _meanwhile(monkeypatch, tighten)
+    r = await _set(client, headers, test_project.id, require_epic_on_close=False, description="agent")
+    assert r.status_code == 409, r.text
+    fresh = await OxydeProject.objects.get(id=test_project.id)
+    assert fresh.require_epic_on_close is True
+    assert fresh.description != "agent"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_agent", [False, True])
+async def test_route_edit_of_other_fields_ignores_a_gate_change(client, auth_headers, agent_headers, test_project, monkeypatch, db, as_agent):
+    """Review 3: only what the request could loosen is pinned."""
+    from app.oxyde_models.project import OxydeProject
+
+    headers = agent_headers if as_agent else auth_headers
+
+    async def tighten():
+        await OxydeProject.objects.filter(id=test_project.id).update(require_epic_on_close=True)
+
+    _meanwhile(monkeypatch, tighten)
+    r = await _set(client, headers, test_project.id, description="agent")
+    assert r.status_code == 200, r.text
+    assert (r.json()["description"], r.json()["require_epic_on_close"]) == ("agent", True)
+
+
+@pytest.mark.asyncio
+async def test_agent_can_raise_and_clear_the_default_budget(client, agent_headers, test_project, db):
+    """Budgets are not gates: an agent may loosen them (CHT-1924 reverted)."""
+    from app.oxyde_models.project import OxydeProject
+
+    await OxydeProject.objects.filter(id=test_project.id).update(default_sprint_budget=10)
+    r = await _set(client, agent_headers, test_project.id, default_sprint_budget=30)
+    assert r.status_code == 200, r.text
+    r = await _set(client, agent_headers, test_project.id, default_sprint_budget=None)
+    assert r.status_code == 200, r.text
+    assert r.json()["default_sprint_budget"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_agent", [False, True])
+@pytest.mark.parametrize("gate_off", [False, True])
+async def test_route_default_reaches_following_planned_sprints(client, auth_headers, agent_headers, test_project, db, as_agent, gate_off):
+    """gate_off sends a gate as False too, as the web Rules save does, so
+    the default change goes through the conditional write (PR #492 review)."""
+    from app.enums import SprintStatus
+    from app.oxyde_models.project import OxydeProject
+    from app.oxyde_models.sprint import OxydeSprint
+
+    await OxydeProject.objects.filter(id=test_project.id).update(default_sprint_budget=20)
+    await OxydeSprint.objects.filter(project_id=test_project.id).delete()
+    planned = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="Next", status=SprintStatus.PLANNED, budget=20, budget_explicit=False,
+    )
+    headers = agent_headers if as_agent else auth_headers
+    extra = {"require_epic_on_close": False} if gate_off else {}
+    r = await _set(client, headers, test_project.id, default_sprint_budget=12, **extra)
+    assert r.status_code == 200, r.text
+    assert r.json()["default_sprint_budget"] == 12
+    await planned.refresh()
+    assert planned.budget == 12
+    fresh = await OxydeProject.objects.get(id=test_project.id)
+    assert r.json()["updated_at"].startswith(fresh.updated_at.isoformat()[:19])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_agent", [False, True])
+async def test_route_write_to_a_project_deleted_meanwhile_is_a_404(client, auth_headers, agent_headers, test_project, monkeypatch, db, as_agent):
+    """Review 4: a missing row answers like a missing row (CHT-1785)."""
+    from app.oxyde_models.project import OxydeProject
+
+    async def delete():
+        await OxydeProject.objects.filter(id=test_project.id).delete()
+
+    _meanwhile(monkeypatch, delete)
+    headers = agent_headers if as_agent else auth_headers
+    r = await _set(client, headers, test_project.id, require_epic_on_close=False)
+    assert r.status_code == 404, r.text

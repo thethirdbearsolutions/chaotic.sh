@@ -7,7 +7,7 @@ from app.api.deps import (
 )
 from app.api.visibility import team_hidden, visible_project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
-from app.services.project_service import ProjectService
+from app.services.project_service import GATE_SETTINGS, ProjectChangedError, ProjectService
 from app.services.team_service import TeamService
 from app.websocket import broadcast_project_event
 
@@ -139,6 +139,20 @@ async def get_project(project_id: str, current_user: CurrentUser) -> ProjectResp
     return ProjectResponse.model_validate(project)
 
 
+def _gate_expect(project, project_in: ProjectUpdate) -> dict | None:
+    """What a write is conditional on (CHT-1926): each gate the request
+    turns off, at the value it was read with, so someone turning that
+    gate on meanwhile gets a 409 instead of being silently undone. A
+    setting the request leaves alone is not pinned (PR #487 review 3).
+    None when nothing is pinned: the write is unconditional."""
+    sent = project_in.model_fields_set
+    expect = {
+        name: getattr(project, name) for name in GATE_SETTINGS
+        if name in sent and getattr(project_in, name) is False
+    }
+    return expect or None
+
+
 @router.patch("/{project_id}", response_model=ProjectResponse)
 @writes
 async def update_project(
@@ -154,7 +168,14 @@ async def update_project(
     await _validate_lead(project_in.lead_id, project.team_id, project.id, project.lead_id)
     await _validate_default_epic(project_in.default_epic_id, project.id, project.default_epic_id)
 
-    project = await project_service.update(project, project_in)
+    expect = _gate_expect(project, project_in)
+    try:
+        project = await project_service.update(project, project_in, expect=expect)
+    except ProjectChangedError as e:
+        # A project deleted meanwhile answers like any missing one
+        # (CHT-1785), not as a conflict.
+        await visible_project(current_user, project_id)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     response = ProjectResponse.model_validate(project, from_attributes=True)
     await broadcast_project_event(project.team_id, "updated", response.model_dump(mode="json"), project_id=project.id)
     return response

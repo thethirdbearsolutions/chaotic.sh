@@ -8,6 +8,15 @@
 // Shared focusable-element selector for sidebar focus trap (CHT-883)
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+// The drawer holds closed dropdowns (team, user) whose items match the
+// selector but are display:none, and focus() on them does nothing. Skip
+// anything inside a hidden container so opening lands on a real control
+// and the Tab trap wraps at the ones a person can see (CHT-1929).
+function focusableIn(container) {
+    return Array.from(container.querySelectorAll(FOCUSABLE_SELECTOR))
+        .filter((el) => !el.closest('.hidden, [hidden]'));
+}
+
 function updateSidebarAria() {
     const isOpen = document.body.classList.contains('sidebar-open');
     const btn = document.getElementById('hamburger-btn');
@@ -47,7 +56,7 @@ export function toggleSidebar() {
         // Opening: focus first focusable element in sidebar
         const sidebar = document.querySelector('.sidebar');
         if (sidebar) {
-            const firstFocusable = sidebar.querySelector(FOCUSABLE_SELECTOR);
+            const [firstFocusable] = focusableIn(sidebar);
             if (firstFocusable) firstFocusable.focus();
         }
     }
@@ -80,7 +89,7 @@ document.addEventListener('keydown', (e) => {
     const sidebar = document.querySelector('.sidebar');
     if (!sidebar) return;
 
-    const focusable = sidebar.querySelectorAll(FOCUSABLE_SELECTOR);
+    const focusable = focusableIn(sidebar);
     if (focusable.length === 0) return;
 
     const first = focusable[0];
