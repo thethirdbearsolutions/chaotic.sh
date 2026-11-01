@@ -94,6 +94,9 @@ def _no_cli_reinstall_after_upgrade(monkeypatch):
         progress.setdefault("cli_path_warning", None)
         return True, "CLI reinstalled (tests)", False
     monkeypatch.setattr(system, "_reinstall_cli_after_upgrade", fake)
+    # An already-current upgrade checks the installed CLI against the
+    # checkout; never against this machine's real uv tool.
+    monkeypatch.setattr(system, "_installed_cli_is_stale", lambda: False)
 
 
 @pytest.fixture

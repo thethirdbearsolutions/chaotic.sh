@@ -1337,7 +1337,7 @@ HEALTH_POLL_INTERVAL_SEC = 0.2
 def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
     """Poll the server health endpoint until it responds or timeout."""
     import urllib.request
-    import urllib.error
+    import http.client
 
     url = _health_url(port, host)
     start = time.time()
@@ -1347,7 +1347,11 @@ def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
             with urllib.request.urlopen(url, timeout=2) as response:
                 if response.status == 200:
                     return True
-        except (urllib.error.URLError, TimeoutError, ConnectionRefusedError):
+        except (OSError, http.client.HTTPException):
+            # URLError and the connection errors are OSErrors. A server
+            # that drops the connection mid-response (starting, or behind
+            # chaotic.socket after a failed start) raises from
+            # getresponse() unwrapped (PR #520 review).
             pass
         time.sleep(HEALTH_POLL_INTERVAL_SEC)
 
@@ -2165,9 +2169,36 @@ def _reinstall_cli_after_upgrade(progress: dict) -> tuple[bool, str, bool]:
         ok, message = _reinstall_cli_tracked(progress)
         return ok, message, False
     except KeyboardInterrupt:
+        if progress.get("cli_installed"):
+            # Interrupted in the PATH check, after the install verified
+            # (review L3, PR #520 review): the CLI is updated.
+            return True, "CLI reinstalled (verified against the checkout)", True
         return False, "Interrupted (Ctrl-C).", True
     except OSError as e:
         return False, f"Could not run a command: {e}", False
+
+
+def _installed_cli_is_stale() -> bool:
+    """True when the installed CLI demonstrably differs from the server
+    checkout. False when it matches, or when where it is installed cannot
+    be told (a CLI that is not the uv tool is not ours to replace)."""
+    if _installed_cli_dirs() is None:
+        return False
+    ok, _ = verify_installed_cli(PROJECT_DIR / "cli")
+    return not ok
+
+
+def _print_cli_not_updated(progress: dict) -> None:
+    """What a post-start reinstall that did not verify leaves behind."""
+    if progress.get("cli_reinstall_started"):
+        state = "may be half-installed (the reinstall did not complete)"
+    else:
+        state = "is still the previous version"
+    console.print(
+        f"[red]The server is upgraded and running, but the CLI {esc(state)}. Reinstall it: "
+        f"uv tool install --force --reinstall {esc(PROJECT_DIR / 'cli')} "
+        "(or re-run 'chaotic system upgrade --yes', which reinstalls it).[/red]"
+    )
 
 
 def _print_path_cli_warning() -> str | None:
@@ -3402,6 +3433,19 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     # when HEAD sits exactly on the tag).
     already_current = direction == "same" or (direction == "unknown" and current_version == target_version)
     if already_current and not fake_initial:
+        # The CLI is reinstalled after the server is up (CHT-2000), so an
+        # upgrade can finish the server and fail the CLI. Its retry lands
+        # here and must finish the CLI, not report success (PR #520 review).
+        if _installed_cli_is_stale():
+            console.print("\nThe server is on the latest version, but the installed CLI is not. Reinstalling it...")
+            progress: dict = {}
+            ok, message, interrupted = _reinstall_cli_after_upgrade(progress)
+            if not ok:
+                console.print(f"[red]{escape(message)}[/red]")
+                _print_cli_not_updated(progress)
+                raise SystemExit(130 if interrupted else 1)
+            console.print(f"  [dim]{escape(message)}[/dim]")
+            _print_closing_path_cli_warning(progress)
         console.print("\n[green]Already on the latest version.[/green]")
         raise SystemExit(0)
 
@@ -3714,10 +3758,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print(f"  [dim]{escape(cli_message)}[/dim]")
     else:
         console.print(f"[red]{escape(cli_message)}[/red]")
-        console.print(
-            "[red]The server is upgraded and running, but the CLI was not updated. "
-            f"Reinstall it: uv tool install --force --reinstall {esc(PROJECT_DIR / 'cli')}[/red]"
-        )
+        _print_cli_not_updated(progress)
     version_after = get_remote_version(port, host=host)
     if version_after and version_after.get("git_dirty"):
         console.print("[yellow]Warning: the server checkout has uncommitted changes (git_dirty).[/yellow]")
@@ -3729,8 +3770,10 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     console.print(_mcp_reconnect_markup(version_before, version_after))
     _print_closing_path_cli_warning(progress)
     if not cli_ok:
-        console.print("[red]The CLI is still the previous version; see above.[/red]")
+        console.print("[red]The CLI was not updated; see above.[/red]")
         raise SystemExit(130 if cli_interrupted else 1)
+    if cli_interrupted:
+        raise SystemExit(130)
 
 
 @system.command("backup")

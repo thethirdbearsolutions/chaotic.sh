@@ -116,7 +116,7 @@ class TestWaitForServiceSettled:
 _COMMITS = ("19ae385deployed", "ab71cd5newer")
 
 
-def _upgrade(args=("--no-backup",), **overrides):
+def _upgrade(args=("--no-backup",), yes=True, **overrides):
     """Run `system upgrade --yes` with every collaborator mocked. Default:
     a forward upgrade of a running server where everything succeeds."""
     commits = iter(_COMMITS)
@@ -149,7 +149,7 @@ def _upgrade(args=("--no-backup",), **overrides):
     patches.update(overrides)
     with ExitStack() as stack:
         mocks = {name: stack.enter_context(patch(f"cli.system.{name}", **kw)) for name, kw in patches.items()}
-        result = CliRunner().invoke(system.system, ["upgrade", "--yes", *args])
+        result = CliRunner().invoke(system.system, ["upgrade", *(["--yes"] if yes else []), *args])
     return result, mocks
 
 
@@ -1465,11 +1465,13 @@ class TestUpgradeRepeatsThePathWarning:
     behind the migrations and the restart."""
 
     def test_the_last_lines_carry_the_warning(self):
-        def migrate(fake_initial=False, progress=None, reinstall=True):
+        # The CLI is reinstalled after the start (CHT-2000); that step is
+        # what records the warning now, not run_migrations.
+        def reinstall(progress):
             progress.update(cli_installed=True, cli_path_warning="`chaotic` on this shell's PATH is /opt/x")
-            return True, "Migrations applied"
+            return True, "CLI reinstalled", False
 
-        result, _ = _upgrade(run_migrations=dict(side_effect=migrate))
+        result, _ = _upgrade(_reinstall_cli_after_upgrade=dict(side_effect=reinstall))
         assert result.exit_code == 0, result.output
         tail = result.output[result.output.index("Upgraded to"):]
         assert "Warning: `chaotic` on this shell's PATH is /opt/x" in _flat(tail)

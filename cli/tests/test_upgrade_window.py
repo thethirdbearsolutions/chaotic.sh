@@ -84,7 +84,7 @@ class TestCliReinstallAfterTheStart:
         assert result.exit_code == 1
         out = _flat(result.output)
         assert "CLI reinstall timed out" in out
-        assert "The server is upgraded and running, but the CLI was not updated" in out
+        assert "The server is upgraded and running, but the CLI may be half-installed" in out
         assert "uv tool install --force --reinstall" in out
         assert "Upgraded to" in out
         assert "Rolling back" not in out
@@ -138,3 +138,116 @@ class TestShorterWaits:
 
         assert sleeps == [system.HEALTH_POLL_INTERVAL_SEC] * 2
         assert system.HEALTH_POLL_INTERVAL_SEC < 1
+
+
+_REAL_IS_STALE = system._installed_cli_is_stale
+
+
+class TestReviewFindings:
+    """PR #520 review."""
+
+    def test_a_retry_after_a_failed_cli_reinstall_finishes_the_cli(self, monkeypatch):
+        _with_real_after_upgrade(monkeypatch)
+        monkeypatch.setattr(system, "_installed_cli_is_stale", lambda: True)
+        result, m = _upgrade(
+            resolve_commit=dict(return_value=_COMMITS[0]),
+            reinstall_cli=dict(return_value=(True, "CLI reinstalled (verified against the checkout)")),
+            _print_path_cli_warning=dict(return_value=None),
+        )
+
+        assert result.exit_code == 0, result.output
+        out = _flat(result.output)
+        assert "the installed CLI is not. Reinstalling it" in out
+        assert "Already on the latest version" in out
+        m["reinstall_cli"].assert_called_once()
+        m["stop_service"].assert_not_called()
+
+    def test_a_retry_whose_reinstall_fails_again_exits_nonzero(self, monkeypatch):
+        _with_real_after_upgrade(monkeypatch)
+        monkeypatch.setattr(system, "_installed_cli_is_stale", lambda: True)
+        result, m = _upgrade(
+            resolve_commit=dict(return_value=_COMMITS[0]),
+            reinstall_cli=dict(return_value=(False, "CLI reinstall timed out")),
+        )
+
+        assert result.exit_code == 1
+        assert "Already on the latest version" not in result.output
+        m["stop_service"].assert_not_called()
+
+    def test_an_up_to_date_cli_on_current_code_is_left_alone(self, monkeypatch):
+        _with_real_after_upgrade(monkeypatch)
+        result, m = _upgrade(resolve_commit=dict(return_value=_COMMITS[0]), reinstall_cli=dict())
+
+        assert result.exit_code == 0, result.output
+        m["reinstall_cli"].assert_not_called()
+
+    def test_staleness_is_only_claimed_for_the_uv_tool(self):
+        with patch("cli.system._installed_cli_dirs", return_value=None), \
+             patch("cli.system.verify_installed_cli") as verify:
+            assert _REAL_IS_STALE() is False
+        verify.assert_not_called()
+        with patch("cli.system._installed_cli_dirs", return_value={"cli": "x"}), \
+             patch("cli.system.verify_installed_cli", return_value=(False, "differs")):
+            assert _REAL_IS_STALE() is True
+
+    def test_ctrl_c_after_a_verified_install_counts_as_installed(self, monkeypatch):
+        _with_real_after_upgrade(monkeypatch)
+        result, m = _upgrade(
+            reinstall_cli=dict(return_value=(True, "CLI reinstalled (verified against the checkout)")),
+            _print_path_cli_warning=dict(side_effect=KeyboardInterrupt),
+        )
+
+        assert result.exit_code == 130
+        out = _flat(result.output)
+        assert "CLI was not updated" not in out
+        assert "Upgraded to" in out
+
+    def test_a_reinstall_that_started_and_failed_says_the_cli_may_be_half_installed(self, monkeypatch):
+        _with_real_after_upgrade(monkeypatch)
+        result, _ = _upgrade(reinstall_cli=dict(side_effect=KeyboardInterrupt))
+
+        assert result.exit_code == 130
+        out = _flat(result.output)
+        assert "may be half-installed" in out
+        assert "is still the previous version" not in out
+
+    def test_health_check_survives_a_dropped_connection(self):
+        import http.client
+        ok = MagicMock(__enter__=lambda s: MagicMock(status=200), __exit__=lambda *a: False)
+        with patch("urllib.request.urlopen", side_effect=[
+                http.client.RemoteDisconnected("closed"), ConnectionResetError(), ok]), \
+             patch("cli.system.time.sleep"):
+            assert system.health_check(24267, host="127.0.0.1")
+
+    def test_a_start_or_health_failure_leaves_the_cli_alone(self, monkeypatch):
+        _with_real_after_upgrade(monkeypatch)
+        result, m = _upgrade(health_check=dict(return_value=False), reinstall_cli=dict())
+
+        assert result.exit_code == 1
+        m["reinstall_cli"].assert_not_called()
+        m["resync_checkout"].assert_called_once_with(reinstall=False, abandoned_commit=_COMMITS[1])
+
+    def test_fake_initial_on_current_code_reinstalls_after_the_health_check(self, monkeypatch):
+        _with_real_after_upgrade(monkeypatch)
+        calls = []
+        result, m = _upgrade(
+            args=("--no-backup", "--fake-initial"),
+            resolve_commit=dict(return_value=_COMMITS[0]),
+            run_migrations=dict(side_effect=lambda **k: calls.append(("migrate", k)) or (True, "ok")),
+            health_check=dict(side_effect=lambda *a, **k: calls.append(("health",)) or True),
+            reinstall_cli=dict(side_effect=lambda: calls.append(("cli",)) or (True, "ok")),
+            _print_path_cli_warning=dict(return_value=None),
+        )
+
+        assert result.exit_code == 0, result.output
+        assert [c[0] for c in calls] == ["migrate", "health", "cli"]
+        assert calls[0][1]["fake_initial"] is True and calls[0][1]["reinstall"] is False
+        assert re.search(r"\(stop \d+\.\ds, sync\+migrate ", _flat(result.output))
+
+    def test_the_confirmation_prompt_is_its_own_step(self):
+        """Without --yes the prompt waits with the server stopped."""
+        with patch("cli.system._confirm_action", return_value=True):
+            result, _ = _upgrade(yes=False)
+
+        assert result.exit_code == 0, result.output
+        assert re.search(r"\(stop \d+\.\ds, prompt \d+\.\ds, checkout ", _flat(result.output))
