@@ -8,7 +8,6 @@ from app.api.deps import (
 from app.api.visibility import team_hidden, visible_project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.services.project_service import GATE_SETTINGS, ProjectChangedError, ProjectService
-from app.services.sprint_service import default_change_loosens
 from app.services.team_service import TeamService
 from app.websocket import broadcast_project_event
 
@@ -140,19 +139,13 @@ async def get_project(project_id: str, current_user: CurrentUser) -> ProjectResp
     return ProjectResponse.model_validate(project)
 
 
-async def _lifted_by_update(project, project_in: ProjectUpdate) -> list[str]:
-    lifted = [
+def _lifted_by_update(project, project_in: ProjectUpdate) -> list[str]:
+    return [
         name for name in GATE_SETTINGS
         if name in project_in.model_fields_set
         and getattr(project_in, name) is False
         and getattr(project, name)
     ]
-    # A looser default budget reaches every planned sprint (CHT-1924).
-    if "default_sprint_budget" in project_in.model_fields_set and await default_change_loosens(
-        project.id, project.default_sprint_budget, project_in.default_sprint_budget,
-    ):
-        lifted.append("default_sprint_budget")
-    return lifted
 
 
 def _agent_expect(project, project_in: ProjectUpdate) -> dict:
@@ -161,8 +154,7 @@ def _agent_expect(project, project_in: ProjectUpdate) -> dict:
 
     Only what the request could loosen is pinned: a gate it sets to
     False (off when read, or the check would have refused it; pinned
-    still, since a person may turn it on meanwhile) and the default
-    budget when it sends one. A setting the request leaves alone cannot
+    still, since a person may turn it on meanwhile). A setting the request leaves alone cannot
     be loosened by it, and pinning it would turn an unrelated edit into
     a 409 whenever a person changes that setting (PR #487 review 3).
     """
@@ -171,8 +163,6 @@ def _agent_expect(project, project_in: ProjectUpdate) -> dict:
         name: getattr(project, name) for name in GATE_SETTINGS
         if name in sent and getattr(project_in, name) is False
     }
-    if "default_sprint_budget" in sent:
-        expect["default_sprint_budget"] = project.default_sprint_budget
     return expect
 
 
@@ -188,8 +178,7 @@ async def update_project(
 
     # A project the caller cannot see answers like a missing one (CHT-1785).
     project = await visible_project(current_user, project_id)
-    if current_user.is_agent:
-        refuse_agent_lifting_gates(current_user, await _lifted_by_update(project, project_in))
+    refuse_agent_lifting_gates(current_user, _lifted_by_update(project, project_in))
     await _validate_lead(project_in.lead_id, project.team_id, project.id, project.lead_id)
     await _validate_default_epic(project_in.default_epic_id, project.id, project.default_epic_id)
 

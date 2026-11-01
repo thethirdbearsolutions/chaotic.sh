@@ -578,45 +578,16 @@ async def test_route_person_write_stays_unconditional(client, auth_headers, test
 
 
 @pytest.mark.asyncio
-async def test_route_agent_budget_racing_a_default_change_is_a_409(client, agent_headers, test_project, monkeypatch, db):
+async def test_agent_can_raise_and_clear_the_default_budget(client, agent_headers, test_project, db):
+    """Budgets are not gates: an agent may loosen them (CHT-1924 reverted)."""
     from app.oxyde_models.project import OxydeProject
 
-    await OxydeProject.objects.filter(id=test_project.id).update(default_sprint_budget=20)
-
-    async def person_sets_default():
-        await OxydeProject.objects.filter(id=test_project.id).update(default_sprint_budget=8)
-
-    _meanwhile(monkeypatch, person_sets_default)
-    r = await _set(client, agent_headers, test_project.id, default_sprint_budget=15)
-    assert r.status_code == 409, r.text
-    assert (await OxydeProject.objects.get(id=test_project.id)).default_sprint_budget == 8
-
-
-@pytest.mark.asyncio
-async def test_route_agent_default_racing_a_rotation_is_refused(client, agent_headers, test_project, monkeypatch, db):
-    """Review 1: under a null default a rotation can create a planned
-    sprint that follows the default and carries a lower budget; the
-    agent's new default must not raise it."""
-    from app.enums import SprintStatus
-    from app.oxyde_models.project import OxydeProject
-    from app.oxyde_models.sprint import OxydeSprint
-
-    await OxydeProject.objects.filter(id=test_project.id).update(default_sprint_budget=None)
-    await OxydeSprint.objects.filter(project_id=test_project.id).delete()
-    created = []
-
-    async def rotation_carries_five():
-        created.append(await OxydeSprint.objects.create(
-            project_id=test_project.id, name="Carried", status=SprintStatus.PLANNED,
-            budget=5, budget_explicit=False,
-        ))
-
-    _meanwhile(monkeypatch, rotation_carries_five)
-    r = await _set(client, agent_headers, test_project.id, default_sprint_budget=10)
-    assert r.status_code == 409, r.text
-    assert (await OxydeProject.objects.get(id=test_project.id)).default_sprint_budget is None
-    await created[0].refresh()
-    assert created[0].budget == 5
+    await OxydeProject.objects.filter(id=test_project.id).update(default_sprint_budget=10)
+    r = await _set(client, agent_headers, test_project.id, default_sprint_budget=30)
+    assert r.status_code == 200, r.text
+    r = await _set(client, agent_headers, test_project.id, default_sprint_budget=None)
+    assert r.status_code == 200, r.text
+    assert r.json()["default_sprint_budget"] is None
 
 
 @pytest.mark.asyncio

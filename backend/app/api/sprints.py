@@ -5,7 +5,7 @@ from app.api.deps import CurrentUser
 from app.api.visibility import visible_project, visible_sprint
 from app.schemas.sprint import SprintCreate, SprintUpdate, SprintResponse
 from app.schemas.budget_transaction import BudgetTransactionResponse
-from app.services.sprint_service import SprintNotPlannedError, SprintService, budget_loosened
+from app.services.sprint_service import SprintNotPlannedError, SprintService
 from app.enums import SprintStatus
 from app.oxyde_models.issue import OxydeBudgetTransaction
 from app.websocket import broadcast_sprint_event
@@ -94,32 +94,6 @@ async def get_sprint(sprint_id: str, current_user: CurrentUser) -> SprintRespons
     return SprintResponse.model_validate(sprint)
 
 
-async def _refuse_agent_loosening(sprint, project, sprint_in: SprintUpdate) -> None:
-    """A sprint's budget is what arrears enforces, so the agent it holds
-    may not loosen it (CHT-1924): raise or clear the budget of an open
-    sprint, point a planned one at a looser project default, or move a
-    sprint's status by hand, which skips the close and its rituals. It
-    may lower a budget, rename, or close through POST .../close.
-
-    A closed sprint is guarded too: reopening one would make a second
-    active sprint, and the arrears check could read that one (CHT-1924
-    review)."""
-    fields = sprint_in.model_fields_set
-    if "status" in fields and sprint_in.status is not None and sprint_in.status != sprint.status:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Agents cannot change a sprint's status by hand; close it with `sprint close`.",
-        )
-    loosened = "budget" in fields and budget_loosened(sprint.budget, sprint_in.budget)
-    if sprint_in.budget_follows_default:
-        loosened = loosened or budget_loosened(sprint.budget, project.default_sprint_budget)
-    if loosened:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Agents cannot raise or clear a sprint's budget; a person has to change it.",
-        )
-
-
 @router.patch("/{sprint_id}", response_model=SprintResponse)
 @writes
 async def update_sprint(
@@ -131,8 +105,6 @@ async def update_sprint(
     sprint_service = SprintService()
 
     sprint, project = await visible_sprint(current_user, sprint_id)
-    if current_user.is_agent:
-        await _refuse_agent_loosening(sprint, project, sprint_in)
 
     # Only a planned sprint follows the project default (CHT-1495): an
     # active or closed sprint's budget changes only by hand (CHT-1701).

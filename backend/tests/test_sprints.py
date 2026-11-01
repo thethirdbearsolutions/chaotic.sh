@@ -1652,3 +1652,38 @@ async def test_a_stale_close_after_rotation_cannot_put_a_completed_sprint_in_lim
 
     loser = await sprints.close_sprint(second_copy)
     assert loser.status == SprintStatus.COMPLETED and loser.limbo is False
+
+
+@pytest.mark.asyncio
+async def test_status_and_name_null_leave_them(client, auth_headers, test_project, db):
+    """CHT-1924 review 3: an explicit null was written and failed NOT NULL (500)."""
+    from datetime import datetime, timezone
+    from app.enums import SprintStatus
+    from app.oxyde_models.sprint import OxydeSprint
+
+    await OxydeSprint.objects.filter(project_id=test_project.id).delete()
+    sprint = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="S", status=SprintStatus.ACTIVE, budget=10, budget_explicit=True,
+        activated_at=datetime.now(timezone.utc),
+    )
+    r = await client.patch(f"/api/sprints/{sprint.id}", headers=auth_headers,
+                           json={"status": None, "name": None, "description": "d"})
+    assert r.status_code == 200, r.text
+    assert (r.json()["status"], r.json()["name"]) == ("active", "S")
+
+
+@pytest.mark.asyncio
+async def test_an_agent_can_raise_a_sprint_budget(client, agent_headers, test_project, db):
+    """Budgets are not gates (CHT-1924 reverted)."""
+    from datetime import datetime, timezone
+    from app.enums import SprintStatus
+    from app.oxyde_models.sprint import OxydeSprint
+
+    await OxydeSprint.objects.filter(project_id=test_project.id).delete()
+    sprint = await OxydeSprint.objects.create(
+        project_id=test_project.id, name="S", status=SprintStatus.ACTIVE, budget=10, budget_explicit=True,
+        activated_at=datetime.now(timezone.utc),
+    )
+    r = await client.patch(f"/api/sprints/{sprint.id}", headers=agent_headers, json={"budget": 50})
+    assert r.status_code == 200, r.text
+    assert r.json()["budget"] == 50
