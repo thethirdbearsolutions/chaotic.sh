@@ -16,7 +16,7 @@ import { getTeams, loadTeams, selectTeam } from './teams.js';
 import { showOnboarding, hasCompletedOnboarding } from './onboarding.js';
 import { consentRequestId, showConsent } from './oauth-consent.js';
 import { hideInvite, isInviteAddress, showInvite, showMissingToken, takeInviteToken } from './invite.js';
-import { initRouter } from './router.js';
+import { initRouter, primeRoute } from './router.js';
 import { getCurrentUser, setCurrentUser, setCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
 
@@ -74,8 +74,9 @@ export async function showSignedOut() {
  * Loads teams, selects the first team, or starts onboarding.
  * @param {object} [options]
  * @param {string} [options.teamId] - select this team if the user is in it
+ * @param {Promise} [options.teamsRequest] - a GET /teams already in flight
  */
-export async function initApp({ teamId } = {}) {
+export async function initApp({ teamId, teamsRequest = null } = {}) {
     // An app asking for access (CHT-1519): after sign-in, the consent
     // page is all this tab shows; approving or denying leaves the app.
     const consentId = consentRequestId(window.location.pathname);
@@ -99,8 +100,9 @@ export async function initApp({ teamId } = {}) {
         return;
     }
     showMainScreen();
+    primeRoute();
     updateUserInfo();
-    await loadTeams();
+    await loadTeams(teamsRequest);
 
     const teams = getTeams();
     if (teams.length === 0 && !hasCompletedOnboarding()) {

@@ -5,7 +5,7 @@ vi.mock('./auth.js', () => ({
 }));
 vi.mock('./teams.js', () => ({ getTeams: vi.fn(() => []), loadTeams: vi.fn(), selectTeam: vi.fn() }));
 vi.mock('./onboarding.js', () => ({ showOnboarding: vi.fn(), hasCompletedOnboarding: vi.fn(() => true) }));
-vi.mock('./router.js', () => ({ initRouter: vi.fn() }));
+vi.mock('./router.js', () => ({ initRouter: vi.fn(), primeRoute: vi.fn() }));
 vi.mock('./oauth-consent.js', async (importOriginal) => ({
     ...(await importOriginal()),
     showConsent: vi.fn(),
@@ -27,7 +27,7 @@ import { api } from './api.js';
 import { getCurrentUser, setCurrentUser } from './state.js';
 import { loadTeams, getTeams, selectTeam } from './teams.js';
 import { showConsent } from './oauth-consent.js';
-import { initRouter } from './router.js';
+import { initRouter, primeRoute } from './router.js';
 import { showOnboarding, hasCompletedOnboarding } from './onboarding.js';
 
 describe('initApp', () => {
@@ -54,6 +54,15 @@ describe('initApp', () => {
         expect(showConsent).not.toHaveBeenCalled();
         expect(showMainScreen).toHaveBeenCalled();
         expect(selectTeam).toHaveBeenCalledWith({ id: 't1' }, true);
+    });
+
+    // CHT-1971: the routed view's shell shows before the team loads.
+    it('primes the route before loading the team', async () => {
+        getTeams.mockReturnValue([{ id: 't1' }]);
+        await initApp();
+        expect(primeRoute).toHaveBeenCalled();
+        expect(primeRoute.mock.invocationCallOrder[0])
+            .toBeLessThan(loadTeams.mock.invocationCallOrder.at(-1));
     });
 
     describe('popstate listener (CHT-1697)', () => {
