@@ -813,7 +813,7 @@ class TestRollbackResync:
 
         assert result.exit_code == 1
         assert calls == [
-            ("checkout", ("v0.1.0a20",)), ("start",),  # the upgrade
+            ("checkout", (_COMMITS[1],)), ("start",),  # the upgrade
             ("checkout", (_COMMITS[0],)),               # the rollback
             ("resync", {"reinstall": False, "abandoned_commit": _COMMITS[1]}), ("start",),
         ]
@@ -909,7 +909,7 @@ class TestRollbackResync:
         assert "just sync-backend" in out and "uv tool install" not in out  # the verified new CLI stays
         assert "CLI: keeping the version this upgrade installed" in out
         # No second rollback: one checkout back, one re-sync, one restart.
-        assert [c.args for c in m["checkout_version"].call_args_list] == [("v0.1.0a20",), (_COMMITS[0],)]
+        assert [c.args for c in m["checkout_version"].call_args_list] == [(_COMMITS[1],), (_COMMITS[0],)]
         m["resync_checkout"].assert_called_once()
         assert m["start_service"].call_count == 2  # new code, then the rollback's
         assert "Rolled back to previous version" in out

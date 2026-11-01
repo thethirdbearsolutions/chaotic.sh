@@ -1934,6 +1934,7 @@ def rebuild_frontend() -> tuple[bool, str]:
 # migrate, copy, start.
 STAGING_DIR = GLOBAL_CONFIG_DIR / "staging"
 FRONTEND_BUNDLE = Path("frontend") / "static" / "js" / "app.bundle.js"
+STAGING_MARKER = ".chaotic-staging"
 
 
 class PreparedRelease:
@@ -1958,22 +1959,35 @@ class PreparedRelease:
 def _stage_checkout(target_commit: str) -> tuple[bool, str]:
     """Put STAGING_DIR at `target_commit`: a detached git worktree of the
     server checkout, created on first use and reused after. Returns
-    (success, message)."""
+    (success, message).
+
+    Only a directory carrying STAGING_MARKER is ever deleted: STAGING_DIR
+    follows CHAOTIC_HOME, which may be a directory shared with other
+    things (PR #504 review). A worktree that cannot be reused (the server
+    was recloned, so its .git points nowhere; a killed `worktree add` left
+    it locked) is removed and made again, so one bad state does not turn
+    staging off for every later upgrade."""
+    if STAGING_DIR.exists() and not (STAGING_DIR / STAGING_MARKER).exists():
+        return False, f"{STAGING_DIR} exists and was not made by this CLI; leaving it alone"
     try:
         if (STAGING_DIR / ".git").exists():
-            run_command(["git", "checkout", "--detach", "--force", target_commit], cwd=STAGING_DIR, timeout=120)
-        else:
-            if STAGING_DIR.exists():
-                # Not a worktree (left over, or made by hand): it is ours to
-                # replace, it lives under ~/.chaotic and holds only builds.
-                shutil.rmtree(STAGING_DIR)
-            # A worktree whose directory was deleted is still registered;
-            # prune it or `worktree add` refuses the path.
-            run_command(["git", "worktree", "prune"], cwd=SERVER_DIR, timeout=30)
-            run_command(
-                ["git", "worktree", "add", "--detach", "--force", str(STAGING_DIR), target_commit],
-                cwd=SERVER_DIR, timeout=120,
-            )
+            try:
+                run_command(["git", "checkout", "--detach", "--force", target_commit],
+                            cwd=STAGING_DIR, timeout=120, own_group=True)
+                return True, ""
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                pass  # made again below
+        if STAGING_DIR.exists():
+            shutil.rmtree(STAGING_DIR)
+        # A worktree whose directory is gone is still registered; prune it,
+        # and force twice so a locked registration does not refuse the path.
+        run_command(["git", "worktree", "prune"], cwd=SERVER_DIR, timeout=30)
+        run_command(
+            ["git", "worktree", "add", "--detach", "--force", "--force", str(STAGING_DIR), target_commit],
+            cwd=SERVER_DIR, timeout=120, own_group=True,
+        )
+        (STAGING_DIR / STAGING_MARKER).write_text(
+            "Made by `chaotic system upgrade` (CHT-1969); safe to delete.\n")
         return True, ""
     except subprocess.CalledProcessError as e:
         return False, _command_output(e)
@@ -1993,14 +2007,18 @@ def _build_frontend_in(checkout: Path) -> tuple[Path | None, str]:
     if not (frontend_dir / "package.json").exists():
         return None, "skipped (no frontend/package.json)"
     try:
-        run_command(["npm", "ci"], cwd=frontend_dir, timeout=600)
-        run_command(["npm", "run", "build"], cwd=frontend_dir, timeout=180)
+        run_command(["npm", "ci"], cwd=frontend_dir, timeout=600, own_group=True)
+        run_command(["npm", "run", "build"], cwd=frontend_dir, timeout=180, own_group=True)
     except subprocess.CalledProcessError as e:
         return None, f"npm ci/build failed: {(e.stderr or '').strip()[:200]}"
     except subprocess.TimeoutExpired:
         return None, "npm ci/build timed out"
     except OSError as e:
         return None, f"npm ci/build failed: {e}"
+    finally:
+        # A few hundred MB that the next `npm ci` deletes anyway; do not
+        # hold it on the server's disk between upgrades (PR #504 review).
+        shutil.rmtree(frontend_dir / "node_modules", ignore_errors=True)
     bundle = checkout / FRONTEND_BUNDLE
     if not bundle.is_file():
         return None, f"build produced no {FRONTEND_BUNDLE}"
@@ -3032,7 +3050,11 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     if not already_current:
         console.print("Preparing the new version while the server keeps running...")
         prep_started = time.monotonic()
-        prepared = prepare_release(target_commit)
+        try:
+            prepared = prepare_release(target_commit)
+        except KeyboardInterrupt:
+            console.print("[yellow]Interrupted. Nothing was changed and the server was not stopped.[/yellow]")
+            raise SystemExit(130)
         if not prepared.ok:
             console.print(f"[red]{escape(prepared.message)}[/red]")
             console.print("Nothing was changed and the server was not stopped.")
@@ -3111,7 +3133,9 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     else:
         # Checkout new version (force to handle dirty state from uv sync etc.)
         console.print(f"Checking out {esc(target_version)}...")
-        ok, err = checkout_version(target_version, force=True)
+        # The commit staging prepared, not the ref: a ref that moved since
+        # would check out code nobody synced or built (PR #504 review).
+        ok, err = checkout_version(target_commit, force=True)
         if not ok:
             console.print(f"[red]Failed to checkout version.[/red]")
             if err:

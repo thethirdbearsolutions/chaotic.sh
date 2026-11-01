@@ -113,6 +113,19 @@ class TestUpgradeOrder:
         assert "rebuild_frontend" in calls
         assert calls.index("rebuild_frontend") > calls.index("migrate")
 
+    def test_ctrl_c_while_preparing_leaves_the_server_up(self):
+        result, m = _upgrade(prepare_release=dict(side_effect=KeyboardInterrupt))
+
+        assert result.exit_code == 130
+        assert "the server was not stopped" in _flat(result.output)
+        m["stop_service"].assert_not_called()
+
+    def test_checks_out_the_commit_it_prepared(self):
+        result, m = _upgrade()
+
+        assert result.exit_code == 0, result.output
+        assert m["checkout_version"].call_args_list[0].args == (_COMMITS[1],)
+
     def test_fake_initial_on_current_code_does_not_prepare(self):
         commits = iter([_COMMITS[1]] * 10)
         result, m = _upgrade(
@@ -132,8 +145,9 @@ def _git_ok(cmd, **kwargs):
 class TestPrepareRelease:
     def test_creates_the_worktree_then_syncs_and_builds_there(self, monkeypatch):
         staging = system.STAGING_DIR
-        (staging / "frontend").mkdir(parents=True)  # leftover, not a worktree: replaced
+        (staging / "frontend").mkdir(parents=True)  # ours (marker), not a worktree: replaced
         (staging / "frontend" / "stale").write_text("x")
+        (staging / system.STAGING_MARKER).write_text("")
         cmds = []
 
         def run(cmd, cwd=None, **kwargs):
@@ -143,6 +157,8 @@ class TestPrepareRelease:
                 (staging / "frontend").mkdir(parents=True)
                 (staging / "frontend" / "package.json").write_text("{}")
                 (staging / ".git").write_text("gitdir: x")
+            if cmd[:2] == ["npm", "ci"]:
+                (staging / "frontend" / "node_modules").mkdir()
             if cmd[:3] == ["npm", "run", "build"]:
                 (staging / FRONTEND_BUNDLE).parent.mkdir(parents=True, exist_ok=True)
                 (staging / FRONTEND_BUNDLE).write_text("bundle")
@@ -157,7 +173,9 @@ class TestPrepareRelease:
         assert prepared.commit == "ab71cd5newer"
         names = [c for c, _ in cmds]
         assert ["git", "worktree", "prune"] in names
-        assert ["git", "worktree", "add", "--detach", "--force", str(staging), "ab71cd5newer"] in names
+        assert ["git", "worktree", "add", "--detach", "--force", "--force", str(staging), "ab71cd5newer"] in names
+        assert (staging / system.STAGING_MARKER).exists()
+        assert not (staging / "frontend" / "node_modules").exists()
         assert (["just", "sync"], staging) in cmds
         assert (["npm", "ci"], staging / "frontend") in cmds
         # Nothing ran in the server checkout but git's worktree bookkeeping.
@@ -168,6 +186,7 @@ class TestPrepareRelease:
         staging = system.STAGING_DIR
         staging.mkdir(parents=True)
         (staging / ".git").write_text("gitdir: x")
+        (staging / system.STAGING_MARKER).write_text("")
         monkeypatch.setattr(system.shutil, "which", lambda name: None)
         with patch("cli.system.run_command", side_effect=_git_ok) as run:
             prepared = prepare_release("ab71cd5newer")
@@ -180,6 +199,8 @@ class TestPrepareRelease:
 
     def test_sync_failure_is_fatal(self, monkeypatch):
         def run(cmd, **kwargs):
+            if cmd[:3] == ["git", "worktree", "add"]:
+                system.STAGING_DIR.mkdir(parents=True)
             if cmd == ["just", "sync"]:
                 raise subprocess.CalledProcessError(1, cmd, output="", stderr="lockfile needs updating")
             return MagicMock(returncode=0, stdout="")
@@ -218,6 +239,46 @@ class TestPrepareRelease:
 
         assert prepared.ok and prepared.staged and prepared.bundle is None
         assert "ERESOLVE" in prepared.frontend_message
+
+
+    def test_never_deletes_a_directory_it_did_not_make(self):
+        staging = system.STAGING_DIR
+        staging.mkdir(parents=True)
+        (staging / "precious").write_text("not ours")
+        with patch("cli.system.run_command", side_effect=_git_ok) as run:
+            prepared = prepare_release("ab71cd5newer")
+
+        assert prepared.ok and not prepared.staged
+        assert "not made by this CLI" in prepared.message
+        assert (staging / "precious").read_text() == "not ours"
+        run.assert_not_called()
+
+    def test_a_worktree_that_cannot_be_reused_is_made_again(self, monkeypatch):
+        """The server was recloned: the staging .git points at a gitdir
+        that is gone, so checkout fails. It is removed and added again
+        rather than turning staging off for good."""
+        staging = system.STAGING_DIR
+        staging.mkdir(parents=True)
+        (staging / ".git").write_text("gitdir: /gone")
+        (staging / system.STAGING_MARKER).write_text("")
+        monkeypatch.setattr(system.shutil, "which", lambda name: None)
+        cmds = []
+
+        def run(cmd, cwd=None, **kwargs):
+            cmds.append(cmd)
+            if cmd[:2] == ["git", "checkout"]:
+                raise subprocess.CalledProcessError(128, cmd, output="", stderr="fatal: not a git repository")
+            if cmd[:3] == ["git", "worktree", "add"]:
+                assert not staging.exists()
+                staging.mkdir(parents=True)
+            return MagicMock(returncode=0, stdout="")
+
+        with patch("cli.system.run_command", side_effect=run):
+            prepared = prepare_release("ab71cd5newer")
+
+        assert prepared.ok and prepared.staged, prepared.message
+        assert ["git", "worktree", "prune"] in cmds
+        assert (staging / system.STAGING_MARKER).exists()
 
 
 class TestInstallPreparedFrontend:
