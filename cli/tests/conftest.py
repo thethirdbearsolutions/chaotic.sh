@@ -80,6 +80,22 @@ def _no_staging_by_default(monkeypatch):
                         lambda target_commit: system.PreparedRelease(True, "staging off in tests"))
 
 
+@pytest.fixture(autouse=True)
+def _no_cli_reinstall_after_upgrade(monkeypatch):
+    """The upgrade reinstalls the CLI after the new server is up
+    (CHT-2000). Tests that mock run_migrations would otherwise run the
+    real `uv tool install`; this one succeeds, as run_migrations' mock
+    used to. Tests of that step use REAL_REINSTALL_CLI_AFTER_UPGRADE."""
+    from cli import system
+
+    def fake(progress):
+        progress["cli_reinstall_started"] = True
+        progress["cli_installed"] = True
+        progress.setdefault("cli_path_warning", None)
+        return True, "CLI reinstalled (tests)", False
+    monkeypatch.setattr(system, "_reinstall_cli_after_upgrade", fake)
+
+
 @pytest.fixture
 def cli_runner():
     """Create a Click test runner with profile set."""

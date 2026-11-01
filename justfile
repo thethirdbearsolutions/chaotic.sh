@@ -34,10 +34,11 @@ serve:
 
 # Run the backend server (production mode, supports PORT and DATABASE_URL env vars).
 # --frozen: run the env `just sync` built; never re-resolve or rewrite uv.lock (CHT-1201).
-# --timeout-graceful-shutdown 10 (CHT-1474): without it uvicorn waits forever for
+# --timeout-graceful-shutdown 3 (CHT-1474, CHT-2000): without it uvicorn waits forever for
 # open connections on SIGTERM, and /mcp streaming clients never close theirs, so a
-# stop sat until systemd's SIGKILL. 10s lets ordinary in-flight API requests (all
-# short) finish; MCP clients reconnect. It must stay under the unit's
+# stop sat until systemd's SIGKILL. 3s lets ordinary in-flight API requests (all
+# short) finish; MCP clients reconnect. It is short because every upgrade's
+# stopped window starts with it, and open /mcp streams always use all of it. It must stay under the unit's
 # TimeoutStopSec (SYSTEMD_TIMEOUT_STOP_SEC in cli/src/cli/system.py; a cli test pins both).
 # --no-proxy-headers (CHT-1586): the app itself applies X-Forwarded-For from the
 # proxies in FORWARDED_ALLOW_IPS (backend/app/config.py, validated: never "*"), so
@@ -47,7 +48,7 @@ serve:
 # itself, so the port stays open across restarts. Unset otherwise (launchd, a
 # unit without the socket), and then uvicorn binds as before.
 serve-prod:
-    cd backend && uv run --frozen uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267} ${LISTEN_FDS:+--fd 3} --timeout-graceful-shutdown 10 --no-proxy-headers
+    cd backend && uv run --frozen uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267} ${LISTEN_FDS:+--fd 3} --timeout-graceful-shutdown 3 --no-proxy-headers
 
 # Run all test suites (backend, frontend, CLI)
 test-all: test-backend test-frontend test-cli

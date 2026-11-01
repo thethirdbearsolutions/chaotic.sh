@@ -108,7 +108,7 @@ LAUNCHD_LABEL = "com.chaotic.server"
 # Shutdown budget, end to end (CHT-1474). Each layer must give the one inside
 # it room to finish, or the outer one gives up while the inner one is still
 # (correctly) waiting:
-#   uvicorn --timeout-graceful-shutdown (justfile serve-prod)  10s
+#   uvicorn --timeout-graceful-shutdown (justfile serve-prod)  3s
 #   < systemd TimeoutStopSec / launchd ExitTimeOut (the units we write)  30s
 #   < systemd's default TimeoutStopSec, which units written before this
 #     change still have until an upgrade rewrites them (CHT-1476; the
@@ -116,7 +116,10 @@ LAUNCHD_LABEL = "com.chaotic.server"
 #   < how long the CLI waits for `systemctl stop` / `launchctl unload`  120s
 # The CLI used to wait 60s against a 90s unit while uvicorn waited forever on
 # /mcp streams, so it raised TimeoutExpired mid-stop and left prod down.
-UVICORN_GRACEFUL_SHUTDOWN_SEC = 10
+# 3s, not 10 (CHT-2000): the drain is the first part of every upgrade's
+# stopped window, and open /mcp streams always use all of it. API requests
+# finish in milliseconds; the streams it waits on reconnect either way.
+UVICORN_GRACEFUL_SHUTDOWN_SEC = 3
 SYSTEMD_TIMEOUT_STOP_SEC = 30
 SYSTEMD_DEFAULT_TIMEOUT_STOP_SEC = 90
 SERVICE_STOP_TIMEOUT = SYSTEMD_DEFAULT_TIMEOUT_STOP_SEC + 30
@@ -1326,6 +1329,11 @@ def _health_url(port: int, host: str = "localhost") -> str:
     return _server_url(port, host, "/health")
 
 
+# How often health_check() polls (CHT-2000): every second of the interval
+# could be a second of an upgrade's stopped window.
+HEALTH_POLL_INTERVAL_SEC = 0.2
+
+
 def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
     """Poll the server health endpoint until it responds or timeout."""
     import urllib.request
@@ -1341,7 +1349,7 @@ def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
                     return True
         except (urllib.error.URLError, TimeoutError, ConnectionRefusedError):
             pass
-        time.sleep(1)
+        time.sleep(HEALTH_POLL_INTERVAL_SEC)
 
     return False
 
@@ -2043,9 +2051,15 @@ def resync_checkout(reinstall: bool = True, abandoned_commit: str | None = None)
     return ok, f"{synced}; {message}" if ok else message
 
 
-def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> tuple[bool, str]:
+def run_migrations(
+    fake_initial: bool = False, progress: dict | None = None, reinstall: bool = True,
+) -> tuple[bool, str]:
     """Sync dependencies, reinstall the CLI and run pending database
     migrations using Oxyde. Returns (success, message).
+
+    `reinstall=False` leaves the CLI alone: the upgrade reinstalls it
+    after the new server is up, since the server does not need it and it
+    took seconds of the stopped window (CHT-2000).
 
     `progress["cli_reinstall_started"]` is set to True just before the CLI
     reinstall, and `progress["cli_installed"]` once it and its
@@ -2074,14 +2088,10 @@ def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> 
         run_command(["just", "sync"], cwd=PROJECT_DIR, timeout=300, own_group=True)
 
         # Reinstall CLI binary so it picks up code changes
-        progress["cli_reinstall_started"] = True
-        ok, msg = reinstall_cli()
-        if not ok:
-            return ok, msg
-        progress["cli_installed"] = True
-        # After cli_installed (review L3): a Ctrl-C during this check must
-        # not roll back an install that was verified.
-        progress["cli_path_warning"] = _print_path_cli_warning()
+        if reinstall:
+            ok, msg = _reinstall_cli_tracked(progress)
+            if not ok:
+                return ok, msg
 
         # If user specified --fake-initial, mark the initial schema migration
         # as applied without running it (for pre-Oxyde databases)
@@ -2132,6 +2142,32 @@ def run_migrations(fake_initial: bool = False, progress: dict | None = None) -> 
                 "  chaotic system upgrade --fake-initial --yes"
             )
         return False, f"Migration failed:\n{_command_output(e)}"
+
+
+def _reinstall_cli_tracked(progress: dict) -> tuple[bool, str]:
+    """reinstall_cli(), recording in `progress` how far it got (see
+    run_migrations) and printing the PATH warning once it verified."""
+    progress["cli_reinstall_started"] = True
+    ok, msg = reinstall_cli()
+    if not ok:
+        return ok, msg
+    progress["cli_installed"] = True
+    # After cli_installed (review L3): a Ctrl-C during this check must
+    # not roll back an install that was verified.
+    progress["cli_path_warning"] = _print_path_cli_warning()
+    return ok, msg
+
+
+def _reinstall_cli_after_upgrade(progress: dict) -> tuple[bool, str, bool]:
+    """The upgrade's CLI reinstall, run once the new server is up
+    (CHT-2000). Never raises: returns (ok, message, interrupted)."""
+    try:
+        ok, message = _reinstall_cli_tracked(progress)
+        return ok, message, False
+    except KeyboardInterrupt:
+        return False, "Interrupted (Ctrl-C).", True
+    except OSError as e:
+        return False, f"Could not run a command: {e}", False
 
 
 def _print_path_cli_warning() -> str | None:
@@ -3425,6 +3461,20 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print(f"[red]Another upgrade holds {esc(DEPLOY_GATE)}; wait for it to finish.[/red]")
         console.print("Nothing was changed and the server was not stopped.")
         raise SystemExit(1)
+    # How long the server is down, reported at the end (CHT-1969), from
+    # before the stop: the drain is part of the window (CHT-2000). Each
+    # step's share is reported too, so a slow one shows up.
+    down_since = time.monotonic() if must_stop else None
+    window_steps: list[tuple[str, float]] = []
+    lap_started = [down_since]
+
+    def lap(step: str) -> None:
+        if down_since is None:
+            return
+        now = time.monotonic()
+        window_steps.append((step, now - lap_started[0]))
+        lap_started[0] = now
+
     if must_stop:
         console.print("Stopping server..." if was_running else f"Stopping server (service state '{esc(state)}')...")
         if gated:
@@ -3437,8 +3487,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             raise SystemExit(1)
         if not wait_for_service_stop(timeout=10):
             console.print("[yellow]Warning: Service may still be stopping[/yellow]")
-    # How long the server is down, reported at the end (CHT-1969).
-    down_since = time.monotonic() if must_stop else None
+    lap("stop")
 
     # Confirm action
     if not yes:
@@ -3456,6 +3505,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                     raise SystemExit(1)
             _print_service_state(port, host)
             raise SystemExit(0)
+        lap("prompt")
 
     console.print()
 
@@ -3477,6 +3527,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             cleanup_old_backups()
         else:
             console.print("  [dim]No database to backup[/dim]")
+        lap("backup")
 
     if already_current:
         console.print("Already on latest code. Running migrations...")
@@ -3499,13 +3550,15 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                     console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
             _print_service_state(port, host)
             raise SystemExit(1)
+        lap("checkout")
 
-    # Sync dependencies and run database migrations
+    # Sync dependencies and run database migrations. The CLI is
+    # reinstalled once the new server is up, outside the window (CHT-2000).
     console.print("Syncing dependencies and running migrations...")
     progress: dict = {}
     interrupted = False
     try:
-        success, message = run_migrations(fake_initial=fake_initial, progress=progress)
+        success, message = run_migrations(fake_initial=fake_initial, progress=progress, reinstall=False)
     except KeyboardInterrupt:
         # run_command has already stopped the command's whole process
         # group; undo the rest like any other failure (review M1).
@@ -3545,6 +3598,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                    cli=_cli_state(progress))
         raise SystemExit(130 if interrupted else 1)
     console.print(f"  [dim]{escape(message)}[/dim]")
+    lap("sync+migrate")
 
     # Put the frontend bundle in place so it matches the updated src/:
     # copied from the staging build when there is one (CHT-1969), rebuilt
@@ -3588,6 +3642,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     # Including a setting saved with `system config set --force` the
     # server cannot start with: say so before the start fails.
     _print_problems(settings_errors, [])
+    lap("bundle+unit")
 
     # Start server, whatever state the upgrade found it in (CHT-1475): an
     # upgrade ends with the server running the new commit and verified, or
@@ -3601,8 +3656,9 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print("[red]Failed to start server.[/red]")
         console.print("Rolling back...")
         _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running,
-                   service_update=service_update, cli="new")
+                   service_update=service_update, cli=_cli_state(progress))
         raise SystemExit(1)
+    lap("start")
 
     # Health check
     console.print("Waiting for health check...", end=" ")
@@ -3610,7 +3666,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print("[red]FAILED[/red]")
         console.print("\nHealth check failed. Rolling back...")
         _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running,
-                   service_update=service_update, cli="new")
+                   service_update=service_update, cli=_cli_state(progress))
         raise SystemExit(1)
     console.print("[green]OK[/green]")
 
@@ -3630,7 +3686,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                 f"{esc(new_commit[:7])}: the new process did not take over. Rolling back..."
             )
             _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running,
-                       service_update=service_update, cli="new")
+                       service_update=service_update, cli=_cli_state(progress))
             raise SystemExit(1)
         if matched is None:
             # A server too old to report git_sha (before 4a9db89) or a
@@ -3644,8 +3700,24 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             )
         else:
             console.print("[green]OK[/green]")
+    lap("health")
     if down_since is not None:
-        console.print(f"[dim]Server was down for {time.monotonic() - down_since:.1f}s.[/dim]")
+        steps = ", ".join(f"{step} {seconds:.1f}s" for step, seconds in window_steps)
+        console.print(f"[dim]Server was down for {time.monotonic() - down_since:.1f}s ({esc(steps)}).[/dim]")
+
+    # The CLI last (CHT-2000): the server does not need it, so it no
+    # longer holds the window open. A failure here leaves the server
+    # upgraded and running, and says so; nothing is rolled back.
+    console.print("Reinstalling the CLI...")
+    cli_ok, cli_message, cli_interrupted = _reinstall_cli_after_upgrade(progress)
+    if cli_ok:
+        console.print(f"  [dim]{escape(cli_message)}[/dim]")
+    else:
+        console.print(f"[red]{escape(cli_message)}[/red]")
+        console.print(
+            "[red]The server is upgraded and running, but the CLI was not updated. "
+            f"Reinstall it: uv tool install --force --reinstall {esc(PROJECT_DIR / 'cli')}[/red]"
+        )
     version_after = get_remote_version(port, host=host)
     if version_after and version_after.get("git_dirty"):
         console.print("[yellow]Warning: the server checkout has uncommitted changes (git_dirty).[/yellow]")
@@ -3656,6 +3728,9 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     console.print(f"[bold green]Upgraded to {esc(new_version)}[/bold green]")
     console.print(_mcp_reconnect_markup(version_before, version_after))
     _print_closing_path_cli_warning(progress)
+    if not cli_ok:
+        console.print("[red]The CLI is still the previous version; see above.[/red]")
+        raise SystemExit(130 if cli_interrupted else 1)
 
 
 @system.command("backup")
