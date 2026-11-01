@@ -16,6 +16,51 @@ import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 // State
 let myIssues = [];
 let dashboardActivities = [];
+let selectedMyIssueIndex = -1;
+// The cursor is kept by issue id, so a re-render (a remote update, a status
+// change moving the row to another group, coming back from the detail
+// view) puts it back on the same issue rather than dropping it.
+let selectedMyIssueId = null;
+// Done and Canceled can hold years of work: they show DONE_PREVIEW rows
+// until expanded, so the rest of the page stays reachable on a phone.
+const DONE_PREVIEW = 5;
+const COLLAPSIBLE = new Set(['done', 'canceled']);
+const expandedGroups = new Set();
+
+/** Keyboard cursor index in the Assigned to me list (CHT-1963). */
+export function getSelectedMyIssueIndex() {
+    return selectedMyIssueIndex;
+}
+
+export function setSelectedMyIssueIndex(i) {
+    selectedMyIssueIndex = i;
+    const row = i >= 0 ? document.querySelectorAll('#my-issues-list .issue-row')[i] : null;
+    selectedMyIssueId = row?.dataset.issueId ?? null;
+}
+
+// Assigned-to-me groups, in the order work moves through them (CHT-1963).
+const MY_ISSUE_GROUPS = [
+    { status: 'in_progress', label: 'In progress' },
+    { status: 'in_review', label: 'In review' },
+    { status: 'todo', label: 'Todo' },
+    { status: 'backlog', label: 'Backlog' },
+    { status: 'done', label: 'Done' },
+    { status: 'canceled', label: 'Canceled' },
+];
+
+/**
+ * Group issues by status in workflow order, dropping empty groups.
+ * Unknown statuses go last, under their formatted name.
+ * @param {Array} issues
+ * @returns {Array<{status: string, label: string, issues: Array}>}
+ */
+export function groupMyIssues(issues) {
+    const known = new Set(MY_ISSUE_GROUPS.map(g => g.status));
+    const groups = MY_ISSUE_GROUPS.map(g => ({ ...g, issues: issues.filter(i => i.status === g.status) }));
+    const other = issues.filter(i => !known.has(i.status));
+    if (other.length) groups.push({ status: 'other', label: 'Other', issues: other });
+    return groups.filter(g => g.issues.length);
+}
 
 // React to project changes when dashboard is active (CHT-1083, CHT-1165)
 subscribe((key) => {
@@ -94,7 +139,9 @@ export async function loadMyIssues() {
         }
         if (requestId !== loadMyIssuesRequestId) return; // a newer loadMyIssues() has since started — drop this stale response
 
-        myIssues = issues;
+        // Hold them in the order they render (grouped by status), so the
+        // keyboard cursor and detail prev/next walk the list as it is shown.
+        myIssues = groupMyIssues(issues).flatMap(g => g.issues);
         // Prev/next issue-detail nav context (CHT-1211 item 2) — issues
         // opened from the Dashboard should page through this list, not the
         // Issues-view-only global issues array. The request id only orders
@@ -193,13 +240,14 @@ export function renderDashboardActivity() {
             targetLink = ` <strong>${docIcon} ${escapeHtml(activity.document_title)}</strong>`;
         }
 
+        const actor = formatActivityActor(activity);
         return `
         <div class="activity-item">
-            <div class="activity-icon">${getActivityIcon(activity.activity_type)}</div>
+            <div class="activity-icon" aria-hidden="true">${getActivityIcon(activity.activity_type)}</div>
             <div class="activity-content">
                 <span class="activity-text">${formatActivityText(activity)}${targetLink}</span>
-                <span class="activity-actor">by ${escapeHtml(formatActivityActor(activity))}</span>
-                <span class="activity-time">${formatTimeAgo(activity.created_at)}</span>
+                <span class="activity-actor">by ${escapeHtml(actor)}</span>
+                <time class="activity-time" datetime="${escapeAttr(activity.created_at || '')}">${formatTimeAgo(activity.created_at)}</time>
             </div>
         </div>
     `}).join('');
@@ -238,6 +286,14 @@ export function renderMyIssues() {
     const list = document.getElementById('my-issues-list');
     if (!list) return;
     list.classList.add('issue-list-linear');
+    // Every writer (load, inline edits, live updates) lands here: hold the
+    // issues in the order they render, so detail prev/next matches.
+    const groups = groupMyIssues(myIssues);
+    myIssues = groups.flatMap(g => g.issues);
+    if (getCurrentView() === 'my-issues') setDetailNavContext(myIssues);
+    selectedMyIssueIndex = -1;
+    const count = document.getElementById('my-issues-count');
+    if (count) count.textContent = myIssues.length ? String(myIssues.length) : '';
 
     if (myIssues.length === 0) {
         list.innerHTML = renderEmptyState({
@@ -248,7 +304,41 @@ export function renderMyIssues() {
         return;
     }
 
-    list.innerHTML = myIssues.map(issue => renderIssueRow(issue)).join('');
+    // A live update must not strand the keyboard user: note which row
+    // control had focus and give it back after the rebuild (CHT-1293).
+    const active = document.activeElement;
+    const focusRowId = list.contains(active) ? active.closest('.issue-row')?.dataset.issueId : null;
+    const focusType = focusRowId ? active.dataset?.dropdownType : null;
+
+    list.innerHTML = groups.map(g => {
+        const capped = COLLAPSIBLE.has(g.status) && !expandedGroups.has(g.status) && g.issues.length > DONE_PREVIEW;
+        const shown = capped ? g.issues.slice(0, DONE_PREVIEW) : g.issues;
+        return `
+        <div class="dash-group" role="group" aria-labelledby="dash-group-${g.status}">
+            <h4 class="dash-group-header" id="dash-group-${g.status}">
+                <span class="dash-group-dot status-${g.status}" aria-hidden="true"></span>
+                ${escapeHtml(g.label)} <span class="dash-group-count">${g.issues.length}</span>
+            </h4>
+            ${shown.map(issue => renderIssueRow(issue)).join('')}
+            ${capped ? `<button type="button" class="dash-group-more" data-action="dash-show-all" data-status="${g.status}">Show all ${g.issues.length}</button>` : ''}
+        </div>`;
+    }).join('');
+
+    if (focusRowId) {
+        const row = [...list.querySelectorAll('.issue-row')].find(r => r.dataset.issueId === focusRowId);
+        const el = row && (focusType ? row.querySelector(`[data-dropdown-type="${focusType}"]`) : row.querySelector('.issue-title'));
+        el?.focus({ preventScroll: true });
+    }
+
+    // Put the keyboard cursor back on the issue it was on.
+    if (selectedMyIssueId) {
+        const rows = [...list.querySelectorAll('.issue-row')];
+        const i = rows.findIndex(r => r.dataset.issueId === selectedMyIssueId);
+        if (i !== -1) {
+            rows[i].classList.add('keyboard-selected');
+            selectedMyIssueIndex = i;
+        }
+    }
 }
 
 // ========================================
@@ -344,7 +434,7 @@ export function renderSprintStatus(sprintData) {
 
     container.innerHTML = `
         <div class="section-header">
-            <h3>Active Sprints</h3>
+            <h3>Active sprints</h3>
         </div>
         <div class="sprint-status-cards">
             ${sprintData.map(({ project, sprint, statusCounts }) => {
@@ -409,6 +499,10 @@ registerActions({
         navigateToIssueByIdentifier(dataset.identifier);
     },
     'retry-load-my-issues': () => loadMyIssues(),
+    'dash-show-all': (event, dataset) => {
+        expandedGroups.add(dataset.status);
+        renderMyIssues();
+    },
     'retry-load-sprint-status': () => loadSprintStatus(),
     // view-document action is registered in documents.js
 });

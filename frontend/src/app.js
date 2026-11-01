@@ -91,7 +91,7 @@ import {
     close as closeCommandPalette,
     isOpen as isCommandPaletteOpen,
 } from './command-palette.js';
-import { loadMyIssues, loadDashboardActivity, loadSprintStatus, filterMyIssues } from './dashboard.js';
+import { loadMyIssues, loadDashboardActivity, loadSprintStatus, filterMyIssues, getSelectedMyIssueIndex, setSelectedMyIssueIndex } from './dashboard.js';
 import { loadBoard } from './board.js';
 import { viewIssueByPath, viewIssue, abandonIssueLoad } from './issue-detail-view.js';
 import {
@@ -756,6 +756,21 @@ document.addEventListener('keydown', createSimpleListNavigationHandler({
     getCurrentView,
     getSelectedIndex: getSelectedEpicIndex,
     setSelectedIndex: setSelectedEpicIndex,
+    isModalOpen,
+    isCommandPaletteOpen,
+    isDetailViewActive: isAnyDetailViewActive,
+}));
+// j/k/arrows/Enter/Escape through Assigned to me on the Dashboard (CHT-1963).
+// Enter opens the row the way its title link does, so the detail view's
+// prev/next follows this list.
+document.addEventListener('keydown', createSimpleListNavigationHandler({
+    view: 'my-issues',
+    selector: '#my-issues-list .issue-row',
+    open: (el) => el.querySelector('.issue-title')?.click(),
+    getCurrentView,
+    getSelectedIndex: getSelectedMyIssueIndex,
+    setSelectedIndex: setSelectedMyIssueIndex,
+    isInlineDropdownOpen,
     isModalOpen,
     isCommandPaletteOpen,
     isDetailViewActive: isAnyDetailViewActive,

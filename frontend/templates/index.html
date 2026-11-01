@@ -225,17 +225,25 @@
                             </select>
                         </div>
                     </div>
-                    <div id="dashboard-sprint-status" class="dashboard-sprint-status"></div>
-                    <div class="dashboard-activity">
-                        <div class="section-header">
-                            <h3>Recent Activity</h3>
-                        </div>
-                        <div id="dashboard-activity-list" class="activity-list"></div>
+                    <!-- CHT-1963: your work first; sprints and activity in a side rail -->
+                    <div class="dashboard-grid">
+                        <section class="dashboard-main" aria-labelledby="dashboard-assigned-heading">
+                            <div class="section-header">
+                                <h3 id="dashboard-assigned-heading">Assigned to me</h3>
+                                <span id="my-issues-count" class="section-count"></span>
+                            </div>
+                            <div id="my-issues-list" class="list"></div>
+                        </section>
+                        <section class="dashboard-rail" aria-label="Sprints and activity">
+                            <div id="dashboard-sprint-status" class="dashboard-sprint-status"></div>
+                            <div class="dashboard-activity">
+                                <div class="section-header">
+                                    <h3>Recent activity</h3>
+                                </div>
+                                <div id="dashboard-activity-list" class="activity-list"></div>
+                            </div>
+                        </section>
                     </div>
-                    <div class="section-header">
-                        <h3>Assigned to Me</h3>
-                    </div>
-                    <div id="my-issues-list" class="list"></div>
                 </div>
 
                 <!-- GATE Approvals view -->
