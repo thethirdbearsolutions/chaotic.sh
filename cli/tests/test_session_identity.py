@@ -839,6 +839,18 @@ class TestMcpDefaultTeam:
             Client()._request("GET", "/issues")
         assert teams_server.registrations == []
 
+    def test_a_person_registrar_registers_in_the_team_chaotic_team_names(self, auto, teams_server, monkeypatch):
+        """CHT-1950: CHAOTIC_TEAM is a configured team, not a lookup
+        default, so a person registrar in several teams registers there."""
+        import cli.main as m
+
+        teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
+        teams_server.teams.append({"id": "team-2", "name": "Beta", "key": "BET"})
+        monkeypatch.setenv(cli_config.TEAM_ENV, "bet")
+        assert m.resolve_env_team() == "team-2"
+        Client()._request("GET", "/issues")
+        assert teams_server.registrations[0]["team_id"] == "team-2"
+
     def test_the_plain_cli_registers_in_the_only_team_without_adopting_it(self, auto, teams_server):
         teams_server.me = {"id": "u-1", "name": "Ada", "is_agent": False}
         Client()._request("GET", "/issues")
