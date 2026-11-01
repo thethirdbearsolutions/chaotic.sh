@@ -69,7 +69,7 @@ class TestResolveDocumentIdEmptyDocuments:
         with pytest.raises(click.ClickException) as exc_info:
             resolve_document_id("Getting Started", "team-123")
 
-        assert "No documents exist" in str(exc_info.value)
+        assert "not found" in str(exc_info.value)
         assert "chaotic doc create" in str(exc_info.value)
 
 
@@ -173,6 +173,95 @@ class TestResolveDocumentIdNotFound:
 
         assert "not found" in str(exc_info.value)
         assert "chaotic doc list" in str(exc_info.value)
+
+
+class TestResolveDocumentIdProjectScopedAgent:
+    """CHT-1947/CHT-1949: the server refuses a project-scoped agent the
+    team-wide listing, so resolution falls back to its own project's."""
+
+    @staticmethod
+    def _error(message, status_code):
+        # cli.client is mocked here: its APIError takes no status_code.
+        from cli.client import APIError
+        error = APIError(message)
+        error.status_code = status_code
+        return error
+
+    def _refused(self):
+        return self._error("Not authorized to access this team", 403)
+
+    def test_falls_back_to_the_agents_project(self, sample_documents):
+        from cli.main import resolve_document_id, client
+
+        def listing(team_id, project_id=None, limit=None):
+            assert limit == 10000
+            if project_id is None:
+                raise self._refused()
+            assert project_id == "proj-1"
+            return sample_documents
+        client.get_documents = MagicMock(side_effect=listing)
+        client.get_me = MagicMock(return_value={"is_agent": True, "agent_project_id": "proj-1"})
+
+        assert resolve_document_id("def6", "team-123") == "def67890-1111-2222-3333-444444444444"
+        assert resolve_document_id("FAQ", "team-123") == "ghi11111-1111-2222-3333-444444444444"
+        client.get_documents.assert_called_with("team-123", project_id="proj-1", limit=10000)
+
+    @pytest.mark.parametrize("me", [
+        {"is_agent": False, "agent_project_id": None},
+        {"is_agent": True, "agent_project_id": None},
+        None,
+        MagicMock(),
+    ])
+    def test_anyone_else_keeps_the_refusal(self, me):
+        from cli.client import APIError
+        from cli.main import resolve_document_id, client
+
+        client.get_documents = MagicMock(side_effect=self._refused())
+        client.get_me = MagicMock(return_value=me)
+
+        with pytest.raises(APIError) as exc_info:
+            resolve_document_id("abc", "team-123")
+        assert exc_info.value.status_code == 403
+        assert client.get_documents.call_count == 1
+
+    def test_a_failed_lookup_keeps_the_refusal(self):
+        from cli.client import APIError
+        from cli.main import resolve_document_id, client
+
+        client.get_documents = MagicMock(side_effect=self._refused())
+        client.get_me = MagicMock(side_effect=self._error("boom", 500))
+
+        with pytest.raises(APIError) as exc_info:
+            resolve_document_id("abc", "team-123")
+        assert exc_info.value.status_code == 403
+
+    def test_an_empty_project_is_not_found_not_no_documents(self):
+        """The configured team is not the agent's own: its project lists
+        nothing there, which must not read as "no documents exist"."""
+        from cli.main import resolve_document_id, client
+
+        def listing(team_id, project_id=None, limit=None):
+            if project_id is None:
+                raise self._refused()
+            return []
+        client.get_documents = MagicMock(side_effect=listing)
+        client.get_me = MagicMock(return_value={"is_agent": True, "agent_project_id": "proj-1"})
+
+        with pytest.raises(click.ClickException) as exc_info:
+            resolve_document_id("Playbook", "other-team")
+        assert "Document 'Playbook' not found" in str(exc_info.value)
+        assert "No documents exist" not in str(exc_info.value)
+
+    def test_other_errors_are_not_retried(self):
+        from cli.client import APIError
+        from cli.main import resolve_document_id, client
+
+        client.get_documents = MagicMock(side_effect=self._error("down", 502))
+        client.get_me = MagicMock()
+
+        with pytest.raises(APIError):
+            resolve_document_id("abc", "team-123")
+        client.get_me.assert_not_called()
 
 
 # =============================================================================

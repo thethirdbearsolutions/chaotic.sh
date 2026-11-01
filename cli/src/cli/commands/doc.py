@@ -7,7 +7,7 @@ from rich.panel import Panel
 from ..markup import Table, esc, markup
 
 from ..principals import principal_markup
-from .shared import _client, console, status_color_markup, resolve_content_value
+from .shared import _client, console, status_color_markup, resolve_content_value, list_documents_or_own_project
 
 
 def _main():
@@ -49,7 +49,14 @@ def register(cli):
             else:
                 console.print("[yellow]Warning: --sprint ignored (no project context)[/yellow]")
 
-        documents = _client().get_documents(m.get_current_team(), project_id=project_id, sprint_id=sprint_id, search=search)
+        if project_id:
+            documents = _client().get_documents(
+                m.get_current_team(), project_id=project_id, sprint_id=sprint_id, search=search,
+            )
+        else:
+            # Team-wide, which a project-scoped agent is refused: it lists
+            # its own project instead (CHT-1949).
+            documents = list_documents_or_own_project(m.get_current_team(), sprint_id=sprint_id, search=search)
         if m.is_json_output():
             m.output_json(documents or [])
             return
