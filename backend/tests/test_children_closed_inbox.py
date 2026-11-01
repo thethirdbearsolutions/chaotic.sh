@@ -195,3 +195,55 @@ async def test_a_closed_epic_is_not_asked_about(client, auth_headers, test_proje
     assert (await client.patch(f"/api/issues/{epic['id']}", headers=auth_headers, json={"status": "done"})).status_code == 200
     await IssueService().apply_intent_transition(child["id"], LimboType.CLOSE, agent_user.id)
     assert await _entries(epic["id"]) == []
+
+
+# --- CHT-1928: two closes racing past the exists check
+
+@pytest.mark.asyncio
+async def test_a_racing_second_entry_is_skipped_not_raised(client, auth_headers, test_project, test_user, agent_user, monkeypatch, db):
+    """The exists check passes for both racers; the partial unique index
+    lets one through and the other is skipped, inside a savepoint so the
+    caller's transaction survives."""
+    from app.db.transactions import atomic
+    from app.services.inbox_service import InboxService
+    from app.oxyde_models.issue import OxydeIssue
+    from app.oxyde_models.project import OxydeProject
+
+    epic, child = await _epic_with_child(client, auth_headers, test_project)
+    parent = await OxydeIssue.objects.get(id=epic["id"])
+    project = await OxydeProject.objects.get(id=test_project.id)
+    service = InboxService()
+    await service.notify_children_closed(parent=parent, project=project, actor_id=agent_user.id, how="was deleted")
+
+    real_filter = OxydeInboxEntry.objects.filter
+
+    class _Blind:
+        async def exists(self):
+            return False
+
+    def blind_filter(*args, **kwargs):
+        if kwargs.get("kind") == InboxEntryKind.CHILDREN_CLOSED.name and "resolved_at" in kwargs:
+            return _Blind()
+        return real_filter(*args, **kwargs)
+
+    monkeypatch.setattr(OxydeInboxEntry.objects, "filter", blind_filter)
+    async with atomic():
+        await service.notify_children_closed(parent=parent, project=project, actor_id=agent_user.id, how="was deleted")
+        # The caller's transaction is still usable after the skipped insert.
+        await OxydeIssue.objects.filter(id=parent.id).update(title="Still writable")
+    monkeypatch.undo()
+    assert [e.recipient_user_id for e in await _entries(epic["id"])] == [test_user.id]
+    assert (await OxydeIssue.objects.get(id=parent.id)).title == "Still writable"
+
+
+@pytest.mark.asyncio
+async def test_a_resolved_entry_does_not_block_a_new_one(client, auth_headers, test_project, test_user, agent_user, db):
+    from datetime import datetime, timezone
+
+    epic, child = await _epic_with_child(client, auth_headers, test_project)
+    await IssueService().apply_intent_transition(child["id"], LimboType.CLOSE, agent_user.id)
+    await OxydeInboxEntry.objects.filter(issue_id=epic["id"]).update(resolved_at=datetime.now(timezone.utc))
+    other = await _create(client, auth_headers, test_project.id, title="Another", parent_id=epic["id"])
+    await IssueService().apply_intent_transition(other["id"], LimboType.CLOSE, agent_user.id)
+    assert len(await _entries(epic["id"])) == 2
+    assert len(await _entries(epic["id"], resolved_at=None)) == 1

@@ -22,9 +22,9 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from oxyde import execute_raw
+from oxyde import IntegrityError, execute_raw
 
-from app.db.transactions import on_commit
+from app.db.transactions import atomic, on_commit
 from app.enums import ActivityType, ApprovalMode, InboxEntryKind, IssueType, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
@@ -314,7 +314,8 @@ class InboxService:
         (active, still in the team: ``eligible_on_project_work``). The
         person who made the change is told too, since none of these paths
         asked them (a gate approver is the usual case); the push skips
-        them. An entry still unresolved for the parent is not repeated.
+        them. An entry still unresolved for the parent is not repeated, even by
+        two closes at once (a partial unique index, CHT-1928).
         """
         recipients = await self._children_closed_recipients(parent, project)
         noun = "epic" if parent.issue_type == IssueType.EPIC else "issue"
@@ -325,19 +326,26 @@ class InboxService:
                 issue_id=parent.id, resolved_at=None,
             ).exists():
                 continue
-            entry = await OxydeInboxEntry.objects.create(
-                recipient_user_id=recipient_id,
-                kind=InboxEntryKind.CHILDREN_CLOSED,
-                team_id=project.team_id,
-                project_id=project.id,
-                issue_id=parent.id,
-                source_user_id=actor_id,
-                title=f"Nothing is left open under {parent.identifier}",
-                body=(
-                    f"The last open sub-issue of {parent.identifier} ({parent.title}) {how}. "
-                    f"Close the {noun}, or add more."
-                ),
-            )
+            try:
+                # A savepoint, so a duplicate rolls back only itself.
+                async with atomic():
+                    entry = await OxydeInboxEntry.objects.create(
+                        recipient_user_id=recipient_id,
+                        kind=InboxEntryKind.CHILDREN_CLOSED,
+                        team_id=project.team_id,
+                        project_id=project.id,
+                        issue_id=parent.id,
+                        source_user_id=actor_id,
+                        title=f"Nothing is left open under {parent.identifier}",
+                        body=(
+                            f"The last open sub-issue of {parent.identifier} ({parent.title}) {how}. "
+                            f"Close the {noun}, or add more."
+                        ),
+                    )
+            except IntegrityError:
+                # Another close wrote it between the check and here; the
+                # partial unique index keeps one (CHT-1928).
+                continue
             created.append(entry)
             await self._broadcast(project.team_id, "created", entry)
         await self._push(created, actor_id)
