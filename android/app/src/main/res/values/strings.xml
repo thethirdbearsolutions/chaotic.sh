@@ -95,7 +95,7 @@
     <string name="push_channel_mentions">Mentions</string>
     <string name="push_channel_mentions_description">Someone mentioned you.</string>
     <string name="push_channel_assignments">Assignments</string>
-    <string name="push_channel_assignments_description">An issue was assigned to you.</string>
+    <string name="push_channel_assignments_description">An issue was assigned to you, or nothing is left open under one of yours.</string>
     <string name="push_channel_agents">Agents</string>
     <string name="push_channel_agents_description">What your agents are up to.</string>
     <string name="push_channel_account">Account</string>
@@ -109,6 +109,7 @@
     <string name="push_kind_assignment">Assigned to you</string>
     <string name="push_kind_agent_status">Agent update</string>
     <string name="push_kind_push_device_added">New device</string>
+    <string name="push_kind_children_closed">Nothing left open</string>
     <string name="push_kind_other">Inbox update</string>
     <string name="push_title_with_issue">%1$s · %2$s</string>
     <string name="push_public_text">Something in your inbox needs you.</string>

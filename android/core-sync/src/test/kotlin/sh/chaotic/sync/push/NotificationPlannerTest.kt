@@ -22,6 +22,7 @@ class NotificationPlannerTest {
         assertEquals(PushChannel.APPROVALS, PushChannel.forKind("gate_rejected"))
         assertEquals(PushChannel.MENTIONS, PushChannel.forKind("mention"))
         assertEquals(PushChannel.ASSIGNMENTS, PushChannel.forKind("assignment"))
+        assertEquals(PushChannel.ASSIGNMENTS, PushChannel.forKind("children_closed"))
         assertEquals(PushChannel.AGENTS, PushChannel.forKind("agent_status"))
         assertEquals(PushChannel.ACCOUNT, PushChannel.forKind("push_device_added"))
         assertEquals(PushChannel.OTHER, PushChannel.forKind("a_kind_from_the_future"))

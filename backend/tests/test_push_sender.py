@@ -544,7 +544,7 @@ class TestResolved:
         await _device(test_user, phone)
         await _assign(test_issue, test_project, test_user, test_user2)
         push.requests.clear()
-        await IssueService().delete(test_issue)
+        await IssueService().delete(test_issue, actor_id=None)
         await push_sender.drain()
         assert phone.read(push.requests[0])["type"] == "resolved"
 

@@ -196,6 +196,7 @@ class InboxEntryKind(str, Enum):
     AGENT_STATUS = "agent_status"          # Someone else deactivated/reactivated an agent this user created, or a departing member's agent keys were revoked (admins)
     GATE_REJECTED = "gate_rejected"        # A human rejected this user's (or their agent's) gate request or review attestation (CHT-1606)
     PUSH_DEVICE_ADDED = "push_device_added"  # A device was registered for this user's push notifications, or its endpoint changed (CHT-1604)
+    CHILDREN_CLOSED = "children_closed"    # An open issue this user owns was left with no open sub-issues by a path nobody was asked on: a cleared intent's auto-close, or a delete (CHT-1909)
 
 
 class InboxEntryState(str, Enum):
