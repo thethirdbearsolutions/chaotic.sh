@@ -7,7 +7,10 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
+import io.ktor.client.engine.okhttp.OkHttp
+import okhttp3.OkHttpClient
 import sh.chaotic.android.data.CacheDao
 import sh.chaotic.android.data.ChaoticDatabase
 import sh.chaotic.android.data.RoomCacheStore
@@ -47,8 +50,9 @@ object DataModule {
 
     @Provides
     @Singleton
-    fun provideRemote(sessions: SessionManager, engine: HttpClientEngine): ChaoticRemote =
-        SessionRemote(sessions, engine)
+    fun provideRemote(sessions: SessionManager, engine: HttpClientEngine, plain: OkHttpClient): ChaoticRemote =
+        // The health probe on the client without credentials (CHT-1671); never closed, like the engine.
+        SessionRemote(sessions, engine, probe = HttpClient(OkHttp.create { preconfigured = plain }))
 
     @Provides
     @Singleton

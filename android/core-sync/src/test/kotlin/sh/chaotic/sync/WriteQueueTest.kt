@@ -72,6 +72,70 @@ class WriteQueueTest {
     }
 
     @Test
+    fun aSyncPageRequestedBeforeAnApprovalWasTakenDoesNotBringTheEntryBack() = runTest {
+        val syncer = InboxSyncer(remote, session)
+        assertNotNull(queue.approve(gate, undoMillis = 0))
+        remote.syncAnswers += Remote.Ok(page(open(gate), open(mention), cursor = "c2"))
+        // The approval is taken while the page is on its way: the page still holds the gate as open.
+        remote.onSync = {
+            remote.onSync = {}
+            assertEquals(FlushOutcome.Done(null), queue.flush())
+        }
+
+        val outcome = syncer.sync()
+
+        assertEquals<SyncOutcome>(SyncOutcome.Synced(pages = 1), outcome)
+        assertEquals(listOf("m1"), store.inbox().map { it.id })
+        assertEquals("c2", store.inboxCursor())
+    }
+
+    @Test
+    fun aSyncPageInFlightThatHoldsTheEntryOpenedAgainIsApplied() = runTest {
+        val syncer = InboxSyncer(remote, session)
+        assertNotNull(queue.approve(gate, undoMillis = 0))
+        // Opened again on the server after the approval, and before the page was built.
+        val reopened = gate.copy(updatedAtMicros = gate.updatedAtMicros + 1)
+        remote.syncAnswers += Remote.Ok(page(open(reopened), cursor = "c2"))
+        remote.onSync = {
+            remote.onSync = {}
+            queue.flush()
+        }
+
+        syncer.sync()
+
+        assertEquals(setOf("g1", "m1"), store.inbox().map { it.id }.toSet())
+    }
+
+    @Test
+    fun aResetPageInFlightDoesNotBringBackAnEntryJustApproved() = runTest {
+        val syncer = InboxSyncer(remote, session)
+        assertNotNull(queue.approve(gate, undoMillis = 0))
+        remote.syncAnswers += Remote.Ok(page(open(gate), open(mention), cursor = "c2", reset = true))
+        remote.onSync = {
+            remote.onSync = {}
+            queue.flush()
+        }
+
+        syncer.sync()
+
+        assertEquals(listOf("m1"), store.inbox().map { it.id })
+    }
+
+    @Test
+    fun aSyncPageRequestedAfterAnApprovalWasTakenIsApplied() = runTest {
+        val syncer = InboxSyncer(remote, session)
+        assertNotNull(queue.approve(gate, undoMillis = 0))
+        queue.flush()
+        val reopened = gate.copy(updatedAtMicros = gate.updatedAtMicros + 1)
+        remote.syncAnswers += Remote.Ok(page(open(reopened), cursor = "c2"))
+
+        syncer.sync()
+
+        // Opened again on the server after the decision: nothing holds it back.
+        assertEquals(setOf("g1", "m1"), store.inbox().map { it.id }.toSet())
+    }
+
+    @Test
     fun anUndoInsideTheWindowSendsNothing() = runTest {
         val key = assertNotNull(queue.approve(gate))
 
@@ -348,7 +412,7 @@ class WriteQueueTest {
     }
 
     @Test
-    fun aTooOldChangeANewerOneSupersedesIsDroppedNotStalled() = runTest {
+    fun aTooOldChangeANewerOneSupersedesGoesWhenTheNewerIsTaken() = runTest {
         queue.update(issue(), IssueFields.STATUS, "done")
         now += WriteQueue.REPLAY_WINDOW_MILLIS
         // A newer value for the same field, queued before the next flush.
@@ -436,7 +500,7 @@ class WriteQueueTest {
     }
 
     @Test
-    fun aStalledChangeIsDroppedWhenANewerOneToTheSameFieldIsMade() = runTest {
+    fun aStalledChangeStaysWhenANewerOneIsMadeAndGoesWhenTheNewerIsTaken() = runTest {
         val old = assertNotNull(queue.update(issue(), IssueFields.STATUS, "done"))
         val comment = assertNotNull(queue.comment(issue(), "kept"))
         store.rescheduleWrite(old, WriteQueue.MAX_ATTEMPTS, now)
@@ -446,12 +510,31 @@ class WriteQueueTest {
         val priority = assertNotNull(queue.update(issue(), IssueFields.PRIORITY, "high"))
         assertEquals(listOf(old, comment, priority), store.pendingWrites().map { it.key })
         val newer = assertNotNull(queue.update(issue(), IssueFields.STATUS, "todo"))
+        // Not yet: the newer one may still be refused (CHT-1671).
+        assertEquals(listOf(old, comment, priority, newer), store.pendingWrites().map { it.key })
 
-        assertEquals(listOf(comment, priority, newer), store.pendingWrites().map { it.key })
+        assertEquals(FlushOutcome.Done(null), queue.flush())
+
+        assertEquals(listOf(comment), store.pendingWrites().map { it.key })
     }
 
     @Test
-    fun aChangeThatStallsBehindANewerOneIsDroppedAndTheNewerGoes() = runTest {
+    fun aStalledChangeStaysWhenTheNewerOneIsRefused() = runTest {
+        remote.answerWrite = { Remote.HttpError(422, message = "No such status") }
+        val old = assertNotNull(queue.update(issue(), IssueFields.STATUS, "done"))
+        store.rescheduleWrite(old, WriteQueue.MAX_ATTEMPTS, now)
+        queue.update(issue(), IssueFields.STATUS, "todo")
+
+        assertEquals(FlushOutcome.Done(null), queue.flush())
+
+        // The person's earlier change is still there to retry, beside the refusal.
+        assertEquals(listOf(old), store.pendingWrites().map { it.key })
+        assertEquals(1, store.refusals().size)
+        assertTrue(queue.retry(old))
+    }
+
+    @Test
+    fun aChangeThatStallsBehindANewerOneGoesWhenTheNewerIsTaken() = runTest {
         remote.answerWrite = { sent ->
             if (sent.body["status"] == JsonPrimitive("done")) Remote.HttpError(500) else Remote.Ok(null)
         }
@@ -474,6 +557,20 @@ class WriteQueueTest {
         assertFalse(queue.retry(old))
 
         assertEquals(listOf(newer), store.pendingWrites().map { it.key })
+    }
+
+    @Test
+    fun aStalledDecisionGoesWhenANewerOneFindsTheGateAlreadyDecided() = runTest {
+        val first = assertNotNull(queue.approve(gate, undoMillis = 0))
+        store.rescheduleWrite(first, WriteQueue.MAX_ATTEMPTS, now)
+        remote.answerWrite = { conflict("Already approved by Ada", WriteQueue.ALREADY_RESOLVED) }
+        assertNotNull(queue.reject(gate, "not yet", undoMillis = 0))
+
+        assertEquals(FlushOutcome.Done(null), queue.flush())
+
+        // Settled: retrying the stalled approval could only be refused the same way.
+        assertEquals(emptyList(), store.pendingWrites())
+        assertEquals(1, store.refusals().size)
     }
 
     @Test

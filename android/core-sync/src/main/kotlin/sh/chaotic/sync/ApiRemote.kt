@@ -47,6 +47,12 @@ class ApiRemote(
     private val nowMillis: () -> Long = System::currentTimeMillis,
     /** The client the writes go out on; one shared across servers holds no server, so it need not be rebuilt. */
     writeClient: HttpClient? = null,
+    /**
+     * The client [reachable] asks on: one with no credentials, since the
+     * health check needs none and must never set off a token refresh
+     * (CHT-1671). Without one, the write client is used.
+     */
+    private val probeClient: HttpClient? = null,
 ) : ChaoticRemote,
     Closeable {
     private val inboxApi = InboxApi(baseUrl, engine, ChaoticApi.clientConfig)
@@ -127,7 +133,7 @@ class ApiRemote(
     /** Any answer from the server's health check counts, whatever its status; only no answer does not. */
     @Suppress("TooGenericExceptionCaught") // no answer of any kind is the answer
     override suspend fun reachable(): Boolean = try {
-        http.get(baseUrl.trimEnd('/') + HEALTH_PATH).bodyAsText()
+        (probeClient ?: http).get(baseUrl.trimEnd('/') + HEALTH_PATH).bodyAsText()
         true
     } catch (e: CancellationException) {
         throw e

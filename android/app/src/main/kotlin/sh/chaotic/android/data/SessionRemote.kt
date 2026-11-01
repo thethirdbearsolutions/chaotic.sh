@@ -24,10 +24,15 @@ import sh.chaotic.sync.WriteOrigin
  * [ChaoticRemote] for whichever server the device is signed in to: an
  * [ApiRemote] on the authenticated engine, rebuilt when the server
  * changes. Signed out, every call is a 401, which the sync and refreshes
- * already treat as "stop".
+ * already treat as "stop". The reachability probe goes out on [probe],
+ * which carries no credentials (CHT-1671).
  */
 @Suppress("TooManyFunctions") // ChaoticRemote, one function per server call
-class SessionRemote(private val sessions: SessionManager, private val engine: HttpClientEngine) : ChaoticRemote {
+class SessionRemote(
+    private val sessions: SessionManager,
+    private val engine: HttpClientEngine,
+    private val probe: HttpClient,
+) : ChaoticRemote {
     private val mutex = Mutex()
     private var current: Pair<String, ApiRemote>? = null
 
@@ -38,7 +43,9 @@ class SessionRemote(private val sessions: SessionManager, private val engine: Ht
         val baseUrl = sessions.server()?.baseUrl ?: return null
         return mutex.withLock {
             current?.takeIf { it.first == baseUrl }?.second
-                ?: ApiRemote(baseUrl, engine, writeClient = writes).also { current = baseUrl to it }
+                ?: ApiRemote(baseUrl, engine, writeClient = writes, probeClient = probe).also {
+                    current = baseUrl to it
+                }
         }
     }
 
