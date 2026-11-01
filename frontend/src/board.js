@@ -6,12 +6,14 @@
 import { handleCloseFollowups } from './epic-prompt.js';
 import { api } from './api.js';
 import { showToast, showApiError } from './ui.js';
-import { escapeHtml, escapeAttr, formatPriority, debounce } from './utils.js';
+import { escapeHtml, escapeAttr, formatPriority, debounce, renderAvatar, sanitizeColor } from './utils.js';
+import { getPriorityIcon } from './issue-list.js';
+import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { registerActions } from './event-delegation.js';
 import { viewIssue } from './issue-detail-view.js';
 import { getCurrentProject, getCurrentView, subscribe, getSelectedBoardIndex, setSelectedBoardIndex, setDetailNavContext } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
-import { getProjects } from './projects.js';
+import { getProjects, formatEstimate, isOutOfScale } from './projects.js';
 import { lastResult, rememberResult, resultKey, sameResult } from './last-result.js';
 
 // Board status configuration
@@ -203,21 +205,42 @@ export function renderBoard() {
                 <div class="kanban-column-content">
                     ${columnIssues.length === 0 ? `
                         <div class="kanban-column-empty">No issues</div>
-                    ` : columnIssues.map(issue => `
-                        <div class="kanban-card" draggable="true" data-action="board-card" data-id="${escapeAttr(issue.id)}" data-identifier="${escapeAttr(issue.identifier)}">
-                            <div class="kanban-card-title">${escapeHtml(issue.title)}</div>
-                            <div class="kanban-card-meta">
-                                <span class="kanban-card-identifier">${issue.identifier}</span>
-                                <span class="badge badge-priority-${issue.priority}" style="font-size: 10px;">${formatPriority(issue.priority)}</span>
-                            </div>
-                        </div>
-                    `).join('')}
+                    ` : columnIssues.map(renderBoardCard).join('')}
                 </div>
             </div>
         `;
     }).join('');
 
     reapplyKeyboardSelection(selectedCardId);
+}
+
+/**
+ * One board card, carrying the same data as an issue-list row (CHT-1766):
+ * identifier and assignee on top, the title, then the list's priority
+ * icon, the estimate and up to two labels.
+ * @param {Object} issue
+ * @returns {string} HTML string
+ */
+export function renderBoardCard(issue) {
+    const assignee = issue.assignee_id ? getAssigneeById(issue.assignee_id) : null;
+    const assigneeName = assignee ? formatAssigneeName(assignee) : null;
+    const estimate = issue.estimate != null ? formatEstimate(issue.estimate, issue.project_id) : '';
+    const outOfScale = isOutOfScale(issue.estimate, issue.project_id);
+    const labels = (issue.labels || []).slice(0, 2);
+    return `
+        <div class="kanban-card" draggable="true" data-action="board-card" data-id="${escapeAttr(issue.id)}" data-identifier="${escapeAttr(issue.identifier)}">
+            <div class="kanban-card-top">
+                <span class="kanban-card-identifier">${escapeHtml(issue.identifier)}</span>
+                ${assigneeName ? `<span class="kanban-card-assignee" title="${escapeAttr(assigneeName)}">${renderAvatar(assignee, 'avatar-small')}</span>` : ''}
+            </div>
+            <div class="kanban-card-title">${escapeHtml(issue.title)}</div>
+            <div class="kanban-card-meta">
+                <span class="kanban-card-priority" title="Priority: ${escapeAttr(formatPriority(issue.priority))}">${getPriorityIcon(issue.priority)}</span>
+                ${estimate ? `<span class="estimate-badge${outOfScale ? ' out-of-scale' : ''}"${outOfScale ? ' title="Estimate outside current scale"' : ''}>${escapeHtml(estimate)}</span>` : ''}
+                ${labels.map(label => `<span class="issue-label" title="${escapeAttr(label.name)}" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>`).join('')}
+            </div>
+        </div>
+    `;
 }
 
 /**
