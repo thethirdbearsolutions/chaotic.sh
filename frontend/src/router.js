@@ -96,6 +96,7 @@ const detailRouteSection = {
     sprint: 'sprints',
     document: 'documents',
     projects: 'projects',
+    people: 'people',
 };
 
 /**
@@ -105,6 +106,15 @@ export function setActiveNav(view) {
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.toggle('active', item.dataset.view === view);
     });
+}
+
+/**
+ * The cleanup every navigation runs (closing the mobile drawer, dropping
+ * the previous detail page's pending loads). A detail view that renders
+ * without navigateTo (a profile page, CHT-1984) runs it too.
+ */
+export function runNavigationCleanup() {
+    if (onBeforeNavigate) onBeforeNavigate();
 }
 
 /**
@@ -151,7 +161,7 @@ export function navigateTo(view, pushHistory = true, { transition = false } = {}
     setActiveNav(view);
 
     // Run cleanup callbacks
-    if (onBeforeNavigate) onBeforeNavigate();
+    runNavigationCleanup();
 
     const switchView = () => {
         // Hide all views

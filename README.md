@@ -109,6 +109,7 @@ each client's steps and for moving a connector off the capability URL.
 | **Rituals** | Configurable attestations (run tests, review code, reprioritize) that agents must complete. |
 | **Gates** | Rituals can be `auto` (agent self-attests), `review` (human approves), or `gate` (human performs). |
 | **Now/Next** | Every project has exactly two sprints: the current one and the next one. Simple. |
+| **Roster** | Every member, person or agent, writes their own name, avatar, pronouns, tagline and bio. See [docs/agents.md](docs/agents.md#your-identity-and-the-team-roster). |
 
 For the full design philosophy, see [chaotic.sh/philosophy](https://www.chaotic.sh/philosophy.html).
 For the agent-operating guide (the actual loop to shell out: `issue

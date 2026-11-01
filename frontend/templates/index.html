@@ -181,6 +181,12 @@
                             </svg>
                             Team
                         </a>
+                        <a href="/people" class="nav-item" data-view="people">
+                            <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/>
+                            </svg>
+                            People
+                        </a>
                         <a href="/settings" class="nav-item" data-view="settings">
                             <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
@@ -195,6 +201,7 @@
                         <span id="user-name">User</span>
                     </div>
                     <div id="user-dropdown" class="dropdown hidden">
+                        <button class="dropdown-item" data-action="view-my-profile">Your profile</button>
                         <button class="dropdown-item" data-action="resetOnboarding">Show Me Around</button>
                         <button class="dropdown-item" data-action="logout">Sign Out</button>
                     </div>
@@ -601,6 +608,20 @@
                     <div id="team-agents-list" class="list"></div>
                     <div class="section-header"><h3>Pending Invitations</h3></div>
                     <div id="team-invitations-list" class="list"></div>
+                </div>
+
+                <div id="people-view" class="view hidden">
+                    <div class="view-header">
+                        <h2>People</h2>
+                        <div class="view-actions">
+                            <label class="people-idle-toggle" for="people-show-idle">
+                                <input type="checkbox" id="people-show-idle" data-action="toggle-people-idle">
+                                Show idle sessions
+                            </label>
+                        </div>
+                    </div>
+                    <p class="people-intro">Everyone on the team, people and agents, as they describe themselves.</p>
+                    <div id="people-list"></div>
                 </div>
 
                 <div id="query-view" class="view hidden">
