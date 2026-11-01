@@ -40,10 +40,17 @@ def linux(tmp_path, monkeypatch):
     monkeypatch.setattr(system, "get_os", lambda: "linux")
     monkeypatch.setattr(system, "socket_activation_supported", lambda: True)
     monkeypatch.setattr(system, "get_systemd_user_dir", lambda: unit_dir)
+    monkeypatch.setattr(system, "get_socket_file_path", lambda: unit_dir / SYSTEMD_SOCKET)
+    monkeypatch.setattr(system, "get_service_file_path", lambda: unit_dir / SYSTEMD_SERVICE)
     monkeypatch.setattr(system, "SERVICE_BACKUP_DIR", tmp_path / "service-backups")
     run = MagicMock(return_value=MagicMock(returncode=0, stdout=""))
     monkeypatch.setattr(system, "run_command", run)
     return unit_dir, run
+
+
+def _install_socket_mode(unit_dir):
+    (unit_dir / SYSTEMD_SERVICE).write_text(generate_systemd_service(PORT, SECRET, HOST, socket=True))
+    (unit_dir / SYSTEMD_SOCKET).write_text(generate_systemd_socket(PORT, HOST))
 
 
 def _commands(run):
@@ -141,7 +148,7 @@ class TestReconcile:
 class TestStartStop:
     def test_start_enables_and_starts_both_after_opening_the_gate(self, linux):
         unit_dir, run = linux
-        (unit_dir / SYSTEMD_SOCKET).write_text("x")
+        _install_socket_mode(unit_dir)
         assert system.hold_deploy_gate()
         gate_open_at_start = []
         run.side_effect = lambda cmd, **kw: (
@@ -157,15 +164,21 @@ class TestStartStop:
 
     def test_full_stop_closes_the_port(self, linux):
         unit_dir, run = linux
-        (unit_dir / SYSTEMD_SOCKET).write_text("x")
+        _install_socket_mode(unit_dir)
         assert system.stop_service()
         assert _commands(run)[-1] == ["systemctl", "--user", "stop", SYSTEMD_SOCKET, SYSTEMD_SERVICE]
 
     def test_keep_socket_stops_only_the_service(self, linux):
         unit_dir, run = linux
-        (unit_dir / SYSTEMD_SOCKET).write_text("x")
+        _install_socket_mode(unit_dir)
         assert system.stop_service(keep_socket=True)
         assert _commands(run)[-1] == ["systemctl", "--user", "stop", SYSTEMD_SERVICE]
+
+    def test_a_socket_beside_an_ungated_unit_is_not_socket_mode(self, linux):
+        unit_dir, run = linux
+        (unit_dir / SYSTEMD_SERVICE).write_text(generate_systemd_service(PORT, SECRET, HOST, socket=False))
+        (unit_dir / SYSTEMD_SOCKET).write_text(generate_systemd_socket(PORT, HOST))
+        assert not system.socket_mode_installed()
 
     def test_classic_install_is_unchanged(self, linux):
         unit_dir, run = linux
@@ -221,6 +234,7 @@ class TestDeployGate:
 class TestUpgradeWindow:
     def test_upgrade_keeps_the_port_and_gates_the_window(self, monkeypatch):
         monkeypatch.setattr(system, "socket_mode_installed", lambda: True)
+        monkeypatch.setattr(system, "_justfile_serves_socket", lambda commit=None: True)
         gate_held_at_stop = []
 
         def stop(keep_socket=False):
@@ -240,10 +254,20 @@ class TestUpgradeWindow:
 
     def test_upgrade_refuses_while_another_holds_the_gate(self, monkeypatch):
         monkeypatch.setattr(system, "socket_mode_installed", lambda: True)
+        monkeypatch.setattr(system, "_justfile_serves_socket", lambda commit=None: True)
         result, m = _upgrade(hold_deploy_gate=dict(return_value=False))
 
         assert result.exit_code == 1
         assert "Another upgrade holds" in _flat(result.output)
+        m["stop_service"].assert_not_called()
+
+    def test_refuses_a_target_whose_justfile_cannot_serve_the_socket(self, monkeypatch):
+        monkeypatch.setattr(system, "socket_mode_installed", lambda: True)
+        monkeypatch.setattr(system, "_justfile_serves_socket", lambda commit=None: commit is None)
+        result, m = _upgrade()
+
+        assert result.exit_code == 1
+        assert "predates socket activation" in _flat(result.output)
         m["stop_service"].assert_not_called()
 
     def test_classic_upgrade_takes_no_gate(self, monkeypatch):
@@ -268,3 +292,136 @@ class TestStartCommand:
 
         assert result.exit_code == 0, result.output
         in_use.assert_not_called()
+
+
+class TestReviewFindings:
+    """PR #510 review."""
+
+    def test_stop_closes_an_idle_socket(self):
+        with patch("cli.system.is_server_installed", return_value=True), \
+             patch("cli.system.is_service_running", return_value=False), \
+             patch("cli.system._socket_active", return_value=True), \
+             patch("cli.system.stop_service", return_value=True) as stop:
+            result = CliRunner().invoke(system.system, ["stop"])
+
+        assert result.exit_code == 0, result.output
+        stop.assert_called_once_with()
+
+    def test_restore_stops_an_idle_socket_and_never_probes_it(self, tmp_path):
+        backup = tmp_path / "chaotic.db.backup-20261101"
+        backup.write_text("x")
+        active = iter([True, False, False, False])
+        with patch("cli.system.is_server_installed", return_value=True), \
+             patch("cli.system.list_backups", return_value=[backup]), \
+             patch("cli.system.load_server_json", return_value={"port": PORT}), \
+             patch("cli.system.is_service_running", return_value=False), \
+             patch("cli.system._socket_active", side_effect=lambda: next(active, False)), \
+             patch("cli.system.stop_service", return_value=True) as stop, \
+             patch("cli.system.wait_for_service_stop", return_value=True), \
+             patch("cli.system.restore_backup", return_value=True), \
+             patch("cli.system.start_service", return_value=True), \
+             patch("cli.system.health_check", return_value=True):
+            result = CliRunner().invoke(system.system, ["backup", "--restore", "latest"])
+
+        assert result.exit_code == 0, result.output
+        stop.assert_called_once_with()
+
+    def test_database_in_use_does_not_connect_to_an_active_socket(self):
+        with patch("cli.system.is_service_running", return_value=False), \
+             patch("cli.system._socket_active", return_value=True), \
+             patch("cli.system.is_port_in_use") as probe:
+            assert system.database_in_use(PORT, HOST)
+        probe.assert_not_called()
+
+    @pytest.mark.parametrize("host", ["localhost", "chaotic.internal", "fe80::1%eth0"])
+    def test_names_and_scoped_addresses_keep_the_classic_unit(self, linux, host):
+        unit_dir, run = linux
+        system.write_service_file(PORT, SECRET, host)
+        assert "ExecStartPre" not in (unit_dir / SYSTEMD_SERVICE).read_text()
+        assert not (unit_dir / SYSTEMD_SOCKET).exists()
+
+    def test_reconfigure_to_a_name_removes_the_socket(self, linux):
+        unit_dir, run = linux
+        _install_socket_mode(unit_dir)
+        system.write_service_file(PORT, SECRET, "localhost")
+        assert not (unit_dir / SYSTEMD_SOCKET).exists()
+        assert ["systemctl", "--user", "disable", SYSTEMD_SOCKET] in _commands(run)
+
+    def test_a_crashed_upgrade_leaves_the_hold_and_start_clears_it(self, linux):
+        unit_dir, run = linux
+        _install_socket_mode(unit_dir)
+        unit = (unit_dir / SYSTEMD_SERVICE).read_text()
+        assert f"! -e {system.DEPLOY_HOLD}" in unit
+        assert system.hold_deploy_gate()
+        assert system.DEPLOY_HOLD.exists()
+        # The CLI dies: the kernel drops the flock, the hold file stays.
+        os.close(system._deploy_gate_fd)
+        system._deploy_gate_fd = None
+        assert system.DEPLOY_HOLD.exists()
+        assert system.start_service()
+        assert not system.DEPLOY_HOLD.exists()
+
+    def test_start_opens_the_gate_even_when_systemctl_fails(self, linux):
+        unit_dir, run = linux
+        _install_socket_mode(unit_dir)
+        assert system.hold_deploy_gate()
+        run.side_effect = subprocess.CalledProcessError(1, "systemctl")
+        assert not system.start_service()
+        assert system._deploy_gate_fd is None and not system.DEPLOY_HOLD.exists()
+
+    def test_failed_stop_opens_the_gate_before_waiting(self, monkeypatch):
+        assert system.hold_deploy_gate()
+        seen = []
+        monkeypatch.setattr(system, "wait_for_service_settled",
+                            lambda *a, **k: seen.append(system._deploy_gate_fd) or "inactive")
+        monkeypatch.setattr(system, "is_service_running", lambda: True)
+        system._handle_failed_stop(PORT, HOST)
+        assert seen == [None]
+
+    def test_rollback_removes_a_socket_created_beside_an_unchanged_unit(self, linux, monkeypatch):
+        unit_dir, run = linux
+        (unit_dir / SYSTEMD_SERVICE).write_text(generate_systemd_service(PORT, SECRET, HOST, socket=True))
+        update = reconcile_service_file(PORT, HOST, SECRET)
+        assert update.status == "unchanged" and update.socket_change == "created"
+        for name, value in {"stop_service": True, "wait_for_service_settled": "inactive",
+                            "get_current_commit": "ab71cd5newer", "checkout_version": (True, ""),
+                            "start_service": True, "database_in_use": False,
+                            "_print_service_state": None}.items():
+            monkeypatch.setattr(system, name, lambda *a, _v=value, **k: _v)
+        monkeypatch.setattr(system, "_resync_for_rollback", lambda *a, **k: None)
+
+        system._roll_back("19ae385deployed", None, port=PORT, host=HOST, service_update=update)
+
+        assert not (unit_dir / SYSTEMD_SOCKET).exists()
+
+    def test_upgrade_rebinds_a_socket_whose_address_changed(self, monkeypatch):
+        update = system.ServiceFileUpdate("unchanged")
+        update.socket_change = "updated"
+        monkeypatch.setattr(system, "_socket_active", lambda: True)
+        result, m = _upgrade(reconcile_service_file=dict(return_value=update),
+                             restart_socket=dict(return_value=True))
+
+        assert result.exit_code == 0, result.output
+        m["restart_socket"].assert_called_once_with()
+        assert m["start_service"].call_count == 1
+
+    def test_reconfigure_restarts_an_idle_socket(self):
+        with patch("cli.system.is_server_installed", return_value=True), \
+             patch("cli.system.load_server_json",
+                   return_value={"port": PORT, "host": HOST, "secret_key": SECRET}), \
+             patch("cli.system.save_server_json"), \
+             patch("cli.system.write_service_file", return_value="unit"), \
+             patch("cli.system._current_service_file", return_value=(None, None, None)), \
+             patch("cli.system.is_service_running", return_value=False), \
+             patch("cli.system._socket_active", return_value=True), \
+             patch("cli.system.is_port_in_use", return_value=False), \
+             patch("cli.system.stop_service", return_value=True) as stop, \
+             patch("cli.system.wait_for_service_stop", return_value=True), \
+             patch("cli.system.start_service", return_value=True) as start, \
+             patch("cli.system.health_check", return_value=True), \
+             patch("cli.system.set_api_url"):
+            result = CliRunner().invoke(system.system, ["reconfigure", "--port", "24300", "--yes"])
+
+        assert result.exit_code == 0, result.output
+        stop.assert_called_once_with()
+        start.assert_called_once_with()

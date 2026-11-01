@@ -61,7 +61,12 @@ def _no_socket_activation_by_default(monkeypatch, tmp_path_factory):
     tests/test_socket_activation.py opts in."""
     from cli import system
     monkeypatch.setattr(system, "socket_activation_supported", lambda: False)
-    monkeypatch.setattr(system, "DEPLOY_GATE", tmp_path_factory.mktemp("gate") / "deploy.lock")
+    gate_dir = tmp_path_factory.mktemp("gate")
+    monkeypatch.setattr(system, "DEPLOY_GATE", gate_dir / "deploy.lock")
+    monkeypatch.setattr(system, "DEPLOY_HOLD", gate_dir / "deploy.hold")
+    # A developer's own socket-activated install must not make older
+    # tests take the gated paths (PR #510 review).
+    monkeypatch.setattr(system, "get_socket_file_path", lambda: gate_dir / "no-such.socket")
     system.release_deploy_gate()
 
 
