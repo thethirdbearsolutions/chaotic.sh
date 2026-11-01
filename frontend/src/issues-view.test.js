@@ -73,7 +73,7 @@ vi.mock('./api.js', () => ({
 import { api } from './api.js';
 import { getIssues, getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setDetailNavContext, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject, setCurrentProject, getCurrentView } from './state.js';
 import { getProjects } from './projects.js';
-import { buildAssignees, resetAssignees } from './assignees.js';
+import { buildAssignees, resetAssignees, updateAssigneeFilter } from './assignees.js';
 import { getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { withEditsInFlight } from './inline-dropdown.js';
@@ -441,6 +441,23 @@ describe('issues-view', () => {
             showFilterCategoryOptions('assignee');
             const container = document.getElementById('filter-menu-options');
             expect(container.querySelector('input[value="a-idle"]').checked).toBe(true);
+        });
+
+        it('choosing a session identity in the popover keeps it in the filter select (CHT-1983)', () => {
+            buildAssignees(() => [
+                { user_id: 'u-1', user_name: 'Alice', user_email: 'alice@example.com' },
+            ], () => [
+                { id: 'a-reg', name: 'Registrar', parent_user_id: 'u-1', kind: 'service' },
+                { id: 'a-s1', name: 'Session One', parent_user_id: 'u-1', kind: 'session', registered_by_id: 'a-reg' },
+            ]);
+            updateAssigneeFilter();
+            showFilterCategoryOptions('assignee');
+            const popoverValues = [...document.querySelectorAll('#filter-menu-options .filter-option')].map(l => l.dataset.value);
+            const selectValues = [...document.getElementById('assignee-filter').options].map(o => o.value);
+            expect(popoverValues).toEqual(selectValues);
+            setAssigneeFilter('a-s1');
+            expect(document.getElementById('assignee-filter').value).toBe('a-s1');
+            expect(document.body.innerHTML).toContain('Session One');
         });
 
         it('names an agent in the assignee filter chip (CHT-1983)', () => {
