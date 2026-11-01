@@ -45,9 +45,8 @@ from app.schemas.template import (
     TemplateRitual,
     TemplateSettings,
 )
-from app.services.project_service import GATE_SETTINGS
 from app.services.ritual_service import RitualService
-from app.services.sprint_service import SprintService, default_change_loosens
+from app.services.sprint_service import SprintService
 
 # Ritual fields a template pins. group/conditions/weight/percentage are
 # deliberately not part of the portable snapshot (they reference
@@ -158,7 +157,6 @@ class TemplateService:
         update_rituals: list[str] | None = None,
         update_all: bool = False,
         dry_run: bool = False,
-        refuse_lifting=None,
     ) -> TemplateApplyReport:
         """Apply a template to a project. See module docstring for the
         idempotency contract. ``dry_run=True`` computes the same report
@@ -167,11 +165,6 @@ class TemplateService:
         Non-dry-run writes run in one transaction (PR #220 review
         finding 6): a mid-loop failure rolls back the whole apply
         instead of leaving a partially-applied template.
-
-        ``refuse_lifting``, when given, is called before a real apply
-        writes any setting, with the gate settings (GATE_SETTINGS) it
-        would switch from on to off; it raises to refuse the whole apply,
-        rituals included (CHT-1905).
         """
         body = TemplateBody.model_validate(json.loads(template.body))
         approved = set(update_rituals or [])
@@ -298,19 +291,6 @@ class TemplateService:
                             old_value=_enum_value(old), new_value=_enum_value(new),
                         )
                     )
-
-            if refuse_lifting is not None and not dry_run:
-                lifted = [
-                    field for field in to_set
-                    if field in GATE_SETTINGS and getattr(current, field) and not to_set[field]
-                ]
-                # A looser default budget reaches every planned sprint
-                # (CHT-1924): a higher number, or none where there was one.
-                if "default_sprint_budget" in to_set and await default_change_loosens(
-                    project.id, project.default_sprint_budget, to_set["default_sprint_budget"],
-                ):
-                    lifted.append("default_sprint_budget")
-                refuse_lifting(lifted)
 
             if to_set and not dry_run:
                 for field, value in to_set.items():

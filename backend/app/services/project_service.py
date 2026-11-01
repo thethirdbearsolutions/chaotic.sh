@@ -7,7 +7,7 @@ from oxyde import F, IntegrityError
 from app.services.credential_events import revoking
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
-from app.services.sprint_service import SprintService, default_change_loosens
+from app.services.sprint_service import SprintService
 from app.db.transactions import atomic
 from app.oxyde_models.document import (
     OxydeDocument, OxydeDocumentComment, OxydeDocumentActivity,
@@ -21,11 +21,9 @@ Project = OxydeProject
 
 
 
-# Project settings that gate a ticket's claim or close (CHT-1905). An
-# agent may turn one on but never off. The require_* ones hold agents to
-# a rule, so the agent being held cannot be the one to lift it;
-# human_rituals_required holds people, and an agent should not be able
-# to let people skip their rituals either.
+# Project settings that gate a ticket's claim or close. A PATCH that
+# turns one off is conditional on it still holding the value it was read
+# with, so anyone turning it on meanwhile is not silently undone (CHT-1926).
 GATE_SETTINGS = (
     "human_rituals_required",
     "require_estimate_on_claim",
@@ -97,11 +95,9 @@ class ProjectService:
 
         ``expect`` makes the write conditional: it lands only while those
         columns still hold those values, else ProjectChangedError and
-        nothing is written. The agent gate check uses it (CHT-1926): it
-        decided on the values it read, and a person turning a gate on in
-        between must not be undone by the agent's write. On that path a
-        new default budget that would raise a planned sprint's budget is
-        refused the same way (``_update_conditionally``)."""
+        nothing is written. update_project pins each gate the request turns
+        off (CHT-1926): the caller decided on the values it read, and anyone
+        turning that gate on in between must not be undone by this write."""
         update_data = project_in.model_dump(exclude_unset=True)
         # These columns are NOT NULL: an explicit null means "leave it"
         # rather than a failed write (PR #462 review 7).
@@ -139,22 +135,11 @@ class ProjectService:
         self, project: OxydeProject, update_data: dict, expect: dict, now: datetime,
         default_changed: bool,
     ) -> None:
-        """The ``expect`` path of ``update``, in one transaction.
-
-        The conditional UPDATE goes first, so on SQLite it takes the
-        write lock before anything else is read: from then on no sprint
-        can rotate under the request. A new default budget reaches the
-        planned sprints that follow it, which the caller's check read
-        earlier and nothing pinned; a person closing the active sprint
-        in between can create one with a lower carried budget (CHT-1495).
-        So the check runs again here, under the lock, against the old
-        default that ``expect`` held, and a loosening rolls the write
-        back (PR #487 review 1).
-        """
-        conditions = {
-            (f"{name}__isnull" if value is None else name): (True if value is None else value)
-            for name, value in expect.items()
-        }
+        """The ``expect`` path of ``update``: the conditional write and the
+        planned sprints' adoption of a new default, in one transaction."""
+        # The gate settings are NOT NULL bools, so a plain equality is
+        # the whole condition (PR #492 review 2).
+        conditions = dict(expect)
         async with atomic():
             matched = await OxydeProject.objects.filter(id=project.id, **conditions).update(
                 **update_data, updated_at=now,
@@ -164,12 +149,8 @@ class ProjectService:
                     "The project's settings changed while this request ran; read them again and retry."
                 )
             if default_changed:
-                if await default_change_loosens(
-                    project.id, project.default_sprint_budget, update_data["default_sprint_budget"],
-                ):
-                    raise ProjectChangedError(
-                        "The project's sprints changed while this request ran; read them again and retry."
-                    )
+                # Planned sprints follow the default until budgeted by
+                # hand (CHT-1495).
                 await SprintService().adopt_default_budget(project.id)
 
     async def delete(self, project: OxydeProject, *, actor_id: str | None = None) -> None:

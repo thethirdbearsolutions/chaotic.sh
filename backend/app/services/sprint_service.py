@@ -20,29 +20,6 @@ class SprintNotPlannedError(ValueError):
     """budget_follows_default was asked of a sprint that is not PLANNED."""
 
 
-
-def budget_loosened(old: int | None, new: int | None) -> bool:
-    """Whether a sprint budget going from ``old`` to ``new`` lets more
-    work close before arrears: a higher number, or none (unlimited) where
-    there was one (CHT-1924)."""
-    if old is None:
-        return False
-    return new is None or new > old
-
-
-async def default_change_loosens(project_id: str, old_default: int | None, new_default: int | None) -> bool:
-    """Whether changing a project's default sprint budget loosens a
-    budget: the default itself, or a planned sprint that follows it and
-    would take the new value (``adopt_default_budget``). While the default
-    is null such a sprint carries a budget of its own (CHT-1495), so a
-    number set then can still raise it (CHT-1924 review)."""
-    if budget_loosened(old_default, new_default):
-        return True
-    following = await OxydeSprint.objects.filter(
-        project_id=project_id, status=SprintStatus.PLANNED, budget_explicit=False,
-    ).all()
-    return any(budget_loosened(s.budget, new_default) for s in following)
-
 class SprintService:
     """Service for sprint operations."""
 
@@ -461,7 +438,8 @@ class SprintService:
         """
         update_data = sprint_in.model_dump(exclude_unset=True)
         # NOT NULL columns: an explicit null means "leave it", not a
-        # failed write (CHT-1924 review 3).
+        # failed write (CHT-1924 review 3; kept when CHT-1924 itself was
+        # reverted).
         for field in ("name", "status"):
             if field in update_data and update_data[field] is None:
                 del update_data[field]
