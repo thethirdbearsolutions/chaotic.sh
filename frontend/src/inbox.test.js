@@ -559,6 +559,23 @@ describe('Inbox triage list (CHT-1962)', () => {
         inboxActions['set-inbox-filter']({}, { filter: 'all' }); // reset module state
     });
 
+    it('mark read under the Unread filter takes the row out of the list now', async () => {
+        api.getInbox.mockResolvedValue([]);
+        await toggleInboxUnreadFilter(); // Unread on
+        let list = [{ ...ENTRY, id: 'u1' }, { ...ENTRY, id: 'u2' }];
+        getInboxEntries.mockImplementation(() => list);
+        setInboxEntries.mockImplementation((next) => { list = next; });
+        api.markInboxRead.mockResolvedValue({});
+        renderInbox();
+        inboxActions['mark-inbox-read']({ preventDefault: vi.fn() }, { entryId: 'u1' });
+        const ids = [...document.querySelectorAll('.inbox-row')].map(r => r.dataset.entryId);
+        expect(ids).toEqual(['u2']);
+        expect(document.querySelector('.inbox-row.keyboard-selected').dataset.entryId).toBe('u2');
+        await toggleInboxUnreadFilter(); // back to All
+        getInboxEntries.mockReset();
+        setInboxEntries.mockReset();
+    });
+
     it('the header shows the unread count', () => {
         document.body.innerHTML += '<span id="inbox-header-count"></span>';
         getInboxUnreadCount.mockReturnValue(7);

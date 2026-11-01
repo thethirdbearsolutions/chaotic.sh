@@ -7568,6 +7568,14 @@ input[type="checkbox"] {
     color: var(--text-primary);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
+/* Light: a white pill on a grey track, not a grey pill on white. */
+body.theme-light .segmented {
+    background: var(--bg-tertiary);
+}
+body.theme-light .segmented-btn.active {
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
 
 #inbox-list.list {
     gap: 0;
@@ -7575,10 +7583,6 @@ input[type="checkbox"] {
 
 .inbox-group + .inbox-group {
     margin-top: 16px;
-}
-/* A day whose last row was archived disappears with it. */
-.inbox-group:not(:has(.inbox-row)) {
-    display: none;
 }
 .inbox-group-header {
     font-size: var(--font-xs);
@@ -7599,7 +7603,6 @@ input[type="checkbox"] {
     min-height: 40px;
     border-bottom: 1px solid var(--border-color);
     background: transparent;
-    cursor: pointer;
     transition: background 0.1s ease;
 }
 .inbox-group .inbox-row:first-of-type {
@@ -7680,7 +7683,8 @@ input[type="checkbox"] {
     gap: 8px;
     flex-shrink: 0;
     /* A fixed column, so titles line up whatever the kind label. */
-    width: 170px;
+    width: 180px;
+    min-width: 0;
     overflow: hidden;
 }
 .inbox-row-header .badge {
@@ -7692,7 +7696,9 @@ input[type="checkbox"] {
     color: var(--text-muted);
     font-weight: 500;
     font-variant-numeric: tabular-nums;
-    min-width: 64px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .inbox-row-text {
@@ -7851,14 +7857,9 @@ input[type="checkbox"] {
     .inbox-row-meta { padding-top: 2px; }
     .inbox-header { align-items: stretch; }
     .inbox-row-header { width: auto; }
-    /* Phones triage from the expanded row's action bar. */
-    .inbox-row-hover-actions { display: none; }
-}
-
-/* In the inbox the cursor follows focus, so the selected row's tint is
-   the focus indicator; a ring on its toggle drew a box inside the row. */
-.inbox-row.keyboard-selected .inbox-row-toggle:focus-visible {
-    box-shadow: none;
+    /* Phones keep one-tap archive; mark read stays in the expanded row. */
+    .inbox-row-hover-actions { opacity: 1; }
+    .inbox-row-action[data-action="mark-inbox-read"] { display: none; }
 }
 
 /* Touch: 44px targets for the inbox's own buttons (PR #260 review 11). */

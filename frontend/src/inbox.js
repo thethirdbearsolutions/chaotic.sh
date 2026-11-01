@@ -306,7 +306,10 @@ function applyBackgroundRefresh(fresh, archivedIds) {
         // here or in another tab really is gone (CHT-1514).
         if (kept && showUnreadOnly && !archivedIds.has(expandedEntryId)) {
             next = [...fresh];
-            next.splice(Math.min(old.indexOf(kept), next.length), 0, kept);
+            // By time, not by its old position: newer entries may have
+            // arrived, and the day groups need the list in order (CHT-1962).
+            const at = next.findIndex(e => e.created_at < kept.created_at);
+            next.splice(at === -1 ? next.length : at, 0, kept);
         } else {
             expandedEntryId = null; // archived elsewhere: it really is gone
         }
@@ -482,6 +485,31 @@ function markEntryReadOptimistic(entryId) {
 }
 
 /**
+ * The row's Mark read action (CHT-1962). Under the Unread filter the row
+ * leaves the list now, as archive does, rather than vanishing under the
+ * reader at the next background refresh.
+ */
+export function markInboxEntryRead(entryId) {
+    const entries = getInboxEntries();
+    const idx = entries.findIndex(e => e.id === entryId);
+    if (idx === -1) return;
+    markEntryReadOptimistic(entryId);
+    if (showUnreadOnly) {
+        if (expandedEntryId === entryId) expandedEntryId = null;
+        setInboxEntries(getInboxEntries().filter(e => e.id !== entryId));
+        renderInbox();
+        selectInboxRow(idx);
+    } else {
+        rerenderInboxRows([entryId]);
+        // Its button is gone; keep focus on the row rather than <body>.
+        if (!document.activeElement || document.activeElement === document.body) {
+            const row = inboxRowById(entryId);
+            row?.querySelector('.inbox-row-toggle')?.focus({ preventScroll: true });
+        }
+    }
+}
+
+/**
  * Collapse any expanded row (j/k cursor moves and Escape use this). Returns
  * true if something was actually collapsed, so callers can decide whether a
  * key press was "consumed" by the collapse. Focus that was inside the row
@@ -567,7 +595,7 @@ const CHECK_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" 
 const ARCHIVE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="3" rx="1"/><path d="M3 6v6.5a1 1 0 001 1h8a1 1 0 001-1V6M6.5 9h3"/></svg>';
 
 function avatarInitial(name) {
-    const ch = (name || '').trim().charAt(0);
+    const ch = [...(name || '').trim()][0]; // whole code point, not half a pair
     return ch ? ch.toUpperCase() : '•';
 }
 
@@ -700,7 +728,8 @@ export function inboxDayGroup(iso, now = new Date()) {
  * The rows under day headers (CHT-1962). Entries keep the server's order
  * (newest first), so each bucket is one contiguous run and the cursor's
  * row index still equals the entry index: headers are not `.inbox-row`s.
- * A group the reader empties by archiving hides itself in CSS (:has).
+ * Labels are computed at render, so a tab left open past midnight shows
+ * yesterday as Today until the next load or refresh.
  */
 function renderInboxGroups(entries) {
     const groups = [];
@@ -710,9 +739,9 @@ function renderInboxGroups(entries) {
         if (last && last.label === label) last.entries.push(entry);
         else groups.push({ label, entries: [entry] });
     }
-    return groups.map(g => `
-        <section class="inbox-group" aria-label="${escapeAttr(g.label)}">
-            <h3 class="inbox-group-header">${escapeHtml(g.label)}</h3>
+    return groups.map((g, i) => `
+        <section class="inbox-group" aria-labelledby="inbox-group-${i}">
+            <h3 class="inbox-group-header" id="inbox-group-${i}">${escapeHtml(g.label)}</h3>
             ${g.entries.map(entry => renderInboxRow(entry)).join('')}
         </section>
     `).join('');
@@ -872,9 +901,7 @@ registerActions({
     'set-inbox-filter': (event, data) => setInboxUnreadFilter(data.filter === 'unread'),
     'mark-inbox-read': (event, data) => {
         event.preventDefault();
-        if (!data.entryId) return;
-        markEntryReadOptimistic(data.entryId);
-        rerenderInboxRows([data.entryId]);
+        if (data.entryId) markInboxEntryRead(data.entryId);
     },
     'mark-all-inbox-read': () => markAllInboxRead(),
     'retry-load-inbox': () => loadInbox({ focusFirst: true }),
