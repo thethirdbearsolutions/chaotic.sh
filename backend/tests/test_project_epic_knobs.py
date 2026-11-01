@@ -463,3 +463,56 @@ async def test_a_refused_template_apply_creates_no_rituals(client, auth_headers,
                           json={"project_id": test_project.id})
     assert r.status_code == 403, r.text
     assert await OxydeRitual.objects.filter(project_id=test_project.id, name="tpl-ritual").count() == 0
+
+
+# --- CHT-1926: an agent's write is conditional on what it was checked against
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget", [None, 10])
+async def test_a_gate_tightened_meanwhile_is_not_undone(test_project, db, budget):
+    from app.oxyde_models.project import OxydeProject
+    from app.schemas.project import ProjectUpdate
+    from app.services.project_service import GATE_SETTINGS, ProjectChangedError, ProjectService
+
+    await OxydeProject.objects.filter(id=test_project.id).update(default_sprint_budget=budget)
+    stale = await OxydeProject.objects.get(id=test_project.id)
+    expect = {name: getattr(stale, name) for name in (*GATE_SETTINGS, "default_sprint_budget")}
+    # A person turns the gate on after the agent's request read the row.
+    await OxydeProject.objects.filter(id=test_project.id).update(require_epic_on_close=True)
+    with pytest.raises(ProjectChangedError):
+        await ProjectService().update(stale, ProjectUpdate(require_epic_on_close=False, description="x"), expect=expect)
+    fresh = await OxydeProject.objects.get(id=test_project.id)
+    assert fresh.require_epic_on_close is True
+    assert fresh.description != "x"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget", [None, 10])
+async def test_the_conditional_write_lands_when_nothing_changed(test_project, db, budget):
+    from app.oxyde_models.project import OxydeProject
+    from app.schemas.project import ProjectUpdate
+    from app.services.project_service import GATE_SETTINGS, ProjectService
+
+    await OxydeProject.objects.filter(id=test_project.id).update(default_sprint_budget=budget)
+    project = await OxydeProject.objects.get(id=test_project.id)
+    expect = {name: getattr(project, name) for name in (*GATE_SETTINGS, "default_sprint_budget")}
+    updated = await ProjectService().update(
+        project, ProjectUpdate(require_epic_on_close=True, estimate_scale="fibonacci", description="y"), expect=expect,
+    )
+    assert (updated.require_epic_on_close, updated.description) == (True, "y")
+    assert updated.estimate_scale.value == "fibonacci"
+
+
+@pytest.mark.asyncio
+async def test_the_conditional_write_stores_enum_names(test_project, db):
+    """CLAUDE.md: the database stores an enum's .name, and .update() must too."""
+    from oxyde import execute_raw
+    from app.oxyde_models.project import OxydeProject
+    from app.schemas.project import ProjectUpdate
+    from app.services.project_service import GATE_SETTINGS, ProjectService
+
+    project = await OxydeProject.objects.get(id=test_project.id)
+    expect = {name: getattr(project, name) for name in (*GATE_SETTINGS, "default_sprint_budget")}
+    await ProjectService().update(project, ProjectUpdate(estimate_scale="fibonacci"), expect=expect)
+    [row] = await execute_raw("SELECT estimate_scale FROM projects WHERE id = ?", [test_project.id])
+    assert row["estimate_scale"] == "FIBONACCI"

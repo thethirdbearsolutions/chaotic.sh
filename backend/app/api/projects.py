@@ -7,7 +7,7 @@ from app.api.deps import (
 )
 from app.api.visibility import team_hidden, visible_project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
-from app.services.project_service import GATE_SETTINGS, ProjectService
+from app.services.project_service import GATE_SETTINGS, ProjectChangedError, ProjectService
 from app.services.sprint_service import default_change_loosens
 from app.services.team_service import TeamService
 from app.websocket import broadcast_project_event
@@ -172,7 +172,16 @@ async def update_project(
     await _validate_lead(project_in.lead_id, project.team_id, project.id, project.lead_id)
     await _validate_default_epic(project_in.default_epic_id, project.id, project.default_epic_id)
 
-    project = await project_service.update(project, project_in)
+    # An agent's write is conditional on the gate values it was checked
+    # against, so a person tightening one meanwhile wins (CHT-1926).
+    expect = (
+        {name: getattr(project, name) for name in (*GATE_SETTINGS, "default_sprint_budget")}
+        if current_user.is_agent else None
+    )
+    try:
+        project = await project_service.update(project, project_in, expect=expect)
+    except ProjectChangedError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     response = ProjectResponse.model_validate(project, from_attributes=True)
     await broadcast_project_event(project.team_id, "updated", response.model_dump(mode="json"), project_id=project.id)
     return response

@@ -33,6 +33,10 @@ GATE_SETTINGS = (
 )
 
 
+
+class ProjectChangedError(Exception):
+    """A conditional project update found the row changed (CHT-1926)."""
+
 class ProjectService:
     """Service for project operations."""
 
@@ -85,8 +89,16 @@ class ProjectService:
             team_id=team_id, key=key.upper()
         ).first()
 
-    async def update(self, project: OxydeProject, project_in: ProjectUpdate) -> OxydeProject:
-        """Update a project."""
+    async def update(
+        self, project: OxydeProject, project_in: ProjectUpdate, *, expect: dict | None = None,
+    ) -> OxydeProject:
+        """Update a project.
+
+        ``expect`` makes the write conditional: it lands only while those
+        columns still hold those values, else ProjectChangedError and
+        nothing is written. The agent gate check uses it (CHT-1926): it
+        decided on the values it read, and a person turning a gate on in
+        between must not be undone by the agent's write."""
         update_data = project_in.model_dump(exclude_unset=True)
         # These columns are NOT NULL: an explicit null means "leave it"
         # rather than a failed write (PR #462 review 7).
@@ -105,10 +117,24 @@ class ProjectService:
             "default_sprint_budget" in update_data
             and update_data["default_sprint_budget"] != project.default_sprint_budget
         )
-        for field, value in update_data.items():
-            setattr(project, field, value)
-        project.updated_at = datetime.now(timezone.utc)
-        await project.save(update_fields=set(update_data.keys()) | {"updated_at"})
+        now = datetime.now(timezone.utc)
+        if expect:
+            conditions = {
+                (f"{name}__isnull" if value is None else name): (True if value is None else value)
+                for name, value in expect.items()
+            }
+            matched = await OxydeProject.objects.filter(id=project.id, **conditions).update(
+                **update_data, updated_at=now,
+            )
+            if not matched:
+                raise ProjectChangedError(
+                    "The project's settings changed while this request ran; read them again and retry."
+                )
+        else:
+            for field, value in update_data.items():
+                setattr(project, field, value)
+            project.updated_at = now
+            await project.save(update_fields=set(update_data.keys()) | {"updated_at"})
         if default_changed:
             # Planned sprints follow the default until budgeted by hand
             # (CHT-1495).
