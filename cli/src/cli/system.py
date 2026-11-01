@@ -1924,6 +1924,147 @@ def rebuild_frontend() -> tuple[bool, str]:
         return False, "npm ci/build timed out"
 
 
+# Release staging (CHT-1969). The upgrade used to do all of its slow work
+# (dependency sync, `npm ci` and the bundle build) with the server stopped,
+# so every deploy was a minute or more of downtime. It now checks the
+# target out into a git worktree beside the server checkout and does that
+# work there first, while the old server keeps serving: the uv cache is
+# warm for the in-place sync, and the built bundle is copied in instead of
+# rebuilt. The stopped window is then checkout, sync, CLI reinstall,
+# migrate, copy, start.
+STAGING_DIR = GLOBAL_CONFIG_DIR / "staging"
+FRONTEND_BUNDLE = Path("frontend") / "static" / "js" / "app.bundle.js"
+
+
+class PreparedRelease:
+    """What prepare_release() did. `ok` False means the target cannot be
+    deployed (its dependency sync failed) and nothing should be stopped.
+    `staged` False with `ok` True means staging itself was unavailable and
+    the upgrade falls back to doing everything in the stopped window.
+    `bundle` is the built frontend bundle in the staging checkout, or None
+    with `frontend_message` saying why (skipped or failed: not fatal)."""
+
+    def __init__(self, ok: bool, message: str, staged: bool = False,
+                 bundle: Path | None = None, frontend_message: str = "",
+                 commit: str | None = None):
+        self.ok = ok
+        self.message = message
+        self.staged = staged
+        self.bundle = bundle
+        self.frontend_message = frontend_message
+        self.commit = commit
+
+
+def _stage_checkout(target_commit: str) -> tuple[bool, str]:
+    """Put STAGING_DIR at `target_commit`: a detached git worktree of the
+    server checkout, created on first use and reused after. Returns
+    (success, message)."""
+    try:
+        if (STAGING_DIR / ".git").exists():
+            run_command(["git", "checkout", "--detach", "--force", target_commit], cwd=STAGING_DIR, timeout=120)
+        else:
+            if STAGING_DIR.exists():
+                # Not a worktree (left over, or made by hand): it is ours to
+                # replace, it lives under ~/.chaotic and holds only builds.
+                shutil.rmtree(STAGING_DIR)
+            # A worktree whose directory was deleted is still registered;
+            # prune it or `worktree add` refuses the path.
+            run_command(["git", "worktree", "prune"], cwd=SERVER_DIR, timeout=30)
+            run_command(
+                ["git", "worktree", "add", "--detach", "--force", str(STAGING_DIR), target_commit],
+                cwd=SERVER_DIR, timeout=120,
+            )
+        return True, ""
+    except subprocess.CalledProcessError as e:
+        return False, _command_output(e)
+    except subprocess.TimeoutExpired:
+        return False, "git timed out"
+    except OSError as e:
+        return False, str(e)
+
+
+def _build_frontend_in(checkout: Path) -> tuple[Path | None, str]:
+    """`npm ci && npm run build` in `checkout`'s frontend (rebuild_frontend's
+    steps, run elsewhere). Returns (the built bundle, message); the bundle
+    is None when it was skipped or failed, which never stops an upgrade."""
+    if shutil.which("npm") is None or shutil.which("node") is None:
+        return None, "skipped (node/npm not on PATH; serving committed bundle)"
+    frontend_dir = checkout / "frontend"
+    if not (frontend_dir / "package.json").exists():
+        return None, "skipped (no frontend/package.json)"
+    try:
+        run_command(["npm", "ci"], cwd=frontend_dir, timeout=600)
+        run_command(["npm", "run", "build"], cwd=frontend_dir, timeout=180)
+    except subprocess.CalledProcessError as e:
+        return None, f"npm ci/build failed: {(e.stderr or '').strip()[:200]}"
+    except subprocess.TimeoutExpired:
+        return None, "npm ci/build timed out"
+    except OSError as e:
+        return None, f"npm ci/build failed: {e}"
+    bundle = checkout / FRONTEND_BUNDLE
+    if not bundle.is_file():
+        return None, f"build produced no {FRONTEND_BUNDLE}"
+    return bundle, "built"
+
+
+def prepare_release(target_commit: str) -> PreparedRelease:
+    """Do the upgrade's slow, server-independent work for `target_commit`
+    before the server is stopped (CHT-1969). Never touches the server
+    checkout, its venvs or the database.
+
+    - The staging worktree cannot be made: not fatal, the upgrade does the
+      work in the stopped window as it used to (staged=False).
+    - `just sync` fails there: fatal (ok=False). The same lock would fail
+      the in-place sync with the server down, so stop before stopping.
+    - The frontend build fails: not fatal, as in rebuild_frontend.
+    """
+    ok, err = _stage_checkout(target_commit)
+    if not ok:
+        return PreparedRelease(True, f"could not create the staging checkout ({err}); "
+                                     "preparing during the stop instead")
+    try:
+        run_command(["just", "sync"], cwd=STAGING_DIR, timeout=300, own_group=True)
+    except subprocess.CalledProcessError as e:
+        return PreparedRelease(False, f"Dependency sync failed for the target version:\n{_command_output(e)}")
+    except subprocess.TimeoutExpired:
+        return PreparedRelease(False, "Dependency sync timed out for the target version")
+    except OSError as e:  # e.g. just not on this shell's PATH
+        return PreparedRelease(False, f"Could not run a command: {e}")
+    bundle, fe_message = _build_frontend_in(STAGING_DIR)
+    return PreparedRelease(True, "dependencies synced", staged=True, bundle=bundle,
+                           frontend_message=fe_message, commit=target_commit)
+
+
+def install_prepared_frontend(prepared: PreparedRelease | None) -> tuple[bool, str]:
+    """Put the frontend bundle in place in the server checkout, inside the
+    stopped window. With a bundle built in staging for the commit now
+    checked out, that is one atomic copy. Without staging, it is the old
+    in-place rebuild_frontend(). When staging ran and its build was skipped
+    or failed, nothing is rebuilt here: it would fail the same way, with
+    the server down."""
+    if prepared is None or not prepared.staged:
+        return rebuild_frontend()
+    if prepared.bundle is None:
+        return prepared.frontend_message.startswith("skipped"), prepared.frontend_message
+    head = get_current_commit()
+    if head and prepared.commit and head != prepared.commit:
+        return False, (f"staged bundle is for {prepared.commit[:7]}, not the checked-out {head[:7]}; "
+                       "serving the committed bundle")
+    dest = PROJECT_DIR / FRONTEND_BUNDLE
+    tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(prepared.bundle, tmp)
+        os.replace(tmp, dest)
+    except OSError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False, f"could not copy the built bundle: {e}"
+    return True, "built before the stop; copied in"
+
+
 # CLI Command Group
 @click.group()
 def system():
@@ -2769,10 +2910,14 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     """Upgrade to a new version.
 
     This command:
-    1. Backs up your database (unless --no-backup)
-    2. Stops the server
-    3. Pulls and checks out the new version
-    4. Syncs dependencies and runs database migrations
+    1. Prepares the new version in a staging checkout (~/.chaotic/staging)
+       while the server keeps running: syncs its dependencies, which warms
+       the cache for step 4, and builds the frontend bundle there. If the
+       sync fails, it stops here and the server was never stopped
+    2. Stops the server and backs up your database (unless --no-backup)
+    3. Checks out the new version
+    4. Syncs dependencies, runs database migrations and copies in the
+       bundle built in step 1
     5. Regenerates the systemd unit / launchd plist when what this CLI
        would write differs and only adds settings (backing up the old
        file to ~/.chaotic/service-backups and printing a redacted
@@ -2879,6 +3024,23 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print("\n[green]Already on the latest version.[/green]")
         raise SystemExit(0)
 
+    # CHT-1969: the slow work (dependency sync, npm ci, the bundle build)
+    # runs in a staging checkout while the old server is still serving.
+    # Nothing here touches the server checkout or the database, so a
+    # failure stops the upgrade with the server never having gone down.
+    prepared = None
+    if not already_current:
+        console.print("Preparing the new version while the server keeps running...")
+        prep_started = time.monotonic()
+        prepared = prepare_release(target_commit)
+        if not prepared.ok:
+            console.print(f"[red]{escape(prepared.message)}[/red]")
+            console.print("Nothing was changed and the server was not stopped.")
+            raise SystemExit(1)
+        console.print(f"  [dim]{escape(prepared.message)} ({time.monotonic() - prep_started:.1f}s)[/dim]")
+        if prepared.staged:
+            console.print(f"  [dim]frontend: {escape(prepared.frontend_message)}[/dim]")
+
     # Stop server FIRST (before backup to ensure consistent db state).
     # Stop anything that is not settled-stopped (CHT-1474): a crash-looping
     # unit sits in "activating" (auto-restart) and is not "running", but
@@ -2903,6 +3065,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             raise SystemExit(1)
         if not wait_for_service_stop(timeout=10):
             console.print("[yellow]Warning: Service may still be stopping[/yellow]")
+    # How long the server is down, reported at the end (CHT-1969).
+    down_since = time.monotonic() if must_stop else None
 
     # Confirm action
     if not yes:
@@ -3008,10 +3172,12 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         raise SystemExit(130 if interrupted else 1)
     console.print(f"  [dim]{escape(message)}[/dim]")
 
-    # Rebuild frontend bundle so it matches the updated src/. Non-fatal: the
-    # committed bundle (if a PR remembered to commit it) is still served.
-    console.print("Rebuilding frontend...")
-    fe_ok, fe_msg = rebuild_frontend()
+    # Put the frontend bundle in place so it matches the updated src/:
+    # copied from the staging build when there is one (CHT-1969), rebuilt
+    # here otherwise. Non-fatal: the committed bundle (if a PR remembered
+    # to commit it) is still served.
+    console.print("Installing frontend bundle...")
+    fe_ok, fe_msg = install_prepared_frontend(prepared)
     if fe_ok:
         console.print(f"  [dim]{esc(fe_msg)}[/dim]")
     else:
@@ -3097,6 +3263,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             )
         else:
             console.print("[green]OK[/green]")
+    if down_since is not None:
+        console.print(f"[dim]Server was down for {time.monotonic() - down_since:.1f}s.[/dim]")
     version_after = get_remote_version(port, host=host)
     if version_after and version_after.get("git_dirty"):
         console.print("[yellow]Warning: the server checkout has uncommitted changes (git_dirty).[/yellow]")

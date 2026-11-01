@@ -39,6 +39,15 @@ def _no_process_team(monkeypatch):
     monkeypatch.setattr(mcp_backend, "_key_projects", {})
 
 
+@pytest.fixture(autouse=True)
+def _staging_in_tmp(monkeypatch, tmp_path_factory):
+    """`system upgrade` prepares the target in a staging checkout
+    (CHT-1969). No test may reach the real ~/.chaotic/staging, which
+    prepare_release() may delete and recreate."""
+    from cli import system
+    monkeypatch.setattr(system, "STAGING_DIR", tmp_path_factory.mktemp("staging-root") / "staging")
+
+
 @pytest.fixture
 def cli_runner():
     """Create a Click test runner with profile set."""
