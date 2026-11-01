@@ -96,14 +96,13 @@ class TestRefused:
         for path in (
             f"/api/issues/search?team_id={other.id}&q=x&project_id={test_project.id}",
             f"/api/issues/activities?team_id={other.id}&project_id={test_project.id}",
-        ):
-            assert (await client.get(path, headers=headers)).status_code == 404, path
-        for path in (
-            f"/api/teams/{other.id}/documents?project_id={test_project.id}",
+            # The comment feed answers like the activity feed (CHT-1952), a
+            # 404 that does not rest on its SQL's team pin alone.
             f"/api/issues/comments?team_id={other.id}&project_id={test_project.id}",
         ):
-            listed = await client.get(path, headers=headers)
-            assert listed.status_code == 200 and listed.json() == [], path
+            assert (await client.get(path, headers=headers)).status_code == 404, path
+        listed = await client.get(f"/api/teams/{other.id}/documents?project_id={test_project.id}", headers=headers)
+        assert listed.status_code == 200 and listed.json() == []
         assert (await client.get(f"/api/teams/{other.id}/projects", headers=headers)).status_code == 403
 
     async def test_team_level_document(self, client, proj_agent, test_document):

@@ -777,7 +777,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * GET /api/issues/comments
         * List Team Comments
-        * List recent comments for a team (both issue and document comments).  &#x60;&#x60;project_id&#x60;&#x60; narrows the feed to one project&#39;s issues and documents. That is the project-confined path, as in &#x60;&#x60;list_documents&#x60;&#x60;: project access is enough, so a project-scoped agent (refused the team-wide feed, CHT-1780) can read its own project&#39;s comments, and a project the caller sees in another team lists nothing (CHT-1952).
+        * List recent comments for a team (both issue and document comments).  &#x60;&#x60;project_id&#x60;&#x60; narrows the feed to one project&#39;s issues and documents. That is the project-confined path, as in &#x60;&#x60;list_documents&#x60;&#x60;: project access is enough, so a project-scoped agent (refused the team-wide feed, CHT-1780) can read its own project&#39;s comments (CHT-1952). A project the caller sees in another team answers 404, as on the activity feed beside it.
          * @param teamId  
          * @param projectId  (optional)
          * @param skip  (optional, default to 0)

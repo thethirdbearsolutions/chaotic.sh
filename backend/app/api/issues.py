@@ -10,8 +10,8 @@ from app.api.deps import (
     confined_project_id, is_eligible_project_member,
 )
 from app.api.visibility import (
-    can_see_label, can_see_project, not_found, project_filter_in_team, project_filter_in_team_or_none,
-    shown_emails, team_hidden, visible_issue, visible_issue_by_identifier, visible_project, visible_sprint,
+    can_see_label, can_see_project, not_found, project_filter_in_team, shown_emails, team_hidden,
+    visible_issue, visible_issue_by_identifier, visible_project, visible_sprint,
 )
 from app.utils import ensure_utc
 
@@ -1125,16 +1125,17 @@ async def list_team_comments(
     ``project_id`` narrows the feed to one project's issues and documents.
     That is the project-confined path, as in ``list_documents``: project
     access is enough, so a project-scoped agent (refused the team-wide
-    feed, CHT-1780) can read its own project's comments, and a project the
-    caller sees in another team lists nothing (CHT-1952).
+    feed, CHT-1780) can read its own project's comments (CHT-1952). A
+    project the caller sees in another team answers 404, as on the
+    activity feed beside it.
     """
     issue_service = IssueService()
     document_service = DocumentService()
 
     if project_id:
-        project = await project_filter_in_team_or_none(current_user, project_id, team_id)
-        if project is None:
-            return []
+        await project_filter_in_team(
+            current_user, project_id, team_id, elsewhere_detail="Project not found",
+        )
     elif not await can_read_team_data(current_user, team_id):
         raise team_hidden()
 
