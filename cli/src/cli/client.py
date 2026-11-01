@@ -1,5 +1,8 @@
 """API client for CLI."""
+import re
 import sys
+import time
+import uuid
 import httpx
 from urllib.parse import quote, urlencode
 from cli.config import get_api_url, get_token, get_api_key
@@ -25,8 +28,98 @@ class APIError(Exception):
         self.detail = detail
 
 
+class WriteOutcomeUnknown(APIError):
+    """A write went out and no answer came back (CHT-1957): it timed out,
+    or the connection dropped, after the request was sent. The server may
+    have done it, so the caller must look before sending it again. The
+    client has already resent it as far as that is safe (see
+    `Client._request`)."""
+
+    ERROR_CODE = "write_outcome_unknown"
+
+    def __init__(self, method: str, path: str, cause: Exception):
+        message = (
+            f"No answer from the server for {method} {path.split('?', 1)[0]} "
+            f"({type(cause).__name__}). The write may have landed; check before retrying."
+        )
+        super().__init__(message, status_code=None, detail={"error_code": self.ERROR_CODE, "message": message})
+
+
+# How long a request may take (CHT-1957). httpx's default is 5 s for
+# everything, which is also the server's SQLite busy_timeout: a write
+# queued behind others could be done just after the client gave up on
+# it. A write gets longer than a read, since giving up on one leaves its
+# outcome unknown.
+READ_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+WRITE_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+IDEMPOTENCY_HEADER = "Idempotency-Key"
+# Attempts at one write (the first one included), and the waits between
+# them when the server named none (Retry-After).
+WRITE_ATTEMPTS = 3
+WRITE_RETRY_WAITS = (1.0, 2.0)
+# The longest Retry-After honoured; a longer one ends the retries.
+MAX_RETRY_AFTER = 10.0
+
+# The write routes the server answers once per Idempotency-Key (the
+# @idempotent endpoints of backend/app/api, CHT-1621; the backend's
+# tests/test_idempotency.py checks this list against them). A write that
+# went out and got no answer is resent, with the same key, only on these:
+# on any other route a resend could do the write twice.
+IDEMPOTENT_ROUTES = (
+    ("POST", "/projects/{project_id}/issues"),
+    ("PATCH", "/issues/{issue_id}"),
+    ("POST", "/issues/{issue_id}/comments"),
+    ("POST", "/inbox/{entry_id}/read"),
+    ("POST", "/inbox/{entry_id}/archive"),
+    ("POST", "/rituals/{ritual_id}/complete-issue/{issue_id}"),
+    ("POST", "/rituals/{ritual_id}/approve-issue/{issue_id}"),
+    ("POST", "/rituals/{ritual_id}/reject-issue/{issue_id}"),
+)
+_IDEMPOTENT_PATTERNS = tuple(
+    (method, re.compile("^" + re.sub(r"\\\{[a-z_]+\\\}", "[^/]+", re.escape(template)) + "$"))
+    for method, template in IDEMPOTENT_ROUTES
+)
+
+# Failures where the request never reached the server: any write may be
+# sent again. (ConnectTimeout is a TimeoutException: test this first.)
+_NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+# Failures after the request may have gone out: the outcome is unknown.
+_NO_ANSWER = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
+# The server's "ask again shortly" answers to a keyed write (CHT-1621):
+# the first attempt is still running, or the database was busy.
+_RETRY_ME = {(409, "idempotency_in_flight"), (503, "idempotency_busy")}
+
+
+def honours_idempotency_key(method: str, path: str) -> bool:
+    """Whether the server answers this write once per Idempotency-Key."""
+    bare = path.split("?", 1)[0]
+    return any(m == method and pattern.match(bare) for m, pattern in _IDEMPOTENT_PATTERNS)
+
+
+def _retry_after(response) -> float | None:
+    """The wait a "retry me" answer asks for, or None when it is not one."""
+    if response.status_code not in (409, 503):
+        return None
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        return None
+    code = detail.get("error_code") if isinstance(detail, dict) else None
+    if (response.status_code, code) not in _RETRY_ME:
+        return None
+    headers = getattr(response, "headers", None) or {}
+    try:
+        return max(0.0, float(headers.get("Retry-After", 1)))
+    except (TypeError, ValueError):
+        return 1.0
+
+
 class Client:
     """API client."""
+
+    # A seam for tests, which do not wait.
+    _sleep = staticmethod(time.sleep)
 
     @staticmethod
     def _configured_credential() -> str | None:
@@ -92,6 +185,14 @@ class Client:
         for that key re-registers once. `as_configured` sends the
         configured credential itself (`agent register`, which is the
         registrar's own call).
+
+        A write (CHT-1957) carries one Idempotency-Key, made here, on
+        every attempt, and is sent up to WRITE_ATTEMPTS times in all:
+        again when it never reached the server; when the server asks for
+        a retry (the first attempt still running, or a busy database);
+        and, only on a route that honours the key, when it went out and
+        got no answer, since the server then does it at most once. A
+        write left without an answer raises WriteOutcomeUnknown.
         """
         ref = credential = None
         if not as_configured:
@@ -108,20 +209,52 @@ class Client:
         # Header mode (no registrar key here): the session key goes in
         # X-Chaotic-Key, the header the proxy passes through (CHT-1913).
         key_header = bool(ref) and session_identity.registrar_key_via() == "header"
-        with httpx.Client() as client:
+        method = method.upper()
+        write = method in WRITE_METHODS
+        idempotency_key = uuid.uuid4().hex if write else None
+        with httpx.Client(timeout=WRITE_TIMEOUT if write else READ_TIMEOUT) as client:
             send = getattr(client, method.lower())
 
             def _send(credential):
-                kwargs = {"headers": self._headers(credential, key_header=key_header)}
+                headers = self._headers(credential, key_header=key_header)
+                if idempotency_key:
+                    headers[IDEMPOTENCY_HEADER] = idempotency_key
+                kwargs = {"headers": headers}
                 if data is not None:
                     kwargs["json"] = data
                 return send(url, **kwargs)
 
-            response = _send(key)
+            def _send_write(credential):
+                """_send, with a write's retries (docstring above)."""
+                unanswered = None  # an earlier attempt that may have landed
+                for attempt in range(1, WRITE_ATTEMPTS + 1):
+                    last = attempt == WRITE_ATTEMPTS
+                    wait = WRITE_RETRY_WAITS[min(attempt - 1, len(WRITE_RETRY_WAITS) - 1)]
+                    try:
+                        response = _send(credential)
+                    except _NOT_SENT as exc:
+                        if last:
+                            if unanswered is not None:
+                                raise WriteOutcomeUnknown(method, path, unanswered) from exc
+                            raise
+                    except _NO_ANSWER as exc:
+                        if last or not honours_idempotency_key(method, path):
+                            raise WriteOutcomeUnknown(method, path, exc) from exc
+                        unanswered = exc
+                    else:
+                        asked = _retry_after(response)
+                        if asked is None or last or asked > MAX_RETRY_AFTER:
+                            return response
+                        wait = asked
+                    self._sleep(wait)
+                raise AssertionError("unreachable")  # pragma: no cover
+
+            send_once = _send_write if write else _send
+            response = send_once(key)
             if ref and response.status_code == 401:
                 # Expired or revoked: register again, once.
                 key = self._session_key(ref, credential, api_url, failed_key=key)
-                response = _send(key)
+                response = send_once(key)
 
             if response.status_code == 204:
                 return None

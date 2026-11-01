@@ -55,8 +55,10 @@ async def _comments(issue) -> list:
 
 
 # The routes the Android write queue sends (CHT-1613): inbox actions'
-# paths (CHT-1607) and the issue routes.
+# paths (CHT-1607) and the issue routes; and creating an issue, which the
+# CLI resends after a lost answer (CHT-1957).
 EXPECTED_ROUTES = {
+    ("POST", "/api/projects/{project_id}/issues"),
     ("POST", "/api/inbox/{entry_id}/read"),
     ("POST", "/api/inbox/{entry_id}/archive"),
     ("POST", "/api/rituals/{ritual_id}/complete-issue/{issue_id}"),
@@ -92,6 +94,14 @@ class TestWiring:
                 found.add((method, rc.path))
         assert found == EXPECTED_ROUTES
 
+    def test_the_cli_resends_on_exactly_these_routes(self):
+        # The CLI resends a write whose answer it lost only where the
+        # server answers once per key (CHT-1957): a route missing from
+        # its list loses that, and one too many could post twice.
+        from cli.client import IDEMPOTENT_ROUTES
+
+        assert {(m, "/api" + p) for m, p in IDEMPOTENT_ROUTES} == EXPECTED_ROUTES
+
     def test_an_unmarked_route_on_an_idempotent_router_is_plain(self):
         [route] = [
             rc.original_route for rc in _route_contexts()
@@ -106,6 +116,36 @@ class TestWiring:
         route = IdempotentRoute("/x", create_comment, methods=["POST"])
         again = IdempotentRoute("/x", create_comment, methods=["POST"], dependencies=route.dependencies)
         assert [d.dependency for d in again.dependencies].count(_idempotency_scope) == 1
+
+
+class TestIssueCreate:
+    """CHT-1957: the CLI resends a create whose answer it lost."""
+
+    async def _create(self, client, headers, project, title="Once", key=None):
+        if key is not None:
+            headers = _keyed(headers, key)
+        return await client.post(f"/api/projects/{project.id}/issues", json={"title": title}, headers=headers)
+
+    async def test_a_resend_creates_one_issue_and_answers_with_it(self, client, auth_headers, test_project):
+        first = await self._create(client, auth_headers, test_project, key="c-1")
+        again = await self._create(client, auth_headers, test_project, key="c-1")
+
+        assert first.status_code == again.status_code == 201
+        assert again.json() == first.json()
+        assert again.headers[REPLAYED_HEADER] == "true"
+        assert await OxydeIssue.objects.filter(project_id=test_project.id).count() == 1
+
+    async def test_a_new_key_is_a_new_issue(self, client, auth_headers, test_project):
+        a = await self._create(client, auth_headers, test_project, key="c-1")
+        b = await self._create(client, auth_headers, test_project, key="c-2")
+        assert a.json()["identifier"] != b.json()["identifier"]
+        assert await OxydeIssue.objects.filter(project_id=test_project.id).count() == 2
+
+    async def test_without_the_header_nothing_changes(self, client, auth_headers, test_project):
+        await self._create(client, auth_headers, test_project)
+        await self._create(client, auth_headers, test_project)
+        assert await OxydeIssue.objects.filter(project_id=test_project.id).count() == 2
+        assert await OxydeIdempotencyRecord.objects.count() == 0
 
 
 class TestCommentCreate:

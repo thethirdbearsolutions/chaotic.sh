@@ -239,13 +239,22 @@ def require_project(f):
 
 
 def handle_error(f):
-    """Decorator to handle API errors, httpx errors, and ClickExceptions."""
+    """Decorator to handle API errors, httpx errors, and ClickExceptions.
+
+    Under --json every failure it catches is one JSON object on stdout,
+    `{"error": message}`, with an `error_code` where there is one
+    (CHT-1957): `write_outcome_unknown` for a write that may have landed,
+    and `connect_error`/`timeout`/`network_error` for the transport."""
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
         except APIError as e:
             if is_json_output():
-                output_json({"error": str(e)})
+                payload = {"error": str(e)}
+                code = e.detail.get("error_code") if isinstance(e.detail, dict) else None
+                if code:
+                    payload["error_code"] = code
+                output_json(payload)
             else:
                 # Server text (issue titles, rejection reasons) is not
                 # markup: escape it so a `[/]` cannot crash the print or
@@ -264,24 +273,33 @@ def handle_error(f):
         except httpx.ConnectError:
             msg = f"Could not connect to server at {get_api_url()}. Is the server running?"
             if is_json_output():
-                output_json({"error": msg})
+                output_json({"error": msg, "error_code": "connect_error"})
             else:
                 console.print(f"[red]{esc(msg)}[/red]")
             raise SystemExit(1)
         except httpx.TimeoutException:
+            # A write that may have landed is a WriteOutcomeUnknown (an
+            # APIError, above); this is a read, or a write never sent.
             msg = "Request timed out. The server may be overloaded or unreachable."
             if is_json_output():
-                output_json({"error": msg})
+                output_json({"error": msg, "error_code": "timeout"})
             else:
                 console.print(f"[red]{esc(msg)}[/red]")
             raise SystemExit(1)
         except httpx.HTTPError as e:
             msg = f"Network error: {e}"
             if is_json_output():
-                output_json({"error": msg})
+                output_json({"error": msg, "error_code": "network_error"})
             else:
                 console.print(f"[red]{esc(msg)}[/red]")
             raise SystemExit(1)
+        except Exception as e:
+            # Anything else still answers --json with JSON, never a
+            # traceback alone (CHT-1957); without --json it is a bug to see.
+            if not is_json_output():
+                raise
+            output_json({"error": f"Unexpected error: {type(e).__name__}: {e}", "error_code": "internal_error"})
+            raise SystemExit(1) from e
     wrapper.__name__ = f.__name__
     wrapper.__doc__ = f.__doc__
     return wrapper

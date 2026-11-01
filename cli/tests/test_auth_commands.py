@@ -679,7 +679,8 @@ class TestAuthVerifyEmail:
         result = cli_runner.invoke(cli, ['auth', 'verify-email', '--code', '1', '--json'])
 
         assert result.exit_code == 1
-        assert json.loads(result.stdout) == {"error": "That code is wrong"}
+        # The server's error_code rides along (CHT-1957).
+        assert json.loads(result.stdout) == {"error": "That code is wrong", "error_code": "invalid_verification_code"}
 
     def test_local_time_falls_back_to_the_raw_value(self):
         from cli.commands.auth import _local_time

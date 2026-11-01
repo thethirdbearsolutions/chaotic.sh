@@ -40,6 +40,7 @@ chatter, which the shared error handler (rich-rendered, exit 1 for
 everything) would flatten. The scope helpers below re-implement the
 require-team/project checks with await's exit-code semantics.
 """
+import functools
 import json
 import os
 import random
@@ -448,6 +449,53 @@ def _is_transient(exc: Exception) -> bool:
     return isinstance(exc, _TRANSIENT_HTTPX_ERRORS)
 
 
+_DEADLINE = "chaotic_await_deadline"
+"""click context meta key: the wall-clock time --timeout expires at,
+set once when the subcommand starts (see _common_options), so the
+lookups before the poll loop count against it too."""
+
+
+def _deadline() -> float | None:
+    ctx = click.get_current_context(silent=True)
+    return ctx.meta.get(_DEADLINE) if ctx is not None else None
+
+
+def _backoff_wait(backoff_idx: int, deadline: float | None) -> float:
+    base = _BACKOFF_SCHEDULE[min(backoff_idx, len(_BACKOFF_SCHEDULE) - 1)]
+    # ±25% jitter so concurrent waiters don't synchronize their retries
+    # against a struggling backend.
+    wait = base * random.uniform(0.75, 1.25)
+    if deadline is not None:
+        wait = min(wait, max(0.0, deadline - time.time()))
+    return wait
+
+
+def _retrying(call, what: str):
+    """`call()`, retrying transient errors (CHT-1957) the way the poll
+    loop does, for the lookups a subcommand makes before it: a ReadTimeout
+    there must not end the wait with exit 1. Gives up only at --timeout,
+    with 124 as the poll loop would; anything not transient propagates."""
+    deadline = _deadline()
+    backoff_idx = 0
+    while True:
+        try:
+            return call()
+        except Exception as exc:  # noqa: BLE001 - re-raised unless transient
+            if not _is_transient(exc):
+                raise
+            if deadline is not None and time.time() >= deadline:
+                _stderr("await: timeout")
+                raise SystemExit(124) from exc
+            wait = _backoff_wait(backoff_idx, deadline)
+            backoff_idx += 1
+            _stderr(
+                f"await: transient error {what} ({type(exc).__name__}); "
+                f"retrying in {wait:.0f}s"
+            )
+            if wait > 0:
+                time.sleep(wait)
+
+
 # ---------------------------------------------------------------------------
 # Polling loop
 # ---------------------------------------------------------------------------
@@ -544,13 +592,8 @@ def _poll(
             activities = _fetch_new_pages(fetch_page, floor)
         except Exception as exc:  # noqa: BLE001 - we re-classify below
             if _is_transient(exc):
-                base = _BACKOFF_SCHEDULE[min(backoff_idx, len(_BACKOFF_SCHEDULE) - 1)]
-                # ±25% jitter so concurrent waiters don't synchronize
-                # their retries against a struggling backend.
-                wait = base * random.uniform(0.75, 1.25)
+                wait = _backoff_wait(backoff_idx, deadline)
                 backoff_idx += 1
-                if deadline is not None:
-                    wait = min(wait, max(0.0, deadline - time.time()))
                 _stderr(
                     f"await: transient error fetching activities "
                     f"({type(exc).__name__}); retrying in {wait:.0f}s"
@@ -633,7 +676,22 @@ _TYPE_OPTION_HELP = (
 
 
 def _common_options(f):
-    """Shared flags across every await subcommand."""
+    """Shared flags across every await subcommand. Also starts the
+    --timeout clock before the subcommand's own lookups (_retrying)."""
+    command = f
+
+    @functools.wraps(command)
+    def f(*args, **kwargs):
+        try:
+            secs = parse_duration(kwargs.get("timeout_spec"))
+        except click.BadParameter as exc:
+            _stderr(f"await: {exc.message}")
+            raise SystemExit(2) from exc
+        click.get_current_context().meta[_DEADLINE] = (
+            time.time() + secs if secs is not None else None
+        )
+        return command(*args, **kwargs)
+
     f = click.option(
         "--until", "until_cmd", default=None,
         help="Shell predicate run via `sh -c` with the candidate event "
@@ -666,7 +724,7 @@ def _resolve_principal_id() -> str | None:
     silent fallback would invert the documented `--include-self`
     default OFF and risk self-triggered wake loops).
     """
-    me = _client().get_me()
+    me = _retrying(lambda: _client().get_me(), "resolving the current user")
     return (me or {}).get("id")
 
 
@@ -676,7 +734,8 @@ def _document_project_id(document_id: str) -> str | None:
     feed but not the team's. None for a team-level document, or when the
     lookup fails (the team feed is asked then, and the server decides)."""
     try:
-        return (_client().get_document(document_id) or {}).get("project_id")
+        doc = _retrying(lambda: _client().get_document(document_id), "looking up the document")
+        return (doc or {}).get("project_id")
     except Exception:
         return None
 
@@ -687,7 +746,7 @@ def _key_project_id() -> str | None:
     key, since the team feed refuses it; a failed lookup keeps the team
     feed."""
     try:
-        me = _client().get_me() or {}
+        me = _retrying(lambda: _client().get_me(), "resolving the current user") or {}
     except Exception:
         return None
     return me.get("agent_project_id") if me.get("is_agent") else None
@@ -728,7 +787,7 @@ def _resolve_project_arg(value: str) -> str:
     """
     m = _main()
     try:
-        return m.resolve_project_id(value)
+        return _retrying(lambda: m.resolve_project_id(value), "resolving the project")
     except click.ClickException as exc:
         _stderr(f"await: {exc.format_message()}")
         raise SystemExit(1) from exc
@@ -738,7 +797,7 @@ def _resolve_team_arg(value: str) -> str:
     """Resolve a team ID/key/name argument to a team ID (CHT-1222)."""
     m = _main()
     try:
-        return m.resolve_team_id(value)
+        return _retrying(lambda: m.resolve_team_id(value), "resolving the team")
     except click.ClickException as exc:
         _stderr(f"await: {exc.format_message()}")
         raise SystemExit(1) from exc
@@ -784,6 +843,10 @@ def _await_event(
                 "a principal id. Pass --include-self to opt in."
             )
             raise SystemExit(1)
+    # Under a subcommand the clock started before its lookups (CHT-1957).
+    started_deadline = _deadline()
+    if started_deadline is not None:
+        timeout_secs = max(0.0, started_deadline - time.time())
     watermark = _now_utc()
 
     def fetch_page(skip: int, limit: int) -> list:
@@ -884,7 +947,7 @@ def register(cli):
         """
         # Resolve the issue to confirm access + get its project/team.
         try:
-            issue = _client().get_issue_by_identifier(identifier)
+            issue = _retrying(lambda: _client().get_issue_by_identifier(identifier), "looking up the issue")
         except APIError as exc:
             _stderr(f"await: {exc}")
             raise SystemExit(1) from exc
@@ -990,7 +1053,7 @@ def register(cli):
             # Resolve the sprint so the positional actually means
             # something: its parent project becomes the wait scope.
             try:
-                sprint = _client().get_sprint(sprint_id)
+                sprint = _retrying(lambda: _client().get_sprint(sprint_id), "looking up the sprint")
             except APIError as exc:
                 _stderr(f"await: {exc}")
                 raise SystemExit(1) from exc
@@ -1046,7 +1109,9 @@ def register(cli):
         scope: dict = {"ritual_name": ritual_name}
         if ticket_identifier:
             try:
-                issue = _client().get_issue_by_identifier(ticket_identifier)
+                issue = _retrying(
+                    lambda: _client().get_issue_by_identifier(ticket_identifier), "looking up the ticket",
+                )
             except APIError as exc:
                 _stderr(f"await: {exc}")
                 raise SystemExit(1) from exc

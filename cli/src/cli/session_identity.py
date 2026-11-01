@@ -470,7 +470,9 @@ def _registrar_call(method: str, url: str, credential: str | None, body: dict | 
     headers = {"Content-Type": "application/json", "X-Chaotic-Interactive": "0"}
     if credential:
         headers["Authorization"] = f"Bearer {credential}"
-    with httpx.Client() as client:
+    # Not httpx's 5 s default (CHT-1957): a registration queued behind
+    # other writes can take longer, and it is idempotent server-side.
+    with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
         response = client.request(method, url, headers=headers, json=body)
     if response.is_success:
         try:

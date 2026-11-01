@@ -61,6 +61,7 @@ from fastapi import APIRouter, status, Header, Query
 
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser
+from app.api.idempotency import IdempotentRoute, idempotent
 from app.schemas.project import ProjectCreate, ProjectResponse
 from app.schemas.issue import IssueCreate, IssueResponse, LabelCreate, LabelResponse
 from app.schemas.issue_query import IssueQueryResponse
@@ -80,7 +81,10 @@ from app.api import epics as _epics
 from app.schemas.epic import EpicProgressResponse
 from app.services.epic_progress import DEFAULT_SPRINT_WINDOW, MAX_SPRINT_WINDOW
 
-router = APIRouter()
+# Idempotency-Key on the app's writes (CHT-1621): the @idempotent routes.
+# Creating an issue is one since CHT-1957, so the CLI can resend a create
+# whose answer it never got without making a second issue.
+router = APIRouter(route_class=IdempotentRoute)
 
 
 # ============================================================================
@@ -157,6 +161,7 @@ async def list_team_documents(
 
 @router.post("/projects/{project_id}/issues", response_model=IssueResponse, status_code=status.HTTP_201_CREATED)
 @writes
+@idempotent
 async def create_project_issue(
     project_id: str,
     issue_in: IssueCreate,
