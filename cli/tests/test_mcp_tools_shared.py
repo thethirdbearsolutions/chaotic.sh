@@ -1316,3 +1316,116 @@ async def test_server_info_reports_the_deploy_not_the_asset_hashes(fake):
     assert result["client_tool_count"] == len(ALL_TOOLS)
     assert "client_version" in result
     assert fake.calls_to("server_info") == [((), {})]
+
+
+# ---------------------------------------------------------------------------
+# CHT-1951: issue_create takes an assignee; no tool drops an unknown argument
+# ---------------------------------------------------------------------------
+
+
+class TestIssueCreateAssignee:
+    async def test_assignee_is_resolved_in_the_projects_team_before_the_create(self, fake):
+        result = await _tools(fake)["issue_create"](title="T", assignee="Look")
+        assert fake.calls_to("resolve_assignee") == [
+            (("Look", "team-1"), {"project_id": "proj-1", "purpose": "assign"})
+        ]
+        (create,) = fake.calls_to("create_issue")
+        assert create[1]["assignee_id"] == "user-Look"
+        assert result["assignee_id"] == "user-Look"
+        names = [n for n, _, _ in fake.calls]
+        assert names.index("resolve_assignee") < names.index("create_issue")
+
+    async def test_me(self, fake):
+        await _tools(fake)["issue_create"](title="T", assignee="me")
+        assert fake.calls_to("create_issue")[0][1]["assignee_id"] == "user-me"
+
+    async def test_no_assignee_resolves_nothing(self, fake):
+        await _tools(fake)["issue_create"](title="T")
+        assert fake.calls_to("resolve_assignee") == []
+        assert fake.calls_to("create_issue")[0][1]["assignee_id"] is None
+
+    async def test_an_assignee_that_does_not_resolve_creates_nothing(self):
+        fake = FakeBackend(fail_on={"resolve_assignee": ToolInputError("No member or agent named 'Nobody'.")})
+        result = await _tools(fake)["issue_create"](title="T", assignee="Nobody")
+        assert result["error"]["error_code"] == "tool_input"
+        assert fake.calls_to("create_issue") == []
+
+
+def _server(backend):
+    from mcp.server.mcpserver import MCPServer
+
+    from chaotic_mcp_tools import add_tools
+
+    mcp = MCPServer(name="t")
+    add_tools(mcp, bind_all(backend))
+    return mcp
+
+
+class TestUnknownArgumentsAreRefused:
+    """Before CHT-1951 the SDK's argument model dropped any argument a tool
+    did not declare, so `issue_create(assignee="Look")` made an unassigned
+    issue and said nothing."""
+
+    async def test_issue_create_names_the_unknown_argument_and_creates_nothing(self, fake):
+        from mcp.server.mcpserver.exceptions import ToolError
+
+        with pytest.raises(ToolError) as exc:
+            await _server(fake).call_tool("issue_create", {"title": "T", "asignee": "Look"})
+        message = str(exc.value)
+        assert "does not take the argument 'asignee' (did you mean 'assignee'?)" in message
+        assert "nothing was done" in message and "It accepts: assignee, description," in message
+        assert fake.calls == []
+
+    async def test_several_unknown_arguments_are_all_named(self, fake):
+        from mcp.server.mcpserver.exceptions import ToolError
+
+        with pytest.raises(ToolError) as exc:
+            await _server(fake).call_tool("issue_create", {"title": "T", "labels": ["x"], "blocks": ["CHT-1"]})
+        assert "does not take the arguments 'blocks', 'labels'" in str(exc.value)
+        assert fake.calls == []
+
+    async def test_known_arguments_still_work(self, fake):
+        result = await _server(fake).call_tool("issue_create", {"title": "T", "assignee": "me"})
+        assert result.is_error is not True
+        assert fake.calls_to("create_issue")[0][1]["assignee_id"] == "user-me"
+
+    async def test_every_tool_refuses_an_unknown_argument_and_says_so_in_its_schema(self):
+        from mcp.server.mcpserver.exceptions import ToolError
+
+        for team_param in (False, True):
+            fake = FakeBackend(team_param=team_param)
+            mcp = _server(fake)
+            tools = await mcp.list_tools()
+            assert len(tools) == len(ALL_TOOLS)
+            for tool in tools:
+                assert tool.input_schema.get("additionalProperties") is False, tool.name
+                with pytest.raises(ToolError, match="'not_a_parameter'"):
+                    await mcp.call_tool(tool.name, {"not_a_parameter": 1})
+            assert fake.calls == []
+
+    async def test_team_is_unknown_where_it_is_not_advertised(self):
+        """The stdio server does not advertise `team`; a caller passing it
+        there is told, rather than having it ignored."""
+        from mcp.server.mcpserver.exceptions import ToolError
+
+        fake = FakeBackend(team_param=False)
+        with pytest.raises(ToolError, match="'team'"):
+            await _server(fake).call_tool("issue_create", {"title": "T", "team": "ENG"})
+
+    def test_a_server_without_the_sdk_internals_still_registers(self, caplog):
+        """If a future SDK moves the tool manager, registration still
+        succeeds (with a warning) rather than taking the server down."""
+        from chaotic_mcp_tools import add_tools
+
+        class BareServer:
+            def __init__(self):
+                self.added = []
+
+            def add_tool(self, fn, description):
+                self.added.append(fn.__name__)
+
+        server = BareServer()
+        with caplog.at_level("WARNING"):
+            add_tools(server, bind_all(FakeBackend()))
+        assert len(server.added) == len(ALL_TOOLS)
+        assert "could not make it refuse unknown arguments" in caplog.text

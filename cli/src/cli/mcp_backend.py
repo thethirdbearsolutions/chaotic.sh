@@ -300,6 +300,7 @@ class RestBackend:
 
     async def create_issue(
         self, project_id, *, title, description, status, priority, issue_type, estimate, parent_id,
+        assignee_id=None,
     ) -> dict:
         data = {
             "description": description,
@@ -311,6 +312,8 @@ class RestBackend:
             data["estimate"] = estimate
         if parent_id:
             data["parent_id"] = parent_id
+        if assignee_id:
+            data["assignee_id"] = assignee_id
         return await self._call(self._client().create_issue, project_id, title, **data)
 
     async def update_issue(self, issue_id: str, **fields) -> dict:

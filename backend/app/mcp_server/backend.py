@@ -290,6 +290,7 @@ class InProcessBackend:
     @_translated(issues_api.create_issue)
     async def create_issue(
         self, project_id, *, title, description, status, priority, issue_type, estimate, parent_id,
+        assignee_id=None,
     ) -> dict:
         issue_in = IssueCreate(
             title=title,
@@ -299,6 +300,7 @@ class InProcessBackend:
             issue_type=IssueType(issue_type),
             estimate=estimate,
             parent_id=parent_id,
+            assignee_id=assignee_id,
         )
         created = await issues_api.create_issue(project_id=project_id, issue_in=issue_in, current_user=self._user)
         return _dump(created)

@@ -1000,6 +1000,7 @@ MCP_PROBES = [
         for tool, args, field, extra in [
             ("issue_update", {"identifier": "{own_identifier}"}, "assignee", _RETIRED),
             ("issue_comment", {"identifier": "{own_identifier}", "content": "x"}, "assign_to", _RETIRED),
+            ("issue_create", {"title": "x"}, "assignee", _RETIRED),
             ("issue_list", {}, "assignee", ()),
         ]
         for placeholder in (

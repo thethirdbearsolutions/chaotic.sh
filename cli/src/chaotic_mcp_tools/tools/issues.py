@@ -308,6 +308,10 @@ async def issue_create(
         Field(description="Parent issue identifier (e.g. CHT-12) to create this as a sub-issue, "
                           "in the parent's project.")
     ] = None,
+    assignee: Annotated[
+        str | None,
+        Field(description="Assign the new issue: 'me', a user/agent id, or a name/email.")
+    ] = None,
 ) -> dict:
     """Create a new issue (optionally as a sub-issue of `parent`).
 
@@ -317,6 +321,12 @@ async def issue_create(
     resolved_type = _resolve_issue_type(issue_type)
     parent_row = await backend.get_issue(parent) if parent else None
     project_id = await _project_for_new_issue(backend, project, team, parent, parent_row)
+    # Resolved before anything is created, so a name that matches nobody
+    # (or several) refuses the call instead of leaving an unassigned issue.
+    assignee_id = (
+        await backend.resolve_assignee(assignee, await backend.team_for_project(project_id), project_id=project_id)
+        if assignee else None
+    )
     created = await backend.create_issue(
         project_id,
         title=title,
@@ -326,6 +336,7 @@ async def issue_create(
         issue_type=resolved_type,
         estimate=estimate,
         parent_id=parent_row["id"] if parent_row else None,
+        assignee_id=assignee_id,
     )
     return await _with_estimate_warning(backend, created, project_id, estimate)
 

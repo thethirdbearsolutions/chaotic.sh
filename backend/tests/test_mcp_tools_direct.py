@@ -105,6 +105,30 @@ class TestIssueCreateParent:
         assert child["parent_id"] == parent["id"]
 
 
+class TestIssueCreateAssignee:
+    """CHT-1951: issue_create assigns in the same call, by name, email, id
+    or 'me', the forms issue_update takes."""
+
+    async def test_by_name(self, test_project, test_user2, test_team):
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.enums import TeamRole
+
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+        created = await tools.issue_create(title="For two", assignee=test_user2.name)
+        assert created["assignee_id"] == test_user2.id
+        assert created["assignee_name"] == test_user2.name
+
+    async def test_me(self, test_project, test_user):
+        created = await tools.issue_create(title="Mine", assignee="me")
+        assert created["assignee_id"] == test_user.id
+
+    async def test_someone_outside_the_team_creates_nothing(self, test_project, test_user2):
+        before = (await tools.issue_list())["count"]
+        result = await tools.issue_create(title="Nobody's", assignee=test_user2.email)
+        assert "error" in result
+        assert (await tools.issue_list())["count"] == before
+
+
 class TestIssueUpdateParent:
     """CHT-1460: re-parenting an existing issue over MCP, end to end."""
 

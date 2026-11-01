@@ -13,8 +13,12 @@ exactly one implementation (CHT-1374; verified against mcp 2.1.1).
 """
 from __future__ import annotations
 
+import difflib
 import functools
 import inspect
+import logging
+
+from pydantic import ConfigDict, model_validator
 
 from .backend import Backend
 from .errors import (
@@ -35,6 +39,65 @@ def add_tools(mcp, tools) -> None:
     the server's interpreter, and paid tokens for the indentation."""
     for tool in tools:
         mcp.add_tool(tool, description=inspect.cleandoc(tool.__doc__ or ""))
+        _forbid_unknown_arguments(mcp, tool.__name__)
+
+
+logger = logging.getLogger(__name__)
+
+
+def unknown_arguments_message(tool_name: str, unknown: list[str], accepted: list[str]) -> str:
+    """The refusal for arguments a tool does not take: each one named,
+    with the closest accepted name when there is one, then the full list."""
+    parts = []
+    for name in unknown:
+        close = difflib.get_close_matches(name, accepted, n=1)
+        parts.append(f"'{name}'" + (f" (did you mean '{close[0]}'?)" if close else ""))
+    noun = "argument" if len(unknown) == 1 else "arguments"
+    return (
+        f"{tool_name} does not take the {noun} {', '.join(parts)}; nothing was done. "
+        f"It accepts: {', '.join(accepted)}."
+    )
+
+
+def _strict_arg_model(tool_name: str, arg_model: type) -> type:
+    """A subclass of the SDK's argument model that refuses arguments it has
+    no field for, instead of pydantic's default of dropping them (CHT-1951).
+    A dropped argument is a call the caller believes did something it did
+    not: `issue_create(assignee=...)` created unassigned tickets."""
+    accepted = sorted(f.alias or name for name, f in arg_model.model_fields.items())
+    accepted_set = frozenset(accepted)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_unknown(cls, data):
+        if isinstance(data, dict):
+            unknown = sorted(k for k in data if k not in accepted_set)
+            if unknown:
+                raise ValueError(unknown_arguments_message(tool_name, unknown, accepted))
+        return data
+
+    return type(arg_model.__name__, (arg_model,), {
+        "__module__": arg_model.__module__,
+        "model_config": ConfigDict(extra="forbid"),
+        "_refuse_unknown": _refuse_unknown,
+    })
+
+
+def _forbid_unknown_arguments(mcp, name: str) -> None:
+    """Make the registered tool `name` refuse unknown arguments, and say so
+    in its inputSchema (`additionalProperties: false`). The SDK has no
+    public switch for this (its argument model ignores extras), so this
+    reaches the registered Tool through the server's tool manager. If a
+    future SDK moves that, the server still starts, with the old
+    behaviour and a logged warning; the tests that pin the refusal fail."""
+    manager = getattr(mcp, "_tool_manager", None)
+    registered = manager.get_tool(name) if manager is not None else None
+    metadata = getattr(registered, "fn_metadata", None)
+    if metadata is None or not hasattr(metadata, "arg_model"):
+        logger.warning("MCP tool %s: could not make it refuse unknown arguments (SDK internals moved)", name)
+        return
+    metadata.arg_model = _strict_arg_model(name, metadata.arg_model)
+    registered.parameters = {**registered.parameters, "additionalProperties": False}
 
 
 async def call_guarded(tool, backend: Backend, *args, **kwargs) -> dict:

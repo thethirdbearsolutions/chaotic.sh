@@ -1846,6 +1846,25 @@ class TestMCPProtocolLoop:
         text = next(c.text for c in result.content if c.type == "text")
         assert json.loads(text) == {"error": {"message": "Issue not found"}}
 
+    def test_unknown_argument_is_refused_over_protocol(self, mcp_mod):
+        """CHT-1951: an argument the tool does not take comes back as a
+        tool error naming it, and nothing is created -- it used to be
+        dropped, and the issue created without it."""
+        from cli.main import client
+
+        client.create_issue = MagicMock()
+
+        async def run():
+            server = mcp_mod.build_server()
+            async with _connected_session(server) as session:
+                return await session.call_tool("issue_create", {"title": "T", "asignee": "Look"})
+
+        result = asyncio.run(run())
+        assert result.is_error is True
+        text = next(c.text for c in result.content if c.type == "text")
+        assert "does not take the argument 'asignee' (did you mean 'assignee'?)" in text
+        client.create_issue.assert_not_called()
+
     def test_unknown_tool_is_a_protocol_error(self, mcp_mod):
 
         async def run():

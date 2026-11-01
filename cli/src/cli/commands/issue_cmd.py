@@ -642,11 +642,12 @@ def register(cli):
     @click.option("--label", "labels", multiple=True, help="Label name(s) to assign (can be used multiple times)")
     @click.option("--blocked-by", "blocked_by", multiple=True, help="Issue identifier(s) that block this issue (can be used multiple times)")
     @click.option("--relates-to", "relates_to", multiple=True, help="Related issue identifier(s) (can be used multiple times)")
+    @click.option("--assignee", help="Assign the new issue: 'me', a user/agent ID, or a name/email")
     @click.option("--project", "project_key", help="Project (ID, key, or name) - overrides current project")
     @_main().json_option
     @_main().require_team
     @_main().handle_error
-    def issue_create(title, title_opt, description, status, priority, issue_type, estimate, sprint, parent, epic, labels, blocked_by, relates_to, project_key):
+    def issue_create(title, title_opt, description, status, priority, issue_type, estimate, sprint, parent, epic, labels, blocked_by, relates_to, assignee, project_key):
         """Create a new issue (or sub-issue with --parent/--epic)."""
         m = _main()
         # Resolve title from positional arg or --title option
@@ -685,14 +686,20 @@ def register(cli):
             data["estimate"] = estimate
         if parent_issue:
             data["parent_id"] = parent_issue["id"]
-        if labels:
-            # Resolve label names to IDs, in the team of the project the
-            # issue is created in (CHT-1709): a parent or --project can name
-            # a project in another team than the current one.
+        # Labels and the assignee are looked up in the team of the project
+        # the issue is created in (CHT-1709): a parent or --project can name
+        # a project in another team than the current one.
+        team_id = None
+        if assignee or labels:
             team_id = (
                 _client().get_project(project_id)["team_id"] if parent_project or project_key
                 else m.get_current_team()
             )
+        if assignee:
+            # Before the create, so a name that matches nobody refuses the
+            # command instead of leaving an unassigned issue (CHT-1951).
+            data["assignee_id"] = m.resolve_assignee_id(assignee, team_id=team_id)
+        if labels:
             all_labels = fetch_all_labels(team_id)
             label_ids = []
             for label_name in labels:

@@ -361,8 +361,9 @@ def resolve_project_id(identifier: str) -> str:
     return resolve_project(identifier)["id"]
 
 
-def resolve_assignee_id(assignee_value: str) -> str:
-    """Resolve an assignee string to a user/agent ID."""
+def resolve_assignee_id(assignee_value: str, team_id: str | None = None) -> str:
+    """Resolve an assignee string to a user/agent ID, among the members
+    and agents of ``team_id`` (the current team when not given)."""
     if not assignee_value:
         raise click.ClickException("Assignee is required.")
 
@@ -370,7 +371,7 @@ def resolve_assignee_id(assignee_value: str) -> str:
         user = client.get_me()
         return user["id"]
 
-    team_id = get_current_team()
+    team_id = team_id or get_current_team()
     if not team_id:
         raise click.ClickException(
             "No team selected. Run 'chaotic team use <team_id>' first."

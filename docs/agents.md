@@ -277,6 +277,17 @@ no tool ever returns a `notice` of its own. (The CLI's own `--json` mode keeps i
 flat `{"error": "..."}` string -- that contract is for shells and exit
 codes, this one is for models.)
 
+Arguments are checked against the tool's `inputSchema` before the tool
+runs, and that check is the one failure that is not the envelope: it
+comes back as a tool result with `isError: true` and the validator's
+text. That covers a wrong type or an enum value off the list, and, since
+CHT-1951, an argument the tool does not take: every schema says
+`additionalProperties: false`, and a call with an unknown argument is
+refused, naming it (with the closest accepted name, when there is one)
+and listing what the tool does accept. Nothing is done. Before, it was
+dropped without a word, so `issue_create(assignee=...)` made unassigned
+issues.
+
 **List tools return compact rows.** `issue_list`, `issue_ready`, `doc_list`
 and `project_list` return a projection of each row (for issues:
 identifier, title, status, priority, issue_type, estimate, assignee_name,

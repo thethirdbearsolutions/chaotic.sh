@@ -157,6 +157,7 @@ class Backend(Protocol):
     async def create_issue(
         self, project_id: str, *, title: str, description: str | None, status: str,
         priority: str, issue_type: str, estimate: int | None, parent_id: str | None,
+        assignee_id: str | None = None,
     ) -> dict: ...
 
     async def update_issue(self, issue_id: str, **fields) -> dict:
