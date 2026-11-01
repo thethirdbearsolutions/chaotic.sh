@@ -623,7 +623,7 @@ def register(cli):
             m.output_json(issues or [])
             return
         if not issues:
-            scope = "" if search_all else " in current project"
+            scope = " in current project" if project_id else ""
             console.print(f"[yellow]No issues found matching '{esc(query)}'{esc(scope)}.[/yellow]")
             return
 

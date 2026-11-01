@@ -73,7 +73,7 @@ def team_hidden() -> HTTPException:
 
 PROJECT_SCOPED_TEAM_DATA_DETAIL = (
     "This identity is scoped to one project and cannot use team-wide data. "
-    "Name its project (for example --project), or use a team-scoped key"
+    "Ask for its own project's data instead, or use a team-scoped key"
 )
 
 
