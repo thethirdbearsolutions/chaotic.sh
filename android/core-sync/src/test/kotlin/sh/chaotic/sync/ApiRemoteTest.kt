@@ -1,5 +1,6 @@
 package sh.chaotic.sync
 
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
@@ -152,6 +153,29 @@ class ApiRemoteTest {
         assertTrue(remote { json("{}", HttpStatusCode.ServiceUnavailable) }.reachable())
         assertEquals("/health", requests.single().url.encodedPath)
         assertEquals(false, remote { throw IOException("no route") }.reachable())
+    }
+
+    @Test
+    fun theReachabilityProbeGoesOutOnTheClientWithoutCredentials() = runTest {
+        val probed = mutableListOf<HttpRequestData>()
+        val probe = HttpClient(
+            MockEngine { request ->
+                probed += request
+                respond("{}", HttpStatusCode.OK)
+            },
+        )
+        val api = ApiRemote(
+            "https://chaotic.example",
+            MockEngine { request ->
+                requests += request
+                error("not the probe's client")
+            },
+            probeClient = probe,
+        )
+
+        assertTrue(api.reachable())
+        assertEquals("/health", probed.single().url.encodedPath)
+        assertTrue(requests.isEmpty())
     }
 
     @Test

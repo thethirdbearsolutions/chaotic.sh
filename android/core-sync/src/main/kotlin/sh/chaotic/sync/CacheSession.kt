@@ -4,6 +4,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import sh.chaotic.auth.SessionManager
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Whose cache this is, and the one gate every write to it goes through.
@@ -33,13 +34,20 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * It also counts the writes to each issue the server has taken
  * ([issueWrites]), so a refresh of an issue that began before one of them
- * can tell that what it fetched is older than the cache (CHT-1668).
+ * can tell that what it fetched is older than the cache (CHT-1668), and
+ * the inbox entries a decision the server took dropped ([entryDropped]),
+ * so a sync page requested before the drop does not bring one back
+ * (CHT-1667).
  */
 class CacheSession(val store: CacheStore, private val currentOwner: () -> String?) {
     private val lock = Mutex()
     private var generation = 0L
     private var owner: String? = null
     private val issueWritesTaken = ConcurrentHashMap<String, Long>()
+    private val entryDrops = AtomicLong()
+
+    /** Each dropped entry: when (in [entryDrops]) and the version of it the cache held. */
+    private val entriesDropped = ConcurrentHashMap<String, Pair<Long, Long>>()
 
     /**
      * How many writes to [issueId] the server has taken while this process
@@ -56,6 +64,34 @@ class CacheSession(val store: CacheStore, private val currentOwner: () -> String
     /** The server took a write to [issueId]: call it in the [write] that records that. */
     fun issueWritten(issueId: String) {
         issueWritesTaken.merge(issueId, 1L, Long::plus)
+    }
+
+    /**
+     * How many entries a taken decision has dropped while this process
+     * ran. A sync reads it before it requests a page, and passes it to
+     * [droppedSince] in the [write] that applies the page.
+     */
+    fun entryDrops(): Long = entryDrops.get()
+
+    /**
+     * A decision the server took dropped [entryId], cached at [version]
+     * (its `updatedAtMicros`): call it in the [write] that drops it.
+     */
+    fun entryDropped(entryId: String, version: Long) {
+        entriesDropped[entryId] = entryDrops.incrementAndGet() to version
+    }
+
+    /**
+     * Which of [entries] were dropped after [mark] (from [entryDrops]) and
+     * are no newer than the copy dropped: a page requested at [mark] may
+     * predate the drop, so that copy is stale. A newer copy (the entry
+     * opened again on the server since) is not held back, and neither is
+     * anything in a page requested after the drop. Emptied by [end]; one
+     * id per decision taken until then.
+     */
+    fun droppedSince(mark: Long, entries: Collection<InboxEntry>): Set<String> = entries.mapNotNullTo(mutableSetOf()) {
+        val (at, version) = entriesDropped[it.id] ?: return@mapNotNullTo null
+        it.id.takeIf { _ -> at > mark && it.updatedAtMicros <= version }
     }
 
     /** The generation to [write] under, or null when nobody is signed in. Claims the store first. */
@@ -92,6 +128,7 @@ class CacheSession(val store: CacheStore, private val currentOwner: () -> String
     suspend fun end() = lock.withLock {
         generation++
         owner = null
+        entriesDropped.clear()
         store.clearAll()
     }
 

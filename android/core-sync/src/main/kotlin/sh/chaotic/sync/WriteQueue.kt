@@ -111,9 +111,11 @@ sealed interface WriteStatus {
  *   [PendingWrite.stalled]: no longer sent or shown as done, and it holds
  *   nothing back, until the person retries ([retry]) or discards ([undo])
  *   it. One write the server always fails can never block the rest. A
- *   write that a newer one supersedes ([PendingWrite.supersedes]) is
- *   dropped instead of stalling, and a stalled one is dropped when a
- *   newer one is queued, so a retry never undoes the newer change.
+ *   stalled write that a newer one supersedes ([PendingWrite.supersedes])
+ *   is dropped once the server takes the newer one, not before: if the
+ *   newer one is refused, the stalled one is still there to retry
+ *   (CHT-1671). A retry while the newer one waits drops it instead, so a
+ *   retry never undoes the newer change.
  * - 409 `idempotency_in_flight` (the server is still doing this write
  *   from an earlier send whose answer was lost) or 503 `idempotency_busy`
  *   (other writes held the database): goes again after exactly the
@@ -228,7 +230,7 @@ class WriteQueue(
 
                 else -> {
                     val write = entry.pendingWrite(kind, action, reason, undoMillis = 0)
-                    enqueue(write, before)
+                    queueWrite(write)
                     NotificationDecision.Queued(write.key)
                 }
             }
@@ -507,38 +509,40 @@ class WriteQueue(
             result is Remote.Ok -> {
                 // Before the cache changes, under the same lock: a refresh of the issue fetched before this is stale.
                 write.changedIssue()?.let(session::issueWritten)
-                completeWrite(write.key, effect(write, result.value))
+                val effect = effect(write, result.value)
+                // Likewise a sync page requested before this: it may still hold the entry as open (CHT-1667).
+                (effect as? WriteEffect.DropEntry)?.let { noteDropped(it.entryId) }
+                dropSupersededBy(write)
+                completeWrite(write.key, effect)
             }
 
             result is Remote.HttpError && !result.isTransient() ->
                 if (result.isQuietDrop(write)) {
+                    dropSupersededBy(write)
                     completeWrite(write.key, effect = null)
                 } else {
+                    // The entry is settled for good: an earlier decision on it can only be refused too.
+                    if (write.kind in DECISIONS && result.settlesEntry()) dropSupersededBy(write)
                     refuseWrite(refusal(write, result))
                 }
 
             else -> {
                 val attempts = write.attempts + 1
                 val wait = retryDelay(attempts, (result as? Remote.HttpError)?.retryAfterMillis ?: 0)
-                // A write that stalls while a newer one replaces it is dropped: the newer one goes instead.
-                val moot = attempts >= MAX_ATTEMPTS && superseded(write, pendingWrites())
-                if (moot) removeWrite(write.key) else rescheduleWrite(write.key, attempts, nowMillis() + wait)
+                // One that stalls while a newer one replaces it stays until the newer one is taken (CHT-1671).
+                rescheduleWrite(write.key, attempts, nowMillis() + wait)
             }
         }
     }
 
     /**
-     * Stall every write too old to send on its own (the class comment),
-     * or drop it when a newer one supersedes it, as a stalled write is.
+     * Stall every write too old to send on its own (the class comment).
+     * One a newer write supersedes stalls too, and goes once the newer one
+     * is taken (CHT-1671).
      */
     private suspend fun CacheStore.stallTooOld(now: Long) {
-        val queued = pendingWrites()
-        for (write in queued.filter { !it.stalled && it.tooOld(now) }) {
-            if (superseded(write, queued)) {
-                removeWrite(write.key)
-            } else {
-                rescheduleWrite(write.key, MAX_ATTEMPTS, write.notBeforeMillis)
-            }
+        for (write in pendingWrites().filter { !it.stalled && it.tooOld(now) }) {
+            rescheduleWrite(write.key, MAX_ATTEMPTS, write.notBeforeMillis)
         }
     }
 
@@ -656,17 +660,26 @@ class WriteQueue(
         val queued = session.write(ticket) {
             val before = pendingWrites()
             val ok = allowed(before)
-            if (ok) enqueue(write, before)
+            if (ok) queueWrite(write)
             ok
         }
         return write.key.takeIf { queued == true }
     }
 
-    /** Add [write] to the queue, which held [before]. */
-    private suspend fun CacheStore.enqueue(write: PendingWrite, before: List<PendingWrite>) {
-        queueWrite(write)
-        // A stalled write this one replaces would only undo it if retried.
-        before.filter { it.stalled && write.supersedes(it) }.forEach { removeWrite(it.key) }
+    /** Tell [session] which entry, at which cached version, a taken decision drops (CHT-1667). */
+    private suspend fun CacheStore.noteDropped(entryId: String) {
+        inboxVersions(listOf(entryId))[entryId]?.let { session.entryDropped(entryId, it) }
+    }
+
+    /**
+     * The server took [write]: the earlier writes it supersedes are moot
+     * now, and go. Only now, not when [write] was queued: had it been
+     * refused, they would still be the person's last accepted intent
+     * (CHT-1671). Call before [CacheStore.completeWrite] drops [write].
+     */
+    private suspend fun CacheStore.dropSupersededBy(write: PendingWrite) {
+        val before = pendingWrites().takeWhile { it.key != write.key }
+        before.filter { write.supersedes(it) }.forEach { removeWrite(it.key) }
     }
 
     companion object {
@@ -735,6 +748,12 @@ class WriteQueue(
         private const val HTTP_UNAVAILABLE = 503
 
         private val DECISIONS = setOf(WriteKind.APPROVE, WriteKind.REJECT, WriteKind.ARCHIVE)
+
+        /** Someone already decided the gate or review: the 409 a decision on a settled entry gets. */
+        const val ALREADY_RESOLVED = "ritual_already_resolved"
+
+        private fun Remote.HttpError.settlesEntry() =
+            status == HTTP_NOT_FOUND || (status == HTTP_CONFLICT && errorCode == ALREADY_RESOLVED)
 
         /** Writes whose value the person typed, kept on a refusal (CHT-1683). */
         private val TYPED_KINDS = setOf(WriteKind.COMMENT, WriteKind.REJECT)
