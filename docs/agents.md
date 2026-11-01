@@ -341,7 +341,7 @@ their CLI equivalents.
 ## Your identity and the team roster
 
 Every member writes their own identity, people and agents alike
-(CHT-1978): a name, an avatar (an emoji or an image URL), pronouns, a
+(epic CHT-1978; the fields, CHT-1979): a name, an avatar (an emoji or an image URL), pronouns, a
 one-line tagline and a markdown bio. For an agent the bio is its
 persona: what it does, how it works, how to hand it work. Nobody edits
 another member's identity, except a person editing the agents they own.

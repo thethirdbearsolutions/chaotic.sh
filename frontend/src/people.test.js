@@ -15,7 +15,7 @@ import {
 } from './people.js';
 import { api } from './api.js';
 import { showToast, showApiError, closeModal } from './ui.js';
-import { navigateTo } from './router.js';
+import { navigateTo, runNavigationCleanup } from './router.js';
 import { updateUserInfo } from './auth.js';
 
 vi.mock('./api.js', () => ({
@@ -41,6 +41,7 @@ vi.mock('./router.js', () => ({
   navigateToIssueByIdentifier: vi.fn(),
   saveScrollPosition: vi.fn(),
   setActiveNav: vi.fn(),
+  runNavigationCleanup: vi.fn(),
 }));
 
 vi.mock('./auth.js', () => ({ updateUserInfo: vi.fn() }));
@@ -113,6 +114,33 @@ describe('loadPeople', () => {
     expect(showApiError).toHaveBeenCalled();
   });
 
+  it('keeps the cache to the response on screen, not a late superseded one', async () => {
+    let resolveFirst;
+    api.getTeamRoster
+      .mockImplementationOnce(() => new Promise(r => { resolveFirst = r; }))
+      .mockResolvedValueOnce([ADA]);
+
+    const first = loadPeople();
+    await loadPeople();
+    resolveFirst([ADA, SAM, PIPER]);
+    await first;
+
+    expect(getRoster()).toEqual([ADA]);
+  });
+
+  it('leaves the idle toggle alone while a profile looks up an idle session', async () => {
+    await loadPeople();
+    let resolve;
+    api.getTeamRoster.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+
+    const pending = viewPerson('a-gone');
+    resolve([ADA]);
+    await pending;
+    await loadPeople();
+
+    expect(api.getTeamRoster).toHaveBeenLastCalledWith('team-1', { includeIdle: false });
+  });
+
   it('drops a response a newer load has superseded', async () => {
     let resolveFirst;
     api.getTeamRoster
@@ -179,6 +207,39 @@ describe('viewPerson', () => {
     expect(document.querySelector('.person-profile-name').textContent).toContain('Piper');
   });
 
+  it('runs the navigation cleanup (closes the mobile drawer) first', async () => {
+    await viewPerson('u-sam');
+
+    expect(runNavigationCleanup).toHaveBeenCalled();
+  });
+
+  it('does not take over the page when the user navigates away while it loads', async () => {
+    let resolve;
+    api.getTeamRoster.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+    history.replaceState({}, '', '/people');
+
+    const pending = viewPerson('u-sam');
+    history.pushState({ view: 'issues' }, '', '/issues');
+    resolve([ADA, SAM]);
+    await pending;
+
+    expect(document.getElementById('person-detail-view')).toBeNull();
+    expect(window.location.pathname).toBe('/issues');
+  });
+
+  it('drops a profile from a team the user has switched away from', async () => {
+    let resolve;
+    api.getTeamRoster.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+
+    const pending = viewPerson('u-sam');
+    setCurrentTeam({ id: 'team-2', name: 'Other' });
+    resolve([ADA, SAM]);
+    await pending;
+
+    expect(document.getElementById('person-detail-view')).toBeNull();
+    expect(getRoster()).toEqual([]);
+  });
+
   it('goes back to the roster for someone not on it', async () => {
     await viewPerson('u-nobody');
 
@@ -191,7 +252,7 @@ describe('editing a profile', () => {
   it('fills the form with the current profile', async () => {
     await loadPeople();
 
-    showEditProfileModal('u-ada');
+    await showEditProfileModal('u-ada');
 
     expect(document.getElementById('profile-name').value).toBe('Ada');
     expect(document.getElementById('profile-bio').value).toBe('Builds **things**.');
@@ -201,12 +262,12 @@ describe('editing a profile', () => {
   it('refuses to open for someone else’s profile', async () => {
     await loadPeople();
 
-    showEditProfileModal('u-sam');
+    await showEditProfileModal('u-sam');
 
     expect(document.getElementById('modal-content').innerHTML).toBe('');
   });
 
-  it('sends blank fields to clear them and a blank avatar as null', () => {
+  it('without a starting point, sends every field: blank clears, a blank avatar is null', () => {
     const form = document.createElement('form');
     form.innerHTML = `
       <input id="profile-name" value="Ada">
@@ -222,14 +283,14 @@ describe('editing a profile', () => {
 
   it('saves your own through /users/me and updates the header', async () => {
     await loadPeople();
-    showEditProfileModal('u-ada');
+    await showEditProfileModal('u-ada');
     document.getElementById('profile-tagline').value = 'Builder';
     api.updateMe.mockResolvedValue({ id: 'u-ada', name: 'Ada', avatar_url: null, pronouns: 'she/her', tagline: 'Builder', bio: 'x' });
 
     const form = document.querySelector('#modal-content form');
     await handleSaveProfile({ preventDefault: vi.fn(), target: form });
 
-    expect(api.updateMe).toHaveBeenCalledWith(expect.objectContaining({ tagline: 'Builder' }));
+    expect(api.updateMe).toHaveBeenCalledWith({ tagline: 'Builder' });
     expect(getCurrentUser().tagline).toBe('Builder');
     expect(updateUserInfo).toHaveBeenCalled();
     expect(closeModal).toHaveBeenCalled();
@@ -238,20 +299,22 @@ describe('editing a profile', () => {
 
   it('saves an agent you own through its own route', async () => {
     await loadPeople();
-    showEditProfileModal('a-piper');
+    await showEditProfileModal('a-piper');
+    document.getElementById('profile-bio').value = 'I review.';
     api.updateAgent.mockResolvedValue({ ...PIPER, id: 'a-piper', bio: 'I review.' });
 
     const form = document.querySelector('#modal-content form');
     await handleSaveProfile({ preventDefault: vi.fn(), target: form });
 
-    expect(api.updateAgent).toHaveBeenCalledWith('a-piper', expect.any(Object));
+    expect(api.updateAgent).toHaveBeenCalledWith('a-piper', { bio: 'I review.' });
     expect(api.updateMe).not.toHaveBeenCalled();
     expect(updateUserInfo).not.toHaveBeenCalled();
   });
 
   it('keeps the form open when the server refuses', async () => {
     await loadPeople();
-    showEditProfileModal('u-ada');
+    await showEditProfileModal('u-ada');
+    document.getElementById('profile-pronouns').value = 'they/them';
     api.updateMe.mockRejectedValue(Object.assign(new Error('That name is taken'), { status: 409 }));
 
     const form = document.querySelector('#modal-content form');
@@ -259,6 +322,74 @@ describe('editing a profile', () => {
 
     expect(showApiError).toHaveBeenCalled();
     expect(closeModal).not.toHaveBeenCalled();
+  });
+
+  it('sends only what changed, so it never reverts an edit made elsewhere', () => {
+    const form = document.createElement('form');
+    form.innerHTML = `
+      <input id="profile-name" value="Ada">
+      <input id="profile-avatar" value="🦊 ">
+      <input id="profile-pronouns" value="">
+      <input id="profile-tagline" value="Founder">
+      <textarea id="profile-bio">Builds.</textarea>`;
+    const initial = { name: 'Ada', avatar_url: '', pronouns: 'she/her', tagline: 'Founder', bio: 'Builds.' };
+
+    expect(profilePayload(form, initial)).toEqual({ avatar_url: '🦊', pronouns: '' });
+    expect(profilePayload(form, { ...initial, avatar_url: '🦊', pronouns: '' })).toEqual({});
+  });
+
+  it('opens on a fresh copy of the profile, not the cached roster', async () => {
+    await loadPeople();
+    api.getTeamRoster.mockResolvedValueOnce([ADA, SAM, { ...PIPER, bio: 'Rewritten by Piper.' }]);
+
+    await showEditProfileModal('a-piper');
+
+    expect(api.getTeamRoster).toHaveBeenLastCalledWith('team-1', { includeIdle: true });
+    expect(document.getElementById('profile-bio').value).toBe('Rewritten by Piper.');
+    expect(getRoster().find(r => r.user_id === 'a-piper').bio).toBe('Rewritten by Piper.');
+  });
+
+  it('closes without a request when nothing changed', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+
+    await handleSaveProfile({ preventDefault: vi.fn(), target: document.querySelector('#modal-content form') });
+
+    expect(api.updateMe).not.toHaveBeenCalled();
+    expect(closeModal).toHaveBeenCalled();
+  });
+
+  it('sends one request for a double submit', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    document.getElementById('profile-tagline').value = 'Builder';
+    let finish;
+    api.updateMe.mockImplementation(() => new Promise(r => { finish = r; }));
+    const form = document.querySelector('#modal-content form');
+
+    const first = handleSaveProfile({ preventDefault: vi.fn(), target: form });
+    expect(form.querySelector('button[type="submit"]').disabled).toBe(true);
+    await handleSaveProfile({ preventDefault: vi.fn(), target: form });
+    finish({ id: 'u-ada', name: 'Ada', tagline: 'Builder' });
+    await first;
+
+    expect(api.updateMe).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the issue list when saving on the profile page', async () => {
+    api.getTeamIssues.mockResolvedValue([{ identifier: 'CHT-1', title: 'Now', status: 'in_progress' }]);
+    await viewPerson('u-ada');
+    await new Promise(r => setTimeout(r, 0));
+    api.getTeamIssues.mockClear();
+    await showEditProfileModal('u-ada');
+    document.getElementById('profile-tagline').value = 'Builder';
+    api.updateMe.mockResolvedValue({ id: 'u-ada', name: 'Ada', tagline: 'Builder' });
+
+    await handleSaveProfile({ preventDefault: vi.fn(), target: document.querySelector('#modal-content form') });
+
+    expect(document.querySelector('.person-tagline').textContent).toBe('Builder');
+    expect(document.querySelectorAll('.person-issue')).toHaveLength(1);
+    expect(api.getTeamIssues).not.toHaveBeenCalled();
   });
 });
 
@@ -287,7 +418,7 @@ describe('loadPersonIssues', () => {
     await new Promise(r => setTimeout(r, 0));
 
     expect(api.getTeamIssues).toHaveBeenCalledWith('team-1', {
-      assignee_id: 'u-sam', status: ['in_progress', 'in_review', 'todo'], limit: 20,
+      assignee_id: 'u-sam', status: ['in_progress', 'in_review', 'todo'], sort_by: 'status', order: 'asc', limit: 20,
     });
     const rows = [...document.querySelectorAll('.person-issue')];
     expect(rows.map(r => r.dataset.identifier)).toEqual(['CHT-1', 'CHT-2']);

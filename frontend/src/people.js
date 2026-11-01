@@ -16,7 +16,7 @@ import { escapeHtml, escapeAttr, renderAvatar } from './utils.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getCurrentTeam, getCurrentUser, setCurrentUser, setCurrentView } from './state.js';
 import { registerActions } from './event-delegation.js';
-import { navigateTo, saveScrollPosition, setActiveNav, navigateToIssueByIdentifier } from './router.js';
+import { navigateTo, saveScrollPosition, setActiveNav, navigateToIssueByIdentifier, runNavigationCleanup } from './router.js';
 import { renderDescriptionContent } from './rich-text.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { updateUserInfo } from './auth.js';
@@ -30,6 +30,11 @@ let rosterTeamId = null;
 let showIdle = false;
 let loadRequestId = 0;
 let editingId = null;
+// The values the edit form opened with: a save sends only what differs,
+// so it never resends a field someone else changed meanwhile.
+let editingInitial = null;
+let editingEntry = null;
+let saving = false;
 
 export function getRoster() {
     return roster;
@@ -41,15 +46,23 @@ export function resetPeople() {
     rosterTeamId = null;
     showIdle = false;
     editingId = null;
+    editingInitial = null;
+    editingEntry = null;
+    saving = false;
 }
 
-async function fetchRoster() {
-    const team = getCurrentTeam();
-    if (!team) return null;
-    const fetched = await api.getTeamRoster(team.id, { includeIdle: showIdle });
-    roster = fetched;
-    rosterTeamId = team.id;
-    return fetched;
+/**
+ * Fetch a team's roster. Returns it and leaves the cache alone: a caller
+ * stores it only once it knows its request is still the current one.
+ */
+async function fetchRoster(teamId, includeIdle) {
+    return api.getTeamRoster(teamId, { includeIdle });
+}
+
+/** Replace one entry in the cached roster, if it is cached there. */
+function refreshCached(teamId, entry) {
+    if (!entry || rosterTeamId !== teamId) return;
+    roster = roster.map(r => (r.user_id === entry.user_id ? entry : r));
 }
 
 function rosterSkeleton() {
@@ -62,18 +75,26 @@ function rosterSkeleton() {
 
 /** The `/people` view: load the current team's roster and show it. */
 export async function loadPeople() {
-    if (!getCurrentTeam()) return;
+    const team = getCurrentTeam();
+    if (!team) return;
     const requestId = ++loadRequestId;
+    const includeIdle = showIdle;
     const list = document.getElementById('people-list');
-    if (list) list.innerHTML = rosterSkeleton();
+    if (list) {
+        list.innerHTML = rosterSkeleton();
+        list.setAttribute('aria-busy', 'true');
+    }
     const toggle = document.getElementById('people-show-idle');
     if (toggle) toggle.checked = showIdle;
     try {
-        await fetchRoster();
+        const fetched = await fetchRoster(team.id, includeIdle);
         if (requestId !== loadRequestId) return;
+        roster = fetched;
+        rosterTeamId = team.id;
         renderPeople();
     } catch (e) {
         if (requestId !== loadRequestId) return;
+        list?.removeAttribute('aria-busy');
         if (list) list.innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.team,
             heading: "Couldn't load the roster",
@@ -106,7 +127,7 @@ function personCard(entry) {
     return `
         <a class="person-card${entry.is_agent ? ' person-card-agent' : ''}${entry.idle ? ' person-card-idle' : ''}"
            href="/people/${id}" data-action="view-person" data-user-id="${id}">
-            ${renderAvatar(entry, 'avatar person-avatar')}
+            <span class="person-card-avatar" aria-hidden="true">${renderAvatar(entry, 'avatar person-avatar')}</span>
             <div class="person-card-body">
                 <div class="person-name">${escapeHtml(entry.name)}${pronouns}</div>
                 ${handle}
@@ -120,6 +141,7 @@ function personCard(entry) {
 export function renderPeople() {
     const list = document.getElementById('people-list');
     if (!list) return;
+    list.removeAttribute('aria-busy');
     const people = roster.filter(r => !r.is_agent);
     const agents = roster.filter(r => r.is_agent);
     const me = getCurrentUser();
@@ -138,21 +160,19 @@ export function canEditProfile(entry, me = getCurrentUser()) {
     return entry.user_id === me.id || (entry.is_agent && entry.owner_id === me.id);
 }
 
-async function findEntry(userId) {
-    const team = getCurrentTeam();
-    let entry = rosterTeamId === team?.id ? roster.find(r => r.user_id === userId) : null;
-    if (!entry) {
-        // Not cached, or an idle session left out of the cached roster:
-        // ask for everyone.
-        const saved = showIdle;
-        showIdle = true;
-        try {
-            await fetchRoster();
-        } finally {
-            showIdle = saved;
-        }
-        entry = roster.find(r => r.user_id === userId) || null;
+/**
+ * One member's roster entry. The cached roster serves it unless `fresh`;
+ * otherwise, or when it is not there (an idle session the cached roster
+ * leaves out), the whole team is asked for, idle sessions included.
+ */
+async function findEntry(teamId, userId, { fresh = false } = {}) {
+    if (!fresh && rosterTeamId === teamId) {
+        const cached = roster.find(r => r.user_id === userId);
+        if (cached) return cached;
     }
+    const fetched = await fetchRoster(teamId, true);
+    const entry = fetched.find(r => r.user_id === userId) || null;
+    refreshCached(teamId, entry);
     return entry;
 }
 
@@ -160,18 +180,29 @@ let viewRequestId = 0;
 
 /** `/people/{id}`: one member's profile page. */
 export async function viewPerson(userId, pushHistory = true) {
-    const requestId = ++viewRequestId;
     if (pushHistory) saveScrollPosition();
+    // What navigateTo does on the way to any view: close the mobile
+    // drawer, drop the previous detail page's pending loads.
+    runNavigationCleanup();
+    const requestId = ++viewRequestId;
+    const team = getCurrentTeam();
+    if (!team) return;
+    // Anything that navigates meanwhile changes the address or the team;
+    // a late answer must not paint over where the user went.
+    const startPath = window.location.pathname;
+    const stale = () => requestId !== viewRequestId
+        || getCurrentTeam()?.id !== team.id
+        || window.location.pathname !== startPath;
     let entry;
     try {
-        entry = await findEntry(userId);
+        entry = await findEntry(team.id, userId);
     } catch (e) {
-        if (requestId !== viewRequestId) return;
+        if (stale()) return;
         showApiError('load this profile', e);
         navigateTo('people', pushHistory);
         return;
     }
-    if (requestId !== viewRequestId) return;
+    if (stale()) return;
     if (!entry) {
         showToast('Not on this team’s roster', 'error');
         // Arrived by address: leave it pointing at the roster shown.
@@ -180,13 +211,16 @@ export async function viewPerson(userId, pushHistory = true) {
         return;
     }
     if (pushHistory) {
-        history.pushState({ personId: userId, view: 'person' }, '', `/people/${encodeURIComponent(userId)}`);
+        history.pushState({ personId: userId, view: 'people' }, '', `/people/${encodeURIComponent(userId)}`);
     }
     setCurrentView('people');
     setActiveNav('people');
     renderPerson(entry);
     window.scrollTo(0, 0);
+    // The card or menu item that was clicked is gone: put focus on the page.
+    document.querySelector('#person-detail-view .person-profile-name')?.focus({ preventScroll: true });
 }
+
 
 function personView() {
     let view = document.getElementById('person-detail-view');
@@ -199,7 +233,7 @@ function personView() {
     return view;
 }
 
-export function renderPerson(entry) {
+export function renderPerson(entry, { withIssues = true } = {}) {
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
     const view = personView();
     view.classList.remove('hidden');
@@ -220,7 +254,7 @@ export function renderPerson(entry) {
         <div class="person-profile">
             ${renderAvatar(entry, 'avatar person-avatar-large')}
             <div class="person-profile-body">
-                <h2 class="person-profile-name">${escapeHtml(entry.name)}${entry.pronouns ? `<span class="person-pronouns">${escapeHtml(entry.pronouns)}</span>` : ''}</h2>
+                <h2 class="person-profile-name" tabindex="-1">${escapeHtml(entry.name)}${entry.pronouns ? `<span class="person-pronouns">${escapeHtml(entry.pronouns)}</span>` : ''}</h2>
                 ${entry.mention_handle ? `<div class="person-handle">@${escapeHtml(entry.mention_handle)}</div>` : ''}
                 ${entry.tagline ? `<div class="person-tagline">${escapeHtml(entry.tagline)}</div>` : ''}
                 <div class="person-role">${escapeHtml(rosterRole(entry))}${joined ? ' · ' : ''}${joined}</div>
@@ -232,10 +266,12 @@ export function renderPerson(entry) {
             <div id="person-issues" class="person-issues"><div class="skeleton skeleton-title"></div></div>
         </section>
     `;
-    loadPersonIssues(entry.user_id);
+    if (withIssues) loadPersonIssues(entry.user_id);
 }
 
 // Open work assigned to them, most active first: what to ask them about.
+// The server sorts by status so the limit cuts the least active, never
+// what they are in the middle of.
 const WORKING_STATUSES = ['in_progress', 'in_review', 'todo'];
 let issuesRequestId = 0;
 
@@ -245,7 +281,9 @@ export async function loadPersonIssues(userId) {
     const requestId = ++issuesRequestId;
     let issues;
     try {
-        issues = await api.getTeamIssues(team.id, { assignee_id: userId, status: WORKING_STATUSES, limit: 20 });
+        issues = await api.getTeamIssues(team.id, {
+            assignee_id: userId, status: WORKING_STATUSES, sort_by: 'status', order: 'asc', limit: 20,
+        });
     } catch (e) {
         issues = null;
         console.error('Failed to load their issues:', e);
@@ -271,14 +309,40 @@ export async function loadPersonIssues(userId) {
     `).join('');
 }
 
-/** The edit form, for your own profile or an agent you own. */
-export function showEditProfileModal(userId) {
+const PROFILE_FIELDS = ['name', 'avatar_url', 'pronouns', 'tagline', 'bio'];
+
+/** A profile's editable fields as the form shows them: blank, never null. */
+function formValues(entry) {
+    return Object.fromEntries(PROFILE_FIELDS.map(f => [f, entry?.[f] ?? '']));
+}
+
+let editRequestId = 0;
+
+/**
+ * The edit form, for your own profile or an agent you own. It opens on
+ * a fresh copy of the profile, not the cached roster, which may predate
+ * an edit the member made elsewhere (an agent through MCP, say).
+ */
+export async function showEditProfileModal(userId) {
     const me = getCurrentUser();
-    const entry = roster.find(r => r.user_id === userId)
-        || (me && userId === me.id ? { user_id: me.id, ...me } : null);
-    if (!entry || !canEditProfile({ ...entry, user_id: userId })) return;
+    const team = getCurrentTeam();
+    if (!me || !team) return;
+    const requestId = ++editRequestId;
+    let entry;
+    try {
+        entry = await findEntry(team.id, userId, { fresh: true });
+    } catch (e) {
+        if (requestId === editRequestId) showApiError('load this profile', e);
+        return;
+    }
+    if (requestId !== editRequestId) return;
+    if (!entry && userId === me.id) entry = { ...me, user_id: me.id };
+    if (!entry || !canEditProfile(entry, me)) return;
     editingId = userId;
-    const self = userId === me?.id;
+    editingEntry = entry;
+    editingInitial = formValues(entry);
+    saving = false;
+    const self = userId === me.id;
     const value = (v) => escapeAttr(v || '');
     document.getElementById('modal-title').textContent = self ? 'Edit your profile' : `Edit ${entry.name}`;
     document.getElementById('modal-content').innerHTML = `
@@ -310,44 +374,80 @@ export function showEditProfileModal(userId) {
     showModal();
 }
 
-/** The form's values as the PATCH body. Blank clears; the server trims. */
-export function profilePayload(form) {
+/**
+ * The PATCH body: only the fields that differ from `initial`, the values
+ * the form opened with, so a save never resends what it did not change.
+ * Blank clears a field (a blank avatar is sent as null); the server trims.
+ * Without `initial`, every field.
+ */
+export function profilePayload(form, initial = null) {
     const field = (id) => form.querySelector(`#${id}`)?.value ?? '';
-    const avatar = field('profile-avatar').trim();
-    return {
+    const values = {
         name: field('profile-name'),
-        avatar_url: avatar || null,
+        avatar_url: field('profile-avatar').trim(),
         pronouns: field('profile-pronouns'),
         tagline: field('profile-tagline'),
         bio: field('profile-bio'),
     };
+    const payload = {};
+    for (const key of PROFILE_FIELDS) {
+        const before = initial ? String(initial[key] ?? '') : null;
+        const unchanged = key === 'avatar_url' ? values[key] === before?.trim() : values[key] === before;
+        if (!unchanged) payload[key] = key === 'avatar_url' ? (values[key] || null) : values[key];
+    }
+    return payload;
+}
+
+function closeProfileForm() {
+    editingId = null;
+    editingInitial = null;
+    editingEntry = null;
+    closeModal();
 }
 
 export async function handleSaveProfile(event) {
     event.preventDefault();
     const userId = editingId;
-    if (!userId) return;
+    if (!userId || saving) return;
     const form = event.target.closest('form') || event.target;
-    const payload = profilePayload(form);
+    const payload = profilePayload(form, editingInitial);
+    if (!Object.keys(payload).length) {
+        closeProfileForm();
+        return;
+    }
     const me = getCurrentUser();
     const self = userId === me?.id;
+    const opened = editingEntry;
+    const submit = form.querySelector('button[type="submit"]');
+    saving = true;
+    if (submit) submit.disabled = true;
     try {
         const saved = self ? await api.updateMe(payload) : await api.updateAgent(userId, payload);
-        const fields = ['name', 'avatar_url', 'pronouns', 'tagline', 'bio'];
-        const changes = Object.fromEntries(fields.map(f => [f, saved?.[f] ?? null]));
+        const changes = Object.fromEntries(PROFILE_FIELDS.map(f => [f, saved?.[f] ?? null]));
         roster = roster.map(r => (r.user_id === userId ? { ...r, ...changes } : r));
         if (self) {
             setCurrentUser({ ...me, ...changes });
             updateUserInfo();
         }
-        closeModal();
+        closeProfileForm();
         showToast('Profile saved', 'success');
-        const entry = roster.find(r => r.user_id === userId);
+        const entry = { ...opened, ...changes };
         const detail = document.getElementById('person-detail-view');
-        if (entry && detail && !detail.classList.contains('hidden')) renderPerson(entry);
-        else renderPeople();
+        if (detail && !detail.classList.contains('hidden')) {
+            // Same page, same person: keep their issue list and the scroll.
+            const scroll = window.scrollY;
+            const issues = document.getElementById('person-issues');
+            renderPerson(entry, { withIssues: false });
+            if (issues) document.getElementById('person-issues')?.replaceWith(issues);
+            window.scrollTo(0, scroll);
+        } else {
+            renderPeople();
+        }
     } catch (e) {
         showApiError('save the profile', e);
+    } finally {
+        saving = false;
+        if (submit) submit.disabled = false;
     }
 }
 

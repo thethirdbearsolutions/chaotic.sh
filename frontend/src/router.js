@@ -109,6 +109,15 @@ export function setActiveNav(view) {
 }
 
 /**
+ * The cleanup every navigation runs (closing the mobile drawer, dropping
+ * the previous detail page's pending loads). A detail view that renders
+ * without navigateTo (a profile page, CHT-1984) runs it too.
+ */
+export function runNavigationCleanup() {
+    if (onBeforeNavigate) onBeforeNavigate();
+}
+
+/**
  * Navigate to a view by name.
  * Updates URL, highlights nav item, hides/shows view containers, calls load handler.
  *
@@ -152,7 +161,7 @@ export function navigateTo(view, pushHistory = true, { transition = false } = {}
     setActiveNav(view);
 
     // Run cleanup callbacks
-    if (onBeforeNavigate) onBeforeNavigate();
+    runNavigationCleanup();
 
     const switchView = () => {
         // Hide all views
