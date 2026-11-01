@@ -98,9 +98,16 @@ class TestWiring:
         # The CLI resends a write whose answer it lost only where the
         # server answers once per key (CHT-1957): a route missing from
         # its list loses that, and one too many could post twice.
-        from cli.client import IDEMPOTENT_ROUTES
+        # Compared as the regexes the CLI matches paths with, so a
+        # placeholder named differently on either side still agrees, and
+        # one the CLI could not turn into a pattern would not.
+        from cli.client import _IDEMPOTENT_PATTERNS, route_pattern
 
-        assert {(m, "/api" + p) for m, p in IDEMPOTENT_ROUTES} == EXPECTED_ROUTES
+        cli_side = {(m, p.pattern) for m, p in _IDEMPOTENT_PATTERNS}
+        server_side = {(m, route_pattern(path.removeprefix("/api"))) for m, path in EXPECTED_ROUTES}
+        assert cli_side == server_side
+        for _, pattern in cli_side:
+            assert "{" not in pattern, f"a placeholder was left literal: {pattern}"
 
     def test_an_unmarked_route_on_an_idempotent_router_is_plain(self):
         [route] = [
@@ -140,6 +147,13 @@ class TestIssueCreate:
         b = await self._create(client, auth_headers, test_project, key="c-2")
         assert a.json()["identifier"] != b.json()["identifier"]
         assert await OxydeIssue.objects.filter(project_id=test_project.id).count() == 2
+
+    async def test_the_key_for_a_different_issue_is_refused(self, client, auth_headers, test_project):
+        await self._create(client, auth_headers, test_project, title="First", key="c-1")
+        other = await self._create(client, auth_headers, test_project, title="Second", key="c-1")
+        assert other.status_code == 422
+        assert other.json()["detail"]["error_code"] == "idempotency_key_reused"
+        assert await OxydeIssue.objects.filter(project_id=test_project.id).count() == 1
 
     async def test_without_the_header_nothing_changes(self, client, auth_headers, test_project):
         await self._create(client, auth_headers, test_project)

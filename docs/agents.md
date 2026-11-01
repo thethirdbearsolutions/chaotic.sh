@@ -255,7 +255,14 @@ MCP protocol-level error (ADR-0006): `message` is always a sentence you
 can show or reason over, `error_code` is present whenever the failure has
 a stable name (`sprint_in_arrears`, `claim_rituals_pending`,
 `already_claimed`, `assignee_changed`, `tool_input`, `validation_error`,
-`unexpected`, ...), and governance
+`unexpected`, ...). One needs care: **`write_outcome_unknown`** (the
+stdio MCP server and the CLI, CHT-1957) means a write went out and no
+answer came back, after the client had already resent it as far as is
+safe. It may have landed: look (`issue_view`) before you send it again,
+or you may do it twice. The CLI's `--json` errors are the flat
+`{"error": "...", "error_code": "..."}`, and add `connect_error`,
+`timeout`, `network_error`, `usage_error`, `command_error`,
+`confirmation_required`, `aborted` and `internal_error`. Governance
 errors keep their structure (`pending_rituals`, `arrears_by`, `override`
 hints) so you can act on them without parsing prose. A claim/close refused
 for pending ticket rituals lists each ritual with its `approval_mode` and

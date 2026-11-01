@@ -18,6 +18,7 @@ from cli.client import (
     IDEMPOTENCY_HEADER,
     READ_TIMEOUT,
     WRITE_ATTEMPTS,
+    WRITE_DEADLINE,
     WRITE_TIMEOUT,
     APIError,
     Client,
@@ -64,9 +65,14 @@ class FakeHttp:
     def _send(self, method, url, **kwargs):
         self.calls.append((method, url, kwargs))
         outcome = self.outcomes.pop(0)
+        if callable(outcome) and not isinstance(outcome, Exception):
+            outcome = outcome()
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+    def call_timeouts(self):
+        return [kw.get("timeout") for _, _, kw in self.calls]
 
     def __getattr__(self, name):
         if name in ("get", "post", "put", "patch", "delete"):
@@ -90,8 +96,16 @@ def http(monkeypatch):
     monkeypatch.setattr(client_mod, "get_api_url", lambda: "http://test/api")
     monkeypatch.setattr(client_mod, "get_api_key", lambda: "k")
     sleeps = []
-    monkeypatch.setattr(Client, "_sleep", staticmethod(sleeps.append))
+    clock = [0.0]
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(Client, "_sleep", staticmethod(sleep))
+    monkeypatch.setattr(Client, "_clock", staticmethod(lambda: clock[0]))
     install.sleeps = sleeps
+    install.clock = clock
     return install
 
 
@@ -208,6 +222,126 @@ class TestBoundedResend:
         assert len(fake.calls) == 1
 
 
+def _gateway(code):
+    return Response(code, {"detail": f"{code} from the proxy"})
+
+
+class TestGatewayAnswers:
+    """PR #502 review: a proxy's 502/504 (or a 503 that is not the app's)
+    is no answer from the app, which may still do the write."""
+
+    def test_a_sprint_create_answered_504_may_have_landed_and_is_not_resent(self, http):
+        fake = http(_gateway(504))
+        with pytest.raises(WriteOutcomeUnknown) as exc:
+            Client().create_sprint("p1", "Sprint 9")
+        assert len(fake.calls) == 1
+        assert "504" in str(exc.value)
+
+    def test_a_bare_503_on_an_unkeyed_route_may_have_landed(self, http):
+        http(Response(503, {"detail": "Service Unavailable"}))
+        with pytest.raises(WriteOutcomeUnknown):
+            Client().create_relation("i1", "i2", "blocks")
+
+    def test_a_lost_answer_then_502s_may_have_landed(self, http):
+        fake = http(_timeout(), _gateway(502), _gateway(502))
+        with pytest.raises(WriteOutcomeUnknown):
+            Client().create_comment("i1", "hi")
+        assert len(set(fake.keys())) == 1 and len(fake.calls) == 3
+
+    def test_a_keyed_route_resends_after_a_502(self, http):
+        fake = http(_timeout(), _gateway(502), Response(201, COMMENT))
+        assert Client().create_comment("i1", "hi") == COMMENT
+        assert len(set(fake.keys())) == 1
+
+    def test_the_app_s_own_5xx_on_a_first_attempt_is_its_answer(self, http):
+        fake = http(Response(500, {"detail": "Internal Server Error"}))
+        with pytest.raises(APIError) as exc:
+            Client().create_comment("i1", "hi")
+        assert not isinstance(exc.value, WriteOutcomeUnknown)
+        assert len(fake.calls) == 1
+
+    def test_after_a_lost_answer_a_5xx_does_not_settle_it(self, http):
+        http(_timeout(), Response(500, {"detail": "Internal Server Error"}))
+        with pytest.raises(WriteOutcomeUnknown):
+            Client().create_comment("i1", "hi")
+
+    def test_after_a_lost_answer_a_refusal_settles_it(self, http):
+        # The resend was refused: had the first attempt been done, its
+        # answer would have been replayed instead.
+        arrears = Response(409, {"detail": {"error_code": "sprint_in_arrears", "message": "over"}})
+        http(_timeout(), arrears)
+        with pytest.raises(APIError) as exc:
+            Client().update_issue("i1", status="done")
+        assert not isinstance(exc.value, WriteOutcomeUnknown)
+        assert exc.value.status_code == 409
+
+
+class TestDeadline:
+    def test_every_attempt_and_wait_fits_in_the_deadline(self, http):
+        def lost_after(seconds):
+            def outcome():
+                http.clock[0] += seconds
+                return _timeout()
+            return outcome
+
+        fake = http(lost_after(WRITE_TIMEOUT.read), lost_after(1000), lost_after(1000))
+        with pytest.raises(WriteOutcomeUnknown):
+            Client().create_comment("i1", "hi")
+        first, second = fake.call_timeouts()
+        assert first.read == WRITE_TIMEOUT.read
+        # 60 s gone, then a 1 s wait: the second attempt gets what is left.
+        assert second.read == pytest.approx(WRITE_DEADLINE - WRITE_TIMEOUT.read - 1.0)
+        assert len(fake.calls) == 2  # no time for a third
+
+    def test_the_deadline_fits_a_120_second_shell_timeout(self):
+        assert WRITE_DEADLINE + WRITE_TIMEOUT.connect < 120
+
+
+class TestReRegister:
+    """A 401 for the session's key re-registers it once (CHT-1499); the
+    write's key, deadline and lost attempt carry over (review MINOR 2)."""
+
+    @pytest.fixture
+    def session(self, monkeypatch):
+        from cli import session_identity
+
+        monkeypatch.setattr(session_identity, "active_ref", lambda: "ref1")
+        monkeypatch.setattr(session_identity, "registrar_settings", lambda: ("reg", "http://test/api"))
+        monkeypatch.setattr(session_identity, "registrar_key_via", lambda: "bearer")
+        session_keys = iter(["sk-old", "sk-new"])
+        monkeypatch.setattr(Client, "_session_key", lambda self, *a, **kw: next(session_keys))
+
+    def test_the_write_keeps_its_key_across_the_re_register(self, http, session):
+        unauthorized = Response(401, {"detail": "expired"})
+        fake = http(_timeout(), unauthorized, Response(201, COMMENT))
+        assert Client().create_comment("i1", "hi") == COMMENT
+        keys = fake.keys()
+        assert len(keys) == 3 and len(set(keys)) == 1
+        auth = [kw["headers"]["Authorization"] for _, _, kw in fake.calls]
+        assert auth == ["Bearer sk-old", "Bearer sk-old", "Bearer sk-new"]
+
+    def test_a_lost_attempt_before_the_re_register_is_remembered(self, http, session):
+        unauthorized = Response(401, {"detail": "expired"})
+        http(_timeout(), unauthorized, *[httpx.ConnectError("refused") for _ in range(WRITE_ATTEMPTS)])
+        with pytest.raises(WriteOutcomeUnknown):
+            Client().create_comment("i1", "hi")
+
+    def test_without_session_identity_a_401_after_a_lost_attempt_may_have_landed(self, http):
+        http(_timeout(), Response(401, {"detail": "expired"}))
+        with pytest.raises(WriteOutcomeUnknown):
+            Client().create_comment("i1", "hi")
+
+
+class TestRoutePattern:
+    def test_any_placeholder_name_is_one_segment(self):
+        import re
+
+        from cli.client import route_pattern
+
+        assert re.match(route_pattern("/x/{issueId}/y/{id2}"), "/x/abc/y/7")
+        assert not re.match(route_pattern("/x/{issueId}"), "/x/a/b")
+
+
 class TestIdempotentRoutes:
     @pytest.mark.parametrize("method,path", [
         ("POST", "/projects/p1/issues"),
@@ -303,6 +437,35 @@ class TestJsonFailures:
         assert body["error_code"] == "internal_error" and "boom" in body["error"]
         assert "Traceback" in result.stderr
 
+    def test_an_abort_is_aborted_not_internal(self, cli_with):
+        import click
+
+        result = cli_with(["issue", "view", "CHT-1", "--json"], click.exceptions.Abort())
+        assert result.exit_code == 1
+        assert json.loads(result.stdout) == {"error": "Aborted.", "error_code": "aborted"}
+        assert "Traceback" not in result.stderr
+
+    def test_a_command_error_has_a_code(self, cli_with):
+        result = cli_with(["issue", "create", "--json"])
+        assert json.loads(result.stdout)["error_code"] == "command_error"
+
+    def test_a_parse_error_has_a_code(self, cli_with):
+        result = cli_with(["issue", "create", "T", "--status", "bogus", "--json"])
+        assert result.exit_code == 2
+        assert json.loads(result.stdout)["error_code"] == "usage_error"
+
+    def test_a_confirmation_required_has_a_code(self, cli_with):
+        result = cli_with(["issue", "delete", "CHT-1", "--json"], Response(200, ISSUE))
+        assert result.exit_code == 2
+        assert json.loads(result.stdout)["error_code"] == "confirmation_required"
+
+    def test_a_batch_item_s_lost_write_says_so(self):
+        from cli.main import error_fields
+
+        fields = error_fields(WriteOutcomeUnknown("PATCH", "/issues/i1", _timeout()))
+        assert fields["error_code"] == "write_outcome_unknown"
+        assert error_fields(httpx.ConnectError("x"))["error_code"] == "connect_error"
+
     def test_without_json_the_message_says_check_first(self, cli_with):
         result = cli_with(
             ["issue", "comment", "CHT-1", "hi"],
@@ -381,6 +544,15 @@ class TestAwaitSurvivesReadTimeout:
         self._patch(monkeypatch, client)
         result = CliRunner().invoke(self._root(), ["await", "team", "--json"])
         assert result.exit_code == 0, result.output
+
+    def test_without_timeout_an_unreachable_server_is_given_up_on(self, monkeypatch):
+        client = MagicMock()
+        client.get_me.side_effect = httpx.ConnectError("refused")
+        await_cmd = self._patch(monkeypatch, client)
+        result = CliRunner().invoke(self._root(), ["await", "team"])
+        assert result.exit_code == 1
+        assert client.get_me.call_count == await_cmd._MAX_CONNECT_TRIES
+        assert "cannot reach the server" in result.stderr
 
     def test_a_refusal_is_still_exit_1(self, monkeypatch):
         client = MagicMock()

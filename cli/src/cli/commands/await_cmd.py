@@ -470,6 +470,11 @@ def _backoff_wait(backoff_idx: int, deadline: float | None) -> float:
     return wait
 
 
+_MAX_CONNECT_TRIES = 6
+"""Connect failures `_retrying` rides out with no --timeout before it
+exits 1 (backoff 1+2+4+8+16 s between them, about half a minute)."""
+
+
 def _retrying(call, what: str):
     """`call()`, retrying transient errors (CHT-1957) the way the poll
     loop does, for the lookups a subcommand makes before it: a ReadTimeout
@@ -477,6 +482,7 @@ def _retrying(call, what: str):
     with 124 as the poll loop would; anything not transient propagates."""
     deadline = _deadline()
     backoff_idx = 0
+    connect_failures = 0
     while True:
         try:
             return call()
@@ -490,6 +496,17 @@ def _retrying(call, what: str):
             )
             if not transient:
                 raise
+            if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+                connect_failures += 1
+                # With no --timeout, a server that is down or a wrong
+                # api_url would otherwise hang the wait forever before it
+                # has begun: give up after a few tries (about half a minute).
+                if deadline is None and connect_failures >= _MAX_CONNECT_TRIES:
+                    _stderr(
+                        f"await: cannot reach the server ({what}) after {connect_failures} tries "
+                        f"({type(exc).__name__}). Is it running, and is api_url right?"
+                    )
+                    raise SystemExit(1) from exc
             if deadline is not None and time.time() >= deadline:
                 _stderr("await: timeout")
                 raise SystemExit(124) from exc

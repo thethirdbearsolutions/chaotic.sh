@@ -113,8 +113,10 @@ Under `--json`:
   hanging on (or leaking) a prompt.
 - An error object is `{"error": "<message>"}`, plus `"error_code"` when
   there is one: the server's (e.g. `sprint_in_arrears`), or the CLI's
-  own `connect_error`, `timeout`, `network_error`, `internal_error`, and
-  `write_outcome_unknown` (below).
+  own `connect_error`, `timeout`, `network_error`, `usage_error`,
+  `command_error`, `confirmation_required`, `aborted`, `internal_error`,
+  and `write_outcome_unknown` (below). A batch command's failed items
+  (`sprint add`, `sprint remove`) carry the same fields.
 - This holds even for errors Click raises before your command runs — an
   invalid choice value (`--status bogus`), a missing required argument,
   an unknown flag all produce `{"error": ...}` on stdout (exit 2), with
@@ -127,8 +129,10 @@ Run `chaotic <command> --help` to check whether a given command supports
 
 Every write the CLI sends carries an `Idempotency-Key`, one per write,
 the same on each attempt. A write may take up to 60 s to be answered (a
-read, 30 s). If it got no answer after it was sent (a timeout, a dropped
-connection), the CLI sends it again with the same key, up to 3 attempts,
+read, 30 s), and all its attempts fit in 100 s, inside a 120 s shell
+timeout. If it got no answer after it was sent (a timeout, a dropped
+connection, a proxy's 502, 503 or 504), the CLI sends it again with the
+same key, up to 3 attempts,
 on the routes where the server does a keyed write at most once: creating
 an issue, updating one (status, assignee, parent, ...), commenting, and
 the inbox and ritual actions. Other writes are resent only when they
@@ -513,7 +517,9 @@ backoff (1s, 2s, 4s, 8s, capped at 30s), retrying indefinitely while
 `--timeout` (if any) has not expired. That includes the lookups before
 the wait begins (the target issue, sprint or project, and the current
 user): `--timeout` counts from the start of the command, and a transient
-error never turns into exit 1. Transient errors include:
+error there never turns into exit 1, with one exception: without
+`--timeout`, a server that cannot be connected to at all is given up on
+after 6 tries (about half a minute), exit 1. Transient errors include:
 
 - Connection errors and timeouts
 - HTTP 429 (rate limit)
