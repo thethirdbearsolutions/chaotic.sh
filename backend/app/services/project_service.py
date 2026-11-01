@@ -21,9 +21,9 @@ Project = OxydeProject
 
 
 
-# Project settings that gate a ticket's claim or close. A write that
-# turns one off is conditional on it still being off as read, so a person
-# turning it on meanwhile is not silently undone (CHT-1926).
+# Project settings that gate a ticket's claim or close. A PATCH that
+# turns one off is conditional on it still holding the value it was read
+# with, so anyone turning it on meanwhile is not silently undone (CHT-1926).
 GATE_SETTINGS = (
     "human_rituals_required",
     "require_estimate_on_claim",
@@ -95,9 +95,9 @@ class ProjectService:
 
         ``expect`` makes the write conditional: it lands only while those
         columns still hold those values, else ProjectChangedError and
-        nothing is written. The agent gate check uses it (CHT-1926): it
-        decided on the values it read, and a person turning a gate on in
-        between must not be undone by the agent's write."""
+        nothing is written. update_project pins each gate the request turns
+        off (CHT-1926): the caller decided on the values it read, and anyone
+        turning that gate on in between must not be undone by this write."""
         update_data = project_in.model_dump(exclude_unset=True)
         # These columns are NOT NULL: an explicit null means "leave it"
         # rather than a failed write (PR #462 review 7).
