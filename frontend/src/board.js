@@ -67,8 +67,12 @@ subscribe((key) => {
 
 /**
  * Load board issues for the current project
+ * @param {Object} [options]
+ * @param {boolean} [options.fromMemory] - entering the view: paint what it
+ *   showed last time for this team and project at once (CHT-1973). Off for
+ *   a reload after a change, which would repaint the state before it.
  */
-export async function loadBoard() {
+export async function loadBoard({ fromMemory = false } = {}) {
     // CHT-1215 (review finding 3): loadBoard() runs on view entry and
     // project switch, and its skeleton wipe below destroys the
     // .keyboard-selected card before renderBoard() can re-find it by id —
@@ -111,7 +115,7 @@ export async function loadBoard() {
     // A revisit paints the board it showed last time for this project at
     // once, and the request below refreshes it (CHT-1973).
     const key = resultKey();
-    const shown = lastResult('board', key);
+    const shown = fromMemory ? lastResult('board', key) : undefined;
     if (shown) {
         boardIssues = shown;
         boardKey = key;
@@ -133,8 +137,8 @@ export async function loadBoard() {
         const issues = await api.getIssues({ project_id: projectId });
         if (requestId !== loadBoardRequestId) return; // a newer loadBoard() has since started — drop this stale response
 
-        // Unchanged since the paint above: keep the DOM (and the cursor).
-        const unchanged = shown && boardKey === key && sameResult(boardIssues, issues);
+        // Unchanged since the paint above: skip a second render.
+        const unchanged = shown && sameResult(boardIssues, issues);
         boardIssues = issues;
         boardKey = key;
         rememberResult('board', key, issues);
@@ -153,9 +157,7 @@ export async function loadBoard() {
         if (requestId !== loadBoardRequestId) return;
         // CHT-1224: the copy said "try again" but shipped no button — add the
         // cta the helper already supports, wired to re-run loadBoard().
-        // The board painted from the last visit stays; the toast says the
-        // refresh failed (CHT-1973).
-        if (board && !shown) board.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'Failed to load board', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-board' }, variant: 'error' });
+        if (board) board.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'Failed to load board', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-board' }, variant: 'error' });
         showApiError('load board', e);
     }
 }

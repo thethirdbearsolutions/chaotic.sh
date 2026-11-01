@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, onTestFinished } from 'vitest';
 
+vi.mock('./last-result.js', () => ({ forgetResults: vi.fn(), forgetResultsUnlessOpen: vi.fn() }));
 vi.mock('./api.js', () => ({
     api: {
         getInbox: vi.fn(() => Promise.resolve([])),

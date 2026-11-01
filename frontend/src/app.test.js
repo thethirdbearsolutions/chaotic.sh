@@ -425,6 +425,19 @@ describe('app.js view registrations', () => {
             .toBeLessThan(showCachedIssuesOrSkeleton.mock.invocationCallOrder[0]);
     });
 
+    // CHT-1973: entering these views paints the last result first; their
+    // other callers (reloads after a change) must not.
+    it('entering Board, Sprints, Epics or Documents asks for the last result', () => {
+        registeredViews['board']();
+        registeredViews['sprints']();
+        registeredViews['epics']();
+        registeredViews['documents']();
+        expect(loadBoard).toHaveBeenCalledWith({ fromMemory: true });
+        expect(loadSprints).toHaveBeenCalledWith({ fromMemory: true });
+        expect(loadEpics).toHaveBeenCalledWith({ fromMemory: true });
+        expect(loadDocuments).toHaveBeenCalledWith(null, null, { fromMemory: true });
+    });
+
     // CHT-1973: the projects are in memory from boot; paint them before
     // the refresh answers.
     it('projects view paints the known projects at once, then refreshes', async () => {

@@ -83,23 +83,30 @@ describe('loadEpics', () => {
     });
 
     // CHT-1973: a revisit painted a skeleton for a round trip.
-    it('paints the last epics at once on a revisit, and keeps them if the refresh fails', async () => {
+    it('paints the last epics at once on entry, then shows a failed refresh', async () => {
         api.getTeamEpicProgress.mockResolvedValue(response([epic({ title: 'Cached Epic' })]));
         await loadEpics();
         api.getTeamEpicProgress.mockRejectedValue(new Error('down'));
-        const loading = loadEpics();
+        const loading = loadEpics({ fromMemory: true });
         const el = document.getElementById('epics-list');
         expect(el.textContent).toContain('Cached Epic');
         expect(el.innerHTML).not.toContain('skeleton');
         await loading;
-        expect(el.textContent).toContain('Cached Epic');
-        expect(el.innerHTML).not.toContain('retry-load-epics');
+        expect(el.innerHTML).toContain('retry-load-epics');
+    });
+
+    it('paints the skeleton without fromMemory', async () => {
+        api.getTeamEpicProgress.mockResolvedValue(response([epic({ title: 'Cached Epic' })]));
+        await loadEpics();
+        api.getTeamEpicProgress.mockReturnValue(new Promise(() => {}));
+        loadEpics();
+        expect(document.getElementById('epics-list').textContent).not.toContain('Cached Epic');
     });
 
     it('keeps the DOM when the refresh is unchanged', async () => {
         api.getTeamEpicProgress.mockResolvedValue(response([epic({ title: 'Same Epic' })]));
         await loadEpics();
-        const loading = loadEpics();
+        const loading = loadEpics({ fromMemory: true });
         const el = document.getElementById('epics-list');
         const first = el.firstElementChild;
         await loading;

@@ -47,8 +47,12 @@ export function resetEpicsViewState() {
 
 /**
  * Load and render the epics list view.
+ * @param {Object} [options]
+ * @param {boolean} [options.fromMemory] - entering the view: paint what it
+ *   showed last time for this team and project at once (CHT-1973). Off for
+ *   a reload after a change, which would repaint the state before it.
  */
-export async function loadEpics() {
+export async function loadEpics({ fromMemory = false } = {}) {
     // Reset the keyboard cursor before the skeleton wipe destroys the selected
     // row — a stale index would positionally clamp into the re-rendered list
     // and Enter could open the wrong epic (CHT-1291 review; mirrors loadBoard).
@@ -62,7 +66,7 @@ export async function loadEpics() {
     // project at once, and the request below refreshes them (CHT-1973).
     // Else the loading skeleton (CHT-1047).
     const key = resultKey();
-    const shown = lastResult('epics', key);
+    const shown = fromMemory ? lastResult('epics', key) : undefined;
     if (shown) {
         paintEpics(shown, listEl);
     } else {
@@ -100,16 +104,11 @@ export async function loadEpics() {
         if (requestId !== loadEpicsRequestId) return; // a newer loadEpics() has since started — drop this stale response
 
         rememberResult('epics', key, progress);
-        // Unchanged since the paint above: keep the DOM (and the cursor).
+        // Unchanged since the paint above: skip a second render.
         if (shown && sameResult(shown, progress)) return;
         paintEpics(progress, listEl);
     } catch (e) {
         if (requestId !== loadEpicsRequestId) return;
-        if (shown) {
-            // The epics painted from the last visit stay (CHT-1973).
-            showApiError('load epics', e);
-            return;
-        }
         listEl.innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.epics,
             heading: 'Failed to load epics',

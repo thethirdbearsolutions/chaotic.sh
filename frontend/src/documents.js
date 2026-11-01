@@ -326,8 +326,12 @@ subscribe((key) => {
  * Load documents for the current team/project
  * @param {string} teamId - Team ID
  * @param {string} projectId - Project ID (optional, filters by project)
+ * @param {Object} [options]
+ * @param {boolean} [options.fromMemory] - entering the view: paint what it
+ *   showed last time for this team and project at once (CHT-1973). Off for
+ *   a reload after a change, which would repaint the state before it.
  */
-export async function loadDocuments(teamId, projectId = null) {
+export async function loadDocuments(teamId, projectId = null, { fromMemory = false } = {}) {
   if (!teamId) {
     // Fall back to getCurrentTeam() for backward compat
     teamId = getCurrentTeam()?.id;
@@ -348,7 +352,7 @@ export async function loadDocuments(teamId, projectId = null) {
   // project at once, and the request below refreshes them (CHT-1973).
   // Else the loading skeleton (CHT-1047).
   const key = `${teamId}|${projectId ?? ''}`;
-  const shown = lastResult('documents', key);
+  const shown = fromMemory ? lastResult('documents', key) : undefined;
   const listEl = document.getElementById('documents-list');
   if (shown) {
     documents = shown;
@@ -369,7 +373,7 @@ export async function loadDocuments(teamId, projectId = null) {
     const fetched = await api.getDocuments(teamId, projectId);
     if (requestId !== loadDocumentsRequestId) return; // a newer documents load has since started — drop this stale response
     rememberResult('documents', key, fetched);
-    // Unchanged since the paint above: keep the DOM (and the cursor).
+    // Unchanged since the paint above: skip a second render.
     const unchanged = shown && sameResult(documents, fetched);
     documents = fetched;
 
@@ -384,11 +388,6 @@ export async function loadDocuments(teamId, projectId = null) {
     if (!unchanged) filterDocuments();  // Apply search/sort and render
   } catch (e) {
     if (requestId !== loadDocumentsRequestId) return;
-    if (shown) {
-      // The documents painted from the last visit stay (CHT-1973).
-      showApiError('load documents', e);
-      return;
-    }
     // CHT-1224: was clearing the skeleton to '' (CHT-1047) — worse than the
     // skeleton, since it left no message at all once the 3s toast passed,
     // indistinguishable from a team with zero documents. Render a persistent

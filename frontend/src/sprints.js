@@ -70,8 +70,10 @@ let loadSprintsRequestId = 0;
 
 // Resolves false when the sprints could not be fetched (the list then shows
 // its own error state); anything else means the list is current or a newer
-// load superseded this one.
-export async function loadSprints() {
+// load superseded this one. `fromMemory`: entering the view, paint what it
+// showed last time for this project at once (CHT-1973); off for a reload
+// after a change, which would repaint the state before it.
+export async function loadSprints({ fromMemory = false } = {}) {
     // Reset the keyboard cursor before the skeleton wipe destroys the selected
     // card — a stale index would positionally clamp into the re-rendered list
     // and Enter could open the wrong sprint (CHT-1291 review; mirrors loadBoard).
@@ -99,7 +101,7 @@ export async function loadSprints() {
     // loading skeleton (CHT-1160).
     const list = document.getElementById('sprints-list');
     const key = resultKey();
-    const shown = lastResult('sprints', key);
+    const shown = fromMemory ? lastResult('sprints', key) : undefined;
     if (shown) {
         sprints = shown;
         renderSprints();
@@ -135,11 +137,6 @@ export async function loadSprints() {
         await loadLimboStatus();
     } catch (e) {
         if (requestId !== loadSprintsRequestId) return;
-        if (shown) {
-            // The sprints painted from the last visit stay (CHT-1973).
-            showApiError('load sprints', e);
-            return false;
-        }
         // CHT-1224: the copy said "try again" but shipped no button — add the
         // cta the helper already supports, wired to re-run loadSprints().
         if (list) list.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.sprints, heading: 'Failed to load sprints', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-sprints' }, variant: 'error' });

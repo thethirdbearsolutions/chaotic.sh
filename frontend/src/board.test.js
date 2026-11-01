@@ -151,7 +151,7 @@ describe('board', () => {
             it('paints the last board at once, before the request answers', async () => {
                 let answer;
                 api.getIssues.mockReturnValue(new Promise((r) => { answer = r; }));
-                const loading = loadBoard();
+                const loading = loadBoard({ fromMemory: true });
                 const board = document.getElementById('kanban-board');
                 expect(board.textContent).toContain('Cached one');
                 expect(board.innerHTML).not.toContain('skeleton');
@@ -163,24 +163,33 @@ describe('board', () => {
 
             it('keeps the DOM when the refresh is unchanged', async () => {
                 api.getIssues.mockResolvedValue(JSON.parse(JSON.stringify(first)));
-                const loading = loadBoard();
+                const loading = loadBoard({ fromMemory: true });
                 const card = document.querySelector('.kanban-card');
                 await loading;
                 expect(document.querySelector('.kanban-card')).toBe(card);
             });
 
-            it('keeps the painted board when the refresh fails', async () => {
-                api.getIssues.mockRejectedValue(new Error('down'));
-                await loadBoard();
+            // Review: a reload after a change must not repaint the state
+            // before it.
+            it('paints a skeleton, not the last board, without fromMemory', () => {
+                api.getIssues.mockReturnValue(new Promise(() => {}));
+                loadBoard();
                 const board = document.getElementById('kanban-board');
-                expect(board.textContent).toContain('Cached one');
-                expect(showApiError).toHaveBeenCalled();
+                expect(board.textContent).not.toContain('Cached one');
+                expect(board.innerHTML).toContain('skeleton');
+            });
+
+            // Review: CHT-1224's lasting error + Retry holds on a revisit too.
+            it('shows the error and Retry when the refresh fails', async () => {
+                api.getIssues.mockRejectedValue(new Error('down'));
+                await loadBoard({ fromMemory: true });
+                expect(document.getElementById('kanban-board').innerHTML).toContain('retry-load-board');
             });
 
             it('paints a skeleton, not another project\'s board', () => {
                 api.getIssues.mockReturnValue(new Promise(() => {}));
                 setState('currentProject', 'project-456');
-                loadBoard();
+                loadBoard({ fromMemory: true });
                 const board = document.getElementById('kanban-board');
                 expect(board.textContent).not.toContain('Cached one');
                 expect(board.innerHTML).toContain('skeleton');

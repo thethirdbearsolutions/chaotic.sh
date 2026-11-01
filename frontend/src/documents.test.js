@@ -120,24 +120,24 @@ describe('loadDocuments', () => {
   });
 
   // CHT-1973: a revisit painted a skeleton for a round trip.
-  it('paints the last documents at once on a revisit, and keeps them if the refresh fails', async () => {
+  it('paints the last documents at once on entry, and only then', async () => {
     api.getDocuments.mockResolvedValue([{ id: 'd1', title: 'Cached doc', updated_at: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z' }]);
     await loadDocuments('team-1');
-    api.getDocuments.mockRejectedValue(new Error('down'));
-    const loading = loadDocuments('team-1');
+    api.getDocuments.mockReturnValue(new Promise(() => {}));
+    loadDocuments('team-1', null, { fromMemory: true });
     const el = document.getElementById('documents-list');
     expect(el.textContent).toContain('Cached doc');
     expect(el.innerHTML).not.toContain('skeleton');
-    await loading;
-    expect(el.textContent).toContain('Cached doc');
-    expect(el.innerHTML).not.toContain('retry-load-documents');
+    // A reload after a delete or create must not show the list before it.
+    loadDocuments('team-1');
+    expect(el.textContent).not.toContain('Cached doc');
   });
 
   it('does not paint another team\'s documents', async () => {
     api.getDocuments.mockResolvedValue([{ id: 'd1', title: 'Team one doc', updated_at: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z' }]);
     await loadDocuments('team-1');
     api.getDocuments.mockReturnValue(new Promise(() => {}));
-    loadDocuments('team-2');
+    loadDocuments('team-2', null, { fromMemory: true });
     expect(document.getElementById('documents-list').textContent).not.toContain('Team one doc');
   });
 

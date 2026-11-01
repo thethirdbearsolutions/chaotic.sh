@@ -263,21 +263,23 @@ describe('loadSprints', () => {
         expect(getSprints()).toHaveLength(1);
     });
 
-    it('paints the last sprints at once on a revisit, and keeps them if the refresh fails', async () => {
+    it('paints the last sprints at once on entry, and only then', async () => {
         api.getCurrentSprint.mockResolvedValue({ id: 's1' });
         api.getSprints.mockResolvedValue([{ id: 's1', name: 'Cached sprint', status: 'active' }]);
         api.getLimboStatus.mockResolvedValue({ in_limbo: false });
         setState('currentProject', 'p1');
         await loadSprints();
 
-        api.getCurrentSprint.mockRejectedValue(new Error('down'));
-        const loading = loadSprints();
+        api.getCurrentSprint.mockReturnValue(new Promise(() => {}));
+        loadSprints({ fromMemory: true });
         const list = document.getElementById('sprints-list');
         expect(list.textContent).toContain('Cached sprint');
         expect(list.innerHTML).not.toContain('skeleton');
-        await loading;
-        expect(list.textContent).toContain('Cached sprint');
-        expect(list.innerHTML).not.toContain('retry-load-sprints');
+
+        // A reload after a change (sprint close) shows the skeleton, not
+        // the sprints before the change.
+        loadSprints();
+        expect(list.textContent).not.toContain('Cached sprint');
     });
 
     it('resets the keyboard cursor on (re)load (CHT-1291 review)', async () => {

@@ -38,6 +38,20 @@ export function lastResult(view, key) {
     return entry && entry.key === key ? entry.value : undefined;
 }
 
+/**
+ * Forget what each of `views` showed, unless it is the view on screen
+ * (which refreshes itself). A change made while a view is closed (an
+ * issue moved from its detail page, a document deleted) would otherwise
+ * show its old state for a round trip on the next visit.
+ * @param {string|null} openView - getCurrentView()
+ * @param {...string} views
+ */
+export function forgetResultsUnlessOpen(openView, ...views) {
+    for (const view of views) {
+        if (view !== openView) results.delete(view);
+    }
+}
+
 /** Forget every view's result. */
 export function forgetResults() {
     results.clear();

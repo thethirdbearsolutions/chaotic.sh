@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { lastResult, rememberResult, resultKey, forgetResults, sameResult } from './last-result.js';
+import { lastResult, rememberResult, resultKey, forgetResults, forgetResultsUnlessOpen, sameResult } from './last-result.js';
 import { setCurrentTeam, setCurrentProject, setCurrentUser } from './state.js';
 
 describe('last-result (CHT-1973)', () => {
@@ -35,6 +35,14 @@ describe('last-result (CHT-1973)', () => {
         rememberResult('board', 't1|p1', [1]);
         setCurrentUser(null);
         expect(lastResult('board', 't1|p1')).toBeUndefined();
+    });
+
+    it('forgets the closed views a change touches, not the open one', () => {
+        rememberResult('board', 't1|p1', [1]);
+        rememberResult('epics', 't1|p1', [2]);
+        forgetResultsUnlessOpen('board', 'board', 'epics');
+        expect(lastResult('board', 't1|p1')).toEqual([1]);
+        expect(lastResult('epics', 't1|p1')).toBeUndefined();
     });
 
     it('compares results by value', () => {
