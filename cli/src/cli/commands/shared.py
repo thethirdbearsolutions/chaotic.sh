@@ -405,49 +405,66 @@ def resolve_sprint_id(sprint_value: str, project_id: str) -> str:
     raise click.ClickException(f"Sprint '{sprint_value}' not found. Use 'chaotic sprint list' to see available sprints.")
 
 
-def _documents_to_resolve_in(team_id: str) -> list:
-    """Every document the caller can see in ``team_id``, to match a title
-    or id prefix against (high limit to avoid pagination cutoff).
+def agent_project_after_refusal(refused) -> str | None:
+    """The project a project-scoped agent key is confined to, when
+    ``refused`` is the 403 the server gives such a key for a team-wide
+    read (CHT-1780); else None, and the caller re-raises ``refused``.
 
-    That is the team listing, except for a project-scoped agent (a
-    session identity is usually one): the server refuses it the team-wide
-    listing (CHT-1780), so it gets its own project's documents, which are
-    all the documents it can see. Without this every ``doc`` command that
-    takes a document failed for it with "Not authorized to access this
-    team", even on a document it had just created (CHT-1947, CHT-1949).
-    The refusal is the cue rather than a ``/auth/me`` call up front, so
-    nobody else pays an extra request.
+    A session identity is usually project-scoped, so this is how a
+    command that reads team-wide falls back to the one project the key
+    can see (CHT-1947, CHT-1949). The refusal is the cue rather than an
+    ``/auth/me`` call up front, so nobody else pays an extra request.
+    ``get_me`` goes out with the same credential that was refused.
     """
     from ..client import APIError
 
+    if getattr(refused, "status_code", None) != 403:
+        return None
     try:
-        return _client().get_documents(team_id, limit=10000)
+        me = _client().get_me()
+    except APIError:
+        return None
+    if not isinstance(me, dict) or not me.get("is_agent"):
+        return None
+    return me.get("agent_project_id") or None
+
+
+def list_documents_or_own_project(team_id: str, **filters) -> list:
+    """``get_documents(team_id, **filters)``, except that a project-scoped
+    agent refused the team-wide listing gets its own project's documents,
+    which are all the documents it can see. Pass no ``project_id``: a
+    project filter is never refused for being team-wide."""
+    from ..client import APIError
+
+    try:
+        return _client().get_documents(team_id, **filters)
     except APIError as refused:
-        if refused.status_code != 403:
-            raise
-        try:
-            me = _client().get_me() or {}
-        except APIError:
-            raise refused from None
-        project_id = me.get("agent_project_id") if me.get("is_agent") else None
+        project_id = agent_project_after_refusal(refused)
         if not project_id:
             raise
-        return _client().get_documents(team_id, project_id=project_id, limit=10000)
+        return _client().get_documents(team_id, project_id=project_id, **filters)
 
 
 def resolve_document_id(doc_value: str, team_id: str) -> str:
     """Resolve a document value to a document ID.
 
-    Resolution order (first match wins):
-    1. Full UUID → passed through
+    Resolution order (first match wins), against every document the
+    caller can see in the team (``list_documents_or_own_project``; high
+    limit to avoid pagination cutoff):
+    1. Exact id
     2. Document title → matched case-insensitively
-    3. UUID prefix → matched against team documents
+    3. UUID prefix
 
     Raises ClickException on ambiguity or not found.
     """
-    documents = _documents_to_resolve_in(team_id)
+    documents = list_documents_or_own_project(team_id, limit=10000)
     if not documents:
-        raise click.ClickException("No documents exist. Create one with 'chaotic doc create'.")
+        # Not "no documents exist" for a project-scoped agent whose
+        # configured team is not its own: it just sees none here.
+        raise click.ClickException(
+            f"Document '{doc_value}' not found: no documents are visible in the current team. "
+            "Create one with 'chaotic doc create'."
+        )
 
     # Try exact ID match first
     exact = [d for d in documents if d["id"] == doc_value]

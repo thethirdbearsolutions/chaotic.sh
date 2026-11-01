@@ -232,6 +232,13 @@ class TestProjectScopedAgentDocumentCommands:
         assert commented.exit_code == 0, commented.output
         assert [c["content"] for c in api_client.get_document_comments(doc["id"])] == ["looks right"]
 
+        # `doc list` with no current project, and `--all`, are team-wide:
+        # the agent lists its own project instead (CHT-1949).
+        for args in ([], ["--all"]):
+            listed = self._doc(key, team_id, "list", *args, "--json")
+            assert listed.exit_code == 0, listed.output
+            assert "Crew playbook" in listed.output and "Team only" not in listed.output
+
         missing = self._doc(key, team_id, "show", "Team only")
         assert missing.exit_code != 0
         assert "not found" in missing.output and "Not authorized" not in missing.output

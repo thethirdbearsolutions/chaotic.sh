@@ -69,7 +69,7 @@ class TestResolveDocumentIdEmptyDocuments:
         with pytest.raises(click.ClickException) as exc_info:
             resolve_document_id("Getting Started", "team-123")
 
-        assert "No documents exist" in str(exc_info.value)
+        assert "not found" in str(exc_info.value)
         assert "chaotic doc create" in str(exc_info.value)
 
 
@@ -194,6 +194,7 @@ class TestResolveDocumentIdProjectScopedAgent:
         from cli.main import resolve_document_id, client
 
         def listing(team_id, project_id=None, limit=None):
+            assert limit == 10000
             if project_id is None:
                 raise self._refused()
             assert project_id == "proj-1"
@@ -208,6 +209,8 @@ class TestResolveDocumentIdProjectScopedAgent:
     @pytest.mark.parametrize("me", [
         {"is_agent": False, "agent_project_id": None},
         {"is_agent": True, "agent_project_id": None},
+        None,
+        MagicMock(),
     ])
     def test_anyone_else_keeps_the_refusal(self, me):
         from cli.client import APIError
@@ -231,6 +234,23 @@ class TestResolveDocumentIdProjectScopedAgent:
         with pytest.raises(APIError) as exc_info:
             resolve_document_id("abc", "team-123")
         assert exc_info.value.status_code == 403
+
+    def test_an_empty_project_is_not_found_not_no_documents(self):
+        """The configured team is not the agent's own: its project lists
+        nothing there, which must not read as "no documents exist"."""
+        from cli.main import resolve_document_id, client
+
+        def listing(team_id, project_id=None, limit=None):
+            if project_id is None:
+                raise self._refused()
+            return []
+        client.get_documents = MagicMock(side_effect=listing)
+        client.get_me = MagicMock(return_value={"is_agent": True, "agent_project_id": "proj-1"})
+
+        with pytest.raises(click.ClickException) as exc_info:
+            resolve_document_id("Playbook", "other-team")
+        assert "Document 'Playbook' not found" in str(exc_info.value)
+        assert "No documents exist" not in str(exc_info.value)
 
     def test_other_errors_are_not_retried(self):
         from cli.client import APIError
