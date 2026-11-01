@@ -127,7 +127,7 @@ async def create_document(
     if current_user.is_agent and not document_in.icon:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Documents created by agents must include an emoji icon (--icon)",
+            detail="Documents created by agents must include an emoji icon (the icon field; --icon in the CLI)",
         )
 
     # Validate sprint belongs to document's project

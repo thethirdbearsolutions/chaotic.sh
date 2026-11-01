@@ -55,7 +55,7 @@ class TestCommentsFeed:
             assert project_id == "proj-1"
             return [COMMENT]
         client.get_team_comments = MagicMock(side_effect=feed)
-        client.get_me = MagicMock(return_value={"is_agent": True, "agent_project_id": "proj-1"})
+        client.get_me = MagicMock(return_value={"is_agent": True, "agent_project_id": "proj-1", "agent_team_id": "test-team-123"})
 
         result = cli_runner.invoke(cli, ["comments", "-n", "5", "--json"])
 
@@ -65,7 +65,11 @@ class TestCommentsFeed:
 
     @pytest.mark.parametrize("me", [
         {"is_agent": False, "agent_project_id": None},
-        {"is_agent": True, "agent_project_id": None},
+        {"is_agent": True, "agent_project_id": None, "agent_team_id": "test-team-123"},
+        # Its project is in another team: the current team is stale, and
+        # retrying there would hide the refusal behind an empty answer
+        # (PR #498 review I1).
+        {"is_agent": True, "agent_project_id": "proj-1", "agent_team_id": "other-team"},
     ])
     def test_anyone_else_keeps_the_refusal(self, cli_runner, me):
         from cli.main import cli, client

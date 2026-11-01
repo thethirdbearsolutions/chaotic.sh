@@ -1772,6 +1772,7 @@ def register(cli):
         m = _main()
         team_id = m.get_current_team()
         comments = team_wide_or_agent_project(
+            team_id,
             lambda project_id: _client().get_team_comments(team_id, limit=limit, project_id=project_id),
         )
 
