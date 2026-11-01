@@ -111,6 +111,12 @@ Under `--json`:
   prompt. Pass `--yes` (`chaotic --yes issue delete ... --json`) to
   proceed; without it they emit `{"error": ...}` and exit 2 instead of
   hanging on (or leaking) a prompt.
+- An error object is `{"error": "<message>"}`, plus `"error_code"` when
+  there is one: the server's (e.g. `sprint_in_arrears`), or the CLI's
+  own `connect_error`, `timeout`, `network_error`, `usage_error`,
+  `command_error`, `confirmation_required`, `aborted`, `internal_error`,
+  `write_not_sent` and `write_outcome_unknown` (below). A batch command's failed items
+  (`sprint add`, `sprint remove`) carry the same fields.
 - This holds even for errors Click raises before your command runs — an
   invalid choice value (`--status bogus`), a missing required argument,
   an unknown flag all produce `{"error": ...}` on stdout (exit 2), with
@@ -118,6 +124,26 @@ Under `--json`:
 
 Run `chaotic <command> --help` to check whether a given command supports
 `--json` — it's listed in the flag help text, not hidden.
+
+### Writes that get no answer
+
+Every write the CLI sends carries an `Idempotency-Key`, one per write,
+the same on each attempt. A write may take up to 60 s to be answered (a
+read, 30 s), and all its attempts fit in 100 s, inside a 120 s shell
+timeout. If it got no answer after it was sent (a timeout, a dropped
+connection, a proxy's 502, 503 or 504), the CLI sends it again with the
+same key, up to 3 attempts,
+on the routes where the server does a keyed write at most once: creating
+an issue, updating one (status, assignee, parent, ...), commenting, and
+the inbox and ritual actions. Other writes are resent only when they
+never reached the server. A write still without an answer exits 1 with
+`write_outcome_unknown`: **it may have landed, so check before retrying**
+(`chaotic issue view`), rather than sending it again blind. A write
+refused on a resend for how things stand right now (a sprint in
+arrears, a claim race) is reported as refused, but the first attempt,
+if it was still queued, can land later once things change: at most one
+of them is done, never two. `write_not_sent` means the time ran out
+before the write could be sent at all.
 
 `chaotic await` has its own richer JSON contract (a normalized event
 schema, not just "whatever the entity looks like") — see the
@@ -493,7 +519,12 @@ want to wake on intents regardless of ritual name.
 
 Transient failures during a wait are retried silently with exponential
 backoff (1s, 2s, 4s, 8s, capped at 30s), retrying indefinitely while
-`--timeout` (if any) has not expired. Transient errors include:
+`--timeout` (if any) has not expired. That includes the lookups before
+the wait begins (the target issue, sprint or project, and the current
+user): `--timeout` counts from the start of the command, and a transient
+error there never turns into exit 1, with one exception: without
+`--timeout`, a server that cannot be connected to at all is given up on
+after 6 tries (about half a minute), exit 1. Transient errors include:
 
 - Connection errors and timeouts
 - HTTP 429 (rate limit)

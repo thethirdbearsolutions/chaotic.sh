@@ -323,6 +323,65 @@ class TestComments:
         assert not any(c["id"] == comment["id"] for c in comments)
 
 
+def _lose_first_answer(monkeypatch):
+    """The first write lands on the server and its answer is lost: the
+    client sees a ReadTimeout (CHT-1957). Returns the keys each attempt
+    carried."""
+    from cli.client import Client
+
+    real_post = httpx.Client.post
+    keys = []
+
+    def post(self, url, **kwargs):
+        keys.append(kwargs["headers"].get("Idempotency-Key"))
+        response = real_post(self, url, **kwargs)
+        if len(keys) == 1:
+            raise httpx.ReadTimeout("answer lost", request=response.request)
+        return response
+
+    monkeypatch.setattr(httpx.Client, "post", post)
+    monkeypatch.setattr(Client, "_sleep", staticmethod(lambda _s: None))
+    return keys
+
+
+class TestLostAnswerResend:
+    """CHT-1957: a write whose answer is lost is resent with the same
+    Idempotency-Key, and the server does it once."""
+
+    def test_a_comment_resent_after_a_lost_answer_posts_once(self, api_client, test_project, monkeypatch):
+        issue = api_client.create_issue(test_project["id"], "Lossy line")
+        keys = _lose_first_answer(monkeypatch)
+        comment = api_client.create_comment(issue["id"], "Only once")
+        monkeypatch.undo()
+        assert len(keys) == 2 and keys[0] and keys[0] == keys[1]
+        comments = [c for c in api_client.get_comments(issue["id"]) if c["content"] == "Only once"]
+        assert [c["id"] for c in comments] == [comment["id"]]
+
+    def test_an_issue_create_resent_after_a_lost_answer_creates_one(self, api_client, test_project, monkeypatch):
+        keys = _lose_first_answer(monkeypatch)
+        created = api_client.create_issue(test_project["id"], "Created exactly once")
+        monkeypatch.undo()
+        assert len(keys) == 2 and keys[0] == keys[1]
+        same = [i for i in api_client.get_issues(project_id=test_project["id"]) if i["title"] == "Created exactly once"]
+        assert [i["id"] for i in same] == [created["id"]]
+
+    def test_two_writes_carry_two_keys(self, api_client, test_project, monkeypatch):
+        issue = api_client.create_issue(test_project["id"], "Two comments")
+        keys = []
+        real_post = httpx.Client.post
+
+        def post(self, url, **kwargs):
+            keys.append(kwargs["headers"].get("Idempotency-Key"))
+            return real_post(self, url, **kwargs)
+
+        monkeypatch.setattr(httpx.Client, "post", post)
+        api_client.create_comment(issue["id"], "Same words")
+        api_client.create_comment(issue["id"], "Same words")
+        monkeypatch.undo()
+        assert len(set(keys)) == 2
+        assert len([c for c in api_client.get_comments(issue["id"]) if c["content"] == "Same words"]) == 2
+
+
 class TestIssueActivities:
     """CHT-995: Test activity endpoints with populated relation data.
 
