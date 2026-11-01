@@ -552,7 +552,7 @@ class WriteQueue(
         entryId = write.entryId,
         issueId = write.issueId,
         atMillis = nowMillis(),
-        value = write.value.takeIf { write.kind == WriteKind.COMMENT },
+        value = write.typedText(),
     )
 
     /** Whether a write queued after [write] supersedes it. */
@@ -595,9 +595,15 @@ class WriteQueue(
         entryId = write.entryId,
         issueId = write.issueId,
         atMillis = nowMillis(),
-        // What the person wrote is not lost with the comment.
-        value = write.value.takeIf { write.kind == WriteKind.COMMENT },
+        value = write.typedText(),
     )
+
+    /**
+     * What the person wrote, kept on a refusal so it is not lost with the
+     * write: a comment's text, or a rejection's note (CHT-1683). Nothing
+     * for writes whose value is a field or a path the person did not type.
+     */
+    private fun PendingWrite.typedText(): String? = value.takeIf { kind in TYPED_KINDS }
 
     /** Offline: doubling from [FIRST_RETRY_MILLIS] to [MAX_RETRY_MILLIS] while nothing answers. */
     private fun offlineBackoff(): Long {
@@ -729,6 +735,9 @@ class WriteQueue(
         private const val HTTP_UNAVAILABLE = 503
 
         private val DECISIONS = setOf(WriteKind.APPROVE, WriteKind.REJECT, WriteKind.ARCHIVE)
+
+        /** Writes whose value the person typed, kept on a refusal (CHT-1683). */
+        private val TYPED_KINDS = setOf(WriteKind.COMMENT, WriteKind.REJECT)
 
         /** The writes that change an issue, and so outdate a fetch of it. */
         private val ISSUE_KINDS = setOf(WriteKind.COMMENT, WriteKind.UPDATE_ISSUE)
