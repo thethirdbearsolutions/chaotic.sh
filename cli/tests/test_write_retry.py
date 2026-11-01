@@ -439,6 +439,48 @@ class TestReRegister:
         with pytest.raises(WriteOutcomeUnknown):
             Client().create_comment("i1", "hi")
 
+    def test_a_re_register_that_fails_after_a_lost_attempt_may_have_landed(self, http, monkeypatch):
+        from cli import session_identity
+
+        monkeypatch.setattr(session_identity, "active_ref", lambda: "ref1")
+        monkeypatch.setattr(session_identity, "registrar_settings", lambda: ("reg", "http://test/api"))
+        monkeypatch.setattr(session_identity, "registrar_key_via", lambda: "bearer")
+
+        def session_key(self, *a, failed_key=None, **kw):
+            if failed_key:
+                raise APIError("registration refused", status_code=503)
+            return "sk-old"
+
+        monkeypatch.setattr(Client, "_session_key", session_key)
+        http(_timeout(), Response(401, {"detail": "expired"}))
+        with pytest.raises(WriteOutcomeUnknown):
+            Client().create_comment("i1", "hi")
+
+    def test_a_re_register_out_of_time_with_nothing_lost_was_not_sent(self, http, monkeypatch):
+        from cli import session_identity
+
+        monkeypatch.setattr(session_identity, "active_ref", lambda: "ref1")
+        monkeypatch.setattr(session_identity, "registrar_settings", lambda: ("reg", "http://test/api"))
+        monkeypatch.setattr(session_identity, "registrar_key_via", lambda: "bearer")
+
+        def session_key(ref, credential, api_url, failed_key=None):
+            if failed_key:
+                session_identity._registrar_timeout()  # what each registrar call asks first
+            return "sk-old"
+
+        monkeypatch.setattr(session_identity, "session_key", session_key)
+
+        def unauthorized_at_the_deadline():
+            http.clock[0] = WRITE_DEADLINE - 0.5
+            return Response(401, {"detail": "expired"})
+
+        fake = http(unauthorized_at_the_deadline)
+        with pytest.raises(APIError) as exc:
+            Client().create_comment("i1", "hi")
+        assert not isinstance(exc.value, WriteOutcomeUnknown)
+        assert exc.value.detail["error_code"] == "write_not_sent"
+        assert len(fake.calls) == 1
+
     def test_without_session_identity_a_401_after_a_lost_attempt_may_have_landed(self, http):
         http(_timeout(), Response(401, {"detail": "expired"}))
         with pytest.raises(WriteOutcomeUnknown):

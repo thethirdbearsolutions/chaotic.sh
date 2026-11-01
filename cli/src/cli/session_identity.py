@@ -483,9 +483,13 @@ def _registrar_timeout() -> httpx.Timeout:
         return httpx.Timeout(REGISTRAR_TIMEOUT, connect=REGISTRAR_CONNECT_TIMEOUT)
     remaining = deadline - time.monotonic()
     if remaining < 1.0:
-        raise SessionIdentityError(
-            f"Session identity registration: no time left in this write's deadline. {NO_FALLBACK}"
+        # The write was not sent again; if an earlier attempt may have
+        # landed, the client reports that instead.
+        message = (
+            "Session identity registration: no time left in this write's deadline, "
+            f"so it was not sent. {NO_FALLBACK}"
         )
+        raise SessionIdentityError(message, detail={"error_code": "write_not_sent", "message": message})
     connect = min(REGISTRAR_CONNECT_TIMEOUT, remaining / 4)
     return httpx.Timeout(min(REGISTRAR_TIMEOUT, remaining - connect), connect=connect)
 
