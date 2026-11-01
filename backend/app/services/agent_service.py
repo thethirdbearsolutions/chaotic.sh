@@ -352,6 +352,9 @@ class AgentService:
             # validation outlives the agent (CHT-1523).
             await self.revoke_credentials_of([agent.id], actor_id=None, reason=REASON_PRINCIPAL_DELETED)
             await OxydeAPIKey.objects.filter(principal_user_id=agent.id).delete()
+            # Its picture (CHT-1992).
+            from app.services.avatar_service import AvatarService
+            await AvatarService.forget([agent.id])
             await agent.delete()
         self._log_retired(identities, agent.id, None)
         return len(identities)

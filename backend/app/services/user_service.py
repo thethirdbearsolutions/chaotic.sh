@@ -533,6 +533,9 @@ class UserService:
             # agents (CHT-1537).
             await OxydeAPIKey.objects.filter(principal_user_id=user.id).delete()
             await OxydeAPIKey.objects.filter(holder_user_id=user.id).delete()
+            # Their pictures, and their agents' (CHT-1992).
+            from app.services.avatar_service import AvatarService
+            await AvatarService.forget([user.id, *(agent.id for agent in agents)])
             await user.delete()
         # Their address is free now: an account 0034 left without one,
         # at the same address ignoring case, takes it (CHT-1827).

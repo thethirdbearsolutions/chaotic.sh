@@ -667,6 +667,10 @@ _WEBSOCKET_PROBE = "test_websocket_team_answers_like_a_missing_one"
 NOT_ROW_KEYED = {
     **{(method, "/mcp/{api_key}", "api_key"): _CREDENTIAL for method in ("GET", "HEAD", "POST", "DELETE")},
     ("GET", "/{full_path:path}", "full_path"): "the SPA catch-all serves index.html for any path; it looks nothing up",
+    ("GET", "/api/avatars/{sha256}", "sha256"): (
+        "a profile picture by its content hash, served without a credential (an <img> sends none): the hash is "
+        "the capability, known only from an avatar_url the caller was shown (CHT-1992)"
+    ),
     ("GET", "/api/teams/invitations/{token}", "token"): _INVITE_TOKEN,
     ("POST", "/api/teams/invitations/{token}/accept", "token"): _INVITE_TOKEN,
     ("POST", "/api/inbox/{entry_id}/read", "entry_id"): _OWN_INBOX,
