@@ -1,25 +1,40 @@
 """Agent schemas."""
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.enums import AgentKind
+from app.schemas.user import AVATAR_URL_MAX, ProfileFields, clean_name
 from app.utils import DateTimeUTC
 
 
-class AgentCreate(BaseModel):
-    """Schema for creating an agent."""
+class AgentCreate(ProfileFields):
+    """Schema for creating an agent, optionally with its profile (CHT-1979)."""
 
     name: str = Field(min_length=1, max_length=255)
-    avatar_url: str | None = None
+    avatar_url: str | None = Field(default=None, max_length=AVATAR_URL_MAX)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _clean_name(cls, v):
+        return clean_name(v)
+
     # Make it a registrar (kind=service) from the start (CHT-1498).
     can_register: bool = False
 
 
-class AgentUpdate(BaseModel):
-    """Schema for updating an agent."""
+class AgentUpdate(ProfileFields):
+    """Schema for updating an agent: its identity (name, avatar, and the
+    profile fields, CHT-1979), or its registrar capability."""
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    avatar_url: str | None = None
+    avatar_url: str | None = Field(default=None, max_length=AVATAR_URL_MAX)
+
+    # Trimmed; null or blank refused, for a manager's rename too (CHT-1979 review).
+    @field_validator("name", mode="before")
+    @classmethod
+    def _clean_name(cls, v):
+        return clean_name(v)
+
     # Turn the registrar capability on (kind becomes service) or off
     # (kind back to assistant). Refused for a registered identity
     # (CHT-1498): registration is one level deep.
@@ -32,6 +47,10 @@ class AgentResponse(BaseModel):
     id: str
     name: str
     avatar_url: str | None
+    # Self-written profile (CHT-1979); null until set.
+    bio: str | None = None
+    pronouns: str | None = None
+    tagline: str | None = None
     is_active: bool
     parent_user_id: str
     parent_user_name: str | None = None
@@ -68,6 +87,9 @@ class AgentCreated(BaseModel):
     id: str
     name: str
     avatar_url: str | None
+    bio: str | None = None
+    pronouns: str | None = None
+    tagline: str | None = None
     agent_team_id: str
     agent_project_id: str | None
     api_key: str  # Full API key - only returned at creation time

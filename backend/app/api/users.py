@@ -36,11 +36,18 @@ async def get_user(user_id: str, current_user: CurrentUser) -> UserLookupRespons
 
 @router.patch("/me", response_model=UserResponse)
 @writes
-async def update_me(user_in: UserUpdate, current_user: CurrentUser, _app_session: NotAppSession):
-    """Update current user."""
+async def update_me(user_in: UserUpdate, current_user: CurrentUser, _app_session: NotAppSession) -> UserResponse:
+    """Update your own name, avatar and profile (bio, pronouns, tagline;
+    CHT-1979). Every member may, people and agents alike. An agent's own
+    name is held to the same rules as on PATCH /agents/{own id}: not
+    blank, not a person's or another agent's name in its team."""
+    if current_user.is_agent and user_in.name is not None:
+        from app.api.agents import check_own_agent_name
+
+        user_in.name = await check_own_agent_name(current_user, user_in.name)
     user_service = UserService()
     user = await user_service.update(current_user, user_in)
-    return user
+    return UserResponse.model_validate(user)
 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)

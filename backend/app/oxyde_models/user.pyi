@@ -25,17 +25,20 @@ class OxydeUser(Model):
     hashed_password: str
     name: str
     avatar_url: str | None
+    bio: str | None
+    pronouns: str | None
+    tagline: str | None
     is_active: bool
     is_superuser: bool
     created_at: datetime
     updated_at: datetime
-    email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None
+    email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f8daa4d94e0>, json_schema_input_type=PydanticUndefined)] | None
     email_folded: str | None
     is_agent: bool
     parent_user: OxydeUser | None
     agent_team_id: str | None
     agent_project_id: str | None
-    kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7eff81525f80>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7eff81526020>, return_type=PydanticUndefined, when_used='always')] | None
+    kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f8daa232c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f8daa232ca0>, return_type=PydanticUndefined, when_used='always')] | None
     external_ref: str | None
     registered_by_id: str | None
     can_register: bool
@@ -84,6 +87,16 @@ class OxydeUserQuery(Query[OxydeUser]):
         avatar_url__iexact: str | None = None,
         avatar_url__in: list[str] | None = None,
         avatar_url__isnull: bool | None = None,
+        bio: str | None = None,
+        bio__contains: str | None = None,
+        bio__icontains: str | None = None,
+        bio__startswith: str | None = None,
+        bio__istartswith: str | None = None,
+        bio__endswith: str | None = None,
+        bio__iendswith: str | None = None,
+        bio__iexact: str | None = None,
+        bio__in: list[str] | None = None,
+        bio__isnull: bool | None = None,
         can_register: bool | None = None,
         can_register__in: list[bool] | None = None,
         can_register__isnull: bool | None = None,
@@ -119,8 +132,8 @@ class OxydeUserQuery(Query[OxydeUser]):
         email_folded__iexact: str | None = None,
         email_folded__in: list[str] | None = None,
         email_folded__isnull: bool | None = None,
-        email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None = None,
-        email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f8daa4d94e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f8daa4d94e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         email_verified_at__isnull: bool | None = None,
         external_ref: str | None = None,
         external_ref__contains: str | None = None,
@@ -161,8 +174,8 @@ class OxydeUserQuery(Query[OxydeUser]):
         is_superuser: bool | None = None,
         is_superuser__in: list[bool] | None = None,
         is_superuser__isnull: bool | None = None,
-        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7eff81525f80>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7eff81526020>, return_type=PydanticUndefined, when_used='always')] | None = None,
-        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7eff81525f80>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7eff81526020>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f8daa232c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f8daa232ca0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f8daa232c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f8daa232ca0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
         kind__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -187,6 +200,16 @@ class OxydeUserQuery(Query[OxydeUser]):
         parent_user_id__iexact: str | None = None,
         parent_user_id__in: list[str] | None = None,
         parent_user_id__isnull: bool | None = None,
+        pronouns: str | None = None,
+        pronouns__contains: str | None = None,
+        pronouns__icontains: str | None = None,
+        pronouns__startswith: str | None = None,
+        pronouns__istartswith: str | None = None,
+        pronouns__endswith: str | None = None,
+        pronouns__iendswith: str | None = None,
+        pronouns__iexact: str | None = None,
+        pronouns__in: list[str] | None = None,
+        pronouns__isnull: bool | None = None,
         registered_by_id: str | None = None,
         registered_by_id__contains: str | None = None,
         registered_by_id__icontains: str | None = None,
@@ -197,6 +220,16 @@ class OxydeUserQuery(Query[OxydeUser]):
         registered_by_id__iexact: str | None = None,
         registered_by_id__in: list[str] | None = None,
         registered_by_id__isnull: bool | None = None,
+        tagline: str | None = None,
+        tagline__contains: str | None = None,
+        tagline__icontains: str | None = None,
+        tagline__startswith: str | None = None,
+        tagline__istartswith: str | None = None,
+        tagline__endswith: str | None = None,
+        tagline__iendswith: str | None = None,
+        tagline__iexact: str | None = None,
+        tagline__in: list[str] | None = None,
+        tagline__isnull: bool | None = None,
         updated_at: datetime | None = None,
         updated_at__gt: datetime | None = None,
         updated_at__gte: datetime | None = None,
@@ -246,6 +279,16 @@ class OxydeUserQuery(Query[OxydeUser]):
         avatar_url__iexact: str | None = None,
         avatar_url__in: list[str] | None = None,
         avatar_url__isnull: bool | None = None,
+        bio: str | None = None,
+        bio__contains: str | None = None,
+        bio__icontains: str | None = None,
+        bio__startswith: str | None = None,
+        bio__istartswith: str | None = None,
+        bio__endswith: str | None = None,
+        bio__iendswith: str | None = None,
+        bio__iexact: str | None = None,
+        bio__in: list[str] | None = None,
+        bio__isnull: bool | None = None,
         can_register: bool | None = None,
         can_register__in: list[bool] | None = None,
         can_register__isnull: bool | None = None,
@@ -281,8 +324,8 @@ class OxydeUserQuery(Query[OxydeUser]):
         email_folded__iexact: str | None = None,
         email_folded__in: list[str] | None = None,
         email_folded__isnull: bool | None = None,
-        email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None = None,
-        email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f8daa4d94e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f8daa4d94e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         email_verified_at__isnull: bool | None = None,
         external_ref: str | None = None,
         external_ref__contains: str | None = None,
@@ -323,8 +366,8 @@ class OxydeUserQuery(Query[OxydeUser]):
         is_superuser: bool | None = None,
         is_superuser__in: list[bool] | None = None,
         is_superuser__isnull: bool | None = None,
-        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7eff81525f80>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7eff81526020>, return_type=PydanticUndefined, when_used='always')] | None = None,
-        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7eff81525f80>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7eff81526020>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f8daa232c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f8daa232ca0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f8daa232c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f8daa232ca0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
         kind__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -349,6 +392,16 @@ class OxydeUserQuery(Query[OxydeUser]):
         parent_user_id__iexact: str | None = None,
         parent_user_id__in: list[str] | None = None,
         parent_user_id__isnull: bool | None = None,
+        pronouns: str | None = None,
+        pronouns__contains: str | None = None,
+        pronouns__icontains: str | None = None,
+        pronouns__startswith: str | None = None,
+        pronouns__istartswith: str | None = None,
+        pronouns__endswith: str | None = None,
+        pronouns__iendswith: str | None = None,
+        pronouns__iexact: str | None = None,
+        pronouns__in: list[str] | None = None,
+        pronouns__isnull: bool | None = None,
         registered_by_id: str | None = None,
         registered_by_id__contains: str | None = None,
         registered_by_id__icontains: str | None = None,
@@ -359,6 +412,16 @@ class OxydeUserQuery(Query[OxydeUser]):
         registered_by_id__iexact: str | None = None,
         registered_by_id__in: list[str] | None = None,
         registered_by_id__isnull: bool | None = None,
+        tagline: str | None = None,
+        tagline__contains: str | None = None,
+        tagline__icontains: str | None = None,
+        tagline__startswith: str | None = None,
+        tagline__istartswith: str | None = None,
+        tagline__endswith: str | None = None,
+        tagline__iendswith: str | None = None,
+        tagline__iexact: str | None = None,
+        tagline__in: list[str] | None = None,
+        tagline__isnull: bool | None = None,
         updated_at: datetime | None = None,
         updated_at__gt: datetime | None = None,
         updated_at__gte: datetime | None = None,
@@ -375,7 +438,7 @@ class OxydeUserQuery(Query[OxydeUser]):
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["agent_project_id", "-agent_project_id", "agent_team_id", "-agent_team_id", "avatar_url", "-avatar_url", "can_register", "-can_register", "created_at", "-created_at", "email", "-email", "email_folded", "-email_folded", "email_verified_at", "-email_verified_at", "external_ref", "-external_ref", "hashed_password", "-hashed_password", "id", "-id", "is_active", "-is_active", "is_agent", "-is_agent", "is_superuser", "-is_superuser", "kind", "-kind", "name", "-name", "parent_user", "-parent_user", "parent_user_id", "-parent_user_id", "registered_by_id", "-registered_by_id", "updated_at", "-updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["agent_project_id", "-agent_project_id", "agent_team_id", "-agent_team_id", "avatar_url", "-avatar_url", "bio", "-bio", "can_register", "-can_register", "created_at", "-created_at", "email", "-email", "email_folded", "-email_folded", "email_verified_at", "-email_verified_at", "external_ref", "-external_ref", "hashed_password", "-hashed_password", "id", "-id", "is_active", "-is_active", "is_agent", "-is_agent", "is_superuser", "-is_superuser", "kind", "-kind", "name", "-name", "parent_user", "-parent_user", "parent_user_id", "-parent_user_id", "pronouns", "-pronouns", "registered_by_id", "-registered_by_id", "tagline", "-tagline", "updated_at", "-updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -391,7 +454,7 @@ class OxydeUserQuery(Query[OxydeUser]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "bio", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "pronouns", "registered_by_id", "tagline", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -415,7 +478,7 @@ class OxydeUserQuery(Query[OxydeUser]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "bio", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "pronouns", "registered_by_id", "tagline", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -423,11 +486,11 @@ class OxydeUserQuery(Query[OxydeUser]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "bio", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "pronouns", "registered_by_id", "tagline", "updated_at"]) -> "OxydeUserQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"], flat: bool = False) -> "OxydeUserQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "bio", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "pronouns", "registered_by_id", "tagline", "updated_at"], flat: bool = False) -> "OxydeUserQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -581,6 +644,16 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         avatar_url__iexact: str | None = None,
         avatar_url__in: list[str] | None = None,
         avatar_url__isnull: bool | None = None,
+        bio: str | None = None,
+        bio__contains: str | None = None,
+        bio__icontains: str | None = None,
+        bio__startswith: str | None = None,
+        bio__istartswith: str | None = None,
+        bio__endswith: str | None = None,
+        bio__iendswith: str | None = None,
+        bio__iexact: str | None = None,
+        bio__in: list[str] | None = None,
+        bio__isnull: bool | None = None,
         can_register: bool | None = None,
         can_register__in: list[bool] | None = None,
         can_register__isnull: bool | None = None,
@@ -616,8 +689,8 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         email_folded__iexact: str | None = None,
         email_folded__in: list[str] | None = None,
         email_folded__isnull: bool | None = None,
-        email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None = None,
-        email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f8daa4d94e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f8daa4d94e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         email_verified_at__isnull: bool | None = None,
         external_ref: str | None = None,
         external_ref__contains: str | None = None,
@@ -658,8 +731,8 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         is_superuser: bool | None = None,
         is_superuser__in: list[bool] | None = None,
         is_superuser__isnull: bool | None = None,
-        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7eff81525f80>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7eff81526020>, return_type=PydanticUndefined, when_used='always')] | None = None,
-        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7eff81525f80>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7eff81526020>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f8daa232c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f8daa232ca0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f8daa232c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f8daa232ca0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
         kind__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -684,6 +757,16 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         parent_user_id__iexact: str | None = None,
         parent_user_id__in: list[str] | None = None,
         parent_user_id__isnull: bool | None = None,
+        pronouns: str | None = None,
+        pronouns__contains: str | None = None,
+        pronouns__icontains: str | None = None,
+        pronouns__startswith: str | None = None,
+        pronouns__istartswith: str | None = None,
+        pronouns__endswith: str | None = None,
+        pronouns__iendswith: str | None = None,
+        pronouns__iexact: str | None = None,
+        pronouns__in: list[str] | None = None,
+        pronouns__isnull: bool | None = None,
         registered_by_id: str | None = None,
         registered_by_id__contains: str | None = None,
         registered_by_id__icontains: str | None = None,
@@ -694,6 +777,16 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         registered_by_id__iexact: str | None = None,
         registered_by_id__in: list[str] | None = None,
         registered_by_id__isnull: bool | None = None,
+        tagline: str | None = None,
+        tagline__contains: str | None = None,
+        tagline__icontains: str | None = None,
+        tagline__startswith: str | None = None,
+        tagline__istartswith: str | None = None,
+        tagline__endswith: str | None = None,
+        tagline__iendswith: str | None = None,
+        tagline__iexact: str | None = None,
+        tagline__in: list[str] | None = None,
+        tagline__isnull: bool | None = None,
         updated_at: datetime | None = None,
         updated_at__gt: datetime | None = None,
         updated_at__gte: datetime | None = None,
@@ -743,6 +836,16 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         avatar_url__iexact: str | None = None,
         avatar_url__in: list[str] | None = None,
         avatar_url__isnull: bool | None = None,
+        bio: str | None = None,
+        bio__contains: str | None = None,
+        bio__icontains: str | None = None,
+        bio__startswith: str | None = None,
+        bio__istartswith: str | None = None,
+        bio__endswith: str | None = None,
+        bio__iendswith: str | None = None,
+        bio__iexact: str | None = None,
+        bio__in: list[str] | None = None,
+        bio__isnull: bool | None = None,
         can_register: bool | None = None,
         can_register__in: list[bool] | None = None,
         can_register__isnull: bool | None = None,
@@ -778,8 +881,8 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         email_folded__iexact: str | None = None,
         email_folded__in: list[str] | None = None,
         email_folded__isnull: bool | None = None,
-        email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None = None,
-        email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f8daa4d94e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        email_verified_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f8daa4d94e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         email_verified_at__isnull: bool | None = None,
         external_ref: str | None = None,
         external_ref__contains: str | None = None,
@@ -820,8 +923,8 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         is_superuser: bool | None = None,
         is_superuser__in: list[bool] | None = None,
         is_superuser__isnull: bool | None = None,
-        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7eff81525f80>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7eff81526020>, return_type=PydanticUndefined, when_used='always')] | None = None,
-        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7eff81525f80>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7eff81526020>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f8daa232c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f8daa232ca0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f8daa232c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f8daa232ca0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
         kind__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -846,6 +949,16 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         parent_user_id__iexact: str | None = None,
         parent_user_id__in: list[str] | None = None,
         parent_user_id__isnull: bool | None = None,
+        pronouns: str | None = None,
+        pronouns__contains: str | None = None,
+        pronouns__icontains: str | None = None,
+        pronouns__startswith: str | None = None,
+        pronouns__istartswith: str | None = None,
+        pronouns__endswith: str | None = None,
+        pronouns__iendswith: str | None = None,
+        pronouns__iexact: str | None = None,
+        pronouns__in: list[str] | None = None,
+        pronouns__isnull: bool | None = None,
         registered_by_id: str | None = None,
         registered_by_id__contains: str | None = None,
         registered_by_id__icontains: str | None = None,
@@ -856,6 +969,16 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         registered_by_id__iexact: str | None = None,
         registered_by_id__in: list[str] | None = None,
         registered_by_id__isnull: bool | None = None,
+        tagline: str | None = None,
+        tagline__contains: str | None = None,
+        tagline__icontains: str | None = None,
+        tagline__startswith: str | None = None,
+        tagline__istartswith: str | None = None,
+        tagline__endswith: str | None = None,
+        tagline__iendswith: str | None = None,
+        tagline__iexact: str | None = None,
+        tagline__in: list[str] | None = None,
+        tagline__isnull: bool | None = None,
         updated_at: datetime | None = None,
         updated_at__gt: datetime | None = None,
         updated_at__gte: datetime | None = None,
@@ -872,11 +995,11 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"]) -> OxydeUserQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "bio", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "pronouns", "registered_by_id", "tagline", "updated_at"]) -> OxydeUserQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "registered_by_id", "updated_at"], flat: bool = False) -> OxydeUserQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["agent_project_id", "agent_team_id", "avatar_url", "bio", "can_register", "created_at", "email", "email_folded", "email_verified_at", "external_ref", "hashed_password", "id", "is_active", "is_agent", "is_superuser", "kind", "name", "parent_user", "parent_user_id", "pronouns", "registered_by_id", "tagline", "updated_at"], flat: bool = False) -> OxydeUserQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -1030,22 +1153,25 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         agent_project_id: str | None = None,
         agent_team_id: str | None = None,
         avatar_url: str | None = None,
+        bio: str | None = None,
         can_register: bool | None = None,
         created_at: datetime | None = None,
         email: str | None = None,
         email_folded: str | None = None,
-        email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7eff82345a80>, json_schema_input_type=PydanticUndefined)] | None = None,
+        email_verified_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f8daa4d94e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         external_ref: str | None = None,
         hashed_password: str | None = None,
         id: str | None = None,
         is_active: bool | None = None,
         is_agent: bool | None = None,
         is_superuser: bool | None = None,
-        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7eff81525f80>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7eff81526020>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f8daa232c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f8daa232ca0>, return_type=PydanticUndefined, when_used='always')] | None = None,
         name: str | None = None,
         parent_user: OxydeUser | None = None,
         parent_user_id: str | None = None,
+        pronouns: str | None = None,
         registered_by_id: str | None = None,
+        tagline: str | None = None,
         updated_at: datetime | None = None,
     ) -> OxydeUser:
         """Create new object."""
