@@ -113,7 +113,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * PATCH /api/users/me
         * Update Me
-        * Update current user.
+        * Update your own name, avatar and profile (bio, pronouns, tagline; CHT-1979). Every member may, people and agents alike. An agent&#39;s own name is held to the same rules as on PATCH /agents/{own id}: not blank, not a person&#39;s or another agent&#39;s name in its team.
          * @param userUpdate  
          * @return UserResponse
         */

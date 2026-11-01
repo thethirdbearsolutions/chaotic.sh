@@ -34,8 +34,11 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * Schema for updating an agent.
+ * Schema for updating an agent: its identity (name, avatar, and the profile fields, CHT-1979), or its registrar capability.
  *
+ * @param bio 
+ * @param pronouns 
+ * @param tagline 
  * @param name 
  * @param avatarUrl 
  * @param canRegister 
@@ -43,6 +46,15 @@ import kotlinx.serialization.encoding.Encoder
 @Serializable
 
 data class AgentUpdate (
+
+    @SerialName(value = "bio")
+    val bio: kotlin.String? = null,
+
+    @SerialName(value = "pronouns")
+    val pronouns: kotlin.String? = null,
+
+    @SerialName(value = "tagline")
+    val tagline: kotlin.String? = null,
 
     @SerialName(value = "name")
     val name: kotlin.String? = null,

@@ -555,6 +555,19 @@
       "description": "Create a new issue (optionally as a sub-issue of `parent`).\n\nAn `estimate` off the project's declared estimate_scale is stored as\ngiven and reported back in `warnings` (absent otherwise).",
       "inputSchema": {
         "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Assign the new issue: 'me', a user/agent id, or a name/email ('unassigned' leaves it unassigned, the default).",
+            "title": "Assignee"
+          },
           "description": {
             "anyOf": [
               {

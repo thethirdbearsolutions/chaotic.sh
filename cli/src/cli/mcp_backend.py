@@ -194,6 +194,19 @@ class RestBackend:
         # server confines what such a key reads there (CHT-1780).
         return await self._require_team()
 
+    async def resolve_named_team(self, team: str) -> str:
+        # The profile's team needs no lookup (and covers a key that cannot
+        # list teams); any other is matched among the teams the key sees.
+        current = await self._require_team()
+        if team == current:
+            return current
+        teams = await self._call(functools.partial(self._client().get_teams, as_configured=_as_configured())) or []
+        wanted = team.strip().lower()
+        for row in teams:
+            if row.get("id") == team or wanted in {(row.get("key") or "").lower(), (row.get("name") or "").lower()}:
+                return row["id"]
+        raise ToolInputError(f"Team '{team}' not found among the teams this key can see.")
+
     async def resolve_project(self, project: str | None, team: str | None) -> tuple[str, str]:
         team_id = await self._require_team()
         if project:
@@ -227,14 +240,21 @@ class RestBackend:
         return None, team_id
 
     async def team_for_project(self, project_id: str | None) -> str:
-        # The profile's (or the key's only) team is the only team this
-        # server can see.
-        return await self._require_team()
+        # The profile's (or the key's only, CHT-1687) team owns the current
+        # project. Any other project -- a `project` argument, a parent's --
+        # can be in another team the key sees, and names are looked up
+        # there (CHT-1951, as the CLI does for labels since CHT-1709).
+        if not project_id or project_id == _main().get_current_project():
+            return await self._require_team()
+        return (await self._call(self._client().get_project, project_id))["team_id"]
 
     async def resolve_assignee(
         self, value: str, team_id: str, project_id: str | None = None, purpose: str = "assign",
     ) -> str:
-        return await self._call(_main().resolve_assignee_id, value)
+        # Among the members and agents of `team_id`, the team the caller
+        # resolved (team_for_project / resolve_team, which apply the
+        # CHT-1687 only-team fallback), not the profile's current team.
+        return await self._call(_main().resolve_assignee_id, value, team_id or await self._require_team())
 
     async def resolve_sprint(self, value: str, project_id: str) -> str:
         return await self._call(_main().resolve_sprint_id, value, project_id)
@@ -291,6 +311,7 @@ class RestBackend:
 
     async def create_issue(
         self, project_id, *, title, description, status, priority, issue_type, estimate, parent_id,
+        assignee_id=None,
     ) -> dict:
         data = {
             "description": description,
@@ -302,6 +323,8 @@ class RestBackend:
             data["estimate"] = estimate
         if parent_id:
             data["parent_id"] = parent_id
+        if assignee_id:
+            data["assignee_id"] = assignee_id
         return await self._call(self._client().create_issue, project_id, title, **data)
 
     async def update_issue(self, issue_id: str, **fields) -> dict:

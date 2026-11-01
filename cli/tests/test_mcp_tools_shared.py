@@ -13,10 +13,12 @@ either transport.
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import json
 import pathlib
 import re
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -93,10 +95,21 @@ class FakeBackend:
 
     async def resolve_member_team(self, team):
         self._rec("resolve_member_team", team)
-        return "team-1"
+        if not self.capabilities.team_param:
+            return "team-1"  # like stdio: the profile's team, whatever is passed
+        return {"ops": "team-2", "team-2": "team-2"}.get((team or "").lower(), "team-1")
+
+    async def resolve_named_team(self, team):
+        self._rec("resolve_named_team", team)
+        teams = {"team-1": "team-1", "eng": "team-1", "team-2": "team-2", "ops": "team-2"}
+        if team.lower() not in teams:
+            raise ToolInputError(f"Team '{team}' not found.")
+        return teams[team.lower()]
 
     async def resolve_project(self, project, team):
         self._rec("resolve_project", project, team)
+        if project == "CHT":
+            return "proj-1", "team-1"
         if project:
             return f"proj-{project}", "team-1"
         if not self.current_project:
@@ -111,7 +124,7 @@ class FakeBackend:
 
     async def team_for_project(self, project_id):
         self._rec("team_for_project", project_id)
-        return "team-1"
+        return "team-2" if project_id == "proj-OPS" else "team-1"
 
     async def resolve_assignee(self, value, team_id, project_id=None, purpose="assign"):
         self._rec("resolve_assignee", value, team_id, project_id=project_id, purpose=purpose)
@@ -1316,3 +1329,307 @@ async def test_server_info_reports_the_deploy_not_the_asset_hashes(fake):
     assert result["client_tool_count"] == len(ALL_TOOLS)
     assert "client_version" in result
     assert fake.calls_to("server_info") == [((), {})]
+
+
+# ---------------------------------------------------------------------------
+# CHT-1951: issue_create takes an assignee; no tool drops an unknown argument
+# ---------------------------------------------------------------------------
+
+
+class TestIssueCreateAssignee:
+    async def test_assignee_is_resolved_in_the_projects_team_before_the_create(self, fake):
+        result = await _tools(fake)["issue_create"](title="T", assignee="Alex")
+        assert fake.calls_to("resolve_assignee") == [
+            (("Alex", "team-1"), {"project_id": "proj-1", "purpose": "assign"})
+        ]
+        (create,) = fake.calls_to("create_issue")
+        assert create[1]["assignee_id"] == "user-Alex"
+        assert result["assignee_id"] == "user-Alex"
+        names = [n for n, _, _ in fake.calls]
+        assert names.index("resolve_assignee") < names.index("create_issue")
+
+    async def test_me(self, fake):
+        await _tools(fake)["issue_create"](title="T", assignee="me")
+        assert fake.calls_to("create_issue")[0][1]["assignee_id"] == "user-me"
+
+    async def test_no_assignee_resolves_nothing(self, fake):
+        await _tools(fake)["issue_create"](title="T")
+        assert fake.calls_to("resolve_assignee") == []
+        assert fake.calls_to("create_issue")[0][1]["assignee_id"] is None
+
+    async def test_unassigned_is_the_default_not_a_name(self, fake):
+        await _tools(fake)["issue_create"](title="T", assignee="Unassigned")
+        assert fake.calls_to("resolve_assignee") == []
+        assert fake.calls_to("create_issue")[0][1]["assignee_id"] is None
+
+    async def test_an_assignee_that_does_not_resolve_creates_nothing(self):
+        fake = FakeBackend(fail_on={"resolve_assignee": ToolInputError("No member or agent named 'Nobody'.")})
+        result = await _tools(fake)["issue_create"](title="T", assignee="Nobody")
+        assert result["error"]["error_code"] == "tool_input"
+        assert fake.calls_to("create_issue") == []
+
+
+    async def test_the_assignee_is_looked_up_in_the_projects_team_not_the_default(self, fake):
+        """The project's team (team_for_project), not the caller's default
+        team (resolve_team): a project or parent can be in another team the
+        key sees, and a name can mean someone else there (PR #497 review)."""
+        async def team_for_project(project_id):
+            fake._rec("team_for_project", project_id)
+            return "team-of-the-project"
+
+        fake.team_for_project = team_for_project
+        await _tools(fake)["issue_create"](title="T", assignee="Sam")
+        assert fake.calls_to("resolve_assignee") == [
+            (("Sam", "team-of-the-project"), {"project_id": "proj-1", "purpose": "assign"})
+        ]
+
+
+@asynccontextmanager
+async def _session(backend):
+    """A real ClientSession against a real MCPServer carrying the tools
+    bound to `backend`, over in-memory streams: the guard is server
+    middleware, which only a request through the protocol reaches."""
+    import anyio
+    from mcp.client.session import ClientSession
+    from mcp.server.mcpserver import MCPServer
+    from mcp.shared.memory import create_client_server_memory_streams
+
+    from chaotic_mcp_tools import add_tools
+
+    mcp = MCPServer(name="t")
+    add_tools(mcp, bind_all(backend))
+    async with create_client_server_memory_streams() as ((client_read, client_write), (server_read, server_write)):
+        lowlevel = mcp._lowlevel_server
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(
+                functools.partial(lowlevel.run, raise_exceptions=True),
+                server_read, server_write, lowlevel.create_initialization_options(),
+            )
+            async with ClientSession(client_read, client_write) as session:
+                await session.initialize()
+                yield session
+            tg.cancel_scope.cancel()
+
+
+async def _call(session, name, arguments):
+    result = await session.call_tool(name, arguments)
+    assert result.is_error is not True
+    return json.loads(result.content[0].text)
+
+
+class TestUnknownArgumentsAreRefused:
+    """Before CHT-1951 the SDK's argument model dropped any argument a tool
+    did not declare, so `issue_create(assignee="Alex")` made an unassigned
+    issue and said nothing."""
+
+    async def test_issue_create_names_the_unknown_argument_and_creates_nothing(self, fake):
+        async with _session(fake) as session:
+            result = await _call(session, "issue_create", {"title": "T", "asignee": "Alex"})
+        error = result["error"]
+        assert error["error_code"] == "unknown_argument"
+        assert error["message"].startswith(
+            "issue_create does not take the argument 'asignee' (did you mean 'assignee'?); nothing was done. "
+            "It accepts: assignee, description,"
+        )
+        assert error["unknown_arguments"] == ["asignee"]
+        assert "title" in error["accepted_arguments"]
+        assert fake.calls == []
+
+    async def test_several_unknown_arguments_are_all_named(self, fake):
+        async with _session(fake) as session:
+            result = await _call(session, "issue_create", {"title": "T", "labels": ["x"], "blocks": ["CHT-1"]})
+        assert "does not take the arguments 'blocks', 'labels'" in result["error"]["message"]
+        assert result["error"]["unknown_arguments"] == ["blocks", "labels"]
+        assert fake.calls == []
+
+    async def test_known_arguments_still_work(self, fake):
+        async with _session(fake) as session:
+            result = await _call(session, "issue_create", {"title": "T", "assignee": "me"})
+        assert result["assignee_id"] == "user-me"
+
+    async def test_every_tool_refuses_an_unknown_argument(self):
+        for team_param in (False, True):
+            fake = FakeBackend(team_param=team_param)
+            async with _session(fake) as session:
+                names = [t.name for t in (await session.list_tools()).tools]
+                assert sorted(names) == sorted(t.__name__ for t in ALL_TOOLS)
+                for name in names:
+                    result = await _call(session, name, {"not_a_parameter": 1})
+                    assert result["error"]["error_code"] == "unknown_argument", name
+                    assert "'not_a_parameter'" in result["error"]["message"], name
+            assert fake.calls == []
+
+    @pytest.mark.parametrize("team_param", [False, True])
+    async def test_a_hint_that_agrees_is_dropped_and_the_call_runs(self, team_param):
+        """Agents pass `team`/`project` on every call, and the stdio server
+        always ignored `team` (PR #497 review, finding 4). A hint naming
+        the scope the tool acts on anyway is taken out and the call runs."""
+        fake = FakeBackend(team_param=team_param)
+        async with _session(fake) as session:
+            viewed = await _call(session, "issue_view", {"identifier": "CHT-1", "team": "ENG", "project": "CHT"})
+            assert viewed["identifier"] == "CHT-1"
+            created = await _call(session, "issue_create", {"title": "T", "team": "ENG", "project": "CHT"})
+            assert "error" not in created
+            labels = await _call(session, "label_list", {"project": "CHT"})
+            assert "error" not in labels
+        assert len(fake.calls_to("create_issue")) == 1
+
+    @pytest.mark.parametrize("team_param", [False, True])
+    async def test_an_issue_in_another_project_than_the_hint_is_refused(self, team_param):
+        fake = FakeBackend(team_param=team_param)
+        async with _session(fake) as session:
+            result = await _call(session, "issue_update", {"identifier": "CHT-1", "status": "done", "project": "B"})
+        assert result["error"]["error_code"] == "scope_mismatch"
+        assert result["error"]["acts_in"] == {"team": "team-1", "project": "proj-1"}
+        assert "issue CHT-1, in project proj-1" in result["error"]["message"]
+        assert fake.calls_to("update_issue") == []
+
+    async def test_stdio_issue_create_with_another_team_creates_nothing(self):
+        """Review delta, finding A1: stdio ignored `team` and created the
+        issue in the profile's current project."""
+        fake = FakeBackend(team_param=False)
+        async with _session(fake) as session:
+            result = await _call(session, "issue_create", {"title": "T", "team": "OPS"})
+        assert result["error"]["error_code"] == "scope_mismatch"
+        assert "team 'OPS'" in result["error"]["message"]
+        assert "run it with a profile for that team" in result["error"]["message"]
+        assert fake.calls_to("create_issue") == []
+
+    async def test_stdio_issue_create_in_a_project_of_the_hinted_team_runs(self):
+        fake = FakeBackend(team_param=False)
+        async with _session(fake) as session:
+            result = await _call(session, "issue_create", {"title": "T", "team": "OPS", "project": "OPS"})
+        assert "error" not in result, result
+        assert fake.calls_to("create_issue")[0][0] == ("proj-OPS",)
+
+    async def test_stdio_sprint_close_with_another_team_closes_nothing(self):
+        """Review delta, finding A1: `sprint_close(team="OPS")` on a profile
+        scoped to ENG closed ENG's sprint."""
+        fake = FakeBackend(team_param=False)
+        async with _session(fake) as session:
+            result = await _call(session, "sprint_close", {"team": "OPS"})
+        assert result["error"]["error_code"] == "scope_mismatch"
+        assert not [n for n, _, _ in fake.calls if n.startswith("close") or n == "update_sprint"]
+
+    async def test_inbox_mark_all_read_with_a_project_marks_nothing(self):
+        """Review delta, finding A2: the inbox is team-wide, so a `project`
+        would have marked the whole team's entries read."""
+        fake = FakeBackend(team_param=True)
+        async with _session(fake) as session:
+            result = await _call(session, "inbox_mark_all_read", {"project": "CHT"})
+        assert result["error"]["error_code"] == "scope_mismatch"
+        assert "acts on the whole of team team-1" in result["error"]["message"]
+        assert fake.calls_to("mark_all_inbox_read") == []
+
+    async def test_an_unknown_hinted_team_is_refused(self):
+        fake = FakeBackend(team_param=False)
+        async with _session(fake) as session:
+            result = await _call(session, "issue_view", {"identifier": "CHT-1", "team": "NOPE"})
+        assert result["error"]["error_code"] == "tool_input"
+        assert "NOPE" in result["error"]["message"]
+
+    async def test_every_issue_of_several_must_agree(self):
+        """The `identifiers` anchor: one issue outside the hinted team is
+        enough to refuse, before any of them is moved."""
+        fake = FakeBackend(team_param=True)
+        fake.issues["OPS-1"] = {"id": "i9", "identifier": "OPS-1", "project_id": "proj-OPS", "labels": []}
+        async with _session(fake) as session:
+            result = await _call(session, "sprint_remove", {"identifiers": ["OPS-1", "CHT-1"], "project": "OPS"})
+            assert result["error"]["error_code"] == "scope_mismatch"
+            assert "issue CHT-1" in result["error"]["message"]
+            agreeing = await _call(session, "sprint_remove", {"identifiers": ["CHT-1", "CHT-2"], "project": "CHT"})
+            assert "error" not in agreeing, agreeing
+        assert [a[0] for a, _ in fake.calls_to("update_issue")] == ["i1", "i2"]
+
+    async def test_a_link_agrees_with_either_end(self, fake):
+        """doc_link joins an issue and a document: a `project` naming the
+        project of either describes the call; one naming neither does not."""
+        async def get_document(document_id):
+            return {"id": document_id, "team_id": "team-1", "project_id": "proj-DOCS"}
+
+        fake.get_document = get_document
+        async with _session(fake) as session:
+            by_doc = await _call(session, "doc_link", {"document_id": "d", "identifier": "CHT-1", "project": "DOCS"})
+            assert "error" not in by_doc, by_doc
+            by_issue = await _call(session, "doc_link", {"document_id": "d", "identifier": "CHT-1", "project": "CHT"})
+            assert "error" not in by_issue, by_issue
+            neither = await _call(session, "doc_link", {"document_id": "d", "identifier": "CHT-1", "project": "X"})
+            assert neither["error"]["error_code"] == "scope_mismatch"
+
+    async def test_a_tool_without_scope_takes_its_team_from_the_hint(self):
+        """server_info and inbox_mark_read act in no team of their own: a
+        `team` the caller passes picks the team the check uses, rather than
+        a default that a caller in several teams does not have (review
+        delta 2, finding 1)."""
+        fake = FakeBackend(team_param=True)
+        async with _session(fake) as session:
+            info = await _call(session, "server_info", {"team": "OPS"})
+            assert "error" not in info, info
+            marked = await _call(session, "inbox_mark_read", {"entry_id": "in-1", "team": "OPS"})
+            assert "error" not in marked, marked
+        assert ("OPS",) in [a for a, _ in fake.calls_to("resolve_member_team")]
+
+    async def test_the_checked_issue_is_not_fetched_again(self, fake):
+        async with _session(fake) as session:
+            viewed = await _call(session, "issue_view", {"identifier": "CHT-1", "project": "CHT"})
+        assert viewed["identifier"] == "CHT-1"
+        assert len(fake.calls_to("get_issue")) == 1
+
+    def test_a_server_without_a_middleware_chain_is_refused_at_startup(self):
+        """No public hook, no guard: registration fails loudly rather than
+        serving tools that drop arguments they do not recognise."""
+        from chaotic_mcp_tools import add_tools
+
+        class BareServer:
+            def add_tool(self, fn, description):
+                raise AssertionError("must refuse before registering anything")
+
+        with pytest.raises(RuntimeError, match="cannot refuse unknown arguments"):
+            add_tools(BareServer(), bind_all(FakeBackend()))
+
+    def test_a_middleware_chain_that_does_not_keep_the_guard_is_refused(self):
+        """A chain handed out as a copy would lose the append, and the
+        server would serve without the guard (review delta, finding C)."""
+        from chaotic_mcp_tools import add_tools
+
+        class CopyingServer:
+            @property
+            def middleware(self):
+                return []
+
+            def add_tool(self, fn, description):
+                raise AssertionError("must refuse before registering anything")
+
+        with pytest.raises(RuntimeError, match="did not keep the unknown-argument guard"):
+            add_tools(CopyingServer(), bind_all(FakeBackend()))
+
+    async def test_any_mapping_of_params_is_checked(self):
+        """The SDK types params as a Mapping, not a dict (finding C)."""
+        from types import SimpleNamespace, MappingProxyType
+
+        from chaotic_mcp_tools.registry import UnknownArgumentGuard
+
+        guard = UnknownArgumentGuard()
+        guard.accepted["issue_view"] = ("identifier",)
+        ctx = SimpleNamespace(method="tools/call", params=MappingProxyType(
+            {"name": "issue_view", "arguments": MappingProxyType({"identifier": "CHT-1", "bogus": 1})},
+        ))
+
+        async def call_next(_ctx):
+            raise AssertionError("must not run the tool")
+
+        result = await guard(ctx, call_next)
+        assert json.loads(result["content"][0]["text"])["error"]["error_code"] == "unknown_argument"
+
+    async def test_one_guard_however_many_registrations(self, fake):
+        from mcp.server.mcpserver import MCPServer
+
+        from chaotic_mcp_tools import add_tools
+        from chaotic_mcp_tools.registry import UnknownArgumentGuard
+
+        mcp = MCPServer(name="t")
+        tools = bind_all(fake)
+        add_tools(mcp, tools[:3])
+        add_tools(mcp, tools[3:])
+        guards = [m for m in mcp.middleware if isinstance(m, UnknownArgumentGuard)]
+        assert len(guards) == 1 and len(guards[0].accepted) == len(ALL_TOOLS)

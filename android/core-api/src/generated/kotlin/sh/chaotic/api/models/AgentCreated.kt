@@ -45,6 +45,9 @@ import kotlinx.serialization.encoding.Encoder
  * @param apiKey 
  * @param apiKeyId 
  * @param createdAt 
+ * @param bio 
+ * @param pronouns 
+ * @param tagline 
  * @param kind 
  * @param canRegister 
  */
@@ -75,6 +78,15 @@ data class AgentCreated (
 
     @SerialName(value = "created_at")
     val createdAt: kotlin.String,
+
+    @SerialName(value = "bio")
+    val bio: kotlin.String? = null,
+
+    @SerialName(value = "pronouns")
+    val pronouns: kotlin.String? = null,
+
+    @SerialName(value = "tagline")
+    val tagline: kotlin.String? = null,
 
     @Contextual @SerialName(value = "kind")
     val kind: AgentKind? = null,

@@ -254,8 +254,8 @@ Every tool returns a JSON object. Failures come back as
 MCP protocol-level error (ADR-0006): `message` is always a sentence you
 can show or reason over, `error_code` is present whenever the failure has
 a stable name (`sprint_in_arrears`, `claim_rituals_pending`,
-`already_claimed`, `assignee_changed`, `tool_input`, `validation_error`,
-`unexpected`, ...). One needs care: **`write_outcome_unknown`** (the
+`already_claimed`, `assignee_changed`, `tool_input`, `unknown_argument`,
+`scope_mismatch`, `validation_error`, `unexpected`, ...). One needs care: **`write_outcome_unknown`** (the
 stdio MCP server and the CLI, CHT-1957) means a write went out and no
 answer came back, after the client had already resent it as far as is
 safe. It may have landed: look (`issue_view`) before you send it again,
@@ -285,6 +285,25 @@ CHT-1720), and says there when and how to switch. Read it and act on it;
 no tool ever returns a `notice` of its own. (The CLI's own `--json` mode keeps its
 flat `{"error": "..."}` string -- that contract is for shells and exit
 codes, this one is for models.)
+
+An argument the tool does not take is refused before the tool runs
+(CHT-1951), with `error_code: unknown_argument`, `unknown_arguments` and
+`accepted_arguments`; the message names each one, with the closest
+accepted name when there is one. Nothing is done. Before, it was dropped
+without a word, so `issue_create(assignee=...)` made unassigned issues.
+`team` and `project` are the exception: any tool takes them, but a tool
+that does not declare one never ignores it in silence. It treats it as a
+scope hint and checks it against where it will act: the issue (or
+document) it is given, an explicit `project`, or else your default team
+(on the stdio server, the profile's team). A hint that agrees is
+dropped and the call runs; one that does not refuses the call with
+`error_code: scope_mismatch` and `acts_in` (the team and project the
+tool would have used), and nothing is done. A team-wide tool (the
+inbox, the activity feed) refuses any `project`, which it would not
+apply; `label_list` and `project_list`, which answer for the whole team,
+take a project of that team. (A wrong type, or an enum value off the list,
+is still the SDK's own check: a result with `isError: true` and the
+validator's text, not the envelope.)
 
 **List tools return compact rows.** `issue_list`, `issue_ready`, `doc_list`
 and `project_list` return a projection of each row (for issues:

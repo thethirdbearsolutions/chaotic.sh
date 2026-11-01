@@ -44,6 +44,9 @@ import kotlinx.serialization.encoding.Encoder
  * @param isActive 
  * @param createdAt 
  * @param updatedAt 
+ * @param bio 
+ * @param pronouns 
+ * @param tagline 
  * @param isAgent 
  * @param parentUserName 
  * @param emailVerifiedAt 
@@ -79,6 +82,15 @@ data class UserResponse (
 
     @SerialName(value = "updated_at")
     val updatedAt: kotlin.String,
+
+    @SerialName(value = "bio")
+    val bio: kotlin.String? = null,
+
+    @SerialName(value = "pronouns")
+    val pronouns: kotlin.String? = null,
+
+    @SerialName(value = "tagline")
+    val tagline: kotlin.String? = null,
 
     @SerialName(value = "is_agent")
     val isAgent: kotlin.Boolean? = false,

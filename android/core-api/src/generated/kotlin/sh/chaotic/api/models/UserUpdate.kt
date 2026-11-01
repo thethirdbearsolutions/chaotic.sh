@@ -34,14 +34,26 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * Schema for updating a user.  No ``email`` on purpose: a change of address takes the password and clears ``email_verified_at`` (``POST /api/auth/email``, UserService.change_email, CHT-1827).
+ * Schema for updating a user: your own name, avatar and profile.  No ``email`` on purpose: a change of address takes the password and clears ``email_verified_at`` (``POST /api/auth/email``, UserService.change_email, CHT-1827).
  *
+ * @param bio 
+ * @param pronouns 
+ * @param tagline 
  * @param name 
  * @param avatarUrl 
  */
 @Serializable
 
 data class UserUpdate (
+
+    @SerialName(value = "bio")
+    val bio: kotlin.String? = null,
+
+    @SerialName(value = "pronouns")
+    val pronouns: kotlin.String? = null,
+
+    @SerialName(value = "tagline")
+    val tagline: kotlin.String? = null,
 
     @SerialName(value = "name")
     val name: kotlin.String? = null,

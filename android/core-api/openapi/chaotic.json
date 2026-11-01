@@ -310,7 +310,7 @@
           "users"
         ],
         "summary": "Update Me",
-        "description": "Update current user.",
+        "description": "Update your own name, avatar and profile (bio, pronouns, tagline;\nCHT-1979). Every member may, people and agents alike. An agent's own\nname is held to the same rules as on PATCH /agents/{own id}: not\nblank, not a person's or another agent's name in its team.",
         "operationId": "update_me_api_users_me_patch",
         "requestBody": {
           "content": {
@@ -6098,7 +6098,7 @@
           "agents"
         ],
         "summary": "Update Agent",
-        "description": "Update an agent's name or avatar, or make it a registrar\n(`can_register`, CHT-1498). Allowed to its creator while in the\nagent's team and to that team's admins. A built-in app's session may\nrename, but not change `can_register` (CHT-1602): a registrar mints\nkeys, a capability that would outlive the session.\n\nA registered session identity may also rename itself, and change\nnothing else (CHT-1918): a cloud session has no person at hand to\nname it, and the name is all it may choose. It still may not rename\nany other agent.",
+        "description": "Update an agent's identity (name, avatar, profile) or make it a\nregistrar (`can_register`, CHT-1498). Allowed to its creator while in\nthe agent's team and to that team's admins. A built-in app's session\nmay rename, but not change `can_register` (CHT-1602): a registrar\nmints keys, a capability that would outlive the session.\n\nEvery agent may also change its own identity, and nothing else\n(CHT-1918, CHT-1979): its name, avatar, bio, pronouns and tagline are\nits own to write. Its own name is held to ``check_own_agent_name``.\nIt still may not change any other agent.",
         "operationId": "update_agent_api_agents__agent_id__patch",
         "security": [
           {
@@ -9222,6 +9222,42 @@
       },
       "AgentCreate": {
         "properties": {
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "pronouns": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pronouns"
+          },
+          "tagline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tagline"
+          },
           "name": {
             "type": "string",
             "maxLength": 255,
@@ -9231,7 +9267,8 @@
           "avatar_url": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 100000
               },
               {
                 "type": "null"
@@ -9250,7 +9287,7 @@
           "name"
         ],
         "title": "AgentCreate",
-        "description": "Schema for creating an agent."
+        "description": "Schema for creating an agent, optionally with its profile (CHT-1979)."
       },
       "AgentCreated": {
         "properties": {
@@ -9272,6 +9309,39 @@
               }
             ],
             "title": "Avatar Url"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "pronouns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pronouns"
+          },
+          "tagline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tagline"
           },
           "agent_team_id": {
             "type": "string",
@@ -9555,6 +9625,39 @@
             ],
             "title": "Avatar Url"
           },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "pronouns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pronouns"
+          },
+          "tagline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tagline"
+          },
           "is_active": {
             "type": "boolean",
             "title": "Is Active"
@@ -9693,6 +9796,42 @@
       },
       "AgentUpdate": {
         "properties": {
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "pronouns": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pronouns"
+          },
+          "tagline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tagline"
+          },
           "name": {
             "anyOf": [
               {
@@ -9709,7 +9848,8 @@
           "avatar_url": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 100000
               },
               {
                 "type": "null"
@@ -9731,7 +9871,7 @@
         },
         "type": "object",
         "title": "AgentUpdate",
-        "description": "Schema for updating an agent."
+        "description": "Schema for updating an agent: its identity (name, avatar, and the\nprofile fields, CHT-1979), or its registrar capability."
       },
       "ApprovalMode": {
         "type": "string",
@@ -17630,6 +17770,39 @@
             ],
             "title": "Avatar Url"
           },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "pronouns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pronouns"
+          },
+          "tagline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tagline"
+          },
           "is_active": {
             "type": "boolean",
             "title": "Is Active"
@@ -17781,6 +17954,39 @@
             ],
             "title": "Avatar Url"
           },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "pronouns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pronouns"
+          },
+          "tagline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tagline"
+          },
           "is_active": {
             "type": "boolean",
             "title": "Is Active"
@@ -17909,10 +18115,48 @@
       },
       "UserUpdate": {
         "properties": {
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "pronouns": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pronouns"
+          },
+          "tagline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tagline"
+          },
           "name": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
               },
               {
                 "type": "null"
@@ -17923,7 +18167,8 @@
           "avatar_url": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 100000
               },
               {
                 "type": "null"
@@ -17934,7 +18179,7 @@
         },
         "type": "object",
         "title": "UserUpdate",
-        "description": "Schema for updating a user.\n\nNo ``email`` on purpose: a change of address takes the password and\nclears ``email_verified_at`` (``POST /api/auth/email``,\nUserService.change_email, CHT-1827)."
+        "description": "Schema for updating a user: your own name, avatar and profile.\n\nNo ``email`` on purpose: a change of address takes the password and\nclears ``email_verified_at`` (``POST /api/auth/email``,\nUserService.change_email, CHT-1827)."
       },
       "ValidationError": {
         "description": "One request-validation error: where it is (`loc`) and what is wrong (`msg`).",

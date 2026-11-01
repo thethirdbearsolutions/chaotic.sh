@@ -46,6 +46,9 @@ import kotlinx.serialization.encoding.Encoder
  * @param agentProjectId 
  * @param createdAt 
  * @param updatedAt 
+ * @param bio 
+ * @param pronouns 
+ * @param tagline 
  * @param parentUserName 
  * @param kind 
  * @param externalRef 
@@ -86,6 +89,15 @@ data class AgentResponse (
 
     @SerialName(value = "updated_at")
     val updatedAt: kotlin.String,
+
+    @SerialName(value = "bio")
+    val bio: kotlin.String? = null,
+
+    @SerialName(value = "pronouns")
+    val pronouns: kotlin.String? = null,
+
+    @SerialName(value = "tagline")
+    val tagline: kotlin.String? = null,
 
     @SerialName(value = "parent_user_name")
     val parentUserName: kotlin.String? = null,

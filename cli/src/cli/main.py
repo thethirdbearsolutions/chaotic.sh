@@ -586,8 +586,9 @@ def resolve_project_id(identifier: str) -> str:
     return resolve_project(identifier)["id"]
 
 
-def resolve_assignee_id(assignee_value: str) -> str:
-    """Resolve an assignee string to a user/agent ID."""
+def resolve_assignee_id(assignee_value: str, team_id: str | None = None) -> str:
+    """Resolve an assignee string to a user/agent ID, among the members
+    and agents of ``team_id`` (the current team when not given)."""
     if not assignee_value:
         raise click.ClickException("Assignee is required.")
 
@@ -595,7 +596,7 @@ def resolve_assignee_id(assignee_value: str) -> str:
         user = client.get_me()
         return user["id"]
 
-    team_id = get_current_team()
+    team_id = team_id or get_current_team()
     if not team_id:
         raise click.ClickException(
             "No team selected. Run 'chaotic team use <team_id>' first."
@@ -638,10 +639,13 @@ def resolve_assignee_id(assignee_value: str) -> str:
         )
 
     if len(candidates) > 1:
-        console.print(f"[red]Ambiguous assignee '{esc(assignee_value)}':[/red]")
-        for _, label in candidates:
-            console.print(f"  - {esc(label)}")
-        raise click.ClickException("Please be more specific.")
+        # In the message, not printed: `chaotic mcp` calls this too, and its
+        # stdout is the protocol channel (CHT-1951).
+        raise click.ClickException(
+            f"Ambiguous assignee '{assignee_value}': it matches "
+            + "; ".join(label for _, label in candidates)
+            + ". Please be more specific: pass an ID or an email."
+        )
 
     return candidates[0][0]
 

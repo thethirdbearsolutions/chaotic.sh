@@ -119,6 +119,9 @@ class AgentService:
                 hashed_password="",  # Agents don't log in via password
                 name=agent_in.name,
                 avatar_url=agent_in.avatar_url,
+                bio=agent_in.bio,
+                pronouns=agent_in.pronouns,
+                tagline=agent_in.tagline,
                 is_agent=True,
                 kind=AgentKind.SERVICE if agent_in.can_register else AgentKind.ASSISTANT,
                 can_register=agent_in.can_register,

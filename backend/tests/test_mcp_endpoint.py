@@ -790,6 +790,85 @@ class TestToolsCall:
         assert payload["comments"] == []
         assert payload["sub_issues"] == []
 
+    async def test_unknown_argument_is_refused_with_the_envelope(self, client, bearer_headers, test_project):
+        """CHT-1951 over the real /mcp app: an argument the tool does not
+        take is refused before it runs, as the usual error envelope."""
+        resp = await _tool_call(client, bearer_headers, "issue_create", {"title": "Nope", "asignee": "me"})
+        result = resp.json()["result"]
+        assert result.get("isError") is not True
+        error = json.loads(result["content"][0]["text"])["error"]
+        assert error["error_code"] == "unknown_argument"
+        assert error["unknown_arguments"] == ["asignee"]
+        listed = await _tool_call(client, bearer_headers, "issue_list", id=2)
+        assert json.loads(listed.json()["result"]["content"][0]["text"])["count"] == 0
+
+    async def test_scope_hints_are_tolerated_and_the_assignee_lands(
+        self, client, bearer_headers, test_project, test_user,
+    ):
+        resp = await _tool_call(client, bearer_headers, "issue_create",
+                                {"title": "Mine", "assignee": "me", "project": test_project.key})
+        created = json.loads(resp.json()["result"]["content"][0]["text"])
+        assert created["assignee_id"] == test_user.id, created
+        resp = await _tool_call(client, bearer_headers, "issue_view",
+                                {"identifier": created["identifier"], "project": test_project.key}, id=2)
+        assert json.loads(resp.json()["result"]["content"][0]["text"])["identifier"] == created["identifier"]
+
+    async def test_a_project_hint_on_a_team_wide_tool_is_refused(self, client, bearer_headers, test_project):
+        """inbox_mark_all_read is team-wide: a `project` would have marked
+        the whole team's inbox read (PR #497 delta review, finding A2)."""
+        resp = await _tool_call(client, bearer_headers, "inbox_mark_all_read", {"project": test_project.key})
+        error = json.loads(resp.json()["result"]["content"][0]["text"])["error"]
+        assert error["error_code"] == "scope_mismatch"
+        assert error["acts_in"]["project"] is None
+
+    async def test_a_caller_in_two_teams_passing_team_to_unscoped_tools(
+        self, client, bearer_headers, test_user, test_team, test_project,
+    ):
+        """server_info and inbox_mark_read have no scope of their own. For a
+        caller in several teams, the `team` they pass picks the team the
+        hint check uses; it must not answer "pass `team` to disambiguate"
+        (PR #497 delta review 2, finding 1)."""
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+
+        other = await OxydeTeam.objects.create(name="Other Team", key="OTHER")
+        await OxydeTeamMember.objects.create(team_id=other.id, user_id=test_user.id, role=TeamRole.MEMBER)
+
+        for n, (name, arguments) in enumerate([
+            ("server_info", {"team": test_team.key}),
+            ("server_info", {"team": "OTHER"}),
+            ("inbox_mark_read", {"entry_id": "no-such-entry", "team": test_team.key}),
+        ]):
+            resp = await _tool_call(client, bearer_headers, name, arguments, id=n + 1)
+            payload = json.loads(resp.json()["result"]["content"][0]["text"])
+            message = (payload.get("error") or {}).get("message", "")
+            assert "disambiguate" not in message, (name, payload)
+            assert (payload.get("error") or {}).get("error_code") != "scope_mismatch", (name, payload)
+        info = json.loads((await _tool_call(client, bearer_headers, "server_info", {"team": "OTHER"}, id=9))
+                          .json()["result"]["content"][0]["text"])
+        assert "error" not in info, info
+        unseen = json.loads((await _tool_call(client, bearer_headers, "server_info", {"team": "NOPE"}, id=10))
+                            .json()["result"]["content"][0]["text"])
+        assert "error" in unseen
+
+    async def test_a_project_hint_naming_another_project_is_refused(
+        self, client, bearer_headers, test_project, test_team,
+    ):
+        from app.oxyde_models.project import OxydeProject
+
+        await OxydeProject.objects.create(name="Other", key="OTH", team_id=test_team.id)
+        created = json.loads((await _tool_call(client, bearer_headers, "issue_create",
+                                               {"title": "Here", "project": test_project.key})).json()
+                             ["result"]["content"][0]["text"])
+        resp = await _tool_call(client, bearer_headers, "issue_update",
+                                {"identifier": created["identifier"], "title": "Moved?", "project": "OTH"}, id=2)
+        error = json.loads(resp.json()["result"]["content"][0]["text"])["error"]
+        assert error["error_code"] == "scope_mismatch"
+        viewed = json.loads((await _tool_call(client, bearer_headers, "issue_view",
+                                              {"identifier": created["identifier"]}, id=3)).json()
+                            ["result"]["content"][0]["text"])
+        assert viewed["title"] == "Here"
+
     async def test_issue_create_then_list_finds_it(self, client, bearer_headers, test_project):
         await _tool_call(client, bearer_headers, "issue_create", {"title": "Findable"})
         resp = await _tool_call(client, bearer_headers, "issue_list", id=2)

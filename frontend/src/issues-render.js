@@ -9,7 +9,7 @@ import { api } from './api.js';
 import { formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import { getActiveFilterCategory, setActiveFilterCategory, getCurrentProject } from './state.js';
 import { getProjects } from './projects.js';
-import { getMembers } from './teams.js';
+import { getAssigneeById, getAssigneeOptionList, formatAssigneeName, formatAssigneeOptionLabel } from './assignees.js';
 import { setCachedCurrentSprintId } from './sprints.js';
 import {
     getSelectedStatuses,
@@ -350,8 +350,6 @@ function renderTypeOptions(container) {
 function renderAssigneeOptions(container) {
     const assigneeFilter = document.getElementById('assignee-filter');
     const currentValue = assigneeFilter?.value || '';
-    const members = getMembers() || [];
-
     let html = `
         <div class="filter-options-header">
             <span class="filter-options-title">Assignee</span>
@@ -371,11 +369,14 @@ function renderAssigneeOptions(container) {
         </label>
     `;
 
-    members.forEach(m => {
+    // The same rows as the assignee picker and the hidden <select>: each
+    // member, the agents they hold, and the session identities each
+    // registrar registered (CHT-1983). Labels are already escaped.
+    getAssigneeOptionList({ keepId: currentValue || null }).forEach(({ assignee, indent }) => {
         html += `
-            <label class="filter-option" data-action="set-assignee-filter" data-value="${escapeAttr(m.user_id)}">
-                <input type="radio" name="assignee-filter-radio" value="${escapeAttr(m.user_id)}" ${currentValue === m.user_id ? 'checked' : ''}>
-                <span class="filter-option-label">${escapeHtml(m.name || m.email)}</span>
+            <label class="filter-option" data-action="set-assignee-filter" data-value="${escapeAttr(assignee.id)}">
+                <input type="radio" name="assignee-filter-radio" value="${escapeAttr(assignee.id)}" ${currentValue === assignee.id ? 'checked' : ''}>
+                <span class="filter-option-label">${formatAssigneeOptionLabel(assignee, indent)}</span>
             </label>
         `;
     });
@@ -619,9 +620,7 @@ export function updateFilterChips() {
         } else if (assigneeFilter.value === 'unassigned') {
             assigneeLabel = 'Unassigned';
         } else {
-            const members = getMembers() || [];
-            const member = members.find(m => m.user_id === assigneeFilter.value);
-            assigneeLabel = member?.name || member?.email || 'Unknown';
+            assigneeLabel = formatAssigneeName(getAssigneeById(assigneeFilter.value)) || 'Unknown';
         }
         chips.push({
             category: 'assignee',

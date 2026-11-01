@@ -67,8 +67,45 @@ class TestScope:
         monkeypatch.setattr("cli.main.resolve_project_id", lambda v: f"resolved-{v}")
         assert await backend.optional_project("KEY", None) == ("resolved-KEY", "test-team-123")
 
-    async def test_team_for_project_is_the_profile_team(self, backend):
-        assert await backend.team_for_project("whatever") == "test-team-123"
+    async def test_team_for_the_current_project_is_the_profile_team(self, backend, monkeypatch):
+        from cli.main import client
+        monkeypatch.setattr(client, "get_project", MagicMock())
+        assert await backend.team_for_project("test-project-123") == "test-team-123"
+        assert await backend.team_for_project(None) == "test-team-123"
+        client.get_project.assert_not_called()
+
+    async def test_team_for_another_project_is_that_projects_team(self, backend, monkeypatch):
+        """CHT-1951: a `project` argument or a parent can name a project in
+        another team the key sees; names are looked up there."""
+        from cli.main import client
+        monkeypatch.setattr(client, "get_project", MagicMock(return_value={"id": "p-b", "team_id": "team-b"}))
+        assert await backend.team_for_project("p-b") == "team-b"
+        client.get_project.assert_called_once_with("p-b")
+
+    async def test_resolve_named_team(self, backend, monkeypatch):
+        """CHT-1951: a `team` hint is checked against a real lookup, not
+        the profile's team that resolve_team answers with whatever is
+        passed."""
+        from chaotic_mcp_tools import ToolInputError
+        from cli.main import client
+        teams = MagicMock(return_value=[
+            {"id": "test-team-123", "key": "ENG", "name": "Engineering"},
+            {"id": "t-ops", "key": "OPS", "name": "Operations"},
+        ])
+        monkeypatch.setattr(client, "get_teams", teams)
+        assert await backend.resolve_named_team("test-team-123") == "test-team-123"
+        teams.assert_not_called()
+        assert await backend.resolve_named_team("ops") == "t-ops"
+        assert await backend.resolve_named_team("Engineering") == "test-team-123"
+        with pytest.raises(ToolInputError, match="'NOPE' not found"):
+            await backend.resolve_named_team("NOPE")
+
+    async def test_resolve_assignee_uses_the_team_it_is_given(self, backend, monkeypatch):
+        from cli.main import client
+        monkeypatch.setattr(client, "get_team_members", MagicMock(return_value=[{"user_id": "u-1", "user_name": "Alex"}]))
+        monkeypatch.setattr(client, "get_team_agents", MagicMock(return_value=[]))
+        assert await backend.resolve_assignee("Alex", "team-b") == "u-1"
+        client.get_team_members.assert_called_once_with("team-b")
 
     async def test_no_team_selected_and_none_accessible(self, backend, monkeypatch):
         from cli.main import client
@@ -243,6 +280,8 @@ class TestDefaultTeam:
             return "p-1"
 
         monkeypatch.setattr("cli.main.resolve_project_id", _resolve)
+        from cli.main import client
+        monkeypatch.setattr(client, "get_project", MagicMock(return_value={"id": "p-1", "team_id": "only-team"}))
         assert await backend.resolve_project("DEMO", None) == ("p-1", "only-team")
         assert await backend.team_for_project("p-1") == "only-team"
         assert seen == ["only-team"]

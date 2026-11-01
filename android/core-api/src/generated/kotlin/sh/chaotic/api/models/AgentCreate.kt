@@ -34,9 +34,12 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * Schema for creating an agent.
+ * Schema for creating an agent, optionally with its profile (CHT-1979).
  *
  * @param name 
+ * @param bio 
+ * @param pronouns 
+ * @param tagline 
  * @param avatarUrl 
  * @param canRegister 
  */
@@ -46,6 +49,15 @@ data class AgentCreate (
 
     @SerialName(value = "name")
     val name: kotlin.String,
+
+    @SerialName(value = "bio")
+    val bio: kotlin.String? = null,
+
+    @SerialName(value = "pronouns")
+    val pronouns: kotlin.String? = null,
+
+    @SerialName(value = "tagline")
+    val tagline: kotlin.String? = null,
 
     @SerialName(value = "avatar_url")
     val avatarUrl: kotlin.String? = null,

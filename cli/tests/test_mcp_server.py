@@ -504,6 +504,57 @@ class TestIssueCreate:
             description=None, status="backlog", priority="no_priority", issue_type="task",
         )
 
+    async def test_create_sends_the_assignee(self, mcp_mod, mock_issue):
+        """CHT-1951 on the stdio adapter: the resolved assignee reaches the
+        create request (PR #497 review: dropping it from RestBackend
+        failed no test)."""
+        from cli.main import client
+        client.get_team_members = MagicMock(return_value=[{"user_id": "u-alex", "user_name": "Alex"}])
+        client.get_team_agents = MagicMock(return_value=[])
+        client.create_issue = MagicMock(return_value=mock_issue)
+
+        await mcp_mod.issue_create(title="T", assignee="Alex")
+
+        client.get_team_members.assert_called_once_with("test-team-123")
+        assert client.create_issue.call_args.kwargs["assignee_id"] == "u-alex"
+
+    async def test_create_resolves_the_assignee_in_the_projects_team(self, mcp_mod, mock_issue, monkeypatch):
+        """A `project` in another team than the profile's: the assignee is
+        looked up among that team's members, not the current team's."""
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_project_id", lambda ident: "project-b")
+        client.get_project = MagicMock(return_value={"id": "project-b", "team_id": "team-b"})
+        members = {"team-b": [{"user_id": "u-alex", "user_name": "Alex"}], "test-team-123": []}
+        client.get_team_members = MagicMock(side_effect=lambda team_id: members[team_id])
+        client.get_team_agents = MagicMock(return_value=[])
+        client.create_issue = MagicMock(return_value=mock_issue)
+
+        result = await mcp_mod.issue_create(title="T", project="B", assignee="Alex")
+
+        assert "error" not in result, result
+        client.get_project.assert_called_once_with("project-b")
+        client.get_team_members.assert_called_once_with("team-b")
+        assert client.create_issue.call_args.args[0] == "project-b"
+        assert client.create_issue.call_args.kwargs["assignee_id"] == "u-alex"
+
+    async def test_an_ambiguous_assignee_names_the_candidates_and_prints_nothing(self, mcp_mod, capsys):
+        """stdout is the protocol channel on stdio: the candidates go in the
+        error, never to the console (PR #497 review, finding 5)."""
+        from cli.main import client
+        client.get_team_members = MagicMock(return_value=[
+            {"user_id": "u-1", "user_name": "Sam", "user_email": "sam@a.example"},
+            {"user_id": "u-2", "user_name": "sam", "user_email": "sam@b.example"},
+        ])
+        client.get_team_agents = MagicMock(return_value=[])
+        client.create_issue = MagicMock()
+
+        result = await mcp_mod.issue_create(title="T", assignee="sam")
+
+        assert result["error"]["error_code"] == "tool_input"
+        assert "Ambiguous assignee 'sam': it matches Sam (user); sam (user)" in result["error"]["message"]
+        assert capsys.readouterr().out == ""
+        client.create_issue.assert_not_called()
+
     async def test_create_resolves_issue_type_alias(self, mcp_mod, mock_issue):
         from cli.main import client
         client.create_issue = MagicMock(return_value=mock_issue)
@@ -1845,6 +1896,54 @@ class TestMCPProtocolLoop:
         assert result.is_error is not True
         text = next(c.text for c in result.content if c.type == "text")
         assert json.loads(text) == {"error": {"message": "Issue not found"}}
+
+    def test_unknown_argument_is_refused_over_protocol(self, mcp_mod):
+        """CHT-1951: an argument the tool does not take comes back as the
+        usual error envelope naming it, and nothing is created -- it used
+        to be dropped, and the issue created without it."""
+        from cli.main import client
+
+        client.create_issue = MagicMock()
+
+        async def run():
+            server = mcp_mod.build_server()
+            async with _connected_session(server) as session:
+                return await session.call_tool("issue_create", {"title": "T", "asignee": "Alex"})
+
+        result = asyncio.run(run())
+        assert result.is_error is not True
+        error = json.loads(next(c.text for c in result.content if c.type == "text"))["error"]
+        assert error["error_code"] == "unknown_argument"
+        assert "does not take the argument 'asignee' (did you mean 'assignee'?)" in error["message"]
+        client.create_issue.assert_not_called()
+
+    def test_assignee_and_team_hint_over_protocol(self, mcp_mod, mock_issue):
+        """The stdio server never advertised `team`. It takes one naming
+        the profile's team as a scope hint, and the assignee reaches the
+        create; one naming another team is refused, and nothing is
+        created (PR #497 delta review, finding A)."""
+        from cli.main import client
+
+        client.get_me = MagicMock(return_value={"id": "u-me"})
+        client.get_teams = MagicMock(return_value=[
+            {"id": "test-team-123", "key": "ENG", "name": "Engineering"},
+            {"id": "t-ops", "key": "OPS", "name": "Operations"},
+        ])
+        client.create_issue = MagicMock(return_value=mock_issue)
+
+        async def run(team):
+            server = mcp_mod.build_server()
+            async with _connected_session(server) as session:
+                result = await session.call_tool("issue_create", {"title": "T", "assignee": "me", "team": team})
+            return json.loads(next(c.text for c in result.content if c.type == "text"))
+
+        refused = asyncio.run(run("OPS"))
+        assert refused["error"]["error_code"] == "scope_mismatch", refused
+        client.create_issue.assert_not_called()
+
+        payload = asyncio.run(run("ENG"))
+        assert "error" not in payload, payload
+        assert client.create_issue.call_args.kwargs["assignee_id"] == "u-me"
 
     def test_unknown_tool_is_a_protocol_error(self, mcp_mod):
 
