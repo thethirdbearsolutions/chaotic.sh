@@ -1,4 +1,5 @@
 """Authentication commands."""
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -11,6 +12,9 @@ from .shared import _client, console, parse_duration, resolve_content_value
 
 
 # How the consent screen labels an app (frontend/src/oauth-consent.js).
+# The server's cap on an uploaded profile picture (CHT-1992).
+PHOTO_MAX_BYTES = 256 * 1024
+
 TRUST_LABELS = {
     "builtin": "built-in sign-in",
     "recognized": "recognized",
@@ -226,6 +230,14 @@ def register(cli):
             user = _client().delete_avatar()
         elif photo is not None:
             try:
+                # The server's cap (AVATAR_MAX_BYTES): refuse a bigger
+                # file here rather than read and send it all for a 413.
+                if os.path.getsize(photo) > PHOTO_MAX_BYTES:
+                    raise click.BadParameter(
+                        f"{photo} is larger than {PHOTO_MAX_BYTES // 1024} KB; shrink it first "
+                        "(the web app resizes a photo for you).",
+                        param_hint="--photo",
+                    )
                 with open(photo, "rb") as f:
                     image = f.read()
             except OSError as exc:

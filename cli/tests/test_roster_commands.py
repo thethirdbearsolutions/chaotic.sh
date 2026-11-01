@@ -298,3 +298,16 @@ def test_profile_photo_and_avatar_conflict(cli_runner, tmp_path):
 
     assert result.exit_code != 0
     client.upload_avatar.assert_not_called()
+
+
+def test_profile_photo_too_large_is_refused_before_reading(cli_runner, tmp_path):
+    from cli.main import cli, client
+    photo = tmp_path / "huge.png"
+    photo.write_bytes(b"\x89PNG" + b"\x00" * (256 * 1024))
+    client.upload_avatar = MagicMock()
+
+    result = cli_runner.invoke(cli, ["auth", "profile", "--photo", str(photo)])
+
+    assert result.exit_code != 0
+    assert "256 KB" in result.output
+    client.upload_avatar.assert_not_called()

@@ -353,10 +353,14 @@ class UserService:
     async def update(self, user: OxydeUser, user_in: UserUpdate) -> OxydeUser:
         """Update a user."""
         update_data = user_in.model_dump(exclude_unset=True)
+        old_avatar = user.avatar_url
         for field, value in update_data.items():
             setattr(user, field, value)
         user.updated_at = datetime.now(timezone.utc)
         await user.save(update_fields=set(update_data.keys()) | {"updated_at"})
+        if "avatar_url" in update_data:
+            from app.services.avatar_service import AvatarService
+            await AvatarService.drop_if_left(user.id, old_avatar, user.avatar_url)
         if "name" in update_data:
             # Inbox entries show who triggered them (CHT-1607).
             from app.services.inbox_service import InboxService

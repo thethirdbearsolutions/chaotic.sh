@@ -291,9 +291,14 @@ class AgentService:
             update_data["kind"] = AgentKind.SERVICE if update_data["can_register"] else AgentKind.ASSISTANT
         if not update_data:
             return await OxydeUser.objects.join("parent_user").filter(id=agent.id).first()
+        old_avatar = agent.avatar_url
         for field, value in update_data.items():
             setattr(agent, field, value)
         await agent.save(update_fields=set(update_data.keys()))
+        if "avatar_url" in update_data:
+            # Moved off its uploaded picture: delete it (PR #522 review).
+            from app.services.avatar_service import AvatarService
+            await AvatarService.drop_if_left(agent.id, old_avatar, agent.avatar_url)
         if "name" in update_data:
             # Inbox entries show who triggered them (CHT-1607).
             from app.services.inbox_service import InboxService

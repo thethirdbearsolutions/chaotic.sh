@@ -34,7 +34,8 @@ async def test_upload_and_serve(client, auth_headers, data, kind):
     assert served.content == data
     assert served.headers["content-type"] == kind
     assert served.headers["x-content-type-options"] == "nosniff"
-    assert "immutable" in served.headers["cache-control"]
+    # Private and short: a removed picture must stop being served.
+    assert served.headers["cache-control"] == "private, max-age=3600"
     assert "sandbox" in served.headers["content-security-policy"]
 
 
@@ -113,6 +114,53 @@ async def test_deleting_an_agent_deletes_its_picture(client, auth_headers, test_
 
 async def test_deleting_an_account_deletes_its_picture(client, auth_headers):
     await _upload(client, auth_headers, PNG)
+
+    deleted = await client.delete("/api/users/me", headers=auth_headers)
+
+    assert deleted.status_code == 204, deleted.text
+    assert await OxydeUserAvatar.objects.count() == 0
+
+
+async def test_moving_avatar_url_off_the_upload_deletes_it(client, auth_headers):
+    url = (await _upload(client, auth_headers, PNG)).json()["avatar_url"]
+
+    await client.patch("/api/users/me", json={"tagline": "Still here"}, headers=auth_headers)
+    assert (await client.get(url)).status_code == 200
+
+    moved = await client.patch("/api/users/me", json={"avatar_url": "🦉"}, headers=auth_headers)
+
+    assert moved.status_code == 200, moved.text
+    assert (await client.get(url)).status_code == 404
+    assert await OxydeUserAvatar.objects.count() == 0
+
+
+async def test_an_owner_moving_an_agents_avatar_deletes_its_picture(client, auth_headers, test_team):
+    agent = (await client.post(f"/api/teams/{test_team.id}/agents", json={"name": "Owl"}, headers=auth_headers)).json()
+    url = (await _upload(client, _bearer(agent["api_key"]), PNG)).json()["avatar_url"]
+
+    moved = await client.patch(f"/api/agents/{agent['id']}", json={"avatar_url": None}, headers=auth_headers)
+
+    assert moved.status_code == 200, moved.text
+    assert (await client.get(url)).status_code == 404
+
+
+async def test_a_shared_picture_survives_one_owner_removing_theirs(client, auth_headers, auth_headers2):
+    url = (await _upload(client, auth_headers, PNG)).json()["avatar_url"]
+    assert (await _upload(client, auth_headers2, PNG)).json()["avatar_url"] == url
+
+    await client.delete("/api/users/me/avatar", headers=auth_headers)
+
+    assert (await client.get(url)).status_code == 200
+
+
+async def test_deleting_an_account_deletes_its_agents_pictures(client, auth_headers, test_team, test_user2):
+    from app.enums import TeamRole
+    from app.oxyde_models.team import OxydeTeamMember
+
+    # Another owner, so the account is not the team's only one.
+    await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.OWNER)
+    agent = (await client.post(f"/api/teams/{test_team.id}/agents", json={"name": "Owl"}, headers=auth_headers)).json()
+    await _upload(client, _bearer(agent["api_key"]), GIF)
 
     deleted = await client.delete("/api/users/me", headers=auth_headers)
 

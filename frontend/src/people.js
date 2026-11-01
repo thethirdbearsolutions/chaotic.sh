@@ -504,53 +504,81 @@ export async function resizePhoto(file, size = PHOTO_SIZE) {
     );
     bitmap.close?.();
     const encode = (type) => new Promise(resolve => canvas.toBlob(resolve, type, 0.9));
+    // WebP where the browser can encode it; else JPEG, which stays well
+    // under the server's cap where a PNG of a photo may not (Safari).
     const webp = await encode('image/webp');
-    return webp && webp.type === 'image/webp' ? webp : encode('image/png');
+    const blob = webp && webp.type === 'image/webp' ? webp : await encode('image/jpeg');
+    if (!blob) throw new Error('This browser could not convert the picture. Try a PNG or JPEG file.');
+    return blob;
 }
 
-/** Your own profile picture changed: the form, the roster, the header. */
-function applyMyAvatar(saved) {
+// An upload or removal in flight: the other waits, so the last answer
+// is never an older request's.
+let photoBusy = false;
+
+function setPhotoControlsDisabled(disabled) {
+    for (const id of ['profile-photo', 'profile-photo-remove']) {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+    }
+}
+
+/**
+ * Your own profile picture changed: the roster, the header, your profile
+ * page, and the form if it is still the one the change started from
+ * (`token`); a form opened since, perhaps an agent's, is left alone.
+ */
+function applyMyAvatar(saved, token) {
     const me = getCurrentUser();
-    if (!me || !saved) return;
+    if (!me || !saved || (saved.id && saved.id !== me.id)) return;
     const avatar = saved.avatar_url ?? null;
     roster = roster.map(r => (r.user_id === me.id ? { ...r, avatar_url: avatar } : r));
     setCurrentUser({ ...me, avatar_url: avatar });
     updateUserInfo();
-    const field = document.getElementById('profile-avatar');
-    if (field) field.value = avatar || '';
-    // The upload is saved already: Save sends the avatar only if it is
-    // edited again after this.
-    if (editingId === me.id && editingInitial) {
+    const sameForm = token === formToken && editingId === me.id && editingInitial;
+    if (sameForm) {
+        const field = document.getElementById('profile-avatar');
+        if (field) field.value = avatar || '';
+        // The upload is saved already: Save sends the avatar only if it
+        // is edited again after this.
         editingInitial = { ...editingInitial, avatar_url: avatar || '' };
         editingEntry = { ...editingEntry, avatar_url: avatar };
+        document.getElementById('profile-photo-remove')?.classList.toggle('hidden', !UPLOADED_AVATAR_RE.test(avatar || ''));
     }
-    document.getElementById('profile-photo-remove')?.classList.toggle('hidden', !UPLOADED_AVATAR_RE.test(avatar || ''));
-    if (editingId === me.id && editingEntry && showingProfileOf(me.id)) rerenderProfile(editingEntry);
+    if (showingProfileOf(me.id)) {
+        const shown = sameForm ? editingEntry : roster.find(r => r.user_id === me.id);
+        if (shown) rerenderProfile({ ...shown, avatar_url: avatar });
+    }
+}
+
+async function changePhoto(request, done, failed) {
+    if (photoBusy) return;
+    photoBusy = true;
+    const token = formToken;
+    setPhotoControlsDisabled(true);
+    try {
+        applyMyAvatar(await request(), token);
+        showToast(done, 'success');
+    } catch (e) {
+        showApiError(failed, e);
+    } finally {
+        photoBusy = false;
+        setPhotoControlsDisabled(false);
+    }
 }
 
 export async function handlePickPhoto(input, resize = resizePhoto) {
     const file = input.files?.[0];
     if (!file) return;
-    input.disabled = true;
     try {
-        const blob = await resize(file);
-        applyMyAvatar(await api.uploadAvatar(blob));
-        showToast('Photo uploaded', 'success');
-    } catch (e) {
-        showApiError('upload the photo', e);
+        await changePhoto(async () => api.uploadAvatar(await resize(file)), 'Photo uploaded', 'upload the photo');
     } finally {
-        input.disabled = false;
         input.value = '';
     }
 }
 
-export async function handleRemovePhoto() {
-    try {
-        applyMyAvatar(await api.deleteAvatar());
-        showToast('Photo removed', 'success');
-    } catch (e) {
-        showApiError('remove the photo', e);
-    }
+export function handleRemovePhoto() {
+    return changePhoto(() => api.deleteAvatar(), 'Photo removed', 'remove the photo');
 }
 
 function opensInNewTab(event) {

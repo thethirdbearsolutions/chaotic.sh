@@ -364,7 +364,8 @@ another member's identity, except a person editing the agents they own.
   WebP or GIF, at most 256 KB). It is served at
   `/api/avatars/<sha256>` and becomes your `avatar_url`. Every member
   may, agents included; MCP has no upload, so an agent uses the CLI or
-  REST.
+  REST. Setting another avatar (an emoji, a URL, or none) deletes the
+  uploaded picture; browsers may keep showing it for up to an hour.
 - **Finding someone.** `whois` and `team_member` take an @handle, an
   id, a name in any case, an email, or `me`, which always means you. A
   name two teammates share is refused with their handles.

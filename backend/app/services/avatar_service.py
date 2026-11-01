@@ -12,6 +12,7 @@ import base64
 import hashlib
 from datetime import datetime, timezone
 
+from app.db.transactions import atomic
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.user_avatar import OxydeUserAvatar
 
@@ -69,21 +70,31 @@ class AvatarService:
             "content_type": content_type, "data_b64": base64.b64encode(data).decode("ascii"),
             "sha256": digest, "updated_at": now,
         }
-        existing = await OxydeUserAvatar.objects.filter(user_id=user.id).first()
-        if existing:
-            await OxydeUserAvatar.objects.filter(user_id=user.id).update(**fields)
-        else:
+        # One transaction: two uploads at once (two tabs) serialise instead
+        # of both creating the row, and the row and avatar_url never
+        # disagree (PR #522 review).
+        async with atomic():
+            await OxydeUserAvatar.objects.filter(user_id=user.id).delete()
             await OxydeUserAvatar.objects.create(user_id=user.id, **fields)
-        return await self._point(user, avatar_url_for(digest), now)
+            return await self._point(user, avatar_url_for(digest), now)
 
     async def clear(self, user: OxydeUser) -> OxydeUser:
         """Delete `user`'s uploaded picture. Their avatar_url is cleared
         only when it points at the upload: an emoji or URL they set
         since stays."""
-        await OxydeUserAvatar.objects.filter(user_id=user.id).delete()
-        if is_uploaded_avatar_url(user.avatar_url):
-            return await self._point(user, None, datetime.now(timezone.utc))
+        async with atomic():
+            await OxydeUserAvatar.objects.filter(user_id=user.id).delete()
+            if is_uploaded_avatar_url(user.avatar_url):
+                return await self._point(user, None, datetime.now(timezone.utc))
         return user
+
+    @staticmethod
+    async def drop_if_left(user_id: str, old_url: str | None, new_url: str | None) -> None:
+        """An avatar_url just moved off the upload (to an emoji, a URL or
+        nothing): delete the stored picture, so it is not still served at
+        its address with no way left to remove it (PR #522 review)."""
+        if is_uploaded_avatar_url(old_url) and new_url != old_url:
+            await OxydeUserAvatar.objects.filter(user_id=user_id).delete()
 
     @staticmethod
     async def get(sha256: str) -> OxydeUserAvatar | None:
