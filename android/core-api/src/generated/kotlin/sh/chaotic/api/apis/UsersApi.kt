@@ -112,7 +112,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * GET /api/avatars/{sha256}
         * Get Avatar
-        * An uploaded profile picture, by its sha256. No credential: an &#x60;&lt;img&gt;&#x60; sends none, and the address is the image&#39;s own hash, which only someone shown a member&#39;s avatar_url knows. It never changes for an image, so it is cached for a year. Unknown answers 404.
+        * An uploaded profile picture, by its sha256. No credential: an &#x60;&lt;img&gt;&#x60; sends none, and the address is the image&#39;s own hash, which only someone shown a member&#39;s avatar_url knows. Cached privately for an hour, so a removed picture stops showing soon. Unknown answers 404.
          * @param sha256  
          * @return void
         */

@@ -409,7 +409,7 @@
           "users"
         ],
         "summary": "Get Avatar",
-        "description": "An uploaded profile picture, by its sha256. No credential: an\n`<img>` sends none, and the address is the image's own hash, which\nonly someone shown a member's avatar_url knows. It never changes for\nan image, so it is cached for a year. Unknown answers 404.",
+        "description": "An uploaded profile picture, by its sha256. No credential: an\n`<img>` sends none, and the address is the image's own hash, which\nonly someone shown a member's avatar_url knows. Cached privately for\nan hour, so a removed picture stops showing soon. Unknown answers 404.",
         "operationId": "get_avatar_api_avatars__sha256__get",
         "parameters": [
           {
