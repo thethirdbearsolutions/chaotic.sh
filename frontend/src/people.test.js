@@ -10,6 +10,8 @@ import {
   showEditProfileModal,
   profilePayload,
   handleSaveProfile,
+  handlePickPhoto,
+  handleRemovePhoto,
   getRoster,
   resetPeople,
 } from './people.js';
@@ -24,6 +26,8 @@ vi.mock('./api.js', () => ({
     updateMe: vi.fn(),
     updateAgent: vi.fn(),
     getTeamIssues: vi.fn(),
+    uploadAvatar: vi.fn(),
+    deleteAvatar: vi.fn(),
   },
 }));
 
@@ -498,5 +502,92 @@ describe('loadPersonIssues', () => {
     await viewPerson('u-sam');
     await new Promise(r => setTimeout(r, 0));
     expect(document.getElementById('person-issues').textContent).toContain('Couldn’t load');
+  });
+});
+
+describe('profile photos', () => {
+  const SHA = 'a'.repeat(64);
+
+  it('offers photo controls on your own form only', async () => {
+    await loadPeople();
+
+    await showEditProfileModal('a-piper');
+    expect(document.getElementById('profile-photo')).toBeNull();
+
+    await showEditProfileModal('u-ada');
+    expect(document.getElementById('profile-photo')).not.toBeNull();
+    expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(true);
+  });
+
+  it('uploads the resized picture and shows it everywhere', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    const input = document.getElementById('profile-photo');
+    const file = new File(['x'], 'me.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    const resized = new Blob(['y'], { type: 'image/webp' });
+    const resize = vi.fn().mockResolvedValue(resized);
+    api.uploadAvatar.mockResolvedValue({ id: 'u-ada', avatar_url: `/api/avatars/${SHA}` });
+
+    await handlePickPhoto(input, resize);
+
+    expect(resize).toHaveBeenCalledWith(file);
+    expect(api.uploadAvatar).toHaveBeenCalledWith(resized);
+    expect(getCurrentUser().avatar_url).toBe(`/api/avatars/${SHA}`);
+    expect(updateUserInfo).toHaveBeenCalled();
+    expect(document.getElementById('profile-avatar').value).toBe(`/api/avatars/${SHA}`);
+    expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(false);
+    expect(getRoster().find(r => r.user_id === 'u-ada').avatar_url).toBe(`/api/avatars/${SHA}`);
+  });
+
+  it('does not resend the uploaded picture when the form is saved after', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    const input = document.getElementById('profile-photo');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'me.png')], configurable: true });
+    api.uploadAvatar.mockResolvedValue({ id: 'u-ada', avatar_url: `/api/avatars/${SHA}` });
+    await handlePickPhoto(input, vi.fn().mockResolvedValue(new Blob(['y'])));
+    document.getElementById('profile-tagline').value = 'Builder';
+    api.updateMe.mockResolvedValue({ id: 'u-ada', name: 'Ada', avatar_url: `/api/avatars/${SHA}`, tagline: 'Builder' });
+
+    await handleSaveProfile({ preventDefault: vi.fn(), target: document.querySelector('#modal-content form') });
+
+    expect(api.updateMe).toHaveBeenCalledWith({ tagline: 'Builder' });
+  });
+
+  it('reports a refused upload and keeps the old avatar', async () => {
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    const input = document.getElementById('profile-photo');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'big.png')], configurable: true });
+    api.uploadAvatar.mockRejectedValue(Object.assign(new Error('Too large'), { status: 413 }));
+
+    await handlePickPhoto(input, vi.fn().mockResolvedValue(new Blob(['y'])));
+
+    expect(showApiError).toHaveBeenCalled();
+    expect(getCurrentUser().avatar_url).toBeNull();
+    expect(input.disabled).toBe(false);
+  });
+
+  it('removes the photo', async () => {
+    setCurrentUser({ id: 'u-ada', name: 'Ada', avatar_url: `/api/avatars/${SHA}` });
+    api.getTeamRoster.mockResolvedValue([{ ...ADA, avatar_url: `/api/avatars/${SHA}` }]);
+    await loadPeople();
+    await showEditProfileModal('u-ada');
+    expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(false);
+    api.deleteAvatar.mockResolvedValue({ id: 'u-ada', avatar_url: null });
+
+    await handleRemovePhoto();
+
+    expect(getCurrentUser().avatar_url).toBeNull();
+    expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(true);
+  });
+
+  it('renders an uploaded picture as an image', async () => {
+    api.getTeamRoster.mockResolvedValue([{ ...ADA, avatar_url: `/api/avatars/${SHA}` }]);
+
+    await loadPeople();
+
+    expect(document.querySelector('.person-card img').getAttribute('src')).toBe(`/api/avatars/${SHA}`);
   });
 });

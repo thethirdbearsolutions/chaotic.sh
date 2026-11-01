@@ -10181,3 +10181,4 @@ body.theme-light .picker-popover {
 .person-issue-id { color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .person-issue-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .person-issue-status { color: var(--text-secondary); font-size: 0.75rem; text-transform: capitalize; flex-shrink: 0; }
+.profile-photo-row { display: flex; align-items: center; gap: var(--space-lg); flex-wrap: wrap; }

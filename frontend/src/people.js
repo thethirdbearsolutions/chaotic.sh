@@ -12,7 +12,7 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml, escapeAttr, renderAvatar } from './utils.js';
+import { escapeHtml, escapeAttr, renderAvatar, UPLOADED_AVATAR_RE } from './utils.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getCurrentTeam, getCurrentUser, setCurrentUser, setCurrentView } from './state.js';
 import { registerActions } from './event-delegation.js';
@@ -373,6 +373,14 @@ export async function showEditProfileModal(userId) {
                 <label for="profile-avatar">Avatar</label>
                 <input type="text" id="profile-avatar" value="${value(entry.avatar_url)}" placeholder="An emoji, or an image URL">
             </div>
+            ${self ? `<div class="form-group">
+                <label for="profile-photo">Photo</label>
+                <div class="profile-photo-row">
+                    <input type="file" id="profile-photo" accept="image/png,image/jpeg,image/webp,image/gif" data-action="pick-profile-photo">
+                    <button type="button" class="btn btn-secondary btn-small${UPLOADED_AVATAR_RE.test(entry.avatar_url || '') ? '' : ' hidden'}" id="profile-photo-remove" data-action="remove-profile-photo">Remove photo</button>
+                </div>
+                <p class="form-help">Uploads at once, cropped square and resized to ${PHOTO_SIZE}px.</p>
+            </div>` : ''}
             <div class="form-group">
                 <label for="profile-pronouns">Pronouns</label>
                 <input type="text" id="profile-pronouns" value="${value(entry.pronouns)}" maxlength="${PROFILE_LIMITS.pronouns}" placeholder="e.g. they/them">
@@ -479,6 +487,72 @@ export async function handleSaveProfile(event) {
     }
 }
 
+// The side of the square a photo is resized to before upload; the
+// server takes up to 256 KB, which a 256px WebP or JPEG stays well under.
+export const PHOTO_SIZE = 256;
+
+/** Crop `file` to its centre square and scale it to PHOTO_SIZE, as a
+ * WebP (or PNG where the browser can't encode WebP). */
+export async function resizePhoto(file, size = PHOTO_SIZE) {
+    const bitmap = await createImageBitmap(file);
+    const side = Math.min(bitmap.width, bitmap.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    canvas.getContext('2d').drawImage(
+        bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, size, size,
+    );
+    bitmap.close?.();
+    const encode = (type) => new Promise(resolve => canvas.toBlob(resolve, type, 0.9));
+    const webp = await encode('image/webp');
+    return webp && webp.type === 'image/webp' ? webp : encode('image/png');
+}
+
+/** Your own profile picture changed: the form, the roster, the header. */
+function applyMyAvatar(saved) {
+    const me = getCurrentUser();
+    if (!me || !saved) return;
+    const avatar = saved.avatar_url ?? null;
+    roster = roster.map(r => (r.user_id === me.id ? { ...r, avatar_url: avatar } : r));
+    setCurrentUser({ ...me, avatar_url: avatar });
+    updateUserInfo();
+    const field = document.getElementById('profile-avatar');
+    if (field) field.value = avatar || '';
+    // The upload is saved already: Save sends the avatar only if it is
+    // edited again after this.
+    if (editingId === me.id && editingInitial) {
+        editingInitial = { ...editingInitial, avatar_url: avatar || '' };
+        editingEntry = { ...editingEntry, avatar_url: avatar };
+    }
+    document.getElementById('profile-photo-remove')?.classList.toggle('hidden', !UPLOADED_AVATAR_RE.test(avatar || ''));
+    if (editingId === me.id && editingEntry && showingProfileOf(me.id)) rerenderProfile(editingEntry);
+}
+
+export async function handlePickPhoto(input, resize = resizePhoto) {
+    const file = input.files?.[0];
+    if (!file) return;
+    input.disabled = true;
+    try {
+        const blob = await resize(file);
+        applyMyAvatar(await api.uploadAvatar(blob));
+        showToast('Photo uploaded', 'success');
+    } catch (e) {
+        showApiError('upload the photo', e);
+    } finally {
+        input.disabled = false;
+        input.value = '';
+    }
+}
+
+export async function handleRemovePhoto() {
+    try {
+        applyMyAvatar(await api.deleteAvatar());
+        showToast('Photo removed', 'success');
+    } catch (e) {
+        showApiError('remove the photo', e);
+    }
+}
+
 function opensInNewTab(event) {
     return event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1;
 }
@@ -502,6 +576,14 @@ registerActions({
         document.getElementById('user-dropdown')?.classList.add('hidden');
         const me = getCurrentUser();
         if (me) viewPerson(me.id);
+    },
+    'pick-profile-photo': (event, _data, target) => {
+        if (event.type !== 'change') return;
+        handlePickPhoto(target);
+    },
+    'remove-profile-photo': (event) => {
+        if (event.type !== 'click') return;
+        handleRemovePhoto();
     },
     'save-profile': (event) => {
         handleSaveProfile(event);
