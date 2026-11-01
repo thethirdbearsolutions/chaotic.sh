@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { getCurrentTeam, setCurrentTeam, setCurrentUser } from './state.js';
+import { getCurrentTeam, setCurrentTeam, setCurrentUser, getLabels } from './state.js';
 import {
   getTeams,
   getMembers,
@@ -72,8 +72,13 @@ vi.mock('./router.js', () => ({
 }));
 
 const mockLoadProjects = vi.fn().mockResolvedValue();
+const mockSetProjects = vi.fn();
+const mockChooseCurrentProject = vi.fn();
 vi.mock('./projects.js', () => ({
   loadProjects: (...args) => mockLoadProjects(...args),
+  setProjects: (...args) => mockSetProjects(...args),
+  updateProjectFilters: vi.fn(),
+  chooseCurrentProject: (...args) => mockChooseCurrentProject(...args),
 }));
 
 const mockLoadTeamAgentsQuiet = vi.fn().mockResolvedValue();
@@ -81,6 +86,12 @@ const mockGetAgents = vi.fn(() => []);
 vi.mock('./agents.js', () => ({
   loadTeamAgentsQuiet: (...args) => mockLoadTeamAgentsQuiet(...args),
   getAgents: (...args) => mockGetAgents(...args),
+  setAgents: (...args) => mockSetAgents(...args),
+}));
+const mockSetAgents = vi.fn();
+const mockImportIssueStore = vi.fn();
+vi.mock('./issue-store.js', () => ({
+  importIssueStore: (...args) => mockImportIssueStore(...args),
 }));
 
 const mockConnectWebSocket = vi.fn();
@@ -187,6 +198,36 @@ describe('selectTeam', () => {
 
   afterEach(() => {
     setCurrentTeam(null);
+  });
+
+  // CHT-1972: with a boot-cache seed the view routes on the cached team
+  // data at once, and the usual requests refresh it behind the paint.
+  it('routes at once on a seed, then refreshes the team data', async () => {
+    let finishProjects;
+    mockLoadProjects.mockReturnValue(new Promise((r) => { finishProjects = r; }));
+    api.getLabels = vi.fn(() => new Promise(() => {}));
+    api.getTeamMembers.mockReturnValue(new Promise(() => {}));
+    const seed = {
+      projects: [{ id: 'p1' }],
+      labels: [{ id: 'l1', name: 'bug' }],
+      members: [{ id: 'm1' }],
+      agents: [{ id: 'a1' }],
+      issues: { queries: [] },
+    };
+    await selectTeam({ id: 'team-1', name: 'T' }, true, { seed });
+    expect(mockSetProjects).toHaveBeenCalledWith([{ id: 'p1' }]);
+    expect(mockChooseCurrentProject).toHaveBeenCalled();
+    expect(getLabels()).toEqual([{ id: 'l1', name: 'bug' }]);
+    expect(getMembers()).toEqual([{ id: 'm1' }]);
+    expect(mockSetAgents).toHaveBeenCalledWith([{ id: 'a1' }]);
+    expect(mockImportIssueStore).toHaveBeenCalledWith(seed.issues);
+    expect(mockHandleRoute).toHaveBeenCalled();
+    // The refresh is in flight, not awaited.
+    expect(mockLoadProjects).toHaveBeenCalled();
+    expect(api.getLabels).toHaveBeenCalled();
+    expect(api.getTeamMembers).toHaveBeenCalled();
+    expect(mockLoadTeamAgentsQuiet).toHaveBeenCalled();
+    finishProjects();
   });
 
   it('sets currentTeam and updates UI', async () => {

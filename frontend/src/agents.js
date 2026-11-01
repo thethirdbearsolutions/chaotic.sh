@@ -25,6 +25,14 @@ export function getAgents() {
 }
 
 /**
+ * Set the team's agents (the boot cache, CHT-1972).
+ * @param {Array} list
+ */
+export function setAgents(list) {
+  agents = Array.isArray(list) ? list : [];
+}
+
+/**
  * Check if an avatar URL is an image (vs emoji)
  * @param {string} avatar - Avatar URL or emoji
  * @returns {boolean}

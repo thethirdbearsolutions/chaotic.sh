@@ -20,6 +20,9 @@ import {
     clearIssueStore,
     deriveQuery,
     MAX_CACHED_QUERIES,
+    exportIssueStore,
+    importIssueStore,
+    onQueryWritten,
 } from './issue-store.js';
 
 const row = (id, extra = {}) => ({ id, updated_at: 't1', title: id, ...extra });
@@ -29,6 +32,54 @@ describe('issue-store', () => {
         clearIssueStore();
         setState('currentView', 'issues');
         setIssues([]);
+    });
+
+    // CHT-1972: the boot cache saves the recent lists and loads them on
+    // the next page load.
+    describe('export and import', () => {
+        it('round-trips the most recent lists and their views', () => {
+            writeQuery('q1', [row('a'), row('b')]);
+            writeQuery('q2', [row('b'), row('c')], { closedMatches: 2 });
+            writeQuery('q3', [row('d')]);
+            rememberView('v2', 'q2');
+            rememberView('v1', 'q1');
+            const saved = structuredClone(exportIssueStore({ maxQueries: 2 }));
+            expect(saved.queries.map(([k]) => k)).toEqual(['q2', 'q3']);
+            expect(saved.views).toEqual([['v2', 'q2']]);
+
+            clearIssueStore();
+            importIssueStore(saved);
+            expect(readQuery('q2').map(r => r.id)).toEqual(['b', 'c']);
+            expect(readQueryMeta('q2')).toEqual({ closedMatches: 2 });
+            expect(readQuery('q3').map(r => r.id)).toEqual(['d']);
+            expect(readQuery('q1')).toBeNull();
+            expect(queryForView('v2')).toBe('q2');
+        });
+
+        it("keeps what this session loaded over the snapshot's copy", () => {
+            writeQuery('q1', [row('a', { updated_at: 't1', title: 'old' })]);
+            const saved = structuredClone(exportIssueStore());
+            clearIssueStore();
+            writeQuery('q1', [row('a', { updated_at: 't2', title: 'new' })]);
+            importIssueStore(saved);
+            expect(readQuery('q1')[0].title).toBe('new');
+        });
+
+        it('ignores a missing or malformed snapshot', () => {
+            importIssueStore(null);
+            importIssueStore({});
+            importIssueStore({ queries: [['q', null]] });
+            expect(readQuery('q')).toBeNull();
+        });
+
+        it('tells listeners after each write', () => {
+            const seen = [];
+            const stop = onQueryWritten((key) => seen.push(key));
+            writeQuery('q1', [row('a')]);
+            stop();
+            writeQuery('q2', [row('b')]);
+            expect(seen).toEqual(['q1']);
+        });
     });
 
     describe('queryKey', () => {

@@ -3,6 +3,7 @@
  */
 
 import { getToken, setToken as persistToken } from './storage.js';
+import { clearSnapshot } from './boot-cache.js';
 
 const API_BASE = '/api';
 
@@ -136,6 +137,8 @@ export class ApiClient {
 
     logout() {
         this.setToken(null);
+        // What the boot cache holds is this user's data (CHT-1972).
+        clearSnapshot();
     }
 
     // Users

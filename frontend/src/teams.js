@@ -9,8 +9,9 @@ import { showModal, closeModal, showToast, showApiError, isModalOpen } from './u
 import { getCurrentTeam, setCurrentTeam, getCurrentView, getCurrentUser, setLabels } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { navigateTo, handleRoute } from './router.js';
-import { loadProjects } from './projects.js';
-import { loadTeamAgentsQuiet } from './agents.js';
+import { loadProjects, setProjects, updateProjectFilters, chooseCurrentProject } from './projects.js';
+import { loadTeamAgentsQuiet, setAgents } from './agents.js';
+import { importIssueStore } from './issue-store.js';
 import { connectWebSocket } from './ws.js';
 import { buildAssignees, updateAssigneeFilter } from './assignees.js';
 import { getAgents } from './agents.js';
@@ -29,6 +30,15 @@ let teamAgents = [];
  */
 export function getTeams() {
   return teams;
+}
+
+/**
+ * Set the teams list and redraw the team menu (the boot cache, CHT-1972).
+ * @param {Array} list
+ */
+export function setTeams(list) {
+  teams = Array.isArray(list) ? list : [];
+  renderTeamList();
 }
 
 /**
@@ -84,8 +94,13 @@ export function renderTeamList() {
  * Select a team and load its data
  * @param {Object} team - Team object to select
  * @param {boolean} isInitialLoad - Whether this is the initial page load
+ * @param {Object} [options]
+ * @param {Object} [options.seed] - a boot-cache snapshot for this team
+ *   (CHT-1972): its projects, labels, members, agents and issue lists are
+ *   applied at once and the view routed on them, while the same requests
+ *   as a load without it refresh them behind the paint.
  */
-export async function selectTeam(team, isInitialLoad = false) {
+export async function selectTeam(team, isInitialLoad = false, { seed = null } = {}) {
   setCurrentTeam(team);
   document.getElementById('current-team-name').textContent = team.name;
   const mobileTeamName = document.getElementById('mobile-team-name');
@@ -99,6 +114,20 @@ export async function selectTeam(team, isInitialLoad = false) {
 
   // Connect to WebSocket for real-time updates
   connectWebSocket(team.id);
+
+  if (seed) {
+    applyTeamSeed(seed);
+    if (isInitialLoad) handleRoute();
+    else navigateTo(getCurrentView() || 'my-issues');
+    Promise.all([
+      loadProjects(),
+      loadLabels(),
+      loadTeamMembersQuiet(),
+      loadTeamAgentsQuiet(),
+      refreshInboxUnreadCount(),
+    ]).catch(e => console.error('Failed to refresh team data:', e));
+    return;
+  }
 
   // Load team data (including members for assignee dropdown)
   await Promise.all([
@@ -115,6 +144,22 @@ export async function selectTeam(team, isInitialLoad = false) {
   } else {
     navigateTo(getCurrentView() || 'my-issues');
   }
+}
+
+/**
+ * Apply a boot-cache snapshot's team data (CHT-1972).
+ * @param {Object} seed
+ */
+function applyTeamSeed(seed) {
+  setProjects(Array.isArray(seed.projects) ? seed.projects : []);
+  updateProjectFilters();
+  chooseCurrentProject();
+  setLabels(Array.isArray(seed.labels) ? seed.labels : []);
+  members = Array.isArray(seed.members) ? seed.members : [];
+  setAgents(seed.agents);
+  buildAssignees(getMembers, getAgents);
+  updateAssigneeFilter();
+  importIssueStore(seed.issues);
 }
 
 /**

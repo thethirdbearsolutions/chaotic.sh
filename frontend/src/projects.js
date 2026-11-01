@@ -192,25 +192,32 @@ export async function loadProjects() {
   try {
     projects = await api.getProjects(getCurrentTeam().id);
     updateProjectFilters();
-
-    // Initialize currentProject: keep if valid, else URL > saved > first
-    const current = getCurrentProject();
-    if (current && projects.some(p => p.id === current)) return;
-    const urlProject = getProjectFromUrl();
-    if (urlProject && projects.some(p => p.id === urlProject)) {
-      setCurrentProject(urlProject);
-      return;
-    }
-    const saved = getSavedProject();
-    if (saved && projects.some(p => p.id === saved)) {
-      setCurrentProject(saved);
-      return;
-    }
-    if (projects.length > 0) {
-      setCurrentProject(projects[0].id);
-    }
+    chooseCurrentProject();
   } catch (e) {
     showApiError('load projects', e);
+  }
+}
+
+/**
+ * Initialize currentProject from the projects list: keep it if valid,
+ * else URL > saved > first. Also used when the boot cache (CHT-1972)
+ * supplies the list.
+ */
+export function chooseCurrentProject() {
+  const current = getCurrentProject();
+  if (current && projects.some(p => p.id === current)) return;
+  const urlProject = getProjectFromUrl();
+  if (urlProject && projects.some(p => p.id === urlProject)) {
+    setCurrentProject(urlProject);
+    return;
+  }
+  const saved = getSavedProject();
+  if (saved && projects.some(p => p.id === saved)) {
+    setCurrentProject(saved);
+    return;
+  }
+  if (projects.length > 0) {
+    setCurrentProject(projects[0].id);
   }
 }
 

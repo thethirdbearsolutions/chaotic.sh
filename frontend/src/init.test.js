@@ -1,9 +1,15 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('./auth.js', () => ({
     showMainScreen: vi.fn(), updateUserInfo: vi.fn(), showAuthScreen: vi.fn(), showLogin: vi.fn(), showSignup: vi.fn(),
 }));
-vi.mock('./teams.js', () => ({ getTeams: vi.fn(() => []), loadTeams: vi.fn(), selectTeam: vi.fn() }));
+vi.mock('./teams.js', () => ({
+    getTeams: vi.fn(() => []), loadTeams: vi.fn(), selectTeam: vi.fn(), setTeams: vi.fn(), getMembers: vi.fn(() => []),
+}));
+vi.mock('./projects.js', () => ({ getProjects: vi.fn(() => []) }));
+vi.mock('./agents.js', () => ({ getAgents: vi.fn(() => []) }));
+vi.mock('./issue-store.js', () => ({ exportIssueStore: vi.fn(() => ({})), onQueryWritten: vi.fn() }));
+vi.mock('./boot-cache.js', () => ({ clearSnapshot: vi.fn(() => Promise.resolve()), writeSnapshot: vi.fn(() => Promise.resolve()) }));
 vi.mock('./onboarding.js', () => ({ showOnboarding: vi.fn(), hasCompletedOnboarding: vi.fn(() => true) }));
 vi.mock('./router.js', () => ({ initRouter: vi.fn(), primeRoute: vi.fn() }));
 vi.mock('./oauth-consent.js', async (importOriginal) => ({
@@ -19,7 +25,13 @@ vi.mock('./invite.js', async (importOriginal) => ({
 vi.mock('./ui.js', () => ({ showToast: vi.fn() }));
 vi.mock('./api.js', () => ({ api: { logout: vi.fn() } }));
 
-import { initApp, openInvite, showSignedOut } from './init.js';
+import { initApp, openInvite, showSignedOut, saveSnapshot, startSavingSnapshots, resetSnapshotSaving } from './init.js';
+import { setTeams, getMembers } from './teams.js';
+import { getProjects } from './projects.js';
+import { getAgents } from './agents.js';
+import { exportIssueStore, onQueryWritten } from './issue-store.js';
+import { clearSnapshot, writeSnapshot } from './boot-cache.js';
+import { setCurrentTeam, setLabels } from './state.js';
 import { showMainScreen, showAuthScreen, showLogin, showSignup } from './auth.js';
 import { showInvite, hideInvite, showMissingToken, forgetInviteToken } from './invite.js';
 import { showToast } from './ui.js';
@@ -274,5 +286,107 @@ describe('invitation links (CHT-1265)', () => {
         selectTeam.mockClear();
         await initApp({ teamId: 'not-mine' });
         expect(selectTeam).toHaveBeenCalledWith({ id: 't1' }, true);
+    });
+});
+
+describe('boot cache (CHT-1972)', () => {
+    const teams = [{ id: 't1' }, { id: 't2' }];
+    const snapshot = { teams, teamId: 't2', projects: [] };
+    let reload;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        getTeams.mockReturnValue([]);
+        hasCompletedOnboarding.mockReturnValue(true);
+        clearSnapshot.mockResolvedValue();
+        writeSnapshot.mockResolvedValue();
+        history.replaceState(null, '', '/');
+        reload = vi.fn();
+        vi.stubGlobal('location', { ...window.location, pathname: '/', reload });
+        resetSnapshotSaving();
+    });
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        resetSnapshotSaving();
+    });
+
+    it('paints from the snapshot without waiting on the teams request', async () => {
+        const teamsRequest = new Promise(() => {});
+        await initApp({ teamsRequest, snapshot });
+        expect(setTeams).toHaveBeenCalledWith(teams);
+        expect(selectTeam).toHaveBeenCalledWith(teams[1], true, { seed: snapshot });
+        expect(loadTeams).not.toHaveBeenCalled();
+        expect(initRouter).toHaveBeenCalled();
+    });
+
+    it('replaces the teams when the request answers', async () => {
+        const fresh = [{ id: 't2', name: 'renamed' }];
+        await initApp({ teamsRequest: Promise.resolve(fresh), snapshot });
+        await new Promise((r) => setTimeout(r, 0));
+        expect(setTeams).toHaveBeenLastCalledWith(fresh);
+        expect(clearSnapshot).not.toHaveBeenCalled();
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('drops the snapshot and reloads when the cached team is gone', async () => {
+        await initApp({ teamsRequest: Promise.resolve([{ id: 't1' }]), snapshot });
+        await new Promise((r) => setTimeout(r, 0));
+        expect(clearSnapshot).toHaveBeenCalled();
+        expect(reload).toHaveBeenCalled();
+    });
+
+    it('ignores a snapshot whose team is not in its list, and an explicit team', async () => {
+        await initApp({ snapshot: { teams, teamId: 'gone' } });
+        expect(loadTeams).toHaveBeenCalled();
+        vi.clearAllMocks();
+        await initApp({ teamId: 't1', snapshot });
+        expect(loadTeams).toHaveBeenCalled();
+        expect(selectTeam).not.toHaveBeenCalledWith(expect.anything(), true, expect.anything());
+    });
+
+    it('saves the user, teams and team data', async () => {
+        setCurrentUser({ id: 'u1' });
+        setCurrentTeam({ id: 't2' });
+        setLabels([{ id: 'l1' }]);
+        getTeams.mockReturnValue(teams);
+        getProjects.mockReturnValue([{ id: 'p1' }]);
+        getMembers.mockReturnValue([{ user_id: 'u1' }]);
+        getAgents.mockReturnValue([{ id: 'a1' }]);
+        exportIssueStore.mockReturnValue({ queries: [] });
+        await saveSnapshot();
+        expect(exportIssueStore).toHaveBeenCalledWith({ maxQueries: 3 });
+        expect(writeSnapshot).toHaveBeenCalledWith('u1', {
+            user: { id: 'u1' }, teams, teamId: 't2', projects: [{ id: 'p1' }],
+            labels: [{ id: 'l1' }], members: [{ user_id: 'u1' }], agents: [{ id: 'a1' }],
+            issues: { queries: [] },
+        });
+        setCurrentTeam(null);
+        await saveSnapshot();
+        expect(writeSnapshot).toHaveBeenCalledTimes(1);
+        setCurrentUser(null);
+    });
+
+    it('saves a moment after a list loads, once per burst, and on pagehide', async () => {
+        vi.useFakeTimers();
+        try {
+            setCurrentUser({ id: 'u1' });
+            setCurrentTeam({ id: 't2' });
+            startSavingSnapshots();
+            startSavingSnapshots();
+            expect(onQueryWritten).toHaveBeenCalledTimes(1);
+            const written = onQueryWritten.mock.calls[0][0];
+            written();
+            written();
+            vi.advanceTimersByTime(1999);
+            expect(writeSnapshot).not.toHaveBeenCalled();
+            vi.advanceTimersByTime(1);
+            expect(writeSnapshot).toHaveBeenCalledTimes(1);
+            window.dispatchEvent(new Event('pagehide'));
+            expect(writeSnapshot).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+            setCurrentTeam(null);
+            setCurrentUser(null);
+        }
     });
 });

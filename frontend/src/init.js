@@ -12,12 +12,16 @@
 
 import { api } from './api.js';
 import { showAuthScreen, showLogin, showSignup, showMainScreen, updateUserInfo } from './auth.js';
-import { getTeams, loadTeams, selectTeam } from './teams.js';
+import { getTeams, getMembers, loadTeams, selectTeam, setTeams } from './teams.js';
+import { getProjects } from './projects.js';
+import { getAgents } from './agents.js';
+import { exportIssueStore, onQueryWritten } from './issue-store.js';
+import { clearSnapshot, writeSnapshot } from './boot-cache.js';
 import { showOnboarding, hasCompletedOnboarding } from './onboarding.js';
 import { consentRequestId, showConsent } from './oauth-consent.js';
 import { hideInvite, isInviteAddress, showInvite, showMissingToken, takeInviteToken } from './invite.js';
 import { initRouter, primeRoute } from './router.js';
-import { getCurrentUser, setCurrentUser, setCurrentTeam, setCurrentView } from './state.js';
+import { getCurrentUser, setCurrentUser, getCurrentTeam, setCurrentTeam, setCurrentView, getLabels } from './state.js';
 import { showToast } from './ui.js';
 
 /**
@@ -75,8 +79,10 @@ export async function showSignedOut() {
  * @param {object} [options]
  * @param {string} [options.teamId] - select this team if the user is in it
  * @param {Promise} [options.teamsRequest] - a GET /teams already in flight
+ * @param {Object} [options.snapshot] - the boot cache (CHT-1972): paint
+ *   from its teams and team data at once, and refresh behind it
  */
-export async function initApp({ teamId, teamsRequest = null } = {}) {
+export async function initApp({ teamId, teamsRequest = null, snapshot = null } = {}) {
     // An app asking for access (CHT-1519): after sign-in, the consent
     // page is all this tab shows; approving or denying leaves the app.
     const consentId = consentRequestId(window.location.pathname);
@@ -102,6 +108,13 @@ export async function initApp({ teamId, teamsRequest = null } = {}) {
     showMainScreen();
     primeRoute();
     updateUserInfo();
+    startSavingSnapshots();
+
+    const cachedTeam = !teamId && snapshot?.teams?.find?.((t) => t.id === snapshot.teamId);
+    if (cachedTeam) {
+        await bootFromSnapshot(snapshot, cachedTeam, teamsRequest);
+        return;
+    }
     await loadTeams(teamsRequest);
 
     const teams = getTeams();
@@ -124,4 +137,83 @@ export async function initApp({ teamId, teamsRequest = null } = {}) {
         // initApp also runs after login and onboarding.
         initRouter();
     }
+}
+
+/**
+ * Boot on the boot cache (CHT-1972): the cached teams and the selected
+ * team's data paint the routed view at once. The teams request then
+ * replaces the list, and if the cached team is gone the snapshot is
+ * dropped and the page reloads from the network.
+ */
+async function bootFromSnapshot(snapshot, team, teamsRequest) {
+    setTeams(snapshot.teams);
+    try {
+        await selectTeam(team, true, { seed: snapshot });
+    } finally {
+        initRouter();
+    }
+    Promise.resolve(teamsRequest || loadTeams().then(getTeams)).then(async (teams) => {
+        if (!Array.isArray(teams)) return;
+        setTeams(teams);
+        if (!teams.some((t) => t.id === team.id)) {
+            await clearSnapshot();
+            window.location.reload();
+        }
+    }, (e) => console.error('Failed to refresh teams:', e));
+}
+
+const SAVE_DELAY_MS = 2000;
+let saveTimer = null;
+let savingStarted = false;
+
+/** Save what the app shows now, for the next load (CHT-1972). */
+export function saveSnapshot() {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    const user = getCurrentUser();
+    const team = getCurrentTeam();
+    if (!user?.id || !team?.id) return Promise.resolve();
+    return writeSnapshot(user.id, {
+        user,
+        teams: getTeams(),
+        teamId: team.id,
+        projects: getProjects(),
+        labels: getLabels(),
+        members: getMembers(),
+        agents: getAgents(),
+        issues: exportIssueStore({ maxQueries: 3 }),
+    });
+}
+
+function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveSnapshot, SAVE_DELAY_MS);
+}
+
+/**
+ * Save a snapshot a moment after each issue list loads, and when the
+ * page is hidden or left. Idempotent.
+ */
+export function startSavingSnapshots() {
+    if (savingStarted) return;
+    savingStarted = true;
+    onQueryWritten(scheduleSave);
+    // Named functions: adding the same listener twice is a no-op.
+    document.addEventListener('visibilitychange', saveWhenHidden);
+    window.addEventListener('pagehide', saveOnPagehide);
+}
+
+function saveWhenHidden() {
+    if (document.visibilityState === 'hidden') saveSnapshot();
+}
+
+function saveOnPagehide() {
+    saveSnapshot();
+}
+
+/** Test hook. */
+export function resetSnapshotSaving() {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    savingStarted = false;
 }
