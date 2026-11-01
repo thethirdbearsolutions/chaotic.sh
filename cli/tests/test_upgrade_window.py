@@ -65,12 +65,12 @@ class TestCliReinstallAfterTheStart:
         result, m = _upgrade(
             run_migrations=dict(side_effect=lambda **k: calls.append(("migrate", k.get("reinstall"))) or (True, "ok")),
             health_check=dict(side_effect=lambda *a, **k: calls.append(("health",)) or True),
-            reinstall_cli=dict(side_effect=lambda: calls.append(("cli",)) or (True, "CLI reinstalled (verified)")),
+            reinstall_cli=dict(side_effect=lambda **k: calls.append(("cli", k)) or (True, "CLI reinstalled (verified)")),
             _print_path_cli_warning=dict(return_value=None),
         )
 
         assert result.exit_code == 0, result.output
-        assert calls == [("migrate", False), ("health",), ("cli",)]
+        assert calls == [("migrate", False), ("health",), ("cli", {"low_priority": True})]
         out = _flat(result.output)
         assert out.index("Server was down for") < out.index("Reinstalling the CLI")
         assert "CLI reinstalled (verified)" in out
@@ -235,12 +235,13 @@ class TestReviewFindings:
             resolve_commit=dict(return_value=_COMMITS[0]),
             run_migrations=dict(side_effect=lambda **k: calls.append(("migrate", k)) or (True, "ok")),
             health_check=dict(side_effect=lambda *a, **k: calls.append(("health",)) or True),
-            reinstall_cli=dict(side_effect=lambda: calls.append(("cli",)) or (True, "ok")),
+            reinstall_cli=dict(side_effect=lambda **k: calls.append(("cli", k)) or (True, "ok")),
             _print_path_cli_warning=dict(return_value=None),
         )
 
         assert result.exit_code == 0, result.output
         assert [c[0] for c in calls] == ["migrate", "health", "cli"]
+        assert calls[2][1] == {"low_priority": True}
         assert calls[0][1]["fake_initial"] is True and calls[0][1]["reinstall"] is False
         assert re.search(r"\(stop \d+\.\ds, sync\+migrate ", _flat(result.output))
 
@@ -251,3 +252,47 @@ class TestReviewFindings:
 
         assert result.exit_code == 0, result.output
         assert re.search(r"\(stop \d+\.\ds, prompt \d+\.\ds, checkout ", _flat(result.output))
+
+
+class TestQueueAfterTheStart:
+    """Coordinator data: some requests waited past the window. A
+    connection dropped at a full listen queue is retried with backoff."""
+
+    def test_drops_during_the_window_are_reported(self):
+        counts = iter([7, 19])
+        result, _ = _upgrade(_listen_drops=dict(side_effect=lambda: next(counts)))
+
+        assert result.exit_code == 0, result.output
+        assert "12 connection(s) were dropped at a full listen queue" in _flat(result.output)
+
+    def test_no_drops_says_nothing(self):
+        result, _ = _upgrade(_listen_drops=dict(return_value=3))
+
+        assert result.exit_code == 0, result.output
+        assert "dropped at a full listen queue" not in result.output
+
+    def test_an_unreadable_counter_says_nothing(self):
+        result, _ = _upgrade(_listen_drops=dict(return_value=None))
+
+        assert result.exit_code == 0, result.output
+        assert "dropped" not in result.output
+
+    def test_the_counter_is_read_from_proc(self, tmp_path):
+        netstat = ("TcpExt: SyncookiesSent ListenOverflows ListenDrops\n"
+                   "TcpExt: 0 4 5\n"
+                   "IpExt: InNoRoutes\nIpExt: 0\n")
+        with patch("cli.system.Path.read_text", return_value=netstat):
+            assert system._listen_drops() == 5
+        with patch("cli.system.Path.read_text", side_effect=OSError):
+            assert system._listen_drops() is None
+
+    def test_the_post_start_reinstall_runs_under_nice(self):
+        with patch("cli.system.shutil.which", return_value="/usr/bin/nice"), \
+             patch("cli.system.run_command") as run, \
+             patch("cli.system.verify_installed_cli", return_value=(True, "ok")):
+            system.reinstall_cli(low_priority=True)
+            system.reinstall_cli()
+
+        first, second = (c.args[0] for c in run.call_args_list)
+        assert first[:3] == ["/usr/bin/nice", "-n", "10"] and first[3] == "uv"
+        assert second[0] == "uv"

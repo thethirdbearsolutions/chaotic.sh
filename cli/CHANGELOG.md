@@ -26,7 +26,10 @@ and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) version
   reinstall that fails there leaves the upgraded server running and exits
   non-zero, saying how to reinstall. uvicorn's graceful drain on stop is
   3s, down from 10s, and the health check polls every 0.2s. "Server was
-  down for" now counts from before the stop and lists each step's share
+  down for" now counts from before the stop and lists each step's share.
+  The post-start reinstall runs under `nice`, and on Linux the upgrade
+  reports connections the kernel dropped at a full listen queue during the
+  window, since their clients retry with backoff well past the restart
   (CHT-2000).
 
 ## [0.1.2] - 2026-11-01

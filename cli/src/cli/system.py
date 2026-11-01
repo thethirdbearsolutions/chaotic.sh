@@ -1839,7 +1839,7 @@ CLI_TOOL_NAME = "chaotic-cli"
 CLI_PACKAGES = ("cli", "chaotic_mcp_tools")
 
 
-def reinstall_cli() -> tuple[bool, str]:
+def reinstall_cli(low_priority: bool = False) -> tuple[bool, str]:
     """Reinstall the CLI binary from the server repo so it picks up new code,
     then check that it did.
 
@@ -1850,11 +1850,17 @@ def reinstall_cli() -> tuple[bool, str]:
     usually does not change, and prod once got a CLI with no
     `system config` after an upgrade that included it (CHT-1675).
     Dependencies are left alone; only the CLI itself is rebuilt.
+
+    `low_priority` runs the build under `nice` (when there is one): after
+    an upgrade's start it shares the CPU with a server answering the
+    requests that queued through the window (CHT-2000).
     """
     cli_dir = PROJECT_DIR / "cli"
+    nice = shutil.which("nice") if low_priority else None
     try:
         run_command(
-            ["uv", "tool", "install", "--force", "--reinstall-package", CLI_TOOL_NAME, str(cli_dir)],
+            [*([nice, "-n", "10"] if nice else []),
+             "uv", "tool", "install", "--force", "--reinstall-package", CLI_TOOL_NAME, str(cli_dir)],
             cwd=PROJECT_DIR,
             timeout=120,
             own_group=True,
@@ -2148,11 +2154,11 @@ def run_migrations(
         return False, f"Migration failed:\n{_command_output(e)}"
 
 
-def _reinstall_cli_tracked(progress: dict) -> tuple[bool, str]:
+def _reinstall_cli_tracked(progress: dict, low_priority: bool = False) -> tuple[bool, str]:
     """reinstall_cli(), recording in `progress` how far it got (see
     run_migrations) and printing the PATH warning once it verified."""
     progress["cli_reinstall_started"] = True
-    ok, msg = reinstall_cli()
+    ok, msg = reinstall_cli(low_priority=True) if low_priority else reinstall_cli()
     if not ok:
         return ok, msg
     progress["cli_installed"] = True
@@ -2166,7 +2172,7 @@ def _reinstall_cli_after_upgrade(progress: dict) -> tuple[bool, str, bool]:
     """The upgrade's CLI reinstall, run once the new server is up
     (CHT-2000). Never raises: returns (ok, message, interrupted)."""
     try:
-        ok, message = _reinstall_cli_tracked(progress)
+        ok, message = _reinstall_cli_tracked(progress, low_priority=True)
         return ok, message, False
     except KeyboardInterrupt:
         if progress.get("cli_installed"):
@@ -2176,6 +2182,22 @@ def _reinstall_cli_after_upgrade(progress: dict) -> tuple[bool, str, bool]:
         return False, "Interrupted (Ctrl-C).", True
     except OSError as e:
         return False, f"Could not run a command: {e}", False
+
+
+def _listen_drops() -> int | None:
+    """The kernel's count of connections dropped at a listening socket
+    (TcpExt ListenDrops, which includes accept-queue overflows), or None
+    where it cannot be read (macOS). A connection dropped while the
+    upgrade's window queued requests is retried by the client with
+    exponential backoff (1s, 3s, 7s, 15s, 31s), so it can wait long after
+    the new server is up (CHT-2000)."""
+    try:
+        lines = [line.split() for line in Path("/proc/net/netstat").read_text().splitlines()
+                 if line.startswith("TcpExt:")]
+        names, values = lines[0], lines[1]
+        return int(values[names.index("ListenDrops")])
+    except (OSError, IndexError, ValueError):
+        return None
 
 
 def _installed_cli_is_stale() -> bool:
@@ -3509,6 +3531,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     # before the stop: the drain is part of the window (CHT-2000). Each
     # step's share is reported too, so a slow one shows up.
     down_since = time.monotonic() if must_stop else None
+    drops_before = _listen_drops() if must_stop else None
     window_steps: list[tuple[str, float]] = []
     lap_started = [down_since]
 
@@ -3748,6 +3771,15 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     if down_since is not None:
         steps = ", ".join(f"{step} {seconds:.1f}s" for step, seconds in window_steps)
         console.print(f"[dim]Server was down for {time.monotonic() - down_since:.1f}s ({esc(steps)}).[/dim]")
+        drops_after = _listen_drops()
+        if drops_before is not None and drops_after is not None and drops_after > drops_before:
+            # Host-wide counter: anything else listening here counts too.
+            console.print(
+                f"[yellow]{esc(drops_after - drops_before)} connection(s) were dropped at a full listen queue "
+                "during the window (TcpExt ListenDrops, host-wide). Their clients retry with backoff, "
+                "so they can wait well past the restart. If this recurs, raise net.core.somaxconn "
+                "(chaotic.socket's backlog follows it).[/yellow]"
+            )
 
     # The CLI last (CHT-2000): the server does not need it, so it no
     # longer holds the window open. A failure here leaves the server
