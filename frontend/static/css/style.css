@@ -2277,6 +2277,19 @@ select:focus-visible {
     outline-offset: 2px;
 }
 
+/* Text for screen readers only. */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 /* Quiet focus for full-width rows (CHT-1960). An offset ring around a
    sidebar link drew two heavy purple bars across the whole sidebar; a
    focused link now looks like the hover state plus the active marker's
@@ -5115,7 +5128,9 @@ input[type="checkbox"] {
     .epic-untracked-row,
     .epic-untracked-row td,
     .epic-group-row,
-    .epic-group-row th {
+    .epic-group-row th,
+    .epic-state-row,
+    .epic-state-row th {
         display: block;
     }
 
@@ -5124,6 +5139,7 @@ input[type="checkbox"] {
     .epic-table .epic-group-row th {
         border-bottom: none;
         padding: 2px 0;
+        height: auto;
     }
 
     .epic-table .epic-untracked-row td:empty {
@@ -5167,6 +5183,42 @@ input[type="checkbox"] {
 
     .epic-status {
         display: inline-block;
+    }
+
+    /* Phone epic rows (CHT-1964): ID and title on one line, then the
+       bar with its points; the per-sprint strip stays on desktop. */
+    .epic-table .epic-row {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        column-gap: 10px;
+        row-gap: 6px;
+        align-items: center;
+        padding: 10px 4px;
+    }
+    .epic-table .epic-row td {
+        height: auto;
+    }
+    .epic-row .epic-identifier { grid-column: 1; width: auto; }
+    .epic-row .epic-title { grid-column: 2 / 4; margin: 0; }
+    .epic-row .epic-progress { grid-column: 1 / 3; width: auto; }
+    .epic-row .epic-points { grid-column: 3; text-align: right; }
+    .epic-row .epic-sprint { grid-column: 1 / 4; }
+    .epic-row .epic-sprint:has(> .text-muted:only-child),
+    .epic-row .epic-sprints {
+        display: none;
+    }
+    /* The row is a grid here: paint the row, not its cells. */
+    .epic-table .epic-row:hover,
+    .epic-table .epic-row:hover td,
+    .epic-table .epic-row.keyboard-selected td,
+    .epic-table .epic-row.keyboard-selected td:first-child {
+        background: transparent;
+        box-shadow: none;
+    }
+    .epic-table .epic-row:hover { background: var(--row-hover); }
+    .epic-table .epic-row.keyboard-selected {
+        background: var(--row-cursor);
+        box-shadow: inset 3px 0 0 var(--row-cursor-edge);
     }
 
     /* Constrain filter selects on mobile */
@@ -8637,23 +8689,112 @@ button.stat-card-link:hover .stat-note {
 
 .epic-table th {
     text-align: left;
-    padding: 8px 12px;
-    font-size: var(--font-sm);
-    font-weight: 600;
+    padding: 6px 12px;
+    font-size: var(--font-xs);
+    font-weight: 500;
     color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
     border-bottom: 1px solid var(--border-color);
 }
 
 .epic-table td {
-    padding: 10px 12px;
+    padding: 6px 12px;
+    height: 40px;
     border-bottom: 1px solid var(--border-color);
     font-size: var(--font-md);
 }
 
-.epic-row:hover {
+.epic-row {
+    cursor: pointer;
+}
+.epic-row:hover td {
+    background: var(--row-hover);
+}
+/* The keyboard cursor (CHT-1964): the epics list had none, so j/k moved
+   an invisible selection. */
+.epic-row.keyboard-selected td {
+    background: var(--row-cursor);
+}
+.epic-row.keyboard-selected td:first-child {
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge);
+}
+.epic-row-empty .epic-title,
+.epic-row-empty .epic-progress-text {
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+/* Progress readout above the table (CHT-1964). */
+.epic-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+.epic-stat {
+    flex: 1 1 160px;
+    padding: 10px 14px;
     background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+.epic-stat-value {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+}
+.epic-stat-of {
+    font-size: var(--font-md);
+    font-weight: 400;
+    color: var(--text-muted);
+}
+.epic-stat-label {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+.epic-stat-up .epic-stat-value {
+    color: var(--success-color);
+}
+.epic-stat-warn .epic-stat-value {
+    color: var(--warning-color);
+}
+.epic-canceled-tag {
+    margin-left: 6px;
+    padding: 0 6px;
+    font-size: var(--font-xs);
+    font-weight: 500;
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+}
+
+/* State groups: In progress, Todo, Backlog, Closed. */
+.epic-table .epic-state-row th {
+    padding: 14px 12px 6px;
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: transparent;
+}
+.epic-state-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+    background: var(--text-muted);
+    vertical-align: 1px;
+}
+.epic-state-active .epic-state-dot { background: #f59e0b; }
+.epic-state-todo .epic-state-dot { background: var(--text-secondary); }
+.epic-state-backlog .epic-state-dot { background: transparent; border: 1px dashed var(--text-muted); }
+.epic-state-closed .epic-state-dot { background: #22c55e; }
+.epic-state-count {
+    margin-left: 8px;
+    font-weight: 400;
+    color: var(--text-muted);
 }
 
 .epic-identifier {
@@ -8670,7 +8811,16 @@ button.stat-card-link:hover .stat-note {
 }
 
 .epic-progress {
-    width: 180px;
+    width: 240px;
+}
+
+.epic-progress-pct {
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    min-width: 34px;
+    text-align: right;
 }
 
 .epic-progress-bar-container {
@@ -8704,6 +8854,7 @@ button.stat-card-link:hover .stat-note {
     color: var(--text-muted);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+    min-width: 40px;
 }
 
 /* Progress toward goals (CHT-1902) */
@@ -8765,8 +8916,10 @@ button.stat-card-link:hover .stat-note {
     background: var(--bg-secondary);
 }
 
-.epic-group-row th {
-    padding-top: 16px;
+.epic-table .epic-group-row th {
+    padding-top: 20px;
+    font-size: var(--font-md);
+    font-weight: 600;
     color: var(--text-primary);
 }
 
