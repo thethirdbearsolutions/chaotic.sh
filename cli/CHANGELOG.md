@@ -5,20 +5,6 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
-## [Unreleased]
-
-### Changed
-
-- **`chaotic system upgrade` keeps the server up while it prepares.**
-  The slow steps used to run with the server stopped: the dependency
-  sync, `npm ci` and the frontend build. They now run first, in a
-  staging checkout at `~/.chaotic/staging` (a git worktree of the server
-  checkout), while the old server keeps serving. The stopped window is
-  then the checkout, a warm-cache sync, the CLI reinstall, migrations,
-  copying in the built bundle and the start. A dependency sync that fails
-  in staging ends the upgrade before anything is stopped. The upgrade
-  prints how long the server was down (CHT-1969).
-
 ## [0.1.2] - 2026-11-01
 
 Session identities find their team and project on their own, and
@@ -49,9 +35,9 @@ install --force chaotic-cli==0.1.2`, then `chaotic system upgrade
   server.** It syncs dependencies and builds the frontend in a staging
   worktree (`~/.chaotic/staging`) while the old server keeps serving, and
   a failed sync there aborts before the stop. The stopped window is now
-  checkout, a warm-cache sync, the CLI reinstall, migrations, copying in
-  the built bundle, and the start; the upgrade reports how long the
-  server was down (CHT-1969).
+  the database backup, checkout, a warm-cache sync, the CLI reinstall,
+  migrations, copying in the built bundle, and the start; the upgrade
+  reports how long the server was down (CHT-1969).
 - **Web UI**: the inbox is a triage list (one-line rows grouped by day,
   hover actions, All/Unread), and Epics is a progress readout (summary,
   state groups, percent, row cursor) (CHT-1962, CHT-1964).
