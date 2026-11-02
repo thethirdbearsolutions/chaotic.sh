@@ -604,7 +604,8 @@ class TestClaimLeases:
 
         released = api_client.get_issue(issue["id"])
         assert released["status"] == "todo"
-        assert released["assignee_id"] is None
+        # The lease ends the claim, not the ownership (CHT-2009).
+        assert released["assignee_id"] == me["id"]
         assert released["lease_expires_at"] is None
 
     def test_expired_lease_reappears_in_ready_query(self, api_client, test_project):
@@ -616,7 +617,8 @@ class TestClaimLeases:
 
         time.sleep(1.5)
 
-        ready_ids = {i["id"] for i in api_client.get_ready_issues(project_id=test_project["id"])}
+        # Ready again for its owner, who resumes it (CHT-2009).
+        ready_ids = {i["id"] for i in api_client.get_ready_issues(project_id=test_project["id"], mine=True)}
         assert issue["id"] in ready_ids
 
     def test_second_claimant_gets_already_claimed_over_the_wire(self, api_client, test_team, test_project):
@@ -710,7 +712,7 @@ class TestClaimLeases:
 
         released = api_client.get_issue(issue["id"])
         assert released["status"] == "todo"
-        assert released["assignee_id"] is None
+        assert released["assignee_id"] == api_client.get_me()["id"]
 
 
 class TestIssueDescriptionRevisions:

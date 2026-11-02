@@ -305,8 +305,9 @@ was in flight, it fails with `assignee_changed` (HTTP 409, nothing
 written); re-read the issue and decide again rather than resending the
 same request. If the lease expires
 while the issue is still `in_progress`, the next read or list of that
-issue lazily releases it back to `todo`/unassigned and logs a
-`lease_expired` activity -- no cron, no silent wedge. See
+issue lazily releases it back to `todo`, still assigned to you, and
+logs a `lease_expired` activity -- no cron, no silent wedge. With no
+live lease, anyone else's `issue start` takes it over. See
 [docs/agents.md](../docs/agents.md#claim-leases) for the full
 semantics.
 

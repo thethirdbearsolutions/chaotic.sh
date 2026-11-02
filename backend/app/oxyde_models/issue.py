@@ -36,8 +36,9 @@ class OxydeIssue(Model):
     # re-claiming (heartbeat), and cleared whenever status leaves
     # IN_PROGRESS. NULL means "not leased" -- either never claimed, or
     # claimed via a path that doesn't grant a lease (e.g. a human
-    # reassigning the ticket to someone else). See IssueService.update()
-    # and IssueService.release_expired_leases().
+    # reassigning the ticket to someone else). An expired lease is
+    # released back to TODO with its assignee kept (CHT-2009). See
+    # IssueService.update() and IssueService.release_expired_leases().
     lease_expires_at: DateTimeUTC | None = Field(default=None)
     # When the ticket was first claimed (CHT-1672): set the first time it
     # enters IN_PROGRESS, by any path, and never cleared. A close (-> done)

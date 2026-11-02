@@ -241,7 +241,7 @@ class TestClaimedTicketIsNotRechecked:
         released = await IssueService().release_expired_leases(project_id=test_project.id)
         assert [i.id for i in released] == [test_issue.id]
         dropped = await _issue(test_issue.id)
-        assert dropped.status == IssueStatus.TODO and dropped.assignee_id is None
+        assert dropped.status == IssueStatus.TODO and dropped.assignee_id == test_user.id  # CHT-2009
         assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, test_issue.id)] == ["b"]
 
         closed = await _close(dropped, test_user.id)
@@ -517,3 +517,35 @@ async def _rr_group(project_id, trigger, names):
         for name in names
     ]
     return group, members
+
+
+@pytest.mark.asyncio
+class TestGatedTakeoverOfALapsedClaim:
+    async def test_the_requester_takes_over_a_released_ticket(
+        self, db, test_issue, test_user, test_user2, test_project, make_ritual,
+    ):
+        """An expired lease keeps its assignee (CHT-2009). A claim gate
+        that another principal clears on that ticket hands it to them,
+        with a lease, as a direct issue_start would; it must not leave
+        the ticket in progress under the old owner with no lease."""
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.enums import TeamRole
+
+        await OxydeTeamMember.objects.create(team_id=test_project.team_id, user_id=test_user2.id, role=TeamRole.MEMBER)
+        await _claim(test_issue, test_user2.id)
+        await OxydeIssue.objects.filter(id=test_issue.id).update(
+            lease_expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        )
+        await IssueService().release_expired_leases(project_id=test_project.id)
+        released = await _issue(test_issue.id)
+        assert (released.status, released.assignee_id) == (IssueStatus.TODO, test_user2.id)
+
+        ritual = await make_ritual(name="claim-gate", trigger=RitualTrigger.TICKET_CLAIM)
+        with pytest.raises(ClaimRitualsError):
+            await _claim(released, test_user.id)
+        await RitualService().attest_for_issue(ritual, test_issue.id, test_user.id, note="cut")
+
+        issue = await _issue(test_issue.id)
+        assert issue.status == IssueStatus.IN_PROGRESS
+        assert issue.assignee_id == test_user.id
+        assert issue.lease_expires_at is not None

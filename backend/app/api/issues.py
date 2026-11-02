@@ -857,8 +857,9 @@ async def list_issues(
         else:
             # Lazy lease sweep (CHT-1246, PR #217 review finding 3):
             # `issue mine` queries by assignee alone -- an agent checking
-            # its own claims must not see a phantom still-mine issue
-            # whose lease already lapsed server-side.
+            # its own claims must not see a phantom in_progress issue
+            # whose lease already lapsed server-side (it is still its,
+            # back in todo: CHT-2009).
             if confine_to:
                 await issue_service.release_expired_leases(project_id=confine_to)
             else:

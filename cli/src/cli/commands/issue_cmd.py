@@ -527,7 +527,9 @@ def register(cli):
         --mine restricts to your own assigned-but-not-started issues;
         --include-assigned widens to all issues regardless of assignee.
         A lease that just expired (CHT-1246) is auto-released before this
-        query runs, so it can show up as ready in this same call.
+        query runs, so it can show up as ready in this same call: under
+        --mine for its owner, who keeps it (CHT-2009), and under
+        --include-assigned for anyone taking it over.
         """
         m = _main()
         if mine and include_assigned:
@@ -1578,7 +1580,8 @@ def register(cli):
         Acquires (or, if you already hold the ticket, extends/heartbeats)
         a claim lease -- see 'chaotic issue ready' and CHT-1246. A lease
         that expires while still IN_PROGRESS is auto-released back to
-        todo/unassigned the next time anyone reads or lists the issue.
+        todo the next time anyone reads or lists the issue; it stays
+        assigned to you, and anyone else's 'issue start' takes it over.
         Pending claim rituals can be attested inline with repeated
         --attest 'name:note'.
         """
