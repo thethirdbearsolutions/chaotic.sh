@@ -712,7 +712,7 @@ class TestClaimLeases:
 
         released = api_client.get_issue(issue["id"])
         assert released["status"] == "todo"
-        assert released["assignee_id"] is not None
+        assert released["assignee_id"] == api_client.get_me()["id"]
 
 
 class TestIssueDescriptionRevisions:

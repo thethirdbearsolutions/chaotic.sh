@@ -1060,8 +1060,12 @@ class IssueService:
         # theirs, so it assigns them and grants the lease the way their
         # own issue_start would have. Otherwise the ticket would sit in
         # in_progress unowned, with no lease to expire, out of the ready
-        # queue. A ticket already assigned to someone else keeps its
-        # assignee, and the transition stays the clearer's. So does a
+        # queue. A lapsed claim counts as held by nobody: an expired
+        # lease keeps its assignee (CHT-2009), and a ticket that was
+        # claimed before (claimed_at) and is not in progress has no live
+        # lease, so the requester takes it over as a direct issue_start
+        # would. A ticket assigned to someone else and never claimed
+        # keeps its assignee, and the transition stays the clearer's. So does a
         # ticket whose requester could no longer be assigned it (CHT-1830):
         # deactivated, or out of the team or project while the intent
         # waited. The cleared gate still moves the ticket, and its
@@ -1071,7 +1075,8 @@ class IssueService:
         if limbo_type == LimboType.CLAIM and intent_id:
             intent = await OxydeTicketLimbo.objects.get_or_none(id=intent_id)
             requester = intent.requested_by_id if intent else None
-            if requester and issue.assignee_id in (None, requester) \
+            lapsed_claim = issue.claimed_at is not None and issue.status != IssueStatus.IN_PROGRESS
+            if requester and (issue.assignee_id in (None, requester) or lapsed_claim) \
                     and await self._can_hold(requester, issue.project_id):
                 update = IssueUpdate(status=new_status, assignee_id=requester)
                 actor_id = requester
@@ -1764,9 +1769,24 @@ class IssueService:
                 # activity is written. Also covers heartbeats (predicate
                 # = ourselves) so a re-claim that raced a lease release +
                 # rival claim fails loudly instead of silently stealing.
-                claimed = await OxydeIssue.objects.filter(
-                    id=issue.id, assignee_id=old_assignee_id,
-                ).update(assignee_id=user_id)
+                if old_assignee_id == user_id:
+                    claimed = await OxydeIssue.objects.filter(
+                        id=issue.id, assignee_id=old_assignee_id,
+                    ).update(assignee_id=user_id)
+                else:
+                    # A takeover is also conditional on no live lease
+                    # (CHT-2009). An expired lease keeps its assignee, so
+                    # the owner's re-claim writes A -> A and leaves the
+                    # value a rival read in place; the assignee alone
+                    # would let the rival's stale claim overwrite the
+                    # owner's fresh lease. Raw SQL for the same reason as
+                    # _release_expired_lease: no range lookups on
+                    # DateTimeUTC fields.
+                    claimed = await execute_raw(
+                        "UPDATE issues SET assignee_id = ? WHERE id = ? AND assignee_id IS ? "
+                        "AND (lease_expires_at IS NULL OR lease_expires_at < ?) RETURNING id",
+                        [user_id, issue.id, old_assignee_id, now],
+                    )
                 if not claimed:
                     current = await OxydeIssue.objects.get_or_none(id=issue.id)
                     raise IssueAlreadyClaimedError(
@@ -2311,7 +2331,9 @@ class IssueService:
         that paused (a rate limit, a restart, the night) still finds its
         tickets assigned to it. Without a live lease, another principal's
         `issue start` takes the ticket over (the claim guard protects only
-        a valid lease).
+        a valid lease). An owner that can no longer be assigned work in
+        the project (deactivated, or out of the team or project) is
+        unassigned instead, so its tickets return to the ready queue.
         Best-effort per issue: one issue's release failing (logged) never
         blocks the others or the caller's read. ``scan_limit`` bounds the
         work done on any single read (the partial index from migration
@@ -2404,7 +2426,11 @@ class IssueService:
         release. End-state idempotence was already guaranteed; this
         makes the *side effects* exactly-once too.
         """
-        old_assignee_id = issue.assignee_id
+        # An owner who can no longer be assigned work here (deactivated,
+        # or out of the team or project) would strand the ticket outside
+        # every default ready queue, so that one release still unassigns
+        # (CHT-2009). Anyone else keeps the ticket.
+        keep_owner = issue.assignee_id is None or await self._can_hold(issue.assignee_id, issue.project_id)
 
         async with atomic():
             # Raw SQL rather than the ORM filter: oxyde doesn't support
@@ -2414,13 +2440,19 @@ class IssueService:
             # already required by this codebase's Python floor). The
             # datetime param serializes exactly like the scan query in
             # release_expired_leases, which is proven against stored rows.
+            # Also conditional on the assignee read: the activity is
+            # credited to the holder whose lease lapsed, and keep_owner was
+            # decided for that holder. A reassignment in between makes this
+            # match nothing, and the next read releases it afresh.
+            old_assignee_id = issue.assignee_id
             won = await execute_raw(
                 "UPDATE issues SET status = 'TODO', "
-                "lease_expires_at = NULL, updated_at = ? "
-                "WHERE id = ? AND status = 'IN_PROGRESS' "
+                + ("" if keep_owner else "assignee_id = NULL, ")
+                + "lease_expires_at = NULL, updated_at = ? "
+                "WHERE id = ? AND status = 'IN_PROGRESS' AND assignee_id IS ? "
                 "AND lease_expires_at IS NOT NULL AND lease_expires_at < ? "
                 "RETURNING id",
-                [now, issue.id, now],
+                [now, issue.id, old_assignee_id, now],
             )
             if not won:
                 return None
@@ -2437,8 +2469,9 @@ class IssueService:
         await self.rederive_parents([issue.parent_id], old_assignee_id)
         updated = await self.get_by_id(issue.id)
         logger.info(
-            "Released expired lease for issue=%s (identifier=%s, still assigned to %s)",
+            "Released expired lease for issue=%s (identifier=%s, held by %s, %s)",
             issue.id, updated.identifier if updated else issue.id, old_assignee_id,
+            "still assigned" if keep_owner else "unassigned: it can no longer hold the ticket",
         )
         await self._broadcast_issue_updated(updated)
         return updated

@@ -76,8 +76,8 @@ seconds (`1800`), or unit suffixes (`30m`, `4h`, `1d`, `1h30m`).
 ticket someone else holds under an unexpired lease fails with "already
 claimed by X" (`already_claimed` on the wire, HTTP 409). Concurrent
 claims on the same unassigned ticket are serialized server-side
-(compare-and-set on the assignee slot), so of two racing `issue start`s
-exactly one wins — the loser gets the same clean error, not a silent
+(compare-and-set on the assignee slot, and for a takeover on there being
+no live lease), so of two racing `issue start`s exactly one wins — the loser gets the same clean error, not a silent
 overwrite. On that error: pick something else from `issue ready`, or
 `await` the ticket if you specifically need it.
 
@@ -110,9 +110,13 @@ assigned to the same principal (CHT-2009). An agent that paused for a
 rate limit, a restart or the night comes back to find its tickets
 still assigned to it, in `issue ready --mine` and `issue list
 --assignee me`. Nothing protects the ticket any more, though: another
-principal can find it with `issue ready --include-assigned` and take
-it over with `issue start`. A crashed agent's work is never wedged in
-`in_progress`; it is still its owner's until someone takes it over.
+principal's `issue start` takes it over (`issue ready
+--include-assigned` lists it, along with every other assigned ticket
+not yet started). A crashed agent's work is never wedged in
+`in_progress`; it is still its owner's until someone takes it over. An
+owner that can no longer hold the ticket (deactivated, or out of the
+team or project) is unassigned on release instead, so its tickets
+return to the default `issue ready` queue.
 
 You can wake on this event with `await`:
 
@@ -139,11 +143,9 @@ while true; do
   if [ "$next" = "[]" ]; then
     next=$(chaotic issue ready --limit 1 --json)
     [ "$next" = "[]" ] && break   # nothing left to do
-    id=$(echo "$next" | jq -r '.[0].identifier')
-    chaotic issue start "$id" --lease 2h --json
-  else
-    id=$(echo "$next" | jq -r '.[0].identifier')
   fi
+  id=$(echo "$next" | jq -r '.[0].identifier')
+  chaotic issue start "$id" --lease 2h --json   # claim, or re-claim your own
 
   # ... do the work for $id ...
 
@@ -152,9 +154,12 @@ while true; do
 done
 ```
 
-`chaotic issue ready --mine` first means: if you already hold a claim
-(e.g. the harness restarted mid-task, or a lease got extended by a
-heartbeat elsewhere), resume that instead of grabbing something new.
+`chaotic issue ready --mine` first means: if a ticket is still yours
+but not in progress (its lease lapsed while the harness was paused or
+restarting, or someone assigned it to you), resume that instead of
+grabbing something new. Either way `issue start` runs before the work:
+on a resumed ticket it takes a fresh lease, which is what stops anyone
+else's `issue start` from taking it over.
 
 ## MCP server (`chaotic mcp`)
 

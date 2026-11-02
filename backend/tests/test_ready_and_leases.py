@@ -842,3 +842,100 @@ async def test_ready_excludes_epics(client, auth_headers, test_project, test_use
     titles = {i["title"] for i in r.json()}
     assert "the-epic" not in titles
     assert "epic-child" in titles
+
+
+# --- CHT-2009: an expired lease keeps its owner ---
+
+
+async def _released(project, owner):
+    """An issue whose lease lapsed and was released: todo, still owned."""
+    issue = await _make_issue(
+        project, owner, status=IssueStatus.IN_PROGRESS, assignee_id=owner.id,
+        lease_expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    await IssueService().release_expired_leases(project_id=project.id)
+    released = await IssueService().get_by_id(issue.id)
+    assert (released.status, released.assignee_id, released.lease_expires_at) == (IssueStatus.TODO, owner.id, None)
+    return released
+
+
+@pytest.mark.asyncio
+async def test_rival_stale_claim_loses_to_the_owners_reclaim(db, test_project, test_user, test_user2):
+    """The owner's re-claim writes A -> A, so the assignee alone no longer
+    tells a rival's stale read it lost; the takeover CAS also needs no
+    live lease. The rival gets already_claimed, and the owner keeps the
+    ticket and its fresh lease."""
+    await _add_team_member(test_project, test_user2)
+    service = IssueService()
+    released = await _released(test_project, test_user)
+    stale_rival = await service.get_by_id(released.id)
+    stale_owner = await service.get_by_id(released.id)
+
+    await service.update(
+        stale_owner, IssueUpdate(status=IssueStatus.IN_PROGRESS, assignee_id=test_user.id),
+        user_id=test_user.id, is_human_request=True,
+    )
+    with pytest.raises(IssueAlreadyClaimedError) as exc_info:
+        await service.update(
+            stale_rival, IssueUpdate(status=IssueStatus.IN_PROGRESS, assignee_id=test_user2.id),
+            user_id=test_user2.id, is_human_request=True,
+        )
+    assert exc_info.value.assignee_id == test_user.id
+
+    final = await service.get_by_id(released.id)
+    assert final.assignee_id == test_user.id
+    assert final.lease_expires_at is not None
+
+
+@pytest.mark.asyncio
+async def test_owner_reclaims_a_released_ticket(client, auth_headers, test_project, test_user, db):
+    released = await _released(test_project, test_user)
+
+    r = await client.patch(
+        f"/api/issues/{released.id}", headers=auth_headers,
+        json={"status": "in_progress", "assignee_id": test_user.id},
+    )
+    assert r.status_code == 200, r.text
+    assert (r.json()["status"], r.json()["assignee_id"]) == ("in_progress", test_user.id)
+    assert r.json()["lease_expires_at"] is not None
+    # Ownership never changed, so nothing records an assignment.
+    assert await _assigned_activities(released.id) == []
+
+
+@pytest.mark.asyncio
+async def test_takeover_records_who_held_it(client, auth_headers2, test_project, test_user, test_user2, db):
+    await _add_team_member(test_project, test_user2)
+    released = await _released(test_project, test_user)
+
+    r = await client.patch(
+        f"/api/issues/{released.id}", headers=auth_headers2,
+        json={"status": "in_progress", "assignee_id": test_user2.id},
+    )
+    assert r.status_code == 200, r.text
+    [assigned] = await _assigned_activities(released.id)
+    assert (assigned.old_value, assigned.new_value) == (test_user.id, test_user2.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gone", ["deactivated", "left the team"])
+async def test_release_unassigns_an_owner_who_can_no_longer_hold_it(db, test_team, test_project, test_user, test_user2, gone):
+    """An owner that can no longer be assigned work here would strand the
+    ticket outside every default ready queue, so that release still
+    unassigns; the activity is credited to the lapsed holder."""
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.oxyde_models.user import OxydeUser
+
+    await _add_team_member(test_project, test_user2)
+    issue = await _make_issue(
+        test_project, test_user, status=IssueStatus.IN_PROGRESS, assignee_id=test_user2.id,
+        lease_expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    if gone == "deactivated":
+        await OxydeUser.objects.filter(id=test_user2.id).update(is_active=False)
+    else:
+        await OxydeTeamMember.objects.filter(team_id=test_team.id, user_id=test_user2.id).delete()
+
+    [released] = await IssueService().release_expired_leases(project_id=test_project.id)
+    assert (released.status, released.assignee_id) == (IssueStatus.TODO, None)
+    [expired] = await _lease_expired_activities(issue.id)
+    assert expired.user_id == test_user2.id
