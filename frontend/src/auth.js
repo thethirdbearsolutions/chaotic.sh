@@ -124,11 +124,13 @@ export function logout() {
  * @returns {boolean}
  */
 export function isImageAvatar(avatar) {
+  // utils.isImageAvatar's rule, uploaded pictures (CHT-1992) included.
   return (
     typeof avatar === 'string' &&
     (avatar.startsWith('http://') ||
       avatar.startsWith('https://') ||
-      avatar.startsWith('data:'))
+      avatar.startsWith('data:') ||
+      /^\/api\/avatars\/[0-9a-f]{64}$/.test(avatar))
   );
 }
 

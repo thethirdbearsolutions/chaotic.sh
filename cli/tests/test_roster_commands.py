@@ -237,3 +237,77 @@ def test_whois_an_ambiguous_id_prefix_says_so(cli_runner):
 
     assert result.exit_code != 0
     assert "not on this team's roster" not in result.output
+
+
+
+
+def test_profile_uploads_a_photo(cli_runner, tmp_path):
+    from cli.main import cli, client
+    photo = tmp_path / "me.png"
+    photo.write_bytes(b"\x89PNG\r\n\x1a\nrest")
+    client.upload_avatar = MagicMock(return_value={**ME, "avatar_url": "/api/avatars/abc"})
+    client.update_me = MagicMock()
+
+    result = cli_runner.invoke(cli, ["auth", "profile", "--photo", str(photo)])
+
+    assert result.exit_code == 0, result.output
+    client.upload_avatar.assert_called_once_with(b"\x89PNG\r\n\x1a\nrest")
+    client.update_me.assert_not_called()
+
+
+def test_profile_photo_with_other_changes(cli_runner, tmp_path):
+    from cli.main import cli, client
+    photo = tmp_path / "me.png"
+    photo.write_bytes(b"img")
+    client.upload_avatar = MagicMock(return_value=ME)
+    client.update_me = MagicMock(return_value=ME)
+
+    result = cli_runner.invoke(cli, ["auth", "profile", "--photo", str(photo), "--tagline", "New"])
+
+    assert result.exit_code == 0, result.output
+    client.update_me.assert_called_once_with(tagline="New")
+
+
+def test_profile_removes_the_photo(cli_runner):
+    from cli.main import cli, client
+    client.delete_avatar = MagicMock(return_value=ME)
+
+    result = cli_runner.invoke(cli, ["auth", "profile", "--photo", ""])
+
+    assert result.exit_code == 0, result.output
+    client.delete_avatar.assert_called_once_with()
+
+
+def test_profile_photo_missing_file(cli_runner):
+    from cli.main import cli, client
+    client.upload_avatar = MagicMock()
+
+    result = cli_runner.invoke(cli, ["auth", "profile", "--photo", "/nonexistent/me.png"])
+
+    assert result.exit_code != 0
+    client.upload_avatar.assert_not_called()
+
+
+def test_profile_photo_and_avatar_conflict(cli_runner, tmp_path):
+    from cli.main import cli, client
+    photo = tmp_path / "me.png"
+    photo.write_bytes(b"img")
+    client.upload_avatar = MagicMock()
+
+    result = cli_runner.invoke(cli, ["auth", "profile", "--photo", str(photo), "--avatar", "x"])
+
+    assert result.exit_code != 0
+    client.upload_avatar.assert_not_called()
+
+
+def test_profile_photo_too_large_is_refused_before_reading(cli_runner, tmp_path):
+    from cli.main import cli, client
+    photo = tmp_path / "huge.png"
+    photo.write_bytes(b"\x89PNG" + b"\x00" * (256 * 1024))
+    client.upload_avatar = MagicMock()
+
+    result = cli_runner.invoke(cli, ["auth", "profile", "--photo", str(photo)])
+
+    assert result.exit_code != 0
+    assert "256 KB" in result.output
+    client.upload_avatar.assert_not_called()

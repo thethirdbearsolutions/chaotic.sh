@@ -248,8 +248,11 @@ export function formatIssueType(issueType) {
 /**
  * Check if an avatar value is an image URL
  */
+// Where the server serves uploaded profile pictures (CHT-1992), by hash.
+export const UPLOADED_AVATAR_RE = /^\/api\/avatars\/[0-9a-f]{64}$/;
+
 export function isImageAvatar(avatar) {
-    return typeof avatar === 'string' && (avatar.startsWith('http://') || avatar.startsWith('https://') || avatar.startsWith('data:'));
+    return typeof avatar === 'string' && (avatar.startsWith('http://') || avatar.startsWith('https://') || avatar.startsWith('data:') || UPLOADED_AVATAR_RE.test(avatar));
 }
 
 /**

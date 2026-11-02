@@ -4,7 +4,7 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml, escapeAttr, formatDate } from './utils.js';
+import { escapeHtml, escapeAttr, formatDate, isImageAvatar } from './utils.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getCurrentTeam, getCurrentUser } from './state.js';
 import { registerActions } from './event-delegation.js';
@@ -30,20 +30,6 @@ export function getAgents() {
  */
 export function setAgents(list) {
   agents = Array.isArray(list) ? list : [];
-}
-
-/**
- * Check if an avatar URL is an image (vs emoji)
- * @param {string} avatar - Avatar URL or emoji
- * @returns {boolean}
- */
-function isImageAvatar(avatar) {
-  return (
-    typeof avatar === 'string' &&
-    (avatar.startsWith('http://') ||
-      avatar.startsWith('https://') ||
-      avatar.startsWith('data:'))
-  );
 }
 
 /**

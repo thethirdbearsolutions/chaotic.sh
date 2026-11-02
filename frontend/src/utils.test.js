@@ -722,3 +722,13 @@ describe('renderPrincipalBadge (CHT-1500)', () => {
     expect(renderPrincipalBadge(undefined)).toBe('');
   });
 });
+
+describe('isImageAvatar and uploaded pictures (CHT-1992)', async () => {
+  const { isImageAvatar } = await import('./utils.js');
+  it('accepts only the avatars route with a full hash', () => {
+    expect(isImageAvatar('/api/avatars/' + 'f'.repeat(64))).toBe(true);
+    expect(isImageAvatar('/api/avatars/' + 'f'.repeat(63))).toBe(false);
+    expect(isImageAvatar('/api/avatars/' + 'F'.repeat(64))).toBe(false);
+    expect(isImageAvatar('🦉')).toBe(false);
+  });
+});

@@ -351,6 +351,94 @@
         ]
       }
     },
+    "/api/users/me/avatar": {
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Upload My Avatar",
+        "description": "Upload your own profile picture (CHT-1992): the raw image as the\nrequest body (PNG, JPEG, WebP or GIF, at most 256 KB), recognised by\nits bytes. Replaces any earlier upload and points your avatar_url at\n``/api/avatars/{sha256}``. Every member may, people and agents alike.",
+        "operationId": "upload_my_avatar_api_users_me_avatar_put",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Delete My Avatar",
+        "description": "Remove your uploaded profile picture (CHT-1992). Your avatar_url is\ncleared if it pointed at the upload; an emoji or URL stays.",
+        "operationId": "delete_my_avatar_api_users_me_avatar_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/avatars/{sha256}": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get Avatar",
+        "description": "An uploaded profile picture, by its sha256. No credential: an\n`<img>` sends none, and the address is the image's own hash, which\nonly someone shown a member's avatar_url knows. Cached privately for\nan hour, so a removed picture stops showing soon. Unknown answers 404.",
+        "operationId": "get_avatar_api_avatars__sha256__get",
+        "parameters": [
+          {
+            "name": "sha256",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sha256"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/teams": {
       "get": {
         "tags": [

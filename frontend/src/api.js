@@ -40,8 +40,12 @@ export class ApiClient {
             headers,
         };
 
+        // A Blob goes as itself, not as JSON: a profile picture (CHT-1992).
+        const isBlob = typeof Blob !== 'undefined' && data instanceof Blob;
+        if (isBlob) headers['Content-Type'] = data.type || 'application/octet-stream';
+
         if (data && (method === 'POST' || method === 'PATCH' || method === 'PUT')) {
-            options.body = JSON.stringify(data);
+            options.body = isBlob ? data : JSON.stringify(data);
         }
 
         let response;
@@ -148,6 +152,16 @@ export class ApiClient {
 
     async updateMe(data) {
         return this.request('PATCH', '/users/me', data);
+    }
+
+    // Your own profile picture (CHT-1992): the image's bytes, which the
+    // server serves at /api/avatars/{sha256} and points avatar_url at.
+    async uploadAvatar(blob) {
+        return this.request('PUT', '/users/me/avatar', blob);
+    }
+
+    async deleteAvatar() {
+        return this.request('DELETE', '/users/me/avatar');
     }
 
     // Teams

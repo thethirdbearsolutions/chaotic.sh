@@ -293,7 +293,14 @@ class AgentService:
             return await OxydeUser.objects.join("parent_user").filter(id=agent.id).first()
         for field, value in update_data.items():
             setattr(agent, field, value)
-        await agent.save(update_fields=set(update_data.keys()))
+        if "avatar_url" in update_data:
+            # Moved off its uploaded picture: delete it (PR #522 review).
+            from app.services.avatar_service import AvatarService
+            async with atomic():
+                await agent.save(update_fields=set(update_data.keys()))
+                await AvatarService.drop_unless_pointed(agent.id, agent.avatar_url)
+        else:
+            await agent.save(update_fields=set(update_data.keys()))
         if "name" in update_data:
             # Inbox entries show who triggered them (CHT-1607).
             from app.services.inbox_service import InboxService
@@ -352,6 +359,9 @@ class AgentService:
             # validation outlives the agent (CHT-1523).
             await self.revoke_credentials_of([agent.id], actor_id=None, reason=REASON_PRINCIPAL_DELETED)
             await OxydeAPIKey.objects.filter(principal_user_id=agent.id).delete()
+            # Its picture (CHT-1992).
+            from app.services.avatar_service import AvatarService
+            await AvatarService.forget([agent.id])
             await agent.delete()
         self._log_retired(identities, agent.id, None)
         return len(identities)

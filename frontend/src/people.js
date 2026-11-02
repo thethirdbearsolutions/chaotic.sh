@@ -12,7 +12,7 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml, escapeAttr, renderAvatar } from './utils.js';
+import { escapeHtml, escapeAttr, renderAvatar, UPLOADED_AVATAR_RE } from './utils.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getCurrentTeam, getCurrentUser, setCurrentUser, setCurrentView } from './state.js';
 import { registerActions } from './event-delegation.js';
@@ -52,6 +52,8 @@ export function resetPeople() {
     editingInitial = null;
     editingEntry = null;
     saving = false;
+    shownEntry = null;
+    photoBusy = false;
 }
 
 /**
@@ -180,6 +182,8 @@ async function findEntry(teamId, userId, { fresh = false } = {}) {
 }
 
 let viewRequestId = 0;
+// The entry the profile page shows, to redraw it with a change.
+let shownEntry = null;
 
 /** `/people/{id}`: one member's profile page. */
 export async function viewPerson(userId, pushHistory = true) {
@@ -243,6 +247,7 @@ export function renderPerson(entry, { withIssues = true } = {}) {
     const view = personView();
     view.classList.remove('hidden');
     view.dataset.userId = entry.user_id;
+    shownEntry = entry;
     const id = escapeAttr(entry.user_id);
     const editable = canEditProfile(entry);
     const self = entry.user_id === getCurrentUser()?.id;
@@ -373,6 +378,14 @@ export async function showEditProfileModal(userId) {
                 <label for="profile-avatar">Avatar</label>
                 <input type="text" id="profile-avatar" value="${value(entry.avatar_url)}" placeholder="An emoji, or an image URL">
             </div>
+            ${self ? `<div class="form-group">
+                <label for="profile-photo">Photo</label>
+                <div class="profile-photo-row">
+                    <input type="file" id="profile-photo" accept="image/png,image/jpeg,image/webp,image/gif" data-action="pick-profile-photo"${photoBusy ? ' disabled' : ''}>
+                    <button type="button" class="btn btn-secondary btn-small${UPLOADED_AVATAR_RE.test(entry.avatar_url || '') ? '' : ' hidden'}" id="profile-photo-remove" data-action="remove-profile-photo"${photoBusy ? ' disabled' : ''}>Remove photo</button>
+                </div>
+                <p class="form-help">Uploads at once, cropped square and resized to ${PHOTO_SIZE}px.</p>
+            </div>` : ''}
             <div class="form-group">
                 <label for="profile-pronouns">Pronouns</label>
                 <input type="text" id="profile-pronouns" value="${value(entry.pronouns)}" maxlength="${PROFILE_LIMITS.pronouns}" placeholder="e.g. they/them">
@@ -479,6 +492,103 @@ export async function handleSaveProfile(event) {
     }
 }
 
+// The side of the square a photo is resized to before upload; the
+// server takes up to 256 KB, which a 256px WebP or JPEG stays well under.
+export const PHOTO_SIZE = 256;
+
+/** Crop `file` to its centre square and scale it to PHOTO_SIZE, as a
+ * WebP (or a JPEG on white where the browser can't encode WebP). */
+export async function resizePhoto(file, size = PHOTO_SIZE) {
+    const bitmap = await createImageBitmap(file);
+    const side = Math.min(bitmap.width, bitmap.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    canvas.getContext('2d').drawImage(
+        bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, size, size,
+    );
+    bitmap.close?.();
+    const encode = (type) => new Promise(resolve => canvas.toBlob(resolve, type, 0.9));
+    // WebP where the browser can encode it; else JPEG, which stays well
+    // under the server's cap where a PNG of a photo may not (Safari).
+    const webp = await encode('image/webp');
+    let blob = webp && webp.type === 'image/webp' ? webp : null;
+    if (!blob) {
+        // JPEG has no transparency: put the picture on white, not black.
+        const ctx = canvas.getContext('2d');
+        ctx.globalCompositeOperation = 'destination-over';
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, size, size);
+        blob = await encode('image/jpeg');
+    }
+    if (!blob) throw new Error('This browser could not convert the picture. Try a PNG or JPEG file.');
+    return blob;
+}
+
+// An upload or removal in flight: the other waits, so the last answer
+// is never an older request's.
+let photoBusy = false;
+
+function setPhotoControlsDisabled(disabled) {
+    for (const id of ['profile-photo', 'profile-photo-remove']) {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+    }
+}
+
+/**
+ * Your own profile picture changed: the roster, the header, your profile
+ * page if it is on screen, and your edit form if one is open; a form
+ * opened since for someone else (an agent you own) is left alone.
+ */
+function applyMyAvatar(saved) {
+    const me = getCurrentUser();
+    if (!me || !saved || (saved.id && saved.id !== me.id)) return;
+    const avatar = saved.avatar_url ?? null;
+    roster = roster.map(r => (r.user_id === me.id ? { ...r, avatar_url: avatar } : r));
+    setCurrentUser({ ...me, avatar_url: avatar });
+    updateUserInfo();
+    if (editingId === me.id && editingInitial) {
+        const field = document.getElementById('profile-avatar');
+        if (field) field.value = avatar || '';
+        // The upload is saved already: Save sends the avatar only if it
+        // is edited again after this.
+        editingInitial = { ...editingInitial, avatar_url: avatar || '' };
+        editingEntry = { ...editingEntry, avatar_url: avatar };
+        document.getElementById('profile-photo-remove')?.classList.toggle('hidden', !UPLOADED_AVATAR_RE.test(avatar || ''));
+    }
+    if (shownEntry && showingProfileOf(me.id)) rerenderProfile({ ...shownEntry, avatar_url: avatar });
+}
+
+async function changePhoto(request, done, failed) {
+    if (photoBusy) return;
+    photoBusy = true;
+    setPhotoControlsDisabled(true);
+    try {
+        applyMyAvatar(await request());
+        showToast(done, 'success');
+    } catch (e) {
+        showApiError(failed, e);
+    } finally {
+        photoBusy = false;
+        setPhotoControlsDisabled(false);
+    }
+}
+
+export async function handlePickPhoto(input, resize = resizePhoto) {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+        await changePhoto(async () => api.uploadAvatar(await resize(file)), 'Photo uploaded', 'upload the photo');
+    } finally {
+        input.value = '';
+    }
+}
+
+export function handleRemovePhoto() {
+    return changePhoto(() => api.deleteAvatar(), 'Photo removed', 'remove the photo');
+}
+
 function opensInNewTab(event) {
     return event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1;
 }
@@ -502,6 +612,14 @@ registerActions({
         document.getElementById('user-dropdown')?.classList.add('hidden');
         const me = getCurrentUser();
         if (me) viewPerson(me.id);
+    },
+    'pick-profile-photo': (event, _data, target) => {
+        if (event.type !== 'change') return;
+        handlePickPhoto(target);
+    },
+    'remove-profile-photo': (event) => {
+        if (event.type !== 'click') return;
+        handleRemovePhoto();
     },
     'save-profile': (event) => {
         handleSaveProfile(event);
