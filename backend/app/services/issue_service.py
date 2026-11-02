@@ -2305,8 +2305,13 @@ class IssueService:
         --type lease_expired` self-trigger (PR #217 review finding 2):
         await polls that feed, so the poll itself runs the sweep.
 
-        Reverts status to TODO, clears assignee_id + lease_expires_at,
-        and writes one LEASE_EXPIRED activity per released issue.
+        Reverts status to TODO, clears lease_expires_at, and writes one
+        LEASE_EXPIRED activity per released issue. The assignee stays: the
+        lease ends the claim, not the ownership (CHT-2009), so a principal
+        that paused (a rate limit, a restart, the night) still finds its
+        tickets assigned to it. Without a live lease, another principal's
+        `issue start` takes the ticket over (the claim guard protects only
+        a valid lease).
         Best-effort per issue: one issue's release failing (logged) never
         blocks the others or the caller's read. ``scan_limit`` bounds the
         work done on any single read (the partial index from migration
@@ -2386,7 +2391,7 @@ class IssueService:
             return issue
 
     async def _release_expired_lease(self, issue, now: datetime) -> OxydeIssue | None:
-        """Revert one expired-lease issue to TODO/unassigned, loudly.
+        """Revert one expired-lease issue to TODO, still assigned, loudly.
 
         Compare-and-set (PR #217 review finding 3, same shape as
         RitualService._approve_atomic): the write is guarded by "still
@@ -2410,7 +2415,7 @@ class IssueService:
             # datetime param serializes exactly like the scan query in
             # release_expired_leases, which is proven against stored rows.
             won = await execute_raw(
-                "UPDATE issues SET status = 'TODO', assignee_id = NULL, "
+                "UPDATE issues SET status = 'TODO', "
                 "lease_expires_at = NULL, updated_at = ? "
                 "WHERE id = ? AND status = 'IN_PROGRESS' "
                 "AND lease_expires_at IS NOT NULL AND lease_expires_at < ? "
@@ -2432,7 +2437,7 @@ class IssueService:
         await self.rederive_parents([issue.parent_id], old_assignee_id)
         updated = await self.get_by_id(issue.id)
         logger.info(
-            "Released expired lease for issue=%s (identifier=%s, was assigned to %s)",
+            "Released expired lease for issue=%s (identifier=%s, still assigned to %s)",
             issue.id, updated.identifier if updated else issue.id, old_assignee_id,
         )
         await self._broadcast_issue_updated(updated)

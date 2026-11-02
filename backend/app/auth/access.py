@@ -90,7 +90,7 @@ registers = _mark(Access.REGISTER)
 # Reads that write as a side effect, by qualified name -> what they do.
 # Each is unattributed reconciliation, triggered by any reader:
 #   lease release (CHT-1246): an expired claim lease reverts the issue to
-#     todo, unassigns it, records LEASE_EXPIRED and broadcasts;
+#     todo (keeping its assignee), records LEASE_EXPIRED and broadcasts;
 #   limbo self-heal (CHT-1278): check_limbo completes a sprint's limbo
 #     once nothing is pending;
 #   orphan cleanup: a ticket-limbo record whose gate is gone is resolved

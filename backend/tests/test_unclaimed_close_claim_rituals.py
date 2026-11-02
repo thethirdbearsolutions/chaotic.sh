@@ -241,7 +241,7 @@ class TestClaimedTicketIsNotRechecked:
         released = await IssueService().release_expired_leases(project_id=test_project.id)
         assert [i.id for i in released] == [test_issue.id]
         dropped = await _issue(test_issue.id)
-        assert dropped.status == IssueStatus.TODO and dropped.assignee_id is None
+        assert dropped.status == IssueStatus.TODO and dropped.assignee_id == test_user.id  # CHT-2009
         assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, test_issue.id)] == ["b"]
 
         closed = await _close(dropped, test_user.id)

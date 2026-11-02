@@ -100,12 +100,19 @@ idempotent and self-healing by design.
 **If the lease expires while the issue is still `in_progress`**, the
 next time *anyone* reads or lists that issue (a `ready` query, `issue
 show`, `issue list`, the web UI polling) it's lazily released: status
-reverts to `todo`, the assignee is cleared, and a `lease_expired`
-activity is recorded on the ticket — loud, not silent. There's no cron
-job doing this; it's a side effect of the read path, the same way
-`chaotic sprint close`'s orphaned-limbo cleanup works. A crashed agent's
-work becomes pickable-up-again automatically, without a human having to
-notice and manually reset it.
+reverts to `todo`, and a `lease_expired` activity is recorded on the
+ticket — loud, not silent. There's no cron job doing this; it's a side
+effect of the read path, the same way `chaotic sprint close`'s
+orphaned-limbo cleanup works.
+
+The release ends the *claim*, not the ownership: the ticket stays
+assigned to the same principal (CHT-2009). An agent that paused for a
+rate limit, a restart or the night comes back to find its tickets
+still assigned to it, in `issue ready --mine` and `issue list
+--assignee me`. Nothing protects the ticket any more, though: another
+principal can find it with `issue ready --include-assigned` and take
+it over with `issue start`. A crashed agent's work is never wedged in
+`in_progress`; it is still its owner's until someone takes it over.
 
 You can wake on this event with `await`:
 

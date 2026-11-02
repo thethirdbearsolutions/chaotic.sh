@@ -342,7 +342,8 @@ async def test_release_expired_lease_reverts_and_logs_activity(db, test_project,
     updated = released[0]
     assert updated.id == test_issue.id
     assert updated.status == IssueStatus.TODO
-    assert updated.assignee_id is None
+    # The lease ends the claim, not the ownership (CHT-2009).
+    assert updated.assignee_id == test_user.id
     assert updated.lease_expires_at is None
 
     activities = await OxydeIssueActivity.objects.filter(issue_id=test_issue.id).all()
@@ -418,7 +419,7 @@ async def test_get_issue_lazily_releases_expired_lease(client, auth_headers, tes
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "todo"
-    assert body["assignee_id"] is None
+    assert body["assignee_id"] == test_user.id
     assert body["lease_expires_at"] is None
 
 
@@ -454,16 +455,27 @@ async def test_list_issues_lazily_releases_expired_leases(client, auth_headers, 
 async def test_ready_query_shows_issue_after_lease_expires_same_call(client, auth_headers, test_project, test_user, db):
     """The whole point of the lazy release living inside list_ready_issues:
     an issue whose lease just expired is 'ready' in this same response,
-    not just the next one."""
+    not just the next one. It is ready for its owner (`ready --mine`),
+    who resumes it, and for anyone widening to assigned work; the
+    default unassigned-only queue leaves it alone (CHT-2009)."""
     issue = await _make_issue(
         test_project, test_user, status=IssueStatus.IN_PROGRESS, assignee_id=test_user.id, title="stale-claim",
         lease_expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
     )
 
-    response = await client.get(f"/api/projects/{test_project.id}/issues/ready", headers=auth_headers)
+    response = await client.get(
+        f"/api/projects/{test_project.id}/issues/ready", headers=auth_headers, params={"mine": True},
+    )
     assert response.status_code == 200
     titles = {i["title"] for i in response.json()}
     assert "stale-claim" in titles
+
+    unassigned_only = await client.get(f"/api/projects/{test_project.id}/issues/ready", headers=auth_headers)
+    assert "stale-claim" not in {i["title"] for i in unassigned_only.json()}
+    widened = await client.get(
+        f"/api/projects/{test_project.id}/issues/ready", headers=auth_headers, params={"include_assigned": True},
+    )
+    assert "stale-claim" in {i["title"] for i in widened.json()}
 
 
 @pytest.mark.asyncio
@@ -611,6 +623,31 @@ async def test_expired_lease_can_be_claimed_by_rival(
 
 
 @pytest.mark.asyncio
+async def test_released_ticket_keeps_its_owner_until_someone_takes_it_over(
+    client, auth_headers, auth_headers2, test_project, test_issue, test_user, test_user2, db,
+):
+    """After the release the ticket is todo and still its owner's
+    (CHT-2009); another principal's `issue start` takes it over
+    explicitly, since no valid lease protects it any more."""
+    await _add_team_member(test_project, test_user2)
+    test_issue.status = IssueStatus.IN_PROGRESS
+    test_issue.assignee_id = test_user.id
+    test_issue.lease_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    await test_issue.save(update_fields={"status", "assignee_id", "lease_expires_at"})
+
+    released = (await client.get(f"/api/issues/{test_issue.id}", headers=auth_headers)).json()
+    assert (released["status"], released["assignee_id"]) == ("todo", test_user.id)
+
+    r = await client.patch(
+        f"/api/issues/{test_issue.id}", headers=auth_headers2,
+        json={"status": "in_progress", "assignee_id": test_user2.id},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["assignee_id"] == test_user2.id
+    assert r.json()["lease_expires_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_still_works_under_cas(client, auth_headers, test_issue, test_user, db):
     """Re-claiming a ticket you already hold is a heartbeat, not a
     conflict: the CAS predicate is ourselves, so it succeeds."""
@@ -651,7 +688,7 @@ async def test_stale_read_release_emits_one_activity(db, test_project, test_user
     # Both callers see the released end-state...
     for result in (ra, rb):
         assert result.status == IssueStatus.TODO
-        assert result.assignee_id is None
+        assert result.assignee_id == test_user.id
         assert result.lease_expires_at is None
     # ...but only one release actually happened.
     assert len(await _lease_expired_activities(issue.id)) == 1
@@ -747,14 +784,14 @@ async def test_sprint_scoped_list_releases_expired_lease(client, auth_headers, t
     matching = [i for i in r.json() if i["id"] == issue.id]
     assert len(matching) == 1
     assert matching[0]["status"] == "todo"
-    assert matching[0]["assignee_id"] is None
+    assert matching[0]["assignee_id"] == test_user.id
 
 
 @pytest.mark.asyncio
 async def test_assignee_scoped_list_releases_expired_lease(client, auth_headers, test_team, test_project, test_user, db):
     """`issue mine` queries by assignee alone (review finding 3's other
-    named gap): the sweep runs first, so a lapsed claim is no longer
-    reported as still-mine."""
+    named gap): the sweep runs first, so a lapsed claim is reported as
+    what it is now: still mine, back in todo (CHT-2009)."""
     issue = await _make_issue(
         test_project, test_user, status=IssueStatus.IN_PROGRESS, assignee_id=test_user.id,
         lease_expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
@@ -762,11 +799,7 @@ async def test_assignee_scoped_list_releases_expired_lease(client, auth_headers,
 
     r = await client.get("/api/issues", headers=auth_headers, params={"assignee_id": test_user.id})
     assert r.status_code == 200
-    assert all(i["id"] != issue.id for i in r.json())
-
-    fresh = await client.get(f"/api/issues/{issue.id}", headers=auth_headers)
-    assert fresh.json()["status"] == "todo"
-    assert fresh.json()["assignee_id"] is None
+    assert [i["status"] for i in r.json() if i["id"] == issue.id] == ["todo"]
 
 
 @pytest.mark.asyncio
