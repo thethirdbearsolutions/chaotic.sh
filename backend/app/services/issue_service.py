@@ -223,6 +223,22 @@ class RelationCycleError(Exception):
     BLOCKS graph is too large to check (possible pre-existing cycle)."""
 
 
+class RelationConflictError(Exception):
+    """The pair already has a different specific relation (BLOCKS vs
+    DUPLICATES) than the one asked for. Answered as a 409 naming the
+    existing relation, never as the unchanged row (CHT-2013)."""
+
+    def __init__(self, relation_id: str, existing: IssueRelationType, requested: IssueRelationType):
+        self.relation_id = relation_id
+        self.existing = existing
+        self.requested = requested
+        super().__init__(
+            f"These issues already have a '{existing.value}' relation "
+            f"(id {relation_id}); remove it before relating them as "
+            f"'{requested.value}'"
+        )
+
+
 class RequirementMissingError(Exception):
     """A per-project requirement refused a claim or close: the ticket
     lacks something the project says it must have first (an estimate,
@@ -2965,8 +2981,13 @@ class IssueService:
         The (issue_id, related_issue_id) pair has a UNIQUE constraint, and
         common CLI flows (e.g. `issue update --blocked-by X` re-run against
         an issue already blocked by X) call this with duplicates. Treat a
-        pre-existing pair as a no-op and return the existing row instead
-        of surfacing an IntegrityError as a 500.
+        pre-existing pair with the same relation (or a request for a plain
+        relates_to on a pair that already has a specific one) as a no-op
+        and return the existing row instead of surfacing an
+        IntegrityError as a 500. A pre-existing relates_to is upgraded in
+        place to a requested blocks/duplicates; a pre-existing blocks or
+        duplicates asked to become the other raises
+        RelationConflictError (CHT-2013).
 
         The cycle check and the insert are one transaction that takes the
         writer lock before the check (CHT-1311): two concurrent inverse
@@ -2988,7 +3009,27 @@ class IssueService:
                 issue_id=issue_id,
                 related_issue_id=relation_in.related_issue_id,
             ).first()
+            requested = IssueRelationType(relation_in.relation_type)
             if existing is not None:
+                current = IssueRelationType(existing.relation_type)
+                if current == requested or requested == IssueRelationType.RELATES_TO:
+                    # The same relation, or a plain association the
+                    # existing specific one already implies: a no-op.
+                    return existing
+                if current != IssueRelationType.RELATES_TO:
+                    raise RelationConflictError(existing.id, current, requested)
+                # CHT-2013: a plain relates_to (usually the auto-link a
+                # mention in a description made) is upgraded in place to
+                # the specific relation asked for. The pair is UNIQUE, so
+                # the two cannot sit side by side, and returning the old
+                # row unchanged told the caller a block had been set when
+                # it had not.
+                if requested == IssueRelationType.BLOCKS:
+                    await self._reject_blocking_cycle(issue_id, relation_in.related_issue_id)
+                await OxydeIssueRelation.objects.filter(id=existing.id).update(
+                    relation_type=requested,
+                )
+                existing.relation_type = requested
                 return existing
             if relation_in.relation_type == IssueRelationType.BLOCKS:
                 await self._reject_blocking_cycle(issue_id, relation_in.related_issue_id)

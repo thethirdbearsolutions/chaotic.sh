@@ -315,6 +315,33 @@ class TestIssueDuplicate:
         client.create_comment.assert_called_once()
         client.update_issue.assert_called_once_with('dup-id', status='canceled')
 
+    def test_duplicate_stops_on_a_relation_conflict(self, cli_runner):
+        """CHT-2013: a pair that already has 'blocks' answers 409; the
+        duplicate must not be commented on or closed."""
+        from cli.main import cli, client
+        from cli.client import APIError
+
+        client.get_issue_by_identifier = MagicMock(side_effect=[
+            {"id": "dup-id", "identifier": "CHT-101", "status": "in_progress"},
+            {"id": "orig-id", "identifier": "CHT-100", "status": "in_progress"},
+        ])
+        client.create_relation = MagicMock(side_effect=APIError(
+            "These issues already have a 'blocks' relation (id rel-1); remove it "
+            "before relating them as 'duplicates'",
+        ))
+        client.create_comment = MagicMock()
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'duplicate', 'CHT-101', 'CHT-100'])
+
+        assert result.exit_code != 0
+        # handle_error prints the message when it catches the APIError;
+        # when another test module has swapped the class it surfaces as
+        # the exception instead. Either way the conflict is what stopped it.
+        assert "already have a 'blocks' relation" in (result.output + str(result.exception))
+        client.create_comment.assert_not_called()
+        client.update_issue.assert_not_called()
+
     def test_duplicate_same_issue_errors(self, cli_runner):
         """issue duplicate with same issue twice shows error."""
         from cli.main import cli, client

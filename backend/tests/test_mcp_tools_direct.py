@@ -471,6 +471,37 @@ class TestIssueRelationTools:
         rels = await tools.issue_relations(identifier=a["identifier"])
         assert rels["relations"][0]["relation_type"] == "duplicates"
 
+    async def test_block_upgrades_the_auto_link_from_a_description(self, test_project):
+        """CHT-2013: naming B in A's description auto-links A -> B as
+        relates_to; issue_block must still set the block."""
+        b = await tools.issue_create(title="Later", status="todo")
+        a = await tools.issue_create(
+            title="Sooner", status="todo", description=f"Must land before {b['identifier']}",
+        )
+
+        result = await tools.issue_block(identifier=a["identifier"], blocked=b["identifier"])
+
+        assert result["relation_type"] == "blocks"
+        rels = await tools.issue_relations(identifier=a["identifier"])
+        assert [r["relation_type"] for r in rels["relations"]] == ["blocks"]
+        idents = {i["identifier"] for i in (await tools.issue_ready())["issues"]}
+        assert b["identifier"] not in idents
+
+    async def test_conflicting_relation_type_is_a_structured_error(self, test_project):
+        a = await tools.issue_create(title="P", status="todo")
+        b = await tools.issue_create(title="Q", status="todo")
+        first = await tools.issue_block(identifier=a["identifier"], blocked=b["identifier"])
+
+        result = await tools.issue_block(
+            identifier=a["identifier"], blocked=b["identifier"], relation_type="duplicates",
+        )
+
+        err = result["error"]
+        assert err["error_code"] == "relation_conflict"
+        assert err["http_status"] == 409
+        assert err["relation_id"] == first["id"]
+        assert err["existing_relation_type"] == "blocks"
+
     async def test_unblock_by_relation_id(self, test_project):
         a = await tools.issue_create(title="X", status="todo")
         b = await tools.issue_create(title="Y", status="todo")
