@@ -1783,7 +1783,15 @@ async def create_relation(
     except RelationCycleError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except RelationConflictError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "relation_conflict",
+                "message": str(e),
+                "relation_id": e.relation_id,
+                "existing_relation_type": e.existing.value,
+            },
+        )
     await broadcast_relation_event(
         project.team_id,
         "created",

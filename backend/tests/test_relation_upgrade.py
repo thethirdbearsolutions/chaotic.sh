@@ -99,9 +99,67 @@ async def test_conflicting_specific_relation_is_refused(client, auth_headers, te
 
     assert r.status_code == 409, r.text
     detail = r.json()["detail"]
-    assert "'blocks'" in detail and first.json()["id"] in detail
+    assert detail["error_code"] == "relation_conflict"
+    assert detail["relation_id"] == first.json()["id"]
+    assert detail["existing_relation_type"] == "blocks"
+    assert "'blocks'" in detail["message"]
     rows = await _rows(a["id"], b["id"])
     assert [IssueRelationType(row.relation_type) for row in rows] == [IssueRelationType.BLOCKS]
+
+
+async def test_duplicates_asked_to_become_blocks_is_refused(client, auth_headers, test_project, db):
+    a = await _mk(client, auth_headers, test_project, "A")
+    b = await _mk(client, auth_headers, test_project, "B")
+    assert (await _relate(client, auth_headers, a["id"], b["id"], "duplicates")).status_code == 201
+
+    r = await _relate(client, auth_headers, a["id"], b["id"], "blocks")
+
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["existing_relation_type"] == "duplicates"
+    rows = await _rows(a["id"], b["id"])
+    assert [IssueRelationType(row.relation_type) for row in rows] == [IssueRelationType.DUPLICATES]
+
+
+async def test_relates_to_on_a_duplicates_pair_is_a_no_op(client, auth_headers, test_project, db):
+    a = await _mk(client, auth_headers, test_project, "A")
+    b = await _mk(client, auth_headers, test_project, "B")
+    first = await _relate(client, auth_headers, a["id"], b["id"], "duplicates")
+
+    r = await _relate(client, auth_headers, a["id"], b["id"], "relates_to")
+
+    assert r.status_code == 201, r.text
+    assert r.json()["relation_type"] == "duplicates"
+    assert r.json()["id"] == first.json()["id"]
+
+
+async def test_upgrade_stores_the_enum_name(client, auth_headers, test_project, db):
+    """Raw-SQL readers (the ready query, the cycle walk) match the stored
+    .name, so the upgrade must write that, for both specific types."""
+    from oxyde import execute_raw
+
+    for rtype in ("blocks", "duplicates"):
+        a, b, auto = await _auto_linked_pair(client, auth_headers, test_project)
+        assert (await _relate(client, auth_headers, a["id"], b["id"], rtype)).status_code == 201
+        rows = await execute_raw("SELECT relation_type FROM issue_relations WHERE id = ?", [auto.id])
+        assert rows[0]["relation_type"] == rtype.upper()
+
+
+async def test_reverse_direction_mention_keeps_both_rows(client, auth_headers, test_project, db):
+    """A names B, then B blocks A: a different (directional) pair, so the
+    block is a new row and the auto-link stays. Pinned so a later change
+    to drop the redundant link is a deliberate one."""
+    a, b, auto = await _auto_linked_pair(client, auth_headers, test_project)
+
+    r = await _relate(client, auth_headers, b["id"], a["id"], "blocks")
+
+    assert r.status_code == 201, r.text
+    assert r.json()["id"] != auto.id
+    assert [IssueRelationType(x.relation_type) for x in await _rows(b["id"], a["id"])] == [
+        IssueRelationType.BLOCKS,
+    ]
+    assert [IssueRelationType(x.relation_type) for x in await _rows(a["id"], b["id"])] == [
+        IssueRelationType.RELATES_TO,
+    ]
 
 
 async def test_upgrade_that_closes_a_cycle_is_refused(client, auth_headers, test_project, db):

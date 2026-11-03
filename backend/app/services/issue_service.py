@@ -228,6 +228,16 @@ class RelationConflictError(Exception):
     DUPLICATES) than the one asked for. Answered as a 409 naming the
     existing relation, never as the unchanged row (CHT-2013)."""
 
+    def __init__(self, relation_id: str, existing: IssueRelationType, requested: IssueRelationType):
+        self.relation_id = relation_id
+        self.existing = existing
+        self.requested = requested
+        super().__init__(
+            f"These issues already have a '{existing.value}' relation "
+            f"(id {relation_id}); remove it before relating them as "
+            f"'{requested.value}'"
+        )
+
 
 class RequirementMissingError(Exception):
     """A per-project requirement refused a claim or close: the ticket
@@ -3007,11 +3017,7 @@ class IssueService:
                     # existing specific one already implies: a no-op.
                     return existing
                 if current != IssueRelationType.RELATES_TO:
-                    raise RelationConflictError(
-                        f"These issues already have a '{current.value}' relation "
-                        f"(id {existing.id}); remove it before relating them as "
-                        f"'{requested.value}'"
-                    )
+                    raise RelationConflictError(existing.id, current, requested)
                 # CHT-2013: a plain relates_to (usually the auto-link a
                 # mention in a description made) is upgraded in place to
                 # the specific relation asked for. The pair is UNIQUE, so
