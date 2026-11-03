@@ -797,10 +797,12 @@ async def issue_block(
     relate with relation_type='duplicates', then issue_comment, then
     issue_update status='canceled'.
 
-    Re-relating an already-related pair is a no-op that returns the
-    EXISTING relation -- including when you pass a different
-    relation_type, which is silently not applied. To change the type,
-    issue_unblock the pair first, then relate it again.
+    Re-relating a pair with the same relation_type is a no-op that
+    returns the existing relation. A plain relates_to on the pair (such
+    as the auto-link made when one issue's text names the other) is
+    upgraded to the 'blocks' or 'duplicates' you ask for. A 'blocks'
+    pair asked to become 'duplicates' (or the reverse) is refused with a
+    conflict naming the existing relation: issue_unblock it first.
     """
     iss = await backend.get_issue(identifier)
     other = await backend.get_issue(blocked)

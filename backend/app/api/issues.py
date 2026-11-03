@@ -45,6 +45,7 @@ from app.services.document_service import DocumentService
 from app.api.rituals import pending_ritual_responses
 from app.services.issue_service import (
     IssueService,
+    RelationConflictError,
     RelationCycleError,
     SprintInArrearsError,
     SprintInLimboError,
@@ -1781,6 +1782,8 @@ async def create_relation(
         relation = await issue_service.create_relation(issue_id, relation_in)
     except RelationCycleError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except RelationConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     await broadcast_relation_event(
         project.team_id,
         "created",

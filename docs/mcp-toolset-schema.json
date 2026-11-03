@@ -496,7 +496,7 @@
       }
     },
     "issue_block": {
-      "description": "Relate two issues: by default, `identifier` blocks `blocked`.\n\nDirection matters for `blocks` -- the issue named first is the one\nholding the other up, and it's the second one that stops showing up\nin issue_ready.\n\nFor closing a duplicate there is no single MCP tool: the CLI's\n`chaotic issue duplicate DUP ORIGINAL` does it in one step. Over MCP,\nrelate with relation_type='duplicates', then issue_comment, then\nissue_update status='canceled'.\n\nRe-relating an already-related pair is a no-op that returns the\nEXISTING relation -- including when you pass a different\nrelation_type, which is silently not applied. To change the type,\nissue_unblock the pair first, then relate it again.",
+      "description": "Relate two issues: by default, `identifier` blocks `blocked`.\n\nDirection matters for `blocks` -- the issue named first is the one\nholding the other up, and it's the second one that stops showing up\nin issue_ready.\n\nFor closing a duplicate there is no single MCP tool: the CLI's\n`chaotic issue duplicate DUP ORIGINAL` does it in one step. Over MCP,\nrelate with relation_type='duplicates', then issue_comment, then\nissue_update status='canceled'.\n\nRe-relating a pair with the same relation_type is a no-op that\nreturns the existing relation. A plain relates_to on the pair (such\nas the auto-link made when one issue's text names the other) is\nupgraded to the 'blocks' or 'duplicates' you ask for. A 'blocks'\npair asked to become 'duplicates' (or the reverse) is refused with a\nconflict naming the existing relation: issue_unblock it first.",
       "inputSchema": {
         "properties": {
           "blocked": {
