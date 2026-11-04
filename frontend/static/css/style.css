@@ -10247,3 +10247,106 @@ body.theme-light .picker-popover {
 .person-issue-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .person-issue-status { color: var(--text-secondary); font-size: 0.75rem; text-transform: capitalize; flex-shrink: 0; }
 .profile-photo-row { display: flex; align-items: center; gap: var(--space-lg); flex-wrap: wrap; }
+
+/* Attestations awaiting the viewer's approval, pinned to the top of the
+   ticket detail (CHT-2018). Sits above the sticky section headers. */
+.ritual-approval-banner {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    margin: 0 0 16px 0;
+    padding: 12px 14px;
+    background: color-mix(in srgb, var(--warning-color) 14%, var(--bg-primary));
+    border: 1px solid var(--warning-color);
+    border-left-width: 4px;
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    max-height: 45vh;
+    overflow-y: auto;
+}
+
+.ritual-approval-banner-header {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: var(--text-primary);
+    font-size: var(--font-md);
+}
+
+.ritual-approval-banner-hint {
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+}
+
+.ritual-approval-item {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid color-mix(in srgb, var(--warning-color) 35%, transparent);
+}
+
+.ritual-approval-item-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.ritual-approval-prompt {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin: 4px 0 0 0;
+}
+
+.ritual-approval-attestation {
+    margin: 8px 0;
+    padding: 8px 10px;
+    background: var(--bg-primary);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-base);
+}
+
+.ritual-approval-attestation .attestation-by {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.ritual-approval-attestation .attestation-time {
+    color: var(--text-muted);
+    margin-left: 8px;
+    font-size: var(--font-sm);
+}
+
+.ritual-approval-attestation .attestation-note {
+    margin-top: 6px;
+    color: var(--text-primary);
+}
+
+.ritual-approval-banner .ritual-approval-actions {
+    margin-left: 0;
+    flex-wrap: wrap;
+}
+
+/* .main-content's overflow-x: hidden and .detail-main's overflow-y: auto make
+   each a scroll container that never scrolls (the window does), which pins a
+   sticky child to nothing. While the banner shows on the open ticket, clip
+   instead: clip is not a scroll container, so the banner sticks to the
+   viewport (CHT-2018). The other sticky things in .main-content never stuck
+   before; keep them in flow so they do not pile onto the banner. */
+.main-content:has(#issue-detail-view:not(.hidden) .ritual-approval-banner:not(.hidden)),
+#issue-detail-view:not(.hidden) .detail-main:has(> .ritual-approval-banner:not(.hidden)) {
+    overflow-x: clip;
+    overflow-y: visible;
+    min-width: 0;
+}
+
+.main-content:has(#issue-detail-view:not(.hidden) .ritual-approval-banner:not(.hidden)) > .limbo-banner,
+.main-content:has(#issue-detail-view:not(.hidden) .ritual-approval-banner:not(.hidden)) > .mobile-header {
+    position: static;
+}
+
+/* Wide content in the ticket used to scroll sideways inside .detail-main;
+   give it its own scroll while that is clipped. */
+#issue-detail-view:not(.hidden) .detail-main:has(> .ritual-approval-banner:not(.hidden)) .markdown-body {
+    overflow-x: auto;
+}

@@ -4,7 +4,7 @@
  */
 
 import { getCommentDraft, setCommentDraft, getDescriptionDraft, setDescriptionDraft, getDescriptionDraftBase } from './storage.js';
-import { getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints, getCurrentView, getDetailNavContext, getIssues, subscribe } from './state.js';
+import { getCurrentUser, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints, getCurrentView, getDetailNavContext, getIssues, subscribe } from './state.js';
 import { getStoredIssue } from './issue-store.js';
 import { api } from './api.js';
 import { showToast, showModal, closeModal, showApiError, showMentionWarnings } from './ui.js';
@@ -20,6 +20,7 @@ import { showDetailDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { registerActions } from './event-delegation.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { showCreateSubIssueModal } from './issue-creation.js';
+import { getMembers } from './teams.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
 // Markdown post-processing (issue-link/mention rendering) lives in rich-text.js
@@ -275,13 +276,99 @@ export function toggleTicketRituals() {
  * @param {string} issueId - Issue ID
  */
 export async function loadTicketRituals(issueId) {
+    // A reload (after approve/reject) that lands once another ticket is
+    // open must not paint this ticket's rituals onto it (CHT-2018 review).
+    const stillShowing = () => {
+        const shown = getCurrentDetailIssue()?.id;
+        return !shown || shown === issueId;
+    };
     try {
-        currentTicketRituals = await api.getTicketRitualsStatus(issueId);
+        const status = await api.getTicketRitualsStatus(issueId);
+        if (!stillShowing()) return;
+        currentTicketRituals = status;
         renderTicketRituals(issueId);
     } catch (e) {
         console.error('Failed to load ticket rituals:', e);
+        if (!stillShowing()) return;
         currentTicketRituals = null;
+        renderTicketRituals(issueId);
     }
+}
+
+/**
+ * Pending ticket rituals whose attestation is waiting on a human's approval
+ * (CHT-2018): someone attested a REVIEW ritual and nobody approved it yet,
+ * so the ticket cannot move until a human does.
+ * @param {Array} pendingRituals
+ * @returns {Array}
+ */
+export function ritualsAwaitingApproval(pendingRituals) {
+    return (pendingRituals || []).filter(r => r.attestation && !r.attestation.approved_at);
+}
+
+/**
+ * Whether the viewer can approve an attestation: a human team admin (the
+ * server refuses agents and non-admins). When the member list is not loaded
+ * yet we cannot tell, and show the block rather than bury it again.
+ * @returns {boolean}
+ */
+function canApproveAttestations() {
+    const user = getCurrentUser();
+    if (!user || user.is_agent) return false;
+    const members = getMembers();
+    if (!members || members.length === 0) return true;
+    const self = members.find(m => m.user_id === user.id);
+    return !self || self.role === 'admin' || self.role === 'owner';
+}
+
+/**
+ * The sticky block at the top of the ticket that puts attestations awaiting
+ * approval in front of a human, with the note and the Approve button right
+ * there (CHT-2018). Shown only to a human viewer and only while something
+ * awaits approval; the Ticket Rituals section further down still lists
+ * everything.
+ * @param {string} issueId
+ */
+export function renderRitualApprovalBanner(issueId) {
+    const banner = document.getElementById('ritual-approval-banner');
+    if (!banner) return;
+    const waiting = canApproveAttestations()
+        ? ritualsAwaitingApproval(currentTicketRituals?.pending_rituals)
+        : [];
+    if (waiting.length === 0) {
+        banner.classList.add('hidden');
+        banner.innerHTML = '';
+        return;
+    }
+    const heading = waiting.length === 1
+        ? 'An attestation needs your approval'
+        : `${waiting.length} attestations need your approval`;
+    banner.classList.remove('hidden');
+    banner.innerHTML = `
+        <div class="ritual-approval-banner-header">
+            <span class="ritual-approval-banner-icon" aria-hidden="true">⏳</span>
+            <strong>${heading}</strong>
+            <span class="ritual-approval-banner-hint">This ticket is waiting on you.</span>
+        </div>
+        ${waiting.map(r => `
+            <div class="ritual-approval-item" data-ritual-id="${escapeAttr(r.id)}">
+                <div class="ritual-approval-item-head">
+                    <span class="ticket-ritual-name">${escapeHtml(r.name)}</span>
+                    <span class="badge badge-trigger-${r.trigger || 'ticket_close'}">${r.trigger === 'ticket_claim' ? 'claim' : 'close'}</span>
+                    <span class="badge badge-ritual-${r.approval_mode || 'auto'}">${r.approval_mode || 'auto'}</span>
+                </div>
+                ${r.prompt ? `<div class="ritual-approval-prompt markdown-body">${renderMarkdown(r.prompt)}</div>` : ''}
+                <div class="ritual-approval-attestation">
+                    <span class="attestation-by">Attested by ${escapeHtml(r.attestation.attested_by_name || 'Unknown')}</span>
+                    <span class="attestation-time">${formatTimeAgo(r.attestation.attested_at)}</span>
+                    ${r.attestation.note ? `<div class="attestation-note markdown-body">${renderMarkdown(r.attestation.note)}</div>` : ''}
+                </div>
+                <div class="ticket-ritual-actions ritual-approval-actions">
+                    ${renderTicketRitualActions(r, issueId)}
+                </div>
+            </div>
+        `).join('')}
+    `;
 }
 
 /**
@@ -291,6 +378,8 @@ export async function loadTicketRituals(issueId) {
 export function renderTicketRituals(issueId) {
     const container = document.getElementById('ticket-rituals-section');
     if (!container) return;
+
+    renderRitualApprovalBanner(issueId);
 
     if (!currentTicketRituals) {
         container.classList.add('hidden');
@@ -307,9 +396,12 @@ export function renderTicketRituals(issueId) {
 
     container.classList.remove('hidden');
 
-    // Auto-expand if there are pending gate rituals - they require immediate attention
-    const hasPendingGateRituals = pending_rituals.some(r => r.approval_mode === 'gate');
-    if (hasPendingGateRituals) {
+    // Auto-expand when a human has to act: a gate to complete, or a review
+    // attestation awaiting approval. CHT-2018: this only checked gate mode,
+    // so the review case (the one that blocks a ticket) stayed collapsed.
+    const needsHuman = pending_rituals.some(r => r.approval_mode === 'gate')
+        || ritualsAwaitingApproval(pending_rituals).length > 0;
+    if (needsHuman) {
         ticketRitualsCollapsed = false;
     }
 
@@ -775,6 +867,8 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                     </div>
 
                     <h1 class="issue-detail-title">${escapeHtml(issue.title)}</h1>
+
+                    <div id="ritual-approval-banner" class="ritual-approval-banner hidden" role="region" aria-label="Rituals awaiting you"></div>
 
                     ${parentIssue ? `
                     <div class="parent-issue-link">
