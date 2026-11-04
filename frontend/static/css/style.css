@@ -10329,19 +10329,24 @@ body.theme-light .picker-popover {
 
 /* .main-content's overflow-x: hidden and .detail-main's overflow-y: auto make
    each a scroll container that never scrolls (the window does), which pins a
-   sticky child to nothing. While the banner shows, clip instead: clip is not
-   a scroll container, so the banner sticks to the viewport (CHT-2018). */
-.main-content:has(.ritual-approval-banner:not(.hidden)),
-.detail-main:has(> .ritual-approval-banner:not(.hidden)) {
+   sticky child to nothing. While the banner shows on the open ticket, clip
+   instead: clip is not a scroll container, so the banner sticks to the
+   viewport (CHT-2018). The other sticky things in .main-content never stuck
+   before; keep them in flow so they do not pile onto the banner. */
+.main-content:has(#issue-detail-view:not(.hidden) .ritual-approval-banner:not(.hidden)),
+#issue-detail-view:not(.hidden) .detail-main:has(> .ritual-approval-banner:not(.hidden)) {
     overflow-x: clip;
     overflow-y: visible;
     min-width: 0;
 }
 
-/* On phones the mobile header sticks too (and does now that .main-content
-   clips); sit the banner just under it. */
-@media (max-width: 768px) {
-    .ritual-approval-banner {
-        top: 72px;
-    }
+.main-content:has(#issue-detail-view:not(.hidden) .ritual-approval-banner:not(.hidden)) > .limbo-banner,
+.main-content:has(#issue-detail-view:not(.hidden) .ritual-approval-banner:not(.hidden)) > .mobile-header {
+    position: static;
+}
+
+/* Wide content in the ticket used to scroll sideways inside .detail-main;
+   give it its own scroll while that is clipped. */
+#issue-detail-view:not(.hidden) .detail-main:has(> .ritual-approval-banner:not(.hidden)) .markdown-body {
+    overflow-x: auto;
 }

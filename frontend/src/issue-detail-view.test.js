@@ -119,6 +119,7 @@ import { renderMarkdown } from './gate-approvals.js';
 import { showDetailDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
 import { renderTicketRitualActions } from './rituals-view.js';
+import { getMembers } from './teams.js';
 import { registerActions } from './event-delegation.js';
 import {
     getActivityIcon,
@@ -1528,6 +1529,61 @@ describe('issue-detail-view', () => {
             api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
 
             await viewIssue('issue-1');
+
+            expect(banner().classList.contains('hidden')).toBe(true);
+        });
+
+        it('is not shown to a human who is not a team admin, once members are known', async () => {
+            getMembers.mockReturnValue([{ user_id: 'human-1', role: 'member' }]);
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
+
+            await viewIssue('issue-1');
+
+            expect(banner().classList.contains('hidden')).toBe(true);
+            getMembers.mockReturnValue([]);
+        });
+
+        it('is shown to an admin, and while members are not loaded yet', async () => {
+            getMembers.mockReturnValue([{ user_id: 'human-1', role: 'admin' }]);
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
+            await viewIssue('issue-1');
+            expect(banner().classList.contains('hidden')).toBe(false);
+
+            getMembers.mockReturnValue([]);
+            await viewIssue('issue-1');
+            expect(banner().classList.contains('hidden')).toBe(false);
+        });
+
+        it('counts several attestations in the heading', async () => {
+            const second = { ...awaiting, id: 'rit-2', name: 'docs-review' };
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting, second], completed_rituals: [] });
+
+            await viewIssue('issue-1');
+
+            expect(banner().textContent).toContain('2 attestations need your approval');
+            expect(banner().querySelectorAll('[data-action="approve-ticket-ritual"]').length).toBe(2);
+        });
+
+        it('a reload that lands after another ticket opened does not repaint it', async () => {
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [], completed_rituals: [] });
+            await viewIssue('issue-1');
+            setCurrentDetailIssue({ ...issue, id: 'issue-2' });
+
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
+            await loadTicketRituals('issue-1');
+
+            expect(banner().classList.contains('hidden')).toBe(true);
+        });
+
+        it('clears the banner when a reload fails', async () => {
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
+            await viewIssue('issue-1');
+            expect(banner().classList.contains('hidden')).toBe(false);
+
+            const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+            api.getTicketRitualsStatus.mockRejectedValue(new Error('offline'));
+            await loadTicketRituals('issue-1');
+            err.mockRestore();
 
             expect(banner().classList.contains('hidden')).toBe(true);
         });

@@ -20,6 +20,7 @@ import { showDetailDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { registerActions } from './event-delegation.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { showCreateSubIssueModal } from './issue-creation.js';
+import { getMembers } from './teams.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
 // Markdown post-processing (issue-link/mention rendering) lives in rich-text.js
@@ -275,12 +276,22 @@ export function toggleTicketRituals() {
  * @param {string} issueId - Issue ID
  */
 export async function loadTicketRituals(issueId) {
+    // A reload (after approve/reject) that lands once another ticket is
+    // open must not paint this ticket's rituals onto it (CHT-2018 review).
+    const stillShowing = () => {
+        const shown = getCurrentDetailIssue()?.id;
+        return !shown || shown === issueId;
+    };
     try {
-        currentTicketRituals = await api.getTicketRitualsStatus(issueId);
+        const status = await api.getTicketRitualsStatus(issueId);
+        if (!stillShowing()) return;
+        currentTicketRituals = status;
         renderTicketRituals(issueId);
     } catch (e) {
         console.error('Failed to load ticket rituals:', e);
+        if (!stillShowing()) return;
         currentTicketRituals = null;
+        renderTicketRituals(issueId);
     }
 }
 
@@ -296,6 +307,21 @@ export function ritualsAwaitingApproval(pendingRituals) {
 }
 
 /**
+ * Whether the viewer can approve an attestation: a human team admin (the
+ * server refuses agents and non-admins). When the member list is not loaded
+ * yet we cannot tell, and show the block rather than bury it again.
+ * @returns {boolean}
+ */
+function canApproveAttestations() {
+    const user = getCurrentUser();
+    if (!user || user.is_agent) return false;
+    const members = getMembers();
+    if (!members || members.length === 0) return true;
+    const self = members.find(m => m.user_id === user.id);
+    return !self || self.role === 'admin' || self.role === 'owner';
+}
+
+/**
  * The sticky block at the top of the ticket that puts attestations awaiting
  * approval in front of a human, with the note and the Approve button right
  * there (CHT-2018). Shown only to a human viewer and only while something
@@ -306,9 +332,9 @@ export function ritualsAwaitingApproval(pendingRituals) {
 export function renderRitualApprovalBanner(issueId) {
     const banner = document.getElementById('ritual-approval-banner');
     if (!banner) return;
-    const waiting = getCurrentUser()?.is_agent
-        ? []
-        : ritualsAwaitingApproval(currentTicketRituals?.pending_rituals);
+    const waiting = canApproveAttestations()
+        ? ritualsAwaitingApproval(currentTicketRituals?.pending_rituals)
+        : [];
     if (waiting.length === 0) {
         banner.classList.add('hidden');
         banner.innerHTML = '';
