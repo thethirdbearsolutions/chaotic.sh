@@ -830,6 +830,7 @@ function isAnyMenuOpen() {
     return shown('team-dropdown') || shown('user-dropdown')
         || shown('filter-menu-dropdown') || shown('display-menu-dropdown')
         || !!document.querySelector('#issue-detail-view .overflow-menu-dropdown:not(.hidden)')
+        || !!document.querySelector('#issue-detail-view details.related-add[open]')
         || isQuoteTooltipVisible();
 }
 

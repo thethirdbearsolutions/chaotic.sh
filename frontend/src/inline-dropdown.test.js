@@ -5,6 +5,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock all dependencies before importing the module under test
 vi.mock('./epic-prompt.js', () => ({ handleCloseFollowups: vi.fn() }));
+vi.mock('./ticket-body.js', () => ({
+    renderMetaLine: vi.fn((issue) => `<div class="issue-meta-line">${issue.status}</div>`),
+}));
 
 vi.mock('./api.js', () => ({
     api: {
@@ -813,6 +816,14 @@ describe('inline-dropdown', () => {
                     </div>
                 </div>
             `;
+        });
+
+        it('refreshes the one-line summary under the title too (CHT-2021)', () => {
+            document.getElementById('issue-detail-view').insertAdjacentHTML('afterbegin', '<div class="issue-meta-line">stale</div>');
+            updateDetailViewField('status', { status: 'done', priority: 'high', issue_type: 'bug' });
+            const meta = document.querySelector('.issue-meta-line');
+            expect(meta.textContent).not.toContain('stale');
+            expect(meta.textContent).toContain('done');
         });
 
         it('updates status field in detail view', () => {

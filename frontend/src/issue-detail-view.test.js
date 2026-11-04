@@ -254,6 +254,16 @@ describe('issue-detail-view', () => {
     });
 
     describe('formatActivityText', () => {
+        it('names approvals, limbo, lease expiry and failed emails (PR #527 review I3)', () => {
+            expect(formatActivityText({ activity_type: 'ritual_approved', new_value: 'tests-pass' })).toBe('Approved <strong>tests-pass</strong>');
+            expect(formatActivityText({ activity_type: 'intent_opened', new_value: 'close' })).toBe('Tried to close it; waiting on rituals');
+            expect(formatActivityText({ activity_type: 'intent_cleared', new_value: 'CLAIM' })).toBe('No longer waiting on rituals to start');
+            expect(formatActivityText({ activity_type: 'intent_canceled', new_value: 'claim' })).toBe('Canceled the pending start');
+            expect(formatActivityText({ activity_type: 'lease_expired' })).toContain('Claim expired');
+            expect(formatActivityText({ activity_type: 'email_delivery_failed', new_value: 'Failed to deliver' })).toBe('Failed to deliver');
+            expect(escapeHtml).toHaveBeenCalledWith('Failed to deliver');
+        });
+
         it('formats created activity', () => {
             const activity = { activity_type: 'created' };
             expect(formatActivityText(activity)).toBe('Created issue');
@@ -517,7 +527,7 @@ describe('issue-detail-view', () => {
 
             expect(api.getIssue).toHaveBeenCalledWith('issue-1');
             expect(api.getComments).toHaveBeenCalledWith('issue-1');
-            expect(api.getActivities).toHaveBeenCalledWith('issue-1');
+            expect(api.getActivities).toHaveBeenCalledWith('issue-1', 0, 500);
         });
 
         it('shows detail view and hides other views', async () => {
@@ -881,22 +891,61 @@ describe('issue-detail-view', () => {
             });
         });
 
-        it('renders empty sub-issues state', async () => {
+        it('shows related work as a heading and one Add, not an empty state (CHT-2021)', async () => {
             await viewIssue('issue-1');
 
-            const content = document.getElementById('issue-detail-content').innerHTML;
-            expect(content).toContain('No sub-issues');
-            expect(content).toContain('Break this issue down by creating sub-issues');
-            expect(content).toContain('empty-state');
+            const related = document.querySelector('#issue-detail-content .related-work');
+            expect(related.querySelector('h3').textContent).toBe('Related work');
+            expect(related.querySelector('.related-list')).toBeNull();
+            expect(related.querySelector('[data-action="show-create-sub-issue-modal"]')).not.toBeNull();
+            expect(related.querySelector('[data-action="show-add-relation-modal"]')).not.toBeNull();
+            expect(document.getElementById('issue-detail-content').innerHTML).not.toContain('No sub-issues');
         });
 
-        it('renders empty activity state', async () => {
+        it('shows one stream with no empty activity box (CHT-2021)', async () => {
             await viewIssue('issue-1');
 
-            const content = document.getElementById('issue-detail-content').innerHTML;
-            expect(content).toContain('No activity yet');
-            expect(content).toContain('Activity will appear here as the issue is updated');
-            expect(content).toContain('empty-state');
+            const content = document.getElementById('issue-detail-content');
+            expect(content.querySelector('#activity-section')).toBeNull();
+            expect(content.querySelector('#comments-section .comments-empty').textContent).toBe('No comments yet');
+        });
+
+        it('has no Description header, and the description still opens the editor (CHT-2021)', async () => {
+            await viewIssue('issue-1');
+
+            const section = document.querySelector('.issue-detail-description');
+            expect(section.querySelector('h3')).toBeNull();
+            expect(section.querySelector('.description-edit-btn').dataset.action).toBe('edit-description');
+            expect(section.querySelector('.description-content').dataset.action).toBe('edit-description');
+        });
+
+        it('the + Add menu closes on Escape without leaving the ticket, on a choice, and on an outside click', async () => {
+            await viewIssue('issue-1');
+            const menu = () => document.querySelector('details.related-add');
+            const listener = vi.fn();
+            document.addEventListener('keydown', listener);
+
+            menu().open = true;
+            document.querySelector('.related-add summary').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            expect(menu().open).toBe(false);
+            expect(listener).not.toHaveBeenCalled();
+            document.removeEventListener('keydown', listener);
+
+            menu().open = true;
+            detailActions['show-add-relation-modal']({}, { issueId: 'issue-1' });
+            expect(menu().open).toBe(false);
+
+            menu().open = true;
+            document.body.click();
+            expect(menu().open).toBe(false);
+        });
+
+        it('puts a one-line summary of the properties under the title (CHT-2021)', async () => {
+            await viewIssue('issue-1');
+
+            const line = document.querySelector('.issue-detail-title + .issue-meta-line');
+            expect(line).not.toBeNull();
+            expect(line.textContent).toContain('Unassigned');
         });
 
         it('shows error toast on API failure', async () => {
