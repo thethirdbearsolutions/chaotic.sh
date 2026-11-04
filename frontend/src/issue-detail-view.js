@@ -19,7 +19,7 @@ import { registerActions } from './event-delegation.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { showCreateSubIssueModal } from './issue-creation.js';
 import { getMembers } from './teams.js';
-import { renderTicketGatePanel, renderTicketGateStickyBar, describeTicketGate, isAwaitingApproval } from './ticket-gate.js';
+import { renderTicketGatePanel, renderTicketGateStickyBar, describeTicketGate, gateFocusRitual, isAwaitingApproval } from './ticket-gate.js';
 import { viewDocument } from './documents.js';
 import { renderRelatedWork, renderTimeline, renderMetaLine } from './ticket-body.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
@@ -103,6 +103,7 @@ export function getActivityIcon(type) {
         // Ritual activities (CHT-673)
         'ritual_attested': '✅',
         'ritual_rejected': '⛔',
+        'ritual_approved': '✅',
     };
     return icons[type] || '•';
 }
@@ -115,6 +116,9 @@ export function getActivityIcon(type) {
 export function formatActivityActor(activity) {
     return activity.user_name || activity.user_email || 'Unknown';
 }
+
+// A limbo's type, as the move it held back.
+const intentVerb = (v) => (String(v || '').toLowerCase() === 'claim' ? 'start' : 'close');
 
 /**
  * Format activity text for display
@@ -199,6 +203,20 @@ export function formatActivityText(activity) {
                 ? `<span class="activity-attestation-link" title="${reason}">Rejected <strong>${ritualName}</strong></span>`
                 : `Rejected <strong>${ritualName}</strong>`;
         }
+        case 'ritual_approved':
+            // The ritual's name is in new_value (ritual_service approve).
+            return `Approved <strong>${escapeHtml(activity.new_value || 'a ritual')}</strong>`;
+        // Ticket limbo (a claim or close waiting on rituals): new_value is the limbo type.
+        case 'intent_opened':
+            return `Tried to ${intentVerb(activity.new_value)} it; waiting on rituals`;
+        case 'intent_cleared':
+            return `No longer waiting on rituals to ${intentVerb(activity.new_value)}`;
+        case 'intent_canceled':
+            return `Canceled the pending ${intentVerb(activity.new_value)}`;
+        case 'lease_expired':
+            return 'Claim expired; moved back to <strong>Todo</strong>';
+        case 'email_delivery_failed':
+            return escapeHtml(activity.new_value || 'An email could not be delivered');
         case 'updated':
             // Generic update - show field if available
             if (activity.field_name) {
@@ -221,23 +239,6 @@ export function formatActivityText(activity) {
  * @param {Event} event - Click event
  * @param {string} issueId - Issue ID
  */
-/**
- * Toggle a collapsible section (activity, comments)
- * @param {string} sectionName - 'activity' or 'comments'
- */
-export function toggleSection(sectionName) {
-    const section = document.getElementById(`${sectionName}-section`);
-    if (!section) return;
-    const content = section.querySelector('.section-collapsible-content');
-    const toggleIcon = section.querySelector('.section-toggle-icon');
-    if (content) {
-        content.classList.toggle('collapsed');
-    }
-    if (toggleIcon) {
-        toggleIcon.classList.toggle('rotated');
-    }
-}
-
 /**
  * Load ticket rituals for an issue
  * @param {string} issueId - Issue ID
@@ -388,6 +389,32 @@ export function renderTicketRituals(issueId) {
     }
 }
 
+/** Close the Related work "+ Add" menu, if open. Returns whether it was. */
+function closeRelatedAddMenu({ focus = false } = {}) {
+    const menu = document.querySelector('#issue-detail-view details.related-add[open]');
+    if (!menu) return false;
+    menu.open = false;
+    if (focus) menu.querySelector('summary')?.focus();
+    return true;
+}
+
+/**
+ * The "+ Add" menu is a <details>: close it on Escape (before the global
+ * handler would leave the ticket), on a click outside it, and once a
+ * choice is made (PR #527 review I5).
+ */
+function setupRelatedAddMenu(signal) {
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && closeRelatedAddMenu({ focus: true })) {
+            e.stopPropagation();
+            e.preventDefault();
+        }
+    }, { capture: true, signal });
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest?.('details.related-add')) closeRelatedAddMenu();
+    }, { signal });
+}
+
 /**
  * View issue by path (identifier or ID)
  * @param {string} identifier - Issue identifier or ID
@@ -493,6 +520,10 @@ subscribe((key) => {
 // Bumped by every navigating viewIssue() call -- not by background
 // refreshes (see `refresh` below).
 let viewIssueNavigationId = 0;
+// How much of an issue's activity the timeline loads (newest first). The
+// endpoint defaults to 50, which dropped older events once comments and
+// attestations went into one stream (PR #527 review I1).
+const ACTIVITY_PAGE = 500;
 
 /**
  * Leaving the detail (the router calls this before every view change)
@@ -527,6 +558,7 @@ export function detailRefreshBlocker() {
     if (isInlineDropdownOpen()) return 'transient';
     const detailView = document.getElementById('issue-detail-view');
     if (detailView?.querySelector('.overflow-menu-dropdown:not(.hidden)')) return 'transient';
+    if (detailView?.querySelector('details.related-add[open]')) return 'transient';
     const mentions = document.getElementById('mention-suggestions');
     if (mentions && !mentions.classList.contains('hidden')) return 'transient';
     if (commentComposing) return 'transient';
@@ -669,7 +701,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         const [issue, comments, activities, subIssues, relations, ritualStatus] = await Promise.all([
             api.getIssue(issueId),
             api.getComments(issueId).catch(e => { console.error('Failed to load comments:', e); commentsLoadFailed = true; return []; }),
-            api.getActivities(issueId),
+            api.getActivities(issueId, 0, ACTIVITY_PAGE),
             api.getSubIssues(issueId),
             api.getRelations(issueId),
             api.getTicketRitualsStatus(issueId).catch(() => ({ pending_rituals: [], completed_rituals: [] })),
@@ -758,7 +790,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                     </div>
 
                     <h1 class="issue-detail-title">${escapeHtml(issue.title)}</h1>
-                    ${renderMetaLine(issue, assigneeName)}
+                    ${renderMetaLine(issue, assigneeName, { formatEstimate })}
 
                     ${parentIssue ? `
                     <div class="parent-issue-link">
@@ -772,8 +804,10 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
 
                     <div class="issue-detail-description">
                         <div class="section-header description-edit-row">
-                            <button type="button" class="description-edit-btn${getDescriptionDraft(issue.id) ? ' has-draft' : ''}" data-action="edit-description" data-issue-id="${escapeAttr(issue.id)}" aria-label="Edit description">
-                                ${getDescriptionDraft(issue.id) ? '<span class="draft-indicator" title="Unsaved draft">Draft</span>' : 'Edit'}
+                            <button type="button" class="description-edit-btn${getDescriptionDraft(issue.id) ? ' has-draft' : ''}" data-action="edit-description" data-issue-id="${escapeAttr(issue.id)}">
+                                ${getDescriptionDraft(issue.id)
+                                    ? '<span class="draft-indicator" title="Unsaved draft">Draft</span><span class="sr-only">: edit description (unsaved draft)</span>'
+                                    : 'Edit<span class="sr-only"> description</span>'}
                             </button>
                         </div>
                         <div class="description-content markdown-body ${!issue.description ? 'empty' : ''}" data-action="edit-description" data-issue-id="${escapeAttr(issue.id)}">
@@ -781,9 +815,13 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                         </div>
                     </div>
 
-                    ${renderRelatedWork(issue, subIssues, relations)}
+                    ${renderRelatedWork(issue, subIssues, relations, { formatEstimate })}
 
-                    ${renderTimeline({ comments: allComments, activities, ritualStatus, commentsLoadFailed, issueId: issue.id }, {
+                    ${renderTimeline({
+                        comments: allComments, activities, ritualStatus, commentsLoadFailed, issueId: issue.id,
+                        gateRitualName: gateFocusRitual(ritualStatus, { canAct: canApproveAttestations() })?.name || null,
+                        activitiesTruncated: activities.length >= ACTIVITY_PAGE,
+                    }, {
                         formatText: formatActivityText,
                         formatActor: formatActivityActor,
                         getAssigneeById,
@@ -953,6 +991,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         renderTicketRituals(issue.id);
         setupMentionAutocomplete('new-comment', 'mention-suggestions', { projectId: issue.project_id });
         setupQuoteComment({ signal: detailSignal });
+        setupRelatedAddMenu(detailSignal);
 
         // Cmd/Ctrl+Enter to submit comment + draft persistence (CHT-1041)
         const commentTextarea = document.getElementById('new-comment');
@@ -1524,9 +1563,6 @@ registerActions({
         if (selection && !selection.isCollapsed && selection.toString().trim()) return;
         editDescription(data.issueId);
     },
-    'toggle-section': (_event, data) => {
-        toggleSection(data.section);
-    },
     'open-gate-document': (event, data) => {
         // Plain click opens the document in the app; a modified click keeps
         // the link's own new-tab behaviour.
@@ -1541,12 +1577,14 @@ registerActions({
         handleAddComment(event, data.issueId);
     },
     'show-add-relation-modal': (_event, data) => {
+        closeRelatedAddMenu();
         showAddRelationModal(data.issueId);
     },
     'remove-relation': (_event, data) => {
         deleteRelation(data.issueId, data.relationId);
     },
     'show-create-sub-issue-modal': (_event, data) => {
+        closeRelatedAddMenu();
         showCreateSubIssueModal(data.issueId, data.projectId);
     },
     'handle-add-relation': (event, data) => {

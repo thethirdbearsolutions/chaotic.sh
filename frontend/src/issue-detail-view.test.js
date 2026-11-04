@@ -254,6 +254,16 @@ describe('issue-detail-view', () => {
     });
 
     describe('formatActivityText', () => {
+        it('names approvals, limbo, lease expiry and failed emails (PR #527 review I3)', () => {
+            expect(formatActivityText({ activity_type: 'ritual_approved', new_value: 'tests-pass' })).toBe('Approved <strong>tests-pass</strong>');
+            expect(formatActivityText({ activity_type: 'intent_opened', new_value: 'close' })).toBe('Tried to close it; waiting on rituals');
+            expect(formatActivityText({ activity_type: 'intent_cleared', new_value: 'CLAIM' })).toBe('No longer waiting on rituals to start');
+            expect(formatActivityText({ activity_type: 'intent_canceled', new_value: 'claim' })).toBe('Canceled the pending start');
+            expect(formatActivityText({ activity_type: 'lease_expired' })).toContain('Claim expired');
+            expect(formatActivityText({ activity_type: 'email_delivery_failed', new_value: 'Failed to deliver' })).toBe('Failed to deliver');
+            expect(escapeHtml).toHaveBeenCalledWith('Failed to deliver');
+        });
+
         it('formats created activity', () => {
             const activity = { activity_type: 'created' };
             expect(formatActivityText(activity)).toBe('Created issue');
@@ -517,7 +527,7 @@ describe('issue-detail-view', () => {
 
             expect(api.getIssue).toHaveBeenCalledWith('issue-1');
             expect(api.getComments).toHaveBeenCalledWith('issue-1');
-            expect(api.getActivities).toHaveBeenCalledWith('issue-1');
+            expect(api.getActivities).toHaveBeenCalledWith('issue-1', 0, 500);
         });
 
         it('shows detail view and hides other views', async () => {
@@ -907,6 +917,27 @@ describe('issue-detail-view', () => {
             expect(section.querySelector('h3')).toBeNull();
             expect(section.querySelector('.description-edit-btn').dataset.action).toBe('edit-description');
             expect(section.querySelector('.description-content').dataset.action).toBe('edit-description');
+        });
+
+        it('the + Add menu closes on Escape without leaving the ticket, on a choice, and on an outside click', async () => {
+            await viewIssue('issue-1');
+            const menu = () => document.querySelector('details.related-add');
+            const listener = vi.fn();
+            document.addEventListener('keydown', listener);
+
+            menu().open = true;
+            document.querySelector('.related-add summary').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            expect(menu().open).toBe(false);
+            expect(listener).not.toHaveBeenCalled();
+            document.removeEventListener('keydown', listener);
+
+            menu().open = true;
+            detailActions['show-add-relation-modal']({}, { issueId: 'issue-1' });
+            expect(menu().open).toBe(false);
+
+            menu().open = true;
+            document.body.click();
+            expect(menu().open).toBe(false);
         });
 
         it('puts a one-line summary of the properties under the title (CHT-2021)', async () => {

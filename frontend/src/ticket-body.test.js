@@ -35,7 +35,9 @@ describe('renderRelatedWork', () => {
             ]));
         const kinds = [...el.querySelectorAll('.related-kind')].map(k => k.textContent);
         expect(kinds).toEqual(['Blocked by', 'Sub-issue · 2 pts', 'Blocks', 'Related']);
-        expect(el.querySelectorAll('.related-id')[0].dataset.issueId).toBe('x2');
+        expect(el.querySelectorAll('.related-link')[0].dataset.issueId).toBe('x2');
+        // Identifier and title are one link.
+        expect(el.querySelector('.related-link .related-title').textContent).toBe('Blocker');
         // Only relations can be removed here; a sub-issue is re-parented from itself.
         expect(el.querySelectorAll('[data-action="remove-relation"]').length).toBe(3);
         expect(el.querySelector('[data-action="remove-relation"]').dataset.relationId).toBe('r2');
@@ -53,6 +55,15 @@ describe('renderRelatedWork', () => {
         const el = dom(renderRelatedWork(issue, [{ id: 's', identifier: '<b>X</b>', title: '<img src=x onerror=alert(1)>', status: 'todo' }], []));
         expect(el.querySelector('img')).toBeNull();
         expect(el.querySelector('.related-id b')).toBeNull();
+    });
+
+    it('labels duplicates and uses the project\'s estimate labels', () => {
+        const el = dom(renderRelatedWork(issue,
+            [{ id: 's1', identifier: 'CHT-2', title: 'Child', status: 'todo', estimate: 3 }],
+            [{ id: 'r1', relation_type: 'duplicates', direction: 'outgoing', related_issue_id: 'x', related_issue_identifier: 'CHT-9', related_issue_title: 'Same' }],
+            { formatEstimate: (v) => (v === 3 ? 'M' : String(v)) }));
+        const kinds = [...el.querySelectorAll('.related-kind')].map(k => k.textContent);
+        expect(kinds).toEqual(['Sub-issue · M', 'Duplicates']);
     });
 });
 
@@ -79,9 +90,9 @@ describe('renderTimeline', () => {
     });
 
     it('links the attestation still waiting for review up to the gate instead of repeating its note', () => {
-        const el = dom(renderTimeline({ comments: [], activities: [attestedNew, attestedOld, rejected, attestedDone], ritualStatus, issueId: 'i1' }, fmt));
+        const el = dom(renderTimeline({ comments: [], activities: [attestedNew, attestedOld, rejected, attestedDone], ritualStatus, gateRitualName: 'tests-pass', issueId: 'i1' }, fmt));
         const events = [...el.querySelectorAll('.timeline-event')];
-        expect(events.map(e => e.querySelector('.activity-text').textContent)).toEqual([
+        expect(events.map(e => e.querySelector('.timeline-text').textContent)).toEqual([
             'Attested changelog', 'Attested tests-pass', 'Sent back tests-pass', 'Attested tests-pass',
         ]);
         const [done, old, back, current] = events;
@@ -92,7 +103,38 @@ describe('renderTimeline', () => {
         expect(old.querySelector('.timeline-note').textContent).toContain('first try');
         expect(done.querySelector('.timeline-note').textContent).toContain('Added a line');
         expect(back.classList.contains('sent-back')).toBe(true);
-        expect(back.textContent).toContain('“Paste the log”');
+        expect(back.querySelector('.timeline-note[open]').textContent).toContain('Paste the log');
+    });
+
+    it('keeps the note of a second ritual waiting for review that the gate does not show (review I2)', () => {
+        const other = { activity_type: 'ritual_attested', field_name: 'docs-review', new_value: 'Docs updated', user_name: 'agent', created_at: '2026-11-04T11:30:00Z' };
+        const status = { pending_rituals: [
+            { name: 'tests-pass', attestation: { approved_at: null } },
+            { name: 'docs-review', attestation: { approved_at: null } },
+        ], completed_rituals: [] };
+        const el = dom(renderTimeline({ activities: [other, attestedNew], ritualStatus: status, gateRitualName: 'tests-pass', issueId: 'i1' }, fmt));
+        const [first, second] = el.querySelectorAll('.timeline-event');
+        expect(first.querySelector('[data-action="scroll-to-ticket-gate"]')).not.toBeNull();
+        expect(second.querySelector('[data-action="scroll-to-ticket-gate"]')).toBeNull();
+        expect(second.textContent).toContain('waiting for review');
+        expect(second.querySelector('.timeline-note').textContent).toContain('Docs updated');
+    });
+
+    it('rebuilds an attestation the activity page left out, so its note is not lost (review I1)', () => {
+        const status = { pending_rituals: [], completed_rituals: [
+            { name: 'changelog', attestation: { attested_by_name: 'agent', attested_at: '2026-11-01T00:00:00Z', approved_at: '2026-11-01T00:00:00Z', note: 'Old note' } },
+        ] };
+        const el = dom(renderTimeline({ activities: [created], ritualStatus: status, activitiesTruncated: true, issueId: 'i1' }, fmt));
+        const events = el.querySelectorAll('.timeline-event');
+        expect(events.length).toBe(2);
+        expect(events[0].textContent).toContain('Attested changelog');
+        expect(events[0].querySelector('.timeline-note').textContent).toContain('Old note');
+        expect(el.querySelector('.timeline-truncated').textContent).toBe('Older activity is not shown.');
+    });
+
+    it('marks agents on event lines', () => {
+        const el = dom(renderTimeline({ activities: [{ ...created, user: { is_agent: true } }], issueId: 'i1' }, fmt));
+        expect(el.querySelector('.timeline-meta .badge-agent')).not.toBeNull();
     });
 
     it('says when comments failed to load, and when there is nothing yet', () => {
@@ -121,5 +163,6 @@ describe('renderMetaLine', () => {
         expect(el.textContent).toContain('builder-agent');
         expect(el.textContent).toContain('3 pts');
         expect(dom(renderMetaLine({ ...issue, estimate: null }, null)).textContent).toContain('Unassigned');
+        expect(dom(renderMetaLine(issue, null, { formatEstimate: () => 'M' })).textContent).toContain('M');
     });
 });

@@ -192,6 +192,12 @@ function renderList(groups, assigneeName) {
         </details>`;
 }
 
+/** The ritual the block shows in full (its prompt and attestation), if any. */
+export function gateFocusRitual(status, { canAct = false } = {}) {
+    const { needsYou, waiting } = classifyTicketRituals(status, { canAct });
+    return needsYou[0] || waiting[0] || null;
+}
+
 /**
  * One sentence saying what the block now shows, for a screen reader's live
  * region after the viewer acts on it.

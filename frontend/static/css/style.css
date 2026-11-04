@@ -10447,8 +10447,8 @@ body.theme-light {
 
 /* Description: no header. Clicking it edits; a quiet Edit shows on hover or
    keyboard focus (and stays while there is an unsaved draft). */
-.issue-detail-description { position: relative; margin-bottom: var(--space-xl); }
-.issue-detail-description > .description-edit-row {
+#issue-detail-view .issue-detail-description { position: relative; margin-bottom: var(--space-xl); }
+#issue-detail-view .issue-detail-description > .description-edit-row {
     position: absolute;
     top: -4px;
     right: 0;
@@ -10466,11 +10466,11 @@ body.theme-light {
     cursor: pointer;
     opacity: 0;
 }
-.issue-detail-description:hover .description-edit-btn,
-.description-edit-btn:focus-visible,
+#issue-detail-view .issue-detail-description:hover .description-edit-btn,
+.description-edit-btn:focus,
 .description-edit-btn.has-draft { opacity: 1; }
 .description-edit-btn:hover { color: var(--text-primary); }
-.description-content { cursor: text; }
+#issue-detail-view .description-content { cursor: text; }
 
 /* Related work: one list, kind on the right, one Add. */
 .related-work { margin-bottom: var(--space-xl); }
@@ -10534,9 +10534,10 @@ body.theme-light {
 }
 .related-row:last-child { border-bottom: 1px solid var(--border-color); }
 .related-status { display: inline-grid; place-items: center; flex-shrink: 0; }
-.related-id { color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; text-decoration: none; }
-.related-id:hover { color: var(--accent-fg); }
-.related-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.related-link { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: baseline; text-decoration: none; color: var(--text-primary); }
+.related-link:hover .related-title { color: var(--accent-fg); }
+.related-id { color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.related-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .related-kind { color: var(--text-muted); flex-shrink: 0; }
 .related-kind.blocked { color: var(--danger-fg); }
 .related-remove {
@@ -10549,7 +10550,12 @@ body.theme-light {
     display: inline-grid;
 }
 .related-row:hover .related-remove,
-.related-remove:focus-visible { opacity: 1; }
+.related-remove:focus { opacity: 1; }
+/* No hover to reveal it: always show it rather than leave it invisible but tappable. */
+@media (hover: none) {
+    .related-remove,
+    .description-edit-btn.has-draft { opacity: 1; }
+}
 .related-remove:hover { color: var(--danger-fg); }
 
 /* One stream: comments keep their body, everything else is one line. */
@@ -10599,6 +10605,8 @@ body.theme-light {
 .timeline-event-body b,
 .timeline-event-body strong { color: var(--text-primary); font-weight: 600; }
 .timeline-meta { color: var(--text-muted); }
+.timeline-meta .badge { margin: 0 2px; vertical-align: 1px; }
+.timeline-truncated { font-size: var(--font-sm); color: var(--text-muted); margin-bottom: var(--space-sm); }
 .timeline-note { margin-top: 2px; }
 .timeline-note > summary { cursor: pointer; color: var(--text-muted); width: fit-content; }
 .timeline-note > summary:hover { color: var(--text-primary); }
@@ -10610,7 +10618,7 @@ body.theme-light {
 }
 
 /* Sidebar badges: a neutral outline with a colored dot, not a fill. */
-.detail-sidebar .issue-type-badge {
+#issue-detail-view .detail-sidebar .issue-type-badge {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -10621,16 +10629,16 @@ body.theme-light {
     letter-spacing: 0;
     font-weight: 500;
 }
-.detail-sidebar .issue-type-badge::before {
+#issue-detail-view .detail-sidebar .issue-type-badge::before {
     content: '';
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: var(--text-muted);
 }
-.detail-sidebar .issue-type-badge.type-bug::before { background: var(--danger-fg); }
-.detail-sidebar .issue-type-badge.type-feature::before,
-.detail-sidebar .issue-type-badge.type-epic::before { background: var(--accent-color); }
+#issue-detail-view .detail-sidebar .issue-type-badge.type-bug::before { background: var(--danger-fg); }
+#issue-detail-view .detail-sidebar .issue-type-badge.type-feature::before,
+#issue-detail-view .detail-sidebar .issue-type-badge.type-epic::before { background: var(--accent-color); }
 
 @media (max-width: 900px) {
     .issue-meta-line {
@@ -10644,11 +10652,10 @@ body.theme-light {
     }
     .issue-meta-part { display: inline-flex; align-items: center; gap: 4px; }
     .issue-meta-sep { color: var(--text-muted); }
-    /* Touch has no hover: keep remove visible. Edit stays hidden (tapping
-       the description edits it) unless there is a draft, which then gets
-       its own line rather than covering the text. */
-    .related-remove { opacity: 1; }
-    .issue-detail-description > .description-edit-row:has(.has-draft) {
+    /* Edit stays hidden here (tapping the description edits it) unless
+       there is a draft, which then gets its own line rather than covering
+       the text. */
+    #issue-detail-view .issue-detail-description > .description-edit-row:has(.has-draft) {
         position: static;
         display: flex;
         justify-content: flex-end;
