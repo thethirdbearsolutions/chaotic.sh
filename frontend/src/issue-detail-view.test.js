@@ -129,9 +129,6 @@ import {
     renderDescriptionContent,
     viewIssue,
     viewIssueByPath,
-    toggleTicketRituals,
-    getTicketRitualsCollapsed,
-    setTicketRitualsCollapsed,
     handleAddComment,
     editDescription,
     setDescriptionEditorMode,
@@ -154,9 +151,6 @@ const detailActions = Object.assign({}, ...registerActions.mock.calls.map(c => c
 
 describe('issue-detail-view', () => {
     beforeEach(() => {
-        // Reset state
-        setTicketRitualsCollapsed(true);
-
         // Reset mocks to defaults
         api.getIssue.mockReset();
         api.getIssueByIdentifier.mockReset();
@@ -210,9 +204,6 @@ describe('issue-detail-view', () => {
             <div class="view" id="my-issues-view"></div>
             <div class="view hidden" id="issue-detail-view">
                 <div id="issue-detail-content"></div>
-            </div>
-            <div id="ticket-rituals-section" class="hidden">
-                <div class="ticket-rituals-content collapsed"></div>
             </div>
             <div id="modal-title"></div>
             <div id="modal-content"></div>
@@ -685,18 +676,6 @@ describe('issue-detail-view', () => {
                 expect(getCurrentDetailIssue().title).toBe('Newer');
             });
 
-            // PR #318 review 3
-            it('keeps the rituals panel expanded across a refresh', async () => {
-                await viewIssue('issue-1');
-                setTicketRitualsCollapsed(false);
-
-                await viewIssue('issue-1', false, { refresh: true });
-                expect(getTicketRitualsCollapsed()).toBe(false);
-
-                await viewIssue('issue-1');
-                expect(getTicketRitualsCollapsed()).toBe(true);
-            });
-
             // PR #318 review 4/5: transient UI that a re-render would
             // orphan or wipe. Held off before fetching, and reported as
             // 'retry' so ws-handlers.js tries again.
@@ -951,13 +930,12 @@ describe('issue-detail-view', () => {
             // loadTicketRituals is fire-and-forget in viewIssue, call directly
             await loadTicketRituals('issue-1');
 
-            // Rituals render into the first ticket-rituals-section found by getElementById
-            const ritualsHtml = document.getElementById('ticket-rituals-section').innerHTML;
-            expect(ritualsHtml).toContain('Attested by');
-            expect(ritualsHtml).toContain('Alice');
+            // CHT-2020: rituals render into the gate panel under the title.
+            const ritualsHtml = document.getElementById('ticket-gate').innerHTML;
+            expect(ritualsHtml).toContain('Alice attested');
             expect(ritualsHtml).toContain('All files reviewed');
-            // Pending ritual with attestation shows hourglass icon
-            expect(ritualsHtml).toContain('⏳');
+            // No signed-in admin here, so it waits on one.
+            expect(ritualsHtml).toContain('Waiting on an admin');
         });
 
         it('renders pending rituals without attestation (CHT-901)', async () => {
@@ -975,11 +953,11 @@ describe('issue-detail-view', () => {
             await viewIssue('issue-1');
             await loadTicketRituals('issue-1');
 
-            const ritualsHtml = document.getElementById('ticket-rituals-section').innerHTML;
+            const ritualsHtml = document.getElementById('ticket-gate').innerHTML;
             expect(ritualsHtml).toContain('Run Tests');
-            expect(ritualsHtml).not.toContain('Attested by');
-            // Non-attested pending ritual shows circle icon
-            expect(ritualsHtml).toContain('○');
+            expect(ritualsHtml).not.toContain('attested');
+            // An open gate waits on a person.
+            expect(ritualsHtml).toContain('Waiting on a person');
         });
 
         describe('prev/next navigation (CHT-553)', () => {
@@ -1440,10 +1418,11 @@ describe('issue-detail-view', () => {
         });
     });
 
-    // CHT-2018: an attestation awaiting a human's approval was buried in a
-    // collapsed section below the fold. It must be pinned to the top of the
-    // ticket, with the Approve button, and the section must open for it.
-    describe('rituals awaiting approval (CHT-2018)', () => {
+    // CHT-2018/CHT-2020: an attestation awaiting a human's approval was
+    // buried in a collapsed section below the fold. The gate panel under the
+    // title is always open and puts what needs the viewer first, with its
+    // Approve button; a sticky bar keeps it in reach once scrolled away.
+    describe('ticket gate: rituals awaiting a human (CHT-2018, CHT-2020)', () => {
         const issue = {
             id: 'issue-1', identifier: 'TEST-1', title: 'Blocked ticket',
             description: 'desc', status: 'in_progress', priority: 'medium',
@@ -1462,20 +1441,21 @@ describe('issue-detail-view', () => {
             trigger: 'ticket_close', approval_mode: 'review', note_required: false, attestation: null,
         };
 
-        const banner = () => document.getElementById('ritual-approval-banner');
+        const gate = () => document.getElementById('ticket-gate');
+        // The step waiting on the viewer, if any (one at a time).
+        const needsYou = () => gate().querySelectorAll('.ticket-gate.you');
+        const bar = () => document.getElementById('ticket-gate-sticky');
 
         beforeEach(() => {
             api.getIssue.mockResolvedValue(issue);
             getProjects.mockReturnValue([{ id: 'project-1', name: 'Test Project' }]);
-            renderTicketRitualActions.mockImplementation((r, issueId) => (
-                r.attestation && !r.attestation.approved_at
-                    ? `<button data-action="approve-ticket-ritual" data-ritual-id="${r.id}" data-issue-id="${issueId}">Approve</button>`
-                    : ''
-            ));
             setCurrentUser({ id: 'human-1', name: 'Third', is_agent: false });
         });
 
-        afterEach(() => setCurrentUser(null));
+        afterEach(() => {
+            setCurrentUser(null);
+            delete global.IntersectionObserver;
+        });
 
         it('selects only attested, unapproved rituals', () => {
             const approved = { ...awaiting, id: 'rit-done', attestation: { ...awaiting.attestation, approved_at: '2024-01-16T00:00:00Z' } };
@@ -1483,85 +1463,121 @@ describe('issue-detail-view', () => {
             expect(ritualsAwaitingApproval(undefined)).toEqual([]);
         });
 
-        it('pins the attestation and its Approve button above the description', async () => {
+        it('puts the attestation and its Approve button first, above the description', async () => {
             api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting, unattested], completed_rituals: [] });
 
             await viewIssue('issue-1');
 
-            const el = banner();
-            expect(el).not.toBeNull();
-            expect(el.classList.contains('hidden')).toBe(false);
-            expect(el.textContent).toContain('code-review');
-            expect(el.textContent).toContain('Agent Smith');
-            expect(el.textContent).toContain('Reviewed in PR 12');
-            expect(el.textContent).not.toContain('tests-pass');
-            const approve = el.querySelector('[data-action="approve-ticket-ritual"]');
+            expect(gate().classList.contains('hidden')).toBe(false);
+            expect(needsYou().length).toBe(1);
+            const card = needsYou()[0];
+            expect(card.textContent).toContain('code-review');
+            expect(card.textContent).toContain('Agent Smith');
+            expect(card.textContent).toContain('Reviewed in PR 12');
+            expect(card.querySelector('.ticket-gate-step').textContent).toBe('Review code-review');
+            const approve = card.querySelector('[data-action="approve-ticket-ritual"]');
             expect(approve).not.toBeNull();
             expect(approve.dataset.ritualId).toBe('rit-review');
+            // The unattested ritual comes after it, as one line, and in the list.
+            expect(card.querySelector('.ticket-gate-then').textContent).toContain('attest tests-pass');
+            expect(card.querySelector('.ticket-gate-list').textContent).toContain('0 of 2 rituals done');
 
-            // Above the description, not below the fold with the section.
             const description = document.querySelector('#issue-detail-content .issue-detail-description');
-            expect(el.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            expect(gate().compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
         });
 
-        it('opens the Ticket Rituals section for a review attestation, not only for a gate', async () => {
-            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
-
-            await viewIssue('issue-1');
-
-            expect(getTicketRitualsCollapsed()).toBe(false);
-            const content = document.getElementById('ticket-rituals-section').querySelector('.ticket-rituals-content');
-            expect(content.classList.contains('collapsed')).toBe(false);
-        });
-
-        it('stays hidden when nothing awaits approval', async () => {
+        it('is always open: there is no collapsed rituals section any more', async () => {
             api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [unattested], completed_rituals: [] });
 
             await viewIssue('issue-1');
 
-            expect(banner().classList.contains('hidden')).toBe(true);
-            expect(banner().innerHTML).toBe('');
-            expect(getTicketRitualsCollapsed()).toBe(true);
+            expect(document.getElementById('ticket-rituals-section')).toBeNull();
+            expect(gate().classList.contains('hidden')).toBe(false);
+            expect(gate().querySelector('.collapsed')).toBeNull();
+            expect(gate().textContent).toContain('tests-pass');
         });
 
-        it('is not shown to an agent, who cannot approve', async () => {
+        it('is hidden on a ticket with no ticket rituals', async () => {
+            await viewIssue('issue-1');
+
+            expect(gate().classList.contains('hidden')).toBe(true);
+        });
+
+        it('asks nothing of you when nothing awaits approval', async () => {
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [unattested], completed_rituals: [] });
+
+            await viewIssue('issue-1');
+
+            expect(needsYou().length).toBe(0);
+            expect(bar().innerHTML.trim()).toBe('');
+            expect(bar().classList.contains('hidden')).toBe(true);
+        });
+
+        it('does not ask an agent, who cannot approve', async () => {
             setCurrentUser({ id: 'agent-1', name: 'Bot', is_agent: true });
             api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
 
             await viewIssue('issue-1');
 
-            expect(banner().classList.contains('hidden')).toBe(true);
+            expect(needsYou().length).toBe(0);
+            expect(gate().querySelector('.ticket-gate-kicker').textContent).toBe('Waiting on an admin');
+            expect(gate().querySelector('[data-action="approve-ticket-ritual"]')).toBeNull();
+            expect(bar().innerHTML.trim()).toBe('');
         });
 
-        it('is not shown to a human who is not a team admin, once members are known', async () => {
+        it('does not ask a human who is not a team admin, once members are known', async () => {
             getMembers.mockReturnValue([{ user_id: 'human-1', role: 'member' }]);
             api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
 
             await viewIssue('issue-1');
 
-            expect(banner().classList.contains('hidden')).toBe(true);
+            expect(needsYou().length).toBe(0);
             getMembers.mockReturnValue([]);
         });
 
-        it('is shown to an admin, and while members are not loaded yet', async () => {
+        it('asks an admin, and asks while members are not loaded yet', async () => {
             getMembers.mockReturnValue([{ user_id: 'human-1', role: 'admin' }]);
             api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
             await viewIssue('issue-1');
-            expect(banner().classList.contains('hidden')).toBe(false);
+            expect(needsYou().length).toBe(1);
 
             getMembers.mockReturnValue([]);
             await viewIssue('issue-1');
-            expect(banner().classList.contains('hidden')).toBe(false);
+            expect(needsYou().length).toBe(1);
         });
 
-        it('counts several attestations in the heading', async () => {
+        it('offers one step at a time, with the next one named after it', async () => {
             const second = { ...awaiting, id: 'rit-2', name: 'docs-review' };
             api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting, second], completed_rituals: [] });
 
             await viewIssue('issue-1');
 
-            expect(banner().textContent).toContain('2 attestations need your approval');
-            expect(banner().querySelectorAll('[data-action="approve-ticket-ritual"]').length).toBe(2);
+            expect(gate().querySelectorAll('[data-action="approve-ticket-ritual"]').length).toBe(1);
+            expect(gate().querySelector('.ticket-gate-then').textContent).toContain('review docs-review');
+            expect(bar().textContent).toContain('and 1 more');
+        });
+
+        it('shows the sticky bar only once the panel has scrolled away', async () => {
+            let callback;
+            global.IntersectionObserver = class {
+                constructor(cb) { callback = cb; }
+                observe() {}
+                disconnect() {}
+            };
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
+
+            await viewIssue('issue-1');
+            expect(bar().classList.contains('hidden')).toBe(true);
+            // It links back up; approving happens with the attestation in view.
+            expect(bar().querySelector('[data-action="approve-ticket-ritual"]')).toBeNull();
+            expect(bar().querySelector('[data-action="scroll-to-ticket-gate"]')).not.toBeNull();
+
+            callback([{ isIntersecting: false }]);
+            expect(bar().classList.contains('hidden')).toBe(false);
+            expect(bar().textContent).toContain('Waiting on you: review code-review');
+
+            callback([{ isIntersecting: true }]);
+            expect(bar().classList.contains('hidden')).toBe(true);
         });
 
         it('a reload that lands after another ticket opened does not repaint it', async () => {
@@ -1572,72 +1588,49 @@ describe('issue-detail-view', () => {
             api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
             await loadTicketRituals('issue-1');
 
-            expect(banner().classList.contains('hidden')).toBe(true);
+            expect(gate().classList.contains('hidden')).toBe(true);
+            expect(needsYou().length).toBe(0);
         });
 
-        it('clears the banner when a reload fails', async () => {
+        it('clears the panel when a reload fails', async () => {
             api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
             await viewIssue('issue-1');
-            expect(banner().classList.contains('hidden')).toBe(false);
+            expect(needsYou().length).toBe(1);
 
             const err = vi.spyOn(console, 'error').mockImplementation(() => {});
             api.getTicketRitualsStatus.mockRejectedValue(new Error('offline'));
             await loadTicketRituals('issue-1');
             err.mockRestore();
 
-            expect(banner().classList.contains('hidden')).toBe(true);
+            expect(gate().classList.contains('hidden')).toBe(true);
+            expect(bar().innerHTML.trim()).toBe('');
         });
 
-        it('goes away once the attestation is approved and rituals reload', async () => {
+        it('moves it to done once approved and rituals reload', async () => {
             api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
             await viewIssue('issue-1');
-            expect(banner().classList.contains('hidden')).toBe(false);
+            expect(needsYou().length).toBe(1);
 
             api.getTicketRitualsStatus.mockResolvedValue({
                 pending_rituals: [],
-                completed_rituals: [{ ...awaiting, attestation: { ...awaiting.attestation, approved_at: '2024-01-16T00:00:00Z' } }],
+                completed_rituals: [{ ...awaiting, attestation: { ...awaiting.attestation, approved_at: '2024-01-16T00:00:00Z', approved_by_name: 'Third' } }],
             });
             await loadTicketRituals('issue-1');
 
-            expect(banner().classList.contains('hidden')).toBe(true);
-        });
-    });
-
-    describe('ticketRitualsCollapsed state', () => {
-        it('getTicketRitualsCollapsed returns current state', () => {
-            setTicketRitualsCollapsed(true);
-            expect(getTicketRitualsCollapsed()).toBe(true);
-
-            setTicketRitualsCollapsed(false);
-            expect(getTicketRitualsCollapsed()).toBe(false);
-        });
-    });
-
-    describe('toggleTicketRituals', () => {
-        beforeEach(() => {
-            document.body.innerHTML = `
-                <div id="ticket-rituals-section">
-                    <div class="section-toggle-icon"></div>
-                    <div class="ticket-rituals-content collapsed"></div>
-                </div>
-            `;
+            expect(needsYou().length).toBe(0);
+            expect(gate().querySelector('.ticket-gate.clear').textContent).toContain('All 1 ritual done');
+            expect(gate().querySelector('.ticket-gate-list').textContent).toContain('code-review');
+            expect(bar().innerHTML.trim()).toBe('');
         });
 
-        it('toggles collapsed state', () => {
-            setTicketRitualsCollapsed(true);
+        it('scroll-to-ticket-gate brings the panel into view', async () => {
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
+            await viewIssue('issue-1');
+            gate().scrollIntoView = vi.fn();
 
-            toggleTicketRituals();
+            detailActions['scroll-to-ticket-gate']();
 
-            expect(getTicketRitualsCollapsed()).toBe(false);
-        });
-
-        it('toggles collapsed class on content element', () => {
-            setTicketRitualsCollapsed(true);
-            const content = document.querySelector('.ticket-rituals-content');
-
-            toggleTicketRituals();
-
-            expect(content.classList.contains('collapsed')).toBe(false);
+            expect(gate().scrollIntoView).toHaveBeenCalled();
         });
     });
 
