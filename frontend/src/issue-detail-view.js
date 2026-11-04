@@ -13,14 +13,14 @@ import { getProjects, formatEstimate, isOutOfScale } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar, renderAgentBadge, renderPrincipalBadge } from './utils.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
-import { renderMarkdown } from './gate-approvals.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
-import { renderTicketRitualActions, renderOutstandingRejection } from './rituals-view.js';
 import { showDetailDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { registerActions } from './event-delegation.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { showCreateSubIssueModal } from './issue-creation.js';
 import { getMembers } from './teams.js';
+import { renderTicketGatePanel, renderTicketGateStickyBar, describeTicketGate, isAwaitingApproval } from './ticket-gate.js';
+import { viewDocument } from './documents.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
 // Markdown post-processing (issue-link/mention rendering) lives in rich-text.js
@@ -33,7 +33,6 @@ export { processTextNodes, addIssueLinks, addIssueLinksAndMentions, renderCommen
 // Module state
 let commentSubmitting = false;
 let descriptionSubmitting = false;
-let ticketRitualsCollapsed = true;
 let currentTicketRituals = null;
 let detailNavPrevId = null;
 let detailNavNextId = null;
@@ -59,22 +58,6 @@ let remoteIssueDuringEdit = null;
 export function noteSkippedDetailRefresh(freshIssue = null) {
     pendingRemoteRefresh = true;
     if (freshIssue) remoteIssueDuringEdit = freshIssue;
-}
-
-/**
- * Get ticketRitualsCollapsed state
- * @returns {boolean}
- */
-export function getTicketRitualsCollapsed() {
-    return ticketRitualsCollapsed;
-}
-
-/**
- * Set ticketRitualsCollapsed state
- * @param {boolean} collapsed
- */
-export function setTicketRitualsCollapsed(collapsed) {
-    ticketRitualsCollapsed = collapsed;
 }
 
 /**
@@ -255,23 +238,6 @@ export function toggleSection(sectionName) {
 }
 
 /**
- * Toggle ticket rituals section collapsed state
- */
-export function toggleTicketRituals() {
-    ticketRitualsCollapsed = !ticketRitualsCollapsed;
-    const container = document.getElementById('ticket-rituals-section');
-    if (!container) return;
-    const content = container.querySelector('.ticket-rituals-content');
-    const toggleIcon = container.querySelector('.section-toggle-icon');
-    if (content) {
-        content.classList.toggle('collapsed', ticketRitualsCollapsed);
-    }
-    if (toggleIcon) {
-        toggleIcon.classList.toggle('rotated', ticketRitualsCollapsed);
-    }
-}
-
-/**
  * Load ticket rituals for an issue
  * @param {string} issueId - Issue ID
  */
@@ -303,13 +269,14 @@ export async function loadTicketRituals(issueId) {
  * @returns {Array}
  */
 export function ritualsAwaitingApproval(pendingRituals) {
-    return (pendingRituals || []).filter(r => r.attestation && !r.attestation.approved_at);
+    return (pendingRituals || []).filter(isAwaitingApproval);
 }
 
 /**
- * Whether the viewer can approve an attestation: a human team admin (the
- * server refuses agents and non-admins). When the member list is not loaded
- * yet we cannot tell, and show the block rather than bury it again.
+ * Whether the viewer can pass a human step (approve an attestation, complete
+ * a gate): a human team admin (the server refuses agents and non-admins).
+ * When the member list is not loaded yet we cannot tell, and show the step
+ * rather than bury it again.
  * @returns {boolean}
  */
 function canApproveAttestations() {
@@ -318,161 +285,106 @@ function canApproveAttestations() {
     const members = getMembers();
     if (!members || members.length === 0) return true;
     const self = members.find(m => m.user_id === user.id);
-    return !self || self.role === 'admin' || self.role === 'owner';
+    // Loaded and not on the list: not a member here, so not an admin.
+    return !!self && (self.role === 'admin' || self.role === 'owner');
+}
+
+// Watches the gate panel so the sticky bar shows only once it has scrolled
+// out of view (CHT-2020).
+let gateObserver = null;
+let gatePanelVisible = true;
+
+function updateGateStickyVisibility() {
+    const bar = document.getElementById('ticket-gate-sticky');
+    if (!bar) return;
+    const hasContent = bar.innerHTML.trim() !== '';
+    const show = hasContent && !gatePanelVisible;
+    bar.classList.toggle('hidden', !show);
+    // Sticky section headers sit under the bar, not behind it.
+    const view = document.getElementById('issue-detail-view');
+    const height = show ? (bar.firstElementChild?.offsetHeight || 0) : 0;
+    if (view) view.style.setProperty('--gate-bar-h', `${height}px`);
+}
+
+/** Stop watching the gate panel: the ticket it belonged to is going away. */
+function disconnectGatePanel() {
+    if (gateObserver) { gateObserver.disconnect(); gateObserver = null; }
+    gatePanelVisible = true;
+    updateGateStickyVisibility();
+}
+
+// The bar only sticks where :has() lets the detail view drop its
+// non-scrolling scroll containers (style.css); elsewhere it stays hidden.
+const canStick = () => typeof CSS === 'undefined' || typeof CSS.supports !== 'function'
+    || CSS.supports('selector(:has(*))');
+
+function observeGatePanel() {
+    disconnectGatePanel();
+    const panel = document.getElementById('ticket-gate');
+    if (!panel || typeof IntersectionObserver === 'undefined' || !canStick()) return;
+    gateObserver = new IntersectionObserver((entries) => {
+        const entry = entries[entries.length - 1];
+        gatePanelVisible = entry.isIntersecting;
+        updateGateStickyVisibility();
+    });
+    gateObserver.observe(panel);
+}
+
+/** Bring the gate panel into view (the sticky bar's and sidebar's links). */
+export function scrollToTicketGate() {
+    const panel = document.getElementById('ticket-gate');
+    if (!panel || panel.classList.contains('hidden')) return;
+    panel.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    const first = panel.querySelector('.ticket-gate-actions .btn-primary');
+    first?.focus?.({ preventScroll: true });
 }
 
 /**
- * The sticky block at the top of the ticket that puts attestations awaiting
- * approval in front of a human, with the note and the Approve button right
- * there (CHT-2018). Shown only to a human viewer and only while something
- * awaits approval; the Ticket Rituals section further down still lists
- * everything.
- * @param {string} issueId
- */
-export function renderRitualApprovalBanner(issueId) {
-    const banner = document.getElementById('ritual-approval-banner');
-    if (!banner) return;
-    const waiting = canApproveAttestations()
-        ? ritualsAwaitingApproval(currentTicketRituals?.pending_rituals)
-        : [];
-    if (waiting.length === 0) {
-        banner.classList.add('hidden');
-        banner.innerHTML = '';
-        return;
-    }
-    const heading = waiting.length === 1
-        ? 'An attestation needs your approval'
-        : `${waiting.length} attestations need your approval`;
-    banner.classList.remove('hidden');
-    banner.innerHTML = `
-        <div class="ritual-approval-banner-header">
-            <span class="ritual-approval-banner-icon" aria-hidden="true">⏳</span>
-            <strong>${heading}</strong>
-            <span class="ritual-approval-banner-hint">This ticket is waiting on you.</span>
-        </div>
-        ${waiting.map(r => `
-            <div class="ritual-approval-item" data-ritual-id="${escapeAttr(r.id)}">
-                <div class="ritual-approval-item-head">
-                    <span class="ticket-ritual-name">${escapeHtml(r.name)}</span>
-                    <span class="badge badge-trigger-${r.trigger || 'ticket_close'}">${r.trigger === 'ticket_claim' ? 'claim' : 'close'}</span>
-                    <span class="badge badge-ritual-${r.approval_mode || 'auto'}">${r.approval_mode || 'auto'}</span>
-                </div>
-                ${r.prompt ? `<div class="ritual-approval-prompt markdown-body">${renderMarkdown(r.prompt)}</div>` : ''}
-                <div class="ritual-approval-attestation">
-                    <span class="attestation-by">Attested by ${escapeHtml(r.attestation.attested_by_name || 'Unknown')}</span>
-                    <span class="attestation-time">${formatTimeAgo(r.attestation.attested_at)}</span>
-                    ${r.attestation.note ? `<div class="attestation-note markdown-body">${renderMarkdown(r.attestation.note)}</div>` : ''}
-                </div>
-                <div class="ticket-ritual-actions ritual-approval-actions">
-                    ${renderTicketRitualActions(r, issueId)}
-                </div>
-            </div>
-        `).join('')}
-    `;
-}
-
-/**
- * Render ticket rituals section
+ * Render what this ticket's rituals are waiting on (CHT-2020): the gate
+ * block under the title and the sticky "waiting on you" bar. Replaces the
+ * collapsed Ticket Rituals section and the CHT-2018 approval banner.
  * @param {string} issueId - Issue ID
  */
+// The ticket whose gate is painted now, so a re-render after the viewer
+// acts (approve, sign off, send back) can be told from a first paint.
+let paintedGateIssueId = null;
+
 export function renderTicketRituals(issueId) {
-    const container = document.getElementById('ticket-rituals-section');
-    if (!container) return;
+    const panel = document.getElementById('ticket-gate');
+    const bar = document.getElementById('ticket-gate-sticky');
+    const repaint = !!panel && panel.dataset.issueId === issueId && paintedGateIssueId === issueId;
+    const active = document.activeElement;
+    const focusWasHere = !!panel && !!active && (panel.contains(active) || active === document.body);
+    const status = currentTicketRituals;
+    const canAct = canApproveAttestations();
+    const issue = getCurrentDetailIssue();
+    const shown = issue && issue.id === issueId ? issue : null;
+    const assignee = shown?.assignee_id ? getAssigneeById(shown.assignee_id) : null;
+    const assigneeName = assignee ? formatAssigneeName(assignee) : (shown?.assignee_name || null);
 
-    renderRitualApprovalBanner(issueId);
-
-    if (!currentTicketRituals) {
-        container.classList.add('hidden');
-        return;
+    const fill = (el, html) => {
+        if (!el) return;
+        el.innerHTML = html;
+        el.classList.toggle('hidden', html.trim() === '');
+    };
+    fill(panel, status ? renderTicketGatePanel(status, issueId, { canAct, assigneeName }) : '');
+    if (panel) panel.dataset.issueId = issueId;
+    paintedGateIssueId = issueId;
+    if (bar) {
+        const html = status ? renderTicketGateStickyBar(status, { canAct }) : '';
+        bar.innerHTML = html ? `<div class="ticket-gate-sticky-bar">${html}</div>` : '';
+        updateGateStickyVisibility();
     }
-
-    const { pending_rituals, completed_rituals } = currentTicketRituals;
-
-    // Hide section if no ticket-level rituals configured
-    if (pending_rituals.length === 0 && completed_rituals.length === 0) {
-        container.classList.add('hidden');
-        return;
+    if (repaint) {
+        // The step the viewer acted on was replaced: say what is next, and
+        // put focus back on the block rather than leaving it on <body>.
+        const live = document.getElementById('ticket-gate-live');
+        if (live) live.textContent = status ? describeTicketGate(status, { canAct, assigneeName }) : '';
+        if (focusWasHere && panel && !panel.classList.contains('hidden')) {
+            const target = panel.querySelector('.ticket-gate-actions .btn-primary') || panel.querySelector('.ticket-gate');
+            target?.focus?.({ preventScroll: true });
+        }
     }
-
-    container.classList.remove('hidden');
-
-    // Auto-expand when a human has to act: a gate to complete, or a review
-    // attestation awaiting approval. CHT-2018: this only checked gate mode,
-    // so the review case (the one that blocks a ticket) stayed collapsed.
-    const needsHuman = pending_rituals.some(r => r.approval_mode === 'gate')
-        || ritualsAwaitingApproval(pending_rituals).length > 0;
-    if (needsHuman) {
-        ticketRitualsCollapsed = false;
-    }
-
-    const content = container.querySelector('.ticket-rituals-content');
-    if (!content) return;
-
-    content.classList.toggle('collapsed', ticketRitualsCollapsed);
-    const toggleIcon = container.querySelector('.section-toggle-icon');
-    if (toggleIcon) {
-        toggleIcon.classList.toggle('rotated', ticketRitualsCollapsed);
-    }
-
-    // Determine the right warning message based on ritual triggers
-    const hasCloseRituals = pending_rituals.some(r => r.trigger === 'ticket_close');
-    const hasClaimRituals = pending_rituals.some(r => r.trigger === 'ticket_claim');
-    let warningMessage = '⚠️ Complete these rituals:';
-    if (hasCloseRituals && hasClaimRituals) {
-        warningMessage = '⚠️ Pending rituals (claim before starting, close before completing):';
-    } else if (hasClaimRituals) {
-        warningMessage = '⚠️ Complete these rituals before claiming this ticket (or closing it unclaimed):';
-    } else if (hasCloseRituals) {
-        warningMessage = '⚠️ Complete these rituals before closing this ticket:';
-    }
-
-    content.innerHTML = `
-        ${pending_rituals.length > 0 ? `
-            <div class="ticket-rituals-pending">
-                <p class="ticket-rituals-warning">${warningMessage}</p>
-                ${pending_rituals.map(r => `
-                    <div class="ticket-ritual-item pending${r.attestation ? ' attested' : ''}">
-                        <div class="ticket-ritual-info">
-                            <span class="ticket-ritual-status">${r.attestation ? '⏳' : '○'}</span>
-                            <span class="ticket-ritual-name">${escapeHtml(r.name)}</span>
-                            <span class="badge badge-trigger-${r.trigger || 'ticket_close'}">${r.trigger === 'ticket_claim' ? 'claim' : 'close'}</span>
-                            <span class="badge badge-ritual-${r.approval_mode || 'auto'}">${r.approval_mode || 'auto'}</span>
-                        </div>
-                        <div class="ticket-ritual-prompt markdown-body">${r.prompt ? renderMarkdown(r.prompt) : ''}</div>
-                        ${r.attestation ? '' : renderOutstandingRejection(r.last_rejection)}
-                        ${r.attestation ? `
-                            <div class="ticket-ritual-attestation">
-                                <span class="attestation-by">Attested by ${escapeHtml(r.attestation.attested_by_name || 'Unknown')}</span>
-                                <span class="attestation-time">${formatTimeAgo(r.attestation.attested_at)}</span>
-                                ${r.attestation.note ? `<div class="attestation-note markdown-body">${renderMarkdown(r.attestation.note)}</div>` : ''}
-                            </div>
-                        ` : ''}
-                        <div class="ticket-ritual-actions">
-                            ${renderTicketRitualActions(r, issueId)}
-                        </div>
-                    </div>
-                `).join('')}
-            </div>
-        ` : ''}
-        ${completed_rituals.length > 0 ? `
-            <div class="ticket-rituals-completed">
-                ${completed_rituals.map(r => `
-                    <div class="ticket-ritual-item completed">
-                        <div class="ticket-ritual-info">
-                            <span class="ticket-ritual-status">✓</span>
-                            <span class="ticket-ritual-name">${escapeHtml(r.name)}</span>
-                        </div>
-                        ${r.attestation ? `
-                            <div class="ticket-ritual-attestation">
-                                <span class="attestation-by">Attested by ${escapeHtml(r.attestation.attested_by_name || 'Unknown')}</span>
-                                <span class="attestation-time">${formatTimeAgo(r.attestation.attested_at)}</span>
-                            </div>
-                        ` : ''}
-                    </div>
-                `).join('')}
-            </div>
-        ` : ''}
-    `;
 }
 
 /**
@@ -661,6 +573,8 @@ function paintDetailFromRow(row) {
     const detailView = document.getElementById('issue-detail-view');
     const content = detailView?.querySelector('#issue-detail-content');
     if (!content) return;
+    disconnectGatePanel();
+    paintedGateIssueId = null;
     setCurrentDetailIssue(row);
     const nav = computeDetailNav(row.id);
     detailNavPrevId = nav.prevIssue ? nav.prevIssue.id : null;
@@ -731,9 +645,6 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         // Record the list's scroll position before we replace it with detail
         // content, so Back can restore it (CHT-1211 item 1).
         if (pushHistory) saveScrollPosition();
-
-        // A refresh keeps whatever the user expanded (PR #318 review 3).
-        if (!refresh) ticketRitualsCollapsed = true;
 
         // Paint what a list already loaded at once (CHT-1899), and take the
         // history entry now, so Back works while the rest loads.
@@ -857,6 +768,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         detailView.querySelector('#issue-detail-content').innerHTML = `
             <div class="detail-layout">
                 <div class="detail-main">
+                    <div id="ticket-gate-sticky" class="ticket-gate-sticky hidden" role="region" aria-label="Rituals waiting on you"></div>
                     <div class="issue-detail-nav">
                         <button class="back-link" data-action="navigate-to" data-view="${escapeAttr(backView)}">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
@@ -868,14 +780,15 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
 
                     <h1 class="issue-detail-title">${escapeHtml(issue.title)}</h1>
 
-                    <div id="ritual-approval-banner" class="ritual-approval-banner hidden" role="region" aria-label="Rituals awaiting you"></div>
-
                     ${parentIssue ? `
                     <div class="parent-issue-link">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                         Sub-issue of <a href="/issue/${encodeURIComponent(parentIssue.identifier)}" data-action="navigate-issue" data-issue-id="${escapeAttr(parentIssue.id)}" data-identifier="${escapeAttr(parentIssue.identifier)}">${parentIssue.identifier}: ${escapeHtml(parentIssue.title)}</a>
                     </div>
                     ` : ''}
+
+                    <div id="ticket-gate" class="ticket-gate-slot hidden"></div>
+                    <div id="ticket-gate-live" class="sr-only" role="status" aria-live="polite"></div>
 
                     <div class="issue-detail-description">
                         <div class="section-header">
@@ -975,20 +888,6 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                                     `).join('')}
                                 </div>
                             ` : ''}
-                        </div>
-                    </div>
-
-                    <div id="ticket-rituals-section" class="issue-detail-section hidden">
-                        <div class="section-header section-header-collapsible" data-action="toggle-ticket-rituals">
-                            <h3>Ticket Rituals</h3>
-                            <button type="button" class="section-toggle" aria-label="Toggle ticket rituals">
-                                <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                                    <path d="M4 6l4 4 4-4"/>
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="ticket-rituals-content collapsed">
-                            <!-- Populated by loadTicketRituals -->
                         </div>
                     </div>
 
@@ -1212,6 +1111,9 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         }
 
         // Render ticket rituals (data already fetched in Promise.all above)
+        // Watch first, so the previous ticket's scroll state can't show
+        // this ticket's bar over its own panel.
+        observeGatePanel();
         renderTicketRituals(issue.id);
         setupMentionAutocomplete('new-comment', 'mention-suggestions', { projectId: issue.project_id });
         setupQuoteComment({ signal: detailSignal });
@@ -1789,8 +1691,15 @@ registerActions({
     'toggle-section': (_event, data) => {
         toggleSection(data.section);
     },
-    'toggle-ticket-rituals': () => {
-        toggleTicketRituals();
+    'open-gate-document': (event, data) => {
+        // Plain click opens the document in the app; a modified click keeps
+        // the link's own new-tab behaviour.
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) return;
+        event.preventDefault();
+        viewDocument(data.documentId);
+    },
+    'scroll-to-ticket-gate': () => {
+        scrollToTicketGate();
     },
     'save-comment': (event, data) => {
         handleAddComment(event, data.issueId);

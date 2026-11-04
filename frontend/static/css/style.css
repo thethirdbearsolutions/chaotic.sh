@@ -46,6 +46,13 @@
     --warning-color: #d29922;
     --error-color: #f85149;
 
+    /* Semantic state colors (CHT-2023). Color means state, not decoration:
+       accent is "your turn" (primary actions, links, what needs you),
+       success is a small check, danger a send-back or a bug. Tints and
+       borders derive from these bases, so light and dark stay in step. */
+    --success-fg: #3fb950;
+    --danger-fg: #f47067;
+
     /* Spacing scale (4px base) */
     --space-xs: 4px;
     --space-sm: 6px;
@@ -98,9 +105,12 @@ body.theme-light {
     --text-secondary: #4b5563;
     --text-muted: #6b7280;
     --border-color: #d5d9e2;
-    --accent-color: #2563eb;
-    --accent-hover: #1d4ed8;
+    /* One accent hue in both themes (CHT-2023): light was blue, dark indigo. */
+    --accent-color: #4f46e5;
+    --accent-hover: #4338ca;
     --success-color: #16a34a;
+    --success-fg: #1a7f37;
+    --danger-fg: #cf222e;
     --warning-color: #d97706;
     --error-color: #dc2626;
     --row-hover: #f0f0ee;
@@ -3708,7 +3718,8 @@ input[type="checkbox"] {
 .issue-detail-section > .section-header-collapsible,
 .issue-detail-description > h3 {
     position: sticky;
-    top: 0;
+    /* Below the ticket gate bar while it shows (CHT-2020). */
+    top: var(--gate-bar-h, 0px);
     background: var(--bg-primary);
     padding: 8px 0;
     z-index: 5;
@@ -6554,17 +6565,6 @@ input[type="checkbox"] {
     margin: 0 0 12px 0;
 }
 
-/* Ticket rituals in issue detail */
-.ticket-rituals-content {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.ticket-rituals-content.collapsed {
-    display: none;
-}
-
 .section-header-collapsible {
     display: flex;
     align-items: center;
@@ -6606,97 +6606,6 @@ input[type="checkbox"] {
 /* Generic collapsible section content */
 .section-collapsible-content.collapsed {
     display: none;
-}
-
-.ticket-rituals-warning {
-    font-size: var(--font-base);
-    color: #f59e0b;
-    margin: 0 0 8px 0;
-}
-
-.ticket-ritual-item {
-    padding: 12px;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-color);
-}
-
-.ticket-ritual-item.completed {
-    opacity: 0.7;
-}
-
-.ticket-ritual-info {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.ticket-ritual-status {
-    font-size: var(--font-md);
-}
-
-.ticket-ritual-name {
-    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.ticket-ritual-prompt {
-    font-size: var(--font-base);
-    color: var(--text-secondary);
-    margin: 4px 0 8px 22px;
-}
-
-.ticket-ritual-actions {
-    margin-left: 22px;
-    display: flex;
-    gap: 8px;
-    align-items: center;
-}
-
-.ticket-rituals-completed {
-    margin-top: 8px;
-}
-
-.ticket-ritual-attestation {
-    margin: 8px 0 0 22px;
-    padding: 8px;
-    background: var(--bg-secondary);
-    border-radius: var(--radius-sm);
-    font-size: var(--font-base);
-}
-
-.ticket-ritual-attestation .attestation-by {
-    color: var(--text-secondary);
-    font-weight: 500;
-}
-
-.ticket-ritual-attestation .attestation-time {
-    color: var(--text-muted);
-    margin-left: 8px;
-    font-size: var(--font-sm);
-}
-
-.ticket-ritual-attestation .attestation-note {
-    margin-top: 6px;
-    color: var(--text-secondary);
-}
-
-.ticket-ritual-item.pending.attested {
-    border-left: 3px solid var(--warning-color, #f59e0b);
-}
-
-.ticket-ritual-note {
-    color: var(--text-secondary);
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-.ticket-ritual-meta {
-    color: var(--text-muted);
-    font-size: var(--font-sm);
-    margin-top: 4px;
 }
 
 /* ============================================================================
@@ -10248,105 +10157,280 @@ body.theme-light .picker-popover {
 .person-issue-status { color: var(--text-secondary); font-size: 0.75rem; text-transform: capitalize; flex-shrink: 0; }
 .profile-photo-row { display: flex; align-items: center; gap: var(--space-lg); flex-wrap: wrap; }
 
-/* Attestations awaiting the viewer's approval, pinned to the top of the
-   ticket detail (CHT-2018). Sits above the sticky section headers. */
-.ritual-approval-banner {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    margin: 0 0 16px 0;
-    padding: 12px 14px;
-    background: color-mix(in srgb, var(--warning-color) 14%, var(--bg-primary));
-    border: 1px solid var(--warning-color);
-    border-left-width: 4px;
-    border-radius: var(--radius-md);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-    max-height: 45vh;
-    overflow-y: auto;
+/* ============================================================================
+   Semantic state tokens, derived (CHT-2023). Declared on both scopes so a
+   theme's base colors flow into them.
+   ============================================================================ */
+:root,
+body.theme-light {
+    --accent-fg: color-mix(in srgb, var(--accent-color) 70%, var(--text-primary));
+    --accent-subtle: color-mix(in srgb, var(--accent-color) 9%, var(--bg-secondary));
+    --accent-border: color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
+    --success-subtle: color-mix(in srgb, var(--success-fg) 12%, var(--bg-secondary));
+    --danger-subtle: color-mix(in srgb, var(--danger-fg) 10%, var(--bg-secondary));
+    --danger-border: color-mix(in srgb, var(--danger-fg) 45%, var(--border-color));
 }
 
-.ritual-approval-banner-header {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 8px;
-    color: var(--text-primary);
-    font-size: var(--font-md);
-}
-
-.ritual-approval-banner-hint {
-    color: var(--text-secondary);
-    font-size: var(--font-sm);
-}
-
-.ritual-approval-item {
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid color-mix(in srgb, var(--warning-color) 35%, transparent);
-}
-
-.ritual-approval-item-head {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.ritual-approval-prompt {
-    font-size: var(--font-sm);
-    color: var(--text-secondary);
-    margin: 4px 0 0 0;
-}
-
-.ritual-approval-attestation {
-    margin: 8px 0;
-    padding: 8px 10px;
-    background: var(--bg-primary);
-    border-radius: var(--radius-sm);
-    font-size: var(--font-base);
-}
-
-.ritual-approval-attestation .attestation-by {
-    color: var(--text-secondary);
-    font-weight: 500;
-}
-
-.ritual-approval-attestation .attestation-time {
-    color: var(--text-muted);
-    margin-left: 8px;
-    font-size: var(--font-sm);
-}
-
-.ritual-approval-attestation .attestation-note {
-    margin-top: 6px;
-    color: var(--text-primary);
-}
-
-.ritual-approval-banner .ritual-approval-actions {
-    margin-left: 0;
-    flex-wrap: wrap;
-}
-
-/* .main-content's overflow-x: hidden and .detail-main's overflow-y: auto make
-   each a scroll container that never scrolls (the window does), which pins a
-   sticky child to nothing. While the banner shows on the open ticket, clip
-   instead: clip is not a scroll container, so the banner sticks to the
-   viewport (CHT-2018). The other sticky things in .main-content never stuck
-   before; keep them in flow so they do not pile onto the banner. */
-.main-content:has(#issue-detail-view:not(.hidden) .ritual-approval-banner:not(.hidden)),
-#issue-detail-view:not(.hidden) .detail-main:has(> .ritual-approval-banner:not(.hidden)) {
+/* ============================================================================
+   Ticket detail: let sticky things stick (CHT-2020, CHT-2022)
+   .main-content's overflow-x: hidden and .detail-main/.detail-sidebar's
+   overflow-y: auto made each a scroll container that never scrolls (the
+   window does), which pinned every sticky child to nothing. On the open
+   ticket they clip instead: clip is not a scroll container. The limbo
+   banner and mobile header stay in flow there so nothing piles onto the
+   gate bar.
+   ============================================================================ */
+.main-content:has(> #issue-detail-view:not(.hidden)) {
     overflow-x: clip;
     overflow-y: visible;
     min-width: 0;
 }
 
-.main-content:has(#issue-detail-view:not(.hidden) .ritual-approval-banner:not(.hidden)) > .limbo-banner,
-.main-content:has(#issue-detail-view:not(.hidden) .ritual-approval-banner:not(.hidden)) > .mobile-header {
+#issue-detail-view .detail-main,
+#issue-detail-view .detail-sidebar {
+    overflow: visible;
+    min-width: 0;
+}
+
+.main-content:has(> #issue-detail-view:not(.hidden)) > .limbo-banner,
+.main-content:has(> #issue-detail-view:not(.hidden)) > .mobile-header {
     position: static;
 }
 
-/* Wide content in the ticket used to scroll sideways inside .detail-main;
-   give it its own scroll while that is clipped. */
-#issue-detail-view:not(.hidden) .detail-main:has(> .ritual-approval-banner:not(.hidden)) .markdown-body {
+/* Wide content used to scroll sideways inside .detail-main; now each block
+   scrolls on its own. */
+#issue-detail-view .markdown-body {
     overflow-x: auto;
+}
+
+/* The composer named an undefined --bg-color, so once it stuck it was see-through. */
+#issue-detail-view .comment-form-sticky {
+    background: var(--bg-primary);
+}
+
+@media (max-width: 900px) {
+    #issue-detail-view .detail-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 600px) {
+    /* On a phone the stuck composer would cover the gate's buttons. */
+    #issue-detail-view .comment-form-sticky {
+        position: static;
+    }
+}
+
+/* ============================================================================
+   Ticket gate: what the ticket's rituals are waiting on (CHT-2020)
+   One next step, one primary button, no pills. A left edge marks the
+   block; the accent means it is waiting on you.
+   ============================================================================ */
+.ticket-gate-slot { margin: 16px 0 32px; }
+
+.ticket-gate {
+    position: relative;
+    border-left: 3px solid var(--border-color);
+    padding: 2px 0 2px 18px;
+}
+
+.ticket-gate.you { border-left-color: var(--accent-color); }
+
+.ticket-gate-kicker {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-xs);
+    padding-right: 160px;
+}
+
+.ticket-gate.you .ticket-gate-kicker { color: var(--accent-fg); font-weight: 600; }
+.ticket-gate-when { color: var(--text-muted); font-weight: 400; }
+.ticket-gate-earlier { margin-top: var(--space-sm); font-size: var(--font-sm); color: var(--text-muted); }
+.ticket-gate:focus { outline: none; }
+.ticket-gate:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+
+.ticket-gate-step {
+    font-size: var(--font-xl);
+    font-weight: 500;
+    margin: 0 0 var(--space-xs);
+    color: var(--text-primary);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.ticket-gate-step b { font-weight: 650; }
+
+.ticket-gate-asks {
+    font-size: var(--font-base);
+    color: var(--text-secondary);
+    margin: 0 0 14px;
+}
+
+.ticket-gate-asks p { margin: 0; }
+
+.ticket-gate-attestation {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg) 14px;
+    margin-bottom: 14px;
+}
+
+.ticket-gate-by {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    margin-bottom: var(--space-sm);
+}
+
+.ticket-gate-note { font-size: var(--font-md); color: var(--text-primary); }
+.ticket-gate-note p { margin: 0 0 var(--space-md); }
+.ticket-gate-note p:last-child { margin-bottom: 0; }
+
+.ticket-gate-note pre {
+    margin: var(--space-sm) 0 var(--space-md);
+    padding: var(--space-md) 10px;
+    font-size: var(--font-sm);
+    background: var(--bg-primary);
+    border: none;
+}
+
+.ticket-gate-artifact {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    text-decoration: none;
+}
+
+.ticket-gate-artifact:hover { color: var(--text-primary); }
+
+.ticket-gate-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xl);
+    flex-wrap: wrap;
+}
+
+.ticket-gate-actions .btn { height: 32px; padding: 0 18px; font-size: var(--font-base); font-weight: 500; }
+
+.ticket-gate-text-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: var(--font-base);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.ticket-gate-text-btn:hover { color: var(--text-primary); }
+.ticket-gate-text-btn.accent { color: var(--accent-fg); font-weight: 500; }
+
+.ticket-gate-then {
+    margin-top: 18px;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+
+.ticket-gate-then b { color: var(--text-secondary); font-weight: 600; }
+
+/* "N of M rituals done": top right, opens the full list below. */
+.ticket-gate-list summary {
+    position: absolute;
+    top: 2px;
+    right: 0;
+    list-style: none;
+    cursor: pointer;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+
+.ticket-gate-list summary::-webkit-details-marker { display: none; }
+.ticket-gate-list summary:hover { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
+.ticket-gate-list[open] summary { color: var(--text-primary); }
+
+.ticket-gate-list ul {
+    list-style: none;
+    margin: 16px 0 0;
+    padding: 10px 0 0;
+    border-top: 1px solid var(--border-color);
+}
+
+.ticket-gate-list li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: 3px 0;
+    font-size: var(--font-sm);
+    color: var(--text-primary);
+}
+
+.ticket-gate-li-ic { display: inline-grid; place-items: center; color: var(--text-muted); }
+.ticket-gate-list li.done .ticket-gate-li-ic { color: var(--success-fg); }
+.ticket-gate-list li.you .ticket-gate-li-ic { color: var(--accent-fg); }
+.ticket-gate-li-who { color: var(--text-muted); }
+
+/* All done: a single quiet line. */
+.ticket-gate.clear {
+    border-left: none;
+    padding: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+}
+
+.ticket-gate-clear-ic { color: var(--success-fg); display: inline-grid; place-items: center; height: 18px; }
+.ticket-gate.clear .ticket-gate-list { flex: 1; }
+.ticket-gate.clear .ticket-gate-list summary { position: static; color: var(--text-secondary); }
+.ticket-gate.clear .ticket-gate-list ul { margin-top: var(--space-md); }
+
+/* Sticky bar, shown once the block scrolls away. The sticky element has no
+   height, and the bar hangs from it, so showing or hiding the bar never
+   moves the page (which would also re-trigger the observer). */
+.ticket-gate-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    height: 0;
+}
+
+.ticket-gate-sticky-bar {
+    position: absolute;
+    top: 0;
+    left: -40px;
+    right: -40px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 9px 40px;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border-color);
+    box-shadow: inset 3px 0 0 var(--accent-color);
+    font-size: var(--font-base);
+    color: var(--text-secondary);
+}
+
+.ticket-gate-sticky b { color: var(--text-primary); font-weight: 600; }
+.ticket-gate-sticky-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 900px) {
+    /* The page padding varies by width here; sit inside it instead of bleeding. */
+    .ticket-gate-sticky-bar {
+        top: 0;
+        left: 0;
+        right: 0;
+        padding: 9px var(--space-lg);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        box-shadow: inset 3px 0 0 var(--accent-color), var(--shadow-sm);
+    }
+}
+
+@media (max-width: 600px) {
+    .ticket-gate { padding-left: 14px; }
+    .ticket-gate-kicker { padding-right: 0; }
+    .ticket-gate-list summary { position: static; margin-top: 14px; }
+    .ticket-gate-actions .btn { flex: 1; height: 40px; }
+    .ticket-gate-note pre { overflow-x: auto; }
 }
