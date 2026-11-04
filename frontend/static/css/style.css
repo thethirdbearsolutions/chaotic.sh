@@ -10434,3 +10434,233 @@ body.theme-light {
     .ticket-gate-actions .btn { flex: 1; height: 40px; }
     .ticket-gate-note pre { overflow-x: auto; }
 }
+
+/* ============================================================================
+   Ticket body (CHT-2021): one quiet page under the gate. No boxed
+   sections, no empty states, one stream for comments and activity.
+   ============================================================================ */
+#issue-detail-view .issue-detail-title { margin-bottom: var(--space-md); }
+
+/* Properties as one line under the title; only where the sidebar is at the
+   bottom of the page. */
+.issue-meta-line { display: none; }
+
+/* Description: no header. Clicking it edits; a quiet Edit shows on hover or
+   keyboard focus (and stays while there is an unsaved draft). */
+.issue-detail-description { position: relative; margin-bottom: var(--space-xl); }
+.issue-detail-description > .description-edit-row {
+    position: absolute;
+    top: -4px;
+    right: 0;
+    margin: 0;
+    z-index: 1;
+}
+.description-edit-btn {
+    border: 0;
+    background: var(--bg-primary);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-sm);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    opacity: 0;
+}
+.issue-detail-description:hover .description-edit-btn,
+.description-edit-btn:focus-visible,
+.description-edit-btn.has-draft { opacity: 1; }
+.description-edit-btn:hover { color: var(--text-primary); }
+.description-content { cursor: text; }
+
+/* Related work: one list, kind on the right, one Add. */
+.related-work { margin-bottom: var(--space-xl); }
+.related-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    margin-bottom: var(--space-sm);
+}
+.related-head h3,
+.ticket-timeline > h3 {
+    position: static;
+    margin: 0;
+    padding: 0;
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: none;
+    letter-spacing: 0;
+}
+.related-add { position: relative; }
+.related-add > summary { list-style: none; cursor: pointer; }
+.related-add > summary::-webkit-details-marker { display: none; }
+.related-add-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    min-width: 160px;
+    padding: 4px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.25));
+}
+.related-add-menu button {
+    text-align: left;
+    border: 0;
+    background: none;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--font-sm);
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+.related-add-menu button:hover,
+.related-add-menu button:focus-visible { background: var(--bg-tertiary); }
+.related-list { list-style: none; margin: 0; padding: 0; }
+.related-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 2px 0;
+    border-top: 1px solid var(--border-color);
+    font-size: var(--font-sm);
+}
+.related-row:last-child { border-bottom: 1px solid var(--border-color); }
+.related-status { display: inline-grid; place-items: center; flex-shrink: 0; }
+.related-id { color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; text-decoration: none; }
+.related-id:hover { color: var(--accent-fg); }
+.related-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.related-kind { color: var(--text-muted); flex-shrink: 0; }
+.related-kind.blocked { color: var(--danger-fg); }
+.related-remove {
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    padding: 4px;
+    cursor: pointer;
+    opacity: 0;
+    display: inline-grid;
+}
+.related-row:hover .related-remove,
+.related-remove:focus-visible { opacity: 1; }
+.related-remove:hover { color: var(--danger-fg); }
+
+/* One stream: comments keep their body, everything else is one line. */
+.ticket-timeline > h3 { margin-bottom: var(--space-md); }
+.ticket-timeline .section-count { font-weight: 400; color: var(--text-muted); }
+.timeline { list-style: none; margin: 0 0 var(--space-lg); padding: 0; gap: 0; }
+.timeline > li { position: relative; }
+.timeline-comment.comment {
+    display: flex;
+    gap: 12px;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    padding: 12px 0;
+    margin: 0;
+}
+.timeline-comment .comment-avatar {
+    width: 24px;
+    height: 24px;
+    font-size: var(--font-xs);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+.timeline-event {
+    display: flex;
+    gap: 12px;
+    padding: 4px 0;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+.timeline-dot {
+    width: 24px;
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    height: 20px;
+}
+.timeline-dot::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--border-color);
+}
+.timeline-event.sent-back .timeline-dot::before { background: var(--danger-fg); }
+.timeline-event-body { flex: 1; min-width: 0; line-height: 20px; }
+.timeline-event-body b,
+.timeline-event-body strong { color: var(--text-primary); font-weight: 600; }
+.timeline-meta { color: var(--text-muted); }
+.timeline-note { margin-top: 2px; }
+.timeline-note > summary { cursor: pointer; color: var(--text-muted); width: fit-content; }
+.timeline-note > summary:hover { color: var(--text-primary); }
+.timeline-note .markdown-body {
+    margin-top: 4px;
+    padding-left: 10px;
+    border-left: 2px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+/* Sidebar badges: a neutral outline with a colored dot, not a fill. */
+.detail-sidebar .issue-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+}
+.detail-sidebar .issue-type-badge::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+.detail-sidebar .issue-type-badge.type-bug::before { background: var(--danger-fg); }
+.detail-sidebar .issue-type-badge.type-feature::before,
+.detail-sidebar .issue-type-badge.type-epic::before { background: var(--accent-color); }
+
+@media (max-width: 900px) {
+    .issue-meta-line {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 8px;
+        margin: 0 0 var(--space-lg);
+        font-size: var(--font-sm);
+        color: var(--text-secondary);
+    }
+    .issue-meta-part { display: inline-flex; align-items: center; gap: 4px; }
+    .issue-meta-sep { color: var(--text-muted); }
+    /* Touch has no hover: keep remove visible. Edit stays hidden (tapping
+       the description edits it) unless there is a draft, which then gets
+       its own line rather than covering the text. */
+    .related-remove { opacity: 1; }
+    .issue-detail-description > .description-edit-row:has(.has-draft) {
+        position: static;
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 4px;
+    }
+}
+
+@media (max-width: 600px) {
+    /* The composer is on this screen; the + button would cover the gate. */
+    body:has(#issue-detail-view:not(.hidden)) .mobile-fab { display: none; }
+}
+.timeline-comment .comment-header { justify-content: flex-start; gap: 8px; margin-bottom: 2px; }
+.timeline-comment .comment-header .comment-date::before { content: '· '; }
+.timeline-comment .comment-content > :last-child { margin-bottom: 0; }
+.timeline .comment + .comment { padding-top: 12px; }

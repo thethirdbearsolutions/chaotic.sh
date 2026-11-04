@@ -881,22 +881,40 @@ describe('issue-detail-view', () => {
             });
         });
 
-        it('renders empty sub-issues state', async () => {
+        it('shows related work as a heading and one Add, not an empty state (CHT-2021)', async () => {
             await viewIssue('issue-1');
 
-            const content = document.getElementById('issue-detail-content').innerHTML;
-            expect(content).toContain('No sub-issues');
-            expect(content).toContain('Break this issue down by creating sub-issues');
-            expect(content).toContain('empty-state');
+            const related = document.querySelector('#issue-detail-content .related-work');
+            expect(related.querySelector('h3').textContent).toBe('Related work');
+            expect(related.querySelector('.related-list')).toBeNull();
+            expect(related.querySelector('[data-action="show-create-sub-issue-modal"]')).not.toBeNull();
+            expect(related.querySelector('[data-action="show-add-relation-modal"]')).not.toBeNull();
+            expect(document.getElementById('issue-detail-content').innerHTML).not.toContain('No sub-issues');
         });
 
-        it('renders empty activity state', async () => {
+        it('shows one stream with no empty activity box (CHT-2021)', async () => {
             await viewIssue('issue-1');
 
-            const content = document.getElementById('issue-detail-content').innerHTML;
-            expect(content).toContain('No activity yet');
-            expect(content).toContain('Activity will appear here as the issue is updated');
-            expect(content).toContain('empty-state');
+            const content = document.getElementById('issue-detail-content');
+            expect(content.querySelector('#activity-section')).toBeNull();
+            expect(content.querySelector('#comments-section .comments-empty').textContent).toBe('No comments yet');
+        });
+
+        it('has no Description header, and the description still opens the editor (CHT-2021)', async () => {
+            await viewIssue('issue-1');
+
+            const section = document.querySelector('.issue-detail-description');
+            expect(section.querySelector('h3')).toBeNull();
+            expect(section.querySelector('.description-edit-btn').dataset.action).toBe('edit-description');
+            expect(section.querySelector('.description-content').dataset.action).toBe('edit-description');
+        });
+
+        it('puts a one-line summary of the properties under the title (CHT-2021)', async () => {
+            await viewIssue('issue-1');
+
+            const line = document.querySelector('.issue-detail-title + .issue-meta-line');
+            expect(line).not.toBeNull();
+            expect(line.textContent).toContain('Unassigned');
         });
 
         it('shows error toast on API failure', async () => {

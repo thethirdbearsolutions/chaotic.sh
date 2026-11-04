@@ -11,7 +11,7 @@ import { showToast, showModal, closeModal, showApiError, showMentionWarnings } f
 import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate, isOutOfScale } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
-import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar, renderAgentBadge, renderPrincipalBadge } from './utils.js';
+import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, sanitizeColor, renderAvatar, renderPrincipalBadge } from './utils.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
 import { showDetailDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
@@ -21,6 +21,7 @@ import { showCreateSubIssueModal } from './issue-creation.js';
 import { getMembers } from './teams.js';
 import { renderTicketGatePanel, renderTicketGateStickyBar, describeTicketGate, isAwaitingApproval } from './ticket-gate.js';
 import { viewDocument } from './documents.js';
+import { renderRelatedWork, renderTimeline, renderMetaLine } from './ticket-body.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
 // Markdown post-processing (issue-link/mention rendering) lives in rich-text.js
@@ -674,26 +675,9 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
             api.getTicketRitualsStatus(issueId).catch(() => ({ pending_rituals: [], completed_rituals: [] })),
         ]);
 
-        // Extract attestation notes from ALL rituals (pending + completed) and merge with comments
-        const allRituals = [
-            ...(ritualStatus.pending_rituals || []),
-            ...(ritualStatus.completed_rituals || []),
-        ];
-        const attestationNotes = allRituals
-            .filter(r => r.attestation && r.attestation.note)
-            .map(r => ({
-                id: `attestation-${r.attestation.id}`,
-                author_name: r.attestation.attested_by_name || 'Unknown',
-                author: r.attestation.attester || null,
-                content: r.attestation.note,
-                created_at: r.attestation.attested_at,
-                is_attestation: true,
-                ritual_name: r.name,
-                is_pending: !r.attestation.approved_at,
-            }));
-
-        // Combine and sort chronologically
-        const allComments = [...comments, ...attestationNotes].sort((a, b) =>
+        // Comments in time order. Attestations reach the timeline as
+        // activity events (CHT-2021), so their notes are not merged in here.
+        const allComments = [...comments].sort((a, b) =>
             new Date(a.created_at) - new Date(b.created_at)
         );
 
@@ -727,11 +711,6 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
 
         // Store ritual status for renderTicketRituals (avoids duplicate API call)
         currentTicketRituals = ritualStatus;
-
-        // Separate relations by type
-        const blockingIssues = relations.filter(r => r.relation_type === 'blocks' && r.direction === 'outgoing');
-        const blockedByIssues = relations.filter(r => r.relation_type === 'blocked_by' || (r.relation_type === 'blocks' && r.direction === 'incoming'));
-        const relatedIssues = relations.filter(r => r.relation_type === 'relates_to');
 
         // Update URL
         if (pushHistory && !historyPushed) {
@@ -779,6 +758,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                     </div>
 
                     <h1 class="issue-detail-title">${escapeHtml(issue.title)}</h1>
+                    ${renderMetaLine(issue, assigneeName)}
 
                     ${parentIssue ? `
                     <div class="parent-issue-link">
@@ -791,12 +771,9 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                     <div id="ticket-gate-live" class="sr-only" role="status" aria-live="polite"></div>
 
                     <div class="issue-detail-description">
-                        <div class="section-header">
-                            <h3>Description</h3>
-                            <button class="btn btn-secondary btn-sm" data-action="edit-description" data-issue-id="${escapeAttr(issue.id)}">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                                Edit
-                                ${getDescriptionDraft(issue.id) ? '<span class="draft-indicator" title="Unsaved draft">Draft</span>' : ''}
+                        <div class="section-header description-edit-row">
+                            <button type="button" class="description-edit-btn${getDescriptionDraft(issue.id) ? ' has-draft' : ''}" data-action="edit-description" data-issue-id="${escapeAttr(issue.id)}" aria-label="Edit description">
+                                ${getDescriptionDraft(issue.id) ? '<span class="draft-indicator" title="Unsaved draft">Draft</span>' : 'Edit'}
                             </button>
                         </div>
                         <div class="description-content markdown-body ${!issue.description ? 'empty' : ''}" data-action="edit-description" data-issue-id="${escapeAttr(issue.id)}">
@@ -804,154 +781,13 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                         </div>
                     </div>
 
-                    <div class="issue-detail-section sub-issues-section">
-                        <div class="section-header">
-                            <h3>Sub-issues</h3>
-                            <button class="btn btn-secondary btn-sm" data-action="show-create-sub-issue-modal" data-issue-id="${escapeAttr(issue.id)}" data-project-id="${escapeAttr(issue.project_id)}">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                Add
-                            </button>
-                        </div>
-                        <div class="sub-issues-list">
-                            ${subIssues.length === 0 ? renderEmptyState({
-                                icon: EMPTY_ICONS.issues,
-                                heading: 'No sub-issues',
-                                description: 'Break this issue down by creating sub-issues',
-                            }) : subIssues.map(subIssue => `
-                                <a href="/issue/${encodeURIComponent(subIssue.identifier)}" class="sub-issue-item" data-action="navigate-issue" data-issue-id="${escapeAttr(subIssue.id)}" data-identifier="${escapeAttr(subIssue.identifier)}">
-                                    <span class="sub-issue-status">${getStatusIcon(subIssue.status)}</span>
-                                    <span class="sub-issue-id">${subIssue.identifier}</span>
-                                    <span class="sub-issue-title">${escapeHtml(subIssue.title)}</span>
-                                    ${subIssue.estimate != null ? `<span class="sub-issue-estimate">${subIssue.estimate}pts</span>` : ''}
-                                </a>
-                            `).join('')}
-                        </div>
-                    </div>
+                    ${renderRelatedWork(issue, subIssues, relations)}
 
-                    <div class="issue-detail-section relations-section">
-                        <div class="section-header">
-                            <h3>Relations</h3>
-                            <button class="btn btn-secondary btn-sm" data-action="show-add-relation-modal" data-issue-id="${escapeAttr(issue.id)}">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                Add
-                            </button>
-                        </div>
-                        <div class="relations-list">
-                            ${blockingIssues.length === 0 && blockedByIssues.length === 0 && relatedIssues.length === 0 ? `
-                                <div class="relations-empty">No relations</div>
-                            ` : ''}
-                            ${blockedByIssues.length > 0 ? `
-                                <div class="relation-group">
-                                    <div class="relation-group-label">Blocked by</div>
-                                    ${blockedByIssues.map(rel => `
-                                        <div class="relation-item blocked-by">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
-                                            <span class="relation-status">${getStatusIcon(rel.related_issue_status)}</span>
-                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" data-action="navigate-issue" data-issue-id="${escapeAttr(rel.related_issue_id)}" data-identifier="${escapeAttr(rel.related_issue_identifier)}" class="relation-link">${rel.related_issue_identifier}</a>
-                                            <span class="relation-title">${escapeHtml(rel.related_issue_title)}</span>
-                                            <button class="relation-delete" data-action="remove-relation" data-issue-id="${escapeAttr(issue.id)}" data-relation-id="${escapeAttr(rel.id)}" title="Remove relation">
-                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                                            </button>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            ` : ''}
-                            ${blockingIssues.length > 0 ? `
-                                <div class="relation-group">
-                                    <div class="relation-group-label">Blocks</div>
-                                    ${blockingIssues.map(rel => `
-                                        <div class="relation-item blocks">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
-                                            <span class="relation-status">${getStatusIcon(rel.related_issue_status)}</span>
-                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" data-action="navigate-issue" data-issue-id="${escapeAttr(rel.related_issue_id)}" data-identifier="${escapeAttr(rel.related_issue_identifier)}" class="relation-link">${rel.related_issue_identifier}</a>
-                                            <span class="relation-title">${escapeHtml(rel.related_issue_title)}</span>
-                                            <button class="relation-delete" data-action="remove-relation" data-issue-id="${escapeAttr(issue.id)}" data-relation-id="${escapeAttr(rel.id)}" title="Remove relation">
-                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                                            </button>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            ` : ''}
-                            ${relatedIssues.length > 0 ? `
-                                <div class="relation-group">
-                                    <div class="relation-group-label">Related to</div>
-                                    ${relatedIssues.map(rel => `
-                                        <div class="relation-item relates-to">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                                            <span class="relation-status">${getStatusIcon(rel.related_issue_status)}</span>
-                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" data-action="navigate-issue" data-issue-id="${escapeAttr(rel.related_issue_id)}" data-identifier="${escapeAttr(rel.related_issue_identifier)}" class="relation-link">${rel.related_issue_identifier}</a>
-                                            <span class="relation-title">${escapeHtml(rel.related_issue_title)}</span>
-                                            <button class="relation-delete" data-action="remove-relation" data-issue-id="${escapeAttr(issue.id)}" data-relation-id="${escapeAttr(rel.id)}" title="Remove relation">
-                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                                            </button>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            ` : ''}
-                        </div>
-                    </div>
-
-                    <div class="issue-detail-section" id="comments-section">
-                        <div class="section-header section-header-collapsible" data-action="toggle-section" data-section="comments">
-                            <h3>Comments${allComments.length > 0 ? ` <span class="section-count">(${allComments.length})</span>` : ''}</h3>
-                            <button type="button" class="section-toggle" aria-label="Toggle comments">
-                                <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                                    <path d="M4 6l4 4 4-4"/>
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="comments-list section-collapsible-content">
-                            ${commentsLoadFailed ? `
-                                <div class="comments-error">
-                                    Comments failed to load.
-                                    <button type="button" class="btn btn-secondary btn-sm" data-action="retry-issue-comments" data-issue-id="${escapeAttr(issue.id)}">Retry</button>
-                                </div>
-                            ` : ''}
-                            ${allComments.length === 0 ? (commentsLoadFailed ? '' : `
-                                <div class="comments-empty">No comments yet</div>
-                            `) : allComments.map(comment => `
-                                <div class="comment ${comment.is_attestation ? 'comment-attestation' : ''} ${comment.is_pending ? 'comment-attestation-pending' : ''}">
-                                    <div class="comment-avatar ${comment.is_attestation ? 'avatar-attestation' : ''}">${comment.is_attestation ? (comment.is_pending ? '⏳' : '✓') : (comment.author_name || 'U').charAt(0).toUpperCase()}</div>
-                                    <div class="comment-body">
-                                        <div class="comment-header">
-                                            <span class="comment-author">${escapeHtml(comment.author_name || 'User')}</span>
-                                            ${comment.author ? renderPrincipalBadge(comment.author) : renderAgentBadge(getAssigneeById(comment.author_id)?.is_agent)}
-                                            ${comment.is_attestation ? `<span class="comment-ritual-badge">${comment.is_pending ? 'Pending approval — ' : ''}Ritual: ${escapeHtml(comment.ritual_name)}</span>` : ''}
-                                            <span class="comment-date">${formatTimeAgo(comment.created_at)}</span>
-                                        </div>
-                                        <div class="comment-content markdown-body">${renderCommentContent(comment.content)}</div>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-
-                    <div class="issue-detail-section" id="activity-section">
-                        <div class="section-header section-header-collapsible" data-action="toggle-section" data-section="activity">
-                            <h3>Activity${activities.length > 0 ? ` <span class="section-count">(${activities.length})</span>` : ''}</h3>
-                            <button type="button" class="section-toggle" aria-label="Toggle activity">
-                                <svg class="section-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                                    <path d="M4 6l4 4 4-4"/>
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="activity-list section-collapsible-content collapsed">
-                            ${activities.length === 0 ? renderEmptyState({
-                                icon: EMPTY_ICONS.activity,
-                                heading: 'No activity yet',
-                                description: 'Activity will appear here as the issue is updated',
-                            }) : activities.map(activity => `
-                                <div class="activity-item">
-                                    <div class="activity-icon">${getActivityIcon(activity.activity_type)}</div>
-                                    <div class="activity-content">
-                                        <span class="activity-text">${formatActivityText(activity)}</span>
-                                        <span class="activity-actor">by ${escapeHtml(formatActivityActor(activity))} ${renderPrincipalBadge(activity.user)}</span>
-                                        <span class="activity-time">${formatTimeAgo(activity.created_at)}</span>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
+                    ${renderTimeline({ comments: allComments, activities, ritualStatus, commentsLoadFailed, issueId: issue.id }, {
+                        formatText: formatActivityText,
+                        formatActor: formatActivityActor,
+                        getAssigneeById,
+                    })}
 
                     <form class="comment-form comment-form-sticky" data-action="save-comment" data-issue-id="${escapeAttr(issue.id)}">
                         <textarea id="new-comment" placeholder="Write a comment... (${/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl'}+Enter to submit)" rows="1"></textarea>
