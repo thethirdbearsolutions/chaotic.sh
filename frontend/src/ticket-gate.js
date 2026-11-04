@@ -39,6 +39,12 @@ function outstandingRejection(r) {
     return rej && !rej.superseded_at ? rej : null;
 }
 
+/** An open gate that was sent back and not asked for again: it waits on
+ * whoever asked for it, not on the person who sent it back. */
+function isSentBackGate(r) {
+    return isOpenGate(r) && !!outstandingRejection(r);
+}
+
 /**
  * Sort a ticket's rituals by who has to act.
  *
@@ -46,7 +52,8 @@ function outstandingRejection(r) {
  *   viewer may pass it (`canAct`: a human team admin; the server refuses
  *   everyone else).
  * - `waiting`: everything else still pending: unattested rituals (the
- *   assignee's to attest), sent-back ones, and approvals or gates that need
+ *   assignee's to attest), sent-back ones (gates included: they wait on a
+ *   new request, CHT-1606), and approvals or gates that need
  *   someone other than the viewer.
  * - `done`: completed rituals.
  *
@@ -59,7 +66,7 @@ export function classifyTicketRituals(status, { canAct = false } = {}) {
     const needsYou = [];
     const waiting = [];
     for (const r of pending) {
-        const humanStep = isAwaitingApproval(r) || isOpenGate(r);
+        const humanStep = isAwaitingApproval(r) || (isOpenGate(r) && !isSentBackGate(r));
         (humanStep && canAct ? needsYou : waiting).push(r);
     }
     return { needsYou, waiting, done, total: pending.length + done.length };
@@ -72,6 +79,7 @@ function plural(n, one, many) {
 /** The step a ritual is waiting for, as a verb phrase. */
 function stepVerb(r) {
     if (isAwaitingApproval(r)) return 'Review';
+    if (isSentBackGate(r)) return 'Ask again for';
     if (isOpenGate(r)) return 'Sign off on';
     if (outstandingRejection(r)) return 'Re-attest';
     return 'Attest';
@@ -80,8 +88,17 @@ function stepVerb(r) {
 /** Who a ritual nobody here can pass is waiting on. */
 function waitingOn(r, assigneeName) {
     if (isAwaitingApproval(r)) return 'an admin';
-    if (isOpenGate(r)) return 'a person';
+    if (isOpenGate(r) && !isSentBackGate(r)) return 'a person';
     return assigneeName || 'the assignee';
+}
+
+/** Which move a ritual holds the ticket back from. */
+function whenNeeded(r) {
+    return r && r.trigger === 'ticket_claim' ? 'needed to start' : 'needed to close';
+}
+
+function kicker(who, r) {
+    return `<div class="ticket-gate-kicker">Waiting on ${escapeHtml(who)}<span class="ticket-gate-when"> · ${whenNeeded(r)}</span></div>`;
 }
 
 function renderArtifact(att) {
@@ -90,7 +107,8 @@ function renderArtifact(att) {
     if (/^https?:\/\//i.test(ref)) {
         return `<a class="ticket-gate-artifact" href="${escapeAttr(ref)}" target="_blank" rel="noopener noreferrer">${ICON.link}${escapeHtml(ref.replace(/^https?:\/\//i, ''))}</a>`;
     }
-    return `<a class="ticket-gate-artifact" href="/document/${encodeURIComponent(ref)}">${ICON.link}Linked document</a>`;
+    const url = `/document/${encodeURIComponent(ref)}`;
+    return `<a class="ticket-gate-artifact" href="${escapeAttr(url)}" data-action="open-gate-document" data-document-id="${escapeAttr(ref)}">${ICON.link}Linked document</a>`;
 }
 
 function renderAttestation(r) {
@@ -110,28 +128,39 @@ function rejectionLine(rej) {
     return `${who} sent it back${when}: “${escapeHtml(rej.note || '')}”`;
 }
 
+/** A re-attested review keeps the send-back it answers, as context (CHT-1606). */
+function earlierRejection(r) {
+    const rej = r && r.last_rejection;
+    if (!rej || !rej.superseded_at || !isAwaitingApproval(r)) return '';
+    return `<div class="ticket-gate-earlier">Sent back before: ${rejectionLine(rej)}</div>`;
+}
+
 const ritualData = (r, issueId) =>
     `data-ritual-id="${escapeAttr(r.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(r.name)}"`;
 
 /** Approve (or Sign off) and a plain "Send back…" for the step that needs you. */
 function renderYourActions(r, issueId) {
+    const sendBack = `<button type="button" class="ticket-gate-text-btn" data-action="reject-ticket-ritual" ${ritualData(r, issueId)}>Send back…</button>`;
     if (isAwaitingApproval(r)) {
         return `
             <button type="button" class="btn btn-primary" data-action="approve-ticket-ritual" ${ritualData(r, issueId)}>Approve</button>
-            <button type="button" class="ticket-gate-text-btn" data-action="reject-ticket-ritual" ${ritualData(r, issueId)}>Send back…</button>`;
+            ${sendBack}`;
     }
-    // An open gate. It can be sent back too, unless it already was and
-    // nobody has asked again (the server refuses that, CHT-1606).
-    const sendBack = outstandingRejection(r)
-        ? ''
-        : `<button type="button" class="ticket-gate-text-btn" data-action="reject-ticket-ritual" ${ritualData(r, issueId)}>Send back…</button>`;
+    // An open gate that has not been sent back (a sent-back one waits on a
+    // new request, so it is never the viewer's step).
     return `
         <button type="button" class="btn btn-primary" data-action="complete-ticket-ritual" ${ritualData(r, issueId)} data-ritual-artifact="${escapeAttr(r.artifact || '')}">Sign off</button>
         ${sendBack}`;
 }
 
 /** A ritual the viewer can still attest by hand from the web, quietly. */
-function renderAttestLink(r, issueId) {
+function renderAttestLink(r, issueId, canAct) {
+    if (isSentBackGate(r)) {
+        // An admin may still pass a sent-back gate, but it is not their turn.
+        return canAct
+            ? `<button type="button" class="ticket-gate-text-btn" data-action="complete-ticket-ritual" ${ritualData(r, issueId)} data-ritual-artifact="${escapeAttr(r.artifact || '')}">Sign off anyway</button>`
+            : '';
+    }
     if (isAwaitingApproval(r) || isOpenGate(r)) return '';
     const modal = r.note_required || r.artifact;
     return modal
@@ -164,6 +193,19 @@ function renderList(groups, assigneeName) {
 }
 
 /**
+ * One sentence saying what the block now shows, for a screen reader's live
+ * region after the viewer acts on it.
+ */
+export function describeTicketGate(status, { canAct = false, assigneeName = null } = {}) {
+    const { needsYou, waiting, total } = classifyTicketRituals(status, { canAct });
+    if (total === 0) return '';
+    const r = needsYou[0] || waiting[0];
+    if (!r) return `All ${total} ${plural(total, 'ritual', 'rituals')} done.`;
+    const who = needsYou.length ? 'you' : waitingOn(r, assigneeName);
+    return `Waiting on ${who}: ${stepVerb(r).toLowerCase()} ${r.name}.`;
+}
+
+/**
  * The block under the ticket title. Empty string when the ticket has no
  * ticket rituals at all.
  */
@@ -174,7 +216,7 @@ export function renderTicketGatePanel(status, issueId, { canAct = false, assigne
 
     if (needsYou.length === 0 && waiting.length === 0) {
         return `
-            <section class="ticket-gate clear" aria-label="Rituals">
+            <section class="ticket-gate clear" aria-label="Rituals" tabindex="-1">
                 <span class="ticket-gate-clear-ic">${ICON.check}</span>
                 ${renderList(groups, assigneeName).replace(
                     /<summary>[^<]*<\/summary>/,
@@ -185,14 +227,13 @@ export function renderTicketGatePanel(status, issueId, { canAct = false, assigne
 
     if (needsYou.length > 0) {
         const r = needsYou[0];
-        const rej = isOpenGate(r) ? outstandingRejection(r) : null;
         return `
-            <section class="ticket-gate you" aria-label="Rituals" data-ritual-id="${escapeAttr(r.id)}">
-                <div class="ticket-gate-kicker">Waiting on you</div>
+            <section class="ticket-gate you" aria-label="Rituals" tabindex="-1" data-ritual-id="${escapeAttr(r.id)}">
+                ${kicker('you', r)}
                 <h2 class="ticket-gate-step">${escapeHtml(stepVerb(r))} <b>${escapeHtml(r.name)}</b></h2>
                 ${r.prompt ? `<div class="ticket-gate-asks markdown-body">${renderMarkdown(r.prompt)}</div>` : ''}
-                ${rej ? `<div class="ticket-gate-asks">${rejectionLine(rej)}</div>` : ''}
                 ${renderAttestation(r)}
+                ${earlierRejection(r)}
                 <div class="ticket-gate-actions">${renderYourActions(r, issueId)}</div>
                 ${renderThen([...needsYou.slice(1), ...waiting], 'Then')}
                 ${renderList(groups, assigneeName)}
@@ -201,15 +242,16 @@ export function renderTicketGatePanel(status, issueId, { canAct = false, assigne
 
     const r = waiting[0];
     const rej = !r.attestation ? outstandingRejection(r) : null;
-    const attest = renderAttestLink(r, issueId);
+    const attest = renderAttestLink(r, issueId, canAct);
     return `
-        <section class="ticket-gate waiting" aria-label="Rituals" data-ritual-id="${escapeAttr(r.id)}">
-            <div class="ticket-gate-kicker">Waiting on ${escapeHtml(waitingOn(r, assigneeName))}</div>
+        <section class="ticket-gate waiting" aria-label="Rituals" tabindex="-1" data-ritual-id="${escapeAttr(r.id)}">
+            ${kicker(waitingOn(r, assigneeName), r)}
             <h2 class="ticket-gate-step">${escapeHtml(stepVerb(r))} <b>${escapeHtml(r.name)}</b></h2>
             ${rej
                 ? `<div class="ticket-gate-asks">${rejectionLine(rej)}</div>`
                 : (r.prompt ? `<div class="ticket-gate-asks markdown-body">${renderMarkdown(r.prompt)}</div>` : '')}
             ${renderAttestation(r)}
+            ${earlierRejection(r)}
             ${attest ? `<div class="ticket-gate-actions">${attest}</div>` : ''}
             ${renderThen(waiting.slice(1), 'After that')}
             ${renderList(groups, assigneeName)}

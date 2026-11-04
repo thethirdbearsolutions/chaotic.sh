@@ -93,9 +93,8 @@ vi.mock('./mention-autocomplete.js', () => ({
     setupMentionAutocomplete: vi.fn(),
 }));
 
-vi.mock('./rituals-view.js', () => ({
-    renderTicketRitualActions: vi.fn(() => ''),
-    renderOutstandingRejection: vi.fn((r) => (r && !r.superseded_at ? `REJECTION:${r.note}` : '')),
+vi.mock('./documents.js', () => ({
+    viewDocument: vi.fn(),
 }));
 
 vi.mock('./state.js', async (importOriginal) => {
@@ -118,7 +117,7 @@ import { getStatusIcon, getPriorityIcon } from './issue-list.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { showDetailDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
-import { renderTicketRitualActions } from './rituals-view.js';
+import { viewDocument } from './documents.js';
 import { getMembers } from './teams.js';
 import { registerActions } from './event-delegation.js';
 import {
@@ -188,7 +187,7 @@ describe('issue-detail-view', () => {
         renderMarkdown.mockReset().mockImplementation((content) => content);
         showDetailDropdown.mockClear();
         setupMentionAutocomplete.mockClear();
-        renderTicketRitualActions.mockReset().mockReturnValue('');
+        viewDocument.mockReset();
         getCurrentView.mockReset().mockReturnValue('my-issues');
         getDetailNavContext.mockReset().mockReturnValue([]);
 
@@ -1520,7 +1519,7 @@ describe('issue-detail-view', () => {
             await viewIssue('issue-1');
 
             expect(needsYou().length).toBe(0);
-            expect(gate().querySelector('.ticket-gate-kicker').textContent).toBe('Waiting on an admin');
+            expect(gate().querySelector('.ticket-gate-kicker').textContent).toBe('Waiting on an admin · needed to close');
             expect(gate().querySelector('[data-action="approve-ticket-ritual"]')).toBeNull();
             expect(bar().innerHTML.trim()).toBe('');
         });
@@ -1544,6 +1543,12 @@ describe('issue-detail-view', () => {
             getMembers.mockReturnValue([]);
             await viewIssue('issue-1');
             expect(needsYou().length).toBe(1);
+
+            // Members loaded, and the viewer is not among them: not an admin here.
+            getMembers.mockReturnValue([{ user_id: 'someone-else', role: 'admin' }]);
+            await viewIssue('issue-1');
+            expect(needsYou().length).toBe(0);
+            getMembers.mockReturnValue([]);
         });
 
         it('offers one step at a time, with the next one named after it', async () => {
@@ -1578,6 +1583,62 @@ describe('issue-detail-view', () => {
 
             callback([{ isIntersecting: true }]);
             expect(bar().classList.contains('hidden')).toBe(true);
+        });
+
+        it('a newly opened ticket does not inherit the last one\'s scrolled-away bar', async () => {
+            const observers = [];
+            global.IntersectionObserver = class {
+                constructor(cb) { this.cb = cb; this.disconnect = vi.fn(); observers.push(this); }
+                observe() {}
+            };
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
+            await viewIssue('issue-1');
+            observers[0].cb([{ isIntersecting: false }]);
+            expect(bar().classList.contains('hidden')).toBe(false);
+            expect(document.getElementById('issue-detail-view').style.getPropertyValue('--gate-bar-h')).toMatch(/px$/);
+
+            api.getIssue.mockResolvedValue({ ...issue, id: 'issue-2', identifier: 'TEST-2' });
+            await viewIssue('issue-2');
+
+            expect(observers[0].disconnect).toHaveBeenCalled();
+            expect(observers.length).toBe(2);
+            // Its own panel has not reported yet: assume it is in view.
+            expect(bar().classList.contains('hidden')).toBe(true);
+            expect(document.getElementById('issue-detail-view').style.getPropertyValue('--gate-bar-h')).toBe('0px');
+        });
+
+        it('after the viewer acts, says what is next and keeps focus on the block', async () => {
+            const second = { ...awaiting, id: 'rit-2', name: 'docs-review' };
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting, second], completed_rituals: [] });
+            await viewIssue('issue-1');
+            gate().querySelector('[data-action="approve-ticket-ritual"]').focus();
+
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [second], completed_rituals: [] });
+            await loadTicketRituals('issue-1');
+
+            expect(document.getElementById('ticket-gate-live').textContent).toBe('Waiting on you: review docs-review.');
+            const approve = gate().querySelector('[data-action="approve-ticket-ritual"]');
+            expect(approve.dataset.ritualId).toBe('rit-2');
+            expect(document.activeElement).toBe(approve);
+        });
+
+        it('a first paint announces nothing', async () => {
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [awaiting], completed_rituals: [] });
+            await viewIssue('issue-1');
+            expect(document.getElementById('ticket-gate-live').textContent).toBe('');
+        });
+
+        it('opens a linked document in the app, or in a new tab on a modified click', () => {
+            const plain = { preventDefault: vi.fn(), metaKey: false, ctrlKey: false, shiftKey: false, button: 0 };
+            detailActions['open-gate-document'](plain, { documentId: 'doc-1' });
+            expect(plain.preventDefault).toHaveBeenCalled();
+            expect(viewDocument).toHaveBeenCalledWith('doc-1');
+
+            viewDocument.mockReset();
+            const modified = { ...plain, preventDefault: vi.fn(), metaKey: true };
+            detailActions['open-gate-document'](modified, { documentId: 'doc-1' });
+            expect(modified.preventDefault).not.toHaveBeenCalled();
+            expect(viewDocument).not.toHaveBeenCalled();
         });
 
         it('a reload that lands after another ticket opened does not repaint it', async () => {
@@ -1631,6 +1692,7 @@ describe('issue-detail-view', () => {
             detailActions['scroll-to-ticket-gate']();
 
             expect(gate().scrollIntoView).toHaveBeenCalled();
+            expect(document.activeElement).toBe(gate().querySelector('[data-action="approve-ticket-ritual"]'));
         });
     });
 

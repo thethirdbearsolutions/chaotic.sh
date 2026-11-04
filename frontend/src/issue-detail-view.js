@@ -19,7 +19,8 @@ import { registerActions } from './event-delegation.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { showCreateSubIssueModal } from './issue-creation.js';
 import { getMembers } from './teams.js';
-import { renderTicketGatePanel, renderTicketGateStickyBar, isAwaitingApproval } from './ticket-gate.js';
+import { renderTicketGatePanel, renderTicketGateStickyBar, describeTicketGate, isAwaitingApproval } from './ticket-gate.js';
+import { viewDocument } from './documents.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
 // Markdown post-processing (issue-link/mention rendering) lives in rich-text.js
@@ -284,7 +285,8 @@ function canApproveAttestations() {
     const members = getMembers();
     if (!members || members.length === 0) return true;
     const self = members.find(m => m.user_id === user.id);
-    return !self || self.role === 'admin' || self.role === 'owner';
+    // Loaded and not on the list: not a member here, so not an admin.
+    return !!self && (self.role === 'admin' || self.role === 'owner');
 }
 
 // Watches the gate panel so the sticky bar shows only once it has scrolled
@@ -296,14 +298,30 @@ function updateGateStickyVisibility() {
     const bar = document.getElementById('ticket-gate-sticky');
     if (!bar) return;
     const hasContent = bar.innerHTML.trim() !== '';
-    bar.classList.toggle('hidden', !hasContent || gatePanelVisible);
+    const show = hasContent && !gatePanelVisible;
+    bar.classList.toggle('hidden', !show);
+    // Sticky section headers sit under the bar, not behind it.
+    const view = document.getElementById('issue-detail-view');
+    const height = show ? (bar.firstElementChild?.offsetHeight || 0) : 0;
+    if (view) view.style.setProperty('--gate-bar-h', `${height}px`);
 }
 
-function observeGatePanel() {
+/** Stop watching the gate panel: the ticket it belonged to is going away. */
+function disconnectGatePanel() {
     if (gateObserver) { gateObserver.disconnect(); gateObserver = null; }
     gatePanelVisible = true;
+    updateGateStickyVisibility();
+}
+
+// The bar only sticks where :has() lets the detail view drop its
+// non-scrolling scroll containers (style.css); elsewhere it stays hidden.
+const canStick = () => typeof CSS === 'undefined' || typeof CSS.supports !== 'function'
+    || CSS.supports('selector(:has(*))');
+
+function observeGatePanel() {
+    disconnectGatePanel();
     const panel = document.getElementById('ticket-gate');
-    if (!panel || typeof IntersectionObserver === 'undefined') return;
+    if (!panel || typeof IntersectionObserver === 'undefined' || !canStick()) return;
     gateObserver = new IntersectionObserver((entries) => {
         const entry = entries[entries.length - 1];
         gatePanelVisible = entry.isIntersecting;
@@ -327,9 +345,16 @@ export function scrollToTicketGate() {
  * collapsed Ticket Rituals section and the CHT-2018 approval banner.
  * @param {string} issueId - Issue ID
  */
+// The ticket whose gate is painted now, so a re-render after the viewer
+// acts (approve, sign off, send back) can be told from a first paint.
+let paintedGateIssueId = null;
+
 export function renderTicketRituals(issueId) {
     const panel = document.getElementById('ticket-gate');
     const bar = document.getElementById('ticket-gate-sticky');
+    const repaint = !!panel && panel.dataset.issueId === issueId && paintedGateIssueId === issueId;
+    const active = document.activeElement;
+    const focusWasHere = !!panel && !!active && (panel.contains(active) || active === document.body);
     const status = currentTicketRituals;
     const canAct = canApproveAttestations();
     const issue = getCurrentDetailIssue();
@@ -343,9 +368,22 @@ export function renderTicketRituals(issueId) {
         el.classList.toggle('hidden', html.trim() === '');
     };
     fill(panel, status ? renderTicketGatePanel(status, issueId, { canAct, assigneeName }) : '');
+    if (panel) panel.dataset.issueId = issueId;
+    paintedGateIssueId = issueId;
     if (bar) {
-        bar.innerHTML = status ? renderTicketGateStickyBar(status, { canAct }) : '';
+        const html = status ? renderTicketGateStickyBar(status, { canAct }) : '';
+        bar.innerHTML = html ? `<div class="ticket-gate-sticky-bar">${html}</div>` : '';
         updateGateStickyVisibility();
+    }
+    if (repaint) {
+        // The step the viewer acted on was replaced: say what is next, and
+        // put focus back on the block rather than leaving it on <body>.
+        const live = document.getElementById('ticket-gate-live');
+        if (live) live.textContent = status ? describeTicketGate(status, { canAct, assigneeName }) : '';
+        if (focusWasHere && panel && !panel.classList.contains('hidden')) {
+            const target = panel.querySelector('.ticket-gate-actions .btn-primary') || panel.querySelector('.ticket-gate');
+            target?.focus?.({ preventScroll: true });
+        }
     }
 }
 
@@ -535,6 +573,8 @@ function paintDetailFromRow(row) {
     const detailView = document.getElementById('issue-detail-view');
     const content = detailView?.querySelector('#issue-detail-content');
     if (!content) return;
+    disconnectGatePanel();
+    paintedGateIssueId = null;
     setCurrentDetailIssue(row);
     const nav = computeDetailNav(row.id);
     detailNavPrevId = nav.prevIssue ? nav.prevIssue.id : null;
@@ -748,6 +788,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                     ` : ''}
 
                     <div id="ticket-gate" class="ticket-gate-slot hidden"></div>
+                    <div id="ticket-gate-live" class="sr-only" role="status" aria-live="polite"></div>
 
                     <div class="issue-detail-description">
                         <div class="section-header">
@@ -1070,8 +1111,10 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         }
 
         // Render ticket rituals (data already fetched in Promise.all above)
-        renderTicketRituals(issue.id);
+        // Watch first, so the previous ticket's scroll state can't show
+        // this ticket's bar over its own panel.
         observeGatePanel();
+        renderTicketRituals(issue.id);
         setupMentionAutocomplete('new-comment', 'mention-suggestions', { projectId: issue.project_id });
         setupQuoteComment({ signal: detailSignal });
 
@@ -1647,6 +1690,13 @@ registerActions({
     },
     'toggle-section': (_event, data) => {
         toggleSection(data.section);
+    },
+    'open-gate-document': (event, data) => {
+        // Plain click opens the document in the app; a modified click keeps
+        // the link's own new-tab behaviour.
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) return;
+        event.preventDefault();
+        viewDocument(data.documentId);
     },
     'scroll-to-ticket-gate': () => {
         scrollToTicketGate();

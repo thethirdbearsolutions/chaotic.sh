@@ -12,6 +12,7 @@ import {
     isAwaitingApproval,
     renderTicketGatePanel,
     renderTicketGateStickyBar,
+    describeTicketGate,
 } from './ticket-gate.js';
 
 const review = {
@@ -60,7 +61,7 @@ describe('renderTicketGatePanel', () => {
     it('shows the first step waiting on you, with one primary button', () => {
         const el = dom(renderTicketGatePanel({ pending_rituals: [review, gate], completed_rituals: [done] }, 'i1', { canAct: true }));
         expect(el.querySelector('.ticket-gate.you')).not.toBeNull();
-        expect(el.querySelector('.ticket-gate-kicker').textContent).toBe('Waiting on you');
+        expect(el.querySelector('.ticket-gate-kicker').textContent).toBe('Waiting on you · needed to close');
         expect(el.querySelector('.ticket-gate-step').textContent).toBe('Review tests-pass');
         expect(el.querySelectorAll('.btn-primary').length).toBe(1);
         const approve = el.querySelector('[data-action="approve-ticket-ritual"]');
@@ -72,22 +73,59 @@ describe('renderTicketGatePanel', () => {
         expect(el.querySelector('.ticket-gate-list summary').textContent).toBe('1 of 3 rituals done');
     });
 
-    it('offers Sign off for an open gate, and drops Send back once it was sent back', () => {
-        let el = dom(renderTicketGatePanel({ pending_rituals: [gate], completed_rituals: [] }, 'i1', { canAct: true }));
+    it('offers Sign off for an open gate', () => {
+        const el = dom(renderTicketGatePanel({ pending_rituals: [gate], completed_rituals: [] }, 'i1', { canAct: true }));
         expect(el.querySelector('.ticket-gate-step').textContent).toBe('Sign off on human-qa');
         expect(el.querySelector('[data-action="complete-ticket-ritual"]').textContent).toBe('Sign off');
         expect(el.querySelector('[data-action="reject-ticket-ritual"]')).not.toBeNull();
+    });
 
+    it('a sent-back gate waits on whoever asked for it, not on the admin', () => {
         const rejected = { ...gate, last_rejection: { rejected_by_name: 'Sam', note: 'Not yet', superseded_at: null } };
-        el = dom(renderTicketGatePanel({ pending_rituals: [rejected], completed_rituals: [] }, 'i1', { canAct: true }));
-        expect(el.querySelector('[data-action="reject-ticket-ritual"]')).toBeNull();
+        const status = { pending_rituals: [rejected], completed_rituals: [] };
+        expect(classifyTicketRituals(status, { canAct: true }).needsYou).toEqual([]);
+        const el = dom(renderTicketGatePanel(status, 'i1', { canAct: true, assigneeName: 'builder-agent' }));
+        expect(el.querySelector('.ticket-gate.waiting')).not.toBeNull();
+        expect(el.querySelector('.ticket-gate-kicker').textContent).toBe('Waiting on builder-agent · needed to close');
+        expect(el.querySelector('.ticket-gate-step').textContent).toBe('Ask again for human-qa');
         expect(el.textContent).toContain('Sam sent it back');
+        expect(el.querySelector('.btn-primary')).toBeNull();
+        expect(el.querySelector('[data-action="reject-ticket-ritual"]')).toBeNull();
+        // An admin can still pass it, quietly.
+        expect(el.querySelector('[data-action="complete-ticket-ritual"]').textContent).toBe('Sign off anyway');
+        // Someone who cannot pass it gets no button at all.
+        const other = dom(renderTicketGatePanel(status, 'i1', { canAct: false, assigneeName: 'builder-agent' }));
+        expect(other.querySelector('[data-action="complete-ticket-ritual"]')).toBeNull();
+        expect(renderTicketGateStickyBar(status, { canAct: true })).toBe('');
+    });
+
+    it('says whether a ritual holds back starting or closing', () => {
+        const claim = { ...review, trigger: 'ticket_claim' };
+        const el = dom(renderTicketGatePanel({ pending_rituals: [claim], completed_rituals: [] }, 'i1', { canAct: true }));
+        expect(el.querySelector('.ticket-gate-when').textContent).toBe(' · needed to start');
+    });
+
+    it('shows the earlier send-back a re-attested review answers', () => {
+        const again = { ...review, last_rejection: { rejected_by_name: 'Sam', note: 'Paste the log', superseded_at: '2026-11-04T19:00:00Z' } };
+        const el = dom(renderTicketGatePanel({ pending_rituals: [again], completed_rituals: [] }, 'i1', { canAct: true }));
+        expect(el.querySelector('.ticket-gate-earlier').textContent).toContain('Sent back before: Sam sent it back');
+        expect(el.querySelector('.ticket-gate-earlier').textContent).toContain('Paste the log');
+        // Not shown when nothing was sent back.
+        expect(dom(renderTicketGatePanel({ pending_rituals: [review], completed_rituals: [] }, 'i1', { canAct: true })).querySelector('.ticket-gate-earlier')).toBeNull();
+    });
+
+    it('copes with missing names and times', () => {
+        const bare = { ...review, attestation: { id: 'a2', attested_by_name: null, attested_at: null, note: null, approved_at: null } };
+        const el = dom(renderTicketGatePanel({ pending_rituals: [bare], completed_rituals: [] }, 'i1', { canAct: true }));
+        expect(el.querySelector('.ticket-gate-by').textContent).toContain('Someone attested');
+        expect(el.querySelector('.ticket-gate-note')).toBeNull();
+        expect(el.querySelector('.ticket-gate-artifact')).toBeNull();
     });
 
     it('shows waiting on the assignee, muted, with only a quiet attest link', () => {
         const el = dom(renderTicketGatePanel({ pending_rituals: [todo], completed_rituals: [done] }, 'i1', { canAct: true, assigneeName: 'builder-agent' }));
         expect(el.querySelector('.ticket-gate.waiting')).not.toBeNull();
-        expect(el.querySelector('.ticket-gate-kicker').textContent).toBe('Waiting on builder-agent');
+        expect(el.querySelector('.ticket-gate-kicker').textContent).toBe('Waiting on builder-agent · needed to close');
         expect(el.querySelector('.ticket-gate-step').textContent).toBe('Attest changelog');
         expect(el.querySelector('.btn-primary')).toBeNull();
         expect(el.querySelector('[data-action="attest-ticket-ritual"]')).not.toBeNull();
@@ -109,9 +147,9 @@ describe('renderTicketGatePanel', () => {
 
     it('waits on an admin or a person when the viewer cannot pass the step', () => {
         expect(dom(renderTicketGatePanel({ pending_rituals: [review], completed_rituals: [] }, 'i1')).querySelector('.ticket-gate-kicker').textContent)
-            .toBe('Waiting on an admin');
+            .toBe('Waiting on an admin · needed to close');
         expect(dom(renderTicketGatePanel({ pending_rituals: [gate], completed_rituals: [] }, 'i1')).querySelector('.ticket-gate-kicker').textContent)
-            .toBe('Waiting on a person');
+            .toBe('Waiting on a person · needed to close');
     });
 
     it('is one line when everything is done', () => {
@@ -128,6 +166,8 @@ describe('renderTicketGatePanel', () => {
         const doc = { ...review, attestation: { ...review.attestation, artifact_ref: 'doc-123' } };
         el = dom(renderTicketGatePanel({ pending_rituals: [doc], completed_rituals: [] }, 'i1', { canAct: true }));
         expect(el.querySelector('.ticket-gate-artifact').getAttribute('href')).toBe('/document/doc-123');
+        expect(el.querySelector('.ticket-gate-artifact').dataset.action).toBe('open-gate-document');
+        expect(el.querySelector('.ticket-gate-artifact').dataset.documentId).toBe('doc-123');
 
         const js = { ...review, attestation: { ...review.attestation, artifact_ref: 'javascript:alert(1)' } };
         el = dom(renderTicketGatePanel({ pending_rituals: [js], completed_rituals: [] }, 'i1', { canAct: true }));
@@ -139,6 +179,17 @@ describe('renderTicketGatePanel', () => {
         const el = dom(renderTicketGatePanel({ pending_rituals: [evil], completed_rituals: [] }, 'i1', { canAct: true }));
         expect(el.querySelector('img')).toBeNull();
         expect(el.querySelector('.ticket-gate-by b')).toBeNull();
+    });
+});
+
+describe('describeTicketGate', () => {
+    it('says the next step in one sentence', () => {
+        expect(describeTicketGate({ pending_rituals: [review, gate], completed_rituals: [] }, { canAct: true }))
+            .toBe('Waiting on you: review tests-pass.');
+        expect(describeTicketGate({ pending_rituals: [todo], completed_rituals: [] }, { assigneeName: 'builder-agent' }))
+            .toBe('Waiting on builder-agent: attest changelog.');
+        expect(describeTicketGate({ pending_rituals: [], completed_rituals: [done] })).toBe('All 1 ritual done.');
+        expect(describeTicketGate(null)).toBe('');
     });
 });
 

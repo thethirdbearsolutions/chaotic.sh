@@ -3718,7 +3718,8 @@ input[type="checkbox"] {
 .issue-detail-section > .section-header-collapsible,
 .issue-detail-description > h3 {
     position: sticky;
-    top: 0;
+    /* Below the ticket gate bar while it shows (CHT-2020). */
+    top: var(--gate-bar-h, 0px);
     background: var(--bg-primary);
     padding: 8px 0;
     z-index: 5;
@@ -6564,17 +6565,6 @@ input[type="checkbox"] {
     margin: 0 0 12px 0;
 }
 
-/* Ticket rituals in issue detail */
-.ticket-rituals-content {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.ticket-rituals-content.collapsed {
-    display: none;
-}
-
 .section-header-collapsible {
     display: flex;
     align-items: center;
@@ -6616,97 +6606,6 @@ input[type="checkbox"] {
 /* Generic collapsible section content */
 .section-collapsible-content.collapsed {
     display: none;
-}
-
-.ticket-rituals-warning {
-    font-size: var(--font-base);
-    color: #f59e0b;
-    margin: 0 0 8px 0;
-}
-
-.ticket-ritual-item {
-    padding: 12px;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-color);
-}
-
-.ticket-ritual-item.completed {
-    opacity: 0.7;
-}
-
-.ticket-ritual-info {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.ticket-ritual-status {
-    font-size: var(--font-md);
-}
-
-.ticket-ritual-name {
-    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.ticket-ritual-prompt {
-    font-size: var(--font-base);
-    color: var(--text-secondary);
-    margin: 4px 0 8px 22px;
-}
-
-.ticket-ritual-actions {
-    margin-left: 22px;
-    display: flex;
-    gap: 8px;
-    align-items: center;
-}
-
-.ticket-rituals-completed {
-    margin-top: 8px;
-}
-
-.ticket-ritual-attestation {
-    margin: 8px 0 0 22px;
-    padding: 8px;
-    background: var(--bg-secondary);
-    border-radius: var(--radius-sm);
-    font-size: var(--font-base);
-}
-
-.ticket-ritual-attestation .attestation-by {
-    color: var(--text-secondary);
-    font-weight: 500;
-}
-
-.ticket-ritual-attestation .attestation-time {
-    color: var(--text-muted);
-    margin-left: 8px;
-    font-size: var(--font-sm);
-}
-
-.ticket-ritual-attestation .attestation-note {
-    margin-top: 6px;
-    color: var(--text-secondary);
-}
-
-.ticket-ritual-item.pending.attested {
-    border-left: 3px solid var(--warning-color, #f59e0b);
-}
-
-.ticket-ritual-note {
-    color: var(--text-secondary);
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-.ticket-ritual-meta {
-    color: var(--text-muted);
-    font-size: var(--font-sm);
-    margin-top: 4px;
 }
 
 /* ============================================================================
@@ -10345,6 +10244,10 @@ body.theme-light {
 }
 
 .ticket-gate.you .ticket-gate-kicker { color: var(--accent-fg); font-weight: 600; }
+.ticket-gate-when { color: var(--text-muted); font-weight: 400; }
+.ticket-gate-earlier { margin-top: var(--space-sm); font-size: var(--font-sm); color: var(--text-muted); }
+.ticket-gate:focus { outline: none; }
+.ticket-gate:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
 
 .ticket-gate-step {
     font-size: var(--font-xl);
@@ -10482,15 +10385,24 @@ body.theme-light {
 .ticket-gate.clear .ticket-gate-list summary { position: static; color: var(--text-secondary); }
 .ticket-gate.clear .ticket-gate-list ul { margin-top: var(--space-md); }
 
-/* Sticky bar, shown once the block scrolls away. */
+/* Sticky bar, shown once the block scrolls away. The sticky element has no
+   height, and the bar hangs from it, so showing or hiding the bar never
+   moves the page (which would also re-trigger the observer). */
 .ticket-gate-sticky {
     position: sticky;
     top: 0;
     z-index: 20;
+    height: 0;
+}
+
+.ticket-gate-sticky-bar {
+    position: absolute;
+    top: 0;
+    left: -40px;
+    right: -40px;
     display: flex;
     align-items: center;
     gap: 14px;
-    margin: -24px -40px var(--space-xl);
     padding: 9px 40px;
     background: var(--bg-primary);
     border-bottom: 1px solid var(--border-color);
@@ -10504,8 +10416,10 @@ body.theme-light {
 
 @media (max-width: 900px) {
     /* The page padding varies by width here; sit inside it instead of bleeding. */
-    .ticket-gate-sticky {
-        margin: 0 0 var(--space-lg);
+    .ticket-gate-sticky-bar {
+        top: 0;
+        left: 0;
+        right: 0;
         padding: 9px var(--space-lg);
         border: 1px solid var(--border-color);
         border-radius: var(--radius-md);
