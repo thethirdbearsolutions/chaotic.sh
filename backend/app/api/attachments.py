@@ -9,8 +9,8 @@ only with a credential: there is no public or signed address.
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse, Response
 
 from app.api.deps import CurrentUser
 from app.api.idempotency import HEADER as IDEMPOTENCY_HEADER
@@ -43,9 +43,13 @@ _DOWNLOAD_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Content-Security-Policy": "default-src 'none'; sandbox",
     "Cross-Origin-Resource-Policy": "same-origin",
-    # Private: it is served only with a credential. An hour: a deleted
-    # attachment stops being served, though a viewer may hold a copy.
-    "Cache-Control": "private, max-age=3600",
+    # Private, and asked about every time: a cached copy is only used once
+    # the server, with the credential, says it is still this file (the
+    # ETag is its sha256, so that costs a 304 and no bytes). A browser
+    # shared by two people, a member removed, a file deleted: each is
+    # asked again, never answered from the cache.
+    "Cache-Control": "private, no-cache",
+    "Vary": "Authorization, X-Chaotic-Key",
 }
 # The query parameter is cut to MAX_FILENAME after cleaning; this bounds
 # what is accepted at all.
@@ -66,7 +70,9 @@ async def _refuse_oversized_body(request: Request) -> None:
     An undeclared length without a key is counted as it streams."""
     max_bytes = get_settings().attachment_max_bytes
     declared = request.headers.get("content-length")
-    if declared is None:
+    # A Transfer-Encoding frames the body whatever Content-Length says
+    # (some HTTP parsers pass both through), so the length is undeclared.
+    if declared is None or "transfer-encoding" in request.headers:
         if request.headers.get(IDEMPOTENCY_HEADER) is not None:
             raise HTTPException(
                 status_code=status.HTTP_411_LENGTH_REQUIRED,
@@ -76,11 +82,10 @@ async def _refuse_oversized_body(request: Request) -> None:
                 },
             )
         return
-    try:
-        length = int(declared)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Content-Length") from None
-    if length > max_bytes:
+    # Digits only: int() would also take "+5", " 12 " and "1_000".
+    if not (declared.isascii() and declared.isdigit()):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Content-Length")
+    if int(declared) > max_bytes:
         raise _refusal(too_large(max_bytes))
 
 
@@ -114,7 +119,7 @@ async def upload_attachment(
     multipart), its display name in ``filename``. PNG, JPEG, GIF, WebP,
     PDF or UTF-8 plain text, recognised by its bytes (415 otherwise), at
     most 10 MiB (413 ``attachment_too_large``), within the project's
-    quota (413 ``attachment_quota_exceeded``). ``comment_id`` names a
+    quota (409 ``attachment_quota_exceeded``, which a resend under the same key asks again). ``comment_id`` names a
     comment of the caller's on this issue the file belongs to; without it the file is
     attached to the issue alone. Honours ``Idempotency-Key``: a resend
     stores the file once."""
@@ -155,15 +160,27 @@ def _content_disposition(disposition: str, filename: str) -> str:
     return f"{disposition}; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
 
 
+def _matches(if_none_match: str | None, etag: str) -> bool:
+    """Whether an If-None-Match header names ``etag`` (weakly, RFC 9110)."""
+    if not if_none_match:
+        return False
+    tags = [tag.strip().removeprefix("W/") for tag in if_none_match.split(",")]
+    return "*" in tags or etag in tags
+
+
 @router.get("/{attachment_id}/content", response_class=FileResponse)
 @reads
-async def download_attachment(attachment_id: str, current_user: CurrentUser) -> FileResponse:
+async def download_attachment(
+    attachment_id: str, current_user: CurrentUser,
+    if_none_match: Annotated[str | None, Header()] = None,
+) -> Response:
     """An attachment's bytes. Raster images are served ``inline``, so a
     page that fetched them can show them; anything else as an
     ``attachment`` to save. 410 ``attachment_blob_missing`` when the row
     is there but its file is not (a database restored without its
     attachments)."""
     attachment, _issue, _project = await visible_attachment(current_user, attachment_id)
+    etag = f'"{attachment.sha256}"'
     service = AttachmentService()
     path = service.store.path_for(attachment.sha256)
     if not path.is_file():
@@ -178,8 +195,12 @@ async def download_attachment(attachment_id: str, current_user: CurrentUser) -> 
     media_type = f"{TEXT_TYPE}; charset=utf-8" if attachment.content_type == TEXT_TYPE else attachment.content_type
     headers = {
         **_DOWNLOAD_HEADERS,
+        "ETag": etag,
         "Content-Disposition": _content_disposition("inline" if inline else "attachment", attachment.filename),
     }
+    if _matches(if_none_match, etag):
+        # Still this file, and still the caller's to see: keep the copy.
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
     return FileResponse(path, media_type=media_type, headers=headers)
 
 

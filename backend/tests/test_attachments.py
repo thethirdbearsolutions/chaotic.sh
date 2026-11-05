@@ -137,6 +137,57 @@ class TestUpload:
         assert first.json()["id"] != second.json()["id"]
         assert _blobs() == [BlobStore().path_for(hashlib.sha256(PNG).hexdigest())]
 
+    async def test_a_reused_blob_is_dated_anew(self, client, auth_headers, test_issue):
+        import os
+
+        first = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
+        blob = BlobStore().path_for(first["sha256"])
+        os.utime(blob, (1_000_000, 1_000_000))  # an orphan, long unreferenced
+
+        assert (await _upload(client, auth_headers, test_issue.id, PNG)).status_code == 201
+
+        # A sweep's age gate sees it as in use now.
+        assert blob.stat().st_mtime > 1_000_000 + 86400
+
+    async def test_a_large_body_in_one_piece_is_worked_through_in_pieces(self, client, auth_headers, test_issue):
+        big = PNG + b"\x00" * (300 * 1024)
+        uploaded = await _upload(client, {**auth_headers, "Idempotency-Key": "big-1"}, test_issue.id, big)
+
+        assert uploaded.status_code == 201, uploaded.text
+        assert uploaded.json()["sha256"] == hashlib.sha256(big).hexdigest()
+        assert BlobStore().path_for(uploaded.json()["sha256"]).read_bytes() == big
+
+    async def test_a_large_text_file_checks_every_piece(self, client, auth_headers, test_issue):
+        # Valid until the last piece, far past the head.
+        bad = b"a" * (200 * 1024) + b"\xff"
+        refused = await _upload(client, auth_headers, test_issue.id, bad)
+
+        assert refused.status_code == 415
+
+    async def test_a_tiny_file_is_still_sniffed(self, client, auth_headers, test_issue):
+        uploaded = await _upload(client, auth_headers, test_issue.id, b"%PDF-")
+
+        assert uploaded.json()["content_type"] == "application/pdf"
+
+    async def test_a_row_that_fails_to_insert_leaves_only_an_orphan_blob(self, client, auth_headers, test_issue):
+        from unittest.mock import patch
+
+        from httpx import ASGITransport, AsyncClient
+
+        from app.main import app
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test",
+        ) as lenient:
+            with patch.object(type(OxydeAttachment.objects), "create", side_effect=RuntimeError("boom")):
+                failed = await _upload(lenient, auth_headers, test_issue.id, PNG)
+
+        assert failed.status_code == 500
+        assert await OxydeAttachment.objects.count() == 0
+        # The blob landed before the insert: an orphan for the sweep.
+        assert _blobs() == [BlobStore().path_for(hashlib.sha256(PNG).hexdigest())]
+        assert _temp_files() == []
+
     async def test_no_filename_gets_a_default(self, client, auth_headers, test_issue):
         uploaded = await _upload(client, auth_headers, test_issue.id, PNG, filename=None)
 
@@ -153,6 +204,19 @@ class TestUpload:
 
     async def test_the_blob_lives_beside_the_database(self, db, tmp_path):
         assert BlobStore().root == tmp_path / "attachments"
+
+    async def test_another_database_needs_a_blob_directory(self):
+        from pydantic import ValidationError
+
+        from app.config import Settings
+
+        with pytest.raises(ValidationError, match="CHAOTIC_ATTACHMENTS_DIR"):
+            Settings(database_url="postgresql+asyncpg://db/chaotic")
+        assert Settings(database_url="postgresql+asyncpg://db/chaotic", attachments_dir="/srv/a").attachments_dir
+
+    async def test_an_attachment_needs_an_issue(self, db):
+        with pytest.raises(Exception, match="NOT NULL"):
+            await OxydeAttachment.objects.create(sha256="0" * 64, size=1, content_type="text/plain", filename="x")
 
     async def test_the_blob_directory_can_be_set(self, db, tmp_path, settings_env):
         settings_env(CHAOTIC_ATTACHMENTS_DIR=tmp_path / "elsewhere")
@@ -234,7 +298,7 @@ class TestLimits:
 
         refused = await _upload(client, auth_headers, test_issue.id, JPEG)
 
-        assert refused.status_code == 413
+        assert refused.status_code == 409
         assert refused.json()["detail"]["error_code"] == "attachment_quota_exceeded"
         assert await OxydeAttachment.objects.count() == 1
         # Small enough to fit what is left.
@@ -249,8 +313,70 @@ class TestLimits:
         refused = await _upload(client, auth_headers, test_issue.id, b"<svg/>")
 
         # The quota, not the type: the body was never looked at.
-        assert refused.status_code == 413
+        assert refused.status_code == 409
         assert refused.json()["detail"]["error_code"] == "attachment_quota_exceeded"
+
+    async def test_uploads_at_once_cannot_both_take_the_last_room(
+        self, client, auth_headers, test_issue, settings_env,
+    ):
+        import asyncio
+
+        settings_env(CHAOTIC_ATTACHMENT_PROJECT_QUOTA_BYTES=len(PNG) + len(JPEG) - 1)
+
+        answers = await asyncio.gather(
+            _upload(client, auth_headers, test_issue.id, PNG),
+            _upload(client, auth_headers, test_issue.id, JPEG),
+        )
+
+        assert sorted(a.status_code for a in answers) == [201, 409]
+        assert await OxydeAttachment.objects.count() == 1
+
+    async def test_a_quota_refusal_is_asked_again_under_the_same_key(
+        self, client, auth_headers, test_issue, settings_env,
+    ):
+        settings_env(CHAOTIC_ATTACHMENT_PROJECT_QUOTA_BYTES=len(PNG) + 10)
+        first = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
+        keyed = {**auth_headers, "Idempotency-Key": "q-1"}
+
+        refused = await _upload(client, keyed, test_issue.id, JPEG)
+        assert refused.status_code == 409
+        assert refused.json()["detail"]["error_code"] == "attachment_quota_exceeded"
+        assert (await client.delete(f"/api/attachments/{first['id']}", headers=auth_headers)).status_code == 204
+
+        resent = await _upload(client, keyed, test_issue.id, JPEG)
+
+        assert resent.status_code == 201, resent.text
+        assert "idempotent-replayed" not in resent.headers
+
+    async def test_a_transfer_encoding_makes_the_length_undeclared(self, test_issue):
+        from fastapi import HTTPException
+        from starlette.requests import Request
+
+        from app.api.attachments import _refuse_oversized_body
+
+        # Some HTTP parsers pass both headers through: the small declared
+        # length must not stand for a chunked body of any size.
+        request = Request({"type": "http", "headers": [
+            (b"content-length", b"1"), (b"transfer-encoding", b"chunked"), (b"idempotency-key", b"te-1"),
+        ]})
+        with pytest.raises(HTTPException) as refused:
+            await _refuse_oversized_body(request)
+        assert refused.value.status_code == 411
+
+        unkeyed = Request({"type": "http", "headers": [(b"content-length", b"1"), (b"transfer-encoding", b"chunked")]})
+        assert await _refuse_oversized_body(unkeyed) is None  # counted as it streams instead
+
+    @pytest.mark.parametrize("declared", ["+5", " 12", "1_000", "-1", "\u0661"])
+    async def test_a_content_length_must_be_digits(self, test_issue, declared):
+        from fastapi import HTTPException
+        from starlette.requests import Request
+
+        from app.api.attachments import _refuse_oversized_body
+
+        request = Request({"type": "http", "headers": [(b"content-length", declared.encode())]})
+        with pytest.raises(HTTPException) as refused:
+            await _refuse_oversized_body(request)
+        assert refused.value.status_code == 400
 
     async def test_the_quota_is_per_project(self, client, auth_headers, test_issue, test_team, settings_env):
         from app.oxyde_models.issue import OxydeIssue
@@ -318,7 +444,9 @@ class TestDownload:
         assert served.headers["content-type"] == "image/png"
         assert served.headers["x-content-type-options"] == "nosniff"
         assert served.headers["content-security-policy"] == "default-src 'none'; sandbox"
-        assert served.headers["cache-control"] == "private, max-age=3600"
+        assert served.headers["cache-control"] == "private, no-cache"
+        assert served.headers["vary"].startswith("Authorization, X-Chaotic-Key")
+        assert served.headers["etag"] == f"\"{uploaded['sha256']}\""
         assert served.headers["content-disposition"] == "inline; filename=\"shot.png\"; filename*=UTF-8''shot.png"
 
     @pytest.mark.parametrize("data,kind", [(PDF, "application/pdf"), (TEXT, "text/plain; charset=utf-8")],
@@ -355,6 +483,30 @@ class TestDownload:
         uploaded = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
 
         assert (await client.get(uploaded["url"])).status_code == 401
+
+    async def test_a_cached_copy_is_revalidated_with_the_credential(self, client, auth_headers, test_issue):
+        uploaded = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
+        etag = f'"{uploaded["sha256"]}"'
+
+        fresh = await client.get(uploaded["url"], headers={**auth_headers, "If-None-Match": etag})
+        weak = await client.get(uploaded["url"], headers={**auth_headers, "If-None-Match": f'"x", W/{etag}'})
+        stale = await client.get(uploaded["url"], headers={**auth_headers, "If-None-Match": '"other"'})
+        anonymous = await client.get(uploaded["url"], headers={"If-None-Match": etag})
+
+        assert fresh.status_code == weak.status_code == 304
+        assert fresh.content == b""
+        assert fresh.headers["etag"] == etag
+        assert fresh.headers["cache-control"] == "private, no-cache"
+        assert stale.status_code == 200 and stale.content == PNG
+        assert anonymous.status_code == 401
+
+    async def test_a_deleted_attachment_is_not_revalidated(self, client, auth_headers, test_issue):
+        uploaded = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
+        await client.delete(f"/api/attachments/{uploaded['id']}", headers=auth_headers)
+
+        gone = await client.get(uploaded["url"], headers={**auth_headers, "If-None-Match": f'"{uploaded["sha256"]}"'})
+
+        assert gone.status_code == 404
 
     async def test_a_missing_blob_is_gone(self, client, auth_headers, test_issue):
         uploaded = (await _upload(client, auth_headers, test_issue.id, PNG)).json()

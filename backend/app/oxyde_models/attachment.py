@@ -21,7 +21,9 @@ class OxydeAttachment(Model):
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
-    issue: OxydeIssue | None = Field(default=None, db_on_delete="CASCADE")
+    # NOT NULL in the database: an attachment means nothing without its
+    # issue. (Optional to Python only because a relation field must be.)
+    issue: OxydeIssue | None = Field(default=None, db_nullable=False, db_on_delete="CASCADE")
     comment: OxydeIssueComment | None = Field(default=None, db_on_delete="SET NULL")
     uploader: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
     sha256: str = Field()

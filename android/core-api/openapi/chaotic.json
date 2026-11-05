@@ -3381,7 +3381,7 @@
           "attachments"
         ],
         "summary": "Upload Attachment",
-        "description": "Attach a file to an issue: the raw bytes as the request body (not\nmultipart), its display name in ``filename``. PNG, JPEG, GIF, WebP,\nPDF or UTF-8 plain text, recognised by its bytes (415 otherwise), at\nmost 10 MiB (413 ``attachment_too_large``), within the project's\nquota (413 ``attachment_quota_exceeded``). ``comment_id`` names a\ncomment of the caller's on this issue the file belongs to; without it the file is\nattached to the issue alone. Honours ``Idempotency-Key``: a resend\nstores the file once.",
+        "description": "Attach a file to an issue: the raw bytes as the request body (not\nmultipart), its display name in ``filename``. PNG, JPEG, GIF, WebP,\nPDF or UTF-8 plain text, recognised by its bytes (415 otherwise), at\nmost 10 MiB (413 ``attachment_too_large``), within the project's\nquota (409 ``attachment_quota_exceeded``, which a resend under the same key asks again). ``comment_id`` names a\ncomment of the caller's on this issue the file belongs to; without it the file is\nattached to the issue alone. Honours ``Idempotency-Key``: a resend\nstores the file once.",
         "operationId": "upload_attachment_api_issues__issue_id__attachments_post",
         "security": [
           {
@@ -3527,6 +3527,22 @@
             "schema": {
               "type": "string",
               "title": "Attachment Id"
+            }
+          },
+          {
+            "name": "if-none-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
             }
           }
         ],

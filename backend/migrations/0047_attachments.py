@@ -5,7 +5,8 @@ below this docstring: one create_table, `attachments`, with one row per
 file attached to an issue (its sha256, size, sniffed content type and
 display filename; the bytes live in the blob store under the sha256,
 not in the database). Three foreign keys, which a CREATE TABLE carries
-on SQLite: the issue CASCADE, the comment and the uploader SET NULL.
+on SQLite: the issue (NOT NULL) CASCADE, the comment and the uploader
+SET NULL.
 Four indexes, each also declared in OxydeAttachment.Meta.indexes under
 the same name (CHT-1410): issue_id (the issue's list), sha256 (whether
 a blob is still named), comment_id and uploader_id (the SET NULLs).
@@ -107,7 +108,7 @@ def upgrade(ctx):
                 'name': 'issue_id',
                 'python_type': 'str',
                 'db_type': None,
-                'nullable': True,
+                'nullable': False,
                 'primary_key': False,
                 'unique': False,
                 'default': None,

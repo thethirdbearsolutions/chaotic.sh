@@ -308,6 +308,16 @@ class Settings(BaseSettings):
         return [str(item) for item in parse_trusted_proxies(self.forwarded_allow_ips)[0]]
 
     @model_validator(mode="after")
+    def _check_attachments_dir(self) -> "Settings":
+        """The blob store sits beside a SQLite database by default
+        (CHT-1996). Any other database has no directory to sit beside,
+        and the working directory of a service may be ``/``: refuse to
+        start rather than guess."""
+        if not self.attachments_dir and not self.database_url.startswith("sqlite"):
+            raise ValueError("CHAOTIC_ATTACHMENTS_DIR must be set when DATABASE_URL is not a SQLite database")
+        return self
+
+    @model_validator(mode="after")
     def _check_oauth_issuer(self) -> "Settings":
         """With OAUTH_ENABLED, APP_BASE_URL becomes the OAuth issuer, so it
         must be one (RFC 8414 §2 / OAuth 2.1 §1.5): https, or http on a

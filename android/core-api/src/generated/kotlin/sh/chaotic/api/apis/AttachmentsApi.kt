@@ -80,9 +80,10 @@ import io.ktor.http.ParametersBuilder
         * Download Attachment
         * An attachment&#39;s bytes. Raster images are served &#x60;&#x60;inline&#x60;&#x60;, so a page that fetched them can show them; anything else as an &#x60;&#x60;attachment&#x60;&#x60; to save. 410 &#x60;&#x60;attachment_blob_missing&#x60;&#x60; when the row is there but its file is not (a database restored without its attachments).
          * @param attachmentId  
+         * @param ifNoneMatch  (optional)
          * @return void
         */
-        open suspend fun downloadAttachmentApiAttachmentsAttachmentIdContentGet(attachmentId: kotlin.String): HttpResponse<Unit> {
+        open suspend fun downloadAttachmentApiAttachmentsAttachmentIdContentGet(attachmentId: kotlin.String, ifNoneMatch: kotlin.String? = null): HttpResponse<Unit> {
 
             val localVariableAuthNames = listOf<String>("HTTPBearer")
 
@@ -92,6 +93,7 @@ import io.ktor.http.ParametersBuilder
             val localVariableQuery = mutableMapOf<String, List<String>>()
 
             val localVariableHeaders = mutableMapOf<String, String>()
+            ifNoneMatch?.apply { localVariableHeaders["if-none-match"] = this.toString() }
 
             val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.GET,
@@ -145,7 +147,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * POST /api/issues/{issue_id}/attachments
         * Upload Attachment
-        * Attach a file to an issue: the raw bytes as the request body (not multipart), its display name in &#x60;&#x60;filename&#x60;&#x60;. PNG, JPEG, GIF, WebP, PDF or UTF-8 plain text, recognised by its bytes (415 otherwise), at most 10 MiB (413 &#x60;&#x60;attachment_too_large&#x60;&#x60;), within the project&#39;s quota (413 &#x60;&#x60;attachment_quota_exceeded&#x60;&#x60;). &#x60;&#x60;comment_id&#x60;&#x60; names a comment of the caller&#39;s on this issue the file belongs to; without it the file is attached to the issue alone. Honours &#x60;&#x60;Idempotency-Key&#x60;&#x60;: a resend stores the file once.
+        * Attach a file to an issue: the raw bytes as the request body (not multipart), its display name in &#x60;&#x60;filename&#x60;&#x60;. PNG, JPEG, GIF, WebP, PDF or UTF-8 plain text, recognised by its bytes (415 otherwise), at most 10 MiB (413 &#x60;&#x60;attachment_too_large&#x60;&#x60;), within the project&#39;s quota (409 &#x60;&#x60;attachment_quota_exceeded&#x60;&#x60;, which a resend under the same key asks again). &#x60;&#x60;comment_id&#x60;&#x60; names a comment of the caller&#39;s on this issue the file belongs to; without it the file is attached to the issue alone. Honours &#x60;&#x60;Idempotency-Key&#x60;&#x60;: a resend stores the file once.
          * @param issueId  
          * @param filename  (optional)
          * @param commentId  (optional)

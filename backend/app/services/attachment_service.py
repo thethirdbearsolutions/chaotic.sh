@@ -17,7 +17,7 @@ What is stored:
   while the body streams in, so a larger one is refused (413) without
   being held whole. One project's files may total at most
   ``attachment_project_quota_bytes`` (1 GiB, counted per row, so the
-  same file attached twice counts twice).
+  same file attached twice counts twice); past it, 409.
 * **Names.** ``filename`` is display text. Its path components and
   control characters are dropped and it is cut to ``MAX_FILENAME``
   characters; the blob's own name on disk is its sha256.
@@ -51,6 +51,12 @@ MAX_FILENAME = 255
 DEFAULT_FILENAME = "attachment"
 # Enough to recognise every allowed type, and to tell markup from text.
 _SNIFF_BYTES = 512
+# Enough to tell every binary type apart (WebP's marker ends at byte 12).
+_SIGNATURE_BYTES = 16
+# What one write, hash and decode step handles: a body that arrives in
+# one piece (a keyed upload's, read whole by the idempotency layer) is
+# still worked through in pieces.
+_PIECE = 64 * 1024
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 RASTER_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
@@ -160,23 +166,31 @@ class BlobStore:
         digest = hashlib.sha256()
         size = 0
         head = b""
+        # The binary type, once enough of the head is in to tell; until
+        # then (and for good once it is not one) the text check runs.
+        binary: str | None = None
+        decided = False
         text = _TextCheck()
         try:
             with open(temp_path, "wb") as out:
                 async for chunk in chunks:
-                    if not chunk:
-                        continue
-                    size += len(chunk)
-                    if size > max_bytes:
-                        raise too_large(max_bytes)
-                    if len(head) < _SNIFF_BYTES:
-                        head += chunk[: _SNIFF_BYTES - len(head)]
-                    digest.update(chunk)
-                    text.feed(chunk)
-                    out.write(chunk)
+                    view = memoryview(chunk)
+                    for start in range(0, len(view), _PIECE):
+                        piece = view[start:start + _PIECE]
+                        size += len(piece)
+                        if size > max_bytes:
+                            raise too_large(max_bytes)
+                        if len(head) < _SNIFF_BYTES:
+                            head += bytes(piece[: _SNIFF_BYTES - len(head)])
+                        if not decided and len(head) >= _SIGNATURE_BYTES:
+                            binary, decided = sniff_binary_type(head), True
+                        digest.update(piece)
+                        if binary is None:
+                            text.feed(bytes(piece))
+                        out.write(piece)
             if size == 0:
                 raise AttachmentRefused(422, "attachment_empty", "The file is empty.")
-            content_type = sniff_binary_type(head)
+            content_type = binary if decided else sniff_binary_type(head)
             if content_type is None:
                 if not text.finish() or looks_like_markup(head):
                     raise AttachmentRefused(
@@ -195,6 +209,9 @@ class BlobStore:
         final = self.path_for(staged.sha256)
         if final.is_file():
             staged.temp_path.unlink(missing_ok=True)
+            # Re-dated, so a sweep's age gate sees a blob in use again,
+            # not the orphan it may have been until now.
+            os.utime(final)
             return final
         final.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staged.temp_path, final)
@@ -239,12 +256,18 @@ def default_root() -> Path:
     settings = get_settings()
     if settings.attachments_dir:
         return Path(settings.attachments_dir).expanduser().resolve()
-    url = settings.database_url
+    path = sqlite_path(settings.database_url)
+    if path is None:  # pragma: no cover -- Settings refuses all but an in-memory SQLite URL
+        raise RuntimeError("CHAOTIC_ATTACHMENTS_DIR must be set when the database is not SQLite")
+    return Path(path).parent / "attachments"
+
+
+def sqlite_path(url: str) -> str | None:
+    """The database file a SQLite URL names, absolute; None otherwise."""
     for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
         if url.startswith(prefix):
-            return Path(os.path.abspath(url[len(prefix):])).parent / "attachments"
-    # Not SQLite: nothing to sit beside, so the working directory.
-    return Path(os.path.abspath("attachments"))
+            return os.path.abspath(url[len(prefix):])
+    return None
 
 
 class AttachmentService:
@@ -265,8 +288,11 @@ class AttachmentService:
         quota = get_settings().attachment_project_quota_bytes
         used = await self.project_usage(project_id)
         if used + adding > quota or (adding == 0 and used >= quota):
+            # 409, not 413: it says how the project stands now, not what
+            # the file is, so an Idempotency-Key does not store it and a
+            # resend after a deletion goes through.
             raise AttachmentRefused(
-                413, "attachment_quota_exceeded",
+                409, "attachment_quota_exceeded",
                 f"This project's attachments would exceed its {_size(quota)} quota "
                 f"({_size(used)} used). Delete some attachments first.",
             )
