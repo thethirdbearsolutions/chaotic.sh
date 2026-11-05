@@ -880,7 +880,7 @@ function renderDecisionBody(entry) {
         // The attestation is the body; who and when are the meta line,
         // the way every other row says who it came from (CHT-2081).
         return {
-            meta: metaLine(att.attested_by_name || 'Someone', 'attested', att.attested_at),
+            meta: metaLine(att.attested_by_name || 'Someone', 'attested'),
             body: `<div class="inbox-expanded-body inbox-expanded-markdown">
                 ${att.note ? `<div class="markdown-body">${renderMarkdown(att.note)}</div>` : '<div class="text-muted">No note.</div>'}
                 ${renderArtifact(att)}
@@ -898,10 +898,9 @@ function renderDecisionBody(entry) {
     };
 }
 
-/** "Ada attested 3 hours ago": who, what they did, when (CHT-2081). */
-function metaLine(who, verb, at) {
-    const when = at ? ` ${escapeHtml(formatRelativeTime(at))}` : '';
-    return `${escapeHtml(who)} ${escapeHtml(verb)}${when}`;
+/** "Ada attested": who did what (CHT-2081). When is the row's own time. */
+function metaLine(who, verb) {
+    return `${escapeHtml(who)} ${escapeHtml(verb)}`;
 }
 
 // The verb of a row's meta line, by kind: what the sender did.
@@ -1235,7 +1234,7 @@ function renderExpandedPanel(entry, sourceRef, panelId) {
     // it, then the action bar.
     const decision = isDecision ? renderDecisionBody(entry) : null;
     const meta = decision?.meta
-        ?? (from ? metaLine(from, META_VERBS[entry.kind] || 'sent this', entry.created_at) : '');
+        ?? (from ? metaLine(from, META_VERBS[entry.kind] || 'sent this') : '');
     const body = decision
         ? decision.body
         : (entry.body ? `<div class="inbox-expanded-body">${escapeHtml(entry.body)}</div>` : '');

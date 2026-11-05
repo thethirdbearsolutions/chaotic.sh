@@ -7305,14 +7305,18 @@ body.theme-light .segmented-btn.active {
     min-height: 40px;
 }
 
+/* One spacing token between the panel's parts, whatever they are
+   (CHT-2081): the children carry no margins of their own. */
 .inbox-row-expanded-panel {
     margin: 0 0 0 37px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
 }
 
 .inbox-expanded-source {
     font-size: var(--font-sm);
     color: var(--text-muted);
-    margin-bottom: 6px;
 }
 
 /* One body container for every expanded row (CHT-2081): an assignment's
@@ -7326,7 +7330,6 @@ body.theme-light .segmented-btn.active {
     background: var(--bg-secondary);
     border-radius: var(--radius-lg);
     padding: var(--space-lg) 14px;
-    margin-bottom: 10px;
 }
 .inbox-expanded-markdown { white-space: normal; }
 .inbox-expanded-markdown .markdown-body > :first-child { margin-top: 0; }
@@ -7390,7 +7393,6 @@ body.theme-light .segmented-btn.active {
    attestation block, what the ritual asks, and the decision buttons. */
 .inbox-decision-asks {
     max-width: 720px;
-    margin-bottom: 10px;
 }
 .inbox-decision-asks-text {
     font-size: var(--font-sm);
@@ -7402,9 +7404,9 @@ body.theme-light .segmented-btn.active {
     cursor: pointer;
     font-size: var(--font-sm);
     color: var(--text-muted);
-    margin-bottom: 8px;
     list-style: none;
 }
+.inbox-decision-asks[open] summary { margin-bottom: var(--space-md); }
 .inbox-decision-asks summary::-webkit-details-marker { display: none; }
 .inbox-decision-asks summary::before { content: '▸ '; }
 .inbox-decision-asks[open] summary::before { content: '▾ '; }
@@ -7412,7 +7414,6 @@ body.theme-light .segmented-btn.active {
 .inbox-decision-status {
     font-size: var(--font-sm);
     color: var(--text-muted);
-    margin-bottom: 10px;
 }
 /* The primary step has the outlined buttons' size and shape, filled
    (CHT-2081): one row of buttons, not two styles side by side. */
