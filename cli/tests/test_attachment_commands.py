@@ -2,7 +2,7 @@
 --attach`, `issue attachments`, `attachment-download`,
 `attachment-delete`, and what `issue view` shows."""
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
