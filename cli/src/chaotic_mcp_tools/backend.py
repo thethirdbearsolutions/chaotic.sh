@@ -178,10 +178,12 @@ class Backend(Protocol):
 
     # -- attachments (CHT-1996) -------------------------------------------
 
-    async def read_local_file(self, path: str) -> tuple[bytes, str]:
+    async def read_local_file(self, path: str, *, base64_arg: str = "content_base64") -> tuple[bytes, str]:
         """The bytes of a file on the machine this server runs on, and
         its name. Only the stdio side has the caller's files; the HTTP
-        side raises ToolInputError (send ``content_base64`` instead)."""
+        side raises ToolInputError (send ``content_base64`` instead).
+        ``base64_arg`` is the calling tool's argument for the bytes, which
+        a refusal names as the way to send them (CHT-2045)."""
 
     async def upload_attachment(self, issue_id: str, data: bytes, filename: str | None) -> dict: ...
 

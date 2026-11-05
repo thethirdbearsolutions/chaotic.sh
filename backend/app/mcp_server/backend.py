@@ -342,12 +342,13 @@ class InProcessBackend:
     # -- attachments (CHT-1996) ----------------------------------------------
 
     @_translated(Access.READ)
-    async def read_local_file(self, path: str) -> tuple[bytes, str]:
+    async def read_local_file(self, path: str, *, base64_arg: str = "content_base64") -> tuple[bytes, str]:
         # This server runs on the Chaotic host, not the caller's machine:
         # a path would name a file of the server's (CHT-1996).
+        with_name = " (with filename)" if base64_arg == "content_base64" else ""
         raise ToolInputError(
-            "This MCP server cannot read files on your machine: send the file as content_base64 "
-            "(with filename), or use the stdio server (`chaotic mcp`), which can read a path."
+            f"This MCP server cannot read files on your machine: send the file as {base64_arg}"
+            f"{with_name}, or use the stdio server (`chaotic mcp`), which can read a path."
         )
 
     @_translated(attachments_api.attach_file)

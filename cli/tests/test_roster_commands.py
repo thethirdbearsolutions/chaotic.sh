@@ -351,7 +351,7 @@ def test_profile_avatar_remove(cli_runner):
     client.delete_avatar.assert_called_once_with()
 
 
-@pytest.mark.parametrize("args", [[], ["x.png", "--remove"]])
+@pytest.mark.parametrize("args", [[], ["x.png", "--remove"], [""]])
 def test_profile_avatar_needs_exactly_a_file_or_remove(cli_runner, args):
     from cli.main import cli, client
     client.upload_avatar = MagicMock()

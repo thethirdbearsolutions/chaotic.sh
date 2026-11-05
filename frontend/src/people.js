@@ -48,6 +48,10 @@ let saving = false;
 // Bumped each time the form opens: a save finishing after its form was
 // closed (and perhaps another opened) must leave the new one alone.
 let formToken = 0;
+// Your role in a team, as its newest roster fetch said (CHT-2045): what
+// decides whether you may edit any of its agents, fresher than a cached
+// roster or another page's member list.
+let viewerRole = { teamId: null, role: null };
 
 export function getRoster() {
     return roster;
@@ -65,6 +69,7 @@ export function resetPeople() {
     saving = false;
     shownEntry = null;
     photoBusy = false;
+    viewerRole = { teamId: null, role: null };
 }
 
 /**
@@ -72,7 +77,11 @@ export function resetPeople() {
  * stores it only once it knows its request is still the current one.
  */
 async function fetchRoster(teamId, includeIdle) {
-    return api.getTeamRoster(teamId, { includeIdle });
+    const fetched = await api.getTeamRoster(teamId, { includeIdle });
+    const me = getCurrentUser();
+    const mine = Array.isArray(fetched) ? fetched.find(r => r.user_id === me?.id) : null;
+    viewerRole = { teamId, role: mine?.role ?? null };
+    return fetched;
 }
 
 /** Replace one entry in the cached roster, if it is cached there. */
@@ -267,12 +276,17 @@ function entryFromAgent(agent) {
     };
 }
 
-/** Is `me` an admin or owner of the current team, by the cached roster
- * or the loaded member list? */
+/** Is `me` an admin or owner of the current team, by the newest roster
+ * fetched for it? The edit form fetches one as it opens, so the form
+ * itself is always decided fresh; PATCH /agents/{id} lets those admins
+ * edit every field of any agent of the team, as this form does. */
 function viewerIsTeamAdmin(me) {
-    const mine = rosterTeamId === getCurrentTeam()?.id ? roster.find(r => r.user_id === me?.id) : null;
-    if (mine?.role === 'admin' || mine?.role === 'owner') return true;
-    return me?.id === getCurrentUser()?.id && isCurrentUserAdmin();
+    const teamId = getCurrentTeam()?.id;
+    if (!teamId || !me) return false;
+    let role = null;
+    if (me.id === getCurrentUser()?.id && viewerRole.teamId === teamId) role = viewerRole.role;
+    else if (rosterTeamId === teamId) role = roster.find(r => r.user_id === me.id)?.role ?? null;
+    return role === 'admin' || role === 'owner';
 }
 
 /** May the viewer edit this entry? Their own, an agent they own, or

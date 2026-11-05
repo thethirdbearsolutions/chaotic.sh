@@ -14,7 +14,8 @@ from pydantic import Field
 from ..attachments import decode_base64
 from ..backend import Backend
 from ..constants import TEAM_FIELD_DESC
-from ..errors import ToolInputError
+from ..errors import BackendError, ToolInputError, TransportError
+from .issues import _with_note
 from ..shapes import COMPACT_ROSTER_FIELDS, _fields_prose, listing
 
 DETAIL_ROSTER_DESC = (
@@ -169,11 +170,7 @@ async def profile_update(
         fields["avatar_url"] = None
     me = None
     if photo_path is not None:
-        try:
-            data, _name = await backend.read_local_file(photo_path)
-        except ToolInputError as e:
-            # Its advice names issue_attach's content_base64; here it is photo_base64.
-            raise ToolInputError(f"{e} For a profile picture, send photo_base64.") from e
+        data, _name = await backend.read_local_file(photo_path, base64_arg="photo_base64")
         me = await backend.upload_avatar(data)
     elif photo_base64 is not None:
         data = decode_base64(photo_base64, "photo_base64")
@@ -183,6 +180,14 @@ async def profile_update(
     elif remove_photo:
         me = await backend.delete_avatar()
     if fields:
-        me = await backend.update_me(**fields)
+        try:
+            me = await backend.update_me(**fields)
+        except (BackendError, TransportError) as e:
+            if me is None:
+                raise
+            # The picture is saved already; say so, or the caller would
+            # think nothing changed (PR #547 review).
+            done = "removed" if remove_photo else "uploaded"
+            raise _with_note(e, "", f"your photo was {done}; the other fields were not saved") from e
     # `user_id`, as on the roster rows, so the two compare (PR #516 review).
     return {"user_id": me.get("id"), **{key: me.get(key) for key in PROFILE_FIELDS[1:]}}

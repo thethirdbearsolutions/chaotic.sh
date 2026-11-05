@@ -563,7 +563,9 @@ def _add_identity_shortcuts(cli, auth_profile):
         """Upload FILE as your own profile picture on the server (PNG, JPEG,
         WebP or GIF, at most 256 KB), or remove it with --remove. The same as
         `chaotic auth profile --photo FILE` (or `--photo ""`)."""
-        if (file is None) == (not remove):
+        # An empty FILE (an unset "$IMG") is a mistake, not a removal:
+        # --remove is the only way to remove (PR #547 review).
+        if (file is None) == (not remove) or file == "":
             raise click.UsageError("Give a FILE to upload, or --remove.")
         ctx = click.get_current_context()
         ctx.invoke(auth_profile, photo="" if remove else file)

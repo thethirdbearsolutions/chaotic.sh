@@ -2374,4 +2374,5 @@ class TestProfileUpdate:
     async def test_a_path_is_refused_on_the_hosted_server(self):
         result = await tools.profile_update(photo_path="/etc/hostname")
 
-        assert set(result) == {"error"} and "photo_base64" in result["error"]["message"], result
+        message = result["error"]["message"]
+        assert set(result) == {"error"} and "photo_base64" in message and "content_base64" not in message, result

@@ -307,6 +307,58 @@ async def test_someone_outside_the_team_gets_the_missing_agents_404(client, auth
     assert hidden.json() == missing.json()
 
 
+async def test_a_project_agent_sets_its_own_but_not_a_siblings(client, auth_headers, test_team, test_project):
+    from app.oxyde_models.project import OxydeProject
+
+    sibling_project = await OxydeProject.objects.create(team_id=test_team.id, name="Sibling", key="SIBA")
+    mine = (await client.post(
+        f"/api/projects/{test_project.id}/agents", json={"name": "Owl"}, headers=auth_headers,
+    )).json()
+    sibling = (await client.post(
+        f"/api/projects/{sibling_project.id}/agents", json={"name": "Lark"}, headers=auth_headers,
+    )).json()
+
+    own = await _upload_for(client, _bearer(mine["api_key"]), mine["id"], PNG)
+    theirs = await _upload_for(client, _bearer(mine["api_key"]), sibling["id"], PNG)
+    back = await _upload_for(client, _bearer(sibling["api_key"]), mine["id"], JPEG)
+
+    assert own.status_code == 200, own.text
+    assert theirs.status_code == 403, theirs.text
+    assert back.status_code == 403, back.text
+    assert await OxydeUserAvatar.objects.count() == 1
+
+
+async def test_a_creator_who_left_the_team_gets_the_missing_agents_404(
+    client, auth_headers, auth_headers2, test_team, test_user2,
+):
+    from app.enums import TeamRole
+    from app.oxyde_models.team import OxydeTeamMember
+
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+    agent = await _agent(client, auth_headers2, test_team.id)
+    assert (await _upload_for(client, auth_headers2, agent["id"], PNG)).status_code == 200
+    await member.delete()
+
+    hidden = await _upload_for(client, auth_headers2, agent["id"], JPEG)
+    hidden_delete = await client.delete(f"/api/agents/{agent['id']}/avatar", headers=auth_headers2)
+    missing = await _upload_for(client, auth_headers2, "no-such-agent", JPEG)
+
+    assert hidden.status_code == hidden_delete.status_code == missing.status_code == 404
+    assert hidden.json() == hidden_delete.json() == missing.json()
+
+
+async def test_replacing_an_agents_picture_keeps_one_row(client, auth_headers, test_team):
+    agent = await _agent(client, auth_headers, test_team.id)
+    first = (await _upload_for(client, auth_headers, agent["id"], PNG)).json()["avatar_url"]
+
+    second = (await _upload_for(client, _bearer(agent["api_key"]), agent["id"], GIF)).json()["avatar_url"]
+
+    assert first != second
+    assert await OxydeUserAvatar.objects.filter(user_id=agent["id"]).count() == 1
+    assert (await client.get(first)).status_code == 404
+    assert (await client.get(second)).content == GIF
+
+
 async def test_another_agent_is_refused(client, auth_headers, test_team):
     agent = await _agent(client, auth_headers, test_team.id)
     other = await _agent(client, auth_headers, test_team.id, name="Lark")

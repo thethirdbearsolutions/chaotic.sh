@@ -202,6 +202,19 @@ describe('canEditProfile', () => {
     expect(canEditProfile({ ...PIPER, owner_id: 'u-sam' }, me)).toBe(false);
   });
 
+  it('decides the admin form from the fresh roster, not a stale one', async () => {
+    setCurrentUser({ id: 'u-sam', name: 'Sam' });
+    api.getTeamRoster.mockResolvedValue([{ ...ADA, user_id: 'u-sam', role: 'admin' }, PIPER]);
+    await loadPeople();
+    // Demoted elsewhere: the form's own fetch says so, and it stays shut.
+    api.getTeamRoster.mockResolvedValue([{ ...ADA, user_id: 'u-sam', role: 'member' }, PIPER]);
+
+    await showEditProfileModal('a-piper');
+
+    expect(document.getElementById('profile-name')).toBeNull();
+    expect(canEditProfile(PIPER, { id: 'u-sam' })).toBe(false);
+  });
+
   it('lets a team admin edit any agent, still no person (CHT-2045)', async () => {
     api.getTeamRoster.mockResolvedValue([{ ...ADA, user_id: 'u-sam', role: 'admin' }, SAM, PIPER]);
     await loadPeople();
