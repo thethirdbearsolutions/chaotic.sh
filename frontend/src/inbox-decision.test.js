@@ -68,7 +68,7 @@ import { registerActions } from './event-delegation.js';
 import {
     renderInbox, toggleInboxEntryExpand, collapseInboxExpand, resetInboxLocalState,
     decideInboxEntry, submitInboxComment, showInboxCommentModal, setInboxKindFilter, loadInbox,
-    markAllInboxRead, setInboxUnreadFilter, applyInboxKindFromUrl,
+    markAllInboxRead, setInboxUnreadFilter, applyInboxKindFromUrl, archiveInboxEntryElement,
 } from './inbox.js';
 
 const actions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
@@ -658,6 +658,57 @@ describe('sprint close rituals (CHT-2032)', () => {
         const r = row('review-1');
         expect(r.querySelector('.inbox-row-archived').textContent).toBe('archived');
         expect(r.querySelector('[data-action="archive-inbox-entry"]')).toBeNull();
+    });
+});
+
+describe('sprint close review fixes (PR #549)', () => {
+    const SPRINT = {
+        ...REVIEW, id: 'sprint-1', kind: 'sprint_ritual', issue_id: null, issue_identifier: null,
+        project_id: 'proj-1', ritual_id: 'sr-1', created_at: '2026-11-05T08:00:00Z',
+    };
+
+    it('a background refresh under Unread keeps the sprint rows pinned above a kept newer row', async () => {
+        const NEWER = { ...REVIEW, created_at: '2026-11-05T12:00:00Z' };
+        api.getInbox.mockReset();
+        api.getInbox.mockResolvedValue([SPRINT, NEWER]);
+        setInboxKindFilter('approvals');
+        await flush();
+        setInboxUnreadFilter(true);
+        await flush();
+        try {
+            api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [RITUAL], completed_rituals: [] });
+            toggleInboxEntryExpand(NEWER.id);
+            await flush();
+            expect(document.querySelector('.inbox-row-expanded').dataset.entryId).toBe('review-1');
+            // Read now, so the unread fetch no longer has it; it is kept open.
+            api.getInbox.mockResolvedValue([SPRINT]);
+            await loadInbox({ background: true });
+            await flush();
+            expect(getInboxEntries().map(e => e.id)).toEqual(['sprint-1', 'review-1']);
+            const pinned = document.querySelector('.inbox-sprint-close');
+            expect([...pinned.querySelectorAll('.inbox-row')].map(r => r.dataset.entryId)).toEqual(['sprint-1']);
+        } finally {
+            api.getInbox.mockResolvedValue([]);
+            setInboxUnreadFilter(false);
+            setInboxKindFilter('all');
+            await flush();
+        }
+    });
+
+    it('e on an archived row archives nothing', () => {
+        setInboxEntries([{ ...REVIEW, archived_at: '2026-11-05T11:00:00Z' }]);
+        renderInbox();
+        archiveInboxEntryElement(row('review-1'));
+        expect(api.archiveInbox).not.toHaveBeenCalled();
+        expect(row('review-1')).toBeDefined();
+    });
+
+    it('deciding an archived row drops it here without archiving it again', async () => {
+        await openRow({ ...REVIEW, archived_at: '2026-11-05T11:00:00Z' }, { pending_rituals: [RITUAL], completed_rituals: [] });
+        expect(await decideInboxEntry('review-1')).toBe(true);
+        expect(api.approveTicketRitual).toHaveBeenCalled();
+        expect(api.archiveInbox).not.toHaveBeenCalled();
+        expect(row('review-1')).toBeUndefined();
     });
 });
 

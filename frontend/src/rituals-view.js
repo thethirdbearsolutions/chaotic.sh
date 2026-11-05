@@ -134,7 +134,7 @@ export async function completeGateRitual(ritualId, projectId, ritualName, artifa
     document.getElementById('modal-content').innerHTML = `
         <form id="complete-gate-ritual-form">
             <div class="form-group">
-                <label for="gate-note">Note (optional)</label>
+                <label for="gate-note">Note</label>
                 <textarea id="gate-note" placeholder="Describe what was done..."></textarea>
             </div>
             ${renderArtifactField(artifact)}
@@ -335,7 +335,7 @@ export function showCompleteTicketRitualModal(ritualId, issueId, ritualName, art
     document.getElementById('modal-content').innerHTML = `
         <form id="complete-ticket-ritual-form">
             <div class="form-group">
-                <label for="ticket-ritual-note">Note (optional)</label>
+                <label for="ticket-ritual-note">Note</label>
                 <textarea id="ticket-ritual-note" placeholder="Describe what was done..."></textarea>
             </div>
             ${renderArtifactField(artifact)}

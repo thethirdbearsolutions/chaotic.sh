@@ -22,7 +22,7 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from oxyde import IntegrityError, execute_raw
+from oxyde import IntegrityError, Q, execute_raw
 
 from app.db.transactions import atomic, on_commit, on_commit_collect
 from app.enums import ActivityType, ApprovalMode, InboxEntryKind, IssueType, TeamRole
@@ -790,6 +790,8 @@ class InboxService:
             ids = [row["id"] for row in await model.objects.filter(project_id=project_id).values("id").all()]
             for start in range(0, len(ids), self._RESOLVE_CHUNK):
                 unread += await self._resolve({f"{column}__in": ids[start:start + self._RESOLVE_CHUNK]})
+        # A sprint ritual's entry names the project, not an issue (CHT-2032).
+        unread += await self.resolve_sprint_rituals(project_id)
         return unread
 
     _ASK_KINDS = (InboxEntryKind.GATE_PENDING, InboxEntryKind.REVIEW_REQUESTED)
@@ -950,8 +952,9 @@ class InboxService:
         return issues, documents
 
     async def sprint_ritual_modes(self, entries: list[OxydeInboxEntry]) -> dict:
-        """The approval mode of each ritual a page's open SPRINT_RITUAL
-        entries name, in one query (CHT-2032): which call approves it."""
+        """The approval mode and note_required of each ritual a page's open
+        SPRINT_RITUAL entries name, in one query (CHT-2032): which call
+        approves it, and whether that call takes a note."""
         from app.oxyde_models.ritual import OxydeRitual
 
         ids = sorted({
@@ -960,7 +963,10 @@ class InboxService:
         })
         if not ids:
             return {}
-        return {r.id: r.approval_mode for r in await OxydeRitual.objects.filter(id__in=ids).all()}
+        return {
+            r.id: (r.approval_mode, bool(r.note_required))
+            for r in await OxydeRitual.objects.filter(id__in=ids).all()
+        }
 
     async def list_for_user(
         self, user_id: str, *, team_id: str | None = None,
@@ -976,10 +982,15 @@ class InboxService:
             resolved_at=None,
         )
         if not include_archived:
-            # CHT-1316: archived entries leave the inbox. With
-            # include_archived, the ones still waiting come back: the
-            # resolved filter above already drops the settled ones (CHT-2032).
+            # CHT-1316: archived entries leave the inbox.
             query = query.filter(archived_at=None)
+        else:
+            # With include_archived, the decisions still waiting come back
+            # (CHT-2032): the resolved filter above already drops the
+            # settled ones. Other kinds never settle, so they stay out.
+            query = query.filter(
+                Q(archived_at__isnull=True) | Q(kind__in=[k.name for k in self._DECISION_KINDS])
+            )
         if team_id:
             query = query.filter(team_id=team_id)
         if unread_only:

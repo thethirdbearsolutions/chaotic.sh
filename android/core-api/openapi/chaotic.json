@@ -7199,11 +7199,11 @@
             "required": false,
             "schema": {
               "type": "boolean",
-              "description": "Also list archived entries that are still waiting: a decision archived before it was made stays reachable (CHT-2032).",
+              "description": "Also list archived decision entries (reviews, gates, sprint rituals) that are still waiting: a decision archived before it was made stays reachable (CHT-2032). Other archived kinds stay out.",
               "default": false,
               "title": "Include Archived"
             },
-            "description": "Also list archived entries that are still waiting: a decision archived before it was made stays reachable (CHT-2032)."
+            "description": "Also list archived decision entries (reviews, gates, sprint rituals) that are still waiting: a decision archived before it was made stays reachable (CHT-2032). Other archived kinds stay out."
           },
           {
             "name": "skip",

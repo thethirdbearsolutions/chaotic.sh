@@ -509,14 +509,6 @@ export class ApiClient {
         return this.request('GET', `/rituals/limbo?project_id=${projectId}`);
     }
 
-    async getPendingGates(projectId) {
-        return this.request('GET', `/rituals/pending-gates?project_id=${projectId}`);
-    }
-
-    async getPendingApprovals(projectId) {
-        return this.request('GET', `/rituals/pending-approvals?project_id=${projectId}`);
-    }
-
     // `artifact` is the document id or URL a ritual with `artifact` set
     // binds its attestation to: `{ document_id }` or `{ url }` (CHT-1359).
     attestationBody(note, artifact) {

@@ -13,7 +13,8 @@ anywhere. This writes the entries such a sprint would have got, the way
 InboxService.notify_sprint_ritual does, for:
 
 - an active, ungrouped EVERY_SPRINT GATE ritual of the project with no
-  attestation for the sprint. A grouped one is left out: which member
+  approved attestation for the sprint (an unapproved one is a review
+  attested before the ritual became a gate, which signing off approves). A grouped one is left out: which member
   of a group a sprint selected is decided in Python
   (RitualService._select), and an entry for one it did not select
   would ask for something nothing waits on;
@@ -77,7 +78,7 @@ def upgrade(ctx):
         + _ADMINS
         + "WHERE s.limbo = 1 AND r.is_active = 1 AND r.trigger = 'EVERY_SPRINT' "
         "AND r.approval_mode = 'GATE' AND r.group_id IS NULL "
-        "AND NOT EXISTS (SELECT 1 FROM ritual_attestations a WHERE a.ritual_id = r.id AND a.sprint_id = s.id) "
+        "AND NOT EXISTS (SELECT 1 FROM ritual_attestations a WHERE a.ritual_id = r.id AND a.sprint_id = s.id AND a.approved_at IS NOT NULL) "
         + _NOT_ALREADY
     )
     ctx.execute(

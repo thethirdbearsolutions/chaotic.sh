@@ -40,9 +40,8 @@ const KIND_LABELS = {
 };
 
 
-// Only entries of these kinds are read-only within a fixed request race
-// window; see loadInboxRequestId below (same doctrine as gate-approvals.js's
-// loadGateApprovalsRequestId / teams.js's loaders).
+// A newer loadInbox() supersedes an older one still in flight (the same
+// doctrine as teams.js's loaders).
 let loadInboxRequestId = 0;
 let showUnreadOnly = false;
 // The single currently-expanded entry id (Gmail-style one-open-at-a-time,
@@ -363,6 +362,8 @@ function applyBackgroundRefresh(fresh, archivedIds) {
             // arrived, and the day groups need the list in order (CHT-1962).
             const at = next.findIndex(e => e.created_at < kept.created_at);
             next.splice(at === -1 ? next.length : at, 0, kept);
+            // By time can land it above the pinned sprint rows (PR #549 review).
+            next = orderForFilter(next);
             // It may also have left because it was decided elsewhere:
             // ask the ritual, so the panel stops offering the decision.
             if (DECISION_KINDS.has(kept.kind)) refreshKept = kept;
@@ -466,6 +467,9 @@ export async function archiveInboxEntry(entryId) {
     if (idx === -1) return;
     const entry = entries[idx];
     const wasUnread = !entry.read_at;
+    // Already archived (listed under Approvals while it waits, CHT-2032):
+    // it leaves once decided, with nothing to archive on the server.
+    const alreadyArchived = !!entry.archived_at;
 
     if (expandedEntryId === entryId) expandedEntryId = null; // it's leaving the list
     reassignCommentPosted.delete(entryId); // review finding 5
@@ -480,6 +484,7 @@ export async function archiveInboxEntry(entryId) {
     // idx now points at the next entry (clamped when last). Behind an open
     // modal the row is selected but not focused (CHT-2029 review finding 1).
     selectInboxRow(idx, { focus: !isModalOpen() });
+    if (alreadyArchived) return;
 
     // CHT-1316: a real archive that persists (drops out of the list + count
     // server-side), instead of the phase-1 mark-read hack that a refetch
@@ -1118,6 +1123,8 @@ function signOffInboxEntry(data) {
     const entry = getInboxEntries().find(e => e.id === data.entryId);
     if (entry?.kind === 'sprint_ritual') {
         // The sprint's own sign-off dialog takes the note and any artifact.
+        // The dialog reloads the current project's limbo banner itself,
+        // the only one on screen.
         const entryId = data.entryId;
         completeGateRitual(data.ritualId, data.projectId, data.ritualName, data.ritualArtifact || '', () => {
             decisionDetails.delete(entryId);
@@ -1542,7 +1549,12 @@ function openInboxEntry(data) {
  * Archive an entry given its rendered DOM row (keyboard `e` path).
  */
 export function archiveInboxEntryElement(rowEl) {
-    if (rowEl?.dataset?.entryId) archiveInboxEntry(rowEl.dataset.entryId);
+    const id = rowEl?.dataset?.entryId;
+    if (!id) return;
+    // An archived decision offers no Archive (CHT-2032); `e` does nothing
+    // either, rather than hide it until the next fetch brings it back.
+    if (getInboxEntries().find(e => e.id === id)?.archived_at) return;
+    archiveInboxEntry(id);
 }
 
 /**

@@ -66,18 +66,19 @@ _APPROVE = {
 }
 
 # A sprint ritual's entry (CHT-2032) has no issue: the call is the
-# sprint-level one, picked by the ritual's mode now. A sprint ritual
-# cannot be sent back, so there is no reject.
+# sprint-level one, picked by the ritual's mode now. A gate's note is
+# required when the ritual says so. A sprint ritual cannot be sent back,
+# so there is no reject.
 _SPRINT_APPROVE = {
-    ApprovalMode.GATE: ("complete", InboxActionNote.OPTIONAL),
-    ApprovalMode.REVIEW: ("approve", InboxActionNote.NONE),
+    ApprovalMode.GATE: "complete",
+    ApprovalMode.REVIEW: "approve",
 }
 _DECIDABLE = set(_APPROVE) | {InboxEntryKind.SPRINT_RITUAL}
 
 
 def _actions(
     entry: OxydeInboxEntry, state: InboxEntryState, *, can_decide: bool,
-    ritual_mode: ApprovalMode | None = None, decide_archived: bool = False,
+    ritual_mode: tuple[ApprovalMode, bool] | None = None, decide_archived: bool = False,
 ) -> list[InboxEntryAction]:
     """The calls the recipient can make on this entry (CHT-1607). A
     tombstone offers none. Approve and reject appear only on an open gate
@@ -107,7 +108,7 @@ def _actions(
 
 
 def _decision_actions(
-    entry: OxydeInboxEntry, can_decide: bool, ritual_mode: ApprovalMode | None,
+    entry: OxydeInboxEntry, can_decide: bool, ritual_mode: tuple[ApprovalMode, bool] | None,
 ) -> list[InboxEntryAction]:
     """Approve and reject, when the entry asks for a decision the
     recipient may make now."""
@@ -123,9 +124,13 @@ def _decision_actions(
             kind=InboxActionKind.REJECT, path=f"{base}/reject-issue/{entry.issue_id}",
             note=InboxActionNote.REQUIRED,
         ))
-    sprint_approve = _SPRINT_APPROVE.get(ritual_mode) if entry.kind == InboxEntryKind.SPRINT_RITUAL else None
-    if sprint_approve and can_decide and entry.ritual_id and entry.project_id:
-        segment, note = sprint_approve
+    mode, note_required = ritual_mode or (None, False)
+    segment = _SPRINT_APPROVE.get(mode) if entry.kind == InboxEntryKind.SPRINT_RITUAL else None
+    if segment and can_decide and entry.ritual_id and entry.project_id:
+        if mode == ApprovalMode.REVIEW:
+            note = InboxActionNote.NONE
+        else:
+            note = InboxActionNote.REQUIRED if note_required else InboxActionNote.OPTIONAL
         actions.append(InboxEntryAction(
             kind=InboxActionKind.APPROVE,
             path=f"/api/rituals/{entry.ritual_id}/{segment}?project_id={entry.project_id}", note=note,
@@ -208,8 +213,9 @@ async def list_inbox(
         description="Only entries of these kinds (repeat the parameter for several).",
     )] = None,
     include_archived: Annotated[bool, Query(
-        description="Also list archived entries that are still waiting: a decision archived "
-                    "before it was made stays reachable (CHT-2032).",
+        description="Also list archived decision entries (reviews, gates, sprint rituals) "
+                    "that are still waiting: a decision archived before it was made stays "
+                    "reachable (CHT-2032). Other archived kinds stay out.",
     )] = False,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,

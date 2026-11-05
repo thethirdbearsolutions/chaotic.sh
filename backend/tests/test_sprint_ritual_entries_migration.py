@@ -49,6 +49,7 @@ def at_before(tmp_path):
                   "VALUES ('g1', 'p1', 'grp', 'RANDOM_ONE', ?)", (T0,))
         _ritual(c, "gate", "p1", "GATE")
         _ritual(c, "gate-done", "p1", "GATE")
+        _ritual(c, "gate-was-review", "p1", "GATE")  # attested as a review, then made a gate
         _ritual(c, "gate-grouped", "p1", "GATE", group="g1")
         _ritual(c, "gate-off", "p1", "GATE", active=0)
         _ritual(c, "gate-ticket", "p1", "GATE", trigger="TICKET_CLOSE")
@@ -62,6 +63,7 @@ def at_before(tmp_path):
             "approved_at) VALUES (?, ?, 's1', 'agent', ?, ?, ?)",
             [
                 ("a1", "gate-done", T0, None, T0),
+                ("a4", "gate-was-review", T0, "attested", None),
                 ("a2", "review", T0, "  Retro notes  \n", None),
                 ("a3", "review-approved", T0, "ok", T0),
             ],
@@ -85,7 +87,11 @@ def _entries(path):
 def test_admins_get_the_entries_a_limbo_would_have_written(at_before):
     _migrate(at_before, target=THIS)
     got = {(e["recipient_user_id"], e["ritual_id"]): e for e in _entries(at_before)}
-    assert set(got) == {("alice", "gate"), ("alice", "review"), ("bob", "review")}
+    assert set(got) == {
+        ("alice", "gate"), ("alice", "review"), ("bob", "review"),
+        # Signing off approves its attestation, so it waits like any gate.
+        ("alice", "gate-was-review"), ("bob", "gate-was-review"),
+    }
 
     gate = got[("alice", "gate")]
     assert gate["kind"] == "SPRINT_RITUAL"
@@ -116,3 +122,16 @@ def test_downgrade_removes_them(at_before):
         c.commit()
         assert c.execute("SELECT count(*) FROM inbox_entries WHERE kind = 'SPRINT_RITUAL'").fetchone()[0] == 0
         assert c.execute("SELECT count(*) FROM inbox_entries").fetchone()[0] == 0
+
+
+def test_rerunning_adds_nothing(at_before):
+    """Idempotent: a second run finds every admin already holding the entry."""
+    _migrate(at_before, target=THIS)
+    first = len(_entries(at_before))
+    spec = importlib.util.spec_from_file_location("m0049", Path(__file__).parent.parent / "migrations" / f"{THIS}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with closing(sqlite3.connect(at_before)) as c:
+        mod.upgrade(SimpleNamespace(execute=c.execute))
+        c.commit()
+    assert len(_entries(at_before)) == first

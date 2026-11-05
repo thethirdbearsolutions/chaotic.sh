@@ -122,7 +122,7 @@ import io.ktor.http.ParametersBuilder
          * @param teamId  (optional)
          * @param unread  (optional, default to false)
          * @param kind Only entries of these kinds (repeat the parameter for several). (optional)
-         * @param includeArchived Also list archived entries that are still waiting: a decision archived before it was made stays reachable (CHT-2032). (optional, default to false)
+         * @param includeArchived Also list archived decision entries (reviews, gates, sprint rituals) that are still waiting: a decision archived before it was made stays reachable (CHT-2032). Other archived kinds stay out. (optional, default to false)
          * @param skip  (optional, default to 0)
          * @param limit  (optional, default to 50)
          * @return kotlin.collections.List<InboxEntryResponse>

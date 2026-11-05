@@ -15,6 +15,7 @@ from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.team import OxydeTeamMember
 from app.schemas.ritual import RitualUpdate
 from app.services.inbox_service import InboxService
+from app.services.project_service import ProjectService
 from app.services.ritual_service import RitualService
 from app.services.sprint_service import SprintService
 
@@ -147,6 +148,76 @@ class TestSettled:
 
 
 @pytest.mark.asyncio
+class TestReviewFixes:
+    """PR #549 review."""
+
+    async def test_deleting_the_project_settles_its_entries(self, db, test_project, test_user, active_sprint):
+        await _ritual(test_project, "retro", ApprovalMode.GATE)
+        await SprintService().close_sprint(active_sprint)
+        await ProjectService().delete(test_project)
+        [entry] = await _entries()
+        assert entry.resolved_at is not None
+
+    async def test_retriggering_off_every_sprint_settles_and_rechecks_limbo(
+        self, db, test_project, test_user, active_sprint,
+    ):
+        gate = await _ritual(test_project, "retro", ApprovalMode.GATE)
+        await SprintService().close_sprint(active_sprint)
+        await RitualService().update(gate, RitualUpdate(trigger=RitualTrigger.TICKET_CLOSE))
+        [entry] = await _entries()
+        assert entry.resolved_at is not None
+        await active_sprint.refresh()
+        assert active_sprint.status == SprintStatus.COMPLETED  # it was all limbo waited on
+
+    async def test_retriggering_onto_every_sprint_during_limbo_asks(
+        self, db, test_project, test_user, active_sprint,
+    ):
+        await _ritual(test_project, "plan", ApprovalMode.GATE)  # keeps the sprint in limbo
+        await SprintService().close_sprint(active_sprint)
+        other = await OxydeRitual.objects.create(
+            project_id=test_project.id, name="retro", prompt="p",
+            trigger=RitualTrigger.TICKET_CLOSE, approval_mode=ApprovalMode.GATE,
+        )
+        await RitualService().update(other, RitualUpdate(trigger=RitualTrigger.EVERY_SPRINT))
+        assert [e.resolved_at for e in await _entries(ritual_id=other.id)] == [None]
+
+    async def test_signing_off_a_review_turned_gate_approves_its_attestation(
+        self, db, test_project, test_user, active_sprint,
+    ):
+        ritual = await _ritual(test_project, "demo", ApprovalMode.REVIEW)
+        await SprintService().close_sprint(active_sprint)
+        await RitualService().attest(ritual, active_sprint.id, test_user.id, note="n")
+        await RitualService().update(ritual, RitualUpdate(approval_mode=ApprovalMode.GATE))
+        ritual = await OxydeRitual.objects.get(id=ritual.id)
+        [open_entry] = [e for e in await _entries() if e.resolved_at is None]
+        assert open_entry.title.startswith("Sign-off needed")
+
+        attestation = await RitualService().complete_gate_ritual(ritual, active_sprint.id, test_user.id, note="ok")
+        assert attestation.approved_at is not None and attestation.approved_by == test_user.id
+        assert all(e.resolved_at is not None for e in await _entries())
+        await active_sprint.refresh()
+        assert active_sprint.status == SprintStatus.COMPLETED
+
+    async def test_a_new_limbo_settles_an_earlier_one_left_open(self, db, test_project, test_user, active_sprint):
+        gate = await _ritual(test_project, "retro", ApprovalMode.GATE)
+        await SprintService().close_sprint(active_sprint)
+        [stale] = await _entries()
+        # Its settling failed when that limbo ended: it is still open.
+        await active_sprint.refresh()
+        await SprintService().complete_limbo(active_sprint)
+        await OxydeInboxEntry.objects.filter(id=stale.id).update(resolved_at=None)
+
+        nxt = await OxydeSprint.objects.filter(
+            project_id=test_project.id, status=SprintStatus.ACTIVE,
+        ).first()
+        await SprintService().close_sprint(nxt)
+        by_id = {e.id: e for e in await _entries(ritual_id=gate.id)}
+        assert by_id[stale.id].resolved_at is not None
+        [fresh] = [e for e in by_id.values() if e.resolved_at is None]
+        assert fresh.title == f"Sign-off needed: retro for {nxt.name}"
+
+
+@pytest.mark.asyncio
 class TestApi:
     async def test_gate_entry_offers_the_sprint_complete_call(
         self, client, db, test_project, test_user, auth_headers, active_sprint,
@@ -162,7 +233,7 @@ class TestApi:
         assert [a["path"] for a in approve] == [
             f"/api/rituals/{gate.id}/complete?project_id={test_project.id}",
         ]
-        assert approve[0]["note"] == "optional"
+        assert approve[0]["note"] == "required"  # the ritual's note_required (PR #549 review)
         assert not [a for a in entry["actions"] if a["kind"] == InboxActionKind.REJECT.value]
 
         done = await client.post(approve[0]["path"], json={"note": "held"}, headers=auth_headers)
@@ -215,6 +286,19 @@ class TestApi:
         assert listed[0]["archived_at"] is not None
         kinds = {a["kind"] for a in listed[0]["actions"]}
         assert kinds == {InboxActionKind.APPROVE.value}  # no archive, no mark read: it is both
+
+    async def test_include_archived_leaves_out_other_archived_kinds(
+        self, client, db, test_project, test_user, auth_headers,
+    ):
+        mention = await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION, team_id=test_project.team_id,
+            title="Bob mentioned you",
+        )
+        await InboxService().archive(mention)
+        listed = (await client.get(
+            "/api/inbox", params={"include_archived": "true"}, headers=auth_headers,
+        )).json()
+        assert listed == []
 
     async def test_sync_tombstone_of_an_archived_decision_offers_nothing(
         self, client, db, test_project, test_user, auth_headers, active_sprint,
