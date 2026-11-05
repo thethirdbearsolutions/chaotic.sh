@@ -1379,3 +1379,17 @@ describe('describeSprintSpan / renderSprintBurndown (CHT-1366)', () => {
         expect(html).not.toContain('progressbar');
     });
 });
+
+// CHT-2027: the Dashboard's sprint rows are <button>s, which turn Enter into
+// their own click; acting on the keydown too would open the sprint twice.
+describe('view-sprint on a button', () => {
+    it('acts on the click, not the keydown that precedes it', () => {
+        const button = document.createElement('button');
+        api.getSprint.mockReset();
+        api.getSprint.mockReturnValue(new Promise(() => {}));
+        sprintsActions['view-sprint']({ type: 'keydown', key: 'Enter' }, { sprintId: 's1', sprintUrl: '/sprint/s1' }, button);
+        expect(api.getSprint).not.toHaveBeenCalled();
+        sprintsActions['view-sprint']({ type: 'click' }, { sprintId: 's1', sprintUrl: '/sprint/s1' }, button);
+        expect(api.getSprint).toHaveBeenCalledWith('s1');
+    });
+});
