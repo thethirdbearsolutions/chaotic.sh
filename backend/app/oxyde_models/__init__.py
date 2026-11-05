@@ -47,8 +47,10 @@ from app.oxyde_models.oauth import (
 from app.oxyde_models.push import OxydePushDevice, OxydePushPreference
 from app.oxyde_models.idempotency import OxydeIdempotencyRecord
 from app.oxyde_models.email_verification import OxydeEmailVerificationCode
+from app.oxyde_models.attachment import OxydeAttachment
 
 __all__ = [
+    "OxydeAttachment",
     "OxydeEmailVerificationCode",
     "OxydeIdempotencyRecord",
     "OxydePushDevice",

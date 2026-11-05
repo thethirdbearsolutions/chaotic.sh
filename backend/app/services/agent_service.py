@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from app.db.transactions import atomic
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.api_key import OxydeAPIKey
+from app.oxyde_models.attachment import OxydeAttachment
 from app.oxyde_models.document import (
     OxydeDocument, OxydeDocumentActivity, OxydeDocumentComment, OxydeDocumentRevision,
 )
@@ -334,6 +335,8 @@ class AgentService:
             "budget transactions": await OxydeBudgetTransaction.objects.filter(user_id=agent_id).count(),
             "issue description revisions": await OxydeIssueDescriptionRevision.objects.filter(author_id=agent_id).count(),
             "document revisions": await OxydeDocumentRevision.objects.filter(author_id=agent_id).count(),
+            # CHT-1996, SET NULL: the file stays, without its uploader.
+            "issue attachments": await OxydeAttachment.objects.filter(uploader_id=agent_id).count(),
         }
 
     async def delete(self, agent: OxydeUser) -> int:

@@ -37,6 +37,7 @@ from starlette.routing import Mount, WebSocketRoute, compile_path
 from app.api.visibility import PROJECT_SCOPED_TEAM_DATA_DETAIL, TEAM_HIDDEN_DETAIL
 from app.enums import ApprovalMode, RitualArtifact, RitualTrigger, TeamRole
 from app.mcp_server import tools
+from app.oxyde_models.attachment import OxydeAttachment
 from app.oxyde_models.document import OxydeDocument, OxydeDocumentComment
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueComment, OxydeIssueRelation
 from app.oxyde_models.label import OxydeLabel
@@ -80,10 +81,16 @@ async def _project_rows(project, team, author):
         team_id=team.id, project_id=project.id, author_id=author.id, title=f"{project.key} doc", content="secret",
     )
     doc_comment = await OxydeDocumentComment.objects.create(document_id=document.id, author_id=author.id, content="c")
+    # A row only: no probe gets as far as its blob (CHT-1996).
+    attachment = await OxydeAttachment.objects.create(
+        issue_id=issue.id, comment_id=comment.id, uploader_id=author.id, sha256="0" * 64, size=1,
+        content_type="text/plain", filename="secret.txt",
+    )
     return {
         "project": project.id, "issue": issue.id, "identifier": issue.identifier,
         "comment": comment.id, "relation": relation.id, "sprint": sprint.id, "ritual": ritual.id,
         "group": group.id, "document": document.id, "doc_comment": doc_comment.id,
+        "attachment": attachment.id,
         # The names an MCP tool argument also accepts for these rows.
         "project_key": project.key, "sprint_name": sprint.name, "ritual_name": ritual.name,
         "doc_title": document.title,
@@ -238,6 +245,13 @@ ROUTES = [
     ("DELETE", "/api/issues/{issue}/comments/{comment}", None, "issue"),
     ("PATCH", "/api/issues/{own_issue}/comments/{comment}", {"content": "x"}, "comment"),
     ("DELETE", "/api/issues/{own_issue}/comments/{comment}", None, "comment"),
+    # Attachments (CHT-1996): by their issue, by their own id, and a
+    # comment named beside an issue the caller can see.
+    ("GET", "/api/issues/{issue}/attachments", None, "issue"),
+    ("POST", "/api/issues/{issue}/attachments?filename=x.txt", None, "issue"),
+    ("POST", "/api/issues/{own_issue}/attachments?filename=x.txt&comment_id={comment}", None, "comment"),
+    ("GET", "/api/attachments/{attachment}/content", None, "attachment"),
+    ("DELETE", "/api/attachments/{attachment}", None, "attachment"),
     # Relations, either end out of scope.
     ("GET", "/api/issues/{issue}/relations", None, "issue"),
     ("POST", "/api/issues/{issue}/relations", {"related_issue_id": "{own_issue}"}, "issue"),

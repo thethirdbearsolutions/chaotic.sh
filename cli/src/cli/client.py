@@ -78,6 +78,7 @@ IDEMPOTENT_ROUTES = (
     ("POST", "/projects/{project_id}/issues"),
     ("PATCH", "/issues/{issue_id}"),
     ("POST", "/issues/{issue_id}/comments"),
+    ("POST", "/issues/{issue_id}/attachments"),
     ("POST", "/inbox/{entry_id}/read"),
     ("POST", "/inbox/{entry_id}/archive"),
     ("POST", "/rituals/{ritual_id}/complete-issue/{issue_id}"),
