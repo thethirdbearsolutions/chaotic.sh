@@ -4,6 +4,7 @@
 
 import { getToken, setToken as persistToken } from './storage.js';
 import { clearSnapshot } from './boot-cache.js';
+import { ATTACHMENT_ID_RE } from './attachment-refs.js';
 
 const API_BASE = '/api';
 
@@ -21,7 +22,7 @@ export class ApiClient {
         return this.token;
     }
 
-    async request(method, path, data = null) {
+    async request(method, path, data = null, { headers: extraHeaders = null } = {}) {
         const headers = {
             'Content-Type': 'application/json',
             // The web app is always a human interacting in real time, so it is
@@ -34,6 +35,7 @@ export class ApiClient {
         if (this.token) {
             headers['Authorization'] = `Bearer ${this.token}`;
         }
+        if (extraHeaders) Object.assign(headers, extraHeaders);
 
         const options = {
             method,
@@ -399,6 +401,58 @@ export class ApiClient {
 
     async deleteRelation(issueId, relationId) {
         return this.request('DELETE', `/issues/${issueId}/relations/${relationId}`);
+    }
+
+    // Attachments (CHT-1996)
+    async getAttachments(issueId) {
+        return this.request('GET', `/issues/${issueId}/attachments`);
+    }
+
+    // The file's bytes as the body (not multipart), its name in the query.
+    // The key makes a resend after a lost answer store the file once.
+    async uploadAttachment(issueId, file, { idempotencyKey } = {}) {
+        const name = encodeURIComponent(file.name || 'file');
+        const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : null;
+        return this.request('POST', `/issues/${issueId}/attachments?filename=${name}`, file, { headers });
+    }
+
+    async deleteAttachment(attachmentId) {
+        return this.request('DELETE', `/attachments/${encodeURIComponent(attachmentId)}`);
+    }
+
+    /**
+     * An attachment's bytes, as a Blob, fetched with this client's bearer
+     * token. Takes only an attachment id and builds the same-origin path
+     * itself, so the token can only ever go to /api/attachments/<id>/content:
+     * a caller cannot point it at another address. Throws an Error with
+     * .status on a refusal (404, 410), like request().
+     */
+    async fetchAttachmentContent(attachmentId) {
+        if (!ATTACHMENT_ID_RE.test(attachmentId)) throw new Error('Not an attachment id');
+        const headers = {};
+        if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+        let response;
+        try {
+            // Same origin, no cookies needed, never a redirect elsewhere.
+            response = await fetch(`${API_BASE}/attachments/${attachmentId}/content`, {
+                headers, credentials: 'same-origin', redirect: 'error',
+            });
+        } catch (networkError) {
+            const error = new Error('Network error - check your connection');
+            error.isNetworkError = true;
+            error.cause = networkError;
+            throw error;
+        }
+        if (!response.ok) {
+            let detail = null;
+            try { detail = (await response.json()).detail; } catch { /* not JSON */ }
+            const message = typeof detail === 'string' ? detail : (detail?.message || `Request failed (${response.status})`);
+            const error = new Error(message);
+            error.status = response.status;
+            error.detail = detail;
+            throw error;
+        }
+        return response.blob();
     }
 
     // Sprints (note: manual creation removed in CHT-588, sprints use cadence system)

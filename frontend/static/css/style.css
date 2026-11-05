@@ -10329,6 +10329,133 @@ body.theme-light {
 }
 .related-remove:hover { color: var(--danger-fg); }
 
+/* Attachments (CHT-1996): a grid of files under the description, in the
+   Related work section's shape. Images are thumbnails; drop anywhere on
+   the page's main column to add. */
+.attachments {
+    margin-bottom: var(--space-xl);
+    border-radius: var(--radius-md);
+    transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+.attachments.is-dragover {
+    background: var(--accent-subtle);
+    box-shadow: 0 0 0 2px var(--accent-border);
+}
+.attachments-add { position: relative; }
+.attachments-add:has(:focus-visible) { color: var(--text-primary); outline: 2px solid var(--accent-border); outline-offset: 2px; border-radius: var(--radius-sm); }
+.attachments-hint {
+    margin: 0;
+    padding: var(--space-md) 0;
+    border-top: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+.attachments .related-head h3:focus { outline: none; }
+.attachments-status { font-size: var(--font-sm); color: var(--text-secondary); }
+.attachments-status:not(:empty) { margin-bottom: var(--space-sm); }
+.attachment-grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: var(--space-md);
+}
+.attachment-item { position: relative; min-width: 0; }
+.attachment-open {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    width: 100%;
+    padding: var(--space-xs);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.attachment-open:hover { border-color: var(--accent-border); }
+.attachment-open:focus-visible { outline: 2px solid var(--accent-border); outline-offset: 1px; }
+.attachment-thumb {
+    display: grid;
+    place-items: center;
+    height: 88px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    overflow: hidden;
+}
+.attachment-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.attachment-name,
+.attachment-meta {
+    padding: 0 var(--space-xs);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.attachment-name { font-size: var(--font-sm); font-weight: 500; }
+.attachment-meta { font-size: var(--font-xs); color: var(--text-muted); }
+.attachment-delete {
+    position: absolute;
+    top: var(--space-md);
+    right: var(--space-md);
+    display: inline-grid;
+    padding: var(--space-xs);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    cursor: pointer;
+    opacity: 0;
+}
+.attachment-item:hover .attachment-delete,
+.attachment-delete:focus-visible { opacity: 1; }
+.attachment-delete:focus-visible { outline: 2px solid var(--accent-border); outline-offset: 1px; }
+.attachment-delete:hover { color: var(--danger-fg); }
+@media (hover: none) {
+    .attachment-delete { opacity: 1; }
+}
+
+/* An attachment image inside rendered markdown, loaded with the token. */
+.markdown-body img.attachment-inline {
+    display: block;
+    max-height: 480px;
+    margin: var(--space-sm) 0;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    cursor: zoom-in;
+}
+.markdown-body img.attachment-inline:not([src]) {
+    width: 240px;
+    height: 120px;
+    background: var(--bg-tertiary);
+}
+.markdown-body img.attachment-inline:focus-visible { outline: 2px solid var(--accent-border); outline-offset: 2px; }
+.attachment-link { display: inline-flex; align-items: center; gap: var(--space-xs); }
+.attachment-unavailable {
+    display: inline-block;
+    padding: 2px var(--space-sm);
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+.attachment-viewer { margin: 0; display: flex; flex-direction: column; gap: var(--space-md); }
+.attachment-viewer img {
+    display: block;
+    max-width: 100%;
+    max-height: 75vh;
+    margin: 0 auto;
+    border-radius: var(--radius-sm);
+}
+.attachment-viewer img:not([src]) { width: 100%; height: 240px; background: var(--bg-tertiary); }
+.attachment-viewer-actions { display: flex; justify-content: flex-end; }
+.attachment-viewer-actions .btn { width: auto; }
+
 /* One stream: comments keep their body, everything else is one line. */
 .ticket-timeline > h3 { margin-bottom: var(--space-md); }
 .ticket-timeline .section-count { font-weight: 400; color: var(--text-muted); }

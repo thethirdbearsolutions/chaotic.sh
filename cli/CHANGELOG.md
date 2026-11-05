@@ -34,6 +34,14 @@ and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) version
 
 ### Fixed
 
+- **`issue show` / `issue view` show every comment.** They used to print
+  the API's first page, the oldest 100 comments, with nothing saying more
+  existed; on a long-running ticket that hid every recent comment. They
+  now page through all of them (as does `epic show --json`). `--last N`
+  keeps only the newest N and takes a single identifier; the
+  single-issue and epic JSON carry `comment_count`, the total. The
+  server now breaks `created_at` ties by id, so pages never skip a
+  comment (CHT-2064).
 - **`system upgrade` asks before it stops anything.** Without `--yes` it
   used to stop the server and close the deploy gate, and only then ask
   to confirm. Run over ssh with no terminal, the unanswered prompt

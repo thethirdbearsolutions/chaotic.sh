@@ -2149,4 +2149,57 @@ describe('ApiClient', () => {
       });
     });
   });
+
+  describe('attachments (CHT-1996)', () => {
+    const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
+
+    it('uploads the raw file with its name in the query and an Idempotency-Key', async () => {
+      client.token = 'tok';
+      fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ id: ID }) });
+      const file = new File(['abc'], 'my shot.png', { type: 'image/png' });
+      await client.uploadAttachment('issue-1', file, { idempotencyKey: 'k-1' });
+      const [url, options] = fetchMock.mock.calls[0];
+      expect(url).toBe('/api/issues/issue-1/attachments?filename=my%20shot.png');
+      expect(options.method).toBe('POST');
+      expect(options.body).toBe(file);
+      expect(options.headers['Idempotency-Key']).toBe('k-1');
+      expect(options.headers['Authorization']).toBe('Bearer tok');
+    });
+
+    it('fetches content only from the attachment route, with the token', async () => {
+      client.token = 'tok';
+      const blob = new Blob(['x'], { type: 'image/png' });
+      fetchMock.mockResolvedValue({ ok: true, status: 200, blob: async () => blob });
+      expect(await client.fetchAttachmentContent(ID)).toBe(blob);
+      const [url, options] = fetchMock.mock.calls[0];
+      expect(url).toBe(`/api/attachments/${ID}/content`);
+      expect(options.headers['Authorization']).toBe('Bearer tok');
+      expect(options.redirect).toBe('error');
+    });
+
+    it.each(['https://example.com/x', '../../users/me', `${ID}/../x`, ''])('refuses %j without a request', async (bad) => {
+      await expect(client.fetchAttachmentContent(bad)).rejects.toThrow('Not an attachment id');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('a refusal carries its status and message', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false, status: 410,
+        json: async () => ({ detail: { error_code: 'attachment_blob_missing', message: 'gone' } }),
+      });
+      await expect(client.fetchAttachmentContent(ID)).rejects.toMatchObject({ status: 410, message: 'gone' });
+    });
+
+    it('a network failure is marked as one', async () => {
+      fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+      await expect(client.fetchAttachmentContent(ID)).rejects.toMatchObject({ isNetworkError: true });
+    });
+
+    it('deletes by id', async () => {
+      fetchMock.mockResolvedValue({ ok: true, status: 204 });
+      await client.deleteAttachment(ID);
+      expect(fetchMock.mock.calls[0][0]).toBe(`/api/attachments/${ID}`);
+      expect(fetchMock.mock.calls[0][1].method).toBe('DELETE');
+    });
+  });
 });

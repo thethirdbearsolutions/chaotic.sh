@@ -5,6 +5,7 @@
 import { appendPendingRows } from './issue-list.js';
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
+import { initAttachmentImages } from './attachments.js';
 import { closeModal, isModalOpen, showToast, closeInlineDropdownsFromEscape, isModalDirty, focusModalFirstField } from './ui.js';
 import { showAuthScreen, logout, initAuth, updateUserInfo } from './auth.js';
 import { initApp, showSignedOut } from './init.js';
@@ -662,6 +663,7 @@ async function bootApp() {
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
     initEventDelegation();
+    initAttachmentImages();
     initAuth();
     initSidebarNav();
     initModal();

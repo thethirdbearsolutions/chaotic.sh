@@ -9,6 +9,7 @@
 
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { markAttachmentRefs } from './attachment-refs.js';
 import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError, showMentionWarnings } from './ui.js';
 import { escapeHtml, escapeAttr } from './utils.js';
@@ -20,6 +21,18 @@ import { isApprovalsExplainerDismissed, dismissApprovalsExplainer as persistDism
 import { viewIssue } from './issue-detail-view.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
+
+/**
+ * Mark attachment images and links in sanitized HTML (CHT-1996), so every
+ * markdown surface loads them with the token instead of a bare <img src>.
+ * A <template> is inert: nothing in it is fetched.
+ */
+function withAttachmentRefs(html) {
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    markAttachmentRefs(template.content);
+    return template.innerHTML;
+}
 
 /**
  * Render markdown content safely using marked + DOMPurify.
@@ -34,7 +47,13 @@ export function renderMarkdown(content) {
         // children as raw text, not DOM nodes (CHT-829)
         const safeHtml = rawHtml.replace(/<(\/?)(?:title|style|textarea|xmp)\b[^>]*>/gi,
             (match) => match.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
-        return DOMPurify.sanitize(safeHtml, { FORCE_BODY: true });
+        // No data-* attributes from content (CHT-1996 review): event
+        // delegation dispatches any [data-action] click, so markup in a
+        // comment could otherwise plant a working control (delete an
+        // attachment, approve a ritual). Every data-* the app needs is
+        // added after sanitising (attachment refs, issue links, mentions).
+        const clean = DOMPurify.sanitize(safeHtml, { FORCE_BODY: true, ALLOW_DATA_ATTR: false });
+        return clean.includes('/api/attachments/') ? withAttachmentRefs(clean) : clean;
     } catch (e) {
         console.error('Markdown parsing error:', e);
         return content.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
