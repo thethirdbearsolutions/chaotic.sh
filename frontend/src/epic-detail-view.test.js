@@ -67,6 +67,7 @@ vi.mock('./issue-detail-view.js', () => ({
     getActivityIcon: vi.fn(() => '📝'),
     formatActivityActor: vi.fn((a) => a.user_name || 'Unknown'),
     formatActivityText: vi.fn((a) => a.activity_type),
+    renderCommentContent: vi.fn((text) => text),
     renderDescriptionContent: vi.fn((text) => text),
     viewIssue: (...args) => mockViewIssue(...args),
 }));

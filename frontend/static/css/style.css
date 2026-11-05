@@ -10604,9 +10604,8 @@ body.theme-light {
     border-bottom: 1px solid var(--border-color);
 }
 .list-row-2line:hover { background: var(--row-hover); }
-a.list-row-2line,
-.list-row-2line[data-action],
-.list-row-2line[href] { cursor: pointer; }
+.list-row-2line[href],
+.list-row-2line[data-action] { cursor: pointer; }
 .list-row-title {
     color: var(--text-primary);
     font-size: var(--font-base);
@@ -10650,9 +10649,16 @@ a.list-row-2line,
    paragraph spacing, so elsewhere lists lost their bullets under the reset. */
 :where(.markdown-body) {
     line-height: 1.6;
-    max-width: 72ch;
     overflow-wrap: break-word;
 }
+/* The measure goes on the blocks, not the container, so a container with
+   its own box (editor preview, approval note) or click target (description)
+   keeps its full width. */
+:where(.markdown-body) > * { max-width: 72ch; }
+/* marked already turns newlines into <br> and blocks; pre-wrap on a
+   container doubled every gap. */
+.markdown-body.comment-content,
+.markdown-body.attestation-note-content { white-space: normal; }
 :where(.markdown-body) > :first-child { margin-top: 0; }
 :where(.markdown-body) > :last-child { margin-bottom: 0; }
 :where(.markdown-body) p,
@@ -10687,16 +10693,14 @@ a.list-row-2line,
 :where(.markdown-body) h4,
 :where(.markdown-body) h5,
 :where(.markdown-body) h6 { font-size: 1em; }
-/* A paragraph that opens with a bold lead-in ("**Problem.** ...") starts a
-   new section, so give it a little more air above. */
-:where(.markdown-body) p:has(> strong:first-child):not(:first-child) { margin-top: 1em; }
 :where(.markdown-body) strong { font-weight: 600; color: var(--text-primary); }
+:where(.markdown-body) :where(a, blockquote) strong { color: inherit; }
 :where(.markdown-body) em { font-style: italic; }
 :where(.markdown-body) a { color: var(--accent-fg); text-decoration: none; }
 :where(.markdown-body) a:hover { text-decoration: underline; }
 :where(.markdown-body) code {
     font-family: var(--font-mono);
-    font-size: 0.85em;
+    font-size: max(0.85em, 11px);
     background: var(--bg-tertiary);
     padding: 0.1em 0.35em;
     border-radius: var(--radius-sm);
@@ -10707,8 +10711,9 @@ a.list-row-2line,
     border-radius: var(--radius-md);
     overflow-x: auto;
     line-height: 1.45;
+    font-size: max(0.85em, 11px);
 }
-:where(.markdown-body) pre code { background: none; padding: 0; font-size: 0.85em; }
+:where(.markdown-body) pre code { background: none; padding: 0; font-size: inherit; }
 :where(.markdown-body) blockquote {
     border-left: 3px solid var(--border-color);
     padding-left: var(--space-lg);
@@ -10719,7 +10724,7 @@ a.list-row-2line,
     border-top: 1px solid var(--border-color);
     margin: 1.2em 0;
 }
-:where(.markdown-body) table { border-collapse: collapse; font-size: 0.95em; display: block; overflow-x: auto; }
+:where(.markdown-body) table { border-collapse: collapse; font-size: 0.95em; }
 :where(.markdown-body) th,
 :where(.markdown-body) td {
     border: 1px solid var(--border-color);
