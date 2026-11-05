@@ -90,7 +90,12 @@ export function renderRelatedWork(issue, subIssues = [], relations = [], { forma
         </section>`;
 }
 
-// No agent/session chip on the timeline: the name is enough here (CHT-2026).
+// No agent/session chip on the timeline: the name is enough here
+// (CHT-2026). Whose agent it is stays on hover.
+const authorTitle = (author) => (author && author.is_agent
+    ? ` title="${escapeAttr(author.owner_name ? `AI agent of ${author.owner_name}` : 'AI agent')}"`
+    : '');
+
 function renderComment(comment) {
     const initial = escapeHtml((comment.author_name || 'U').charAt(0).toUpperCase());
     return `
@@ -98,7 +103,7 @@ function renderComment(comment) {
             <div class="comment-avatar">${initial}</div>
             <div class="comment-body">
                 <div class="comment-header">
-                    <span class="comment-author">${escapeHtml(comment.author_name || 'User')}</span>
+                    <span class="comment-author"${authorTitle(comment.author)}>${escapeHtml(comment.author_name || 'User')}</span>
                     <span class="comment-date">${escapeHtml(formatTimeAgo(comment.created_at))}</span>
                 </div>
                 <div class="comment-content markdown-body">${renderCommentContent(comment.content).trim()}</div>
