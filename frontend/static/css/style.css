@@ -10604,6 +10604,9 @@ body.theme-light {
     border-bottom: 1px solid var(--border-color);
 }
 .list-row-2line:hover { background: var(--row-hover); }
+a.list-row-2line,
+.list-row-2line[data-action],
+.list-row-2line[href] { cursor: pointer; }
 .list-row-title {
     color: var(--text-primary);
     font-size: var(--font-base);
