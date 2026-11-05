@@ -14,9 +14,12 @@ from datetime import datetime, timezone
 
 from oxyde import execute_raw
 
-from app.enums import IssueStatus, IssueType, SprintStatus
+from app.enums import ApprovalMode, IssueStatus, IssueType, SprintStatus
 from app.schemas.epic import (
+    AwaitingHuman,
     ChildCounts,
+    EpicPerson,
+    EpicTicket,
     EpicProgress,
     EpicProgressResponse,
     SprintTick,
@@ -40,6 +43,21 @@ _OPEN = {IssueStatus.BACKLOG, IssueStatus.TODO, IssueStatus.IN_PROGRESS, IssueSt
 
 
 _EPIC = (IssueType.EPIC.name, IssueType.EPIC.value)
+
+# How many of an epic's in-flight tickets the response names; the
+# count of all of them comes with it (CHT-2043).
+IN_FLIGHT_LIMIT = 5
+
+
+def _spellings(*members) -> list[str]:
+    """Each enum member as its stored name and its value, for an IN (...)
+    over a column that may hold either (see _EPIC)."""
+    return [x for m in members for x in (m.name, m.value)]
+
+
+_IN_FLIGHT = _spellings(IssueStatus.IN_PROGRESS, IssueStatus.IN_REVIEW)
+_DONE = _spellings(IssueStatus.DONE)
+_CLOSED = _spellings(IssueStatus.DONE, IssueStatus.CANCELED)
 
 
 def _owner_cte(scope: str, start: str) -> str:
@@ -116,7 +134,8 @@ async def epic_progress(
 
     scope = _placeholders(project_ids)
     epic_rows = await execute_raw(
-        "SELECT id, identifier, title, status, priority, project_id, estimate, status_pinned, number "
+        "SELECT id, identifier, title, status, priority, project_id, estimate, status_pinned, number, "
+        "updated_at, completed_at "
         f"FROM issues WHERE project_id IN ({scope}) AND issue_type IN (?, ?)",
         [*project_ids, *_EPIC],
     )
@@ -127,11 +146,13 @@ async def epic_progress(
         _owner_cte(scope, f"project_id IN ({scope})")
         + "SELECT o.epic_id, i.project_id, i.status, "
         "CASE WHEN i.issue_type IN (?, ?) THEN 1 ELSE 0 END AS is_epic, "
-        "COUNT(*) AS n, SUM(COALESCE(i.estimate, 1)) AS pts "
+        "COUNT(*) AS n, SUM(COALESCE(i.estimate, 1)) AS pts, MAX(i.updated_at) AS last_updated "
         f"FROM issues i LEFT JOIN owners o ON o.issue_id = i.id WHERE i.project_id IN ({scope}) "
         "GROUP BY o.epic_id, i.project_id, i.status, is_epic",
         [*project_ids, *_EPIC, *project_ids, *_EPIC, *project_ids],
     )
+
+    in_flight, in_flight_count, last_shipped, awaiting = await _epic_now(scope, project_ids)
 
     # Sprint windows: each project's most recent started sprints.
     sprint_rows = await execute_raw(
@@ -201,6 +222,7 @@ async def epic_progress(
         ]
 
     counts: dict[str, ChildCounts] = defaultdict(ChildCounts)
+    last_activity: dict[str, datetime] = {}
     points: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     untracked_open: dict[str, int] = defaultdict(int)
     for r in count_rows:
@@ -211,6 +233,10 @@ async def epic_progress(
             if not r["is_epic"] and st in _OPEN:
                 untracked_open[r["project_id"]] += n
             continue
+        if r["last_updated"]:
+            when = _when(r["last_updated"])
+            if epic_id not in last_activity or when > last_activity[epic_id]:
+                last_activity[epic_id] = when
         c = counts[epic_id]
         c.total += n
         if st is not None:
@@ -226,6 +252,7 @@ async def epic_progress(
         pid = r["project_id"]
         current = ticks.get(issue_id, {}).get(active.get(pid), [0, 0])
         c = counts.get(issue_id) or ChildCounts()
+        activity = [w for w in (last_activity.get(issue_id), r["updated_at"] and _when(r["updated_at"])) if w]
         epics.append((r["number"], pid, EpicProgress(
             id=issue_id, identifier=r["identifier"], title=r["title"], status=r["status"],
             status_pinned=bool(r["status_pinned"]), priority=r["priority"], estimate=r["estimate"],
@@ -233,6 +260,9 @@ async def epic_progress(
             points_total=points[issue_id][0], points_done=points[issue_id][1],
             closed_this_sprint=current[0], points_this_sprint=current[1],
             sprints=sprint_ticks(issue_id, pid),
+            in_flight=in_flight.get(issue_id, []), in_flight_count=in_flight_count.get(issue_id, 0),
+            last_shipped=last_shipped.get(issue_id), last_activity_at=max(activity) if activity else None,
+            completed_at=r["completed_at"], awaiting_human=awaiting.get(issue_id, []),
         )))
     # Newest first within a project, projects in key order.
     epics.sort(key=lambda e: (projects[e[1]], -e[0]))
@@ -245,8 +275,110 @@ async def epic_progress(
             project_id=pid, project_key=projects[pid], open=untracked_open[pid],
             closed_this_sprint=current[0], points_this_sprint=current[1],
             sprints=sprint_ticks(bucket, pid),
+            awaiting_human=awaiting.get(bucket, []),
         ))
 
     return EpicProgressResponse(
         epics=[e for _, _, e in epics], untracked=untracked, sprint_window=sprint_window,
     )
+
+
+def _person(row) -> EpicPerson | None:
+    if not row["assignee_id"] or row["assignee_name"] is None:
+        return None
+    return EpicPerson(id=row["assignee_id"], name=row["assignee_name"], is_agent=bool(row["assignee_is_agent"]))
+
+
+async def _epic_now(scope: str, project_ids: list[str]):
+    """What is happening under each epic now (CHT-2043), in three
+    queries however many epics there are: its in-flight tickets with who
+    holds them, the ticket that shipped last, and the ticket rituals
+    only a person can clear. Each counts toward the issue's nearest
+    epic, as the counts do; a ritual on an epic itself counts toward
+    that epic. A ritual on work under no epic is keyed
+    ``("untracked", project_id)``.
+
+    Returns ``(in_flight, in_flight_count, last_shipped, awaiting)``,
+    keyed by epic id."""
+    assignee = (
+        "u.id AS assignee_id, u.name AS assignee_name, u.is_agent AS assignee_is_agent "
+    )
+    flight_rows = await execute_raw(
+        _owner_cte(scope, f"project_id IN ({scope}) AND status IN ({_placeholders(_IN_FLIGHT)})")
+        + "SELECT o.epic_id, i.identifier, i.title, i.status, i.updated_at, " + assignee
+        + "FROM issues i JOIN owners o ON o.issue_id = i.id LEFT JOIN users u ON u.id = i.assignee_id "
+        f"WHERE i.project_id IN ({scope}) AND i.status IN ({_placeholders(_IN_FLIGHT)}) "
+        "AND i.issue_type NOT IN (?, ?) "
+        "ORDER BY i.updated_at DESC",
+        [*project_ids, *_IN_FLIGHT, *_EPIC, *project_ids, *project_ids, *_IN_FLIGHT, *_EPIC],
+    )
+    in_flight: dict[str, list[EpicTicket]] = defaultdict(list)
+    in_flight_count: dict[str, int] = defaultdict(int)
+    for r in flight_rows:
+        in_flight_count[r["epic_id"]] += 1
+        if len(in_flight[r["epic_id"]]) < IN_FLIGHT_LIMIT:
+            in_flight[r["epic_id"]].append(EpicTicket(
+                identifier=r["identifier"], title=r["title"], status=r["status"],
+                assignee=_person(r), updated_at=r["updated_at"],
+            ))
+
+    shipped_rows = await execute_raw(
+        _owner_cte(
+            scope,
+            f"project_id IN ({scope}) AND status IN ({_placeholders(_DONE)}) "
+            "AND completed_at IS NOT NULL AND issue_type NOT IN (?, ?)",
+        )
+        + "SELECT * FROM ("
+        "SELECT o.epic_id, i.identifier, i.title, i.status, i.updated_at, i.completed_at, " + assignee + ", "
+        "ROW_NUMBER() OVER (PARTITION BY o.epic_id ORDER BY i.completed_at DESC, i.number DESC) AS rn "
+        "FROM issues i JOIN owners o ON o.issue_id = i.id LEFT JOIN users u ON u.id = i.assignee_id"
+        ") WHERE rn = 1",
+        [*project_ids, *_DONE, *_EPIC, *_EPIC, *project_ids],
+    )
+    last_shipped = {
+        r["epic_id"]: EpicTicket(
+            identifier=r["identifier"], title=r["title"], status=r["status"], assignee=_person(r),
+            updated_at=r["updated_at"], completed_at=r["completed_at"],
+        )
+        for r in shipped_rows
+    }
+
+    # The approvals banner's set (RitualService.get_issues_with_pending_
+    # approvals), for open tickets: a REVIEW attestation not yet approved,
+    # and an open intent's unresolved GATE blocker, each on an active
+    # ritual.
+    pending = (
+        "SELECT a.issue_id, r.name AS ritual_name, r.approval_mode, a.attested_at AS since, "
+        "a.attested_by AS by_id FROM ritual_attestations a JOIN rituals r ON r.id = a.ritual_id "
+        f"WHERE a.issue_id IS NOT NULL AND a.approved_at IS NULL AND r.is_active AND r.project_id IN ({scope}) "
+        f"AND r.approval_mode IN ({_placeholders(_spellings(ApprovalMode.REVIEW))}) "
+        "UNION ALL "
+        "SELECT l.issue_id, r.name, r.approval_mode, l.requested_at, l.requested_by_id "
+        "FROM ticket_limbo l JOIN ticket_limbo_blockers b ON b.limbo_id = l.id JOIN rituals r ON r.id = b.ritual_id "
+        f"WHERE l.cleared_at IS NULL AND b.resolved_at IS NULL AND r.is_active AND r.project_id IN ({scope}) "
+        f"AND r.approval_mode IN ({_placeholders(_spellings(ApprovalMode.GATE))})"
+    )
+    awaiting_rows = await execute_raw(
+        _owner_cte(scope, f"project_id IN ({scope}) AND status NOT IN ({_placeholders(_CLOSED)})")
+        + "SELECT p.ritual_name, p.approval_mode, p.since, i.identifier, i.title, i.project_id, "
+        "CASE WHEN i.issue_type IN (?, ?) THEN i.id ELSE o.epic_id END AS epic_id, by_user.name AS by_name "
+        f"FROM ({pending}) p JOIN issues i ON i.id = p.issue_id "
+        "LEFT JOIN owners o ON o.issue_id = i.id LEFT JOIN users by_user ON by_user.id = p.by_id "
+        f"WHERE i.project_id IN ({scope}) AND i.status NOT IN ({_placeholders(_CLOSED)}) "
+        "ORDER BY p.since",
+        [
+            *project_ids, *_CLOSED, *_EPIC, *project_ids,
+            *_EPIC,
+            *project_ids, *_spellings(ApprovalMode.REVIEW),
+            *project_ids, *_spellings(ApprovalMode.GATE),
+            *project_ids, *_CLOSED,
+        ],
+    )
+    awaiting: dict = defaultdict(list)
+    for r in awaiting_rows:
+        bucket = r["epic_id"] or ("untracked", r["project_id"])
+        awaiting[bucket].append(AwaitingHuman(
+            ritual_name=r["ritual_name"], approval_mode=r["approval_mode"], identifier=r["identifier"],
+            title=r["title"], since=r["since"], requested_by_name=r["by_name"],
+        ))
+    return in_flight, in_flight_count, last_shipped, awaiting
