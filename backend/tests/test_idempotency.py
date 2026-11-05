@@ -65,6 +65,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/rituals/{ritual_id}/approve-issue/{issue_id}"),
     ("POST", "/api/rituals/{ritual_id}/reject-issue/{issue_id}"),
     ("POST", "/api/issues/{issue_id}/comments"),
+    ("POST", "/api/issues/{issue_id}/attachments"),
     ("PATCH", "/api/issues/{issue_id}"),
 }
 

@@ -6,7 +6,7 @@ import re
 from datetime import date
 from urllib.parse import urlsplit
 
-from pydantic import AnyHttpUrl, Field, ValidationError, field_validator, model_validator
+from pydantic import AliasChoices, AnyHttpUrl, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -182,6 +182,21 @@ class Settings(BaseSettings):
     # Bounded so a bad value fails when Settings is built at import, not
     # as a 500 on the first registration (bcrypt rejects < 4; 31 is hours).
     bcrypt_rounds: int = Field(12, ge=4, le=31)
+
+    # File attachments on issues (CHT-1996). The blob store's directory;
+    # empty (the default) puts it beside the SQLite database, as
+    # ``attachments/`` in the same data directory. One file may be at most
+    # CHAOTIC_ATTACHMENT_MAX_BYTES (10 MiB), and one project's files at
+    # most CHAOTIC_ATTACHMENT_PROJECT_QUOTA_BYTES in all (1 GiB).
+    attachments_dir: str = Field("", validation_alias=AliasChoices("CHAOTIC_ATTACHMENTS_DIR", "attachments_dir"))
+    attachment_max_bytes: int = Field(
+        10 * 1024 * 1024, ge=1,
+        validation_alias=AliasChoices("CHAOTIC_ATTACHMENT_MAX_BYTES", "attachment_max_bytes"),
+    )
+    attachment_project_quota_bytes: int = Field(
+        1024 * 1024 * 1024, ge=1,
+        validation_alias=AliasChoices("CHAOTIC_ATTACHMENT_PROJECT_QUOTA_BYTES", "attachment_project_quota_bytes"),
+    )
 
     # Agent self-registration (CHT-1498). A key minted by POST
     # /agents/register expires after this many seconds (7 days); the
