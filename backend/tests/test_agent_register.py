@@ -552,7 +552,10 @@ class TestRegisterOnly:
                 called = set(re.findall(rf"\b{module}_api\.(\w+)\(", body))
                 assert called == {fn.api_fn.__name__}, f"{name} names {fn.api_fn.__name__} but calls {called}"
             (reads if fn.api_access is Access.READ else writes).add(name)
-        assert {"create_issue", "update_issue", "create_comment", "close_sprint", "mark_inbox_read"} <= writes
+        assert {
+            "create_issue", "update_issue", "create_comment", "close_sprint", "mark_inbox_read",
+            "upload_attachment", "delete_attachment",
+        } <= writes
         assert reads == {
             "get_current_sprint", "get_document", "get_document_revision", "get_issue",
             "get_issue_description_revision", "get_limbo_status", "get_pending_issue_rituals",
@@ -560,7 +563,7 @@ class TestRegisterOnly:
             "list_document_issues", "list_document_revisions", "list_documents", "list_inbox",
             "list_issue_description_revisions", "list_issues", "list_labels", "list_projects",
             "list_ready_issues", "list_relations", "list_rituals", "list_sprints", "list_sub_issues",
-            "query_issues",
+            "query_issues", "list_attachments", "read_local_file",
             "list_transactions", "server_info", "get_team_roster",
         }
 

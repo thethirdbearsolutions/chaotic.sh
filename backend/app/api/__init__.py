@@ -1,6 +1,6 @@
 """API routes."""
 from fastapi import APIRouter
-from app.api import auth, avatars, users, teams, projects, issues, sprints, documents, labels, api_keys, rituals, agents, nested, inbox, templates, oauth, push
+from app.api import attachments, auth, avatars, users, teams, projects, issues, sprints, documents, labels, api_keys, rituals, agents, nested, inbox, templates, oauth, push
 
 api_router = APIRouter()
 
@@ -10,6 +10,9 @@ api_router.include_router(avatars.router, prefix="/avatars", tags=["users"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(issues.router, prefix="/issues", tags=["issues"])
+# Files attached to issues (CHT-1996).
+api_router.include_router(attachments.issue_router, prefix="/issues", tags=["attachments"])
+api_router.include_router(attachments.router, prefix="/attachments", tags=["attachments"])
 api_router.include_router(sprints.router, prefix="/sprints", tags=["sprints"])
 api_router.include_router(rituals.router, prefix="/rituals", tags=["rituals"])
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])

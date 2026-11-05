@@ -72,6 +72,7 @@ class TestIssueShowSingle:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
@@ -102,6 +103,7 @@ class TestIssueShowSingle:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
@@ -129,6 +131,7 @@ class TestIssueShowSingle:
                 },
             ],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
@@ -183,6 +186,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
@@ -210,6 +214,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
@@ -228,6 +233,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
@@ -246,6 +252,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[
             {"title": "Design Doc", "icon": "📐"},
@@ -269,6 +276,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[
             {**RELATION, "relation_type": "blocked_by", "direction": "incoming"},
             {"id": "malformed"},
@@ -291,6 +299,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(side_effect=APIError("boom"))
         client.get_issue_documents = MagicMock(return_value=[])
 
@@ -310,6 +319,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[
             {**RELATION, "relation_type": "duplicates", "direction": "incoming"},
         ])
@@ -332,6 +342,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
@@ -350,6 +361,7 @@ class TestIssueShowParentSubIssues:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": [],
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
@@ -369,6 +381,7 @@ class TestIssueShowMulti:
         client.get_issue_by_identifier = MagicMock(
             side_effect=[mock_issue, mock_issue_2],
         )
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', 'CHT-101'])
@@ -405,6 +418,7 @@ class TestIssueShowJson:
         client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
         client.get_comments = MagicMock(return_value=[])
         client.get_sub_issues = MagicMock(return_value=[{"id": "sub-1", "status": "done"}])
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', '--json'])
@@ -422,6 +436,7 @@ class TestIssueShowJson:
         client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
         client.get_comments = MagicMock(return_value=[])
         client.get_sub_issues = MagicMock(return_value=[])
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[RELATION])
 
         result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100', '--json'])
@@ -438,6 +453,7 @@ class TestIssueShowJson:
         client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
         client.get_comments = MagicMock(return_value=[])
         client.get_sub_issues = MagicMock(return_value=[])
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(side_effect=APIError("boom"))
 
         result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100', '--json'])
@@ -451,6 +467,7 @@ class TestIssueShowJson:
         from cli.main import cli, client, APIError
 
         client.get_issue_by_identifier = MagicMock(side_effect=[mock_issue, mock_issue_2])
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(side_effect=[[RELATION], APIError("boom")])
 
         result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100', 'CHT-101', '--json'])
@@ -467,6 +484,7 @@ class TestIssueShowJson:
         client.get_issue_by_identifier = MagicMock(
             side_effect=[mock_issue, mock_issue_2],
         )
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
 
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', 'CHT-101', '--json'])

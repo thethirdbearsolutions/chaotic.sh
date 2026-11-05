@@ -10,6 +10,7 @@ These commands orchestrate existing tools (git, systemd/launchd, just, uv)
 rather than bundling the server.
 """
 import difflib
+import hashlib
 import html
 import json
 import os
@@ -23,6 +24,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import tarfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -1426,6 +1428,127 @@ def get_backup_path(timestamp: str | None = None) -> Path:
     return DATA_DIR / f"chaotic.db.backup-{timestamp}"
 
 
+def attachments_dir() -> Path:
+    """The server's attachment blob store (CHT-1996): `attachments/`
+    beside the database, where the server keeps it unless
+    CHAOTIC_ATTACHMENTS_DIR says otherwise (a store set elsewhere that
+    way is not backed up here)."""
+    return DATABASE_PATH.parent / "attachments"
+
+
+def attachments_backup_for(backup_path: Path) -> Path:
+    """The attachments archive that goes with a database backup:
+    `attachments.backup-<timestamp>.tar` beside it."""
+    stamp = backup_path.name.removeprefix("chaotic.db.backup-")
+    return backup_path.with_name(f"attachments.backup-{stamp}.tar")
+
+
+_BLOB_SHARD = re.compile(r"[0-9a-f]{2}")
+_BLOB_NAME = re.compile(r"[0-9a-f]{64}")
+
+
+def _blob_member(name: str) -> tuple[str, str] | None:
+    """(shard, sha256) when `name` is a blob's path in the store or in an
+    attachments archive, `<sha256[:2]>/<sha256>`; None for anything else."""
+    shard, sep, sha = name.partition("/")
+    if sep and _BLOB_SHARD.fullmatch(shard) and _BLOB_NAME.fullmatch(sha) and sha[:2] == shard:
+        return shard, sha
+    return None
+
+
+def backup_attachments(backup_path: Path) -> Path | None:
+    """Archive the blob store beside `backup_path` (attachments_backup_for);
+    None when there is no store. Only blobs go in, never the store's
+    `tmp/` uploads in progress.
+
+    Taken after the database backup, so every row in that backup has its
+    blob in the archive: an upload puts its blob in place before its row
+    commits, and the sweep keeps a blob no row names for 30 days, so a
+    blob is not deleted in between. A blob the sweep deletes while this
+    runs was one no row named."""
+    store = attachments_dir()
+    if not store.is_dir():
+        return None
+    target = attachments_backup_for(backup_path)
+    partial = target.with_name(target.name + ".partial")
+    try:
+        with tarfile.open(partial, "w") as tar:
+            for shard in sorted(store.iterdir()):
+                if not (_BLOB_SHARD.fullmatch(shard.name) and shard.is_dir()):
+                    continue
+                for blob in sorted(shard.iterdir()):
+                    name = f"{shard.name}/{blob.name}"
+                    if _blob_member(name) is None or not blob.is_file() or blob.is_symlink():
+                        continue
+                    try:
+                        tar.add(blob, arcname=name, recursive=False)
+                    except FileNotFoundError:
+                        continue  # swept since it was listed
+        with open(partial, "rb") as f:
+            os.fsync(f.fileno())
+        os.replace(partial, target)
+    except (OSError, tarfile.TarError) as e:
+        partial.unlink(missing_ok=True)
+        raise BackupError(f"Backing up the attachments failed: {e}") from e
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    return target
+
+
+def restore_attachments(archive: Path) -> tuple[int, int]:
+    """Put the blobs in `archive` back into the store: each one missing
+    there, or there at another size than the archive's (truncated or
+    damaged on disk), checked against its sha256 name first. A blob
+    already there at its size is taken to be the same bytes (its name is
+    its hash) and is left alone, as is every blob not in the archive (one
+    no row of the restored database names is an orphan the server's
+    sweep deletes later). Returns (restored, skipped): skipped counts
+    members that are not blobs or whose bytes do not match their name.
+    Raises OSError or tarfile.TarError when the archive cannot be read.
+
+    Each blob is written to `<store>/tmp/<random>.part` first and moved
+    into place, so a restore that is killed leaves only `.part` files,
+    which the server's sweep deletes once they are a day old."""
+    store = attachments_dir()
+    restored = skipped = 0
+    with tarfile.open(archive, "r") as tar:
+        for member in tar:
+            parts = _blob_member(member.name)
+            if parts is None or not member.isfile():
+                skipped += 1
+                continue
+            shard, sha = parts
+            final = store / shard / sha
+            if final.is_file() and final.stat().st_size == member.size:
+                continue
+            source = tar.extractfile(member)
+            if source is None:  # pragma: no cover -- a regular member always has a file
+                skipped += 1
+                continue
+            final.parent.mkdir(parents=True, exist_ok=True)
+            (store / "tmp").mkdir(parents=True, exist_ok=True)
+            partial = store / "tmp" / f"{uuid.uuid4().hex}.part"
+            digest = hashlib.sha256()
+            try:
+                with source, open(partial, "wb") as out:
+                    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                        out.write(chunk)
+                    out.flush()
+                    os.fsync(out.fileno())
+                if digest.hexdigest() != sha:
+                    partial.unlink(missing_ok=True)
+                    skipped += 1
+                    continue
+                os.replace(partial, final)
+            except BaseException:
+                partial.unlink(missing_ok=True)
+                raise
+            restored += 1
+    return restored, skipped
+
+
 def list_backups() -> list[Path]:
     """List all backup files, sorted newest first."""
     if not DATA_DIR.exists():
@@ -1450,8 +1573,14 @@ class BackupError(RuntimeError):
 BACKUP_TIMEOUT = 60.0
 
 
-def create_backup(timeout: float = BACKUP_TIMEOUT) -> Path | None:
+def create_backup(timeout: float = BACKUP_TIMEOUT, attachments: bool = True) -> Path | None:
     """Create a backup of the database. Returns backup path or None if no db.
+
+    With `attachments` (CHT-1996), the attachment blob store is archived
+    beside it (backup_attachments); a failure there discards the database
+    backup too, so a backup reported is a whole one. The upgrade passes
+    False: it changes the schema, never the blobs, and archiving a large
+    store on every upgrade would cost minutes and disk for nothing.
 
     Uses SQLite's online backup API rather than copying the file: the
     server runs the database in WAL mode, so committed rows can live in
@@ -1505,6 +1634,12 @@ def create_backup(timeout: float = BACKUP_TIMEOUT) -> Path | None:
     if not ok:
         backup_path.unlink(missing_ok=True)
         raise BackupError("Backup failed verification (PRAGMA quick_check) and was discarded")
+    if attachments:
+        try:
+            backup_attachments(backup_path)
+        except BaseException:
+            backup_path.unlink(missing_ok=True)
+            raise
     return backup_path
 
 
@@ -1650,10 +1785,11 @@ def cleanup_old_backups(keep: int = MAX_BACKUPS):
     """
     backups = list_backups()
     for old_backup in backups[keep:]:
-        try:
-            old_backup.unlink()
-        except OSError:
-            pass  # Best-effort cleanup, ignore failures
+        for path in (old_backup, attachments_backup_for(old_backup)):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass  # Best-effort cleanup, ignore failures
 
 
 def get_current_version() -> str | None:
@@ -3351,7 +3487,9 @@ def _opens_gate_on_handled_exit(func):
 def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade):
     """Upgrade to a new version.
 
-    This command:
+    This command first asks for confirmation (unless --yes), before
+    anything below happens, so a "no" or an unanswered prompt changes
+    nothing. Then it:
     1. Prepares the new version in a staging checkout (~/.chaotic/staging)
        while the server keeps running: syncs its dependencies, which warms
        the cache for step 4, and builds the frontend bundle there. If the
@@ -3482,6 +3620,41 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print("\n[green]Already on the latest version.[/green]")
         raise SystemExit(0)
 
+    gated = socket_mode_installed()
+    if gated and not _justfile_serves_socket(target_commit):
+        # The target's serve-prod would bind the port chaotic.socket holds
+        # and crash-loop (PR #510 review): not something to find out with
+        # the server down.
+        console.print(
+            f"[red]{esc(describe_commit(target_commit))} predates socket activation (CHT-1970), "
+            "and this server runs behind chaotic.socket.[/red]"
+        )
+        console.print(
+            "Nothing was changed. To go back that far, first return to the classic unit: "
+            f"'chaotic system stop', delete {esc(get_socket_file_path())}, then 'chaotic system reconfigure'."
+        )
+        raise SystemExit(1)
+
+    # CHT-2025: every question is asked before anything is stopped or
+    # gated. Asked after the stop, an unanswered prompt (no tty over ssh:
+    # click reads EOF and raises Abort, which is not a handled exit) left
+    # the server down behind deploy.hold. An abort or a "no" here leaves
+    # the server exactly as it was.
+    if not yes:
+        if already_current:
+            action = "Run migrations with --fake-initial?"
+        else:
+            action = f"Upgrade from {current_version} to {target_version}?"
+        try:
+            confirmed = _confirm_action(f"\n{action}")
+        except click.Abort:
+            console.print("\n[yellow]No answer. Nothing was changed and the server was not stopped. "
+                          "Pass --yes to run without a prompt.[/yellow]")
+            raise SystemExit(1)
+        if not confirmed:
+            console.print("[yellow]Cancelled. Nothing was changed and the server was not stopped.[/yellow]")
+            raise SystemExit(0)
+
     # CHT-1969: the slow work (dependency sync, npm ci, the bundle build)
     # runs in a staging checkout while the old server is still serving.
     # Nothing here touches the server checkout or the database, so a
@@ -3520,20 +3693,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     # CHT-1970: behind chaotic.socket the port stays open through the
     # window, and the deploy gate keeps a request from starting the server
     # before the new version is in place. start_service() releases it.
-    gated = socket_mode_installed()
-    if gated and not _justfile_serves_socket(target_commit):
-        # The target's serve-prod would bind the port chaotic.socket holds
-        # and crash-loop (PR #510 review): not something to find out with
-        # the server down.
-        console.print(
-            f"[red]{esc(describe_commit(target_commit))} predates socket activation (CHT-1970), "
-            "and this server runs behind chaotic.socket.[/red]"
-        )
-        console.print(
-            "Nothing was changed. To go back that far, first return to the classic unit: "
-            f"'chaotic system stop', delete {esc(get_socket_file_path())}, then 'chaotic system reconfigure'."
-        )
-        raise SystemExit(1)
+    # Computed (and the predates refusal made) before the prompt; the gate
+    # itself is taken after it (CHT-2025).
     if gated and not hold_deploy_gate():
         console.print(f"[red]Another upgrade holds {esc(DEPLOY_GATE)}; wait for it to finish.[/red]")
         console.print("Nothing was changed and the server was not stopped.")
@@ -3569,24 +3730,6 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
             console.print("[yellow]Warning: Service may still be stopping[/yellow]")
     lap("stop")
 
-    # Confirm action
-    if not yes:
-        if already_current:
-            action = "Run migrations with --fake-initial?"
-        else:
-            action = f"Upgrade from {current_version} to {target_version}?"
-        if not _confirm_action(f"\n{action}"):
-            console.print("[yellow]Cancelled.[/yellow]")
-            if was_running:
-                console.print("Starting server again...")
-                if not (start_service() and health_check(port, host=host)):
-                    console.print("[red]The server did not come back up.[/red]")
-                    _print_service_state(port, host)
-                    raise SystemExit(1)
-            _print_service_state(port, host)
-            raise SystemExit(0)
-        lap("prompt")
-
     console.print()
 
     # Backup database (now safe since server is stopped)
@@ -3594,7 +3737,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     if not no_backup and DATABASE_PATH.exists():
         console.print("Backing up database...")
         try:
-            backup_path = create_backup()
+            backup_path = create_backup(attachments=False)
         except BackupError as e:
             console.print(f"[red]{esc(e)}[/red]")
             console.print("Nothing was changed. Fix the backup problem or pass --no-backup deliberately.")
@@ -3849,7 +3992,11 @@ def system_backup(list_mode, restore_timestamp):
             age_markup = ""
             if i == 0:
                 age_markup = " [dim](latest)[/dim]"
-            console.print(f"  {esc(timestamp)}  ({size_mb:.1f} MB){age_markup}")
+            archive = attachments_backup_for(backup)
+            files_note = ""
+            if archive.exists():
+                files_note = f", attachments {archive.stat().st_size / (1024 * 1024):.1f} MB"
+            console.print(f"  {esc(timestamp)}  ({size_mb:.1f} MB{esc(files_note)}){age_markup}")
         return
 
     if restore_timestamp:
@@ -3894,6 +4041,26 @@ def system_backup(list_mode, restore_timestamp):
                 start_service()
             raise SystemExit(1)
 
+        # The attachments that go with it (CHT-1996), while the server is
+        # still stopped, so it never serves a row whose blob is on its way.
+        attachments_failed = False
+        archive = attachments_backup_for(backup_path)
+        if archive.exists():
+            try:
+                restored, skipped = restore_attachments(archive)
+            except (OSError, tarfile.TarError) as e:
+                attachments_failed = True
+                console.print(
+                    f"[red]Could not restore the attachments from {esc(archive.name)}: {esc(e)}. "
+                    "The database was restored; attachments whose files are missing answer 410 "
+                    "until you run this restore again.[/red]"
+                )
+            else:
+                note = f" ({skipped} archive entries skipped: not attachment files, or damaged)" if skipped else ""
+                console.print(f"[green]Attachments restored: {esc(restored)} file(s) put back{esc(note)}.[/green]")
+        else:
+            console.print("[dim]This backup has no attachments archive; the attachments on disk were left as they are.[/dim]")
+
         if was_running:
             console.print("Starting server...")
             start_service()
@@ -3902,6 +4069,8 @@ def system_backup(list_mode, restore_timestamp):
                 console.print("[green]OK[/green]")
             else:
                 console.print("[yellow]TIMEOUT[/yellow]")
+        if attachments_failed:
+            raise SystemExit(1)
         return
 
     # Default: create backup
@@ -3923,6 +4092,10 @@ def system_backup(list_mode, restore_timestamp):
     if backup_path:
         size_mb = backup_path.stat().st_size / (1024 * 1024)
         console.print(f"[green]Backup created: {esc(backup_path.name)} ({size_mb:.1f} MB)[/green]")
+        archive = attachments_backup_for(backup_path)
+        if archive.exists():
+            files_mb = archive.stat().st_size / (1024 * 1024)
+            console.print(f"[green]Attachments archived: {esc(archive.name)} ({files_mb:.1f} MB)[/green]")
         cleanup_old_backups()
     else:
         console.print("[red]Failed to create backup.[/red]")

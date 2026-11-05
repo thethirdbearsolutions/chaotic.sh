@@ -6,7 +6,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from ..markup import Markup, Table, esc
 
-from .shared import _client, _warn_off_scale_estimate, console, fetch_all_labels, resolve_content_value
+from .shared import _client, _warn_off_scale_estimate, console, fetch_all_comments, fetch_all_labels, resolve_content_value
 
 
 def _main():
@@ -177,7 +177,8 @@ def register(cli):
 
         # JSON output
         if m.is_json_output():
-            issue['comments'] = _client().get_comments(issue["id"])
+            issue['comments'] = fetch_all_comments(issue["id"])
+            issue['comment_count'] = len(issue['comments'])
             try:
                 issue['sub_issues'] = _client().get_sub_issues(issue["id"])
             except m.APIError:

@@ -18,7 +18,7 @@ with a loader first and the permission second, never the other way round.
 What "see" means per row is the matching read rule in ``app.api.deps``:
 
 * issue, sprint, project, ritual, ritual group: ``check_user_project_access``
-  on the row's project. It takes the project row and reads the team off
+  on the row's project. An attachment is seen through its issue. It takes the project row and reads the team off
   it; a project named beside a URL ``team_id`` goes through
   ``visible_project_in_team`` (in a body) or ``project_filter_in_team``
   (a query filter), which also pin the project to that team (CHT-1807).
@@ -212,6 +212,20 @@ async def visible_issue_by_identifier(user, identifier: str):
     if issue is None or not await can_see_project(user, project):
         raise not_found("Issue not found")
     return issue, project
+
+
+async def visible_attachment(user, attachment_id: str, detail: str = "Attachment not found"):
+    """``(attachment, issue, project)``, or ``not_found(detail)``: an
+    attachment is seen through its issue (CHT-1996)."""
+    from app.services.attachment_service import AttachmentService
+    from app.services.issue_service import IssueService
+
+    attachment = await AttachmentService.get(attachment_id) if attachment_id else None
+    issue = await IssueService().get_by_id(attachment.issue_id) if attachment is not None else None
+    project = await _project_of(issue)
+    if issue is None or not await can_see_project(user, project):
+        raise not_found(detail)
+    return attachment, issue, project
 
 
 async def visible_sprint(user, sprint_id: str | None, detail: str = "Sprint not found"):

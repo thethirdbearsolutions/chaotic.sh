@@ -11,6 +11,7 @@ import { getCurrentTeam, getCurrentProject, setCurrentProject } from './state.js
 import { getIssueFilters, setIssueFilters } from './storage.js';
 import { selectAssigneeFilter } from './assignees.js';
 import { OPEN_STATUSES } from './constants.js';
+import { getProjects } from './projects.js';
 
 // ========================================
 // Filter Getter Functions
@@ -54,7 +55,6 @@ export function getGroupByValue() {
 // ========================================
 
 export const FILTER_CATEGORIES = [
-    { key: 'project', label: 'Project' },
     { key: 'status', label: 'Status' },
     { key: 'priority', label: 'Priority' },
     { key: 'type', label: 'Type' },
@@ -95,8 +95,6 @@ export function getStatusPreset(selected = getSelectedStatuses()) {
 
 export function getFilterCategoryCount(category) {
     switch (category) {
-        case 'project':
-            return getCurrentProject() ? 1 : 0;
         case 'status': {
             // A preset is one filter, not four (CHT-1755)
             const preset = getStatusPreset();
@@ -231,8 +229,12 @@ export function loadFiltersFromUrl(setSuppressProjectSubscriber) {
     }
 
     // Apply project filter — suppress subscriber to prevent sprint clearing
+    // Only a project this team has: a stale or hand-edited ?project= must
+    // not become the scope of every view (PR #543 review C1). Before the
+    // list has loaded there is nothing to check against yet.
     const project = params.get('project');
-    if (project) {
+    const known = getProjects();
+    if (project && (!known.length || known.some(p => p.id === project))) {
         setSuppressProjectSubscriber(true);
         setCurrentProject(project);
         setSuppressProjectSubscriber(false);

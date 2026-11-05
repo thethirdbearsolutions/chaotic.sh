@@ -61,6 +61,7 @@ class TestSecretFormat:
             "(CHT-1869): public labels, not credentials"
         ),
         ("app/api/idempotency.py", "uuid4"): "idempotency claim token: names a request, grants nothing",
+        ("app/services/attachment_service.py", "uuid4"): "an upload's temporary file name on disk: grants nothing",
         ("app/services/issue_service.py", "random"): "shuffles issue order for display",
         ("app/services/ritual_selection.py", "random"): "seeded ritual sampling, deterministic by design",
         ("app/services/email_verification_service.py", "randbelow"): (

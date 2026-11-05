@@ -17,6 +17,7 @@ from app.oxyde_db import init_oxyde, close_oxyde, bootstrap_if_empty, verify_mig
 from app.api import api_router
 from app.websocket import SocketOwner, manager
 from app.services import credential_events, email_service, push_sender
+from app.services.attachment_service import run_sweeper as run_attachment_sweeper
 from app.services.email_verification_service import log_invitation_gate, warn_if_app_base_url_is_local
 from app.services.push_service import PushService
 from app.services.user_service import warn_if_accounts_share_an_address
@@ -111,8 +112,21 @@ async def lifespan(app: FastAPI):
     # for the app's whole lifetime -- Starlette doesn't cascade a mounted
     # sub-app's own lifespan, so it's entered explicitly here (the mcp
     # SDK's documented pattern; see mcp_server/asgi.py).
-    async with mcp_lifespan():
-        yield
+    # CHT-1996: orphaned attachment blobs and stale upload files, now and
+    # on a timer, in the background: a large store must not hold up
+    # startup, and a failed sweep only logs.
+    sweeper = asyncio.create_task(run_attachment_sweeper(), name="attachment-sweeper")
+    try:
+        async with mcp_lifespan():
+            yield
+    finally:
+        sweeper.cancel()
+        try:
+            await sweeper
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("attachment sweeper ended with an error")
     # Shutdown. Deliveries in flight get a few seconds before the
     # database closes under them (CHT-1628): push deliveries, the
     # on-commit dispatches that can still schedule one, and emails

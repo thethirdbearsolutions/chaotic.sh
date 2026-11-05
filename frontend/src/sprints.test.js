@@ -112,10 +112,6 @@ beforeEach(() => {
     document.body.innerHTML = `
         <div id="modal-title"></div>
         <div id="modal-content"></div>
-        <select id="sprint-project-filter">
-            <option value="">Select</option>
-            <option value="p1">Project 1</option>
-        </select>
         <div id="sprints-list"></div>
         <div class="main-content"></div>
     `;
@@ -1377,5 +1373,19 @@ describe('describeSprintSpan / renderSprintBurndown (CHT-1366)', () => {
         const html = renderSprintBurndown({ budget: null, points_spent: 0 });
         expect(html).toContain('Set a sprint budget');
         expect(html).not.toContain('progressbar');
+    });
+});
+
+// CHT-2027: the Dashboard's sprint rows are <button>s, which turn Enter into
+// their own click; acting on the keydown too would open the sprint twice.
+describe('view-sprint on a button', () => {
+    it('acts on the click, not the keydown that precedes it', () => {
+        const button = document.createElement('button');
+        api.getSprint.mockReset();
+        api.getSprint.mockReturnValue(new Promise(() => {}));
+        sprintsActions['view-sprint']({ type: 'keydown', key: 'Enter' }, { sprintId: 's1', sprintUrl: '/sprint/s1' }, button);
+        expect(api.getSprint).not.toHaveBeenCalled();
+        sprintsActions['view-sprint']({ type: 'click' }, { sprintId: 's1', sprintUrl: '/sprint/s1' }, button);
+        expect(api.getSprint).toHaveBeenCalledWith('s1');
     });
 });

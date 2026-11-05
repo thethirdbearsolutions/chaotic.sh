@@ -670,6 +670,34 @@ async def test_list_comments(client, auth_headers, test_issue, db, test_user):
 
 
 @pytest.mark.asyncio
+async def test_comment_pages_are_stable_when_timestamps_tie(client, auth_headers, test_issue, test_user):
+    """CHT-2064: comments sharing created_at come back in one fixed order,
+    so paging with skip neither repeats nor drops one."""
+    from datetime import datetime, timezone
+    from app.oxyde_models.issue import OxydeIssueComment
+
+    same = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    created = [
+        await OxydeIssueComment.objects.create(
+            issue_id=test_issue.id, author_id=test_user.id,
+            content=f"c{i}", created_at=same,
+        )
+        for i in range(7)
+    ]
+
+    seen = []
+    for skip in range(0, 7, 3):
+        response = await client.get(
+            f"/api/issues/{test_issue.id}/comments?skip={skip}&limit=3",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        seen.extend(c["id"] for c in response.json())
+
+    assert seen == sorted(c.id for c in created)
+
+
+@pytest.mark.asyncio
 async def test_update_comment(client, auth_headers, test_issue, db, test_user):
     """Test updating a comment."""
     from app.oxyde_models.issue import OxydeIssueComment

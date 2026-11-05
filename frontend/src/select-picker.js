@@ -62,6 +62,24 @@ export function closeSelectPicker({ restoreFocus = true } = {}) {
 }
 
 /**
+ * Open the picker of an enhanced select, as a click on its button would
+ * (a keyboard shortcut uses it). Returns false if there is none to open.
+ */
+export function openSelectPicker(select, { returnFocus = false } = {}) {
+    const button = select?._picker?.button;
+    if (!button || button.disabled || !button.isConnected) return false;
+    // Hidden (a closed phone drawer): there is nothing to anchor to.
+    if (typeof button.checkVisibility === 'function' && !button.checkVisibility({ visibilityProperty: true })) return false;
+    if (openPicker?.select !== select) {
+        // returnFocus: closing puts focus back where it was before, for a
+        // picker opened by a shortcut rather than from its button.
+        const before = document.activeElement;
+        openPopover(select, button, returnFocus ? (before && before !== document.body ? before : null) : undefined);
+    }
+    return true;
+}
+
+/**
  * Enhance every `select[data-picker]` under `root` that is not enhanced yet.
  */
 export function initSelectPickers(root = document) {
@@ -116,9 +134,12 @@ export function enhanceSelect(select) {
             e.preventDefault();
             e.stopPropagation();
             if (openPicker?.select !== select) openPopover(select, button);
-        } else if (e.key.length === 1) {
+        } else if (e.key.length === 1 && select.dataset.pickerKeys !== 'pass') {
             // A focused <select> kept single-key shortcuts (j/k, c, /) from
             // the global handlers; the button stands in for it, so it does too.
+            // `data-picker-keys="pass"` opts out: the sidebar's project
+            // switcher keeps focus after a pick, and must not leave the
+            // shortcuts dead until the next click (PR #543 review I4).
             e.stopPropagation();
         }
     });
@@ -129,7 +150,11 @@ export function enhanceSelect(select) {
 function syncLabel(select, button) {
     const opt = select.options[select.selectedIndex];
     const text = opt ? opt.textContent.trim() : '';
-    button.querySelector('.picker-label').textContent = text;
+    const hint = opt?.dataset.hint || '';
+    const labelEl = button.querySelector('.picker-label');
+    labelEl.textContent = text;
+    // The option's hint (a project's key) leads the label as a small chip.
+    if (hint) labelEl.insertAdjacentHTML('afterbegin', `<span class="picker-label-hint">${escapeHtml(hint)}</span>`);
     button.disabled = select.disabled;
     button.title = text;
     // The accessible name carries the current value too ("Project: Chaotic"):
@@ -142,10 +167,10 @@ function syncLabel(select, button) {
 function optionList(select) {
     return [...select.options]
         .filter(o => !o.hidden)
-        .map(o => ({ value: o.value, text: o.textContent.trim(), disabled: o.disabled }));
+        .map(o => ({ value: o.value, text: o.textContent.trim(), hint: o.dataset.hint || '', disabled: o.disabled }));
 }
 
-function openPopover(select, button) {
+function openPopover(select, button, returnTo) {
     closeSelectPicker({ restoreFocus: false });
     const options = optionList(select);
     const listId = `picker-list-${++uid}`;
@@ -174,6 +199,7 @@ function openPopover(select, button) {
                     data-index="${i}" data-value="${escapeAttr(o.value)}"
                     aria-selected="${o.value === select.value ? 'true' : 'false'}"${o.disabled ? ' aria-disabled="true"' : ''}>
                     <span class="picker-option-text">${escapeHtml(o.text)}</span>
+                    ${o.hint ? `<span class="picker-option-hint">${escapeHtml(o.hint)}</span>` : ''}
                     ${o.value === select.value ? `<span class="picker-check">${CHECK}</span>` : ''}
                 </li>`).join('')
             : '<li class="picker-empty" role="presentation">No matches</li>';
@@ -266,7 +292,8 @@ function openPopover(select, button) {
 
     const onInput = () => {
         const q = search.value.trim().toLowerCase();
-        shown = q ? options.filter(o => o.text.toLowerCase().includes(q)) : options;
+        // A hint (a project's key) matches too: "cht" finds Chaotic.
+        shown = q ? options.filter(o => o.text.toLowerCase().includes(q) || o.hint.toLowerCase().includes(q)) : options;
         const current = shown.findIndex(o => o.value === select.value && !o.disabled);
         active = !q && current !== -1 ? current : firstEnabled(shown);
         render();
@@ -300,7 +327,10 @@ function openPopover(select, button) {
         window.removeEventListener('popstate', onNavigate);
         window.removeEventListener('resize', onReflow);
         window.removeEventListener('scroll', onReflow, true);
-        if (restoreFocus) button.focus({ preventScroll: true });
+        if (!restoreFocus) return;
+        if (returnTo === undefined) button.focus({ preventScroll: true });
+        else if (returnTo?.isConnected) returnTo.focus({ preventScroll: true });
+        else document.activeElement?.blur?.();
     }
 
     list.addEventListener('click', (e) => {
@@ -324,7 +354,7 @@ function openPopover(select, button) {
     const refresh = () => {
         const now = optionList(select);
         const same = now.length === options.length
-            && now.every((o, i) => o.value === options[i].value && o.text === options[i].text && o.disabled === options[i].disabled);
+            && now.every((o, i) => o.value === options[i].value && o.text === options[i].text && o.hint === options[i].hint && o.disabled === options[i].disabled);
         if (!same || select.disabled) close(false);
         else render();
     };

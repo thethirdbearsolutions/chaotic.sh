@@ -246,6 +246,7 @@ chaotic issue mine --status in_progress   # Filter my issues by status
 chaotic issue search "search term"        # Search issues across the team
 chaotic issue show CHT-123                # Show issue details
 chaotic issue view CHT-123                # Alias for 'show'
+chaotic issue show CHT-123 --last 5       # Only the newest 5 comments (all by default)
 chaotic issue open CHT-123                # Open issue in browser
 ```
 
@@ -734,6 +735,7 @@ registers them; the canonical descriptions and schemas are in
 | `issue_create` | `issue create` |
 | `issue_update` | `issue update` + `issue assign` (status/priority/estimate/assignee/title/description/type/parent; `assignee: "unassigned"` clears; `no_parent` is `--no-parent`; `attest` map for ritual notes) |
 | `issue_comment` | `issue comment` |
+| `issue_attach` | `issue attach` |
 | `issue_start` | `issue start` |
 | `issue_ready` | `issue ready` |
 | `issue_relations` | `issue relations` |

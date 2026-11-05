@@ -15,14 +15,12 @@ import { importIssueStore } from './issue-store.js';
 import { connectWebSocket } from './ws.js';
 import { buildAssignees, updateAssigneeFilter } from './assignees.js';
 import { getAgents } from './agents.js';
-import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { refreshInboxUnreadCount } from './inbox.js';
 
 // Module state
 let teams = [];
 let members = [];
 let invitations = [];
-let teamAgents = [];
 
 /**
  * Get current teams list
@@ -103,12 +101,14 @@ export function renderTeamList() {
 export async function selectTeam(team, isInitialLoad = false, { seed = null } = {}) {
   loadedTeamId = null;
   setCurrentTeam(team);
+  // The last team's invitations are its admins' business, not this team's.
+  clearTeamInvitations();
   document.getElementById('current-team-name').textContent = team.name;
   const mobileTeamName = document.getElementById('mobile-team-name');
   if (mobileTeamName) mobileTeamName.textContent = team.name;
   const teamDescription = document.getElementById('team-description-text');
   if (teamDescription) {
-    teamDescription.textContent = team.description || 'No description';
+    teamDescription.textContent = team.description || '';
   }
   // Close dropdown instead of toggle (fix for dropdown staying open)
   document.getElementById('team-dropdown').classList.add('hidden');
@@ -249,49 +249,32 @@ function memberListSkeleton() {
     `).join('');
 }
 
-// Monotonic request id — lets loadTeamMembers() drop a response from a
-// superseded request (double-clicked Retry, or Retry racing a team switch)
-// instead of painting stale data, mirroring loadTeamInvitations() below
-// (CHT-1226).
+// Monotonic request id: a superseded loadTeamMembers() (a double-clicked
+// retry, or one racing a team switch) drops its answer (CHT-1226).
 let loadTeamMembersRequestId = 0;
 
 /**
- * Load team members with UI feedback
+ * Load the team's members and redraw People's admin-only controls
+ * (CHT-2044: the Team view, which listed them, became People). Fails
+ * closed (PR #212 review finding 2): with the fetch failed the viewer's
+ * role is unknown, so the members are dropped and the controls hidden.
  */
 export async function loadTeamMembers() {
-  if (!getCurrentTeam()) return;
-
+  const teamId = getCurrentTeam()?.id;
+  if (!teamId) return;
   const requestId = ++loadTeamMembersRequestId;
-  const list = document.getElementById('team-members-list');
-  if (list) list.innerHTML = memberListSkeleton();
-
   try {
-    const fetched = await api.getTeamMembers(getCurrentTeam().id);
-    if (requestId !== loadTeamMembersRequestId) return; // a newer loadTeamMembers() has since started — drop this stale response
+    const fetched = await api.getTeamMembers(teamId);
+    if (requestId !== loadTeamMembersRequestId || getCurrentTeam()?.id !== teamId) return;
     members = fetched;
     buildAssignees(getMembers, getAgents);
     updateAssigneeFilter();
-    renderTeamMembers();
   } catch (e) {
     if (requestId !== loadTeamMembersRequestId) return;
-    // CHT-1226: was showApiError()-only (a toast) -- the list itself was
-    // left blank/stale with zero in-page indication anything went wrong.
-    if (list) list.innerHTML = renderEmptyState({
-      icon: EMPTY_ICONS.team,
-      heading: "Couldn't load members",
-      description: 'Check your connection and try again',
-      cta: { label: 'Retry', action: 'retry-load-team-members' },
-      variant: 'error',
-    });
-    // Fail closed (PR #212 review finding 2): with the fetch failed we
-    // cannot confirm the viewer's role, so drop any stale members list and
-    // re-run the admin gate -- otherwise a previously-visible Invite button
-    // (or a demoted admin's stale role) would keep admin affordances up
-    // indefinitely on error.
     members = [];
-    updateInviteButtonVisibility();
     showApiError('load team members', e);
   }
+  updateInviteButtonVisibility();
 }
 
 /**
@@ -313,45 +296,11 @@ export function isCurrentUserAdmin() {
  * after members load, since that's the only source of the viewer's role
  * (CHT-1226).
  */
-function updateInviteButtonVisibility() {
-  const inviteBtn = document.getElementById('invite-member-btn');
-  if (inviteBtn) inviteBtn.classList.toggle('hidden', !isCurrentUserAdmin());
-}
-
-/**
- * Render the team members list
- */
-export function renderTeamMembers() {
-  const list = document.getElementById('team-members-list');
-  const canManageMembers = isCurrentUserAdmin();
-  updateInviteButtonVisibility();
-  list.innerHTML = members
-    .map(
-      (member) => `
-        <div class="list-item member-item">
-            <div class="member-info">
-                <div class="avatar">${(member.user_name || 'U').charAt(0).toUpperCase()}</div>
-                <div class="member-details">
-                    <span class="member-name">${escapeHtml(member.user_name || 'Unknown')}</span>
-                    <span class="member-email">${escapeHtml(member.user_email || '')}</span>
-                </div>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <span class="member-role">${member.role}</span>
-                ${
-                  canManageMembers &&
-                  member.user_id !== getCurrentUser().id &&
-                  member.role !== 'owner'
-                    ? `
-                    <button class="btn btn-danger btn-small" data-action="remove-member" data-user-id="${escapeAttr(member.user_id)}">Remove</button>
-                `
-                    : ''
-                }
-            </div>
-        </div>
-    `
-    )
-    .join('');
+export function updateInviteButtonVisibility() {
+  const admin = isCurrentUserAdmin();
+  for (const id of ['invite-member-btn', 'edit-team-btn']) {
+    document.getElementById(id)?.classList.toggle('hidden', !admin);
+  }
 }
 
 // Monotonic request id — lets loadTeamInvitations() drop a response from a
@@ -366,14 +315,16 @@ export async function loadTeamInvitations() {
   if (!getCurrentTeam()) return;
 
   const requestId = ++loadTeamInvitationsRequestId;
+  const teamId = getCurrentTeam().id;
   // CHT-1226: was the only one of the three team lists with no loading
   // state at all -- the DOM just sat at whatever it last rendered.
   const list = document.getElementById('team-invitations-list');
   if (list) list.innerHTML = memberListSkeleton();
 
   try {
-    const fetched = await api.getTeamInvitations(getCurrentTeam().id);
+    const fetched = await api.getTeamInvitations(teamId);
     if (requestId !== loadTeamInvitationsRequestId) return; // a newer loadTeamInvitations() has since started — drop this stale response
+    if (getCurrentTeam()?.id !== teamId) return; // answered for a team switched away from
     invitations = fetched;
     renderTeamInvitations();
   } catch (e) {
@@ -382,10 +333,12 @@ export async function loadTeamInvitations() {
     // other failure (network, 500) used to collapse into the same blank
     // list, with zero indication to an actual admin that the request failed.
     if (e?.status === 403) {
-      document.getElementById('team-invitations-list').innerHTML = '';
+      invitations = [];
+      renderTeamInvitations();
       return;
     }
     console.error('Failed to load team invitations:', e);
+    showInvitationsSection(true);
     // empty-state-error (CHT-1224 PR #211 review finding 3): failure states
     // must be visually distinct from informational/empty boxes.
     document.getElementById('team-invitations-list').innerHTML = `
@@ -398,12 +351,33 @@ export async function loadTeamInvitations() {
 }
 
 /**
- * Render the team invitations list
+ * Forget the invitations shown: on a team switch, and when the viewer is
+ * not (or no longer known to be) an admin. Bumps the request id so a load
+ * still in flight cannot repaint them.
+ */
+export function clearTeamInvitations() {
+  loadTeamInvitationsRequestId++;
+  invitations = [];
+  renderTeamInvitations();
+}
+
+/** People's Pending invitations section shows only while it has something. */
+function showInvitationsSection(show) {
+  document.getElementById('people-invitations')?.classList.toggle('hidden', !show);
+}
+
+/**
+ * Render the team invitations list: People's Pending invitations section,
+ * hidden when there are none (CHT-2044).
  */
 export function renderTeamInvitations() {
   const list = document.getElementById('team-invitations-list');
+  if (!list) return;
+  const count = document.getElementById('people-invitations-count');
+  if (count) count.textContent = String(invitations.length);
+  showInvitationsSection(invitations.length > 0);
   if (invitations.length === 0) {
-    list.innerHTML = `<div class="empty-state" style="padding: 1rem"><p>No pending invitations</p></div>`;
+    list.innerHTML = '';
     return;
   }
 
@@ -415,86 +389,18 @@ export function renderTeamInvitations() {
   list.innerHTML = invitations
     .map(
       (inv) => `
-        <div class="list-item">
-            <div class="list-item-content">
-                <div class="list-item-title">${escapeHtml(inv.email)}</div>
-                <div class="list-item-meta">
-                    <span class="member-role">${escapeHtml(inv.role)}</span>
-                    <span>Expires: ${new Date(inv.expires_at).toLocaleDateString()}</span>
-                </div>
+        <div class="list-row-2line">
+            <div class="list-row-main">
+                <div class="list-row-title">${escapeHtml(inv.email)}</div>
+                <div class="list-row-sub">Invited as ${escapeHtml(inv.role)} · expires ${new Date(inv.expires_at).toLocaleDateString()}</div>
             </div>
-            ${canManageInvitations ? `<button class="btn btn-secondary btn-small" data-action="issue-invitation-code" data-invitation-id="${escapeAttr(inv.id)}" title="For an invitee whose verification email never arrives">Code for invitee</button>
-            <button class="btn btn-danger btn-small" data-action="delete-invitation" data-invitation-id="${escapeAttr(inv.id)}">Cancel</button>` : ''}
+            ${canManageInvitations ? `<div class="list-row-right">
+            <button class="btn btn-secondary btn-small" data-action="issue-invitation-code" data-invitation-id="${escapeAttr(inv.id)}" title="For an invitee whose verification email never arrives">Code for invitee</button>
+            <button class="btn btn-danger-outline btn-small" data-action="delete-invitation" data-invitation-id="${escapeAttr(inv.id)}">Cancel</button>
+            </div>` : ''}
         </div>
     `
     )
-    .join('');
-}
-
-// Monotonic request id — see loadTeamMembersRequestId above (CHT-1226).
-let loadTeamAgentsRequestId = 0;
-
-/**
- * Load team agents with UI feedback
- */
-export async function loadTeamAgents() {
-  if (!getCurrentTeam()) return;
-
-  const requestId = ++loadTeamAgentsRequestId;
-  const list = document.getElementById('team-agents-list');
-  if (list) list.innerHTML = memberListSkeleton();
-
-  try {
-    const fetched = await api.getTeamAgents(getCurrentTeam().id);
-    if (requestId !== loadTeamAgentsRequestId) return; // a newer loadTeamAgents() has since started — drop this stale response
-    teamAgents = fetched;
-    renderTeamAgents();
-  } catch (e) {
-    if (requestId !== loadTeamAgentsRequestId) return;
-    // CHT-1226: was showApiError()-only (a toast) -- see loadTeamMembers above.
-    if (list) list.innerHTML = renderEmptyState({
-      icon: EMPTY_ICONS.team,
-      heading: "Couldn't load agents",
-      description: 'Check your connection and try again',
-      cta: { label: 'Retry', action: 'retry-load-team-agents' },
-      variant: 'error',
-    });
-    showApiError('load team agents', e);
-  }
-}
-
-/**
- * Render the team agents list
- */
-export function renderTeamAgents() {
-  const list = document.getElementById('team-agents-list');
-  if (!list) return;
-
-  if (teamAgents.length === 0) {
-    list.innerHTML = `<div class="empty-state" style="padding: 1rem"><p>No agents yet. <a href="#" data-action="navigate-to" data-view="settings">Create an agent</a> to enable CLI automation with its own identity.</p></div>`;
-    return;
-  }
-
-  list.innerHTML = teamAgents
-    .map((agent) => {
-      const safeName = escapeHtml(agent.name);
-      const safeParentName = escapeHtml(agent.parent_user_name || 'Unknown');
-      const avatar = agent.avatar_url || '🤖';
-      return `
-        <div class="list-item member-item">
-            <div class="member-info">
-                <div class="avatar agent-avatar" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">${escapeHtml(avatar)}</div>
-                <div class="member-details">
-                    <span class="member-name">${safeName}</span>
-                    <span class="member-email">Created by ${safeParentName} • ${agent.agent_project_id ? 'Project-scoped' : 'Team-wide'}</span>
-                </div>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <span class="member-role" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;">Agent</span>
-            </div>
-        </div>
-      `;
-    })
     .join('');
 }
 
@@ -766,6 +672,8 @@ export async function removeMember(userId) {
     await api.removeMember(getCurrentTeam().id, userId);
     await loadTeamMembers();
     showToast('Member removed!', 'success');
+    // People shows the roster; it listens rather than being imported here.
+    window.dispatchEvent(new CustomEvent('chaotic:member-removed', { detail: { userId } }));
   } catch (e) {
     showApiError('remove member', e);
   }
@@ -883,7 +791,7 @@ export async function handleUpdateTeam(event) {
     document.getElementById('current-team-name').textContent = updated.name;
     const teamDescription = document.getElementById('team-description-text');
     if (teamDescription) {
-      teamDescription.textContent = updated.description || 'No description';
+      teamDescription.textContent = updated.description || '';
     }
     await loadTeams();
     closeModal();
@@ -941,22 +849,19 @@ registerActions({
     selectTeam(JSON.parse(dataset.teamJson));
   },
   'remove-member': (event, dataset) => {
+    if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
     removeMember(dataset.userId);
   },
   'delete-invitation': (event, dataset) => {
+    if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
     deleteInvitation(dataset.invitationId);
   },
   'issue-invitation-code': (event, dataset) => {
+    if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
     issueInvitationCode(dataset.invitationId);
   },
   'retry-load-team-invitations': () => {
     loadTeamInvitations();
-  },
-  'retry-load-team-members': () => {
-    loadTeamMembers();
-  },
-  'retry-load-team-agents': () => {
-    loadTeamAgents();
   },
   'invite-member': (event) => {
     handleInvite(event);

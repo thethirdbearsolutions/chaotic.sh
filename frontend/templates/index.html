@@ -90,6 +90,13 @@
                         <button class="dropdown-item" data-action="showCreateTeamModal">+ Create Team</button>
                     </div>
                 </div>
+                <!-- One project scope for every view (CHT-2058). Empty = all projects. -->
+                <div class="project-switcher">
+                    <select id="project-switcher" data-picker data-picker-keys="pass" aria-label="Project" data-action="switch-project">
+                        <option value="">All projects</option>
+                    </select>
+                    <kbd class="project-switcher-key" aria-hidden="true">P</kbd>
+                </div>
                 <button class="sidebar-create-btn">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -176,12 +183,6 @@
                         </a>
                     </div>
                     <div class="nav-group nav-group-bottom">
-                        <a href="/team" class="nav-item" data-view="team">
-                            <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"/>
-                            </svg>
-                            Team
-                        </a>
                         <a href="/people" class="nav-item" data-view="people">
                             <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/>
@@ -230,9 +231,6 @@
                     <div class="view-header">
                         <h2>Dashboard</h2>
                         <div class="view-actions">
-                            <select id="dashboard-project-filter" data-picker aria-label="Project" data-action="set-current-project">
-                                <option value="">All Projects</option>
-                            </select>
                             <select id="my-issues-status-filter" data-picker aria-label="Status">
                                 <option value="">All Statuses</option>
                                 <option value="backlog">Backlog</option>
@@ -268,11 +266,6 @@
                 <div id="approvals-view" class="view hidden">
                     <div class="view-header">
                         <h2>Approvals</h2>
-                        <div class="view-actions">
-                            <select id="approvals-project-filter" data-picker aria-label="Project" data-action="set-current-project">
-                                <option value="">All Projects</option>
-                            </select>
-                        </div>
                     </div>
                     <div id="approvals-list" class="list"></div>
                 </div>
@@ -349,9 +342,6 @@
                     </div>
                     <!-- Hidden original controls (preserve IDs for existing JS) -->
                     <div class="hidden-filter-controls">
-                        <select id="project-filter" data-action="set-current-project">
-                            <option value="">All Projects</option>
-                        </select>
                         <div class="multi-select-dropdown" id="status-filter-dropdown">
                             <button type="button" class="multi-select-btn">
                                 <span class="multi-select-label">All Statuses</span>
@@ -521,11 +511,6 @@
                 <div id="board-view" class="view hidden">
                     <div class="view-header">
                         <h2>Board</h2>
-                        <div class="view-actions">
-                            <select id="board-project-filter" data-picker aria-label="Project" data-action="set-current-project">
-                                <option value="">Select Project</option>
-                            </select>
-                        </div>
                     </div>
                     <div id="kanban-board" class="kanban-board"></div>
                 </div>
@@ -534,10 +519,7 @@
                     <div class="view-header">
                         <h2>Epics</h2>
                         <div class="view-actions">
-                            <select id="epics-project-filter" data-picker aria-label="Project" data-action="set-current-project">
-                                <option value="">All Projects</option>
-                            </select>
-                            <button class="btn btn-primary" data-action="showCreateEpicModal">+ New Epic</button>
+                            <button class="btn btn-primary" data-action="showCreateEpicModal">+ New epic</button>
                         </div>
                     </div>
                     <div id="epics-list" class="list"></div>
@@ -554,11 +536,6 @@
                 <div id="sprints-view" class="view hidden">
                     <div class="view-header">
                         <h2>Sprints</h2>
-                        <div class="view-actions">
-                            <select id="sprint-project-filter" data-picker aria-label="Project" data-action="set-current-project">
-                                <option value="">Select Project</option>
-                            </select>
-                        </div>
                     </div>
                     <div id="sprints-list" class="list"></div>
                 </div>
@@ -570,9 +547,6 @@
                             <div class="search-box">
                                 <input type="text" id="doc-search" placeholder="Search documents...">
                             </div>
-                            <select id="doc-project-filter" data-picker class="filter-select" aria-label="Filter by project" data-action="set-current-project">
-                                <option value="">All Projects</option>
-                            </select>
                             <select id="doc-sort" data-picker class="filter-select" aria-label="Sort by">
                                 <option value="updated_desc">Newest first</option>
                                 <option value="updated_asc">Oldest first</option>
@@ -592,25 +566,6 @@
                     <div id="documents-list" class="grid"></div>
                 </div>
 
-                <div id="team-view" class="view hidden">
-                    <div class="view-header">
-                        <h2>Team</h2>
-                        <div class="view-actions">
-                            <button class="btn btn-secondary" data-action="showEditTeamModal">Edit Team</button>
-                            <!-- CHT-1226 (PR #212 review finding 2): hidden by default — permission
-                                 gates fail closed; revealed only on confirmed admin/owner role -->
-                            <button id="invite-member-btn" class="btn btn-primary hidden" data-action="showInviteModal">+ Invite Member</button>
-                        </div>
-                    </div>
-                    <p id="team-description-text" class="team-description"></p>
-                    <div class="section-header"><h3>Members</h3></div>
-                    <div id="team-members-list" class="list"></div>
-                    <div class="section-header"><h3>Agents</h3></div>
-                    <div id="team-agents-list" class="list"></div>
-                    <div class="section-header"><h3>Pending Invitations</h3></div>
-                    <div id="team-invitations-list" class="list"></div>
-                </div>
-
                 <div id="people-view" class="view hidden">
                     <div class="view-header">
                         <h2>People</h2>
@@ -619,19 +574,25 @@
                                 <input type="checkbox" id="people-show-idle" data-action="toggle-people-idle">
                                 Show idle sessions
                             </label>
+                            <!-- Admin-only controls stay hidden until the viewer's role is
+                                 confirmed (CHT-1226): permission gates fail closed. -->
+                            <button id="edit-team-btn" class="btn btn-secondary hidden" data-action="showEditTeamModal">Edit team</button>
+                            <button id="invite-member-btn" class="btn btn-secondary hidden" data-action="showInviteModal">Invite person</button>
+                            <button class="btn btn-primary" data-action="showCreateAgentModal">Create agent</button>
                         </div>
                     </div>
-                    <p class="people-intro">Everyone on the team, people and agents, as they describe themselves.</p>
+                    <p id="team-description-text" class="team-description"></p>
                     <div id="people-list"></div>
+                    <div id="people-invitations" class="hidden">
+                        <div class="section-header"><h3>Pending invitations <span id="people-invitations-count" class="section-count"></span></h3></div>
+                        <div id="team-invitations-list" class="people-rows"></div>
+                    </div>
                 </div>
 
                 <div id="query-view" class="view hidden">
                     <div class="view-header">
                         <h2>Query</h2>
                         <div class="view-actions">
-                            <select id="query-project-filter" data-picker aria-label="Scope">
-                                <option value="">All projects</option>
-                            </select>
                             <div id="query-columns-picker" class="query-columns-picker">
                                 <button type="button" id="query-columns-btn" class="btn btn-secondary btn-small" aria-haspopup="true" aria-expanded="false">Columns</button>
                                 <div id="query-columns-menu" class="query-columns-menu hidden"></div>
@@ -654,11 +615,6 @@
                 <div id="rituals-view" class="view hidden">
                     <div class="view-header">
                         <h2>Rituals</h2>
-                        <div class="view-actions">
-                            <select id="rituals-project-filter" data-picker aria-label="Project" data-action="set-current-project">
-                                <option value="">Select a project</option>
-                            </select>
-                        </div>
                     </div>
                     <div id="rituals-tabs" class="settings-tabs hidden">
                         <button class="settings-tab active" data-tab="sprint">Sprint Rituals</button>
@@ -702,10 +658,10 @@
                             <div id="push-devices-list" class="api-keys-list"></div>
                         </section>
                         <section class="settings-section">
-                            <h3>Agents</h3>
-                            <p class="settings-description">Create agents to give CLI automation its own identity. Agent actions are attributed separately from your human account.</p>
-                            <button class="btn btn-primary" data-action="showCreateAgentModal">+ Create Agent</button>
-                            <div id="agents-list" class="agents-list"></div>
+                            <h3>Your agents</h3>
+                            <p class="settings-description">Agents give automation its own identity, attributed separately from you. Each one's keys, connected apps, scope and registrar right are on its profile; the whole team's agents are on <a href="/people" data-action="back-to-roster">People</a>.</p>
+                            <button class="btn btn-primary" data-action="showCreateAgentModal">Create agent</button>
+                            <div id="agents-list" class="people-rows"></div>
                         </section>
                     </div>
                 </div>

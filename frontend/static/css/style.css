@@ -2120,39 +2120,6 @@ select:focus-visible {
 }
 
 /* Team member list */
-.member-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.member-info {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
-.member-details {
-    display: flex;
-    flex-direction: column;
-}
-
-.member-name {
-    font-size: var(--font-md);
-    font-weight: 500;
-}
-
-.member-email {
-    color: var(--text-secondary);
-    font-size: 0.875rem;
-}
-
-.member-role {
-    color: var(--text-muted);
-    font-size: 0.75rem;
-    text-transform: capitalize;
-}
-
 /* Scrollbar */
 ::-webkit-scrollbar {
     width: 8px;
@@ -3916,42 +3883,6 @@ input[type="checkbox"] {
     margin-bottom: 12px;
 }
 
-.sprint-status-cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 12px;
-}
-
-.sprint-status-card {
-    padding: 12px 16px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-}
-
-.sprint-status-card.limbo {
-    border-color: var(--warning-color);
-}
-
-.sprint-status-card.arrears {
-    border-color: var(--error-color);
-}
-
-.sprint-status-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.sprint-status-project {
-    font-size: var(--font-xs);
-    color: var(--text-muted);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
 .sprint-status-badge {
     font-size: 10px;
     padding: 1px 6px;
@@ -3968,13 +3899,6 @@ input[type="checkbox"] {
 .sprint-status-badge.arrears {
     background: rgba(239, 68, 68, 0.15);
     color: var(--error-color);
-}
-
-.sprint-status-name {
-    font-size: var(--font-sm);
-    font-weight: 500;
-    color: var(--text-primary);
-    margin-bottom: 8px;
 }
 
 .sprint-status-progress {
@@ -4004,12 +3928,6 @@ input[type="checkbox"] {
 
 .sprint-progress-fill.limbo {
     background: var(--warning-color);
-}
-
-.sprint-status-points {
-    font-size: var(--font-xs);
-    color: var(--text-muted);
-    white-space: nowrap;
 }
 
 .sprint-issue-breakdown {
@@ -4699,10 +4617,6 @@ input[type="checkbox"] {
         gap: 0.75rem;
     }
 
-    .epic-table th,
-    .epic-table td {
-        padding: 8px 10px;
-    }
 }
 
 /* Responsive */
@@ -4723,8 +4637,7 @@ input[type="checkbox"] {
 @media (max-width: 768px) {
     /* Hide less critical columns on narrow screens */
     .issue-labels,
-    .issue-date,
-    .epic-estimate {
+    .issue-date {
         display: none;
     }
 
@@ -4926,111 +4839,6 @@ input[type="checkbox"] {
     .filter-menu-options {
         min-height: 0;
         max-height: 50vh;
-    }
-
-    /* Responsive epics: card layout on mobile */
-    .epic-table thead {
-        display: none;
-    }
-
-    .epic-table,
-    .epic-table tbody,
-    .epic-row,
-    .epic-row td,
-    .epic-untracked-row,
-    .epic-untracked-row td,
-    .epic-group-row,
-    .epic-group-row th,
-    .epic-state-row,
-    .epic-state-row th {
-        display: block;
-    }
-
-    .epic-table .epic-row td,
-    .epic-table .epic-untracked-row td,
-    .epic-table .epic-group-row th {
-        border-bottom: none;
-        padding: 2px 0;
-        height: auto;
-    }
-
-    .epic-table .epic-untracked-row td:empty {
-        display: none;
-    }
-
-    .epic-table .epic-group-row th {
-        padding-top: 16px;
-    }
-
-    .epic-untracked-row {
-        padding: 12px 8px;
-        background: var(--bg-secondary);
-        border-bottom: 1px solid var(--border-color);
-    }
-
-    .epic-table .epic-untracked-row td {
-        width: auto;
-        background: none;
-    }
-
-    .epic-row {
-        padding: 12px 0;
-        border-bottom: 1px solid var(--border-color);
-    }
-
-    .epic-row td {
-        padding: 2px 0;
-    }
-
-    .epic-identifier {
-        font-size: var(--font-sm);
-        color: var(--text-muted);
-    }
-
-    .epic-title {
-        font-size: 15px;
-        font-weight: 500;
-        margin-bottom: 4px;
-    }
-
-    .epic-status {
-        display: inline-block;
-    }
-
-    /* Phone epic rows (CHT-1964): ID and title on one line, then the
-       bar with its points; the per-sprint strip stays on desktop. */
-    .epic-table .epic-row {
-        display: grid;
-        grid-template-columns: auto 1fr auto;
-        column-gap: 10px;
-        row-gap: 6px;
-        align-items: center;
-        padding: 10px 4px;
-    }
-    .epic-table .epic-row td {
-        height: auto;
-    }
-    .epic-row .epic-identifier { grid-column: 1; width: auto; }
-    .epic-row .epic-title { grid-column: 2 / 4; margin: 0; }
-    .epic-row .epic-progress { grid-column: 1 / 3; width: auto; }
-    .epic-row .epic-points { grid-column: 3; text-align: right; }
-    .epic-row .epic-sprint { grid-column: 1 / 4; }
-    .epic-row .epic-sprint:has(> .text-muted:only-child),
-    .epic-row .epic-sprints {
-        display: none;
-    }
-    /* The row is a grid here: paint the row, not its cells. */
-    .epic-table .epic-row:hover,
-    .epic-table .epic-row:hover td,
-    .epic-table .epic-row.keyboard-selected td,
-    .epic-table .epic-row.keyboard-selected td:first-child {
-        background: transparent;
-        box-shadow: none;
-    }
-    .epic-table .epic-row:hover { background: var(--row-hover); }
-    .epic-table .epic-row.keyboard-selected {
-        background: var(--row-cursor);
-        box-shadow: inset 3px 0 0 var(--row-cursor-edge);
     }
 
     /* Constrain filter selects on mobile */
@@ -6623,54 +6431,6 @@ input[type="checkbox"] {
     top: -3px;
     right: -3px;
     font-size: 8px;
-}
-
-/* Agent list in settings */
-/* Wraps so the action buttons drop to their own line when the row is narrow,
-   instead of crushing the avatar and the meta text (CHT-1749). */
-.agent-item {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px 12px;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.agent-item:last-child {
-    border-bottom: none;
-}
-
-.agent-item > .agent-avatar {
-    flex-shrink: 0;
-}
-
-.agent-info {
-    flex: 1 1 220px;
-    min-width: 0;
-}
-
-.agent-name {
-    font-size: var(--font-md); /* a row title, like .issue-title (CHT-1887) */
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.agent-meta {
-    font-size: var(--font-sm);
-    color: var(--text-muted);
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px 8px;
-    margin-top: 2px;
-}
-
-.agent-scope {
-    background: var(--bg-tertiary);
-    padding: 2px 6px;
-    border-radius: var(--radius-sm);
-    white-space: nowrap;
 }
 
 /* Agent badge for activity feeds */
@@ -8418,250 +8178,147 @@ button.stat-card-link:hover .stat-note {
     color: var(--accent-color);
 }
 
-/* Epics view (CHT-831) */
-.epic-table {
-    width: 100%;
-    border-collapse: collapse;
+/* Epics view (CHT-831; sections and two-line rows, CHT-2043). The
+   section label, .list-row-2line and .meter are the shared components
+   (CHT-2040); only the epic layout lives here. */
+.epic-sections {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space-xl) * 2);
 }
-
-.epic-table th {
-    text-align: left;
-    padding: 6px 12px;
-    font-size: var(--font-xs);
-    font-weight: 500;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border-color);
+.epic-section > .section-header {
+    margin: 0 0 var(--space-sm);
 }
-
-.epic-table td {
-    padding: 6px 12px;
-    height: 40px;
-    border-bottom: 1px solid var(--border-color);
-    font-size: var(--font-md);
+/* Accent means "needs you". */
+.epic-section-waiting > .section-header h3 {
+    color: var(--accent-fg);
 }
-
-.epic-row {
+.epic-section .list-row-2line {
     cursor: pointer;
 }
-.epic-row:hover td {
-    background: var(--row-hover);
+.epic-section-rows > .list-row-2line:first-child {
+    border-top: 1px solid var(--border-color);
 }
-/* The keyboard cursor (CHT-1964): the epics list had none, so j/k moved
-   an invisible selection. */
-.epic-row.keyboard-selected td {
+.epic-section .list-row-sub b {
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+/* Epic rows lead with the sprint strip, well apart from the meter: a
+   health glyph read before the title (CHT-2043). */
+.epic-section .list-row-2line {
+    grid-template-columns: 56px minmax(0, 1fr) auto;
+}
+.epic-section .epic-spark {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    display: flex;
+    align-items: center;
+}
+.epic-section .list-row-title,
+.epic-section .list-row-sub {
+    grid-column: 2;
+}
+.epic-section .list-row-right {
+    grid-column: -2;
+    grid-row: 1 / span 2;
+}
+.epic-row .list-row-right {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-xs);
+    width: 140px;
+    text-align: right;
+}
+/* The keyboard cursor (CHT-1964). */
+.epic-row.keyboard-selected {
     background: var(--row-cursor);
-}
-.epic-row.keyboard-selected td:first-child {
     box-shadow: inset 3px 0 0 var(--row-cursor-edge);
 }
-.epic-row-empty .epic-title,
-.epic-row-empty .epic-progress-text {
-    color: var(--text-muted);
+.epic-row-empty .list-row-title,
+.epic-row-closed .list-row-title {
+    color: var(--text-secondary);
     font-weight: 400;
 }
-
-/* Progress readout above the table (CHT-1964). */
-.epic-summary {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 16px;
-}
-.epic-stat {
-    flex: 1 1 160px;
-    padding: 10px 14px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-}
-.epic-stat-value {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-    line-height: 1.2;
-}
-.epic-stat-of {
-    font-size: var(--font-md);
+.epic-owner,
+.epic-project-key {
     font-weight: 400;
     color: var(--text-muted);
 }
-.epic-stat-label {
+.epic-project-key {
+    font-family: var(--font-mono, monospace);
+    font-size: var(--font-sm);
+}
+.epic-untracked-note {
+    margin: 0;
     font-size: var(--font-sm);
     color: var(--text-muted);
-    margin-top: 2px;
-}
-.epic-stat-up .epic-stat-value {
-    color: var(--success-color);
-}
-.epic-stat-warn .epic-stat-value {
-    color: var(--warning-color);
 }
 .epic-canceled-tag {
-    margin-left: 6px;
-    padding: 0 6px;
+    margin-left: var(--space-sm);
+    padding: 0 var(--space-sm);
     font-size: var(--font-xs);
     font-weight: 500;
     color: var(--text-muted);
     border: 1px solid var(--border-color);
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
 }
-
-/* State groups: In progress, Todo, Backlog, Closed. */
-.epic-table .epic-state-row th {
-    padding: 14px 12px 6px;
-    font-size: var(--font-sm);
-    font-weight: 600;
-    color: var(--text-secondary);
-    background: transparent;
-}
-.epic-state-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    margin-right: 8px;
-    background: var(--text-muted);
-    vertical-align: 1px;
-}
-.epic-state-active .epic-state-dot { background: #f59e0b; }
-.epic-state-todo .epic-state-dot { background: var(--text-secondary); }
-.epic-state-backlog .epic-state-dot { background: transparent; border: 1px dashed var(--text-muted); }
-.epic-state-closed .epic-state-dot { background: #22c55e; }
-.epic-state-count {
-    margin-left: 8px;
-    font-weight: 400;
+.epic-status-pinned-mark {
+    margin-left: var(--space-xs);
     color: var(--text-muted);
-}
-
-.epic-identifier {
-    font-family: var(--font-mono);
-    font-size: var(--font-base);
-    color: var(--text-muted);
-    white-space: nowrap;
-    width: 80px;
-}
-
-.epic-title {
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.epic-progress {
-    width: 240px;
-}
-
-.epic-progress-pct {
-    font-size: var(--font-sm);
-    font-weight: 600;
-    color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-    min-width: 34px;
-    text-align: right;
-}
-
-.epic-progress-bar-container {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.epic-progress-bar {
-    display: flex;
-    flex: 1;
-    height: 6px;
-    background: var(--bg-tertiary);
-    border-radius: 3px;
-    overflow: hidden;
-}
-
-.epic-progress-fill {
-    height: 100%;
-    border-radius: 3px;
-    background: #3b82f6;
-    transition: width 0.3s ease;
-}
-
-.epic-progress-fill.epic-progress-complete {
-    background: #22c55e;
-}
-
-.epic-progress-text {
-    font-size: var(--font-sm);
-    color: var(--text-muted);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-    min-width: 40px;
-}
-
-/* Progress toward goals (CHT-1902) */
-.epic-progress-active {
-    height: 100%;
-    background: #93c5fd;
-}
-
-.epic-points,
-.epic-sprint {
-    white-space: nowrap;
-    font-size: var(--font-sm);
-    font-variant-numeric: tabular-nums;
+    cursor: help;
 }
 
 .epic-sprint-strip {
     display: inline-flex;
     align-items: flex-end;
     gap: 2px;
-    height: 18px;
-    vertical-align: middle;
+    height: 20px;
 }
-
 .epic-sprint-tick {
     display: inline-flex;
     align-items: flex-end;
-    width: 6px;
+    width: 4px;
     height: 100%;
-    background: var(--bg-tertiary);
-    border-radius: 1px;
 }
-
 .epic-sprint-fill {
     display: block;
     width: 100%;
-    background: #3b82f6;
+    min-height: 2px;
+    background: var(--bg-hover);
     border-radius: 1px;
 }
-
-.epic-sprint-current .epic-sprint-fill {
-    background: #22c55e;
+.epic-sprint-fill:not([style*="height: 0%"]) {
+    background: var(--text-muted);
 }
-
-.epic-sprint-current {
-    outline: 1px solid var(--border-color);
-}
-
-.epic-status-pinned-mark {
-    margin-left: 4px;
-    color: var(--text-muted);
-    cursor: help;
-}
-
-.epic-row-closed .epic-title {
-    color: var(--text-muted);
-}
-
-.epic-untracked-row td {
-    background: var(--bg-secondary);
-}
-
-.epic-table .epic-group-row th {
-    padding-top: 20px;
-    font-size: var(--font-md);
-    font-weight: 600;
-    color: var(--text-primary);
+.epic-sprint-current .epic-sprint-fill:not([style*="height: 0%"]) {
+    background: var(--text-secondary);
 }
 
 .epic-table-footer {
-    padding: 12px;
+    padding: var(--space-md) 0 0;
+}
+
+/* Phone epic rows (CHT-2043): the sub-line wraps, the outer columns
+   narrow. After the rules above so it wins at equal specificity. */
+@media (max-width: 768px) {
+    .epic-section .list-row-2line {
+        grid-template-columns: 36px minmax(0, 1fr) auto;
+        column-gap: var(--space-md);
+        padding-left: var(--space-xs);
+        padding-right: var(--space-xs);
+    }
+    .epic-section .list-row-sub {
+        white-space: normal;
+    }
+    .epic-row .list-row-right {
+        width: 64px;
+    }
+    .epic-section .epic-sprint-strip {
+        gap: 1px;
+    }
+    .epic-section .epic-sprint-tick {
+        width: 3px;
+    }
 }
 
 /* Epic detail page: progress bar and sub-issue rows. epic-detail-view.js
@@ -8727,16 +8384,6 @@ button.stat-card-link:hover .stat-note {
     }
 }
 
-.epic-estimate {
-    font-size: var(--font-base);
-    color: var(--text-secondary);
-    white-space: nowrap;
-    width: 60px;
-}
-
-.epic-status {
-    width: 100px;
-}
 
 /* ==========================================================================
    Mobile overrides (CHT-1118)
@@ -8806,32 +8453,6 @@ button.stat-card-link:hover .stat-note {
         inset: 0;
         background: rgba(0, 0, 0, 0.4);
         z-index: -1;
-    }
-
-    /* Fix #2: Epics card layout — show less info */
-    .epic-row td {
-        padding: 2px 0;
-    }
-
-    .epic-row td:empty {
-        display: none;
-    }
-
-    .epic-row .epic-estimate,
-    .epic-row .epic-dates {
-        display: inline-block;
-        font-size: var(--font-sm);
-        width: auto;
-        margin-right: 8px;
-    }
-
-    .epic-status {
-        width: auto;
-    }
-
-    .epic-title {
-        font-size: var(--font-base);
-        margin-bottom: 2px;
     }
 
     /* Fix #3: Button sizing — reduce bulk on mobile */
@@ -9543,9 +9164,78 @@ body.theme-light .picker-popover {
     color: var(--text-muted);
 }
 
+/* An option's hint (a project's key, CHT-2058): muted, after the name. */
+.picker-option-text {
+    flex: 1;
+    min-width: 0;
+}
+.picker-option-hint {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+.picker-label-hint {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--accent-subtle);
+    color: var(--accent-fg);
+    font-family: var(--font-mono);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    line-height: 1.6;
+}
+
+/* The sidebar's project switcher (CHT-2058): one scope for every view. */
+.project-switcher {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin: 12px 12px 0;
+}
+.project-switcher .picker-btn {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+    height: 36px;
+    /* Room for the P chip and the chevron, so a long name stops short of them. */
+    padding-right: 52px;
+    background: var(--bg-primary);
+}
+.project-switcher .picker-btn:hover,
+.project-switcher .picker-btn.open {
+    background: var(--bg-hover);
+}
+.project-switcher .picker-label {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+}
+.project-switcher-key {
+    position: absolute;
+    right: 28px;
+    pointer-events: none;
+    padding: 0 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: var(--font-xs);
+    line-height: 1.4;
+    color: var(--text-muted);
+}
+/* The chevron sits right of the P hint. */
+.project-switcher .picker-chevron {
+    position: absolute;
+    right: 10px;
+}
+
 @media (pointer: coarse) {
     .picker-btn { height: 40px; }
     .picker-option { padding: 10px 8px; }
+    .project-switcher .picker-btn { height: 40px; padding-right: 28px; }
+    .project-switcher-key { display: none; }
 }
 
 /* ========================================
@@ -9660,14 +9350,167 @@ body.theme-light .picker-popover {
 .dashboard-rail .dashboard-sprint-status {
     margin-bottom: 20px;
 }
-.dashboard-rail .sprint-status-cards {
-    grid-template-columns: 1fr;
-    gap: 8px;
+
+/* Rail sprint panel (CHT-2027): one card for one project, one row per
+   project otherwise. Both are buttons that open the sprint. Bars are the
+   shared .meter, dots .state-dot, labels .badge (CHT-2040). */
+.dashboard-sprint-status .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-md);
 }
-.dashboard-rail .sprint-status-card {
-    padding: 10px 12px;
+.sprint-attention {
+    margin-left: auto;
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--danger-fg);
+}
+.sprint-focus {
+    display: block;
+    width: 100%;
+    padding: var(--space-lg) var(--space-lg);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
 }
+.sprint-focus:hover { background: var(--row-hover); }
+.sprint-focus:focus-visible,
+.sprint-row:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
+}
+.sprint-focus.limbo { border-color: var(--warning-color); }
+.sprint-focus.arrears { border-color: var(--danger-fg); }
+.sprint-focus-top {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    margin-bottom: var(--space-sm);
+    min-width: 0;
+}
+.sprint-focus-name {
+    min-width: 0;
+    flex: 0 1 auto;
+    font-size: var(--font-base);
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sprint-focus-top .badge { flex-shrink: 0; }
+.sprint-focus-meta {
+    flex-shrink: 0;
+    margin-left: auto;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.sprint-focus-headline,
+.sprint-focus .sprint-issue-breakdown,
+.sprint-focus .meter,
+.sprint-focus .meter-fill {
+    display: block;
+}
+.sprint-focus-headline {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-md);
+}
+.sprint-focus-headline strong {
+    font-size: var(--font-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+.sprint-focus.arrears .sprint-focus-headline strong { color: var(--danger-fg); }
+.sprint-focus-muted { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.sprint-focus .meter { height: 6px; }
+.sprint-focus .sprint-issue-breakdown { margin-top: var(--space-lg); }
+.sprint-focus .sprint-status-counts { gap: var(--space-xs) var(--space-lg); }
+.sprint-focus-note {
+    display: block;
+    margin-top: var(--space-lg);
+    font-size: var(--font-xs);
+    color: var(--text-secondary);
+}
+.sprint-focus-note.arrears { color: var(--danger-fg); }
+.sprint-focus-note.limbo { color: var(--warning-color); }
+
+.sprint-rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    overflow: hidden;
+}
+.sprint-rows li + li { border-top: 1px solid var(--border-color); }
+.sprint-row {
+    display: grid;
+    grid-template-columns: 6px minmax(0, 1fr) auto 44px auto;
+    align-items: center;
+    gap: var(--space-md);
+    width: 100%;
+    height: 34px;
+    padding: 0 var(--space-lg);
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-size: var(--font-sm);
+    text-align: left;
+    cursor: pointer;
+}
+.sprint-row:hover { background: var(--row-hover); }
+.sprint-row .state-dot.is-over { box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger-fg) 25%, transparent); }
+.sprint-row .state-dot.is-limbo { box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning-color) 25%, transparent); }
+.sprint-row-project {
+    color: var(--text-primary);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sprint-row-sprint {
+    max-width: 80px;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sprint-row .meter { width: 44px; min-width: 0; }
+.sprint-row .meter,
+.sprint-row .meter-fill { display: block; }
+.sprint-row-nometer { display: block; border-top: 1px dashed var(--border-color); }
+.sprint-row .meter-label {
+    font-size: var(--font-xs);
+    color: var(--text-secondary);
+    text-align: right;
+}
+.sprint-row-unit { color: var(--text-muted); }
+.sprint-row.arrears .meter-label { color: var(--danger-fg); }
+/* A narrow rail (or phone) keeps the project name readable. */
+.dashboard-rail { container-type: inline-size; }
+@container (max-width: 300px) {
+    .sprint-row { grid-template-columns: 6px minmax(0, 1fr) 36px auto; }
+    .sprint-row .meter { width: 36px; }
+    .sprint-row-sprint, .sprint-row-unit { display: none; }
+}
+.sprint-rows-more {
+    border: 1px solid var(--border-color);
+    border-top: 0;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    background: var(--bg-secondary);
+    font-size: var(--font-xs);
+}
+.sprint-rows:has(+ .sprint-rows-more) { border-radius: var(--radius-md) var(--radius-md) 0 0; }
 .dashboard-rail .dashboard-activity {
     margin: 0;
     padding: 0;
@@ -9950,23 +9793,55 @@ body.theme-light .picker-popover {
    ============================================================================ */
 #people-view .people-intro { color: var(--text-secondary); margin: 0 0 var(--space-2xl); }
 .people-idle-toggle { display: flex; align-items: center; gap: var(--space-sm); color: var(--text-secondary); font-size: 0.875rem; }
-.people-section-header { display: flex; align-items: center; justify-content: space-between; margin: var(--space-2xl) 0 var(--space-lg); }
+.people-section-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
 .people-section-header:first-child { margin-top: 0; }
 .people-section-header h3 { margin: 0; }
-.people-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-lg); }
-.people-empty { color: var(--text-muted); }
-.person-card {
-    display: flex; gap: var(--space-lg); align-items: flex-start;
-    padding: var(--space-xl); border: 1px solid var(--border-color); border-radius: var(--radius-lg);
-    background: var(--bg-secondary); color: inherit; text-decoration: none; min-width: 0;
+.people-empty { color: var(--text-muted); margin: var(--space-lg); }
+/* One home per agent (CHT-2044): the roster is two-line rows, people and
+   agents alike, in one bordered list per section. */
+.people-rows { border: 1px solid var(--border-color); border-radius: var(--radius-lg); overflow: hidden; }
+.people-rows > .list-row-2line:last-child { border-bottom: 0; }
+.settings-section > .people-rows { margin-top: var(--space-lg); }
+.people-rows:empty { display: none; }
+.list-row-2line.person-row,
+.list-row-2line.agent-link-row { grid-template-columns: auto minmax(0, 1fr) auto; color: inherit; text-decoration: none; }
+.person-row:focus-visible,
+.agent-link-row:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; }
+.person-row .person-avatar,
+.agent-link-row .agent-avatar { width: 28px; height: 28px; font-size: var(--font-sm); }
+.person-avatar-agent { background: var(--accent-subtle); color: var(--accent-fg); }
+.person-row-handle { color: var(--text-muted); font-weight: 400; }
+.person-row-idle { opacity: 0.6; }
+.list-row-2line.person-row-skeleton { grid-template-columns: 1fr; min-height: 44px; }
+.people-rows .list-row-right,
+.agent-credentials .list-row-right { flex-wrap: wrap; justify-content: flex-end; }
+/* Rows that are not links keep still on hover. */
+.people-rows > div.list-row-2line:hover,
+.agent-credentials > .list-row-2line:hover { background: transparent; }
+#people-view .team-description:empty { display: none; }
+/* An agent's page: access, credentials and what its owner can do. */
+.person-sections { max-width: 72ch; }
+.agent-access {
+    display: grid;
+    grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
+    margin: 0;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
 }
-.person-card:hover, .person-card:focus-visible { background: var(--bg-tertiary); border-color: var(--accent-color); }
-.person-card-idle { opacity: 0.6; }
-.person-card-skeleton { min-height: 72px; }
-.person-card-avatar { display: contents; }
+.agent-access > dt,
+.agent-access > dd { margin: 0; padding: var(--space-md) var(--space-lg); border-top: 1px solid var(--border-color); }
+.agent-access > dt { color: var(--text-secondary); }
+.agent-access > dt:first-of-type,
+.agent-access > dt:first-of-type + dd { border-top: 0; }
+.agent-access > dd { overflow-wrap: anywhere; }
+.agent-profile-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
+.agent-profile-section-head h3 { margin: 0; }
+.agent-credentials { border: 1px solid var(--border-color); border-radius: var(--radius-lg); overflow: hidden; }
+.agent-credentials > .list-row-2line:last-child { border-bottom: 0; }
+.agent-credentials > p, .agent-credentials > .skeleton { margin: var(--space-lg); }
+.agent-profile-actions { display: flex; flex-wrap: wrap; gap: var(--space-md); margin-top: var(--space-lg); }
+.agent-profile-section .section-header + .agent-profile-actions { margin-top: 0; }
 .person-avatar { width: 44px; height: 44px; flex-shrink: 0; font-size: 1.25rem; }
-.person-card-agent .person-avatar { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
-.person-card-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .person-name { font-weight: 600; overflow-wrap: anywhere; }
 .person-pronouns { margin-left: var(--space-sm); font-weight: 400; font-size: 0.8125rem; color: var(--text-secondary); }
 .person-handle { font-size: 0.8125rem; color: var(--text-secondary); }
@@ -9983,10 +9858,8 @@ body.theme-light .picker-popover {
 .person-bio-empty { color: var(--text-muted); }
 @media (max-width: 600px) {
     .person-profile { flex-direction: column; align-items: flex-start; gap: var(--space-lg); }
-    .people-grid { grid-template-columns: 1fr; }
 }
 .person-work { margin-top: var(--space-2xl); max-width: 72ch; }
-.person-work h3 { margin: 0 0 var(--space-lg); }
 .person-issues { display: flex; flex-direction: column; border: 1px solid var(--border-color); border-radius: var(--radius-lg); overflow: hidden; }
 .person-issues > p, .person-issues > .skeleton { margin: var(--space-lg); }
 .person-issue { display: flex; gap: var(--space-lg); align-items: baseline; padding: var(--space-md) var(--space-lg); color: inherit; text-decoration: none; border-top: 1px solid var(--border-color); }
@@ -10700,6 +10573,7 @@ body.theme-light {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.list-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .list-row-right {
     display: flex;
     align-items: center;
