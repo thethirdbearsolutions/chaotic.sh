@@ -21,3 +21,14 @@ export const BOARD_STATUSES = ['backlog', 'todo', 'in_progress', 'in_review', 'd
 // The Issues list rows j/k move over: every row except those inside a
 // collapsed group (CHT-1932). Flat-list rows sit directly in the list.
 export const ISSUE_NAV_ROWS = '#issues-list > .issue-row, #issues-list .issue-group:not(.collapsed) .issue-row';
+
+/**
+ * True when keys pressed in `el` are text being typed: a form field, or a
+ * content-editable element such as the rich comment editor (CHT-2028).
+ * Keyboard shortcuts stand aside for these.
+ */
+export function isTextEntry(el) {
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(el.isContentEditable);
+}

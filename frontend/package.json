@@ -6,7 +6,7 @@
   "scripts": {
     "generate-html": "node scripts/generate-dev-html.js",
     "dev": "node scripts/generate-dev-html.js && vite",
-    "build": "node scripts/generate-dev-html.js && eslint src/ && vite build",
+    "build": "node scripts/generate-dev-html.js && eslint src/ && vite build && vite build --config vite.editor.config.js",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -15,6 +15,14 @@
     "lint:fix": "eslint src/ --fix"
   },
   "dependencies": {
+    "@tiptap/core": "^3.32.3",
+    "@tiptap/extension-list": "^3.32.3",
+    "@tiptap/extension-paragraph": "^3.32.3",
+    "@tiptap/extension-table": "^3.32.3",
+    "@tiptap/extensions": "^3.32.3",
+    "@tiptap/markdown": "^3.32.3",
+    "@tiptap/starter-kit": "^3.32.3",
+    "@tiptap/suggestion": "^3.32.3",
     "dompurify": "^3.2.4",
     "marked": "^15.0.7"
   },

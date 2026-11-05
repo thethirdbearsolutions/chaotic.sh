@@ -244,6 +244,8 @@ class TestVersionEndpoint:
         html = (await client.get("/")).text
         assert f"app.bundle.js?v={info['bundle_hash']}" in html
         assert f"style.css?v={info['css_hash']}" in html
+        # The editor bundle is loaded by script, keyed on its own hash (CHT-2028).
+        assert f'data-editor="{info["editor_hash"]}"' in html
         assert 'name="chaotic-version"' in html
         # The manual counter is gone.
         assert "app.bundle.js?v=35" not in html
