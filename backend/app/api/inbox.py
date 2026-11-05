@@ -167,12 +167,15 @@ async def list_inbox(
     principal: CurrentPrincipal,
     team_id: str | None = None,
     unread: bool = False,
+    kind: Annotated[list[InboxEntryKind] | None, Query(
+        description="Only entries of these kinds (repeat the parameter for several).",
+    )] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[InboxEntryResponse]:
     """List the current user's inbox entries, newest first."""
     entries = await InboxService().list_for_user(
-        current_user.id, team_id=team_id, unread_only=unread, skip=skip, limit=limit,
+        current_user.id, team_id=team_id, unread_only=unread, kinds=kind, skip=skip, limit=limit,
     )
     return await _build_responses(entries, current_user, may_write=_may_write(principal))
 

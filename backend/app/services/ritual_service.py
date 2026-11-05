@@ -558,6 +558,7 @@ class RitualService:
                 await inbox.notify_review_requested(
                     ritual=ritual, issue=issue, project=project, attested_by_name="Someone",
                     attested_by_id=attestations[issue_id].attested_by,
+                    attestation_note=attestations[issue_id].note,
                 )
 
     async def delete(self, ritual: OxydeRitual, deleted_by_id: str | None = None) -> None:
@@ -1243,7 +1244,7 @@ class RitualService:
         # gate-requests + invitations only).
         if ritual.approval_mode == ApprovalMode.REVIEW:
             try:
-                await self._notify_review_requested(ritual, issue, user_id)
+                await self._notify_review_requested(ritual, issue, user_id, attestation.note)
             except Exception:
                 logger.exception(
                     "Failed to write review-requested inbox entries for "
@@ -1252,7 +1253,9 @@ class RitualService:
 
         return attestation
 
-    async def _notify_review_requested(self, ritual: "OxydeRitual", issue: "OxydeIssue", attested_by_id: str) -> None:
+    async def _notify_review_requested(
+        self, ritual: "OxydeRitual", issue: "OxydeIssue", attested_by_id: str, note: str | None,
+    ) -> None:
         """CHT-1250: fan a review_requested inbox entry out to every team
         admin now that `ritual` has been attested on `issue`.
         """
@@ -1268,6 +1271,7 @@ class RitualService:
             ritual=ritual, issue=issue, project=project,
             attested_by_name=attester.name if attester else "Someone",
             attested_by_id=attested_by_id,
+            attestation_note=note,
         )
 
     async def _ensure_and_clear_limbo_for_attest(

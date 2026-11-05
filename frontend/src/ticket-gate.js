@@ -111,7 +111,7 @@ function renderArtifact(att) {
     return `<a class="ticket-gate-artifact" href="${escapeAttr(url)}" data-action="open-gate-document" data-document-id="${escapeAttr(ref)}">${ICON.link}Linked document</a>`;
 }
 
-function renderAttestation(r) {
+export function renderAttestation(r) {
     const att = r.attestation;
     if (!att) return '';
     return `

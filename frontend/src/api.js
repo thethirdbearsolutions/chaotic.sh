@@ -712,9 +712,10 @@ export class ApiClient {
     }
 
     // Inbox (CHT-1250)
-    async getInbox(teamId, { unread = false, skip = 0, limit = 50 } = {}) {
+    async getInbox(teamId, { unread = false, kinds = null, skip = 0, limit = 50 } = {}) {
         const params = new URLSearchParams({ team_id: teamId, skip, limit });
         if (unread) params.set('unread', 'true');
+        for (const kind of kinds || []) params.append('kind', kind);
         return this.request('GET', `/inbox?${params.toString()}`);
     }
 

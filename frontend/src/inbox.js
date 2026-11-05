@@ -7,7 +7,9 @@
  * documents.js/issue-list.js's deep-link actions.
  */
 import { api } from './api.js';
-import { showApiError, isModalOpen } from './ui.js';
+import {
+    showApiError, showToast, isModalOpen, showModal, closeModal, showMentionWarnings,
+} from './ui.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { registerActions } from './event-delegation.js';
@@ -18,7 +20,9 @@ import {
 } from './state.js';
 import { viewIssue } from './issue-detail-view.js';
 import { viewDocument } from './documents.js';
-import { formatRelativeTime } from './gate-approvals.js';
+import { formatRelativeTime, renderMarkdown } from './gate-approvals.js';
+import { renderAttestation, isAwaitingApproval } from './ticket-gate.js';
+import { showRejectTicketRitualModal, showCompleteTicketRitualModal } from './rituals-view.js';
 
 const KIND_LABELS = {
     gate_pending: 'Gate pending',
@@ -46,6 +50,31 @@ let pendingLoadIntent = null;
 // Entries whose "Reassign back" PATCH is in flight: a second press is ignored
 // rather than sending a second PATCH (and a second notification).
 const reassignInFlight = new Set();
+
+// The kinds an entry waits on a human decision for (CHT-2031): its row
+// loads the ritual's live state when opened and can be decided in place.
+const DECISION_KINDS = new Set(['review_requested', 'gate_pending']);
+
+// The Inbox's type filter (CHT-2031): which kinds each choice asks the
+// server for. `all` sends no kind.
+export const INBOX_KIND_FILTERS = {
+    all: null,
+    approvals: ['review_requested', 'gate_pending'],
+    mentions: ['mention'],
+    assigned: ['assignment'],
+};
+let kindFilter = 'all';
+
+// entry id -> { state: 'loading' | 'ready' | 'error', ritual, decided }:
+// the ritual's live state, fetched when a decision row is first opened.
+// `ritual` is the pending ritual the entry is about (null once nothing is
+// waiting on it any more), `decided` the completed one if it was decided.
+const decisionDetails = new Map();
+// Entries whose approve / sign-off is in flight: a second press is ignored.
+const decisionInFlight = new Set();
+// entry id -> comment already posted by a "Comment and approve" whose
+// approve then failed, so a retry does not post it twice.
+const decisionCommentPosted = new Map();
 
 // What this client has done locally that a fetch may not show yet (CHT-1514).
 // A fetch that was already in flight when the user archived or read an entry
@@ -76,6 +105,10 @@ function confirmRead(entryId) {
 export function resetInboxLocalState() {
     archivedLocally.clear();
     readLocally.clear();
+    decisionDetails.clear();
+    decisionInFlight.clear();
+    decisionCommentPosted.clear();
+    kindFilter = 'all';
 }
 
 /**
@@ -180,7 +213,9 @@ export async function loadInbox({ focusFirst = false, background = false } = {})
     }
 
     try {
-        const fetched = await api.getInbox(team.id, { unread: showUnreadOnly, limit: 100 });
+        const fetched = await api.getInbox(team.id, {
+            unread: showUnreadOnly, kinds: INBOX_KIND_FILTERS[kindFilter], limit: 100,
+        });
         if (requestId !== loadInboxRequestId) return; // a newer loadInbox() has since started
         // What was archived when this fetch started, before pruning: an open
         // row archived elsewhere must not be held on to (see
@@ -444,7 +479,10 @@ export function toggleInboxEntryExpand(entryId) {
     expandedEntryId = (previous === entryId) ? null : entryId;
     // Mark read optimistically BEFORE the re-render (PR #260 review): setting
     // read_at in state up front means the re-render simply omits the dot.
-    if (expandedEntryId === entryId) markEntryReadOptimistic(entryId);
+    if (expandedEntryId === entryId) {
+        markEntryReadOptimistic(entryId);
+        loadDecisionDetails(entries[idx]);
+    }
     // Only the rows that changed are rebuilt (PR #260 review findings 3, 9).
     rerenderInboxRows([previous, entryId]);
     selectInboxRow(idx); // the cursor follows the row the user just toggled
@@ -591,6 +629,303 @@ export function setInboxUnreadFilter(unreadOnly) {
     loadInbox({ focusFirst: true });
 }
 
+/**
+ * Show only one type of entry (CHT-2031): approvals, mentions or
+ * assignments, or everything. Choosing the current one again does nothing.
+ */
+export function setInboxKindFilter(kind) {
+    if (!(kind in INBOX_KIND_FILTERS) || kind === kindFilter) return;
+    kindFilter = kind;
+    document.querySelectorAll('[data-action="set-inbox-kind"]').forEach(btn => {
+        const on = btn.dataset.kind === kindFilter;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    loadInbox({ focusFirst: true });
+}
+
+/**
+ * Fetch the live state of the ritual a decision entry is about (CHT-2031):
+ * the entry's own body is a snapshot from when it was written, and the
+ * attestation, its artifact, and whether anyone has decided it since all
+ * live on the ritual. Once per entry until it is decided from here; a
+ * failed load can be retried from the row.
+ */
+async function loadDecisionDetails(entry, { force = false } = {}) {
+    if (!entry || !DECISION_KINDS.has(entry.kind) || !entry.issue_id || !entry.ritual_id) return;
+    const known = decisionDetails.get(entry.id);
+    if (known && !force && known.state !== 'error') return;
+    decisionDetails.set(entry.id, { state: 'loading' });
+    if (force) rerenderInboxRows([entry.id]);
+    let next;
+    try {
+        const status = await api.getTicketRitualsStatus(entry.issue_id);
+        const ritual = (status?.pending_rituals || []).find(r => r.id === entry.ritual_id) || null;
+        const decided = ritual ? null
+            : (status?.completed_rituals || []).find(r => r.id === entry.ritual_id) || null;
+        next = { state: 'ready', ritual, decided };
+    } catch (e) {
+        console.error('Failed to load ritual for inbox entry:', e);
+        next = { state: 'error' };
+    }
+    if (decisionDetails.get(entry.id)?.state !== 'loading') return; // superseded
+    decisionDetails.set(entry.id, next);
+    rerenderInboxRows([entry.id]);
+}
+
+/** Whether the server offers this entry's recipient the decision now. */
+function canDecide(entry) {
+    return (entry.actions || []).some(a => a.kind === 'approve');
+}
+
+/**
+ * What a decision row's open panel says about the ritual (CHT-2031): who
+ * attested what (the ticket gate's own block), what the ritual asks behind
+ * a disclosure for a review (the admin knows it already) and in full for a
+ * gate (it is what they sign off on), or that nothing waits any more.
+ */
+function renderDecisionBody(entry) {
+    if (entry.state === 'resolved') {
+        return '<div class="inbox-decision-status">Already decided. Nothing is waiting on you here.</div>';
+    }
+    const d = decisionDetails.get(entry.id);
+    if (!d || d.state === 'loading') {
+        return '<div class="inbox-decision-status" role="status">Loading the attestation…</div>';
+    }
+    if (d.state === 'error') {
+        return `<div class="inbox-decision-status">Couldn’t load the attestation.
+            <button type="button" class="ticket-gate-text-btn accent" data-action="retry-inbox-decision"
+                data-entry-id="${escapeAttr(entry.id)}">Try again</button></div>`;
+    }
+    const r = d.ritual;
+    if (!r) {
+        const by = d.decided?.attestation?.approved_by_name;
+        return `<div class="inbox-decision-status">Already decided${by ? ` by ${escapeHtml(by)}` : ''}. Nothing is waiting on you here.</div>`;
+    }
+    const isReview = entry.kind === 'review_requested';
+    const rej = r.last_rejection && !r.last_rejection.superseded_at ? r.last_rejection : null;
+    const asks = r.prompt
+        ? (isReview
+            ? `<details class="inbox-decision-asks"><summary>What ${escapeHtml(r.name)} asks</summary>
+                   <div class="ticket-gate-asks markdown-body">${renderMarkdown(r.prompt)}</div></details>`
+            : `<div class="ticket-gate-asks markdown-body">${renderMarkdown(r.prompt)}</div>`)
+        : '';
+    let state = '';
+    if (isReview && !isAwaitingApproval(r)) {
+        state = rej
+            ? `<div class="inbox-decision-status">Sent back by ${escapeHtml(rej.rejected_by_name || 'someone')}: “${escapeHtml(rej.note || '')}”. Waiting on a new attestation.</div>`
+            : '<div class="inbox-decision-status">Not attested any more. Waiting on a new attestation.</div>';
+    } else if (!isReview && rej) {
+        state = `<div class="inbox-decision-status">Sent back by ${escapeHtml(rej.rejected_by_name || 'someone')}: “${escapeHtml(rej.note || '')}”.</div>`;
+    }
+    return `
+        <div class="inbox-decision">
+            ${isReview ? asks : ''}
+            ${renderAttestation(r)}
+            ${!isReview ? asks : ''}
+            ${state}
+        </div>`;
+}
+
+/** The ritual a decision row can still be decided on, or null. */
+function decidableRitual(entry) {
+    const d = decisionDetails.get(entry.id);
+    const r = d?.state === 'ready' ? d.ritual : null;
+    if (!r || !canDecide(entry)) return null;
+    if (entry.kind === 'review_requested') return isAwaitingApproval(r) ? r : null;
+    const sentBack = r.last_rejection && !r.last_rejection.superseded_at;
+    return !r.attestation && !sentBack ? r : null;
+}
+
+function decisionData(entry, r) {
+    return `data-entry-id="${escapeAttr(entry.id)}" data-ritual-id="${escapeAttr(r.id)}" data-issue-id="${escapeAttr(entry.issue_id)}" data-ritual-name="${escapeAttr(r.name)}"`;
+}
+
+/**
+ * The decision buttons for a row: Approve (or Sign off) first, then
+ * Comment… and Send back…. Comment is offered on any decision row with an
+ * issue, decided or not; the rest only while the server says the viewer
+ * may decide and the ritual is still waiting.
+ */
+function renderDecisionActions(entry) {
+    if (!DECISION_KINDS.has(entry.kind) || !entry.issue_id) return [];
+    const r = decidableRitual(entry);
+    const busy = decisionInFlight.has(entry.id) ? ' aria-disabled="true" aria-busy="true"' : '';
+    const comment = `<button type="button" class="inbox-action-btn" data-action="comment-inbox-entry"
+        data-entry-id="${escapeAttr(entry.id)}">Comment…</button>`;
+    if (!r) return [comment];
+    const primary = entry.kind === 'review_requested'
+        ? `<button type="button" class="btn btn-primary btn-sm" data-action="approve-inbox-entry" ${decisionData(entry, r)}${busy}>Approve</button>`
+        : `<button type="button" class="btn btn-primary btn-sm" data-action="sign-off-inbox-entry" ${decisionData(entry, r)} data-ritual-artifact="${escapeAttr(r.artifact || '')}"${busy}>Sign off</button>`;
+    return [
+        primary,
+        comment,
+        `<button type="button" class="inbox-action-btn" data-action="send-back-inbox-entry" ${decisionData(entry, r)}>Send back…</button>`,
+    ];
+}
+
+function setDecisionBusy(entryId, busy) {
+    document.querySelectorAll('#inbox-list [data-action="approve-inbox-entry"], #inbox-list [data-action="sign-off-inbox-entry"]').forEach(btn => {
+        if (btn.dataset.entryId !== entryId) return;
+        if (busy) {
+            btn.setAttribute('aria-disabled', 'true');
+            btn.setAttribute('aria-busy', 'true');
+        } else {
+            btn.removeAttribute('aria-disabled');
+            btn.removeAttribute('aria-busy');
+        }
+    });
+}
+
+/**
+ * Approve a review, or sign off on a gate, from its Inbox row (CHT-2031),
+ * then archive the row: deciding it was the point of it. `comment`, when
+ * given, is posted on the ticket first; a gate takes it as its note too.
+ * The entry stays (and says why) if any call fails.
+ */
+export async function decideInboxEntry(entryId, { comment = null } = {}) {
+    if (decisionInFlight.has(entryId)) return false;
+    const entry = getInboxEntries().find(e => e.id === entryId);
+    const r = entry ? decidableRitual(entry) : null;
+    if (!r) return false;
+    const isReview = entry.kind === 'review_requested';
+    decisionInFlight.add(entryId);
+    setDecisionBusy(entryId, true);
+    const what = `${isReview ? 'approve' : 'sign off on'} ${r.name}`;
+    try {
+        if (comment && isReview && decisionCommentPosted.get(entryId) !== comment) {
+            showMentionWarnings(await api.createComment(entry.issue_id, comment));
+            // A retry after a failed approve does not post it again.
+            decisionCommentPosted.set(entryId, comment);
+        }
+        if (isReview) await api.approveTicketRitual(r.id, entry.issue_id);
+        else await api.completeTicketGateRitual(r.id, entry.issue_id, comment || null);
+    } catch (e) {
+        decisionInFlight.delete(entryId);
+        setDecisionBusy(entryId, false);
+        showApiError(what, e);
+        // The ritual may have moved (someone else decided): show what is true now.
+        loadDecisionDetails(entry, { force: true });
+        return false;
+    }
+    decisionInFlight.delete(entryId);
+    decisionDetails.delete(entryId);
+    decisionCommentPosted.delete(entryId);
+    const ref = entry.issue_identifier ? ` on ${entry.issue_identifier}` : '';
+    showToast(`${isReview ? 'Approved' : 'Signed off on'} ${r.name}${ref}.`, 'success');
+    archiveInboxEntry(entryId);
+    return true;
+}
+
+/**
+ * Sign off from the row. A gate that needs an artifact opens the
+ * ticket's own sign-off dialog, which asks for it; the entry resolves on
+ * the server and the next refresh shows that.
+ */
+function signOffInboxEntry(data) {
+    if (data.ritualArtifact) {
+        showCompleteTicketRitualModal(data.ritualId, data.issueId, data.ritualName, data.ritualArtifact);
+        return;
+    }
+    decideInboxEntry(data.entryId);
+}
+
+function sendBackInboxEntry(data) {
+    const entryId = data.entryId;
+    showRejectTicketRitualModal(data.ritualId, data.issueId, data.ritualName, () => {
+        decisionDetails.delete(entryId);
+        archiveInboxEntry(entryId);
+    });
+}
+
+/**
+ * Comment on the entry's ticket from the Inbox (CHT-2031). Where the
+ * viewer can also decide, a second button posts the comment and approves
+ * (or signs off) in one go, as the Approvals tab's "Comment & Approve" did.
+ */
+export function showInboxCommentModal(entryId) {
+    const entry = getInboxEntries().find(e => e.id === entryId);
+    if (!entry || !entry.issue_id) return;
+    const r = decidableRitual(entry);
+    // A gate that needs an artifact is signed off in its own dialog.
+    const canDecideHere = !!r && !(entry.kind === 'gate_pending' && r.artifact);
+    const decideLabel = entry.kind === 'review_requested' ? 'Comment and approve' : 'Comment and sign off';
+    const ref = entry.issue_identifier || 'the ticket';
+    // Same shape as the "Reassign back" dialog (CHT-2029): required comment,
+    // inline error, Cancel, ⌘/Ctrl+Enter submits the primary button.
+    document.getElementById('modal-title').textContent = `Comment on ${ref}`;
+    document.getElementById('modal-content').innerHTML = `
+        <form id="inbox-comment-form" class="inbox-comment-form" novalidate>
+            <div class="form-group">
+                <label for="inbox-comment-text">Comment</label>
+                <textarea id="inbox-comment-text" rows="5" required aria-describedby="inbox-comment-help"
+                    placeholder="${escapeAttr(r ? 'Questions, or what has to change.' : 'Your comment')}"></textarea>
+                <p class="form-help" id="inbox-comment-help">Posted on ${escapeHtml(ref)}.${r ? ' To stop it until something changes, use Send back instead.' : ''}</p>
+                <p class="form-error hidden" id="inbox-comment-error" role="alert">Add a comment first.</p>
+            </div>
+            <div class="inbox-comment-actions">
+                <button type="button" class="btn btn-secondary" data-action="close-inbox-comment">Cancel</button>
+                ${canDecideHere
+                    ? `<button type="submit" class="btn btn-secondary" value="comment">Comment</button>
+                       <button type="submit" class="btn btn-primary" value="decide">${escapeHtml(decideLabel)}</button>`
+                    : '<button type="submit" class="btn btn-primary" value="comment">Comment</button>'}
+            </div>
+        </form>
+    `;
+    const form = document.getElementById('inbox-comment-form');
+    const textarea = document.getElementById('inbox-comment-text');
+    const error = document.getElementById('inbox-comment-error');
+    textarea.addEventListener('input', () => {
+        if (textarea.value.trim()) error.classList.add('hidden');
+    });
+    textarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            const primary = form.querySelector('button.btn-primary[type="submit"]');
+            if (form.requestSubmit) form.requestSubmit(primary || undefined);
+            else primary?.click();
+        }
+    });
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!textarea.value.trim()) {
+            error.classList.remove('hidden');
+            textarea.focus();
+            return;
+        }
+        const buttons = [...form.querySelectorAll('button[type="submit"]')];
+        buttons.forEach(b => { b.disabled = true; });
+        const decide = e.submitter?.value === 'decide';
+        const ok = await submitInboxComment(entryId, textarea.value, { decide });
+        if (ok) closeModal();
+        else buttons.forEach(b => { if (document.contains(b)) b.disabled = false; });
+    });
+    showModal();
+    textarea.focus();
+}
+
+/**
+ * Post an Inbox comment on the entry's ticket; with `decide`, approve the
+ * review (or sign off on the gate, the comment as its note) as well.
+ * Resolves true once everything asked for is done.
+ */
+export async function submitInboxComment(entryId, text, { decide = false } = {}) {
+    const content = (text || '').trim();
+    const entry = getInboxEntries().find(e => e.id === entryId);
+    if (!content || !entry || !entry.issue_id) return false;
+    if (decide) return decideInboxEntry(entryId, { comment: content });
+    let created;
+    try {
+        created = await api.createComment(entry.issue_id, content);
+    } catch (e) {
+        showApiError(`comment on ${entry.issue_identifier || 'the ticket'}`, e);
+        return false;
+    }
+    showMentionWarnings(created);
+    showToast(`Comment posted on ${entry.issue_identifier || 'the ticket'}.`, 'success');
+    return true;
+}
+
 const CHECK_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg>';
 const ARCHIVE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="3" rx="1"/><path d="M3 6v6.5a1 1 0 001 1h8a1 1 0 001-1V6M6.5 9h3"/></svg>';
 
@@ -655,13 +990,16 @@ function renderInboxRow(entry) {
  * inside it, so clicks in it never reach the toggle-expand action.
  */
 function renderExpandedPanel(entry, sourceRef, panelId) {
-    const canReassign = (entry.kind === 'assignment' || entry.kind === 'review_requested')
-        && entry.source_user_id && entry.issue_id;
+    // Not on a review: its source is the attester, and Send back… is how
+    // a review goes back to them (CHT-2031).
+    const canReassign = entry.kind === 'assignment' && entry.source_user_id && entry.issue_id;
     const canOpen = entry.issue_id || entry.document_id;
     const from = entry.source_user_name;
 
     const openLabel = sourceRef ? `Open ${escapeHtml(sourceRef)}` : 'Open';
+    const isDecision = DECISION_KINDS.has(entry.kind) && entry.issue_id && entry.ritual_id;
     const actions = [
+        ...(isDecision ? renderDecisionActions(entry) : []),
         canReassign
             ? `<button type="button" class="inbox-action-btn" data-action="reassign-inbox-entry"
                     data-entry-id="${escapeAttr(entry.id)}"${reassignInFlight.has(entry.id) ? ' aria-disabled="true" aria-busy="true"' : ''}>Reassign back${from ? ` to ${escapeHtml(from)}` : ''}</button>`
@@ -679,12 +1017,34 @@ function renderExpandedPanel(entry, sourceRef, panelId) {
     return `
         <div class="inbox-row-expanded-panel" id="${escapeAttr(panelId)}" role="region"
              aria-label="${escapeAttr(entry.title)}">
-            ${from ? `<div class="inbox-expanded-source">from ${escapeHtml(from)}</div>` : ''}
-            ${entry.body ? `<div class="inbox-expanded-body">${escapeHtml(entry.body)}</div>` : ''}
+            ${from && !isDecision ? `<div class="inbox-expanded-source">from ${escapeHtml(from)}</div>` : ''}
+            ${isDecision
+                ? renderDecisionBody(entry)
+                : (entry.body ? `<div class="inbox-expanded-body">${escapeHtml(entry.body)}</div>` : '')}
             <div class="inbox-action-bar">${actions}</div>
         </div>
     `;
 }
+
+// What an empty Inbox says under each type filter (CHT-2031).
+const EMPTY_COPY = {
+    all: {
+        noun: 'items', heading: 'Inbox zero',
+        description: 'Approvals, mentions, assignments, and more will show up here.',
+    },
+    approvals: {
+        noun: 'approvals', heading: 'Nothing to approve',
+        description: 'Reviews and gates waiting on you will show up here.',
+    },
+    mentions: {
+        noun: 'mentions', heading: 'No mentions',
+        description: 'Comments that @mention you will show up here.',
+    },
+    assigned: {
+        noun: 'assignments', heading: 'Nothing newly assigned',
+        description: 'Tickets someone assigns to you will show up here.',
+    },
+};
 
 /**
  * Render the inbox list from current state.
@@ -696,12 +1056,11 @@ export function renderInbox() {
     const entries = getInboxEntries();
 
     if (entries.length === 0) {
+        const empty = EMPTY_COPY[kindFilter] || EMPTY_COPY.all;
         container.innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.inbox,
-            heading: showUnreadOnly ? 'No unread items' : 'Inbox zero',
-            description: showUnreadOnly
-                ? 'Nothing unread right now.'
-                : 'Gates, mentions, assignments, and review requests will show up here.',
+            heading: showUnreadOnly ? `No unread ${empty.noun}` : empty.heading,
+            description: showUnreadOnly ? 'Nothing unread right now.' : empty.description,
         });
         return;
     }
@@ -904,5 +1263,31 @@ registerActions({
         if (data.entryId) markInboxEntryRead(data.entryId);
     },
     'mark-all-inbox-read': () => markAllInboxRead(),
+    'set-inbox-kind': (event, data) => setInboxKindFilter(data.kind),
+    'approve-inbox-entry': (event, data) => {
+        event.preventDefault();
+        if (data.entryId) decideInboxEntry(data.entryId);
+    },
+    'sign-off-inbox-entry': (event, data) => {
+        event.preventDefault();
+        if (data.entryId) signOffInboxEntry(data);
+    },
+    'send-back-inbox-entry': (event, data) => {
+        event.preventDefault();
+        if (data.entryId) sendBackInboxEntry(data);
+    },
+    'close-inbox-comment': (event) => {
+        event.preventDefault();
+        closeModal();
+    },
+    'comment-inbox-entry': (event, data) => {
+        event.preventDefault();
+        if (data.entryId) showInboxCommentModal(data.entryId);
+    },
+    'retry-inbox-decision': (event, data) => {
+        event.preventDefault();
+        const entry = getInboxEntries().find(e => e.id === data.entryId);
+        if (entry) loadDecisionDetails(entry, { force: true });
+    },
     'retry-load-inbox': () => loadInbox({ focusFirst: true }),
 });
