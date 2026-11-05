@@ -61,6 +61,7 @@ vi.mock('./teams.js', () => ({
   getMembers: (...a) => mockMembers(...a),
   loadTeamMembers: vi.fn(() => Promise.resolve()),
   loadTeamInvitations: vi.fn(() => Promise.resolve()),
+  clearTeamInvitations: vi.fn(),
 }));
 const mockAgents = vi.fn(() => []);
 vi.mock('./agents.js', () => ({ getAgents: (...a) => mockAgents(...a) }));
