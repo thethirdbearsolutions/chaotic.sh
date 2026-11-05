@@ -13,7 +13,7 @@ import { registerActions } from './event-delegation.js';
 import { viewProjectSettings } from './projects.js';
 import { loadLimboStatus, getLimboStatus, showLimboDetailsModal } from './sprints.js';
 import { loadTicketRituals } from './issue-detail-view.js';
-import { getCurrentProject, getCurrentView, subscribe } from './state.js';
+import { getCurrentProject, getCurrentView, setCurrentView, subscribe } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // ========================================
@@ -36,12 +36,15 @@ subscribe((key) => {
 
 /**
  * Open the current project's rituals in Project settings, replacing the
- * /rituals history entry so Back skips it.
+ * /rituals history entry so Back skips it. Once there, the current view is
+ * Projects, as when settings is opened from Projects, so the switcher no
+ * longer drives the page (PR #546 review I2).
  */
 export async function loadRitualsView() {
     const projectId = getCurrentProject();
     if (projectId) {
-        await viewProjectSettings(projectId, { tab: 'sprint-rituals', replace: true });
+        setCurrentView('projects');
+        await viewProjectSettings(projectId, { tab: 'sprint-rituals', replace: true, onlyIfView: 'projects' });
         return;
     }
     const container = document.getElementById('rituals-content');

@@ -714,10 +714,19 @@ describe('viewProjectSettings', () => {
     expect(mockNavigateTo).toHaveBeenCalledWith('projects');
   });
 
+  it('makes Projects the current view, however it was reached', async () => {
+    const { setCurrentView, getCurrentView } = await import('./state.js');
+    setCurrentView('issues');
+    await viewProjectSettings('proj-1');
+    expect(getCurrentView()).toBe('projects');
+    setCurrentView(null);
+  });
+
   it('opens on the general tab and pushes a history entry by default', async () => {
     await viewProjectSettings('proj-1');
     expect(document.querySelector('[data-tab="general"]').classList.contains('active')).toBe(true);
-    expect(window.history.pushState).toHaveBeenCalledWith({}, '', '/projects/proj-1/settings');
+    expect(window.history.pushState).toHaveBeenCalledWith(
+      { view: 'project-settings', settingsProjectId: 'proj-1', tab: 'general' }, '', '/projects/proj-1/settings');
   });
 
   // CHT-2076: the rituals route redirects here.
@@ -731,8 +740,49 @@ describe('viewProjectSettings', () => {
     await viewProjectSettings('proj-1', { tab: 'sprint-rituals', replace: true });
     expect(document.querySelector('[data-tab="sprint-rituals"]').classList.contains('active')).toBe(true);
     expect(document.getElementById('project-settings-tab-sprint-rituals').classList.contains('hidden')).toBe(false);
-    expect(window.history.replaceState).toHaveBeenCalledWith({}, '', '/projects/proj-1/settings');
+    expect(window.history.replaceState).toHaveBeenCalledWith(
+      { view: 'project-settings', settingsProjectId: 'proj-1', tab: 'sprint-rituals' }, '', '/projects/proj-1/settings?tab=sprint-rituals');
     expect(window.history.pushState).not.toHaveBeenCalled();
+  });
+
+  // PR #546 review M1: a late redirect must not replace where the user went.
+  it('gives up after loading projects if the view moved on', async () => {
+    setProjects([]);
+    const { setCurrentView } = await import('./state.js');
+    setCurrentView('projects');
+    api.getProjects.mockImplementation(async () => {
+      setCurrentView('issues');
+      return [{ id: 'proj-1', name: 'One', key: 'ONE' }];
+    });
+    await viewProjectSettings('proj-1', { replace: true, onlyIfView: 'projects' });
+    expect(document.getElementById('project-settings-view').classList.contains('hidden')).toBe(true);
+    expect(window.history.pushState).not.toHaveBeenCalled();
+    setCurrentView(null);
+  });
+
+  // PR #546 review I3: out-of-order answers when switching projects fast.
+  it('drops a ritual list that answers after a newer project opened', async () => {
+    setProjects([
+      { id: 'proj-1', name: 'One', key: 'ONE' },
+      { id: 'proj-2', name: 'Two', key: 'TWO' },
+    ]);
+    document.getElementById('project-settings-view').insertAdjacentHTML('beforeend', `
+      <button class="settings-tab" data-tab="sprint-rituals"></button>
+      <div id="project-settings-tab-sprint-rituals" class="settings-tab-content hidden"></div>
+      <div id="ps-sprint-rituals-list"></div><div id="ps-close-rituals-list"></div><div id="ps-claim-rituals-list"></div>
+    `);
+    let answerOne;
+    api.getRituals.mockImplementation((id) => id === 'proj-1'
+      ? new Promise(r => { answerOne = r; })
+      : Promise.resolve([{ id: 'r2', name: 'two-ritual', trigger: 'every_sprint' }]));
+    await viewProjectSettings('proj-1', { tab: 'sprint-rituals' });
+    await viewProjectSettings('proj-2', { tab: 'sprint-rituals' });
+    await Promise.resolve(); await Promise.resolve();
+    answerOne([{ id: 'r1', name: 'one-ritual', trigger: 'every_sprint' }]);
+    await Promise.resolve(); await Promise.resolve();
+    const html = document.getElementById('ps-sprint-rituals-list').innerHTML;
+    expect(html).toContain('two-ritual');
+    expect(html).not.toContain('one-ritual');
   });
 
   it('reloads rituals when it opens a different project', async () => {

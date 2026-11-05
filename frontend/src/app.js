@@ -178,7 +178,8 @@ configureRouter({
             return true;
         }
         if (parts[0] === 'projects' && parts[1] && parts[2] === 'settings') {
-            viewProjectSettings(parts[1]);
+            const tab = new URLSearchParams(window.location.search).get('tab') || undefined;
+            viewProjectSettings(decodeURIComponent(parts[1]), { tab, replace: true });
             return true;
         }
         return false;
@@ -190,6 +191,10 @@ configureRouter({
         if (state.documentId) { viewDocument(state.documentId, false); return true; }
         if (state.sprintId) { viewSprint(state.sprintId, false); return true; }
         if (state.personId) { viewPerson(state.personId, false); return true; }
+        if (state.settingsProjectId) {
+            viewProjectSettings(state.settingsProjectId, { tab: state.tab, replace: true });
+            return true;
+        }
         return false;
     },
     restoreProject: () => {

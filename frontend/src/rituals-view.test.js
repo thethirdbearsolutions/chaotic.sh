@@ -89,7 +89,7 @@ describe('rituals-view', () => {
 
             await loadRitualsView();
 
-            expect(viewProjectSettings).toHaveBeenCalledWith('p1', { tab: 'sprint-rituals', replace: true });
+            expect(viewProjectSettings).toHaveBeenCalledWith('p1', { tab: 'sprint-rituals', replace: true, onlyIfView: 'projects' });
             expect(document.getElementById('rituals-content').innerHTML).toBe('');
             setState('currentProject', null);
         });
@@ -117,7 +117,25 @@ describe('rituals-view', () => {
             setState('currentProject', 'p2');
             await Promise.resolve();
 
-            expect(viewProjectSettings).toHaveBeenCalledWith('p2', { tab: 'sprint-rituals', replace: true });
+            expect(viewProjectSettings).toHaveBeenCalledWith('p2', { tab: 'sprint-rituals', replace: true, onlyIfView: 'projects' });
+            setState('currentProject', null);
+            setState('currentView', null);
+        });
+
+        // PR #546 review I2: once redirected, the page is Project settings
+        // as reached from Projects, and the switcher no longer drives it.
+        it('leaves the rituals route behind once redirected', async () => {
+            const { setState, getCurrentView } = await import('./state.js');
+            setState('currentView', 'rituals');
+            setState('currentProject', 'p1');
+            await Promise.resolve();
+            expect(getCurrentView()).toBe('projects');
+            viewProjectSettings.mockClear();
+
+            setState('currentProject', 'p2');
+            await Promise.resolve();
+
+            expect(viewProjectSettings).not.toHaveBeenCalled();
             setState('currentProject', null);
             setState('currentView', null);
         });

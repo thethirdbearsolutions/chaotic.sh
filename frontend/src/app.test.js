@@ -577,7 +577,22 @@ describe('app.js router configuration', () => {
     it('configures detailRoute for project settings paths', () => {
         const result = routerConfig.detailRoute(['projects', 'proj-1', 'settings']);
         expect(result).toBe(true);
-        expect(viewProjectSettings).toHaveBeenCalledWith('proj-1');
+        expect(viewProjectSettings).toHaveBeenCalledWith('proj-1', { tab: undefined, replace: true });
+    });
+
+    // PR #546 review I4: the tab is in the address, and the state.
+    it('detailRoute reopens the tab named in the address', () => {
+        const prev = window.location.href;
+        window.history.replaceState(null, '', '/projects/proj-1/settings?tab=close-rituals');
+        routerConfig.detailRoute(['projects', 'proj-1', 'settings']);
+        expect(viewProjectSettings).toHaveBeenCalledWith('proj-1', { tab: 'close-rituals', replace: true });
+        window.history.replaceState(null, '', prev);
+    });
+
+    it('detailPopstate reopens a settings entry in place', () => {
+        const result = routerConfig.detailPopstate({ view: 'project-settings', settingsProjectId: 'proj-2', tab: 'sprint-rituals' });
+        expect(result).toBe(true);
+        expect(viewProjectSettings).toHaveBeenCalledWith('proj-2', { tab: 'sprint-rituals', replace: true });
     });
 
     it('detailRoute returns false for unknown paths', () => {

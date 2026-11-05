@@ -223,7 +223,7 @@ function getTourSteps() {
                 <p class="onboarding-subtitle">Here's a quick tour of Chaotic.</p>
                 <div class="onboarding-tips">
                     <h3>Your Home</h3>
-                    <p class="onboarding-description">The dashboard shows your assigned issues and recent activity across all projects.</p>
+                    <p class="onboarding-description">Home shows your assigned issues and recent activity across all projects.</p>
                 </div>
                 <div class="onboarding-actions">
                     <button class="btn btn-primary" data-action="onboarding-next">Next</button>

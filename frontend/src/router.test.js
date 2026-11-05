@@ -62,7 +62,6 @@ describe('router', () => {
         document.body.innerHTML = `
             <a class="nav-item" data-view="my-issues"></a>
             <a class="nav-item" data-view="issues"></a>
-            <a class="nav-item" data-view="board"></a>
             <a class="nav-item" data-view="settings"></a>
             <div id="my-issues-view" class="view hidden"></div>
             <div id="issues-view" class="view hidden"></div>
@@ -263,7 +262,6 @@ describe('router', () => {
 
         // CHT-2076: Board has no sidebar item; Issues stands for it.
         it('highlights Issues for the board layout', () => {
-            document.querySelector('.nav-item[data-view="board"]').remove();
             navigateTo('board', false);
             expect(document.querySelector('[data-view="issues"]').classList.contains('active')).toBe(true);
             expect(document.querySelectorAll('.nav-item.active')).toHaveLength(1);
@@ -471,12 +469,12 @@ describe('router', () => {
         });
 
         it('leaves the nav alone for a detail route with no known section', () => {
-            document.querySelector('[data-view="board"]').classList.add('active');
+            document.querySelector('[data-view="settings"]').classList.add('active');
             configureRouter({ detailRoute: vi.fn(() => true) });
             window.location.pathname = '/mystery/x';
             handleRoute();
             const active = [...document.querySelectorAll('.nav-item.active')].map(n => n.dataset.view);
-            expect(active).toEqual(['board']);
+            expect(active).toEqual(['settings']);
         });
 
         it('falls through to standard routing when detailRoute returns false', () => {
