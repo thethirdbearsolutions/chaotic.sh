@@ -204,8 +204,21 @@ function showIssueToast(issue, lines, type) {
         if (msg) {
             toast.classList.add('toast-clickable');
             msg.title = `Open ${issue.identifier}`;
-            msg.addEventListener('click', () => {
+            // A keyboard can reach it too (PR #531 review 1).
+            msg.setAttribute('role', 'button');
+            msg.tabIndex = 0;
+            const open = () => {
+                // Dismiss through the close button, so the toast does not
+                // hang over the issue it just opened.
+                toast.querySelector('.toast-close')?.click();
                 Promise.resolve(viewIssue(issue.id)).catch(e => console.error('Failed to open issue:', e));
+            };
+            msg.addEventListener('click', open);
+            msg.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    open();
+                }
             });
         }
     }
@@ -337,7 +350,9 @@ function handleIssueUpdated(data) {
 }
 
 function handleIssueDeleted(data) {
-    // Older servers send only id + identifier; fall back to the cached row.
+    // A bundle cached from before CHT-2034 can meet a server that sends
+    // only id + identifier the other way round too; fall back to the
+    // cached row whenever the title is missing.
     const deletedTitle = data.title
         ?? getIssues().find(i => i.id === data.id)?.title
         ?? getMyIssues().find(i => i.id === data.id)?.title;
@@ -585,11 +600,15 @@ function handleSprint(data, { type } = {}) {
     if (type === 'created') {
         showToast(`New sprint: ${data.name}`, 'info');
     } else if (type === 'closed') {
-        // "Sprint 2" names already say Sprint (was "Sprint Sprint 2 closed").
+        // Default names already say Sprint (was "Sprint Sprint 2 closed").
+        const name = /^sprint\b/i.test(data.name || '') ? data.name : `Sprint ${data.name}`;
         const spent = data.budget != null && data.points_spent != null
             ? ` at ${data.points_spent}/${data.budget} points`
             : '';
-        showToast(`${data.name} closed${spent}`, 'info');
+        // A close with rituals pending enters limbo; it is not closed yet.
+        showToast(data.limbo
+            ? `${name} is closing${spent}: rituals pending`
+            : `${name} closed${spent}`, 'info');
     }
 }
 

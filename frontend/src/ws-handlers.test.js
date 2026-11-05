@@ -222,7 +222,19 @@ describe('ws-handlers.js', () => {
             );
             expect(toast.classList.contains('toast-multiline')).toBe(true);
             expect(toast.classList.contains('toast-clickable')).toBe(true);
+            const close = document.createElement('button');
+            close.className = 'toast-close';
+            const dismissed = vi.fn();
+            close.addEventListener('click', dismissed);
+            toast.appendChild(close);
             msg.click();
+            expect(viewIssue).toHaveBeenCalledWith('issue-1');
+            expect(dismissed).toHaveBeenCalled();
+            expect(msg.getAttribute('role')).toBe('button');
+            expect(msg.tabIndex).toBe(0);
+            viewIssue.mockClear();
+            viewIssue.mockResolvedValueOnce(undefined);
+            msg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
             expect(viewIssue).toHaveBeenCalledWith('issue-1');
         });
 
@@ -493,7 +505,14 @@ describe('ws-handlers.js', () => {
             expect(showToast).toHaveBeenCalledWith('Ada deleted CHT-1: Old work', 'info');
         });
 
-        it('falls back to the cached title for an older server', () => {
+        it('says "You deleted" for the signed-in user', () => {
+            dispatch({ type: 'deleted', entity: 'issue', data: {
+                ...deletedIssue, title: 'Old work', deleted_by_id: 'user-1', deleted_by_name: 'Me',
+            } });
+            expect(showToast).toHaveBeenCalledWith('You deleted CHT-1: Old work', 'info');
+        });
+
+        it('falls back to the cached title when the event has none', () => {
             getIssues.mockReturnValue([{ id: 'issue-1', title: 'Cached title' }]);
             dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
             expect(showToast).toHaveBeenCalledWith('Issue CHT-1: Cached title was deleted', 'info');
@@ -899,6 +918,16 @@ describe('ws-handlers.js', () => {
         it('shows points spent against budget on sprint closed (CHT-2034)', () => {
             dispatch({ type: 'closed', entity: 'sprint', data: { id: 's1', name: 'Sprint 2', points_spent: 21, budget: 20 } });
             expect(showToast).toHaveBeenCalledWith('Sprint 2 closed at 21/20 points', 'info');
+        });
+
+        it('says a sprint in limbo is closing, not closed', () => {
+            dispatch({ type: 'closed', entity: 'sprint', data: { id: 's1', name: 'Sprint 2', points_spent: 21, budget: 20, limbo: true } });
+            expect(showToast).toHaveBeenCalledWith('Sprint 2 is closing at 21/20 points: rituals pending', 'info');
+        });
+
+        it('adds "Sprint" to a custom sprint name', () => {
+            dispatch({ type: 'closed', entity: 'sprint', data: { id: 's1', name: 'Q3 hardening' } });
+            expect(showToast).toHaveBeenCalledWith('Sprint Q3 hardening closed', 'info');
         });
 
         it('shows no toast on sprint updated', () => {
