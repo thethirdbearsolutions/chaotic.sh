@@ -1,169 +1,55 @@
 /**
  * Rituals View module - Rituals management and ticket ritual actions (CHT-784)
  *
- * Extracted from app.js. Handles the top-level rituals view (listing/managing
- * project rituals) and ticket-level ritual actions (attest, approve, complete).
+ * Extracted from app.js. Handles the rituals route, which opens the rituals
+ * tabs in Project settings (CHT-2076), and ticket-level ritual actions
+ * (attest, approve, complete).
  */
 
 import { api } from './api.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
-import {
-    getProjectRituals,
-    loadProjectSettingsRituals,
-    renderRitualList,
-    setCurrentSettingsProjectId,
-    showCreateProjectRitualModal,
-    setOnRitualsChanged,
-} from './projects.js';
+import { viewProjectSettings } from './projects.js';
 import { loadLimboStatus, getLimboStatus, showLimboDetailsModal } from './sprints.js';
 import { loadTicketRituals } from './issue-detail-view.js';
 import { getCurrentProject, getCurrentView, subscribe } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // ========================================
-// Rituals top-level view
+// Rituals route (CHT-2076)
 // ========================================
+//
+// Rituals have one home: the three rituals tabs in Project settings. The
+// rituals route (/rituals, g r, the palette) opens them for the project the
+// switcher shows. With All projects it shows a "pick a project" state, and
+// picking one from the switcher finishes the trip.
 
-// React to project changes when rituals view is active (CHT-1083)
+// React to project changes while the rituals route is current (CHT-1083).
+// Deferred so the switcher's own subscriber writes ?project= first and the
+// redirect's replaceState leaves the settings address clean.
 subscribe((key) => {
     if (key !== 'currentProject') return;
     if (getCurrentView() !== 'rituals') return;
-    loadRitualsForProject();
+    queueMicrotask(() => loadRitualsView());
 });
 
-// Monotonic request id — lets loadRitualsForProject() drop a completion from
-// a superseded request (rapid project switching via the subscriber above, or
-// a double-clicked Retry) instead of painting a stale error state over fresh
-// data (CHT-1226 PR #212 review finding 1; same pattern as teams.js's loaders).
-let loadRitualsRequestId = 0;
-
 /**
- * Load rituals for the currently selected project.
- */
-async function loadRitualsForProject() {
-    const projectId = getCurrentProject();
-    const container = document.getElementById('rituals-content');
-
-    const requestId = ++loadRitualsRequestId;
-
-    if (!projectId) {
-        const tabs = document.getElementById('rituals-tabs');
-        if (tabs) tabs.classList.add('hidden');
-        // CHT-1226: was a raw icon-less div, missed by CHT-1169.
-        if (container) container.innerHTML = renderEmptyState({
-            icon: EMPTY_ICONS.projects,
-            heading: 'Select a project',
-            description: 'Rituals belong to one project. Pick one in the sidebar switcher, or press P.',
-        });
-        return;
-    }
-
-    // Set the project context so create/edit/delete functions work
-    setCurrentSettingsProjectId(projectId);
-
-    // CHT-1226: loading skeleton, matching epics.js/board.js's pattern —
-    // was plain 'Loading rituals...' text.
-    if (container) container.innerHTML = Array(3).fill(0).map(() => `
-        <div class="skeleton-list-item">
-            <div style="flex: 1">
-                <div class="skeleton skeleton-title"></div>
-                <div style="display: flex; gap: 8px; margin-top: 4px;">
-                    <div class="skeleton skeleton-badge"></div>
-                    <div class="skeleton skeleton-badge" style="width: 100px"></div>
-                </div>
-            </div>
-        </div>
-    `).join('');
-
-    // loadProjectSettingsRituals() swallows API failures internally (toast +
-    // return false, no rethrow) — so failure is detected via the return
-    // value, not try/catch. Without this check the error branch was dead
-    // code and a failed fetch left the skeleton up forever (CHT-1226 PR #212
-    // review). On success, rendering happens via the _onRitualsChanged
-    // callback inside the call.
-    const ok = await loadProjectSettingsRituals();
-    if (requestId !== loadRitualsRequestId) return; // a newer loadRitualsForProject() has since started — drop this stale completion
-    if (!ok && container) {
-        // CHT-1226: was a raw div exposing the raw exception message
-        // directly, unlike every other list view post-PR#200. The toast is
-        // already fired inside loadProjectSettingsRituals().
-        container.innerHTML = renderEmptyState({
-            icon: EMPTY_ICONS.rituals,
-            heading: 'Failed to load rituals',
-            description: 'Check your connection and try again',
-            cta: { label: 'Retry', action: 'retry-load-rituals' },
-            variant: 'error',
-        });
-    }
-}
-
-/**
- * Load the top-level rituals view. Sets up _onRitualsChanged callback
- * and loads rituals for the current project.
+ * Open the current project's rituals in Project settings, replacing the
+ * /rituals history entry so Back skips it.
  */
 export async function loadRitualsView() {
-    // Set callback so CRUD operations refresh the rituals view
-    setOnRitualsChanged(renderRitualsView);
-
-    loadRitualsForProject();
-}
-
-/**
- * Render the rituals view with tabbed sprint, close, and claim ritual sections.
- */
-export function renderRitualsView() {
+    const projectId = getCurrentProject();
+    if (projectId) {
+        await viewProjectSettings(projectId, { tab: 'sprint-rituals', replace: true });
+        return;
+    }
     const container = document.getElementById('rituals-content');
-    const rituals = getProjectRituals();
-
-    const sprintRituals = rituals.filter(r => !r.trigger || r.trigger === 'every_sprint');
-    const closeRituals = rituals.filter(r => r.trigger === 'ticket_close');
-    const claimRituals = rituals.filter(r => r.trigger === 'ticket_claim');
-
-    // Show the tabs bar
-    document.getElementById('rituals-tabs').classList.remove('hidden');
-
-    container.innerHTML = `
-        <div id="rituals-tab-sprint" class="settings-tab-content">
-            <div class="settings-section-header">
-                <p class="settings-description">Required when closing a sprint</p>
-                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="every_sprint">+ Create Ritual</button>
-            </div>
-            <div id="rv-sprint-rituals-list" class="rituals-list"></div>
-        </div>
-        <div id="rituals-tab-close" class="settings-tab-content hidden">
-            <div class="settings-section-header">
-                <p class="settings-description">Required when closing a ticket</p>
-                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="ticket_close">+ Create Ritual</button>
-            </div>
-            <div id="rv-close-rituals-list" class="rituals-list"></div>
-        </div>
-        <div id="rituals-tab-claim" class="settings-tab-content hidden">
-            <div class="settings-section-header">
-                <p class="settings-description">Required when claiming a ticket (moving to in_progress), and when closing one that was never claimed</p>
-                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="ticket_claim">+ Create Ritual</button>
-            </div>
-            <div id="rv-claim-rituals-list" class="rituals-list"></div>
-        </div>
-    `;
-
-    // Render ritual lists into the view-specific containers
-    renderRitualList('rv-sprint-rituals-list', sprintRituals, 'sprint');
-    renderRitualList('rv-close-rituals-list', closeRituals, 'close');
-    renderRitualList('rv-claim-rituals-list', claimRituals, 'claim');
-}
-
-/**
- * Switch between ritual tabs (sprint, close, claim).
- */
-export function switchRitualsTab(tabName) {
-    const tabs = document.getElementById('rituals-tabs');
-    tabs.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-    tabs.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
-
-    document.querySelectorAll('#rituals-content > .settings-tab-content').forEach(c => c.classList.add('hidden'));
-    document.getElementById(`rituals-tab-${tabName}`).classList.remove('hidden');
+    if (container) container.innerHTML = renderEmptyState({
+        icon: EMPTY_ICONS.projects,
+        heading: 'Select a project',
+        description: 'Rituals live in each project\'s settings. Pick a project in the sidebar switcher, or press P.',
+    });
 }
 
 // ========================================
@@ -469,9 +355,6 @@ async function handleCompleteTicketRitual(event, ritualId, issueId, artifact = '
 
 // Register delegated event handlers
 registerActions({
-    'show-create-ritual-modal': (_event, data) => {
-        showCreateProjectRitualModal(data.trigger);
-    },
     'approve-ticket-ritual': (_event, data) => {
         approveTicketRitual(data.ritualId, data.issueId);
     },
@@ -492,5 +375,4 @@ registerActions({
     'attest-ticket-ritual': (_event, data) => {
         attestTicketRitual(data.ritualId, data.issueId);
     },
-    'retry-load-rituals': () => loadRitualsForProject(),
 });

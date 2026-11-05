@@ -713,6 +713,44 @@ describe('viewProjectSettings', () => {
     await viewProjectSettings('unknown');
     expect(mockNavigateTo).toHaveBeenCalledWith('projects');
   });
+
+  it('opens on the general tab and pushes a history entry by default', async () => {
+    await viewProjectSettings('proj-1');
+    expect(document.querySelector('[data-tab="general"]').classList.contains('active')).toBe(true);
+    expect(window.history.pushState).toHaveBeenCalledWith({}, '', '/projects/proj-1/settings');
+  });
+
+  // CHT-2076: the rituals route redirects here.
+  it('opens the asked-for tab and replaces the entry when told to', async () => {
+    window.history.replaceState = vi.fn();
+    document.getElementById('project-settings-view').insertAdjacentHTML('beforeend', `
+      <button class="settings-tab" data-tab="sprint-rituals"></button>
+      <div id="project-settings-tab-sprint-rituals" class="settings-tab-content hidden"></div>
+    `);
+    api.getRituals.mockResolvedValue([]);
+    await viewProjectSettings('proj-1', { tab: 'sprint-rituals', replace: true });
+    expect(document.querySelector('[data-tab="sprint-rituals"]').classList.contains('active')).toBe(true);
+    expect(document.getElementById('project-settings-tab-sprint-rituals').classList.contains('hidden')).toBe(false);
+    expect(window.history.replaceState).toHaveBeenCalledWith({}, '', '/projects/proj-1/settings');
+    expect(window.history.pushState).not.toHaveBeenCalled();
+  });
+
+  it('reloads rituals when it opens a different project', async () => {
+    setProjects([
+      { id: 'proj-1', name: 'One', key: 'ONE' },
+      { id: 'proj-2', name: 'Two', key: 'TWO' },
+    ]);
+    document.getElementById('project-settings-view').insertAdjacentHTML('beforeend', `
+      <button class="settings-tab" data-tab="sprint-rituals"></button>
+      <div id="project-settings-tab-sprint-rituals" class="settings-tab-content hidden"></div>
+    `);
+    api.getRituals.mockResolvedValue([{ id: 'r1', name: 'one' }]);
+    await viewProjectSettings('proj-1', { tab: 'sprint-rituals' });
+    await Promise.resolve();
+    api.getRituals.mockClear();
+    await viewProjectSettings('proj-2', { tab: 'sprint-rituals' });
+    expect(api.getRituals).toHaveBeenCalledWith('proj-2');
+  });
 });
 
 describe('switchProjectSettingsTab', () => {

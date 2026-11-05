@@ -199,7 +199,7 @@ function getSetupSteps() {
                     <div class="onboarding-tip"><kbd>Cmd+K</kbd> Command palette</div>
                 </div>
                 <div class="onboarding-actions">
-                    <button class="btn btn-primary" data-action="onboarding-finish">Go to Dashboard</button>
+                    <button class="btn btn-primary" data-action="onboarding-finish">Go to Home</button>
                 </div>
             `,
             onMount() {
@@ -222,7 +222,7 @@ function getTourSteps() {
                 <h2>Welcome Back!</h2>
                 <p class="onboarding-subtitle">Here's a quick tour of Chaotic.</p>
                 <div class="onboarding-tips">
-                    <h3>Your Dashboard</h3>
+                    <h3>Your Home</h3>
                     <p class="onboarding-description">The dashboard shows your assigned issues and recent activity across all projects.</p>
                 </div>
                 <div class="onboarding-actions">

@@ -18,9 +18,6 @@ import { renderConditionBuilder, collectConditions } from './rituals.js';
 // Module state
 let projects = [];
 
-// Callback for when rituals change (set by rituals-view)
-let _onRitualsChangedCallback = null;
-
 // The one project scope picker, in the sidebar (CHT-2058). Every view
 // follows currentProject; an empty value is "All projects".
 export const PROJECT_SWITCHER_ID = 'project-switcher';
@@ -103,15 +100,6 @@ const ESTIMATE_SCALES = {
     { value: 8, label: 'XL' },
   ],
 };
-
-/**
- * Set the callback to be called when rituals change.
- * Used by rituals-view to register its refresh function.
- * @param {Function|null} callback
- */
-export function setOnRitualsChanged(callback) {
-  _onRitualsChangedCallback = callback;
-}
 
 /**
  * Get current projects list
@@ -562,8 +550,14 @@ export async function populateDefaultEpicSelect(project) {
 /**
  * Navigate to and load the project settings page
  * @param {string} projectId - Project ID
+ * @param {Object} [options]
+ * @param {string} [options.tab='general'] - Tab to open (see switchProjectSettingsTab)
+ * @param {boolean} [options.replace=false] - Replace the current history entry
+ *   instead of pushing one, for a route that redirects here (/rituals,
+ *   CHT-2076): Back then skips the redirect instead of bouncing into it.
  */
-export async function viewProjectSettings(projectId) {
+export async function viewProjectSettings(projectId, { tab = 'general', replace = false } = {}) {
+  if (projectId !== currentSettingsProjectId) projectRituals = [];
   currentSettingsProjectId = projectId;
 
   // Ensure projects are loaded
@@ -601,11 +595,12 @@ export async function viewProjectSettings(projectId) {
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
   document.getElementById('project-settings-view').classList.remove('hidden');
 
-  // Activate first tab
-  switchProjectSettingsTab('general');
+  switchProjectSettingsTab(tab);
 
   // Update URL
-  window.history.pushState({}, '', `/projects/${encodeURIComponent(projectId)}/settings`);
+  const url = `/projects/${encodeURIComponent(projectId)}/settings`;
+  if (replace) window.history.replaceState({}, '', url);
+  else window.history.pushState({}, '', url);
 }
 
 /**
@@ -648,17 +643,10 @@ export function clearProjectSettingsState() {
 }
 
 /**
- * Set the current settings project ID (used by rituals view to reuse CRUD functions)
+ * Set the current settings project ID
  */
 export function setCurrentSettingsProjectId(projectId) {
   currentSettingsProjectId = projectId;
-}
-
-/**
- * Get the current project rituals array
- */
-export function getProjectRituals() {
-  return projectRituals;
 }
 
 /**
@@ -739,9 +727,9 @@ let projectRituals = [];
  * Load rituals for the current project settings page.
  *
  * @returns {Promise<boolean>} true on success — the catch below swallows
- *   API failures (toast only, no rethrow), so callers that need to render
- *   their own in-page error state (rituals-view.js, CHT-1226 PR #212
- *   review) must check the return value rather than try/catch.
+ *   API failures (toast only, no rethrow), so a caller that needs to
+ *   render its own in-page error state must check the return value rather
+ *   than try/catch (CHT-1226 PR #212 review).
  */
 export async function loadProjectSettingsRituals() {
   if (!currentSettingsProjectId) return false;
@@ -749,10 +737,6 @@ export async function loadProjectSettingsRituals() {
   try {
     projectRituals = await api.getRituals(currentSettingsProjectId);
     renderProjectSettingsRituals();
-    // Notify rituals view if active (for CRUD operations triggered from modals)
-    if (typeof _onRitualsChangedCallback === 'function') {
-      _onRitualsChangedCallback();
-    }
     return true;
   } catch (e) {
     showApiError('load rituals', e);
@@ -764,7 +748,7 @@ export async function loadProjectSettingsRituals() {
  * Render rituals in all three ritual tab containers
  */
 function renderProjectSettingsRituals() {
-  // Skip if project settings containers aren't in the DOM (e.g., on the rituals view)
+  // Skip if project settings containers aren't in the DOM
   if (!document.getElementById('ps-sprint-rituals-list')) return;
 
   const sprintRituals = projectRituals.filter(r => !r.trigger || r.trigger === 'every_sprint');

@@ -7988,6 +7988,22 @@ button.stat-card-link:hover .stat-note {
     border-right: 1px solid var(--border-color);
 }
 
+/* A toggle of words, not glyphs: the Issues List | Board layout switch
+   (CHT-2076). Its buttons are links, since each layout has its own URL. */
+.view-toggle-text .view-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--font-base);
+    font-weight: 500;
+    text-decoration: none;
+    padding: 0.4rem 0.75rem;
+}
+
+.view-toggle-text .view-toggle-btn.active {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
 /* Onboarding overlay */
 .onboarding-overlay {
     position: fixed;

@@ -31,6 +31,7 @@ import {
     resetRouter,
     saveScrollPosition,
     primeRoute,
+    setActiveNav,
 } from './router.js';
 
 describe('router', () => {
@@ -258,6 +259,21 @@ describe('router', () => {
             const myIssuesNav = document.querySelector('[data-view="my-issues"]');
             expect(issuesNav.classList.contains('active')).toBe(true);
             expect(myIssuesNav.classList.contains('active')).toBe(false);
+        });
+
+        // CHT-2076: Board has no sidebar item; Issues stands for it.
+        it('highlights Issues for the board layout', () => {
+            document.querySelector('.nav-item[data-view="board"]').remove();
+            navigateTo('board', false);
+            expect(document.querySelector('[data-view="issues"]').classList.contains('active')).toBe(true);
+            expect(document.querySelectorAll('.nav-item.active')).toHaveLength(1);
+        });
+
+        it('highlights Projects for the rituals route', () => {
+            document.body.insertAdjacentHTML('beforeend', '<a class="nav-item" data-view="projects"></a>');
+            setActiveNav('rituals');
+            expect(document.querySelector('[data-view="projects"]').classList.contains('active')).toBe(true);
+            expect(document.querySelectorAll('.nav-item.active')).toHaveLength(1);
         });
 
         it('hides all views then shows the selected one', () => {
