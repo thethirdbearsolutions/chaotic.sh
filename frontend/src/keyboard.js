@@ -144,7 +144,6 @@ export function createKeyboardHandler(actions) {
                 case 't': actions.navigateTo('people'); break; // Team became People (CHT-2044)
                 case 'e': actions.navigateTo('epics'); break;
                 case 'r': actions.navigateTo('rituals'); break;
-                case 'a': actions.navigateTo('approvals'); break;
                 case 'w': actions.navigateTo('inbox'); break; // 'w' = awaiting you (CHT-1250)
                 case ',': actions.navigateTo('settings'); break;
             }

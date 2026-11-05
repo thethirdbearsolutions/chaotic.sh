@@ -182,6 +182,11 @@ class TestInboxKindFilter:
             "GET", "/inbox?skip=0&limit=50&team_id=t1&kind=review_requested&kind=gate_pending",
         )
 
+    def test_include_archived(self, sent):
+        """CHT-2032: archived entries still waiting, on request."""
+        Client().get_inbox(None, include_archived=True)
+        assert _call(sent)[:2] == ("GET", "/inbox?skip=0&limit=50&include_archived=true")
+
     def test_no_kind_sends_none(self, sent):
         Client().get_inbox(None, unread=True)
         assert _call(sent)[:2] == ("GET", "/inbox?skip=0&limit=50&unread=true")

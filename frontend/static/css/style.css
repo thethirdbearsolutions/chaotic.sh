@@ -7503,7 +7503,9 @@ body.theme-light .segmented-btn.active {
     }
 }
 
-.badge-inbox-gate_pending {
+/* A sprint ritual blocks like a gate does (CHT-2032): the same badge. */
+.badge-inbox-gate_pending,
+.badge-inbox-sprint_ritual {
     background: #713f12;
     color: #fcd34d;
 }
@@ -10953,3 +10955,30 @@ body.theme-light {
 
 /* The panel's gap spaces the line already (CHT-2081). */
 .inbox-row-expanded-panel .ticket-gate-earlier { margin-top: 0; }
+
+/* Sprint close (CHT-2032): the sprint rituals a limbo waits on, pinned
+   above the Approvals filter's day groups as one more group, labelled
+   like them, with a line on why it is first. */
+.inbox-group-header .section-count { font-size: var(--font-xs); margin-left: 4px; }
+.inbox-group-note {
+    font-size: var(--font-xs);
+    padding: 0 12px 6px;
+    margin: 0;
+}
+
+/* An expanded row's focus ring goes round the whole row, not just its
+   header line (CHT-2032 design check). */
+.inbox-row-expanded .inbox-row-toggle:focus-visible,
+.inbox-row.keyboard-selected.inbox-row-expanded .inbox-row-toggle:focus-visible {
+    outline: none;
+    box-shadow: none;
+}
+.inbox-row-expanded:has(.inbox-row-toggle:focus-visible) {
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
+}
+.inbox-row-expanded.keyboard-selected:has(.inbox-row-toggle:focus-visible) {
+    outline: none;
+    box-shadow: inset 3px 0 0 var(--row-cursor-edge), inset 0 0 0 1px var(--row-cursor-edge);
+}
+.inbox-row-archived { font-size: var(--font-xs); }

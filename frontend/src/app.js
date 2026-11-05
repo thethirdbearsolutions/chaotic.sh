@@ -40,9 +40,8 @@ import {
     getSelectedLabels,
     getExcludedLabels,
 } from './issues-view.js';
-import { loadGateApprovals } from './gate-approvals.js';
 import { loadQueryView, setQueryScope } from './query-view.js';
-import { loadInbox, toggleInboxEntryElementExpand, collapseInboxExpand, archiveInboxEntryElement } from './inbox.js';
+import { loadInbox, toggleInboxEntryElementExpand, collapseInboxExpand, archiveInboxEntryElement, applyInboxKindFromUrl } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive, focusMainContent } from './keyboard.js';
@@ -213,10 +212,9 @@ registerViews({
         loadMyIssues();
         loadDashboardActivity();
     },
-    'approvals': () => {
-        loadGateApprovals();
-    },
     'inbox': () => {
+        // /approvals lands here with ?kind=approvals (CHT-2032).
+        applyInboxKindFromUrl();
         loadInbox({ focusFirst: true });
     },
     'issues': () => {
@@ -723,9 +721,6 @@ async function viewDocumentByPath(docId) {
     }
 }
 
-// loadGateApprovals, renderGateApprovals, dismissApprovalsExplainer, renderApprovalIssue
-// moved to gate-approvals.js (CHT-1040)
-
 // getMemberHandle, setupMentionAutocomplete moved to mention-autocomplete.js (CHT-1044)
 
 
@@ -921,8 +916,7 @@ setCommandPaletteCommands([
     { id: 'nav-documents', title: 'Go to Documents', subtitle: 'View all documents', icon: '📄', shortcut: 'G D', action: () => navigateTo('documents'), category: 'Navigation' },
     { id: 'nav-epics', title: 'Go to Epics', subtitle: 'View all epics', icon: '🎯', shortcut: 'G E', action: () => navigateTo('epics'), category: 'Navigation' },
     { id: 'nav-rituals', title: 'Go to Rituals', subtitle: 'The rituals tabs in Project settings', icon: '🔮', shortcut: 'G R', action: () => navigateTo('rituals'), category: 'Navigation' },
-    { id: 'nav-approvals', title: 'Go to Approvals', subtitle: 'Review pending approvals', icon: '✅', shortcut: 'G A', action: () => navigateTo('approvals'), category: 'Navigation' },
-    { id: 'nav-inbox', title: 'Go to Inbox', subtitle: 'Gates, mentions, assignments, and reviews awaiting you', icon: '📥', shortcut: 'G W', action: () => navigateTo('inbox'), category: 'Navigation' },
+    { id: 'nav-inbox', title: 'Go to Inbox', subtitle: 'Approvals, mentions and assignments awaiting you', icon: '📥', shortcut: 'G W', action: () => navigateTo('inbox'), category: 'Navigation' },
     { id: 'nav-team', title: 'Go to People', subtitle: 'Everyone on the team, people and agents', icon: '👥', shortcut: 'G T', action: () => navigateTo('people'), category: 'Navigation' },
     { id: 'nav-settings', title: 'Go to Settings', subtitle: 'Project and team settings', icon: '⚙️', shortcut: 'G ,', action: () => navigateTo('settings'), category: 'Navigation' },
 

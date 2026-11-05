@@ -519,14 +519,6 @@ export class ApiClient {
         return this.request('GET', `/rituals/limbo?project_id=${projectId}`);
     }
 
-    async getPendingGates(projectId) {
-        return this.request('GET', `/rituals/pending-gates?project_id=${projectId}`);
-    }
-
-    async getPendingApprovals(projectId) {
-        return this.request('GET', `/rituals/pending-approvals?project_id=${projectId}`);
-    }
-
     // `artifact` is the document id or URL a ritual with `artifact` set
     // binds its attestation to: `{ document_id }` or `{ url }` (CHT-1359).
     attestationBody(note, artifact) {
@@ -781,9 +773,10 @@ export class ApiClient {
     }
 
     // Inbox (CHT-1250)
-    async getInbox(teamId, { unread = false, kinds = null, skip = 0, limit = 50 } = {}) {
+    async getInbox(teamId, { unread = false, kinds = null, includeArchived = false, skip = 0, limit = 50 } = {}) {
         const params = new URLSearchParams({ team_id: teamId, skip, limit });
         if (unread) params.set('unread', 'true');
+        if (includeArchived) params.set('include_archived', 'true');
         for (const kind of kinds || []) params.append('kind', kind);
         return this.request('GET', `/inbox?${params.toString()}`);
     }

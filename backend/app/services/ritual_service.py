@@ -461,6 +461,12 @@ class RitualService:
 
         # A mode change moves what each issue waits on (CHT-1626).
         mode_changed = update_data.get("approval_mode", ritual.approval_mode) != ritual.approval_mode
+        # A sprint ritual's entries (CHT-2032) follow its mode and trigger,
+        # and its coming back: a limbo may now wait on it, or no longer.
+        was_sprint = ritual.trigger == RitualTrigger.EVERY_SPRINT
+        is_sprint = update_data.get("trigger", ritual.trigger) == RitualTrigger.EVERY_SPRINT
+        activating = update_data.get("is_active") is True and not ritual.is_active
+        sprint_moved = (was_sprint or is_sprint) and (mode_changed or was_sprint != is_sprint or activating)
 
         async with atomic():
             if leaving or deactivating:
@@ -475,6 +481,10 @@ class RitualService:
 
         if deactivating:
             await self._resolve_inbox_for_ritual(ritual.id)
+        elif sprint_moved:
+            await self._resync_sprint_ritual_entries(ritual)
+            if was_sprint and not is_sprint:
+                await self._recheck_limbo(ritual.project_id)
 
         # Reload to get fresh data
         return await self.get_by_id(ritual.id, include_inactive=True)
@@ -852,6 +862,78 @@ class RitualService:
         group.last_selected_ritual_id = pointer_after_removal(siblings, ritual)
         await group.save(update_fields={"last_selected_ritual_id"})
 
+    async def notify_sprint_limbo(self, sprint: OxydeSprint) -> None:
+        """The sprint just entered limbo: put each pending sprint ritual an
+        admin can act on in the admins' inboxes (CHT-2032). Best-effort,
+        after commit: a failure here must not fail the close.
+
+        Any entry still open from an earlier limbo of the project is
+        settled first: only one sprint is ever in limbo, so it asks about
+        nothing, and left open it would stand in for this limbo's entry
+        under the earlier sprint's title (PR #549 review)."""
+        await self.settle_sprint_ritual_entries(sprint.project_id)
+        try:
+            project = await OxydeProject.objects.get_or_none(id=sprint.project_id)
+            if project is None:
+                return
+            for ritual in await self.get_pending_rituals(sprint.project_id, sprint.id):
+                await self._notify_sprint_ritual(ritual, sprint, project)
+        except Exception:
+            logger.exception("Failed to write sprint ritual inbox entries for sprint=%s", sprint.id)
+
+    async def _notify_sprint_ritual(self, ritual: OxydeRitual, sprint: OxydeSprint, project) -> None:
+        """One pending sprint ritual's entry, if an admin is what it waits
+        on: a GATE always, a REVIEW once attested. AUTO waits on whoever
+        attests, which is not a decision."""
+        from app.services.inbox_service import InboxService
+
+        if ritual.approval_mode == ApprovalMode.GATE:
+            await InboxService().notify_sprint_ritual(ritual=ritual, sprint=sprint, project=project)
+        elif ritual.approval_mode == ApprovalMode.REVIEW:
+            attestation = await self.get_attestation(ritual.id, sprint.id)
+            if attestation is not None and attestation.approved_at is None:
+                await InboxService().notify_sprint_ritual(
+                    ritual=ritual, sprint=sprint, project=project, attestation=attestation,
+                )
+
+    async def settle_sprint_ritual_entries(self, project_id: str, ritual_id: str | None = None) -> None:
+        """Settle SPRINT_RITUAL inbox entries (CHT-2032), best-effort."""
+        try:
+            from app.services.inbox_service import InboxService
+            await InboxService().resolve_sprint_rituals(project_id, ritual_id)
+        except Exception:
+            logger.exception(
+                "Failed to settle sprint ritual inbox entries for project=%s ritual=%s",
+                project_id, ritual_id,
+            )
+
+    async def _resync_sprint_ritual_entries(self, ritual: OxydeRitual) -> None:
+        """A sprint ritual changed mode: what its entries offer no longer
+        fits (a gate is signed off, a review approved). Settle them, and
+        if the project is in limbo on it, ask again in the new mode."""
+        await self.settle_sprint_ritual_entries(ritual.project_id, ritual.id)
+        try:
+            sprint = await OxydeSprint.objects.filter(project_id=ritual.project_id, limbo=True).first()
+            if sprint is None:
+                return
+            pending = await self.get_pending_rituals(ritual.project_id, sprint.id)
+            if any(r.id == ritual.id for r in pending):
+                project = await OxydeProject.objects.get_or_none(id=ritual.project_id)
+                if project is not None:
+                    await self._notify_sprint_ritual(ritual, sprint, project)
+        except Exception:
+            logger.exception("Failed to re-ask sprint ritual=%s after a mode change", ritual.id)
+
+    async def _recheck_limbo(self, project_id: str) -> None:
+        """A ritual stopped being a sprint ritual: the project's limbo may
+        have been waiting on nothing else. Best-effort, after commit."""
+        try:
+            sprint = await OxydeSprint.objects.filter(project_id=project_id, limbo=True).first()
+            if sprint is not None:
+                await self._maybe_clear_limbo(sprint.id)
+        except Exception:
+            logger.exception("Failed to recheck limbo for project=%s", project_id)
+
     async def get_pending_rituals(
         self, project_id: str, sprint_id: str
     ) -> list[OxydeRitual]:
@@ -1071,6 +1153,18 @@ class RitualService:
                 "Failed to check/clear limbo for sprint=%s after attestation",
                 sprint_id,
             )
+
+        # A REVIEW attestation on a sprint in limbo now waits on an admin
+        # (CHT-2032). Before limbo, the close asks for it.
+        if ritual.approval_mode == ApprovalMode.REVIEW:
+            try:
+                sprint = await OxydeSprint.objects.get_or_none(id=sprint_id)
+                if sprint is not None and sprint.limbo:
+                    project = await OxydeProject.objects.get_or_none(id=sprint.project_id)
+                    if project is not None:
+                        await self._notify_sprint_ritual(ritual, sprint, project)
+            except Exception:
+                logger.exception("Failed to write the sprint review inbox entry for ritual=%s", ritual.id)
 
         # Broadcast sprint attest. Sprint-level events were silent before;
         # without this, frontends and the agent await primitive can't see
@@ -1613,6 +1707,8 @@ class RitualService:
         )
 
         await self._approve_atomic(attestation, approver_id)
+
+        await self.settle_sprint_ritual_entries(ritual.project_id, ritual.id)
 
         await self._maybe_clear_limbo(attestation.sprint_id)
 
@@ -2208,26 +2304,40 @@ class RitualService:
         ritual_id = ritual.id
 
         existing = await self.get_attestation(ritual_id, sprint_id)
-        if existing:
+        if existing and existing.approved_at is not None:
             return existing
 
         now = datetime.now(timezone.utc)
         try:
-            attestation = await OxydeRitualAttestation.objects.create(
-                ritual_id=ritual_id,
-                sprint_id=sprint_id,
-                attested_by=user_id,
-                attested_at=now,
-                approved_by=user_id,
-                approved_at=now,
-                note=note,
-                artifact_ref=artifact_ref,
-            )
+            if existing:
+                # Attested while the ritual was a REVIEW, then switched to
+                # GATE: signing off approves that attestation, so limbo can
+                # move on (PR #549 review). Before, this returned it as it
+                # was, and the sprint waited on it for good.
+                updated = await OxydeRitualAttestation.objects.filter(
+                    id=existing.id, approved_at__isnull=True,
+                ).update(approved_by=user_id, approved_at=now)
+                attestation = await self.get_attestation(ritual_id, sprint_id)
+                if not updated:
+                    return attestation  # someone else signed off meanwhile
+            else:
+                attestation = await OxydeRitualAttestation.objects.create(
+                    ritual_id=ritual_id,
+                    sprint_id=sprint_id,
+                    attested_by=user_id,
+                    attested_at=now,
+                    approved_by=user_id,
+                    approved_at=now,
+                    note=note,
+                    artifact_ref=artifact_ref,
+                )
         except IntegrityError:
             existing = await self.get_attestation(ritual_id, sprint_id)
             if existing:
                 return existing
             raise
+
+        await self.settle_sprint_ritual_entries(ritual.project_id, ritual_id)
 
         try:
             await self._maybe_clear_limbo(sprint_id)

@@ -388,7 +388,7 @@ async def _deliver_created(entry_ids: list[str]) -> None:
             kind = InboxEntryKind(entry.kind)
             if not await prefs.wants(entry.recipient_user_id, kind):
                 continue
-            urgent = kind in (InboxEntryKind.GATE_PENDING, InboxEntryKind.REVIEW_REQUESTED)
+            urgent = kind in (InboxEntryKind.GATE_PENDING, InboxEntryKind.REVIEW_REQUESTED, InboxEntryKind.SPRINT_RITUAL)
             messages.append(_Message(
                 entry.recipient_user_id, entry.id,
                 entry_payload(entry, identifiers.get(entry.issue_id)),

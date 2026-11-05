@@ -276,16 +276,6 @@ export function setDocViewMode(mode) {
     set('doc_view_mode', mode);
 }
 
-// --- Gate approvals explainer ---
-
-export function isApprovalsExplainerDismissed() {
-    return get('approvals_explainer_dismissed') === '1';
-}
-
-export function dismissApprovalsExplainer() {
-    set('approvals_explainer_dismissed', '1');
-}
-
 // --- Comment composer mode (CHT-2028) ---
 
 /** 'markdown' when the person last switched the comment box to raw markdown, else 'rich'. */

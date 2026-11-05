@@ -124,26 +124,31 @@ export function readArtifactField(artifact) {
     return null;
 }
 
-export async function completeGateRitual(ritualId, projectId, ritualName, artifact = '') {
-    document.getElementById('modal-title').textContent = `Complete: ${ritualName}`;
+/**
+ * Sign off on a sprint GATE ritual. `onCompleted`, when given, runs after
+ * the sign-off instead of the limbo details dialog: the Inbox signs off
+ * from here too (CHT-2032).
+ */
+export async function completeGateRitual(ritualId, projectId, ritualName, artifact = '', onCompleted = null) {
+    document.getElementById('modal-title').textContent = `Sign off: ${ritualName}`;
     document.getElementById('modal-content').innerHTML = `
         <form id="complete-gate-ritual-form">
             <div class="form-group">
-                <label for="gate-note">Note (optional)</label>
+                <label for="gate-note">Note</label>
                 <textarea id="gate-note" placeholder="Describe what was done..."></textarea>
             </div>
             ${renderArtifactField(artifact)}
-            <button type="submit" class="btn btn-primary">Complete Ritual</button>
+            <button type="submit" class="btn btn-primary">Sign off</button>
         </form>
     `;
     // Attach event listener programmatically to avoid XSS via inline handlers (CHT-166)
     document.getElementById('complete-gate-ritual-form').addEventListener('submit', (event) => {
-        handleCompleteGateRitual(event, ritualId, projectId, artifact);
+        handleCompleteGateRitual(event, ritualId, projectId, artifact, onCompleted, ritualName);
     });
     showModal();
 }
 
-async function handleCompleteGateRitual(event, ritualId, projectId, artifact = '') {
+async function handleCompleteGateRitual(event, ritualId, projectId, artifact = '', onCompleted = null, ritualName = '') {
     event.preventDefault();
     const note = document.getElementById('gate-note').value;
     const bound = readArtifactField(artifact);
@@ -151,8 +156,13 @@ async function handleCompleteGateRitual(event, ritualId, projectId, artifact = '
 
     try {
         await api.completeGateRitual(ritualId, projectId, note || null, bound);
-        showToast('Ritual completed!', 'success');
+        showToast(ritualName ? `Signed off on ${ritualName}.` : 'Signed off.', 'success');
         await loadLimboStatus();
+        if (onCompleted) {
+            closeModal();
+            await onCompleted();
+            return false;
+        }
 
         const ls = getLimboStatus();
         if (ls && !ls.in_limbo) {
@@ -321,15 +331,15 @@ export async function handleRejectTicketRitual(event, ritualId, issueId, ritualN
 }
 
 export function showCompleteTicketRitualModal(ritualId, issueId, ritualName, artifact = '', onCompleted = null) {
-    document.getElementById('modal-title').textContent = `Complete: ${ritualName}`;
+    document.getElementById('modal-title').textContent = `Sign off: ${ritualName}`;
     document.getElementById('modal-content').innerHTML = `
         <form id="complete-ticket-ritual-form">
             <div class="form-group">
-                <label for="ticket-ritual-note">Note (optional)</label>
+                <label for="ticket-ritual-note">Note</label>
                 <textarea id="ticket-ritual-note" placeholder="Describe what was done..."></textarea>
             </div>
             ${renderArtifactField(artifact)}
-            <button type="submit" class="btn btn-primary">Complete Ritual</button>
+            <button type="submit" class="btn btn-primary">Sign off</button>
         </form>
     `;
     // Attach event listener programmatically to avoid XSS via inline handlers (CHT-166)
@@ -352,7 +362,7 @@ async function handleCompleteTicketRitual(event, ritualId, issueId, artifact = '
 
     try {
         await api.completeTicketGateRitual(ritualId, issueId, note || null, bound);
-        showToast('Ritual completed!', 'success');
+        showToast('Signed off.', 'success');
         closeModal();
         if (onCompleted) await onCompleted();
         else await loadTicketRituals(issueId);

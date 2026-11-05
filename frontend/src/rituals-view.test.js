@@ -190,7 +190,7 @@ describe('rituals-view', () => {
         it('renders completion form and shows modal', async () => {
             await completeGateRitual('r1', 'p1', 'Deploy Check');
 
-            expect(document.getElementById('modal-title').textContent).toBe('Complete: Deploy Check');
+            expect(document.getElementById('modal-title').textContent).toBe('Sign off: Deploy Check');
             expect(document.getElementById('modal-content').innerHTML).toContain('gate-note');
             expect(showModal).toHaveBeenCalled();
         });
@@ -481,7 +481,7 @@ describe('rituals-view', () => {
         it('renders completion form and shows modal', () => {
             showCompleteTicketRitualModal('r1', 'issue-1', 'Deploy Gate');
 
-            expect(document.getElementById('modal-title').textContent).toBe('Complete: Deploy Gate');
+            expect(document.getElementById('modal-title').textContent).toBe('Sign off: Deploy Gate');
             expect(document.getElementById('modal-content').innerHTML).toContain('ticket-ritual-note');
             expect(showModal).toHaveBeenCalled();
         });

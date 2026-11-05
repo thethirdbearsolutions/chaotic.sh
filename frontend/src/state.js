@@ -36,7 +36,6 @@ const initialState = {
     selectedEpicIndex: -1,
 
     // Pending gates for ritual completion
-    pendingGates: [],
 
     // Inbox (CHT-1250): entries for the current view + unread badge count
     // (the count is independent of the loaded page -- it's a team-wide
@@ -177,8 +176,6 @@ export const setSelectedSprintIndex = (index) => setState('selectedSprintIndex',
 export const getSelectedEpicIndex = () => state.selectedEpicIndex;
 export const setSelectedEpicIndex = (index) => setState('selectedEpicIndex', index);
 
-export const getPendingGates = () => state.pendingGates;
-export const setPendingGates = (gates) => setState('pendingGates', gates);
 
 export const getInboxEntries = () => state.inboxEntries;
 export const setInboxEntries = (entries) => setState('inboxEntries', entries);

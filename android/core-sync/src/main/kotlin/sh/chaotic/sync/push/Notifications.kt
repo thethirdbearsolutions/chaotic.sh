@@ -27,7 +27,7 @@ enum class PushChannel(val id: String, val importance: Importance) {
     companion object {
         /** The channel for an inbox entry kind (the server's wire value). */
         fun forKind(kind: String): PushChannel = when (kind) {
-            "gate_pending", "review_requested", "gate_rejected" -> APPROVALS
+            "gate_pending", "review_requested", "gate_rejected", "sprint_ritual" -> APPROVALS
             "mention" -> MENTIONS
             "assignment", "children_closed" -> ASSIGNMENTS
             "agent_status" -> AGENTS

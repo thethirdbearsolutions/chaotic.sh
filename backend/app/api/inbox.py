@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from app.auth.access import Access, is_registrar, reads, scopes_permit, writes
 from app.api.idempotency import IdempotentRoute, idempotent
 from app.api.deps import CurrentPrincipal, CurrentUser
-from app.enums import InboxActionKind, InboxActionNote, InboxEntryKind, InboxEntryState
+from app.enums import ApprovalMode, InboxActionKind, InboxActionNote, InboxEntryKind, InboxEntryState
 from app.schemas.inbox import (
     InboxEntryAction,
     InboxEntryResponse,
@@ -65,9 +65,20 @@ _APPROVE = {
     InboxEntryKind.REVIEW_REQUESTED: ("approve-issue", InboxActionNote.NONE),
 }
 
+# A sprint ritual's entry (CHT-2032) has no issue: the call is the
+# sprint-level one, picked by the ritual's mode now. A gate's note is
+# required when the ritual says so. A sprint ritual cannot be sent back,
+# so there is no reject.
+_SPRINT_APPROVE = {
+    ApprovalMode.GATE: "complete",
+    ApprovalMode.REVIEW: "approve",
+}
+_DECIDABLE = set(_APPROVE) | {InboxEntryKind.SPRINT_RITUAL}
+
 
 def _actions(
     entry: OxydeInboxEntry, state: InboxEntryState, *, can_decide: bool,
+    ritual_mode: tuple[ApprovalMode, bool] | None = None, decide_archived: bool = False,
 ) -> list[InboxEntryAction]:
     """The calls the recipient can make on this entry (CHT-1607). A
     tombstone offers none. Approve and reject appear only on an open gate
@@ -75,13 +86,32 @@ def _actions(
     human who is still an admin of the entry's team, the same check the
     ritual endpoints make. Any of these calls can still fail if the world
     moved since (most usefully the 409 naming who already decided). A
-    resolved entry offers archive only; an archived one nothing."""
+    resolved entry offers archive only; an archived one nothing, except
+    in a listing that asked for archived entries (`decide_archived`)."""
     if state == InboxEntryState.ARCHIVED:
+        # Archived is the recipient putting it away, not a decision: one
+        # still waiting can be decided from the Approvals filter, which
+        # lists it (CHT-2032). Nothing else applies to it, and a sync
+        # tombstone offers nothing.
+        if decide_archived and entry.resolved_at is None:
+            return _decision_actions(entry, can_decide, ritual_mode)
         return []
     if state == InboxEntryState.RESOLVED:
         # GET /inbox no longer lists it (CHT-2031); a syncing device may
         # still hold it, so archive stays possible.
         return [InboxEntryAction(kind=InboxActionKind.ARCHIVE, path=f"/api/inbox/{entry.id}/archive")]
+    actions = _decision_actions(entry, can_decide, ritual_mode)
+    if entry.read_at is None:
+        actions.append(InboxEntryAction(kind=InboxActionKind.MARK_READ, path=f"/api/inbox/{entry.id}/read"))
+    actions.append(InboxEntryAction(kind=InboxActionKind.ARCHIVE, path=f"/api/inbox/{entry.id}/archive"))
+    return actions
+
+
+def _decision_actions(
+    entry: OxydeInboxEntry, can_decide: bool, ritual_mode: tuple[ApprovalMode, bool] | None,
+) -> list[InboxEntryAction]:
+    """Approve and reject, when the entry asks for a decision the
+    recipient may make now."""
     actions = []
     approve = _APPROVE.get(entry.kind)
     if approve and can_decide and entry.ritual_id and entry.issue_id:
@@ -94,14 +124,22 @@ def _actions(
             kind=InboxActionKind.REJECT, path=f"{base}/reject-issue/{entry.issue_id}",
             note=InboxActionNote.REQUIRED,
         ))
-    if entry.read_at is None:
-        actions.append(InboxEntryAction(kind=InboxActionKind.MARK_READ, path=f"/api/inbox/{entry.id}/read"))
-    actions.append(InboxEntryAction(kind=InboxActionKind.ARCHIVE, path=f"/api/inbox/{entry.id}/archive"))
+    mode, note_required = ritual_mode or (None, False)
+    segment = _SPRINT_APPROVE.get(mode) if entry.kind == InboxEntryKind.SPRINT_RITUAL else None
+    if segment and can_decide and entry.ritual_id and entry.project_id:
+        if mode == ApprovalMode.REVIEW:
+            note = InboxActionNote.NONE
+        else:
+            note = InboxActionNote.REQUIRED if note_required else InboxActionNote.OPTIONAL
+        actions.append(InboxEntryAction(
+            kind=InboxActionKind.APPROVE,
+            path=f"/api/rituals/{entry.ritual_id}/{segment}?project_id={entry.project_id}", note=note,
+        ))
     return actions
 
 
 async def _build_responses(
-    entries: list[OxydeInboxEntry], viewer, *, may_write: bool,
+    entries: list[OxydeInboxEntry], viewer, *, may_write: bool, decide_archived: bool = False,
 ) -> list[InboxEntryResponse]:
     """Fill in display fields (issue identifier, document title, source
     user) that aren't stored on the entry itself, and each entry's state
@@ -118,8 +156,9 @@ async def _build_responses(
     if may_write and not viewer.is_agent:
         decide_teams = await inbox_service.admin_team_ids(viewer.id, {
             e.team_id for e in entries
-            if e.kind in _APPROVE and e.recipient_user_id == viewer.id
+            if e.kind in _DECIDABLE and e.recipient_user_id == viewer.id
         })
+    ritual_modes = await inbox_service.sprint_ritual_modes(entries)
 
     def one(entry: OxydeInboxEntry) -> InboxEntryResponse:
         state = _state(entry)
@@ -151,6 +190,8 @@ async def _build_responses(
             actions=_actions(
                 entry, state,
                 can_decide=entry.recipient_user_id == viewer.id and entry.team_id in decide_teams,
+                ritual_mode=ritual_modes.get(entry.ritual_id) if entry.ritual_id else None,
+                decide_archived=decide_archived,
             ) if may_write else [],
         )
 
@@ -171,14 +212,22 @@ async def list_inbox(
     kind: Annotated[list[InboxEntryKind] | None, Query(
         description="Only entries of these kinds (repeat the parameter for several).",
     )] = None,
+    include_archived: Annotated[bool, Query(
+        description="Also list archived decision entries (reviews, gates, sprint rituals) "
+                    "that are still waiting: a decision archived before it was made stays "
+                    "reachable (CHT-2032). Other archived kinds stay out.",
+    )] = False,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[InboxEntryResponse]:
     """List the current user's inbox entries, newest first."""
     entries = await InboxService().list_for_user(
-        current_user.id, team_id=team_id, unread_only=unread, kinds=kind, skip=skip, limit=limit,
+        current_user.id, team_id=team_id, unread_only=unread, kinds=kind,
+        include_archived=include_archived, skip=skip, limit=limit,
     )
-    return await _build_responses(entries, current_user, may_write=_may_write(principal))
+    return await _build_responses(
+        entries, current_user, may_write=_may_write(principal), decide_archived=include_archived,
+    )
 
 
 @router.get("/sync", response_model=InboxSyncResponse)

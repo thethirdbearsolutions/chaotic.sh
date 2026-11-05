@@ -22,7 +22,7 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from oxyde import IntegrityError, execute_raw
+from oxyde import IntegrityError, Q, execute_raw
 
 from app.db.transactions import atomic, on_commit, on_commit_collect
 from app.enums import ActivityType, ApprovalMode, InboxEntryKind, IssueType, TeamRole
@@ -285,6 +285,59 @@ class InboxService:
             created.append(entry)
             await self._broadcast(project.team_id, "created", entry)
         await self._push(created, attested_by_id)
+
+    async def notify_sprint_ritual(
+        self, *, ritual, sprint, project, attestation=None,
+    ) -> None:
+        """A sprint in limbo is waiting on an admin for `ritual` (CHT-2032):
+        a GATE to sign off, or a REVIEW attestation to approve. Fan out an
+        entry to every team admin. For a review the body is the note and
+        the source the attester, as for a ticket review (CHT-2031); for a
+        gate the body is what the ritual asks. No email: email is ticket
+        gate requests and invitations only (CHT-1251).
+
+        One open entry per (recipient, ritual): a project has at most one
+        sprint in limbo, and leaving limbo settles every entry of the
+        project's sprint rituals (``resolve_sprint_rituals``).
+        """
+        admins = await self._team_admins(project.team_id)
+        attester_id = attestation.attested_by if attestation is not None else None
+        if attestation is not None:
+            title = f"Review requested: {ritual.name} for {sprint.name}"
+            body = (attestation.note or "").strip() or None
+        else:
+            title = f"Sign-off needed: {ritual.name} for {sprint.name}"
+            body = ritual.prompt
+        created = []
+        for member in admins:
+            existing = await OxydeInboxEntry.objects.filter(
+                recipient_user_id=member.user_id, kind=InboxEntryKind.SPRINT_RITUAL,
+                ritual_id=ritual.id, resolved_at=None,
+            ).first()
+            if existing is not None:
+                continue
+            entry = await OxydeInboxEntry.objects.create(
+                recipient_user_id=member.user_id,
+                kind=InboxEntryKind.SPRINT_RITUAL,
+                team_id=project.team_id,
+                project_id=project.id,
+                ritual_id=ritual.id,
+                source_user_id=attester_id,
+                title=title,
+                body=body,
+            )
+            created.append(entry)
+            await self._broadcast(project.team_id, "created", entry)
+        await self._push(created, attester_id)
+
+    async def resolve_sprint_rituals(self, project_id: str, ritual_id: str | None = None) -> int:
+        """Settle the open SPRINT_RITUAL entries of a project (CHT-2032):
+        of one ritual when it was approved or signed off, of all of them
+        when the sprint left limbo (it rotated, or limbo was force-cleared)."""
+        filters: dict = {"project_id": project_id, "kind": InboxEntryKind.SPRINT_RITUAL}
+        if ritual_id is not None:
+            filters["ritual_id"] = ritual_id
+        return await self._resolve(filters)
 
     async def notify_gate_rejected(self, *, ritual, issue, project, rejection) -> None:
         """A human rejected a gate request or review attestation (CHT-1606).
@@ -697,6 +750,7 @@ class InboxService:
     # gate goes away.
     _DECISION_KINDS = (
         InboxEntryKind.GATE_PENDING, InboxEntryKind.REVIEW_REQUESTED, InboxEntryKind.GATE_REJECTED,
+        InboxEntryKind.SPRINT_RITUAL,
     )
 
     async def resolve_for_issue(self, issue_id: str, *, decisions_only: bool = False) -> int:
@@ -736,6 +790,8 @@ class InboxService:
             ids = [row["id"] for row in await model.objects.filter(project_id=project_id).values("id").all()]
             for start in range(0, len(ids), self._RESOLVE_CHUNK):
                 unread += await self._resolve({f"{column}__in": ids[start:start + self._RESOLVE_CHUNK]})
+        # A sprint ritual's entry names the project, not an issue (CHT-2032).
+        unread += await self.resolve_sprint_rituals(project_id)
         return unread
 
     _ASK_KINDS = (InboxEntryKind.GATE_PENDING, InboxEntryKind.REVIEW_REQUESTED)
@@ -895,20 +951,46 @@ class InboxService:
         )
         return issues, documents
 
+    async def sprint_ritual_modes(self, entries: list[OxydeInboxEntry]) -> dict:
+        """The approval mode and note_required of each ritual a page's open
+        SPRINT_RITUAL entries name, in one query (CHT-2032): which call
+        approves it, and whether that call takes a note."""
+        from app.oxyde_models.ritual import OxydeRitual
+
+        ids = sorted({
+            e.ritual_id for e in entries
+            if e.kind == InboxEntryKind.SPRINT_RITUAL and e.ritual_id and e.resolved_at is None
+        })
+        if not ids:
+            return {}
+        return {
+            r.id: (r.approval_mode, bool(r.note_required))
+            for r in await OxydeRitual.objects.filter(id__in=ids).all()
+        }
+
     async def list_for_user(
         self, user_id: str, *, team_id: str | None = None,
         unread_only: bool = False, kinds: list[InboxEntryKind] | None = None,
-        skip: int = 0, limit: int = 50,
+        include_archived: bool = False, skip: int = 0, limit: int = 50,
     ) -> list[OxydeInboxEntry]:
         query = OxydeInboxEntry.objects.filter(
             recipient_user_id=user_id,
             team_id__in=await self.current_team_ids(user_id),
-            archived_at=None,  # CHT-1316: archived entries leave the inbox
             # Settled elsewhere (a review approved on the ticket, a gate
             # signed off): nothing is waiting any more, so it leaves too
             # (CHT-2031). Sync still sends it, as a tombstone.
             resolved_at=None,
         )
+        if not include_archived:
+            # CHT-1316: archived entries leave the inbox.
+            query = query.filter(archived_at=None)
+        else:
+            # With include_archived, the decisions still waiting come back
+            # (CHT-2032): the resolved filter above already drops the
+            # settled ones. Other kinds never settle, so they stay out.
+            query = query.filter(
+                Q(archived_at__isnull=True) | Q(kind__in=[k.name for k in self._DECISION_KINDS])
+            )
         if team_id:
             query = query.filter(team_id=team_id)
         if unread_only:

@@ -99,9 +99,9 @@ vi.mock('./issues-view.js', () => ({
     getSelectedLabels: vi.fn(() => []),
     getExcludedLabels: vi.fn(() => []),
 }));
-vi.mock('./gate-approvals.js', () => ({ loadGateApprovals: vi.fn() }));
 vi.mock('./inbox.js', () => ({
     loadInbox: vi.fn(),
+    applyInboxKindFromUrl: vi.fn(),
     toggleInboxEntryElementExpand: vi.fn(),
     collapseInboxExpand: vi.fn(),
     archiveInboxEntryElement: vi.fn(),
@@ -246,6 +246,7 @@ vi.mock('./utils.js', () => ({
 }));
 
 // Import mocked modules so we can assert on them
+import { loadInbox, applyInboxKindFromUrl } from './inbox.js';
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
 import { initFilterBar, loadIssues, loadFiltersFromUrl, populateLabelFilter, updateSprintFilter, showCachedIssuesOrSkeleton, getSelectedLabels, getExcludedLabels } from './issues-view.js';
 import { loadApiKeys } from './api-keys.js';
@@ -260,7 +261,6 @@ import { openSelectPicker } from './select-picker.js';
 import { readSnapshot, clearSnapshot } from './boot-cache.js';
 import { updateUserInfo } from './auth.js';
 import { setCurrentUser, setCurrentDetailIssue, setCurrentDetailSprints, setCurrentProject, getCurrentView } from './state.js';
-import { loadGateApprovals } from './gate-approvals.js';
 import { loadEpics } from './epics.js';
 import { loadBoard } from './board.js';
 import { loadSprints } from './sprints.js';
@@ -323,7 +323,7 @@ describe('inbox keyboard handler wiring (CHT-1513)', () => {
 describe('app.js view registrations', () => {
     it('registers all expected views', () => {
         const expectedViews = [
-            'my-issues', 'approvals', 'issues', 'epics', 'board',
+            'my-issues', 'issues', 'epics', 'board',
             'projects', 'sprints', 'rituals', 'documents', 'people', 'settings',
         ];
         for (const view of expectedViews) {
@@ -476,9 +476,15 @@ describe('app.js view registrations', () => {
         expect(loadAgents).toHaveBeenCalled();
     });
 
-    it('approvals view loads approvals', () => {
-        registeredViews['approvals']();
-        expect(loadGateApprovals).toHaveBeenCalled();
+    it('has no approvals view: the Inbox took it over (CHT-2032)', () => {
+        expect(registeredViews['approvals']).toBeUndefined();
+    });
+
+    it('inbox view takes its type filter from the address first (CHT-2032)', () => {
+        registeredViews['inbox']();
+        expect(applyInboxKindFromUrl).toHaveBeenCalled();
+        expect(applyInboxKindFromUrl.mock.invocationCallOrder[0])
+            .toBeLessThan(loadInbox.mock.invocationCallOrder.at(-1));
     });
 
     it('epics view loads epics', () => {
@@ -734,7 +740,7 @@ describe('app.js command palette registration', () => {
         expect(navCommands.map(c => c.id)).toContain('nav-issues');
         expect(navCommands.map(c => c.id)).toContain('nav-my-issues');
         expect(navCommands.map(c => c.id)).toContain('nav-rituals');
-        expect(navCommands.map(c => c.id)).toContain('nav-approvals');
+        expect(navCommands.map(c => c.id)).not.toContain('nav-approvals');
         expect(navCommands.map(c => c.id)).toContain('nav-settings');
         expect(navCommands.map(c => c.id)).toContain('nav-epics');
     });
