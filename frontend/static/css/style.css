@@ -2469,6 +2469,8 @@ select:focus-visible {
     align-items: center;
     gap: 8px;
     min-width: 200px;
+    /* A live toast now carries an issue title (CHT-2034) */
+    max-width: min(28rem, calc(100vw - 2rem));
 }
 
 .toast-icon {
@@ -2483,6 +2485,19 @@ select:focus-visible {
 /* One line per @mention warning (CHT-1743) */
 .toast-multiline .toast-message {
     white-space: pre-line;
+}
+
+/* Live issue toasts open the issue on click (CHT-2034) */
+.toast-message {
+    overflow-wrap: anywhere;
+}
+
+.toast-clickable .toast-message {
+    cursor: pointer;
+}
+
+.toast-clickable .toast-message:hover {
+    text-decoration: underline;
 }
 
 .toast-close {
@@ -7776,6 +7791,33 @@ body.theme-light .segmented-btn.active {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+}
+
+/* "Reassign back" comment dialog (CHT-2029) */
+.inbox-reassign-form textarea {
+    width: 100%;
+    min-height: 96px;
+    resize: vertical;
+}
+
+.inbox-reassign-form .form-error {
+    font-size: var(--font-sm);
+    color: var(--error-color);
+    margin-top: 4px;
+}
+
+.inbox-reassign-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 1rem;
+}
+
+/* .modal-body .btn makes every modal button full width; these sit in a row. */
+.modal-body .inbox-reassign-actions .btn {
+    width: auto;
+    margin-top: 0;
 }
 
 .inbox-action-btn {
