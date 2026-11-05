@@ -145,7 +145,7 @@ function showReviewApprovalModal(ritualId, issueId, ritualName, ritualPrompt, is
             <div class="gate-approval-ritual">
                 <div class="gate-approval-prompt">${escapeHtml(ritualPrompt)}</div>
                 ${attestedBy ? `<div class="gate-approval-requested">Attested by <strong>${escapeHtml(attestedBy)}</strong>${attestedAt ? ` ${formatRelativeTime(attestedAt)}` : ''}</div>` : ''}
-                ${attestationNote ? `<div class="gate-approval-attestation-note"><strong>Attestation note:</strong><br>${renderMarkdown(attestationNote)}</div>` : ''}
+                ${attestationNote ? `<div class="gate-approval-attestation-note"><strong>Attestation note:</strong><div class="markdown-body">${renderMarkdown(attestationNote)}</div></div>` : ''}
             </div>
             <form id="review-approval-form">
                 <div class="form-group">
@@ -547,7 +547,7 @@ function renderApprovalIssue(approvalIssue) {
             ? `<span class="gate-waiting-info">${waitingLabel}: <strong>${escapeHtml(r.requested_by_name)}</strong>${r.requested_at ? ` (${formatRelativeTime(r.requested_at)})` : ''}</span>`
             : '';
         const attestationNote = isReview && r.attestation_note
-            ? `<div class="gate-attestation-note">${renderMarkdown(r.attestation_note)}</div>`
+            ? `<div class="gate-attestation-note markdown-body">${renderMarkdown(r.attestation_note)}</div>`
             : '';
         const modeLabel = isReview
             ? '<span class="badge badge-review">review</span>'

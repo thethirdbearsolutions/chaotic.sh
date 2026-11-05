@@ -3825,118 +3825,7 @@ input[type="checkbox"] {
     font-size: var(--font-sm);
 }
 
-/* Markdown styling for descriptions (matching comment-content) */
-.description-content code {
-    background: var(--bg-tertiary);
-    padding: 0.2em 0.4em;
-    border-radius: var(--radius-sm);
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-    font-size: 0.9em;
-}
-
-.description-content pre {
-    background: var(--bg-tertiary);
-    padding: 12px;
-    border-radius: var(--radius-md);
-    overflow-x: auto;
-    margin: 8px 0;
-}
-
-.description-content pre code {
-    background: none;
-    padding: 0;
-    font-size: var(--font-base);
-    line-height: 1.4;
-}
-
-.description-content blockquote {
-    border-left: 3px solid var(--accent-color);
-    padding-left: 12px;
-    margin: 8px 0;
-    color: var(--text-secondary);
-}
-
-.description-content ul,
-.description-content ol {
-    margin: 8px 0;
-    padding-left: 24px;
-}
-
-.description-content li {
-    margin: 4px 0;
-    line-height: 1.6;
-}
-
-.description-content ul ul,
-.description-content ul ol,
-.description-content ol ul,
-.description-content ol ol {
-    margin: 2px 0;
-    padding-left: 20px;
-}
-
-.description-content p {
-    margin: 0 0 8px 0;
-}
-
-.description-content p:last-child {
-    margin-bottom: 0;
-}
-
-.description-content a {
-    color: var(--accent-color);
-    text-decoration: none;
-}
-
-.description-content a:hover {
-    text-decoration: underline;
-}
-
-.description-content strong {
-    font-weight: 600;
-}
-
-.description-content em {
-    font-style: italic;
-}
-
-.description-content h1,
-.description-content h2,
-.description-content h3,
-.description-content h4 {
-    margin: 12px 0 8px 0;
-    font-weight: 600;
-    line-height: 1.3;
-}
-
-.description-content h1 { font-size: 1.3em; }
-.description-content h2 { font-size: 1.2em; }
-.description-content h3 { font-size: 1.1em; }
-.description-content h4 { font-size: 1em; }
-
-.description-content hr {
-    border: none;
-    border-top: 1px solid var(--border-color);
-    margin: 12px 0;
-}
-
-.description-content table {
-    border-collapse: collapse;
-    width: 100%;
-    margin: 8px 0;
-}
-
-.description-content th,
-.description-content td {
-    border: 1px solid var(--border-color);
-    padding: 6px 12px;
-    text-align: left;
-}
-
-.description-content th {
-    background: var(--bg-tertiary);
-    font-weight: 600;
-}
+/* Prose for rendered markdown lives in "Prose" under Shared components (CHT-2047). */
 
 .description-inline-editor {
     display: flex;
@@ -4386,119 +4275,6 @@ input[type="checkbox"] {
     font-size: var(--font-md);
     line-height: 1.5;
     color: var(--text-primary);
-}
-
-/* Markdown styling for comments */
-.comment-content code {
-    background: var(--bg-tertiary);
-    padding: 0.2em 0.4em;
-    border-radius: var(--radius-sm);
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-    font-size: 0.9em;
-}
-
-.comment-content pre {
-    background: var(--bg-tertiary);
-    padding: 12px;
-    border-radius: var(--radius-md);
-    overflow-x: auto;
-    margin: 8px 0;
-}
-
-.comment-content pre code {
-    background: none;
-    padding: 0;
-    font-size: var(--font-base);
-    line-height: 1.4;
-}
-
-.comment-content blockquote {
-    border-left: 3px solid var(--accent-color);
-    padding-left: 12px;
-    margin: 8px 0;
-    color: var(--text-secondary);
-}
-
-.comment-content ul,
-.comment-content ol {
-    margin: 8px 0;
-    padding-left: 24px;
-}
-
-.comment-content li {
-    margin: 4px 0;
-    line-height: 1.6;
-}
-
-.comment-content ul ul,
-.comment-content ul ol,
-.comment-content ol ul,
-.comment-content ol ol {
-    margin: 2px 0;
-    padding-left: 20px;
-}
-
-.comment-content p {
-    margin: 0 0 8px 0;
-}
-
-.comment-content p:last-child {
-    margin-bottom: 0;
-}
-
-.comment-content a {
-    color: var(--accent-color);
-    text-decoration: none;
-}
-
-.comment-content a:hover {
-    text-decoration: underline;
-}
-
-.comment-content strong {
-    font-weight: 600;
-}
-
-.comment-content em {
-    font-style: italic;
-}
-
-.comment-content h1,
-.comment-content h2,
-.comment-content h3,
-.comment-content h4 {
-    margin: 12px 0 8px 0;
-    font-weight: 600;
-    line-height: 1.3;
-}
-
-.comment-content h1 { font-size: 1.3em; }
-.comment-content h2 { font-size: 1.2em; }
-.comment-content h3 { font-size: 1.1em; }
-.comment-content h4 { font-size: 1em; }
-
-.comment-content hr {
-    border: none;
-    border-top: 1px solid var(--border-color);
-    margin: 12px 0;
-}
-
-.comment-content table {
-    border-collapse: collapse;
-    margin: 8px 0;
-    font-size: var(--font-base);
-}
-
-.comment-content th,
-.comment-content td {
-    border: 1px solid var(--border-color);
-    padding: 6px 10px;
-    text-align: left;
-}
-
-.comment-content th {
-    background: var(--bg-tertiary);
-    font-weight: 600;
 }
 
 /* Attestation comments styling */
@@ -9960,7 +9736,6 @@ body.theme-light .picker-popover {
     .person-profile { flex-direction: column; align-items: flex-start; gap: var(--space-lg); }
     .people-grid { grid-template-columns: 1fr; }
 }
-.person-bio ul, .person-bio ol { padding-left: 1.25rem; }
 .person-work { margin-top: var(--space-2xl); max-width: 72ch; }
 .person-work h3 { margin: 0 0 var(--space-lg); }
 .person-issues { display: flex; flex-direction: column; border: 1px solid var(--border-color); border-radius: var(--radius-lg); overflow: hidden; }
@@ -10087,7 +9862,6 @@ body.theme-light {
     margin: 0 0 14px;
 }
 
-.ticket-gate-asks p { margin: 0; }
 
 .ticket-gate-attestation {
     background: var(--bg-secondary);
@@ -10581,6 +10355,8 @@ body.theme-light {
     border-bottom: 1px solid var(--border-color);
 }
 .list-row-2line:hover { background: var(--row-hover); }
+.list-row-2line[href],
+.list-row-2line[data-action] { cursor: pointer; }
 .list-row-title {
     color: var(--text-primary);
     font-size: var(--font-base);
@@ -10614,3 +10390,97 @@ body.theme-light {
     cursor: pointer;
 }
 .list-row-action:hover { text-decoration: underline; }
+
+/* Prose (CHT-2047): every rendered-markdown container carries .markdown-body
+   and gets this one style, so attestation notes, ritual prompts, comments,
+   descriptions and bios read the same. Sizes are em-based so a container
+   sets the scale (comments 14px, documents 16px); the measure keeps lines
+   readable on wide screens. :where() keeps it at zero specificity, so a
+   container can still tune it (documents use a larger size and 65ch). Before this only documents had list padding and
+   paragraph spacing, so elsewhere lists lost their bullets under the reset. */
+:where(.markdown-body) {
+    line-height: 1.6;
+    overflow-wrap: break-word;
+}
+/* The measure goes on the blocks, not the container, so a container with
+   its own box (editor preview, approval note) or click target (description)
+   keeps its full width. */
+:where(.markdown-body) > * { max-width: 72ch; }
+/* marked already turns newlines into <br> and blocks; pre-wrap on a
+   container doubled every gap. */
+.markdown-body.comment-content,
+.markdown-body.attestation-note-content { white-space: normal; }
+:where(.markdown-body) > :first-child { margin-top: 0; }
+:where(.markdown-body) > :last-child { margin-bottom: 0; }
+:where(.markdown-body) p,
+:where(.markdown-body) ul,
+:where(.markdown-body) ol,
+:where(.markdown-body) pre,
+:where(.markdown-body) blockquote,
+:where(.markdown-body) table { margin: 0 0 0.75em; }
+:where(.markdown-body) ul,
+:where(.markdown-body) ol { padding-left: 1.5em; }
+:where(.markdown-body) ul { list-style: disc; }
+:where(.markdown-body) ol { list-style: decimal; }
+:where(.markdown-body) ul ul { list-style: circle; }
+:where(.markdown-body) li { margin: 0.2em 0; }
+:where(.markdown-body) li > p { margin-bottom: 0.25em; }
+:where(.markdown-body) li > ul,
+:where(.markdown-body) li > ol { margin: 0.2em 0 0; }
+:where(.markdown-body) h1,
+:where(.markdown-body) h2,
+:where(.markdown-body) h3,
+:where(.markdown-body) h4,
+:where(.markdown-body) h5,
+:where(.markdown-body) h6 {
+    margin: 1.2em 0 0.4em;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--text-primary);
+}
+:where(.markdown-body) h1 { font-size: 1.3em; }
+:where(.markdown-body) h2 { font-size: 1.2em; }
+:where(.markdown-body) h3 { font-size: 1.1em; }
+:where(.markdown-body) h4,
+:where(.markdown-body) h5,
+:where(.markdown-body) h6 { font-size: 1em; }
+:where(.markdown-body) strong { font-weight: 600; color: var(--text-primary); }
+:where(.markdown-body) :where(a, blockquote) strong { color: inherit; }
+:where(.markdown-body) em { font-style: italic; }
+:where(.markdown-body) a { color: var(--accent-fg); text-decoration: none; }
+:where(.markdown-body) a:hover { text-decoration: underline; }
+:where(.markdown-body) code {
+    font-family: var(--font-mono);
+    font-size: max(0.85em, 11px);
+    background: var(--bg-tertiary);
+    padding: 0.1em 0.35em;
+    border-radius: var(--radius-sm);
+}
+:where(.markdown-body) pre {
+    background: var(--bg-tertiary);
+    padding: var(--space-lg);
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+    line-height: 1.45;
+    font-size: max(0.85em, 11px);
+}
+:where(.markdown-body) pre code { background: none; padding: 0; font-size: inherit; }
+:where(.markdown-body) blockquote {
+    border-left: 3px solid var(--border-color);
+    padding-left: var(--space-lg);
+    color: var(--text-secondary);
+}
+:where(.markdown-body) hr {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 1.2em 0;
+}
+:where(.markdown-body) table { border-collapse: collapse; font-size: 0.95em; }
+:where(.markdown-body) th,
+:where(.markdown-body) td {
+    border: 1px solid var(--border-color);
+    padding: 0.35em 0.75em;
+    text-align: left;
+}
+:where(.markdown-body) th { background: var(--bg-tertiary); font-weight: 600; }
+:where(.markdown-body) img { max-width: 100%; height: auto; }
