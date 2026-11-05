@@ -39,6 +39,7 @@ from .docs import (
 )
 from .inbox import inbox_list, inbox_mark_all_read, inbox_mark_read
 from .issues import (
+    issue_attach,
     issue_block,
     issue_comment,
     issue_create,
@@ -67,7 +68,7 @@ from .sprints import (
 )
 
 ALL_TOOLS = (
-    issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
+    issue_list, issue_view, issue_create, issue_update, issue_comment, issue_attach, issue_start,
     issue_ready, issue_relations, issue_block, issue_unblock,
     label_list, issue_label, issue_revisions, issue_revision,
     doc_list, doc_view, doc_create, doc_update,

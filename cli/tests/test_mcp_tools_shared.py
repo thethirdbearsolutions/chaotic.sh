@@ -16,6 +16,7 @@ import asyncio
 import functools
 import inspect
 import json
+import os
 import pathlib
 import re
 from contextlib import asynccontextmanager
@@ -79,6 +80,8 @@ class FakeBackend:
         ]
         self.list_result: list = []
         self.query_total = 0
+        self.local_files: dict[str, bytes] = {}
+        self.uploaded: list[dict] = []
         self.roster = [
             {"user_id": "user-me", "name": "Ada", "mention_handle": "ada", "pronouns": "she/her",
              "tagline": "Founder", "bio": "Long bio.", "is_agent": False, "role": "owner",
@@ -192,6 +195,32 @@ class FakeBackend:
     async def list_sub_issues(self, issue_id, limit):
         self._rec("list_sub_issues", issue_id, limit)
         return [self.issues["CHT-2"]]
+
+    # attachments (CHT-1996)
+    async def read_local_file(self, path):
+        self._rec("read_local_file", path)
+        if path not in self.local_files:
+            raise ToolInputError(f"No such file: {path}")
+        return self.local_files[path], path.rsplit("/", 1)[-1]
+
+    async def upload_attachment(self, issue_id, data, filename):
+        self._rec("upload_attachment", issue_id, data, filename)
+        n = len(self.uploaded) + 1
+        row = {
+            "id": f"att-{n}", "issue_id": issue_id, "filename": filename or "attachment",
+            "content_type": "image/png" if data.startswith(b"\x89PNG") else "text/plain",
+            "size": len(data), "url": f"/api/attachments/att-{n}/content",
+        }
+        self.uploaded.append(row)
+        return dict(row)
+
+    async def list_attachments(self, issue_id):
+        self._rec("list_attachments", issue_id)
+        return [dict(r) for r in self.uploaded]
+
+    async def delete_attachment(self, attachment_id):
+        self._rec("delete_attachment", attachment_id)
+        self.uploaded = [r for r in self.uploaded if r["id"] != attachment_id]
 
     async def list_relations(self, issue_id):
         self._rec("list_relations", issue_id)
@@ -1754,3 +1783,349 @@ async def test_team_member_me_is_the_caller_even_beside_a_teammate_named_me():
     entry = await _tools(backend)["team_member"](who="me")
 
     assert entry["user_id"] == "user-me"
+
+
+# ---------------------------------------------------------------------------
+# attachments (CHT-1996)
+# ---------------------------------------------------------------------------
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+
+class _FlakyUploads(FakeBackend):
+    """Uploads fail from the `fail_at`th on, with `error`."""
+
+    def __init__(self, fail_at, error, **kw):
+        super().__init__(**kw)
+        self.fail_at, self.error = fail_at, error
+
+    async def upload_attachment(self, issue_id, data, filename):
+        if len(self.uploaded) + 1 >= self.fail_at:
+            self._rec("upload_attachment", issue_id, data, filename)
+            raise self.error
+        return await super().upload_attachment(issue_id, data, filename)
+
+
+async def test_issue_attach_reads_a_path_on_the_stdio_side():
+    backend = FakeBackend()
+    backend.local_files["/tmp/shot.png"] = PNG
+
+    result = await _tools(backend)["issue_attach"](identifier="CHT-1", path="/tmp/shot.png")
+
+    assert result["filename"] == "shot.png" and result["content_type"] == "image/png"
+    assert result["markdown"] == "![shot.png](/api/attachments/att-1/content)"
+    assert ("upload_attachment", ("i1", PNG, "shot.png"), {}) in backend.calls
+
+
+async def test_issue_attach_a_filename_overrides_the_paths():
+    backend = FakeBackend()
+    backend.local_files["/tmp/x"] = PNG
+    result = await _tools(backend)["issue_attach"](identifier="CHT-1", path="/tmp/x", filename="after.png")
+    assert result["filename"] == "after.png"
+
+
+async def test_issue_attach_needs_exactly_one_form():
+    backend = FakeBackend()
+    tools = _tools(backend)
+    for kwargs in ({}, {"path": "/a", "content_base64": "aGk="}):
+        result = await tools["issue_attach"](identifier="CHT-1", **kwargs)
+        assert result["error"]["error_code"] == "tool_input"
+    assert backend.calls_to("upload_attachment") == []
+
+
+async def test_comment_attach_reads_every_file_before_sending_any():
+    backend = FakeBackend()
+    backend.local_files["/a.png"] = PNG
+
+    result = await _tools(backend)["issue_comment"](
+        identifier="CHT-1", content="x", attach=[{"path": "/a.png"}, {"path": "/missing.png"}],
+    )
+
+    assert result["error"]["error_code"] == "tool_input"
+    assert "No such file: /missing.png" in result["error"]["message"]
+    assert backend.calls_to("upload_attachment") == []
+    assert backend.calls_to("create_comment") == []
+
+
+async def test_comment_attach_links_each_file():
+    backend = FakeBackend()
+    backend.local_files["/a.png"] = PNG
+
+    result = await _tools(backend)["issue_comment"](
+        identifier="CHT-1", content="Fixed",
+        attach=[{"path": "/a.png"}, {"content_base64": "aGk=", "filename": "n.txt"}],
+    )
+
+    assert result["content"] == (
+        "Fixed\n\n![a.png](/api/attachments/att-1/content)\n[n.txt](/api/attachments/att-2/content)"
+    )
+    assert [a["id"] for a in result["attachments"]] == ["att-1", "att-2"]
+
+
+async def test_comment_attach_rejects_an_unknown_key_in_a_file():
+    result = await _tools(FakeBackend())["issue_comment"](identifier="CHT-1", content="x", attach=[{"file": "/a"}])
+    assert result["error"]["error_code"] == "tool_input"
+
+
+async def test_a_refused_upload_removes_the_earlier_ones_and_keeps_the_servers_code():
+    refused = BackendError("A file may be at most 10 MiB.", 413,
+                           {"error_code": "attachment_too_large", "message": "A file may be at most 10 MiB."})
+    backend = _FlakyUploads(2, refused)
+    backend.local_files.update({"/a.png": PNG, "/b.png": PNG})
+
+    result = await _tools(backend)["issue_comment"](
+        identifier="CHT-1", content="x", attach=[{"path": "/a.png"}, {"path": "/b.png"}],
+    )
+
+    error = result["error"]
+    assert error["error_code"] == "attachment_too_large" and error["http_status"] == 413
+    assert error["message"] == (
+        "Could not attach b.png, so the comment was not posted: A file may be at most 10 MiB "
+        "(the 1 file(s) already uploaded were removed again)."
+    )
+    assert backend.calls_to("delete_attachment") == [(("att-1",), {})]
+    assert backend.calls_to("create_comment") == []
+
+
+async def test_an_upload_with_no_answer_may_have_been_stored():
+    unknown = BackendError("No answer", None, {"error_code": "write_outcome_unknown", "message": "No answer."})
+    backend = _FlakyUploads(1, unknown)
+    backend.local_files["/a.png"] = PNG
+
+    result = await _tools(backend)["issue_comment"](identifier="CHT-1", content="x", attach=[{"path": "/a.png"}])
+
+    assert result["error"]["error_code"] == "write_outcome_unknown"
+    assert "a.png itself may have been stored" in result["error"]["message"]
+
+
+async def test_a_connection_refused_upload_was_not_stored():
+    backend = _FlakyUploads(2, TransportError("Could not connect", "connect_error"))
+    backend.local_files.update({"/a.png": PNG, "/b.png": PNG})
+
+    result = await _tools(backend)["issue_comment"](
+        identifier="CHT-1", content="x", attach=[{"path": "/a.png"}, {"path": "/b.png"}],
+    )
+
+    assert result["error"]["error_code"] == "connect_error"
+    assert "may have been stored" not in result["error"]["message"]
+    assert "removed again" in result["error"]["message"]
+
+
+async def test_a_refused_comment_removes_its_files():
+    backend = FakeBackend(fail_on={"create_comment": BackendError("arrears", 409, {"error_code": "sprint_in_arrears"})})
+    backend.local_files["/a.png"] = PNG
+
+    result = await _tools(backend)["issue_comment"](identifier="CHT-1", content="x", attach=[{"path": "/a.png"}])
+
+    assert result["error"]["error_code"] == "sprint_in_arrears"
+    assert result["error"]["message"].startswith("The comment was not posted: arrears")
+    assert backend.uploaded == []
+
+
+async def test_a_comment_with_no_answer_keeps_its_files():
+    unknown = BackendError("No answer", None, {"error_code": "write_outcome_unknown", "message": "No answer."})
+    backend = FakeBackend(fail_on={"create_comment": unknown})
+    backend.local_files["/a.png"] = PNG
+
+    result = await _tools(backend)["issue_comment"](identifier="CHT-1", content="x", attach=[{"path": "/a.png"}])
+
+    assert "may or may not have been posted" in result["error"]["message"]
+    assert "a.png (att-1)" in result["error"]["message"]
+    assert backend.calls_to("delete_attachment") == []
+
+
+async def test_a_file_that_cannot_be_removed_is_named():
+    class Stuck(_FlakyUploads):
+        async def delete_attachment(self, attachment_id):
+            raise BackendError("boom", 500, "boom")
+
+    backend = Stuck(2, BackendError("nope", 415, {"error_code": "attachment_type_not_allowed"}))
+    backend.local_files.update({"/a.png": PNG, "/b.png": PNG})
+
+    result = await _tools(backend)["issue_comment"](
+        identifier="CHT-1", content="x", attach=[{"path": "/a.png"}, {"path": "/b.png"}],
+    )
+
+    assert "could not be removed and are still on the issue: a.png (att-1)" in result["error"]["message"]
+
+
+async def test_issue_view_lists_attachments_and_tolerates_an_old_server():
+    backend = FakeBackend()
+    backend.uploaded.append({"id": "att-1"})
+    assert (await _tools(backend)["issue_view"](identifier="CHT-1"))["attachments"] == [{"id": "att-1"}]
+
+    for status in (404, 405):
+        old = FakeBackend(fail_on={"list_attachments": BackendError("Not Found", status, "Not Found")})
+        assert (await _tools(old)["issue_view"](identifier="CHT-1"))["attachments"] is None
+
+
+async def test_issue_view_reports_a_real_attachments_failure():
+    broken = FakeBackend(fail_on={"list_attachments": BackendError("Forbidden", 403, "Forbidden")})
+
+    result = await _tools(broken)["issue_view"](identifier="CHT-1")
+
+    assert result["error"]["message"] == "Forbidden"
+
+
+@pytest.fixture
+def stdio_cwd(tmp_path, monkeypatch):
+    """A project root as the working directory, and this CLI's home
+    somewhere else, as Claude Code launches the stdio server."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("CHAOTIC_HOME", str(tmp_path / "chaotic-home"))
+    monkeypatch.delenv("CHAOTIC_MCP_ATTACH_TEXT", raising=False)
+    return root
+
+
+async def test_the_stdio_backend_reads_a_local_file_and_refuses_a_missing_one(stdio_cwd):
+    from cli.mcp_backend import RestBackend
+
+    path = stdio_cwd / "a.png"
+    path.write_bytes(PNG)
+    backend = RestBackend()
+    assert await backend.read_local_file(str(path)) == (PNG, "a.png")
+    assert await backend.read_local_file("a.png") == (PNG, "a.png")
+    with pytest.raises(ToolInputError, match="No such file"):
+        await backend.read_local_file(str(stdio_cwd / "nope"))
+    with pytest.raises(ToolInputError, match="Not a regular file"):
+        await backend.read_local_file(str(stdio_cwd))
+
+
+@pytest.mark.parametrize("name", ["~/.ssh/id_rsa", "/home/u/.chaotic/config.json", "/srv/app/.env", "/a/.git/config"])
+async def test_the_stdio_backend_will_not_read_hidden_files(name, stdio_cwd):
+    from cli.mcp_backend import RestBackend
+
+    with pytest.raises(ToolInputError, match="hidden"):
+        await RestBackend().read_local_file(name)
+
+
+@pytest.mark.parametrize("name", [".git/config", ".claude/settings.local.json", ".claude/worktrees/w1/.env",
+                                  ".claude/worktrees/w1/.git", ".claude/worktrees/w1/.git/config"])
+async def test_hidden_files_under_the_working_directory_are_refused(name, stdio_cwd):
+    from cli.mcp_backend import RestBackend
+
+    secret = stdio_cwd / name
+    secret.parent.mkdir(parents=True, exist_ok=True)
+    secret.write_bytes(PNG)  # an image's bytes, so only the path refuses it
+
+    with pytest.raises(ToolInputError, match="hidden"):
+        await RestBackend().read_local_file(name)
+
+
+@pytest.mark.parametrize("cwd", ["repo", "repo/.claude/worktrees/w1"])
+async def test_an_agent_worktree_is_read(cwd, stdio_cwd, monkeypatch):
+    from cli.mcp_backend import RestBackend
+
+    shot = stdio_cwd / ".claude" / "worktrees" / "w1" / "out" / "shot.png"
+    shot.parent.mkdir(parents=True)
+    shot.write_bytes(PNG)
+    monkeypatch.chdir(stdio_cwd.parent / cwd)
+
+    assert await RestBackend().read_local_file(str(shot)) == (PNG, "shot.png")
+
+
+async def test_this_clis_own_home_is_refused_whatever_its_name(stdio_cwd, tmp_path):
+    from cli.mcp_backend import RestBackend
+
+    home = tmp_path / "chaotic-home"
+    home.mkdir()
+    (home / "config.json").write_bytes(PNG)
+
+    with pytest.raises(ToolInputError, match="own configuration"):
+        await RestBackend().read_local_file(str(home / "config.json"))
+
+
+async def test_text_is_refused_unless_the_user_opts_in(stdio_cwd, monkeypatch):
+    from cli.mcp_backend import RestBackend
+
+    (stdio_cwd / "terraform.tfstate").write_text('{"secret": "x"}')
+    (stdio_cwd / "doc.pdf").write_bytes(b"%PDF-1.7 ...")
+
+    with pytest.raises(ToolInputError, match="CHAOTIC_MCP_ATTACH_TEXT=1"):
+        await RestBackend().read_local_file("terraform.tfstate")
+    assert (await RestBackend().read_local_file("doc.pdf"))[1] == "doc.pdf"
+    monkeypatch.setenv("CHAOTIC_MCP_ATTACH_TEXT", "1")
+    assert await RestBackend().read_local_file("terraform.tfstate") == (b'{"secret": "x"}', "terraform.tfstate")
+
+
+async def test_the_stdio_backend_follows_a_link_before_deciding(stdio_cwd):
+    from cli.mcp_backend import RestBackend
+
+    secret_dir = stdio_cwd / ".secrets"
+    secret_dir.mkdir()
+    (secret_dir / "key.png").write_bytes(PNG)
+    link = stdio_cwd / "innocent.png"
+    link.symlink_to(secret_dir / "key.png")
+
+    with pytest.raises(ToolInputError, match="hidden"):
+        await RestBackend().read_local_file(str(link))
+
+
+async def test_a_link_to_an_allowed_file_is_read_as_its_target(stdio_cwd):
+    from cli.mcp_backend import RestBackend
+
+    (stdio_cwd / "real.png").write_bytes(PNG)
+    (stdio_cwd / "alias.png").symlink_to(stdio_cwd / "real.png")
+
+    assert await RestBackend().read_local_file("alias.png") == (PNG, "alias.png")
+
+
+async def test_a_link_swapped_in_after_the_check_is_not_followed(stdio_cwd, monkeypatch):
+    """The checked path is opened with O_NOFOLLOW: a symbolic link put in
+    its place between the check and the open is refused, not read."""
+    from cli import mcp_backend
+    from cli.mcp_backend import RestBackend
+
+    target = stdio_cwd / "shot.png"
+    target.write_bytes(PNG)
+    secret = stdio_cwd / ".secret.png"
+    secret.write_bytes(PNG + b"secret")
+    real = mcp_backend.refused_local_path
+
+    def check_then_swap(path):
+        answer = real(path)
+        target.unlink()
+        target.symlink_to(secret)
+        return answer
+
+    monkeypatch.setattr(mcp_backend, "refused_local_path", check_then_swap)
+
+    with pytest.raises(ToolInputError, match="Cannot read"):
+        await RestBackend().read_local_file(str(target))
+
+
+def test_the_cli_reader_checks_the_open_file(tmp_path):
+    """A FIFO is refused without blocking, from the opened handle."""
+    from chaotic_mcp_tools.attachments import read_local_file
+
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    with pytest.raises(ToolInputError, match="Not a regular file"):
+        read_local_file(str(fifo))
+
+
+async def test_comment_attach_undoes_its_uploads_when_cancelled():
+    """A cancellation between uploads (the client gave up on the call)
+    still deletes what was uploaded, and the comment is not posted."""
+    backend = FakeBackend()
+    real = backend.upload_attachment
+    calls = []
+
+    async def upload(issue_id, data, filename):
+        calls.append(filename)
+        if len(calls) == 2:
+            raise asyncio.CancelledError()
+        return await real(issue_id, data, filename)
+
+    backend.upload_attachment = upload
+
+    with pytest.raises(asyncio.CancelledError):
+        await _tools(backend)["issue_comment"](
+            identifier="CHT-1", content="x",
+            attach=[{"content_base64": "aGk=", "filename": "a.txt"}, {"content_base64": "aGk=", "filename": "b.txt"}],
+        )
+
+    assert [name for name, *_ in backend.calls if name == "delete_attachment"] == ["delete_attachment"]
+    assert not [name for name, *_ in backend.calls if name == "create_comment"]

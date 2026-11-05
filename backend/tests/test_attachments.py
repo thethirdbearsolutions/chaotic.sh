@@ -4,6 +4,7 @@ Out-of-scope callers are probed in test_out_of_scope_is_not_found.py
 (ROUTES); this module covers what is stored, how it is served, and who
 may delete it.
 """
+import base64
 import hashlib
 import os
 from urllib.parse import quote
@@ -19,7 +20,13 @@ from app.oxyde_models.issue import OxydeIssueComment
 from app.oxyde_models.team import OxydeTeamMember
 from app.schemas.agent import AgentCreate
 from app.services.agent_service import AgentService
-from app.services.attachment_service import BlobStore, clean_filename
+from app.services.attachment_service import (
+    ORPHAN_GRACE_SECONDS,
+    STALE_PART_SECONDS,
+    AttachmentService,
+    BlobStore,
+    clean_filename,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -663,3 +670,315 @@ class TestIdempotency:
         assert refused.status_code == 411
         assert refused.json()["detail"]["error_code"] == "length_required"
         assert await OxydeIdempotencyRecord.objects.count() == 0
+
+
+
+def _age(path, seconds):
+    """Date ``path`` back by ``seconds``."""
+    stamp = path.stat().st_mtime - seconds
+    os.utime(path, (stamp, stamp))
+
+
+class TestSweep:
+    """The orphan sweep (design answer 3B): a blob no row names goes
+    once it is 30 days old; stale upload files go after a day."""
+
+    async def _orphan(self, client, auth_headers, test_issue, data=PNG):
+        uploaded = (await _upload(client, auth_headers, test_issue.id, data)).json()
+        assert (await client.delete(f"/api/attachments/{uploaded['id']}", headers=auth_headers)).status_code == 204
+        return BlobStore().path_for(uploaded["sha256"])
+
+    async def test_an_old_orphan_is_deleted(self, client, auth_headers, test_issue):
+        """Orphaned more than 30 days ago: the delete re-dated the blob,
+        and the 30 days since then have passed."""
+        path = await self._orphan(client, auth_headers, test_issue)
+        _age(path, ORPHAN_GRACE_SECONDS + 60)
+
+        result = await AttachmentService().sweep_orphans()
+
+        assert not path.exists()
+        assert result.blobs_deleted == 1 and result.bytes_freed == len(PNG)
+        assert result.deleted == [path.name]
+
+    async def test_a_recent_orphan_is_kept(self, client, auth_headers, test_issue):
+        path = await self._orphan(client, auth_headers, test_issue)
+        _age(path, ORPHAN_GRACE_SECONDS - 3600)
+
+        result = await AttachmentService().sweep_orphans()
+
+        assert path.exists() and result.blobs_deleted == 0
+
+    @pytest.mark.parametrize("delete", ["attachment", "issue", "project", "team"])
+    async def test_an_old_upload_orphaned_now_is_kept(self, client, auth_headers, test_issue, test_project,
+                                                      test_team, delete):
+        """The grace runs from the delete that orphaned the blob, not from
+        the upload: a restore of last night's database still finds it."""
+        uploaded = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
+        path = BlobStore().path_for(uploaded["sha256"])
+        _age(path, ORPHAN_GRACE_SECONDS * 2)
+        url = {
+            "attachment": f"/api/attachments/{uploaded['id']}",
+            "issue": f"/api/issues/{test_issue.id}",
+            "project": f"/api/projects/{test_project.id}",
+            "team": f"/api/teams/{test_team.id}",
+        }[delete]
+
+        assert (await client.delete(url, headers=auth_headers)).status_code == 204
+        assert await OxydeAttachment.objects.count() == 0
+        result = await AttachmentService().sweep_orphans()
+
+        assert path.exists() and result.blobs_deleted == 0
+        later = await AttachmentService().sweep_orphans(now=os.stat(path).st_mtime + ORPHAN_GRACE_SECONDS + 60)
+        assert not path.exists() and later.blobs_deleted == 1
+
+    async def test_release_takes_exactly_one_scope(self, db):
+        with pytest.raises(ValueError):
+            await AttachmentService().release()
+        with pytest.raises(ValueError):
+            await AttachmentService().release(issue_id="a", project_id="b")
+
+    async def test_releasing_a_row_whose_blob_is_gone_is_harmless(self, client, auth_headers, test_issue):
+        uploaded = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
+        BlobStore().path_for(uploaded["sha256"]).unlink()
+
+        assert (await client.delete(f"/api/attachments/{uploaded['id']}", headers=auth_headers)).status_code == 204
+
+    async def test_an_old_blob_a_row_names_is_kept(self, client, auth_headers, test_issue):
+        uploaded = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
+        path = BlobStore().path_for(uploaded["sha256"])
+        _age(path, ORPHAN_GRACE_SECONDS * 3)
+
+        result = await AttachmentService().sweep_orphans()
+
+        assert path.exists() and result.blobs_deleted == 0
+        assert (await client.get(uploaded["url"], headers=auth_headers)).status_code == 200
+
+    async def test_reuse_re_dates_an_orphan_so_the_sweep_keeps_it(self, client, auth_headers, test_issue):
+        path = await self._orphan(client, auth_headers, test_issue)
+        _age(path, ORPHAN_GRACE_SECONDS + 60)
+        again = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
+        assert (await client.delete(f"/api/attachments/{again['id']}", headers=auth_headers)).status_code == 204
+
+        result = await AttachmentService().sweep_orphans()
+
+        assert path.exists() and result.blobs_deleted == 0
+
+    async def test_a_row_added_after_the_first_pass_keeps_the_blob(self, client, auth_headers, test_issue, monkeypatch):
+        """The locked second pass asks the table again: an upload that
+        named the blob since the unlocked first pass keeps it."""
+        path = await self._orphan(client, auth_headers, test_issue)
+        _age(path, ORPHAN_GRACE_SECONDS + 60)
+        service = AttachmentService()
+        answers = iter([set(), {path.name}])
+
+        async def referenced(shas):
+            return next(answers)
+
+        monkeypatch.setattr(service, "_referenced", referenced)
+
+        result = await service.sweep_orphans()
+
+        assert path.exists() and result.blobs_deleted == 0
+
+    async def test_a_blob_re_dated_after_the_first_pass_is_kept(self, client, auth_headers, test_issue, monkeypatch):
+        """The age is read again after the locked reference check: a
+        reuse that re-dated the blob since the scan keeps it."""
+        path = await self._orphan(client, auth_headers, test_issue)
+        _age(path, ORPHAN_GRACE_SECONDS + 60)
+        service = AttachmentService()
+        real = service._referenced
+        calls = []
+
+        async def referenced(shas):
+            calls.append(shas)
+            if len(calls) == 2:
+                os.utime(path)  # what an upload's commit does to a blob it reuses
+            return await real(shas)
+
+        monkeypatch.setattr(service, "_referenced", referenced)
+
+        result = await service.sweep_orphans()
+
+        assert len(calls) == 2
+        assert path.exists() and result.blobs_deleted == 0
+
+    async def test_stale_upload_files_are_deleted(self, db):
+        tmp = BlobStore().root / "tmp"
+        tmp.mkdir(parents=True, exist_ok=True)
+        stale, fresh, other = tmp / "a.part", tmp / "b.part", tmp / "c.keep"
+        for path in (stale, fresh, other):
+            path.write_bytes(b"x")
+        _age(stale, STALE_PART_SECONDS + 60)
+        _age(other, STALE_PART_SECONDS + 60)
+
+        result = await AttachmentService().sweep_orphans()
+
+        assert result.parts_deleted == 1
+        assert not stale.exists() and fresh.exists() and other.exists()
+
+    async def test_files_not_named_like_blobs_are_left_alone(self, db):
+        root = BlobStore().root
+        stray = [root / "ab" / "notes.txt", root / "zz" / ("z" * 64), root / "ab" / ("cd" + "0" * 62)]
+        for path in stray:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x")
+            _age(path, ORPHAN_GRACE_SECONDS * 2)
+
+        result = await AttachmentService().sweep_orphans()
+
+        assert result.blobs_deleted == 0 and all(p.exists() for p in stray)
+
+    async def test_a_store_that_does_not_exist_is_nothing_to_sweep(self, tmp_path):
+        result = await AttachmentService(BlobStore(tmp_path / "missing")).sweep_orphans()
+
+        assert (result.blobs_deleted, result.parts_deleted) == (0, 0)
+        assert not (tmp_path / "missing").exists()
+
+    async def test_the_sweeper_sweeps_now_and_logs_a_failure(self, monkeypatch, caplog):
+        from app.services import attachment_service
+
+        runs = []
+
+        async def sweep(self, *, now=None):
+            runs.append(now)
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr(attachment_service.AttachmentService, "sweep_orphans", sweep)
+        with caplog.at_level("ERROR"):
+            await attachment_service.run_sweeper(interval=0)
+
+        assert runs == [None]
+        assert "attachment sweep failed" in caplog.text
+
+    async def test_a_database_without_the_table_is_said_once_and_quietly(self, monkeypatch, caplog):
+        import asyncio
+
+        from app.services import attachment_service
+
+        runs = []
+
+        async def sweep(self, *, now=None):
+            runs.append(1)
+            raise RuntimeError("no such table: attachments")
+
+        monkeypatch.setattr(attachment_service.AttachmentService, "sweep_orphans", sweep)
+        with caplog.at_level("DEBUG", logger=attachment_service.logger.name):
+            task = asyncio.create_task(attachment_service.run_sweeper(interval=0.01))
+            while len(runs) < 3:
+                await asyncio.sleep(0.01)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        records = [r for r in caplog.records if r.name == attachment_service.logger.name]
+        assert [r.levelname for r in records] == ["DEBUG"]
+        assert "no attachments table" in records[0].getMessage()
+
+    async def test_the_sweeper_repeats_on_its_interval(self, monkeypatch):
+        import asyncio
+
+        from app.services import attachment_service
+
+        runs = []
+
+        async def sweep(self, *, now=None):
+            runs.append(1)
+            return attachment_service.SweepResult(blobs_deleted=1, parts_deleted=1)
+
+        monkeypatch.setattr(attachment_service.AttachmentService, "sweep_orphans", sweep)
+        task = asyncio.create_task(attachment_service.run_sweeper(interval=0.01))
+        while len(runs) < 3:
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+class TestMcpTools:
+    """issue_attach and issue_comment(attach=...) on the hosted server:
+    bytes as base64, never a path (that would be the server's file)."""
+
+    @pytest.fixture(autouse=True)
+    def _as(self, test_user):
+        from app.mcp_server import context
+        from .mcp_principal import api_key_principal
+
+        token = context.current_mcp_principal.set(api_key_principal(test_user))
+        yield
+        context.current_mcp_principal.reset(token)
+
+    async def test_issue_attach_takes_base64(self, test_issue):
+        from app.mcp_server import tools
+
+        result = await tools.issue_attach(test_issue.identifier, content_base64=base64.b64encode(PNG).decode(),
+                                          filename="shot.png")
+
+        assert result["content_type"] == "image/png" and result["filename"] == "shot.png"
+        assert result["markdown"] == f"![shot.png](/api/attachments/{result['id']}/content)"
+        assert BlobStore().path_for(result["sha256"]).read_bytes() == PNG
+        viewed = await tools.issue_view(test_issue.identifier)
+        assert [a["id"] for a in viewed["attachments"]] == [result["id"]]
+
+    async def test_a_path_is_refused_here(self, test_issue, tmp_path):
+        from app.mcp_server import tools
+
+        secret = tmp_path / "server-file.txt"
+        secret.write_text("server secret")
+
+        result = await tools.issue_attach(test_issue.identifier, path=str(secret))
+
+        assert result["error"]["error_code"] == "tool_input"
+        assert "content_base64" in result["error"]["message"]
+        assert await OxydeAttachment.objects.count() == 0
+
+    async def test_exactly_one_form_and_valid_base64(self, test_issue):
+        from app.mcp_server import tools
+
+        neither = await tools.issue_attach(test_issue.identifier)
+        both = await tools.issue_attach(test_issue.identifier, path="x", content_base64="aGk=")
+        bad = await tools.issue_attach(test_issue.identifier, content_base64="not base64!")
+
+        for result in (neither, both, bad):
+            assert result["error"]["error_code"] == "tool_input", result
+        assert await OxydeAttachment.objects.count() == 0
+
+    async def test_the_server_refusals_come_through(self, test_issue, settings_env):
+        from app.mcp_server import tools
+
+        svg = await tools.issue_attach(test_issue.identifier, content_base64=base64.b64encode(b"<svg/>").decode())
+        settings_env(CHAOTIC_ATTACHMENT_MAX_BYTES=16)
+        big = await tools.issue_attach(test_issue.identifier, content_base64=base64.b64encode(PNG).decode())
+
+        assert svg["error"]["error_code"] == "attachment_type_not_allowed"
+        assert svg["error"]["http_status"] == 415
+        assert big["error"]["error_code"] == "attachment_too_large"
+        assert big["error"]["http_status"] == 413
+
+    async def test_comment_with_attachments(self, test_issue):
+        from app.mcp_server import tools
+
+        result = await tools.issue_comment(test_issue.identifier, content="Fixed", attach=[
+            {"content_base64": base64.b64encode(PNG).decode(), "filename": "after.png"},
+            {"content_base64": base64.b64encode(TEXT).decode(), "filename": "run [1].log"},
+        ])
+
+        png, text = result["attachments"]
+        assert result["content"] == (
+            f"Fixed\n\n![after.png](/api/attachments/{png['id']}/content)\n"
+            f"[run \\[1\\].log](/api/attachments/{text['id']}/content)"
+        )
+        assert await OxydeAttachment.objects.count() == 2
+
+    async def test_a_refused_file_posts_nothing_and_removes_the_rest(self, test_issue):
+        from app.mcp_server import tools
+
+        result = await tools.issue_comment(test_issue.identifier, content="Fixed", attach=[
+            {"content_base64": base64.b64encode(PNG).decode(), "filename": "after.png"},
+            {"content_base64": base64.b64encode(b"<html></html>").decode(), "filename": "page.html"},
+        ])
+
+        assert result["error"]["error_code"] == "attachment_type_not_allowed"
+        assert result["error"]["message"].startswith("Could not attach page.html, so the comment was not posted")
+        assert "removed again" in result["error"]["message"]
+        assert await OxydeAttachment.objects.count() == 0
+        assert await OxydeIssueComment.objects.filter(issue_id=test_issue.id).count() == 0

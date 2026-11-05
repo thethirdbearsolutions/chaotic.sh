@@ -26,19 +26,37 @@ The blob store (``BlobStore``) keeps ``<root>/<sha256[:2]>/<sha256>``. A
 write goes to a temporary file in ``<root>/tmp`` and is moved into place
 with ``os.replace``, so a reader never sees half a file and identical
 bytes land on one blob. Deleting a row leaves its blob: other rows may
-name it, and a database restored from a backup may still need it. A
-later sweep deletes blobs no row names once they are old enough.
+name it, and a database restored from a backup may still need it.
+
+The sweep (``AttachmentService.sweep_orphans``, run at startup and every
+``attachment_sweep_interval_seconds`` by ``run_sweeper``) deletes a blob
+once no row names it and it has not been written, reused or let go for
+``ORPHAN_GRACE_SECONDS`` (30 days), so a database restored from a recent
+backup still finds its files. "Let go" is a delete of a row naming it:
+``AttachmentService.release`` re-dates the blobs of the rows a delete is
+about to remove (an attachment's, or an issue's, project's or team's,
+whose rows go with it), so the grace runs from when a blob may have
+become an orphan, not from when it was uploaded. It also deletes ``tmp/*.part`` files a
+killed upload left behind, once they are a day old. The last check of
+each blob, its references and then its age, is made holding the
+database's writer lock, which an upload also holds from its quota check
+until its row commits: a blob an upload is reusing is either dated anew
+first (and kept) or deleted first (and the upload stores its own copy).
 """
 from __future__ import annotations
 
+import asyncio
 import codecs
 import hashlib
+import logging
 import os
 import re
+import stat
+import time
 import unicodedata
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from oxyde import execute_raw
@@ -46,6 +64,8 @@ from oxyde import execute_raw
 from app.config import get_settings
 from app.db.transactions import atomic
 from app.oxyde_models.attachment import OxydeAttachment
+
+logger = logging.getLogger(__name__)
 
 MAX_FILENAME = 255
 DEFAULT_FILENAME = "attachment"
@@ -58,6 +78,16 @@ _SIGNATURE_BYTES = 16
 # still worked through in pieces.
 _PIECE = 64 * 1024
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_SHARD = re.compile(r"[0-9a-f]{2}")
+
+# How long a blob no row names is kept (design question 3, answer B): a
+# database restored from a backup up to this old still finds its files.
+ORPHAN_GRACE_SECONDS = 30 * 24 * 3600
+# A temporary upload file older than this belongs to no upload still
+# running (one is at most attachment_max_bytes, read in one request).
+STALE_PART_SECONDS = 24 * 3600
+# Blobs checked against the table per query, and per writer-lock hold.
+_SWEEP_BATCH = 200
 
 RASTER_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
 TEXT_TYPE = "text/plain"
@@ -221,9 +251,79 @@ class BlobStore:
         os.replace(staged.temp_path, final)
         return final
 
+    def touch(self, sha256: str) -> None:
+        """Date the blob now, if it is there."""
+        try:
+            os.utime(self.path_for(sha256))
+        except FileNotFoundError:
+            pass
+
     @staticmethod
     def discard(staged: StagedBlob) -> None:
         staged.temp_path.unlink(missing_ok=True)
+
+    def blobs_older_than(self, cutoff: float) -> list[tuple[str, Path]]:
+        """``(sha256, path)`` of every blob last written before ``cutoff``
+        (a ``time.time()``). Anything in the store not named like a blob
+        is left alone."""
+        found = []
+        try:
+            shards = [d for d in self.root.iterdir() if _SHARD.fullmatch(d.name) and d.is_dir()]
+        except FileNotFoundError:
+            return found
+        for shard in shards:
+            try:
+                entries = list(shard.iterdir())
+            except FileNotFoundError:
+                continue
+            for path in entries:
+                name = path.name
+                if not (_SHA256.fullmatch(name) and name[:2] == shard.name):
+                    continue
+                mtime = _mtime(path)
+                if mtime is not None and mtime < cutoff:
+                    found.append((name, path))
+        return found
+
+    def delete_stale_parts(self, cutoff: float) -> int:
+        """Delete the ``tmp/*.part`` files last written before ``cutoff``;
+        how many were."""
+        deleted = 0
+        try:
+            parts = list((self.root / "tmp").glob("*.part"))
+        except FileNotFoundError:  # pragma: no cover -- glob of a missing directory is empty
+            return 0
+        for path in parts:
+            mtime = _mtime(path)
+            if mtime is not None and mtime < cutoff:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    continue
+                deleted += 1
+        return deleted
+
+
+def _mtime(path: Path) -> float | None:
+    """When ``path`` was last written; None when it is gone, or is not a
+    regular file."""
+    try:
+        st = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    return st.st_mtime
+
+
+@dataclass
+class SweepResult:
+    """What one sweep deleted."""
+
+    blobs_deleted: int = 0
+    bytes_freed: int = 0
+    parts_deleted: int = 0
+    deleted: list[str] = field(default_factory=list)
 
 
 class _TextCheck:
@@ -338,7 +438,119 @@ class AttachmentService:
     async def get(attachment_id: str) -> OxydeAttachment | None:
         return await OxydeAttachment.objects.filter(id=attachment_id).first()
 
-    @staticmethod
-    async def delete(attachment: OxydeAttachment) -> None:
-        """Delete the row. The blob stays for the sweep (module docstring)."""
+    async def delete(self, attachment: OxydeAttachment) -> None:
+        """Delete the row. The blob stays for the sweep, dated now so its
+        grace starts here (module docstring)."""
+        await self.release(attachment_id=attachment.id)
         await OxydeAttachment.objects.filter(id=attachment.id).delete()
+
+    async def release(
+        self, *, attachment_id: str | None = None, issue_id: str | None = None,
+        project_id: str | None = None, team_id: str | None = None,
+    ) -> None:
+        """Re-date the blobs of the attachment rows about to be deleted
+        with that attachment, issue, project or team (exactly one), so
+        the sweep's grace counts from now. Call it before the delete: a
+        blob dated and then not orphaned after all only waits longer."""
+        keys = [(k, v) for k, v in (("attachment", attachment_id), ("issue", issue_id),
+                                    ("project", project_id), ("team", team_id)) if v is not None]
+        if len(keys) != 1:
+            raise ValueError("release takes exactly one of attachment_id, issue_id, project_id or team_id")
+        (key, value), = keys
+        where = {
+            "attachment": "a.id = ?",
+            "issue": "a.issue_id = ?",
+            "project": "i.project_id = ?",
+            "team": "i.project_id IN (SELECT id FROM projects WHERE team_id = ?)",
+        }[key]
+        rows = await execute_raw(
+            f"SELECT DISTINCT a.sha256 FROM attachments a JOIN issues i ON i.id = a.issue_id WHERE {where}",
+            [value],
+        )
+        shas = [row["sha256"] for row in rows]
+        if shas:
+            await asyncio.to_thread(lambda: [self.store.touch(sha) for sha in shas])
+
+    @staticmethod
+    async def _referenced(shas: list[str]) -> set[str]:
+        """Those of ``shas`` some attachment row names."""
+        if not shas:
+            return set()
+        marks = ",".join("?" for _ in shas)
+        rows = await execute_raw(f"SELECT DISTINCT sha256 FROM attachments WHERE sha256 IN ({marks})", list(shas))
+        return {row["sha256"] for row in rows}
+
+    async def sweep_orphans(self, *, now: float | None = None) -> SweepResult:
+        """Delete stale ``tmp/*.part`` files, and the blobs no row names
+        that are older than ORPHAN_GRACE_SECONDS (module docstring)."""
+        now = time.time() if now is None else now
+        cutoff = now - ORPHAN_GRACE_SECONDS
+        result = SweepResult()
+        result.parts_deleted = await asyncio.to_thread(self.store.delete_stale_parts, now - STALE_PART_SECONDS)
+        candidates = await asyncio.to_thread(self.store.blobs_older_than, cutoff)
+        for start in range(0, len(candidates), _SWEEP_BATCH):
+            batch = candidates[start:start + _SWEEP_BATCH]
+            # Without the lock first, so a store whose old blobs are all
+            # in use never waits for it.
+            named = await self._referenced([sha for sha, _ in batch])
+            orphans = [(sha, path) for sha, path in batch if sha not in named]
+            if not orphans:
+                continue
+            async with atomic():
+                # The writer lock, as an upload takes it: no row can be
+                # added for these blobs, nor any of them re-dated by an
+                # upload's commit, until this transaction ends.
+                await execute_raw("UPDATE attachments SET size = size WHERE 0", [])
+                named = await self._referenced([sha for sha, _ in orphans])
+                for sha, path in orphans:
+                    if sha in named:
+                        continue
+                    # Read after the reference check: a reuse that landed
+                    # before the lock re-dated the blob.
+                    try:
+                        st = path.lstat()
+                    except FileNotFoundError:
+                        continue
+                    if not stat.S_ISREG(st.st_mode) or st.st_mtime >= cutoff:
+                        continue
+                    try:
+                        path.unlink()
+                    except FileNotFoundError:
+                        continue
+                    result.blobs_deleted += 1
+                    result.bytes_freed += st.st_size
+                    result.deleted.append(sha)
+        return result
+
+
+async def run_sweeper(interval: float | None = None) -> None:
+    """Sweep now, then every ``interval`` seconds
+    (``attachment_sweep_interval_seconds``; 0 sweeps once). A failed
+    sweep is logged and tried again at the next interval. A database
+    with no ``attachments`` table (one built by hand and served as it
+    is) has nothing to sweep: that is logged once, at debug level, not
+    as a failure every interval. Runs until cancelled (the app's
+    lifespan does, at shutdown)."""
+    if interval is None:
+        interval = get_settings().attachment_sweep_interval_seconds
+    said_no_table = False
+    while True:
+        try:
+            result = await AttachmentService().sweep_orphans()
+            if result.blobs_deleted or result.parts_deleted:
+                logger.info(
+                    "attachment sweep: deleted %d orphaned blob(s) (%d bytes) and %d stale upload file(s)",
+                    result.blobs_deleted, result.bytes_freed, result.parts_deleted,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            if "no such table" in str(e).lower():
+                if not said_no_table:
+                    logger.debug("attachment sweep skipped: this database has no attachments table (%s)", e)
+                    said_no_table = True
+            else:
+                logger.exception("attachment sweep failed")
+        if interval <= 0:
+            return
+        await asyncio.sleep(interval)

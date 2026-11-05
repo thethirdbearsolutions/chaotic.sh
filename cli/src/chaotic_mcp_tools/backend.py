@@ -176,6 +176,19 @@ class Backend(Protocol):
 
     async def create_comment(self, issue_id: str, content: str) -> dict: ...
 
+    # -- attachments (CHT-1996) -------------------------------------------
+
+    async def read_local_file(self, path: str) -> tuple[bytes, str]:
+        """The bytes of a file on the machine this server runs on, and
+        its name. Only the stdio side has the caller's files; the HTTP
+        side raises ToolInputError (send ``content_base64`` instead)."""
+
+    async def upload_attachment(self, issue_id: str, data: bytes, filename: str | None) -> dict: ...
+
+    async def list_attachments(self, issue_id: str) -> list: ...
+
+    async def delete_attachment(self, attachment_id: str) -> None: ...
+
     async def list_comments(self, issue_id: str, limit: int) -> list: ...
 
     async def list_sub_issues(self, issue_id: str, limit: int) -> list: ...

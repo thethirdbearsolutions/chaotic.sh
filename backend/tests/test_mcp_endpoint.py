@@ -199,6 +199,27 @@ class TestTransportSecurity:
         resp = await client.post("/mcp", content=body, headers=bearer_headers)
         assert resp.status_code == 413
 
+    async def test_a_file_as_base64_fits_about_three_mib(self, client, bearer_headers, test_issue):
+        """What issue_attach's description and docs/agents.md say: a file
+        sent as content_base64 can be about 3 MiB here; one larger is
+        refused by the body cap with a 413 before any tool runs."""
+        import base64
+
+        from app.oxyde_models.attachment import OxydeAttachment
+
+        png = b"\x89PNG\r\n\x1a\n"
+
+        def call(size):
+            data = base64.b64encode(png + b"\x00" * (size - len(png))).decode()
+            return _tool_call(client, bearer_headers, "issue_attach",
+                              {"identifier": test_issue.identifier, "content_base64": data, "filename": "s.png"})
+
+        fits = await call(3 * 1024 * 1024 - 64 * 1024)
+        assert fits.status_code == 200
+        assert "error" not in json.loads(fits.json()["result"]["content"][0]["text"])
+        assert (await call(3 * 1024 * 1024 + 64 * 1024)).status_code == 413
+        assert await OxydeAttachment.objects.count() == 1
+
     async def test_body_at_cap_is_not_413(self, client, bearer_headers):
         """Exactly-at-cap must pass the limiter (it then fails JSON parsing
         downstream, which is a 400 from the transport, not a 413)."""

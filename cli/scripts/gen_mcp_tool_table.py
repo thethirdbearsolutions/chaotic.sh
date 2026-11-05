@@ -40,6 +40,7 @@ CLI_EQUIVALENTS: dict[str, str] = {
         "`assignee: \"unassigned\"` clears; `no_parent` is `--no-parent`; `attest` map for ritual notes)"
     ),
     "issue_comment": "`issue comment`",
+    "issue_attach": "`issue attach`",
     "issue_start": "`issue start`",
     "issue_ready": "`issue ready`",
     "issue_relations": "`issue relations`",

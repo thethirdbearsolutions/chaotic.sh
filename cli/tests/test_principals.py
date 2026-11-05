@@ -55,6 +55,7 @@ class TestRendering:
         client.get_pending_issue_rituals = MagicMock(return_value={
             "pending_rituals": [], "completed_rituals": list(completed),
         })
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
         client.get_sub_issues = MagicMock(return_value=[])
@@ -136,6 +137,7 @@ class TestMarkupEscaping:
         client.get_pending_issue_rituals = MagicMock(return_value={"pending_rituals": [], "completed_rituals": [
             {"name": "t", "attestation": {"note": "n", "attested_by_name": "Ada [/dim]", "attester": EVIL_PERSON}},
         ]})
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
         client.get_sub_issues = MagicMock(return_value=[])
@@ -157,6 +159,7 @@ class TestMarkupEscaping:
         })
         client.get_comments = MagicMock(return_value=[])
         client.get_pending_issue_rituals = MagicMock(return_value={"pending_rituals": [], "completed_rituals": []})
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
         client.get_sub_issues = MagicMock(return_value=[])

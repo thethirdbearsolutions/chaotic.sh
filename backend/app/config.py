@@ -197,6 +197,14 @@ class Settings(BaseSettings):
         1024 * 1024 * 1024, ge=1,
         validation_alias=AliasChoices("CHAOTIC_ATTACHMENT_PROJECT_QUOTA_BYTES", "attachment_project_quota_bytes"),
     )
+    # How often the orphan sweep runs after the one at startup; 0 runs
+    # only that one. What it deletes: app.services.attachment_service.
+    attachment_sweep_interval_seconds: float = Field(
+        6 * 3600, ge=0,
+        validation_alias=AliasChoices(
+            "CHAOTIC_ATTACHMENT_SWEEP_INTERVAL_SECONDS", "attachment_sweep_interval_seconds",
+        ),
+    )
 
     # Agent self-registration (CHT-1498). A key minted by POST
     # /agents/register expires after this many seconds (7 days); the

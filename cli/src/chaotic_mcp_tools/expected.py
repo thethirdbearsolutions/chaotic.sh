@@ -32,6 +32,7 @@ EXPECTED_TOOLS: dict[str, bool] = {
     "inbox_list": True,
     "inbox_mark_all_read": True,
     "inbox_mark_read": False,
+    "issue_attach": False,
     "issue_block": False,
     "issue_comment": False,
     "issue_create": True,

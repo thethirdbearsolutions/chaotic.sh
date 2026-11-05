@@ -183,6 +183,10 @@ class ProjectService:
                 await OxydeDocumentIssue.objects.filter(document_id__in=doc_ids).delete()
                 await OxydeDocumentLabel.objects.filter(document_id__in=doc_ids).delete()
             await OxydeDocument.objects.filter(project_id=project.id).delete()
+            # Its issues' attachment rows go by cascade; their blobs stay
+            # for the sweep, dated now so its grace starts here (CHT-1996).
+            from app.services.attachment_service import AttachmentService
+            await AttachmentService().release(project_id=project.id)
             await project.delete()
 
     async def list_by_team(
