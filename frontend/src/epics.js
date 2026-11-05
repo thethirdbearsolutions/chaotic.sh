@@ -3,8 +3,8 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml, escapeAttr } from './utils.js';
-import { navigateToEpicByIdentifier } from './router.js';
+import { escapeHtml, escapeAttr, formatTimeAgo } from './utils.js';
+import { navigateToEpicByIdentifier, navigateToIssueByIdentifier } from './router.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjects } from './projects.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setSelectedEpicIndex } from './state.js';
@@ -37,7 +37,8 @@ let loadEpicsRequestId = 0;
 
 const CLOSED = new Set(['done', 'canceled']);
 
-// Whether closed epics are listed; per page load, like the board's filters.
+// Whether every shipped epic is listed, or the latest few; per page
+// load, like the board's filters.
 let showClosed = false;
 
 /** Test hook: forget the closed-epics toggle. */
@@ -139,10 +140,6 @@ function plural(n, word) {
     return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
-/**
- * Progress bar: done, then in progress or review, out of every ticket
- * that is not canceled.
- */
 /** Whole percent, never 100% until everything is done. */
 export function pctLabel(done, total) {
     if (total <= 0) return '-';
@@ -150,37 +147,48 @@ export function pctLabel(done, total) {
     return `${Math.floor((done / total) * 100)}%`;
 }
 
-function renderProgress(epic) {
+function ticketTotal(epic) {
     const c = epic.children || {};
-    const total = (c.total || 0) - (c.canceled || 0);
-    if (total <= 0) {
-        return '<span class="epic-progress-text">No tickets</span>';
-    }
-    const donePct = Math.round(((c.done || 0) / total) * 100);
-    const activePct = Math.round((((c.in_progress || 0) + (c.in_review || 0)) / total) * 100);
-    const complete = c.done === total;
-    const title = `${c.done || 0} done, ${(c.in_progress || 0) + (c.in_review || 0)} in progress, `
+    return (c.total || 0) - (c.canceled || 0);
+}
+
+function time(raw) {
+    const t = raw ? new Date(raw).getTime() : NaN;
+    return Number.isNaN(t) ? 0 : t;
+}
+
+/** "3h ago", or "on 10/2/2026" once formatTimeAgo gives a date. */
+function when(raw) {
+    const s = formatTimeAgo(raw);
+    if (!s) return '';
+    return /ago$|^just now$|future/.test(s) ? s : `on ${s}`;
+}
+
+/**
+ * Done tickets out of every ticket that is not canceled, as a neutral
+ * meter with its count (CHT-2043; the shared .meter of CHT-2040).
+ */
+function renderMeter(epic) {
+    const c = epic.children || {};
+    const total = ticketTotal(epic);
+    if (total <= 0) return '<span class="meter-label">No tickets</span>';
+    const done = c.done || 0;
+    const title = `${pctLabel(done, total)} done: ${done} done, ${(c.in_progress || 0) + (c.in_review || 0)} in progress, `
         + `${(c.todo || 0) + (c.backlog || 0)} not started`
         + (c.canceled ? `, ${c.canceled} canceled` : '');
     return `
-        <div class="epic-progress-bar-container" title="${escapeAttr(title)}">
-            <div class="epic-progress-bar">
-                <div class="epic-progress-fill${complete ? ' epic-progress-complete' : ''}" style="width: ${donePct}%"></div>
-                <div class="epic-progress-active" style="width: ${Math.min(activePct, 100 - donePct)}%"></div>
-            </div>
-            <span class="epic-progress-pct" title="Tickets done">${pctLabel(c.done || 0, total)}</span>
-            <span class="epic-progress-text">${c.done || 0}/${total}</span>
-        </div>
-    `;
+        <span class="meter" title="${escapeAttr(title)}"><span class="meter-fill" style="width: ${Math.round((done / total) * 100)}%"></span></span>
+        <span class="meter-label">${done} of ${total}</span>`;
 }
 
 /**
  * One bar per recent sprint, oldest first, the active sprint last: the
- * points each sprint moved toward this goal. Sprints are the clock.
+ * points each sprint moved toward this goal. Sprints are the clock, and
+ * the strip reads as healthy, slowing or abandoned at a glance.
  */
 export function renderSprintStrip(sprints) {
     if (!sprints || sprints.length === 0) {
-        return '<span class="text-muted">-</span>';
+        return '<span class="epic-sprint-strip" aria-hidden="true"></span>';
     }
     const max = Math.max(1, ...sprints.map(s => s.points || 0));
     const bars = sprints.map(s => {
@@ -189,195 +197,148 @@ export function renderSprintStrip(sprints) {
             + `${plural(s.closed || 0, 'ticket')} closed, ${s.points || 0} pts`;
         return `<span class="epic-sprint-tick${s.status === 'active' ? ' epic-sprint-current' : ''}" title="${escapeAttr(label)}"><span class="epic-sprint-fill" style="height: ${h}%"></span></span>`;
     }).join('');
-    return `<span class="epic-sprint-strip" aria-label="Points closed per sprint">${bars}</span>`;
+    return `<span class="epic-sprint-strip" aria-label="Points closed per sprint, oldest first">${bars}</span>`;
 }
 
-function renderThisSprint(closed, points) {
-    if (!closed) return '<span class="text-muted">-</span>';
-    return `<span class="epic-this-sprint">+${closed} <span class="text-muted">(${points} pts)</span></span>`;
+/** "ivy on Inline label picker, ash on Sticky header, +2 more". */
+function renderWho(epic) {
+    const flight = epic.in_flight || [];
+    const shown = flight.slice(0, 2).map(t => {
+        const name = t.assignee ? `<b>${escapeHtml(t.assignee.name)}</b>` : 'Unassigned';
+        return `${name} on ${escapeHtml(t.title)}`;
+    });
+    const more = (epic.in_flight_count || flight.length) - shown.length;
+    if (more > 0) shown.push(`+${more} more`);
+    return shown.join(', ');
 }
 
-function renderEpicRow(epic) {
+function renderShipped(epic, lead = 'shipped') {
+    const s = epic.last_shipped;
+    if (!s) return '';
+    return `${lead} ${escapeHtml(s.title)} ${escapeHtml(when(s.completed_at))}`;
+}
+
+function renderRow(epic, { sub, right, grouped }) {
     const pinned = epic.status_pinned && !CLOSED.has(epic.status)
         ? ' <span class="epic-status-pinned-mark" title="Status set by hand, so it no longer follows its tickets">✎<span class="sr-only"> (status set by hand)</span></span>'
         : '';
     const canceled = epic.status === 'canceled' ? ' <span class="epic-canceled-tag">Canceled</span>' : '';
-    const points = (epic.points_total || 0) > 0
-        ? `${epic.points_done || 0}/${epic.points_total} pts`
-        : '-';
+    const key = grouped ? `<span class="epic-project-key">${escapeHtml(epic.project_key)}</span> ` : '';
+    const owner = epic.owner ? ` <span class="epic-owner">· ${escapeHtml(epic.owner.name)}</span>` : '';
     const empty = ticketTotal(epic) <= 0;
     return `
-        <tr class="epic-row${CLOSED.has(epic.status) ? ' epic-row-closed' : ''}${empty ? ' epic-row-empty' : ''}" data-identifier="${escapeAttr(epic.identifier)}">
-            <td class="epic-identifier">${escapeHtml(epic.identifier)}</td>
-            <td class="epic-title">${escapeHtml(epic.title)}${pinned}${canceled}</td>
-            <td class="epic-progress">${renderProgress(epic)}</td>
-            <td class="epic-points">${points}</td>
-            <td class="epic-sprint">${renderThisSprint(epic.closed_this_sprint, epic.points_this_sprint)}</td>
-            <td class="epic-sprints">${renderSprintStrip(epic.sprints)}</td>
-        </tr>
-    `;
-}
-
-// Work under no epic: the gap a default epic and require_epic_on_close
-// close (CHT-1900). Not an .epic-row, so the keyboard cursor skips it.
-function renderUntrackedRow(u) {
-    if (!u || (!u.open && !u.closed_this_sprint && !(u.sprints || []).some(s => s.closed))) return '';
-    return `
-        <tr class="epic-untracked-row">
-            <td class="epic-identifier">${escapeHtml(u.project_key)}</td>
-            <td class="epic-title text-muted">No epic</td>
-            <td class="epic-progress"><span class="epic-progress-text">${plural(u.open || 0, 'open ticket')}</span></td>
-            <td class="epic-points"></td>
-            <td class="epic-sprint">${renderThisSprint(u.closed_this_sprint, u.points_this_sprint)}</td>
-            <td class="epic-sprints">${renderSprintStrip(u.sprints)}</td>
-        </tr>
-    `;
-}
-
-function ticketTotal(epic) {
-    const c = epic.children || {};
-    return (c.total || 0) - (c.canceled || 0);
-}
-
-function donePct(epic) {
-    const total = ticketTotal(epic);
-    return total > 0 ? (epic.children?.done || 0) / total : 0;
-}
-
-// The state groups, in reading order (CHT-1964). An epic's status is
-// derived from its tickets (CHT-1901), so these read as "moving",
-// "queued", "not started" and "finished".
-const STATUS_GROUPS = [
-    { key: 'active', label: 'In progress', statuses: ['in_progress', 'in_review'] },
-    { key: 'todo', label: 'Todo', statuses: ['todo'] },
-    { key: 'backlog', label: 'Backlog', statuses: ['backlog'] },
-    { key: 'closed', label: 'Closed', statuses: ['done', 'canceled'] },
-];
-
-function statusGroupOf(epic) {
-    const status = epic.status || 'backlog';
-    return STATUS_GROUPS.find(g => g.statuses.includes(status)) || STATUS_GROUPS[2];
-}
-
-/**
- * Order inside a state group: what moved this sprint first, then the
- * furthest along; epics with no tickets last.
- */
-function compareEpics(a, b) {
-    const emptyA = ticketTotal(a) <= 0;
-    const emptyB = ticketTotal(b) <= 0;
-    if (emptyA !== emptyB) return emptyA ? 1 : -1;
-    const moved = (b.points_this_sprint || 0) - (a.points_this_sprint || 0);
-    if (moved) return moved;
-    const closed = (b.closed_this_sprint || 0) - (a.closed_this_sprint || 0);
-    if (closed) return closed;
-    return donePct(b) - donePct(a);
-}
-
-/**
- * Epics of one project (or of everything, in a single-project view) in
- * state groups, each sorted by compareEpics. Returns [{group, epics}].
- */
-function groupByState(epics) {
-    return STATUS_GROUPS
-        .map(group => ({ group, epics: epics.filter(e => statusGroupOf(e) === group).sort(compareEpics) }))
-        .filter(g => g.epics.length);
-}
-
-/**
- * The readout above the table: how the open goals stand and what this
- * sprint moved (CHT-1964). Counts open epics only.
- */
-export function renderSummary(all, untracked) {
-    const open = all.filter(e => !CLOSED.has(e.status));
-    // Moved = closed a ticket while this sprint is active. "In progress"
-    // alone would count an epic whose last close was months ago (CHT-1901).
-    const moved = open.filter(e => (e.closed_this_sprint || 0) > 0).length;
-    // Tickets, like each row's percent, so the two agree.
-    const tDone = open.reduce((n, e) => n + (e.children?.done || 0), 0);
-    const tTotal = open.reduce((n, e) => n + ticketTotal(e), 0);
-    // Everything closed this sprint, epic or not, as the budget counts it.
-    const sources = [...all, ...untracked];
-    const sprintClosed = sources.reduce((n, x) => n + (x.closed_this_sprint || 0), 0);
-    const sprintPts = sources.reduce((n, x) => n + (x.points_this_sprint || 0), 0);
-    const loose = untracked.reduce((n, u) => n + (u.open || 0), 0);
-    if (!open.length && !sprintClosed && !loose) return '';
-    const stat = (value, label, extra = '') => `
-        <div class="epic-stat${extra}">
-            <div class="epic-stat-value">${value}</div>
-            <div class="epic-stat-label">${label}</div>
-        </div>`;
-    return `
-        <div class="epic-summary" role="group" aria-label="Progress summary">
-            ${open.length ? stat(`${moved}<span class="epic-stat-of"> / ${open.length}</span>`, 'open epics moved this sprint') : ''}
-            ${open.length ? stat(pctLabel(tDone, tTotal), tTotal ? `of their tickets done (${tDone}/${tTotal})` : 'no tickets yet') : ''}
-            ${stat(sprintClosed ? `+${sprintClosed}` : '0', `${sprintClosed === 1 ? 'ticket' : 'tickets'} closed this sprint (${sprintPts} pts)`, sprintClosed ? ' epic-stat-up' : '')}
-            ${loose ? stat(String(loose), `open ${loose === 1 ? 'ticket' : 'tickets'} under no epic`, ' epic-stat-warn') : ''}
+        <div class="list-row-2line epic-row${CLOSED.has(epic.status) ? ' epic-row-closed' : ''}${empty ? ' epic-row-empty' : ''}" data-identifier="${escapeAttr(epic.identifier)}" title="${escapeAttr(epic.identifier)}">
+            <span class="epic-spark">${renderSprintStrip(epic.sprints)}</span>
+            <span class="list-row-title">${key}${escapeHtml(epic.title)}${owner}${pinned}${canceled}</span>
+            <span class="list-row-sub">${sub}</span>
+            <span class="list-row-right">${right}</span>
         </div>`;
 }
 
-const COLS = 6;
+function renderSection(key, label, count, rows, extra = '') {
+    if (!rows) return '';
+    return `
+        <section class="epic-section epic-section-${key}">
+            <div class="section-header"><h3>${label} <span class="section-count">${count}</span></h3></div>
+            <div class="epic-section-rows">${rows}</div>
+            ${extra}
+        </section>`;
+}
+
+/** Every ticket is done, but an epic never closes itself (CHT-1901). */
+function isFinished(epic) {
+    return !CLOSED.has(epic.status) && ticketTotal(epic) > 0 && (epic.open_children || 0) === 0;
+}
+
+// Shipped epics listed before "Show all".
+const SHIPPED_SHOWN = 5;
 
 /**
- * Render the epics readout: a summary, then each project's epics grouped
- * by state with progress, points and sprint movement (CHT-1902, CHT-1964).
+ * The Epics list (CHT-2043): what is waiting on a person, what is
+ * moving now and who holds it, open epics with nothing in flight, and
+ * what shipped. Each section is ordered by time.
  * Uses data attributes + event delegation instead of inline onclick to avoid XSS.
  * @param {{epics: Array, untracked: Array}} progress - GET .../epics response
  */
 export function renderEpics(progress, container) {
     const all = progress?.epics || [];
     const untracked = progress?.untracked || [];
-    const closedCount = all.filter(e => CLOSED.has(e.status)).length;
-    const shown = showClosed ? all : all.filter(e => !CLOSED.has(e.status));
+    const grouped = new Set([...all.map(e => e.project_key), ...untracked.map(u => u.project_key)]).size > 1;
+    const keyed = (key, text) => (grouped ? `${escapeHtml(key)} · ${text}` : text);
 
-    const projectKeys = [...new Set([...all.map(e => e.project_key), ...untracked.map(u => u.project_key)])];
-    const grouped = projectKeys.length > 1;
-    const ordered = [];
-    const body = projectKeys.map(key => {
-        const groups = groupByState(shown.filter(e => e.project_key === key));
-        const rows = groups.map(({ group, epics }) => {
-            ordered.push(...epics);
-            return `<tr class="epic-state-row epic-state-${group.key}"><th colspan="${COLS}" scope="colgroup">`
-                + `<span class="epic-state-dot" aria-hidden="true"></span>${group.label}`
-                + `<span class="epic-state-count">${epics.length}</span></th></tr>`
-                + epics.map(renderEpicRow).join('');
-        }).join('');
-        const gap = renderUntrackedRow(untracked.find(u => u.project_key === key));
-        if (!rows && !gap) return '';
-        const header = grouped
-            ? `<tr class="epic-group-row"><th colspan="${COLS}" scope="colgroup">${escapeHtml(key)}</th></tr>`
-            : '';
-        return header + rows + gap;
+    const open = all.filter(e => !CLOSED.has(e.status));
+    const finished = open.filter(isFinished);
+    const moving = open.filter(e => !isFinished(e) && (e.in_flight_count || 0) > 0)
+        .sort((a, b) => time(b.last_activity_at) - time(a.last_activity_at));
+    const quiet = open.filter(e => !isFinished(e) && !(e.in_flight_count || 0))
+        .sort((a, b) => (ticketTotal(a) <= 0) - (ticketTotal(b) <= 0)
+            || time(b.last_shipped?.completed_at) - time(a.last_shipped?.completed_at)
+            || time(b.last_activity_at) - time(a.last_activity_at));
+    const shipped = all.filter(e => CLOSED.has(e.status))
+        .sort((a, b) => time(b.completed_at || b.last_activity_at) - time(a.completed_at || a.last_activity_at));
+    const shippedShown = showClosed ? shipped : shipped.slice(0, SHIPPED_SHOWN);
+
+    // Waiting on you: rituals only a person can clear, oldest first, then
+    // finished epics to close.
+    const asks = [
+        ...all.filter(e => !CLOSED.has(e.status)).flatMap(e => (e.awaiting_human || []).map(a => ({ a, where: keyed(e.project_key, escapeHtml(e.title)) }))),
+        ...untracked.flatMap(u => (u.awaiting_human || []).map(a => ({ a, where: keyed(u.project_key, 'No epic') }))),
+    ].sort((x, y) => time(x.a.since) - time(y.a.since));
+    const askRows = asks.map(({ a, where }) => {
+        const review = a.approval_mode === 'review';
+        const by = a.requested_by_name ? ` by ${escapeHtml(a.requested_by_name)}` : '';
+        return `
+        <div class="list-row-2line epic-ask-row" data-issue-identifier="${escapeAttr(a.identifier)}" title="${escapeAttr(a.identifier)}">
+            <span class="list-row-title">${review ? 'Approve' : 'Complete'} ${escapeHtml(a.ritual_name)}: ${escapeHtml(a.title)}</span>
+            <span class="list-row-sub">${where} · ${review ? 'attested' : 'requested'}${by} ${escapeHtml(when(a.since))}</span>
+            <span class="list-row-right"><span class="list-row-action">${review ? 'Approve' : 'Complete'}</span></span>
+        </div>`;
     }).join('');
-    // Prev/next on the epic page walks the rows as shown.
-    currentEpics = ordered;
+    const finishedRows = finished.map(e => renderRow(e, {
+        grouped,
+        sub: `Every ticket is done${e.last_shipped ? ` · last shipped ${escapeHtml(when(e.last_shipped.completed_at))}` : ''}`,
+        right: '<span class="list-row-action">Open epic</span>',
+    })).join('');
 
-    const emptyNote = !body.trim() && closedCount > 0
-        ? `<tr class="epic-empty-row"><td colspan="${COLS}" class="text-muted">Every epic here is closed.</td></tr>`
+    const movingRows = moving.map(e => renderRow(e, {
+        grouped,
+        sub: [renderWho(e), renderShipped(e)].filter(Boolean).join(' · '),
+        right: renderMeter(e),
+    })).join('');
+
+    const quietRows = quiet.map(e => {
+        const c = e.children || {};
+        const next = c.todo ? `${c.todo} ready to start` : (c.backlog ? `${c.backlog} in backlog` : '');
+        const last = e.last_shipped ? renderShipped(e, 'Last shipped') : 'Nothing shipped yet';
+        return renderRow(e, { grouped, sub: [last, next].filter(Boolean).join(' · '), right: renderMeter(e) });
+    }).join('');
+
+    const shippedRows = shippedShown.map(e => renderRow(e, {
+        grouped,
+        sub: e.completed_at ? `Closed ${escapeHtml(when(e.completed_at))}` : 'Closed',
+        right: `<span class="meter-label">${plural(e.children?.done || 0, 'ticket')}</span>`,
+    })).join('');
+    const toggle = shipped.length > SHIPPED_SHOWN
+        ? `<button class="btn btn-secondary btn-small epic-closed-toggle" data-epics-toggle-closed>${showClosed ? `Show the latest ${SHIPPED_SHOWN}` : `Show all ${shipped.length}`}</button>`
         : '';
 
-    const toggle = closedCount > 0
-        ? `<button class="btn btn-secondary btn-small epic-closed-toggle" data-epics-toggle-closed>${showClosed ? 'Hide' : 'Show'} ${plural(closedCount, 'closed epic')}</button>`
+    const loose = untracked.filter(u => u.open);
+    const gap = loose.length
+        ? `<p class="epic-untracked-note">${loose.map(u => `${grouped ? `${escapeHtml(u.project_key)}: ` : ''}${plural(u.open, 'open ticket')}`).join(', ')} under no epic.</p>`
         : '';
+
+    // Prev/next on the epic page, and the keyboard cursor, walk the rows
+    // as shown.
+    currentEpics = [...finished, ...moving, ...quiet, ...shippedShown];
 
     container.innerHTML = `
-        ${renderSummary(all, untracked)}
-        <table class="epic-table">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Title</th>
-                    <th>Progress</th>
-                    <th>Points</th>
-                    <th title="Closed while the current sprint is active">This sprint</th>
-                    <th title="Points closed in each recent sprint, oldest first">Sprints</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${body}${emptyNote}
-            </tbody>
-        </table>
-        ${toggle ? `<div class="epic-table-footer">${toggle}</div>` : ''}
+        <div class="epic-sections">
+            ${renderSection('waiting', 'Waiting on you', asks.length + finished.length, askRows + finishedRows)}
+            ${renderSection('moving', 'Moving now', moving.length, movingRows)}
+            ${renderSection('quiet', 'Nothing in flight', quiet.length, quietRows)}
+            ${renderSection('shipped', 'Shipped', shipped.length, shippedRows, toggle ? `<div class="epic-table-footer">${toggle}</div>` : '')}
+            ${gap}
+        </div>
     `;
     container._epicProgress = progress;
 
@@ -389,6 +350,11 @@ export function renderEpics(progress, container) {
                 // The rows change under the keyboard cursor, as on reload.
                 setSelectedEpicIndex(-1);
                 renderEpics(container._epicProgress, container);
+                return;
+            }
+            const ask = e.target.closest('.epic-ask-row');
+            if (ask && ask.dataset.issueIdentifier) {
+                navigateToIssueByIdentifier(ask.dataset.issueIdentifier);
                 return;
             }
             const row = e.target.closest('.epic-row');

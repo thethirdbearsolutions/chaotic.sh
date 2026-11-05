@@ -347,7 +347,7 @@ async def _set(issue_id, **fields):
 async def test_in_flight_last_shipped_and_activity(client, interactive_headers, test_project, test_user, db):
     from datetime import datetime, timedelta, timezone
     h = interactive_headers
-    epic = await _create(client, h, test_project.id, title="Goal", issue_type="epic")
+    epic = await _create(client, h, test_project.id, title="Goal", issue_type="epic", assignee_id=test_user.id)
     doing = await _create(client, h, test_project.id, title="Doing", parent_id=epic["id"], assignee_id=test_user.id)
     review = await _create(client, h, test_project.id, title="Reviewing", parent_id=epic["id"])
     task = await _create(client, h, test_project.id, title="Task", parent_id=epic["id"])
@@ -388,7 +388,10 @@ async def test_in_flight_last_shipped_and_activity(client, interactive_headers, 
     assert row["completed_at"] is None
     assert row["awaiting_human"] == []
 
+    assert row["owner"] == {"id": test_user.id, "name": test_user.name, "is_agent": False}
+
     inner_row = rows[inner["identifier"]]
+    assert inner_row["owner"] is None
     assert [t["title"] for t in inner_row["in_flight"]] == ["Inner work"]
     assert inner_row["last_shipped"] is None
 

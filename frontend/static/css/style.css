@@ -4885,10 +4885,6 @@ input[type="checkbox"] {
         gap: 0.75rem;
     }
 
-    .epic-table th,
-    .epic-table td {
-        padding: 8px 10px;
-    }
 }
 
 /* Responsive */
@@ -4909,8 +4905,7 @@ input[type="checkbox"] {
 @media (max-width: 768px) {
     /* Hide less critical columns on narrow screens */
     .issue-labels,
-    .issue-date,
-    .epic-estimate {
+    .issue-date {
         display: none;
     }
 
@@ -5114,109 +5109,16 @@ input[type="checkbox"] {
         max-height: 50vh;
     }
 
-    /* Responsive epics: card layout on mobile */
-    .epic-table thead {
-        display: none;
+    /* Phone epic rows (CHT-2043): the sub-line wraps, the right
+       column narrows. */
+    .list-row-2line.epic-row {
+        grid-template-columns: 40px minmax(0, 1fr) auto;
     }
-
-    .epic-table,
-    .epic-table tbody,
-    .epic-row,
-    .epic-row td,
-    .epic-untracked-row,
-    .epic-untracked-row td,
-    .epic-group-row,
-    .epic-group-row th,
-    .epic-state-row,
-    .epic-state-row th {
-        display: block;
+    .epic-section .list-row-sub {
+        white-space: normal;
     }
-
-    .epic-table .epic-row td,
-    .epic-table .epic-untracked-row td,
-    .epic-table .epic-group-row th {
-        border-bottom: none;
-        padding: 2px 0;
-        height: auto;
-    }
-
-    .epic-table .epic-untracked-row td:empty {
-        display: none;
-    }
-
-    .epic-table .epic-group-row th {
-        padding-top: 16px;
-    }
-
-    .epic-untracked-row {
-        padding: 12px 8px;
-        background: var(--bg-secondary);
-        border-bottom: 1px solid var(--border-color);
-    }
-
-    .epic-table .epic-untracked-row td {
-        width: auto;
-        background: none;
-    }
-
-    .epic-row {
-        padding: 12px 0;
-        border-bottom: 1px solid var(--border-color);
-    }
-
-    .epic-row td {
-        padding: 2px 0;
-    }
-
-    .epic-identifier {
-        font-size: var(--font-sm);
-        color: var(--text-muted);
-    }
-
-    .epic-title {
-        font-size: 15px;
-        font-weight: 500;
-        margin-bottom: 4px;
-    }
-
-    .epic-status {
-        display: inline-block;
-    }
-
-    /* Phone epic rows (CHT-1964): ID and title on one line, then the
-       bar with its points; the per-sprint strip stays on desktop. */
-    .epic-table .epic-row {
-        display: grid;
-        grid-template-columns: auto 1fr auto;
-        column-gap: 10px;
-        row-gap: 6px;
-        align-items: center;
-        padding: 10px 4px;
-    }
-    .epic-table .epic-row td {
-        height: auto;
-    }
-    .epic-row .epic-identifier { grid-column: 1; width: auto; }
-    .epic-row .epic-title { grid-column: 2 / 4; margin: 0; }
-    .epic-row .epic-progress { grid-column: 1 / 3; width: auto; }
-    .epic-row .epic-points { grid-column: 3; text-align: right; }
-    .epic-row .epic-sprint { grid-column: 1 / 4; }
-    .epic-row .epic-sprint:has(> .text-muted:only-child),
-    .epic-row .epic-sprints {
-        display: none;
-    }
-    /* The row is a grid here: paint the row, not its cells. */
-    .epic-table .epic-row:hover,
-    .epic-table .epic-row:hover td,
-    .epic-table .epic-row.keyboard-selected td,
-    .epic-table .epic-row.keyboard-selected td:first-child {
-        background: transparent;
-        box-shadow: none;
-    }
-    .epic-table .epic-row:hover { background: var(--row-hover); }
-    .epic-table .epic-row.keyboard-selected {
-        background: var(--row-cursor);
-        box-shadow: inset 3px 0 0 var(--row-cursor-edge);
+    .epic-row .list-row-right {
+        width: 72px;
     }
 
     /* Constrain filter selects on mobile */
@@ -8577,250 +8479,124 @@ button.stat-card-link:hover .stat-note {
     color: var(--accent-color);
 }
 
-/* Epics view (CHT-831) */
-.epic-table {
-    width: 100%;
-    border-collapse: collapse;
+/* Epics view (CHT-831; sections and two-line rows, CHT-2043). The
+   section label, .list-row-2line and .meter are the shared components
+   (CHT-2040); only the epic layout lives here. */
+.epic-sections {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space-xl) * 2);
 }
-
-.epic-table th {
-    text-align: left;
-    padding: 6px 12px;
-    font-size: var(--font-xs);
-    font-weight: 500;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border-color);
+.epic-section > .section-header {
+    margin: 0 0 var(--space-sm);
 }
-
-.epic-table td {
-    padding: 6px 12px;
-    height: 40px;
-    border-bottom: 1px solid var(--border-color);
-    font-size: var(--font-md);
+/* Accent means "needs you". */
+.epic-section-waiting > .section-header h3 {
+    color: var(--accent-fg);
 }
-
-.epic-row {
+.epic-section .list-row-2line {
     cursor: pointer;
 }
-.epic-row:hover td {
-    background: var(--row-hover);
+.epic-section-rows > .list-row-2line:first-child {
+    border-top: 1px solid var(--border-color);
 }
-/* The keyboard cursor (CHT-1964): the epics list had none, so j/k moved
-   an invisible selection. */
-.epic-row.keyboard-selected td {
+.epic-section .list-row-sub b {
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+/* Epic rows lead with the sprint strip, well apart from the meter: a
+   health glyph read before the title (CHT-2043). */
+.list-row-2line.epic-row {
+    grid-template-columns: 56px minmax(0, 1fr) auto;
+}
+.epic-row .epic-spark {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    display: flex;
+    align-items: center;
+}
+.epic-row .list-row-title,
+.epic-row .list-row-sub {
+    grid-column: 2;
+}
+.epic-section .list-row-right {
+    grid-column: -2;
+    grid-row: 1 / span 2;
+}
+.epic-row .list-row-right {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-xs);
+    width: 140px;
+    text-align: right;
+}
+/* The keyboard cursor (CHT-1964). */
+.epic-row.keyboard-selected {
     background: var(--row-cursor);
-}
-.epic-row.keyboard-selected td:first-child {
     box-shadow: inset 3px 0 0 var(--row-cursor-edge);
 }
-.epic-row-empty .epic-title,
-.epic-row-empty .epic-progress-text {
-    color: var(--text-muted);
+.epic-row-empty .list-row-title,
+.epic-row-closed .list-row-title {
+    color: var(--text-secondary);
     font-weight: 400;
 }
-
-/* Progress readout above the table (CHT-1964). */
-.epic-summary {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 16px;
-}
-.epic-stat {
-    flex: 1 1 160px;
-    padding: 10px 14px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-}
-.epic-stat-value {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-    line-height: 1.2;
-}
-.epic-stat-of {
-    font-size: var(--font-md);
+.epic-owner,
+.epic-project-key {
     font-weight: 400;
     color: var(--text-muted);
 }
-.epic-stat-label {
+.epic-project-key {
+    font-family: var(--font-mono, monospace);
+    font-size: var(--font-sm);
+}
+.epic-untracked-note {
+    margin: 0;
     font-size: var(--font-sm);
     color: var(--text-muted);
-    margin-top: 2px;
-}
-.epic-stat-up .epic-stat-value {
-    color: var(--success-color);
-}
-.epic-stat-warn .epic-stat-value {
-    color: var(--warning-color);
 }
 .epic-canceled-tag {
-    margin-left: 6px;
-    padding: 0 6px;
+    margin-left: var(--space-sm);
+    padding: 0 var(--space-sm);
     font-size: var(--font-xs);
     font-weight: 500;
     color: var(--text-muted);
     border: 1px solid var(--border-color);
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
 }
-
-/* State groups: In progress, Todo, Backlog, Closed. */
-.epic-table .epic-state-row th {
-    padding: 14px 12px 6px;
-    font-size: var(--font-sm);
-    font-weight: 600;
-    color: var(--text-secondary);
-    background: transparent;
-}
-.epic-state-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    margin-right: 8px;
-    background: var(--text-muted);
-    vertical-align: 1px;
-}
-.epic-state-active .epic-state-dot { background: #f59e0b; }
-.epic-state-todo .epic-state-dot { background: var(--text-secondary); }
-.epic-state-backlog .epic-state-dot { background: transparent; border: 1px dashed var(--text-muted); }
-.epic-state-closed .epic-state-dot { background: #22c55e; }
-.epic-state-count {
-    margin-left: 8px;
-    font-weight: 400;
+.epic-status-pinned-mark {
+    margin-left: var(--space-xs);
     color: var(--text-muted);
-}
-
-.epic-identifier {
-    font-family: var(--font-mono, monospace);
-    font-size: var(--font-base);
-    color: var(--text-muted);
-    white-space: nowrap;
-    width: 80px;
-}
-
-.epic-title {
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.epic-progress {
-    width: 240px;
-}
-
-.epic-progress-pct {
-    font-size: var(--font-sm);
-    font-weight: 600;
-    color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-    min-width: 34px;
-    text-align: right;
-}
-
-.epic-progress-bar-container {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.epic-progress-bar {
-    display: flex;
-    flex: 1;
-    height: 6px;
-    background: var(--bg-tertiary);
-    border-radius: 3px;
-    overflow: hidden;
-}
-
-.epic-progress-fill {
-    height: 100%;
-    border-radius: 3px;
-    background: #3b82f6;
-    transition: width 0.3s ease;
-}
-
-.epic-progress-fill.epic-progress-complete {
-    background: #22c55e;
-}
-
-.epic-progress-text {
-    font-size: var(--font-sm);
-    color: var(--text-muted);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-    min-width: 40px;
-}
-
-/* Progress toward goals (CHT-1902) */
-.epic-progress-active {
-    height: 100%;
-    background: #93c5fd;
-}
-
-.epic-points,
-.epic-sprint {
-    white-space: nowrap;
-    font-size: var(--font-sm);
-    font-variant-numeric: tabular-nums;
+    cursor: help;
 }
 
 .epic-sprint-strip {
     display: inline-flex;
     align-items: flex-end;
     gap: 2px;
-    height: 18px;
-    vertical-align: middle;
+    height: 20px;
 }
-
 .epic-sprint-tick {
     display: inline-flex;
     align-items: flex-end;
-    width: 6px;
+    width: 4px;
     height: 100%;
-    background: var(--bg-tertiary);
-    border-radius: 1px;
 }
-
 .epic-sprint-fill {
     display: block;
     width: 100%;
-    background: #3b82f6;
+    min-height: 2px;
+    background: var(--bg-hover);
     border-radius: 1px;
 }
-
-.epic-sprint-current .epic-sprint-fill {
-    background: #22c55e;
+.epic-sprint-fill:not([style*="height: 0%"]) {
+    background: var(--text-muted);
 }
-
-.epic-sprint-current {
-    outline: 1px solid var(--border-color);
-}
-
-.epic-status-pinned-mark {
-    margin-left: 4px;
-    color: var(--text-muted);
-    cursor: help;
-}
-
-.epic-row-closed .epic-title {
-    color: var(--text-muted);
-}
-
-.epic-untracked-row td {
-    background: var(--bg-secondary);
-}
-
-.epic-table .epic-group-row th {
-    padding-top: 20px;
-    font-size: var(--font-md);
-    font-weight: 600;
-    color: var(--text-primary);
+.epic-sprint-current .epic-sprint-fill:not([style*="height: 0%"]) {
+    background: var(--text-secondary);
 }
 
 .epic-table-footer {
-    padding: 12px;
+    padding: var(--space-md) 0 0;
 }
 
 /* Epic detail page: progress bar and sub-issue rows. epic-detail-view.js
@@ -8886,16 +8662,6 @@ button.stat-card-link:hover .stat-note {
     }
 }
 
-.epic-estimate {
-    font-size: var(--font-base);
-    color: var(--text-secondary);
-    white-space: nowrap;
-    width: 60px;
-}
-
-.epic-status {
-    width: 100px;
-}
 
 /* ==========================================================================
    Mobile overrides (CHT-1118)
@@ -8965,32 +8731,6 @@ button.stat-card-link:hover .stat-note {
         inset: 0;
         background: rgba(0, 0, 0, 0.4);
         z-index: -1;
-    }
-
-    /* Fix #2: Epics card layout — show less info */
-    .epic-row td {
-        padding: 2px 0;
-    }
-
-    .epic-row td:empty {
-        display: none;
-    }
-
-    .epic-row .epic-estimate,
-    .epic-row .epic-dates {
-        display: inline-block;
-        font-size: var(--font-sm);
-        width: auto;
-        margin-right: 8px;
-    }
-
-    .epic-status {
-        width: auto;
-    }
-
-    .epic-title {
-        font-size: var(--font-base);
-        margin-bottom: 2px;
     }
 
     /* Fix #3: Button sizing — reduce bulk on mobile */

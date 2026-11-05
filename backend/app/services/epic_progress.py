@@ -134,9 +134,11 @@ async def epic_progress(
 
     scope = _placeholders(project_ids)
     epic_rows = await execute_raw(
-        "SELECT id, identifier, title, status, priority, project_id, estimate, status_pinned, number, "
-        "updated_at, completed_at "
-        f"FROM issues WHERE project_id IN ({scope}) AND issue_type IN (?, ?)",
+        "SELECT e.id, e.identifier, e.title, e.status, e.priority, e.project_id, e.estimate, e.status_pinned, "
+        "e.number, e.updated_at, e.completed_at, e.assignee_id, "
+        "u.name AS assignee_name, u.is_agent AS assignee_is_agent "
+        "FROM issues e LEFT JOIN users u ON u.id = e.assignee_id "
+        f"WHERE e.project_id IN ({scope}) AND e.issue_type IN (?, ?)",
         [*project_ids, *_EPIC],
     )
 
@@ -263,6 +265,7 @@ async def epic_progress(
             in_flight=in_flight.get(issue_id, []), in_flight_count=in_flight_count.get(issue_id, 0),
             last_shipped=last_shipped.get(issue_id), last_activity_at=max(activity) if activity else None,
             completed_at=r["completed_at"], awaiting_human=awaiting.get(issue_id, []),
+            owner=_person(r),
         )))
     # Newest first within a project, projects in key order.
     epics.sort(key=lambda e: (projects[e[1]], -e[0]))

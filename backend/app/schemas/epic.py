@@ -107,6 +107,8 @@ class EpicProgress(BaseModel):
     points_this_sprint: int
     # The project's most recent sprints, oldest first, the active one last.
     sprints: list[SprintTick]
+    # The epic's own assignee: the person or agent who owns the goal.
+    owner: EpicPerson | None = None
     # What the Epics list reads per goal (CHT-2043). in_flight is the
     # epic's in-progress and in-review tickets, most recently updated
     # first, at most IN_FLIGHT_LIMIT of in_flight_count.
