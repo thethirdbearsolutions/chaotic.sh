@@ -7,6 +7,7 @@ vi.mock('./assignees.js', () => ({
     selectAssigneeFilter: vi.fn(),
 }));
 
+vi.mock('./projects.js', () => ({ getProjects: vi.fn(() => []) }));
 vi.mock('./state.js', () => ({
     getCurrentTeam: vi.fn(() => ({ id: 'team-1' })),
     getCurrentProject: vi.fn(() => null),

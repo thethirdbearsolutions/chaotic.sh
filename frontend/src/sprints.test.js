@@ -112,10 +112,6 @@ beforeEach(() => {
     document.body.innerHTML = `
         <div id="modal-title"></div>
         <div id="modal-content"></div>
-        <select id="sprint-project-filter">
-            <option value="">Select</option>
-            <option value="p1">Project 1</option>
-        </select>
         <div id="sprints-list"></div>
         <div class="main-content"></div>
     `;

@@ -107,7 +107,7 @@ export async function loadBoard({ fromMemory = false } = {}) {
                 : renderEmptyState({
                     icon: EMPTY_ICONS.board,
                     heading: 'Select a project',
-                    description: 'Choose a project to view its board',
+                    description: 'Board shows one project at a time. Pick one in the sidebar switcher, or press P.',
                 });
         }
         return;

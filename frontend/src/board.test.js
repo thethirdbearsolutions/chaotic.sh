@@ -90,7 +90,6 @@ describe('board', () => {
 
         // Setup minimal DOM
         document.body.innerHTML = `
-            <select id="board-project-filter"></select>
             <div id="kanban-board"></div>
         `;
     });

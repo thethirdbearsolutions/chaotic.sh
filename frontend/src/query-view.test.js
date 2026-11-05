@@ -11,14 +11,20 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
-vi.mock('./projects.js', () => ({
-    getProjects: vi.fn(() => [
-        { id: 'p1', name: 'Demo <Project>', key: 'DEM' },
-        { id: 'p2', name: 'Other', key: 'OTH' },
-    ]),
-}));
+vi.mock('./projects.js', async () => {
+    const state = await vi.importActual('./state.js');
+    return {
+        getProjects: vi.fn(() => [
+            { id: 'p1', name: 'Demo <Project>', key: 'DEM' },
+            { id: 'p2', name: 'Other', key: 'OTH' },
+        ]),
+        chooseAllProjects: vi.fn(() => state.setCurrentProject(null)),
+        syncProjectSwitcher: vi.fn(),
+    };
+});
 
 import { api } from './api.js';
+import { chooseAllProjects, syncProjectSwitcher } from './projects.js';
 import { showToast } from './ui.js';
 import { setCurrentProject, setCurrentTeam, getCurrentProject, setCurrentView } from './state.js';
 import {
@@ -45,7 +51,6 @@ import {
 
 const PAGE_HTML = `
     <div id="query-view" class="view">
-        <select id="query-project-filter"></select>
         <div id="query-columns-picker">
             <button id="query-columns-btn" aria-expanded="false">Columns</button>
             <div id="query-columns-menu" class="hidden"></div>
@@ -265,9 +270,8 @@ describe('loadQueryView', () => {
         expect(window.location.pathname + window.location.search).toBe('/query?project=p1&where=status%21%3Ddone%2Ccanceled');
         expect(document.getElementById('query-where').value).toBe('status!=done,canceled');
         expect(document.querySelectorAll('.query-row')).toHaveLength(1);
-        expect(document.getElementById('query-project-filter').value).toBe('p1');
-        // The select's option text is escaped.
-        expect(document.getElementById('query-project-filter').innerHTML).toContain('Demo &lt;Project&gt;');
+        // The sidebar switcher shows the query's project (CHT-2058).
+        expect(getCurrentProject()).toBe('p1');
     });
 
     it('sends where and order from the URL and adopts the echoed text', async () => {
@@ -289,7 +293,8 @@ describe('loadQueryView', () => {
         await loadQueryView();
         expect(api.queryIssues.mock.calls[0][0]).toMatchObject({ teamId: 't1', where: '' });
         expect(window.location.search).toBe('?scope=team&where=');
-        expect(document.getElementById('query-project-filter').value).toBe('');
+        // A team-wide query shows as All projects in the switcher (CHT-2058).
+        expect(syncProjectSwitcher).toHaveBeenCalledWith(null);
 
         _resetQueryViewForTest();
         go('/query?project=unknown');
@@ -407,15 +412,13 @@ describe('interactions', () => {
     it('switching to all projects queries the team and pushes one entry', async () => {
         api.queryIssues.mockResolvedValue(response());
         const before = history.length;
-        const select = document.getElementById('query-project-filter');
-        select.value = '';
-        select.dispatchEvent(new Event('change'));
-        await flush();
+        await setQueryScope('');
         expect(api.queryIssues.mock.calls[0][0]).toMatchObject({ teamId: 't1' });
         expect(history.length).toBe(before + 1);
         expect(new URLSearchParams(window.location.search).get('scope')).toBe('team');
-        // The global current project is left as it was.
-        expect(getCurrentProject()).toBe('p1');
+        // The one global scope follows: All projects, chosen (CHT-2058).
+        expect(chooseAllProjects).toHaveBeenCalled();
+        expect(getCurrentProject()).toBe(null);
         await setQueryScope('p2');
         expect(getCurrentProject()).toBe('p2');
         expect(api.queryIssues.mock.calls[1][0]).toMatchObject({ projectId: 'p2' });
@@ -501,6 +504,36 @@ describe('review findings on PR #429', () => {
         await setQueryScope('p2');
         expect(window.location.search).toBe('?project=p2&where=status%3Dtodo');
         expect(history.length).toBe(before + 1);
+        expect(getCurrentProject()).toBe('p2');
+    });
+
+    // PR #543 review I1: a refused scope change leaves the query, and the
+    // sidebar switcher, on the scope that was showing.
+    it('a refused scope change rolls back the scope and the switcher', async () => {
+        setCurrentProject('p1');
+        api.queryIssues.mockResolvedValueOnce(response());
+        await loadQueryView();
+        syncProjectSwitcher.mockClear();
+        chooseAllProjects.mockClear();
+        api.queryIssues.mockRejectedValueOnce(Object.assign(new Error('bad'), { status: 400 }));
+        await setQueryScope('');
+        expect(syncProjectSwitcher).toHaveBeenLastCalledWith('p1');
+        expect(chooseAllProjects).not.toHaveBeenCalled();
+        // The next run is in the old scope, not the refused one.
+        api.queryIssues.mockResolvedValueOnce(response());
+        await runWhereBox();
+        expect(api.queryIssues.mock.calls.at(-1)[0]).toMatchObject({ projectId: 'p1' });
+    });
+
+    // PR #543 review I2: opening a team-wide link shows All projects in the
+    // switcher without changing the scope the other views share.
+    it('a team-wide link shows All in the switcher and leaves the shared scope', async () => {
+        setCurrentProject('p2');
+        go('/query?scope=team');
+        api.queryIssues.mockResolvedValue(response());
+        syncProjectSwitcher.mockClear();
+        await loadQueryView();
+        expect(syncProjectSwitcher).toHaveBeenCalledWith(null);
         expect(getCurrentProject()).toBe('p2');
     });
 

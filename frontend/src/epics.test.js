@@ -254,8 +254,10 @@ describe('renderEpics (CHT-2043)', () => {
 
     it('shows the epic owner after the title, and nothing when unassigned', () => {
         renderEpics(response([
-            moving({ identifier: 'CHT-1', owner: person('Rowan') }),
-            moving({ id: 'e2', identifier: 'CHT-2' }),
+            // Distinct times: two ago(MIN) calls can land a millisecond
+            // apart, and the newer one would sort first.
+            moving({ identifier: 'CHT-1', owner: person('Rowan'), last_activity_at: ago(MIN) }),
+            moving({ id: 'e2', identifier: 'CHT-2', last_activity_at: ago(5 * MIN) }),
         ]), container);
         const owners = [...container.querySelectorAll('.epic-row')].map(r => r.querySelector('.epic-owner')?.textContent || null);
         expect(owners).toEqual(['· Rowan', null]);

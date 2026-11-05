@@ -80,10 +80,8 @@ export function getValidViews() {
 }
 
 // Views that read getCurrentProject()/getCurrentView() to scope their data
-// and so should round-trip ?project= in the URL (CHT-1211 item 5). Hand-
-// maintained rather than derived from the DOM's `${view}-project-filter`
-// elements because the ids aren't consistently named (`project-filter`,
-// `sprint-project-filter`, `doc-project-filter`, ...).
+// and so should round-trip ?project= in the URL (CHT-1211 item 5). Every
+// one follows the sidebar's project switcher (CHT-2058).
 const viewsWithProject = ['issues', 'query', 'board', 'sprints', 'epics', 'documents', 'rituals', 'approvals', 'my-issues'];
 
 // The sidebar section each detail route belongs to, keyed by the first URL

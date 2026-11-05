@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { setCurrentTeam } from './state.js';
+import { setCurrentTeam, setCurrentProject, getCurrentProject } from './state.js';
 import {
   getProjects,
   setProjects,
@@ -27,6 +27,9 @@ import {
   loadProjectSettingsRituals,
   setCurrentSettingsProjectId,
   saveProjectSettingsRules,
+  chooseCurrentProject,
+  chooseAllProjects,
+  ALL_PROJECTS,
 } from './projects.js';
 import { api } from './api.js';
 import { showToast } from './ui.js';
@@ -187,7 +190,7 @@ describe('getEstimateScaleHint', () => {
 
 describe('loadProjects', () => {
   beforeEach(() => {
-    document.body.innerHTML = '<select id="project-filter"></select>';
+    document.body.innerHTML = '<select id="project-switcher"></select>';
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
   });
@@ -219,7 +222,7 @@ describe('loadProjects', () => {
     api.getProjects.mockResolvedValue(projects);
     await loadProjects();
     expect(api.getProjects).toHaveBeenCalledWith('team-1');
-    const filter = document.getElementById('project-filter');
+    const filter = document.getElementById('project-switcher');
     expect(filter.innerHTML).toContain('Test Project');
   });
 });
@@ -235,7 +238,7 @@ describe('handleCreateProject (CHT-1176: null-team guard)', () => {
       <input id="project-color" value="#6366f1" />
       <select id="project-estimate-scale"><option value="fibonacci" selected>fib</option></select>
       <input id="project-human-rituals-required" type="checkbox" />
-      <select id="project-filter"></select>
+      <select id="project-switcher"></select>
     `;
   }
 
@@ -273,9 +276,7 @@ describe('handleCreateProject (CHT-1176: null-team guard)', () => {
 describe('updateProjectFilters', () => {
   beforeEach(() => {
     document.body.innerHTML = `
-      <select id="project-filter"></select>
-      <select id="sprint-project-filter"></select>
-      <select id="board-project-filter"></select>
+      <select id="project-switcher"></select>
     `;
     // Mock localStorage
     const store = {};
@@ -290,19 +291,22 @@ describe('updateProjectFilters', () => {
     vi.restoreAllMocks();
   });
 
-  it('updates all filter dropdowns', () => {
-    setProjects([{ id: 'proj-1', name: 'Project 1' }, { id: 'proj-2', name: 'Project 2' }]);
+  it('fills the sidebar switcher (CHT-2058)', () => {
+    setProjects([{ id: 'proj-1', name: 'Project 1', key: 'PA' }, { id: 'proj-2', name: 'Project 2', key: 'PB' }]);
     updateProjectFilters();
-    const filter = document.getElementById('project-filter');
+    const filter = document.getElementById('project-switcher');
     expect(filter.innerHTML).toContain('Project 1');
     expect(filter.innerHTML).toContain('Project 2');
-    expect(filter.innerHTML).toContain('All Projects');
+    expect(filter.options[0].value).toBe('');
+    expect(filter.options[0].textContent).toBe('All projects');
+    // Each project carries its key, which the picker shows and matches.
+    expect(filter.options[1].dataset.hint).toBe('PA');
   });
 
   it('escapes project names for XSS prevention', () => {
     setProjects([{ id: 'proj-1', name: '<script>xss</script>' }]);
     updateProjectFilters();
-    const filter = document.getElementById('project-filter');
+    const filter = document.getElementById('project-switcher');
     expect(filter.innerHTML).not.toContain('<script>xss</script>');
     expect(filter.innerHTML).toContain('&lt;script&gt;');
   });
@@ -310,7 +314,63 @@ describe('updateProjectFilters', () => {
   it('selects first project by default', () => {
     setProjects([{ id: 'proj-1', name: 'First' }, { id: 'proj-2', name: 'Second' }]);
     updateProjectFilters();
-    expect(document.getElementById('project-filter').value).toBe('proj-1');
+    expect(document.getElementById('project-switcher').value).toBe('proj-1');
+  });
+});
+
+// One scope for every view (CHT-2058): "All projects" is a choice that
+// survives a reload, and a link's ?project= still wins over it.
+describe('All projects in the switcher', () => {
+  let store;
+  beforeEach(() => {
+    document.body.innerHTML = '<select id="project-switcher"></select>';
+    store = {};
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation((key) => store[key] ?? null);
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key, value) => { store[key] = value; });
+    setProjects([{ id: 'proj-1', name: 'One', key: 'ONE' }, { id: 'proj-2', name: 'Two', key: 'TWO' }]);
+    updateProjectFilters();
+    window.history.replaceState(null, '', '/issues');
+  });
+
+  afterEach(() => {
+    setCurrentProject(null);
+    setProjects([]);
+    vi.restoreAllMocks();
+  });
+
+  it('chooseAllProjects clears the scope and remembers the choice', () => {
+    setCurrentProject('proj-2');
+    chooseAllProjects();
+    expect(getCurrentProject()).toBe(null);
+    expect(Object.values(store)).toContain(ALL_PROJECTS);
+    expect(document.getElementById('project-switcher').value).toBe('');
+  });
+
+  it('a saved All projects stays All projects on the next load', () => {
+    chooseAllProjects();
+    chooseCurrentProject();
+    expect(getCurrentProject()).toBe(null);
+  });
+
+  it('a project in the link wins over a saved All projects', () => {
+    chooseAllProjects();
+    window.history.replaceState(null, '', '/issues?project=proj-2');
+    chooseCurrentProject();
+    expect(getCurrentProject()).toBe('proj-2');
+    expect(document.getElementById('project-switcher').value).toBe('proj-2');
+  });
+
+  // PR #543 review C1: the saved marker never reaches URLs or modals.
+  it('getSavedProjectId reports nothing saved for All projects', () => {
+    chooseAllProjects();
+    expect(getSavedProjectId()).toBe(null);
+    setCurrentProject('proj-2');
+    expect(getSavedProjectId()).toBe('proj-2');
+  });
+
+  it('with nothing saved, the first project is picked', () => {
+    chooseCurrentProject();
+    expect(getCurrentProject()).toBe('proj-1');
   });
 });
 
@@ -373,13 +433,13 @@ describe('renderProjects', () => {
 
 describe('viewProject', () => {
   beforeEach(() => {
-    document.body.innerHTML = '<select id="project-filter"><option value="proj-1">P1</option></select>';
+    document.body.innerHTML = '<select id="project-switcher"><option value="proj-1">P1</option></select>';
     mockNavigateTo.mockClear();
   });
 
   it('sets project filter and navigates to issues', () => {
     viewProject('proj-1');
-    expect(document.getElementById('project-filter').value).toBe('proj-1');
+    expect(document.getElementById('project-switcher').value).toBe('proj-1');
     expect(mockNavigateTo).toHaveBeenCalledWith('issues');
   });
 });
@@ -419,7 +479,7 @@ describe('handleCreateProject', () => {
       <select id="project-estimate-scale"><option value="fibonacci">F</option></select>
       <input type="checkbox" id="project-human-rituals-required">
       <div id="projects-list"></div>
-      <select id="project-filter"></select>
+      <select id="project-switcher"></select>
     `;
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
@@ -505,7 +565,7 @@ describe('handleUpdateProject', () => {
       <select id="project-estimate-scale"><option value="linear" selected>L</option></select>
       <input type="checkbox" id="project-human-rituals-required" checked>
       <div id="projects-list"></div>
-      <select id="project-filter"></select>
+      <select id="project-switcher"></select>
     `;
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
@@ -544,7 +604,7 @@ describe('confirmDeleteProject', () => {
   beforeEach(() => {
     document.body.innerHTML = `
       <div id="projects-list"></div>
-      <select id="project-filter"></select>
+      <select id="project-switcher"></select>
     `;
     vi.clearAllMocks();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -731,7 +791,7 @@ describe('saveProjectSettingsGeneral', () => {
         <div id="project-settings-tab-rules" class="settings-tab-content hidden"></div>
       </div>
       <div id="projects-list"></div>
-      <select id="project-filter"></select>
+      <select id="project-switcher"></select>
     `;
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
@@ -826,7 +886,7 @@ describe('showCreateProjectRitualModal', () => {
         <div id="project-settings-tab-rules" class="settings-tab-content hidden"></div>
       </div>
       <div id="projects-list"></div>
-      <select id="project-filter"></select>
+      <select id="project-switcher"></select>
       <h3 id="modal-title"></h3>
       <div id="modal-content"></div>
     `;
@@ -890,7 +950,7 @@ describe('handleCreateProjectRitual', () => {
         <div id="project-settings-tab-general" class="settings-tab-content"></div>
       </div>
       <div id="projects-list"></div>
-      <select id="project-filter"></select>
+      <select id="project-switcher"></select>
       <h3 id="modal-title"></h3>
       <div id="modal-content"></div>
       <div id="ps-sprint-rituals-list"></div>
@@ -956,7 +1016,7 @@ describe('showEditProjectRitualModal', () => {
         <div id="project-settings-tab-general" class="settings-tab-content"></div>
       </div>
       <div id="projects-list"></div>
-      <select id="project-filter"></select>
+      <select id="project-switcher"></select>
       <h3 id="modal-title"></h3>
       <div id="modal-content"></div>
       <div id="ps-sprint-rituals-list"></div>
@@ -1023,7 +1083,7 @@ describe('deleteProjectRitual', () => {
         <div id="project-settings-tab-general" class="settings-tab-content"></div>
       </div>
       <div id="projects-list"></div>
-      <select id="project-filter"></select>
+      <select id="project-switcher"></select>
       <div id="ps-sprint-rituals-list"></div>
       <div id="ps-close-rituals-list"></div>
       <div id="ps-claim-rituals-list"></div>
@@ -1079,7 +1139,7 @@ describe('ritual XSS prevention', () => {
         <div id="project-settings-tab-sprint-rituals" class="settings-tab-content hidden"></div>
       </div>
       <div id="projects-list"></div>
-      <select id="project-filter"></select>
+      <select id="project-switcher"></select>
       <div id="ps-sprint-rituals-list"></div>
       <div id="ps-close-rituals-list"></div>
       <div id="ps-claim-rituals-list"></div>
@@ -1197,7 +1257,7 @@ describe('project rules: epic and assignee knobs', () => {
         <div id="project-settings-tab-general" class="settings-tab-content"></div>
       </div>
       <div id="projects-list"></div>
-      <select id="project-filter"></select>
+      <select id="project-switcher"></select>
     `;
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });

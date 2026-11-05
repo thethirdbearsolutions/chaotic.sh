@@ -8,7 +8,6 @@
 import { api } from './api.js';
 import { formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import { getActiveFilterCategory, setActiveFilterCategory, getCurrentProject } from './state.js';
-import { getProjects } from './projects.js';
 import { getAssigneeById, getAssigneeOptionList, formatAssigneeName, formatAssigneeOptionLabel } from './assignees.js';
 import { setCachedCurrentSprintId } from './sprints.js';
 import {
@@ -165,9 +164,6 @@ export function showFilterCategoryOptions(category) {
     if (!container) return;
 
     switch (category) {
-        case 'project':
-            renderProjectOptions(container);
-            break;
         case 'status':
             renderStatusOptions(container);
             break;
@@ -216,34 +212,6 @@ export function showFilterCategories() {
 // ========================================
 // Filter Option Renderers
 // ========================================
-
-function renderProjectOptions(container) {
-    const currentValue = getCurrentProject() || '';
-    const projects = getProjects() || [];
-
-    let html = `
-        <div class="filter-options-header">
-            <span class="filter-options-title">Project</span>
-            ${currentValue ? '<button class="filter-options-clear" data-action="set-project-filter" data-value="">Clear</button>' : ''}
-        </div>
-        <label class="filter-option" data-action="set-project-filter" data-value="">
-            <input type="radio" name="project-filter-radio" value="" ${!currentValue ? 'checked' : ''}>
-            <span class="filter-option-label">All Projects</span>
-        </label>
-    `;
-
-    projects.forEach(p => {
-        html += `
-            <label class="filter-option" data-action="set-project-filter" data-value="${escapeAttr(p.id)}">
-                <input type="radio" name="project-filter-radio" value="${escapeAttr(p.id)}" ${currentValue === p.id ? 'checked' : ''}>
-                <span class="filter-option-icon" style="width: 12px; height: 12px; border-radius: 3px; background: ${sanitizeColor(p.color)};"></span>
-                <span class="filter-option-label">${escapeHtml(p.name)}</span>
-            </label>
-        `;
-    });
-
-    container.innerHTML = html;
-}
 
 function renderStatusOptions(container) {
     const selected = getSelectedStatuses();
@@ -556,19 +524,6 @@ export function updateFilterChips() {
     if (!container) return;
 
     const chips = [];
-
-    // Project chip
-    const currentProjectId = getCurrentProject();
-    if (currentProjectId) {
-        const projects = getProjects() || [];
-        const project = projects.find(p => p.id === currentProjectId);
-        chips.push({
-            category: 'project',
-            label: 'Project',
-            value: project?.name || 'Unknown',
-            clearAction: 'clear-project-filter'
-        });
-    }
 
     // Status chips
     const statuses = getSelectedStatuses();

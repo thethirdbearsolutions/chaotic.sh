@@ -25,7 +25,7 @@ import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor, formatStatus, formatPriority, formatIssueType, formatDate } from './utils.js';
 import { showToast } from './ui.js';
 import { getCurrentProject, setCurrentProject, getCurrentTeam, getCurrentView } from './state.js';
-import { getProjects } from './projects.js';
+import { getProjects, chooseAllProjects, syncProjectSwitcher } from './projects.js';
 
 export const PAGE_SIZE = 100;
 export const DEFAULT_WHERE = 'status!=done,canceled';
@@ -290,13 +290,25 @@ function writeUrl(mode) {
     }
 }
 
-function populateProjectSelect() {
-    const select = el('query-project-filter');
-    if (!select) return;
-    const options = ['<option value="">All projects</option>']
-        .concat(getProjects().map((p) => `<option value="${escapeAttr(p.id)}">${esc(p.name)}</option>`));
-    select.innerHTML = options.join('');
-    select.value = state.teamScope ? '' : (state.projectId || '');
+/**
+ * The sidebar switcher shows the query's scope (CHT-2058). A team-wide
+ * query shows as "All projects" there without changing the scope the
+ * other views share: opening a team-wide link is not choosing All for
+ * them (PR #543 review I2). Leaving Query puts the switcher back.
+ */
+function showScopeInSwitcher() {
+    if (!state) return;
+    syncProjectSwitcher(state.teamScope ? null : state.projectId);
+}
+
+/** On load: a project-scoped query sets the shared scope, as it always has on a change. */
+function syncScopeToSwitcher() {
+    if (!state) return;
+    if (!state.teamScope && state.projectId !== getCurrentProject()) {
+        setCurrentProject(state.projectId);
+    } else {
+        showScopeInSwitcher();
+    }
 }
 
 function renderColumnPicker() {
@@ -443,13 +455,26 @@ export function runWhereBox() {
 /** Change the scope: a project id, or '' for every project of the team. */
 export function setQueryScope(projectId) {
     if (!state) return;
+    const previous = { teamScope: state.teamScope, projectId: state.projectId, page: state.page };
     state.teamScope = !projectId;
     if (projectId) state.projectId = projectId;
     state.page = 1;
     showNotice(null);
     // setCurrentProject syncs ?project= with a replaceState, so it runs after
     // the new entry is pushed, not on the entry Back returns to.
-    return runQuery('push', { onSuccess: () => { if (projectId) setCurrentProject(projectId); } });
+    return runQuery('push', {
+        onSuccess: () => {
+            if (projectId) setCurrentProject(projectId);
+            else chooseAllProjects();
+            showScopeInSwitcher();
+        },
+        // Refused: stay on the scope that was showing, in the query and in
+        // the switcher (PR #543 review I1).
+        onFailure: () => {
+            Object.assign(state, previous);
+            showScopeInSwitcher();
+        },
+    });
 }
 
 /** Show or hide a column; identifier and title cannot be hidden. */
@@ -520,7 +545,6 @@ function initListeners() {
     });
     el('query-run-btn')?.addEventListener('click', () => runWhereBox());
     el('query-copy-cli-btn')?.addEventListener('click', () => copyQueryAsCli());
-    el('query-project-filter')?.addEventListener('change', (e) => setQueryScope(e.target.value));
     el('query-columns-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
         const menu = el('query-columns-menu');
@@ -577,7 +601,7 @@ export function loadQueryView() {
     if (box) box.value = state.where === null ? DEFAULT_WHERE : state.where;
     el('query-cli-preview')?.classList.add('hidden');
     el('query-columns-menu')?.classList.add('hidden');
-    populateProjectSelect();
+    syncScopeToSwitcher();
     renderColumnPicker();
     showError(null);
     showNotice(notice);

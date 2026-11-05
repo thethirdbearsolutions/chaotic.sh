@@ -96,10 +96,6 @@ describe('dashboard module', () => {
             <div id="my-issues-list"></div>
             <div id="dashboard-activity-list"></div>
             <div id="dashboard-sprint-status"></div>
-            <select id="dashboard-project-filter">
-                <option value="">All Projects</option>
-                <option value="proj-1">Project 1</option>
-            </select>
             <select id="my-issues-status-filter">
                 <option value="">All</option>
                 <option value="todo">Todo</option>

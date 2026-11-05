@@ -55,7 +55,7 @@ async function loadRitualsForProject() {
         if (container) container.innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.projects,
             heading: 'Select a project',
-            description: 'Choose a project to view and manage its rituals',
+            description: 'Rituals belong to one project. Pick one in the sidebar switcher, or press P.',
         });
         return;
     }

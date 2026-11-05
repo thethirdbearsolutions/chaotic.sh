@@ -13,6 +13,7 @@ import { ISSUE_NAV_ROWS } from './constants.js';
  * @param {Object} actions - Callback functions for keyboard actions
  * @param {Function} actions.closeModal - Close the current modal
  * @param {Function} actions.navigateTo - Navigate to a view (e.g., 'issues')
+ * @param {Function} [actions.openProjectSwitcher] - Open the sidebar project switcher; false if it could not (CHT-2058)
  * @param {Function} actions.showCreateIssueModal - Open the create issue modal
  * @param {Function} actions.showKeyboardShortcutsHelp - Show the shortcuts help modal
  * @param {Function} actions.isModalOpen - Returns true if a modal is currently open
@@ -174,10 +175,12 @@ export function createKeyboardHandler(actions) {
                 break;
             case 'p':
                 // CHT-1215: same as 'c' above — detail view's 'p' (Priority)
-                // takes precedence over the global Projects shortcut.
+                // takes precedence over the global project switcher.
                 if (actions.isDetailViewActive?.()) break;
                 e.preventDefault();
-                actions.navigateTo('projects');
+                // P opens the sidebar's project switcher (CHT-2058); g p
+                // still goes to the Projects page.
+                if (!actions.openProjectSwitcher?.()) actions.navigateTo('projects');
                 break;
             case '?':
                 e.preventDefault();
