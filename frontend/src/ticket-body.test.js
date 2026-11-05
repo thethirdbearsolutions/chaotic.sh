@@ -132,9 +132,14 @@ describe('renderTimeline', () => {
         expect(el.querySelector('.timeline-truncated').textContent).toBe('Older activity is not shown.');
     });
 
-    it('marks agents on event lines', () => {
-        const el = dom(renderTimeline({ activities: [{ ...created, user: { is_agent: true } }], issueId: 'i1' }, fmt));
-        expect(el.querySelector('.timeline-meta .badge-agent')).not.toBeNull();
+    it('shows no agent chip on comments or event lines (CHT-2026)', () => {
+        const el = dom(renderTimeline({
+            comments: [{ ...comment, author: { is_agent: true } }],
+            activities: [{ ...created, user: { is_agent: true } }],
+            issueId: 'i1',
+        }, fmt));
+        expect(el.querySelector('.badge')).toBeNull();
+        expect(el.textContent).not.toContain('agent');
     });
 
     it('says when comments failed to load, and when there is nothing yet', () => {

@@ -18,7 +18,7 @@
  * Pure render functions; issue-detail-view.js owns the data and wiring.
  */
 
-import { escapeHtml, escapeAttr, formatTimeAgo, formatStatus, formatPriority, formatIssueType, renderAgentBadge, renderPrincipalBadge } from './utils.js';
+import { escapeHtml, escapeAttr, formatTimeAgo, formatStatus, formatPriority, formatIssueType } from './utils.js';
 import { getStatusIcon } from './issue-list.js';
 import { renderCommentContent } from './rich-text.js';
 
@@ -90,28 +90,25 @@ export function renderRelatedWork(issue, subIssues = [], relations = [], { forma
         </section>`;
 }
 
-function renderComment(comment, getAssigneeById) {
+// No agent/session chip on the timeline: the name is enough here (CHT-2026).
+function renderComment(comment) {
     const initial = escapeHtml((comment.author_name || 'U').charAt(0).toUpperCase());
-    const badge = comment.author
-        ? renderPrincipalBadge(comment.author)
-        : renderAgentBadge(getAssigneeById ? getAssigneeById(comment.author_id)?.is_agent : false);
     return `
         <li class="comment timeline-comment">
             <div class="comment-avatar">${initial}</div>
             <div class="comment-body">
                 <div class="comment-header">
                     <span class="comment-author">${escapeHtml(comment.author_name || 'User')}</span>
-                    ${badge}
                     <span class="comment-date">${escapeHtml(formatTimeAgo(comment.created_at))}</span>
                 </div>
-                <div class="comment-content markdown-body">${renderCommentContent(comment.content)}</div>
+                <div class="comment-content markdown-body">${renderCommentContent(comment.content).trim()}</div>
             </div>
         </li>`;
 }
 
 // A note or reason, folded; `comment-content` so it can be quoted like a comment.
 const folded = (label, text, open = false) =>
-    `<details class="timeline-note"${open ? ' open' : ''}><summary>${label}</summary><div class="markdown-body comment-content">${renderCommentContent(text)}</div></details>`;
+    `<details class="timeline-note"${open ? ' open' : ''}><summary>${label}</summary><div class="markdown-body comment-content">${renderCommentContent(text).trim()}</div></details>`;
 
 function renderEvent(activity, { formatText, formatActor, gateShowsIt, awaitingReview }) {
     let text;
@@ -137,7 +134,7 @@ function renderEvent(activity, { formatText, formatActor, gateShowsIt, awaitingR
             <span class="timeline-dot" aria-hidden="true"></span>
             <div class="timeline-event-body">
                 <span class="timeline-text">${text}</span>${inline}
-                <span class="timeline-meta">· ${escapeHtml(formatActor(activity))} ${renderPrincipalBadge(activity.user)} · ${escapeHtml(formatTimeAgo(activity.created_at))}</span>
+                <span class="timeline-meta">· ${escapeHtml(formatActor(activity))} · ${escapeHtml(formatTimeAgo(activity.created_at))}</span>
                 ${below}
             </div>
         </li>`;
@@ -177,7 +174,7 @@ function attestationsMissingFrom(activities, ritualStatus) {
  * @param {boolean} [data.activitiesTruncated] - older activity was left out
  * @param {boolean} [data.commentsLoadFailed]
  * @param {string} data.issueId
- * @param {{formatText: Function, formatActor: Function, getAssigneeById?: Function}} fmt
+ * @param {{formatText: Function, formatActor: Function}} fmt
  */
 export function renderTimeline({ comments = [], activities = [], ritualStatus = null, gateRitualName = null, activitiesTruncated = false, commentsLoadFailed = false, issueId }, fmt) {
     const awaiting = new Set(((ritualStatus && ritualStatus.pending_rituals) || [])
@@ -194,7 +191,7 @@ export function renderTimeline({ comments = [], activities = [], ritualStatus = 
     }
 
     const items = [
-        ...(comments || []).map(c => ({ at: c.created_at, html: renderComment(c, fmt.getAssigneeById) })),
+        ...(comments || []).map(c => ({ at: c.created_at, html: renderComment(c) })),
         // A comment is already in the stream; its "Added a comment" line would repeat it.
         ...events.filter(a => a.activity_type !== 'commented').map(a => {
             const current = latest.get(a.field_name) === a;

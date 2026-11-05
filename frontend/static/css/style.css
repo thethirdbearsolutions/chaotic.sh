@@ -10667,7 +10667,27 @@ body.theme-light {
     /* The composer is on this screen; the + button would cover the gate. */
     body:has(#issue-detail-view:not(.hidden)) .mobile-fab { display: none; }
 }
-.timeline-comment .comment-header { justify-content: flex-start; gap: 8px; margin-bottom: 2px; }
+.timeline-comment .comment-header { justify-content: flex-start; gap: 6px; margin-bottom: 2px; }
 .timeline-comment .comment-header .comment-date::before { content: '· '; }
 .timeline-comment .comment-content > :last-child { margin-bottom: 0; }
 .timeline .comment + .comment { padding-top: 12px; }
+
+/* Tighter timeline (CHT-2026): one rhythm for comments and events. */
+.timeline-comment.comment { padding: 8px 0; gap: 10px; }
+.timeline .comment + .comment { padding-top: 8px; border-top: 0; }
+.timeline-comment .comment-header { margin-bottom: 0; line-height: 20px; }
+.timeline-comment .comment-author { font-size: var(--font-sm); }
+.timeline-comment .comment-date { font-size: var(--font-xs, 12px); }
+.timeline-comment .comment-content { font-size: var(--font-base); line-height: 1.5; }
+.timeline-comment .comment-content p,
+.timeline-comment .comment-content ul,
+.timeline-comment .comment-content ol,
+.timeline-comment .comment-content pre,
+.timeline-comment .comment-content blockquote { margin: 0 0 6px; }
+.timeline-comment .comment-content > :last-child { margin-bottom: 0; }
+.timeline-event { padding: 1px 0; gap: 10px; }
+.timeline-comment + .timeline-event { margin-top: 2px; }
+.timeline-event + .timeline-comment { margin-top: 4px; }
+.timeline-note { margin-top: 0; }
+.timeline-note .markdown-body { margin-top: 2px; font-size: var(--font-sm); }
+.timeline-note .markdown-body > :last-child { margin-bottom: 0; }
