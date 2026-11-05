@@ -368,7 +368,11 @@ describe('dashboard module', () => {
             statusCounts: {},
         }));
 
-        beforeEach(() => resetSprintRowsExpanded());
+        beforeEach(() => {
+            resetSprintRowsExpanded();
+            api.getCurrentSprint.mockReset();
+            api.getIssues.mockReset();
+        });
 
         it('uses a singular heading and says what is left for one project', () => {
             renderSprintStatus([{
@@ -380,7 +384,7 @@ describe('dashboard module', () => {
             expect(html).toContain('Current sprint');
             expect(html).not.toContain('Active sprints');
             expect(html).toContain('<strong>5</strong> pts left');
-            expect(html).toContain('Day 2');
+            expect(html).toContain('Day 3'); // two full days in: the third day
             expect(html).toContain('4 issues');
             expect(html).toContain('data-action="view-sprint"');
         });
@@ -412,7 +416,98 @@ describe('dashboard module', () => {
             expect(api.getIssues).not.toHaveBeenCalled();
             dashboardActions['dash-sprints-toggle']();
             expect(container.querySelectorAll('.sprint-row')).toHaveLength(7);
-            expect(container.innerHTML).toContain('Show fewer');
+            const toggle = container.querySelector('[data-action="dash-sprints-toggle"]');
+            expect(toggle.textContent).toBe('Show fewer');
+            expect(toggle.getAttribute('aria-expanded')).toBe('true');
+            expect(document.activeElement).toBe(toggle);
+            dashboardActions['dash-sprints-toggle']();
+            expect(container.querySelectorAll('.sprint-row')).toHaveLength(5);
+        });
+
+        it('starts collapsed again in a new team', async () => {
+            getCurrentProject.mockReturnValue(null);
+            setProjects(Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, name: `Project ${i}` })));
+            api.getCurrentSprint.mockImplementation(async (pid) => sprint(pid));
+            await loadSprintStatus();
+            dashboardActions['dash-sprints-toggle']();
+            getCurrentTeam.mockReturnValue({ id: 'team-2', name: 'Other' });
+            await loadSprintStatus();
+            expect(document.querySelectorAll('.sprint-row')).toHaveLength(5);
+        });
+
+        it('ignores Show all while a load is in flight', () => {
+            renderSprintStatus(many(8), { single: false });
+            resetSprintRowsExpanded(); // as a new load does: no current data
+            dashboardActions['dash-sprints-toggle']();
+            expect(document.querySelectorAll('.sprint-row')).toHaveLength(5);
+        });
+
+        it('shows no toggle at exactly five rows', () => {
+            renderSprintStatus(many(5), { single: false });
+            expect(document.querySelectorAll('.sprint-row')).toHaveLength(5);
+            expect(document.querySelector('[data-action="dash-sprints-toggle"]')).toBeNull();
+        });
+
+        it('says when issue counts failed instead of claiming an empty sprint', async () => {
+            const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            getCurrentProject.mockReturnValue('proj-1');
+            setProjects([{ id: 'proj-1', name: 'Project 1' }]);
+            api.getCurrentSprint.mockResolvedValue(sprint('a'));
+            api.getIssues.mockRejectedValue(new Error('boom'));
+            await loadSprintStatus();
+            const html = document.getElementById('dashboard-sprint-status').innerHTML;
+            expect(html).toContain('Issue counts unavailable');
+            expect(html).not.toContain('No issues planned');
+            consoleErrorSpy.mockRestore();
+        });
+
+        it('explains limbo on the card and in a row', () => {
+            const limbo = { project: { id: 'p', name: 'P' }, sprint: sprint('a', { limbo: true }), statusCounts: {} };
+            renderSprintStatus([limbo], { single: true });
+            let c = document.getElementById('dashboard-sprint-status');
+            expect(c.querySelector('.sprint-focus.limbo')).not.toBeNull();
+            expect(c.innerHTML).toContain('waiting on sprint rituals');
+            renderSprintStatus([limbo, ...many(1)], { single: false });
+            c = document.getElementById('dashboard-sprint-status');
+            expect(c.querySelector('.sprint-row.limbo .sr-only').textContent).toBe(', in limbo');
+        });
+
+        it('marks a nearly spent row and an unbudgeted row', () => {
+            renderSprintStatus([
+                { project: { id: 'a', name: 'A' }, sprint: sprint('a', { points_spent: 17 }) },
+                { project: { id: 'b', name: 'B' }, sprint: sprint('b', { budget: null, points_spent: 4 }) },
+            ], { single: false });
+            const rows = document.querySelectorAll('.sprint-row');
+            expect(rows[0].classList.contains('near')).toBe(true);
+            expect(rows[1].querySelector('.sprint-row-bar.none')).not.toBeNull();
+            expect(rows[1].querySelector('.sprint-row-points').textContent).toContain('4 pts');
+        });
+
+        it('escapes project and sprint names in rows and the card', () => {
+            const evil = '<img src=x onerror=alert(1)>';
+            renderSprintStatus([
+                { project: { id: 'a', name: evil }, sprint: sprint('a', { name: evil }) },
+                ...many(1),
+            ], { single: false });
+            expect(document.querySelector('#dashboard-sprint-status img')).toBeNull();
+            renderSprintStatus([{ project: { id: 'a', name: evil }, sprint: sprint('a', { name: evil }), statusCounts: {} }], { single: true });
+            expect(document.querySelector('#dashboard-sprint-status img')).toBeNull();
+        });
+
+        it('keeps a button card free of block children', () => {
+            renderSprintStatus([{ project: { id: 'p', name: 'P' }, sprint: sprint('a', { points_spent: 3 }), statusCounts: { todo: 2 } }], { single: true });
+            expect(document.querySelector('.sprint-focus div')).toBeNull();
+        });
+
+        it('keeps ties in project order and limbo above a bigger arrears', () => {
+            const row = (id, s) => ({ project: { id, name: id }, sprint: sprint(id, s) });
+            const sorted = sortSprintsByAttention([
+                row('first', { points_spent: 10 }),
+                row('second', { points_spent: 10 }),
+                row('over', { points_spent: 90 }),
+                row('limbo', { limbo: true }),
+            ]).map(d => d.project.id);
+            expect(sorted).toEqual(['limbo', 'over', 'first', 'second']);
         });
 
         it('puts limbo and arrears first and counts them', () => {
@@ -422,7 +517,7 @@ describe('dashboard module', () => {
             renderSprintStatus(data, { single: false });
             const rows = [...document.querySelectorAll('.sprint-row-project')].map(e => e.textContent);
             expect(rows.slice(0, 2)).toEqual(['Stuck', 'Over']);
-            expect(document.querySelector('.sprint-attention').textContent).toBe('2 need closing');
+            expect(document.querySelector('.sprint-attention').textContent).toBe('1 in arrears · 1 in limbo');
         });
 
         it('orders budgeted sprints by fill, then unbudgeted by points', () => {

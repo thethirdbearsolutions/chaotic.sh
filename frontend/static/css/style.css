@@ -9812,6 +9812,8 @@ body.theme-light .picker-popover {
     min-width: 0;
 }
 .sprint-focus-name {
+    min-width: 0;
+    flex: 0 1 auto;
     font-size: var(--font-sm);
     font-weight: 600;
     color: var(--text-primary);
@@ -9819,11 +9821,19 @@ body.theme-light .picker-popover {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+.sprint-focus-top .sprint-status-badge { flex-shrink: 0; }
 .sprint-focus-meta {
+    flex-shrink: 0;
     margin-left: auto;
     font-size: var(--font-xs);
     color: var(--text-muted);
     white-space: nowrap;
+}
+.sprint-focus-headline,
+.sprint-focus .sprint-issue-breakdown,
+.sprint-focus .sprint-progress-bar,
+.sprint-focus .sprint-progress-fill {
+    display: block;
 }
 .sprint-focus-headline {
     font-size: var(--font-sm);
@@ -9842,6 +9852,7 @@ body.theme-light .picker-popover {
 .sprint-focus .sprint-issue-breakdown { margin-top: 10px; }
 .sprint-focus .sprint-status-counts { gap: 4px 10px; }
 .sprint-focus-note {
+    display: block;
     margin-top: 10px;
     font-size: var(--font-xs);
     color: var(--text-secondary);
@@ -9862,7 +9873,7 @@ body.theme-light .picker-popover {
 .sprint-rows li + li { border-top: 1px solid var(--border-color); }
 .sprint-row {
     display: grid;
-    grid-template-columns: 8px minmax(0, 1fr) auto 44px 52px;
+    grid-template-columns: 8px minmax(0, 1fr) auto 44px auto;
     align-items: center;
     gap: 8px;
     width: 100%;
@@ -9919,6 +9930,12 @@ body.theme-light .picker-popover {
     white-space: nowrap;
 }
 .sprint-row-unit { color: var(--text-muted); }
+/* A narrow rail (or phone) keeps the project name readable. */
+.dashboard-rail { container-type: inline-size; }
+@container (max-width: 300px) {
+    .sprint-row { grid-template-columns: 8px minmax(0, 1fr) 36px auto; }
+    .sprint-row-sprint, .sprint-row-unit { display: none; }
+}
 .sprint-row.arrears .sprint-row-points { color: var(--error, #ef4444); }
 .sprint-rows-more {
     border: 1px solid var(--border-color);
