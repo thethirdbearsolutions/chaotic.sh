@@ -19,6 +19,7 @@ import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
 import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRemoteDocumentDeleted } from './documents.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
+import { formatPriority, formatIssueType } from './utils.js';
 import { api } from './api.js';
 import { showAuthScreen } from './auth.js';
 import { forgetResults, forgetResultsUnlessOpen } from './last-result.js';
@@ -148,6 +149,81 @@ function handleLiveFeedForbidden() {
     showToast('Live updates stopped: you no longer have access to this team.', 'error');
 }
 
+/**
+ * "You" for the signed-in user, else the name the event carries.
+ */
+function actorName(id, name) {
+    if (id && id === getCurrentUser()?.id) return 'You';
+    return name || 'Someone';
+}
+
+/**
+ * Lines for a live "issue created" toast (CHT-2034): who made it and its
+ * title, then its type, priority and assignee. It used to read only
+ * "New issue: CHT-N", which said that something happened and nothing else.
+ */
+export function describeCreatedIssue(data) {
+    const who = actorName(data.creator_id, data.creator_name);
+    const head = data.title
+        ? `${who} created ${data.identifier}: ${data.title}`
+        : `${who} created ${data.identifier}`;
+    const facts = [];
+    if (data.issue_type) facts.push(formatIssueType(data.issue_type));
+    if (data.priority && data.priority !== 'no_priority') {
+        facts.push(`${formatPriority(data.priority)} priority`);
+    }
+    if (data.estimate != null) facts.push(`${data.estimate} pt${data.estimate === 1 ? '' : 's'}`);
+    if (data.assignee_id) {
+        facts.push(data.assignee_id === getCurrentUser()?.id
+            ? 'assigned to you'
+            : `assigned to ${data.assignee_name || 'someone'}`);
+    }
+    if (data.parent_identifier) facts.push(`under ${data.parent_identifier}`);
+    return facts.length ? [head, facts.join(' · ')] : [head];
+}
+
+/** Lines for a live "issue deleted" toast (CHT-2034). */
+export function describeDeletedIssue(data, title) {
+    const label = title ? `${data.identifier}: ${title}` : data.identifier;
+    if (data.deleted_by_id || data.deleted_by_name) {
+        return [`${actorName(data.deleted_by_id, data.deleted_by_name)} deleted ${label}`];
+    }
+    return [`Issue ${label} was deleted`];
+}
+
+/**
+ * Show a live-event toast of one or more lines. With an issue, clicking
+ * the message opens it.
+ */
+function showIssueToast(issue, lines, type) {
+    const toast = showToast(lines.join('\n'), type);
+    if (!toast) return;
+    if (lines.length > 1) toast.classList.add('toast-multiline');
+    if (issue?.id) {
+        const msg = toast.querySelector('.toast-message');
+        if (msg) {
+            toast.classList.add('toast-clickable');
+            msg.title = `Open ${issue.identifier}`;
+            // A keyboard can reach it too (PR #531 review 1).
+            msg.setAttribute('role', 'button');
+            msg.tabIndex = 0;
+            const open = () => {
+                // Dismiss through the close button, so the toast does not
+                // hang over the issue it just opened.
+                toast.querySelector('.toast-close')?.click();
+                Promise.resolve(viewIssue(issue.id)).catch(e => console.error('Failed to open issue:', e));
+            };
+            msg.addEventListener('click', open);
+            msg.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    open();
+                }
+            });
+        }
+    }
+}
+
 function handleIssueCreated(data) {
     // A closed view's remembered result is stale now (CHT-1973).
     forgetResultsUnlessOpen(getCurrentView(), 'board', 'sprints', 'epics');
@@ -172,7 +248,7 @@ function handleIssueCreated(data) {
         if (getCurrentView() === 'issues') {
             renderIssues();
         }
-        showToast(`New issue: ${data.identifier}`, 'info');
+        showIssueToast(data, describeCreatedIssue(data), 'info');
     }
 
     // Check myIssues separately (managed by dashboard.js)
@@ -274,6 +350,12 @@ function handleIssueUpdated(data) {
 }
 
 function handleIssueDeleted(data) {
+    // A bundle cached from before CHT-2034 can meet a server that sends
+    // only id + identifier the other way round too; fall back to the
+    // cached row whenever the title is missing.
+    const deletedTitle = data.title
+        ?? getIssues().find(i => i.id === data.id)?.title
+        ?? getMyIssues().find(i => i.id === data.id)?.title;
     // A closed view's remembered result is stale now (CHT-1973).
     forgetResultsUnlessOpen(getCurrentView(), 'board', 'sprints', 'epics');
     removeIssue(data.id);
@@ -304,11 +386,12 @@ function handleIssueDeleted(data) {
         // leave its progress bar stale (denominator never shrank).
         loadEpics();
     }
-    showToast(`Issue ${data.identifier} deleted`, 'info');
+    // One toast, not two: a warning when it was the issue on screen.
+    const wasOpen = isViewingIssueDetail(data.id);
+    showIssueToast(null, describeDeletedIssue(data, deletedTitle), wasOpen ? 'warning' : 'info');
 
     // Navigate away if viewing the deleted issue
-    if (isViewingIssueDetail(data.id)) {
-        showToast(`Issue ${data.identifier} was deleted`, 'warning');
+    if (wasOpen) {
         navigateTo('my-issues');
     }
 }
@@ -517,7 +600,15 @@ function handleSprint(data, { type } = {}) {
     if (type === 'created') {
         showToast(`New sprint: ${data.name}`, 'info');
     } else if (type === 'closed') {
-        showToast(`Sprint ${data.name} closed`, 'info');
+        // Default names already say Sprint (was "Sprint Sprint 2 closed").
+        const name = /^sprint\b/i.test(data.name || '') ? data.name : `Sprint ${data.name}`;
+        const spent = data.budget != null && data.points_spent != null
+            ? ` at ${data.points_spent}/${data.budget} points`
+            : '';
+        // A close with rituals pending enters limbo; it is not closed yet.
+        showToast(data.limbo
+            ? `${name} is closing${spent}: rituals pending`
+            : `${name} closed${spent}`, 'info');
     }
 }
 
