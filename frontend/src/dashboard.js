@@ -353,6 +353,10 @@ export function renderMyIssues() {
 // above) instead of painting stale sprint cards (CHT-1224 PR #211 review
 // finding 2; same pattern as loadMyIssues above / CHT-1211 review #3).
 let loadSprintStatusRequestId = 0;
+// The last load's results, so Show all / Show fewer re-renders without a refetch.
+let lastSprintData = [];
+// Which team/project the expanded state belongs to: a new scope starts collapsed.
+let lastSprintScope = null;
 
 export async function loadSprintStatus() {
     const container = document.getElementById('dashboard-sprint-status');
@@ -361,6 +365,13 @@ export async function loadSprintStatus() {
     const requestId = ++loadSprintStatusRequestId;
 
     const currentProjectId = getCurrentProject();
+    const scope = `${getCurrentTeam()?.id ?? ''}:${currentProjectId ?? ''}`;
+    if (scope !== lastSprintScope) {
+        lastSprintScope = scope;
+        sprintRowsExpanded = false;
+    }
+    // Until this load lands, Show all has nothing current to re-render.
+    lastSprintData = [];
     const allProjects = getProjects();
     const projects = currentProjectId
         ? allProjects.filter(p => p.id === currentProjectId)
@@ -376,6 +387,10 @@ export async function loadSprintStatus() {
                 const sprint = await api.getCurrentSprint(project.id);
                 if (!sprint) return null;
                 let statusCounts = {};
+                let countsFailed = false;
+                // The many-projects list shows points only, so skip a
+                // second request per project there (CHT-2027).
+                if (!currentProjectId) return { project, sprint, statusCounts };
                 try {
                     const issues = await api.getIssues({ sprint_id: sprint.id, project_id: project.id, limit: 500 });
                     for (const issue of issues) {
@@ -387,8 +402,9 @@ export async function loadSprintStatus() {
                     // breakdown at all, indistinguishable from a sprint with no
                     // issues. Log it; the sprint card itself still renders below.
                     console.error(`Failed to load issue counts for sprint ${sprint.id}:`, e);
+                    countsFailed = true;
                 }
-                return { project, sprint, statusCounts };
+                return { project, sprint, statusCounts, countsFailed };
             } catch (e) {
                 // CHT-1224: was a bare `catch { return null }` — a project whose
                 // sprint fetch 500s looked identical to a project with no active
@@ -400,7 +416,8 @@ export async function loadSprintStatus() {
         });
         const results = (await Promise.all(sprintPromises)).filter(Boolean);
         if (requestId !== loadSprintStatusRequestId) return; // a newer loadSprintStatus() has since started — drop this stale response
-        renderSprintStatus(results);
+        lastSprintData = results;
+        renderSprintStatus(results, { single: !!currentProjectId });
     } catch (e) {
         if (requestId !== loadSprintStatusRequestId) return;
         // CHT-1224: was `container.innerHTML = ''` with zero indication — the
@@ -417,11 +434,154 @@ export async function loadSprintStatus() {
     }
 }
 
+// How many rows the many-projects list shows before "Show all" (CHT-2027).
+// Enough to see what needs attention; the rest of the rail stays in reach.
+const SPRINT_ROWS_PREVIEW = 5;
+let sprintRowsExpanded = false;
+
+const SPRINT_STATUS_ORDER = ['done', 'in_review', 'in_progress', 'todo', 'backlog'];
+
 /**
- * Render sprint status cards.
- * @param {Array<{project, sprint}>} sprintData
+ * Budget facts for one sprint. A null budget is unlimited; 0 is a real
+ * budget (any spend is arrears), matching Sprint.in_arrears on the server.
  */
-export function renderSprintStatus(sprintData) {
+export function describeSprintBudget(sprint) {
+    const spent = sprint.points_spent || 0;
+    const hasBudget = sprint.budget !== null && sprint.budget !== undefined;
+    const budget = hasBudget ? sprint.budget : null;
+    const overBudget = hasBudget && spent > budget;
+    const pct = hasBudget ? (budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : (spent > 0 ? 100 : 0)) : null;
+    const state = sprint.limbo ? 'limbo' : overBudget ? 'arrears' : (hasBudget && pct >= 80) ? 'near' : '';
+    return { spent, budget, hasBudget, overBudget, pct, state };
+}
+
+/**
+ * Order sprints by how much they need someone: limbo, then arrears, then
+ * by how much of the budget is spent; unbudgeted sprints after, busiest
+ * first. Ties keep the incoming (project) order.
+ */
+export function sortSprintsByAttention(sprintData) {
+    const rank = ({ sprint }) => {
+        const b = describeSprintBudget(sprint);
+        if (sprint.limbo) return [0, 0];
+        if (b.overBudget) return [1, -(b.spent - b.budget)];
+        if (b.hasBudget) return [2, -b.pct];
+        return [3, -b.spent];
+    };
+    return sprintData
+        .map((d, i) => ({ d, r: rank(d), i }))
+        .sort((a, b) => a.r[0] - b.r[0] || a.r[1] - b.r[1] || a.i - b.i)
+        .map(x => x.d);
+}
+
+function sprintDaysRunning(sprint) {
+    if (!sprint.activated_at) return null;
+    const elapsed = Date.now() - new Date(sprint.activated_at);
+    return Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed / 86400000)) + 1 : null;
+}
+
+function sprintBudgetHeadline(b) {
+    if (!b.hasBudget) return `<strong>${b.spent}</strong> pts spent <span class="sprint-focus-muted">· no budget</span>`;
+    if (b.overBudget) return `<strong>${b.spent - b.budget}</strong> pts over budget <span class="sprint-focus-muted">· ${b.spent}/${b.budget}</span>`;
+    return `<strong>${b.budget - b.spent}</strong> pts left <span class="sprint-focus-muted">· ${b.spent}/${b.budget}</span>`;
+}
+
+function sprintStateBadge(sprint, b) {
+    if (sprint.limbo) return '<span class="badge badge-warning" title="Closed, waiting on sprint rituals">Limbo</span>';
+    if (b.overBudget) return '<span class="badge badge-danger" title="Over budget: close the sprint to keep working">Arrears</span>';
+    return '';
+}
+
+// State modifier for the shared .meter / .state-dot (CHT-2040).
+const STATE_MODIFIER = { near: 'is-near', arrears: 'is-over', limbo: 'is-limbo' };
+function stateModifier(b) {
+    return STATE_MODIFIER[b.state] || '';
+}
+
+function sprintMeter(b) {
+    return `<span class="meter ${stateModifier(b)}" aria-hidden="true"><span class="meter-fill" style="width: ${b.pct}%"></span></span>`;
+}
+
+function sprintStateText(sprint, b) {
+    if (sprint.limbo) return 'in limbo';
+    if (b.overBudget) return 'in arrears';
+    if (b.state === 'near') return 'nearly spent';
+    return '';
+}
+
+function sprintActionAttrs(sprint) {
+    return `data-action="view-sprint" data-sprint-id="${escapeAttr(sprint.id)}" data-sprint-url="/sprint/${escapeAttr(sprint.id)}"`;
+}
+
+/** One project's sprint, with room to say something (CHT-2027). */
+function renderSprintFocus({ sprint, statusCounts, countsFailed }) {
+    const b = describeSprintBudget(sprint);
+    const counts = statusCounts || {};
+    const total = Object.values(counts).reduce((a, n) => a + n, 0);
+    const days = sprintDaysRunning(sprint);
+    const issuesText = countsFailed ? 'Issue counts unavailable'
+        : total ? `${total} issue${total === 1 ? '' : 's'}` : 'No issues planned';
+    const meta = [days ? `Day ${days}` : '', issuesText].filter(Boolean).join(' · ');
+    let note = '';
+    if (sprint.limbo) note = 'Closed and waiting on sprint rituals before the next sprint starts.';
+    else if (b.overBudget) note = 'Over budget. Close the sprint to keep moving tickets.';
+    // Inner pieces are spans: a <button> may hold only phrasing content.
+    return `
+        <button type="button" class="sprint-focus ${b.state}" ${sprintActionAttrs(sprint)}>
+            <span class="sprint-focus-top">
+                <span class="sprint-focus-name">${escapeHtml(sprint.name)}</span>
+                ${sprintStateBadge(sprint, b)}
+                <span class="sprint-focus-meta">${escapeHtml(meta)}</span>
+            </span>
+            <span class="sprint-focus-headline">${sprintBudgetHeadline(b)}</span>
+            ${b.hasBudget ? sprintMeter(b) : ''}
+            ${total ? `
+                <span class="sprint-issue-breakdown">
+                    <span class="sprint-stacked-bar" aria-hidden="true">
+                        ${SPRINT_STATUS_ORDER.filter(s => counts[s]).map(s =>
+                            `<span class="sprint-stacked-segment status-${s}" style="width: ${(counts[s] / total) * 100}%"></span>`
+                        ).join('')}
+                    </span>
+                    <span class="sprint-status-counts">
+                        ${SPRINT_STATUS_ORDER.filter(s => counts[s]).map(s =>
+                            `<span class="sprint-count-label status-${s}">${counts[s]} ${formatStatus(s)}</span>`
+                        ).join('')}
+                    </span>
+                </span>
+            ` : ''}
+            ${note ? `<span class="sprint-focus-note ${b.state}">${note}</span>` : ''}
+        </button>
+    `;
+}
+
+/** One line per project, so many projects fit in the rail (CHT-2027). */
+function renderSprintRow({ project, sprint }) {
+    const b = describeSprintBudget(sprint);
+    const points = b.hasBudget ? `${b.spent}/${b.budget}` : `${b.spent}`;
+    const stateText = sprintStateText(sprint, b);
+    const title = `${project.name}: ${sprint.name}, ${b.hasBudget ? `${b.spent} of ${b.budget} pts` : `${b.spent} pts, no budget`}${stateText ? `, ${stateText}` : ''}`;
+    return `
+        <li>
+            <button type="button" class="sprint-row ${b.state}" ${sprintActionAttrs(sprint)} title="${escapeAttr(title)}">
+                <span class="state-dot ${stateModifier(b)}" aria-hidden="true"></span>
+                <span class="sprint-row-project">${escapeHtml(project.name)}</span>
+                <span class="sprint-row-sprint">${escapeHtml(sprint.name)}</span>
+                ${b.hasBudget ? sprintMeter(b) : '<span class="sprint-row-nometer" aria-hidden="true"></span>'}
+                <span class="meter-label">${points}<span class="sprint-row-unit"> pts</span>${b.hasBudget ? '' : '<span class="sr-only">, no budget</span>'}</span>
+                ${stateText ? `<span class="sr-only">, ${stateText}</span>` : ''}
+            </button>
+        </li>
+    `;
+}
+
+/**
+ * Render the rail's sprint panel. One project gets a single card that says
+ * what's left and what's in flight; several projects get one compact row
+ * each, most in need of attention first, capped until expanded (CHT-2027).
+ * @param {Array<{project, sprint, statusCounts}>} sprintData
+ * @param {{single?: boolean}} [opts] single: one project is selected
+ */
+export function renderSprintStatus(sprintData, { single = sprintData.length === 1 && !!getCurrentProject() } = {}) {
     const container = document.getElementById('dashboard-sprint-status');
     if (!container) return;
 
@@ -430,62 +590,42 @@ export function renderSprintStatus(sprintData) {
         return;
     }
 
-    const STATUS_ORDER = ['done', 'in_review', 'in_progress', 'todo', 'backlog'];
+    if (single) {
+        container.innerHTML = `
+            <div class="section-header">
+                <h3>Current sprint</h3>
+            </div>
+            ${renderSprintFocus(sprintData[0])}
+        `;
+        return;
+    }
+
+    const sorted = sortSprintsByAttention(sprintData);
+    const inLimbo = sorted.filter(({ sprint }) => sprint.limbo).length;
+    const inArrears = sorted.filter(({ sprint }) => !sprint.limbo && describeSprintBudget(sprint).overBudget).length;
+    const attention = [inArrears ? `${inArrears} in arrears` : '', inLimbo ? `${inLimbo} in limbo` : ''].filter(Boolean).join(' · ');
+    const collapsible = sorted.length > SPRINT_ROWS_PREVIEW;
+    const shown = sprintRowsExpanded ? sorted : sorted.slice(0, SPRINT_ROWS_PREVIEW);
+    const hidden = sorted.length - shown.length;
 
     container.innerHTML = `
         <div class="section-header">
             <h3>Active sprints</h3>
+            <span class="section-count">${sorted.length}</span>
+            ${attention ? `<span class="sprint-attention">${attention}</span>` : ''}
         </div>
-        <div class="sprint-status-cards">
-            ${sprintData.map(({ project, sprint, statusCounts }) => {
-                const budget = sprint.budget || 0;
-                const spent = sprint.points_spent || 0;
-                const pct = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
-                const overBudget = budget > 0 && spent > budget;
-                const statusClass = sprint.limbo ? 'limbo' : overBudget ? 'arrears' : '';
-                const counts = statusCounts || {};
-                const totalIssues = Object.values(counts).reduce((a, b) => a + b, 0);
-
-                return `
-                    <div class="sprint-status-card ${statusClass}">
-                        <div class="sprint-status-header">
-                            <span class="sprint-status-project">${escapeHtml(project.name)}</span>
-                            ${sprint.limbo ? '<span class="sprint-status-badge limbo">Limbo</span>' : ''}
-                            ${overBudget ? '<span class="sprint-status-badge arrears">Arrears</span>' : ''}
-                        </div>
-                        <div class="sprint-status-name">${escapeHtml(sprint.name)}</div>
-                        ${budget > 0 ? `
-                            <div class="sprint-status-progress">
-                                <div class="sprint-progress-bar">
-                                    <div class="sprint-progress-fill ${statusClass}" style="width: ${pct}%"></div>
-                                </div>
-                                <span class="sprint-status-points">${spent}/${budget} pts</span>
-                            </div>
-                        ` : `
-                            <div class="sprint-status-progress">
-                                <span class="sprint-status-points">${spent} pts (no budget)</span>
-                            </div>
-                        `}
-                        ${totalIssues > 0 ? `
-                            <div class="sprint-issue-breakdown">
-                                <div class="sprint-stacked-bar">
-                                    ${STATUS_ORDER.filter(s => counts[s]).map(s => {
-                                        const widthPct = Math.round((counts[s] / totalIssues) * 100);
-                                        return `<div class="sprint-stacked-segment status-${s}" style="width: ${widthPct}%" title="${formatStatus(s)}: ${counts[s]}"></div>`;
-                                    }).join('')}
-                                </div>
-                                <div class="sprint-status-counts">
-                                    ${STATUS_ORDER.filter(s => counts[s]).map(s =>
-                                        `<span class="sprint-count-label status-${s}">${counts[s]} ${formatStatus(s)}</span>`
-                                    ).join('')}
-                                </div>
-                            </div>
-                        ` : ''}
-                    </div>
-                `;
-            }).join('')}
-        </div>
+        <ul class="sprint-rows" id="dashboard-sprint-rows">
+            ${shown.map(renderSprintRow).join('')}
+        </ul>
+        ${collapsible ? `<button type="button" class="dash-group-more sprint-rows-more" data-action="dash-sprints-toggle" aria-expanded="${sprintRowsExpanded}" aria-controls="dashboard-sprint-rows">${hidden > 0 ? `Show all ${sorted.length}` : 'Show fewer'}</button>` : ''}
     `;
+}
+
+/** For tests: reset the many-projects list to collapsed. */
+export function resetSprintRowsExpanded() {
+    sprintRowsExpanded = false;
+    lastSprintData = [];
+    lastSprintScope = null;
 }
 
 // ========================================
@@ -504,5 +644,12 @@ registerActions({
         renderMyIssues();
     },
     'retry-load-sprint-status': () => loadSprintStatus(),
+    'dash-sprints-toggle': () => {
+        if (!lastSprintData.length) return; // a load is in flight; its render will settle the list
+        sprintRowsExpanded = !sprintRowsExpanded;
+        renderSprintStatus(lastSprintData, { single: false });
+        // The re-render replaced the button: keep keyboard focus on it.
+        document.querySelector('#dashboard-sprint-status [data-action="dash-sprints-toggle"]')?.focus();
+    },
     // view-document action is registered in documents.js
 });
