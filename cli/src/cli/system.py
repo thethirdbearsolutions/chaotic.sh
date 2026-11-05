@@ -3474,6 +3474,19 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print("\n[green]Already on the latest version.[/green]")
         raise SystemExit(0)
 
+    # CHT-2025: every question is asked before anything is stopped or
+    # gated. Asked after the stop, an unanswered prompt (no tty over ssh:
+    # click reads EOF and aborts) left the server down behind deploy.hold.
+    # An abort or a "no" here leaves the server exactly as it was.
+    if not yes:
+        if already_current:
+            action = "Run migrations with --fake-initial?"
+        else:
+            action = f"Upgrade from {current_version} to {target_version}?"
+        if not _confirm_action(f"\n{action}"):
+            console.print("[yellow]Cancelled. Nothing was changed and the server was not stopped.[/yellow]")
+            raise SystemExit(0)
+
     # CHT-1969: the slow work (dependency sync, npm ci, the bundle build)
     # runs in a staging checkout while the old server is still serving.
     # Nothing here touches the server checkout or the database, so a
@@ -3560,24 +3573,6 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         if not wait_for_service_stop(timeout=10):
             console.print("[yellow]Warning: Service may still be stopping[/yellow]")
     lap("stop")
-
-    # Confirm action
-    if not yes:
-        if already_current:
-            action = "Run migrations with --fake-initial?"
-        else:
-            action = f"Upgrade from {current_version} to {target_version}?"
-        if not _confirm_action(f"\n{action}"):
-            console.print("[yellow]Cancelled.[/yellow]")
-            if was_running:
-                console.print("Starting server again...")
-                if not (start_service() and health_check(port, host=host)):
-                    console.print("[red]The server did not come back up.[/red]")
-                    _print_service_state(port, host)
-                    raise SystemExit(1)
-            _print_service_state(port, host)
-            raise SystemExit(0)
-        lap("prompt")
 
     console.print()
 

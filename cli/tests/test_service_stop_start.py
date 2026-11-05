@@ -1217,10 +1217,11 @@ class TestRunMigrationsReportsOxydesOutput:
 
 
 class TestUpgradeCancelled:
-    """Declining the confirmation after the server was stopped restarts it
-    and says where it ended up (review of CHT-1474)."""
+    """CHT-2025: the confirmation is asked before the server is stopped or
+    the deploy gate is closed. Asked after, an unanswered prompt (no tty
+    over ssh) aborted with the server down behind deploy.hold."""
 
-    def _run_without_yes(self, **overrides):
+    def _run_without_yes(self, input=None, **overrides):
         commits = iter(_COMMITS)
         patches = {
             "is_server_installed": dict(return_value=True),
@@ -1242,31 +1243,80 @@ class TestUpgradeCancelled:
             "load_server_json": dict(return_value={"port": 24267}),
             "get_remote_version": dict(return_value=None),
             "checkout_version": dict(return_value=(True, None)),
+            "hold_deploy_gate": dict(return_value=True),
+            "prepare_release": dict(return_value=system.PreparedRelease(True, "staged")),
             "_confirm_action": dict(return_value=False),
         }
         patches.update(overrides)
         with ExitStack() as stack:
             mocks = {n: stack.enter_context(patch(f"cli.system.{n}", **kw)) for n, kw in patches.items()}
-            result = CliRunner().invoke(system.system, ["upgrade", "--no-backup"])
+            result = CliRunner().invoke(system.system, ["upgrade", "--no-backup"], input=input)
         return result, mocks
 
-    def test_cancel_restarts_and_verifies(self):
-        result, m = self._run_without_yes()
-        assert result.exit_code == 0
-        out = _flat(result.output)
-        assert "Cancelled" in out and "Server is RUNNING" in out
-        m["start_service"].assert_called_once()
-        assert m["health_check"].call_count >= 1  # the restart, then the final state line
+    def _assert_untouched(self, m):
+        m["stop_service"].assert_not_called()
+        m["hold_deploy_gate"].assert_not_called()
+        m["start_service"].assert_not_called()
         m["checkout_version"].assert_not_called()
+        assert not system.DEPLOY_HOLD.exists()
 
-    def test_cancel_whose_restart_fails_says_down(self):
-        result, _ = self._run_without_yes(
-            health_check=dict(return_value=False),
-            is_service_running=dict(side_effect=[True, False]),
+    def test_decline_leaves_the_server_running_untouched(self):
+        result, m = self._run_without_yes()
+        assert result.exit_code == 0, result.output
+        out = _flat(result.output)
+        assert "Cancelled. Nothing was changed and the server was not stopped." in out
+        self._assert_untouched(m)
+        m["prepare_release"].assert_not_called()
+
+    def test_no_tty_abort_happens_before_the_stop(self):
+        """The incident: no answer on stdin. click reads EOF and aborts;
+        that must now happen with the server still serving."""
+        result, m = self._run_without_yes(
+            input="", _confirm_action=dict(wraps=system._confirm_action),
+        )
+        assert result.exit_code == 1  # click's Abort
+        assert "Upgrade from v0.1.0a19 to v0.1.0a20?" in result.output
+        self._assert_untouched(m)
+
+    def test_no_tty_abort_behind_the_socket_closes_no_gate(self, monkeypatch):
+        monkeypatch.setattr(system, "socket_mode_installed", lambda: True)
+        monkeypatch.setattr(system, "_justfile_serves_socket", lambda commit: True)
+        result, m = self._run_without_yes(
+            input="", _confirm_action=dict(wraps=system._confirm_action),
         )
         assert result.exit_code == 1
-        out = _flat(result.output)
-        assert "did not come back up" in out and "Server is DOWN" in out
+        self._assert_untouched(m)
+
+    def test_yes_is_asked_before_the_slow_preparation_and_the_stop(self):
+        order = []
+        result, m = self._run_without_yes(
+            _confirm_action=dict(side_effect=lambda *a, **k: order.append("confirm") or True),
+            prepare_release=dict(side_effect=lambda c: order.append("prepare")
+                                 or system.PreparedRelease(True, "staged")),
+            stop_service=dict(side_effect=lambda **k: order.append("stop") or True),
+            run_migrations=dict(return_value=(True, "ok")),
+            rebuild_frontend=dict(return_value=(True, "built")),
+            verify_deployed_commit=dict(return_value=(True, "ab71cd5")),
+            restore_backup=dict(return_value=True),
+            resync_checkout=dict(return_value=(True, "re-synced")),
+        )
+        assert result.exit_code == 0, result.output
+        assert order == ["confirm", "prepare", "stop"]
+
+    def test_piped_yes_still_upgrades(self):
+        """The incident's workaround (piping y) keeps working."""
+        result, m = self._run_without_yes(
+            input="y\n",
+            _confirm_action=dict(wraps=system._confirm_action),
+            run_migrations=dict(return_value=(True, "ok")),
+            rebuild_frontend=dict(return_value=(True, "built")),
+            verify_deployed_commit=dict(return_value=(True, "ab71cd5")),
+            restore_backup=dict(return_value=True),
+            resync_checkout=dict(return_value=(True, "re-synced")),
+        )
+        assert result.exit_code == 0, result.output
+        m["stop_service"].assert_called_once()
+        m["start_service"].assert_called_once()
 
 
 class TestSystemStopTimeout:
