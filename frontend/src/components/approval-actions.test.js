@@ -42,4 +42,10 @@ describe('renderApprovalActions', () => {
         }));
         expect(back.className).toBe('inbox-action-btn');
     });
+
+    it('keeps Send back a text button by default, and busy with the primary step', () => {
+        const [, back] = buttons(renderApprovalActions('review', { approveAction: 'a', sendBackAction: 'b', busy: true }));
+        expect(back.className).toBe('ticket-gate-text-btn');
+        expect(back.getAttribute('aria-disabled')).toBe('true');
+    });
 });

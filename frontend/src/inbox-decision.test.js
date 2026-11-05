@@ -217,6 +217,49 @@ describe('one expanded layout for every kind (CHT-2081)', () => {
         expect(assigned.querySelector('.inbox-expanded-source').textContent).toContain('Ada assigned you this');
     });
 
+    it('names nobody as attester on a review that was sent back', async () => {
+        const sentBack = {
+            ...RITUAL, attestation: null,
+            last_rejection: { rejected_by_name: 'pat', note: 'Needs numbers', superseded_at: null },
+        };
+        const el = await openRow(REVIEW, { pending_rituals: [sentBack], completed_rituals: [] });
+        expect(el.querySelector('.inbox-expanded-source')).toBeNull();
+        expect(el.querySelector('.inbox-expanded-body')).toBeNull();
+        expect(el.querySelector('details.inbox-decision-asks').open).toBe(false);
+        expect(el.textContent).toContain('Sent back by pat');
+    });
+
+    it('names no sender while the ritual loads', async () => {
+        api.getTicketRitualsStatus.mockReturnValueOnce(new Promise(() => {}));
+        setInboxEntries([REVIEW]);
+        renderInbox();
+        toggleInboxEntryExpand(REVIEW.id);
+        expect(row(REVIEW.id).querySelector('.inbox-expanded-source')).toBeNull();
+    });
+
+    it('says a gate is waiting on a sign-off', async () => {
+        const el = await openRow(GATE, { pending_rituals: [GATE_RITUAL], completed_rituals: [] });
+        expect(el.querySelector('.inbox-expanded-source').textContent).toBe('Waiting on a sign-off');
+    });
+
+    it('shows no meta line for a kind with no verb, or about the viewer themself', () => {
+        const closed = { ...ASSIGNED, id: 'e-closed', kind: 'children_closed', title: 'Nothing left open on APP-3' };
+        const device = { ...ASSIGNED, id: 'e-dev', kind: 'assignment', source_user_id: 'me', recipient_user_id: 'me' };
+        for (const entry of [closed, device]) {
+            setInboxEntries([entry]);
+            renderInbox();
+            toggleInboxEntryExpand(entry.id);
+            expect(row(entry.id).querySelector('.inbox-expanded-source')).toBeNull();
+        }
+    });
+
+    it('escapes the attester in the meta line', async () => {
+        const evil = { ...RITUAL, attestation: { ...RITUAL.attestation, attested_by_name: '<img src=x onerror=alert(1)>' } };
+        const el = await openRow(REVIEW, { pending_rituals: [evil], completed_rituals: [] });
+        expect(el.querySelector('.inbox-expanded-source img')).toBeNull();
+        expect(el.querySelector('.inbox-expanded-source').textContent).toContain('<img');
+    });
+
     it('puts Send back in the row of outlined buttons, with only the decision filled', async () => {
         const el = await openRow(REVIEW, { pending_rituals: [RITUAL], completed_rituals: [] });
         const buttons = [...el.querySelectorAll('.inbox-action-bar button')];

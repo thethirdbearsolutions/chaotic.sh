@@ -7329,12 +7329,22 @@ body.theme-light .segmented-btn.active {
     word-break: break-word;
     background: var(--bg-secondary);
     border-radius: var(--radius-lg);
-    padding: var(--space-lg) 14px;
+    padding: var(--space-lg);
+    min-width: 0;
 }
 .inbox-expanded-markdown { white-space: normal; }
 .inbox-expanded-markdown .markdown-body > :first-child { margin-top: 0; }
 .inbox-expanded-markdown .markdown-body > :last-child { margin-bottom: 0; }
 .inbox-expanded-markdown .ticket-gate-artifact { margin-top: var(--space-sm); }
+.inbox-expanded-markdown p { margin: 0 0 var(--space-md); }
+.inbox-expanded-markdown pre {
+    margin: var(--space-sm) 0 var(--space-md);
+    padding: var(--space-md) var(--space-lg);
+    font-size: var(--font-sm);
+    background: var(--bg-primary);
+    border-radius: var(--radius-sm);
+    overflow-x: auto;
+}
 
 .inbox-action-bar {
     display: flex;
@@ -7421,7 +7431,7 @@ body.theme-light .segmented-btn.active {
     height: auto;
     padding: 6px 10px;
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: var(--font-sm);
     line-height: 1;
 }
@@ -10924,3 +10934,6 @@ body.theme-light {
 }
 :where(.markdown-body) th { background: var(--bg-tertiary); font-weight: 600; }
 :where(.markdown-body) img { max-width: 100%; height: auto; }
+
+/* The panel's gap spaces the line already (CHT-2081). */
+.inbox-row-expanded-panel .ticket-gate-earlier { margin-top: 0; }

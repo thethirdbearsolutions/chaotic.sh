@@ -129,7 +129,7 @@ function rejectionLine(rej) {
 }
 
 /** A re-attested review keeps the send-back it answers, as context (CHT-1606). */
-function earlierRejection(r) {
+export function earlierRejection(r) {
     const rej = r && r.last_rejection;
     if (!rej || !rej.superseded_at || !isAwaitingApproval(r)) return '';
     return `<div class="ticket-gate-earlier">Sent back before: ${rejectionLine(rej)}</div>`;

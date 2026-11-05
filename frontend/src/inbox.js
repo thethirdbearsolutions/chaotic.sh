@@ -21,7 +21,7 @@ import {
 import { viewIssue } from './issue-detail-view.js';
 import { viewDocument } from './documents.js';
 import { formatRelativeTime, renderMarkdown } from './gate-approvals.js';
-import { renderArtifact, isAwaitingApproval } from './ticket-gate.js';
+import { renderArtifact, earlierRejection, isAwaitingApproval } from './ticket-gate.js';
 import { renderApprovalActions } from './components/approval-actions.js';
 import { showRejectTicketRitualModal, showCompleteTicketRitualModal } from './rituals-view.js';
 
@@ -838,13 +838,13 @@ function canWrite(entry) {
  * gate (it is what they sign off on), or that nothing waits any more.
  */
 function renderDecisionBody(entry) {
-    const status = (text) => ({ body: `<div class="inbox-decision-status">${text}</div>` });
+    const status = (text) => ({ meta: '', body: `<div class="inbox-decision-status">${text}</div>` });
     if (entry.state === 'resolved') {
         return status('Already decided. Nothing is waiting on you here.');
     }
     const d = decisionDetails.get(entry.id);
     if (!d || d.state === 'loading') {
-        return { body: '<div class="inbox-decision-status" role="status">Loading the attestation…</div>' };
+        return { meta: '', body: '<div class="inbox-decision-status" role="status">Loading the attestation…</div>' };
     }
     if (d.state === 'error') {
         return status(`Couldn’t load the attestation.
@@ -876,21 +876,27 @@ function renderDecisionBody(entry) {
         state = `<div class="inbox-decision-status">Sent back by ${escapeHtml(rej.rejected_by_name || 'someone')}: “${escapeHtml(rej.note || '')}”.</div>`;
     }
     const att = r.attestation;
-    if (isReview && att) {
-        // The attestation is the body; who and when are the meta line,
-        // the way every other row says who it came from (CHT-2081).
+    if (isReview) {
+        if (!att) {
+            // Sent back, or the attestation was withdrawn: nothing to show
+            // as the body, and nobody to name as having attested.
+            return { meta: '', body: '', after: asksDisclosure + state };
+        }
+        // The attestation is the body; who attested is the meta line, the
+        // way every other row says who it came from (CHT-2081).
         return {
             meta: metaLine(att.attested_by_name || 'Someone', 'attested'),
             body: `<div class="inbox-expanded-body inbox-expanded-markdown">
                 ${att.note ? `<div class="markdown-body">${renderMarkdown(att.note)}</div>` : '<div class="text-muted">No note.</div>'}
                 ${renderArtifact(att)}
             </div>`,
-            after: asksDisclosure + state,
+            after: earlierRejection(r) + asksDisclosure + state,
         };
     }
     // A gate: what the ritual asks is what the admin signs off on, so it
     // is the body, in full.
     return {
+        meta: 'Waiting on a sign-off',
         body: r.prompt
             ? `<div class="inbox-expanded-body inbox-expanded-markdown"><div class="markdown-body">${renderMarkdown(r.prompt)}</div></div>`
             : '',
@@ -909,7 +915,7 @@ const META_VERBS = {
     mention: 'mentioned you',
     review_requested: 'attested',
     gate_rejected: 'sent it back',
-    children_closed: 'closed the last sub-issue',
+    agent_status: 'changed your agent',
 };
 
 /** The ritual a decision row can still be decided on, or null. */
@@ -1233,8 +1239,12 @@ function renderExpandedPanel(entry, sourceRef, panelId) {
     // what and when, one body container, anything about the ritual under
     // it, then the action bar.
     const decision = isDecision ? renderDecisionBody(entry) : null;
-    const meta = decision?.meta
-        ?? (from ? metaLine(from, META_VERBS[entry.kind] || 'sent this') : '');
+    // A decision row's meta comes from the ritual's live state only, never
+    // the entry's snapshot (PR #548 review). Other kinds name their sender
+    // with a verb, and say nothing when it has none or is the viewer.
+    const verb = META_VERBS[entry.kind];
+    const fromSomeoneElse = from && entry.source_user_id !== entry.recipient_user_id;
+    const meta = decision ? decision.meta : (fromSomeoneElse && verb ? metaLine(from, verb) : '');
     const body = decision
         ? decision.body
         : (entry.body ? `<div class="inbox-expanded-body">${escapeHtml(entry.body)}</div>` : '');

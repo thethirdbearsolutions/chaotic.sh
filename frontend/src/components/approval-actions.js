@@ -46,7 +46,7 @@ export function renderApprovalActions(mode, {
         `<button type="button" class="${cls}" data-action="${escapeAttr(approveAction)}" ${attrs}${state}>${approvalVerb(mode)}</button>`,
     ];
     if (sendBackAction) {
-        buttons.push(`<button type="button" class="${escapeAttr(sendBackClass)}" data-action="${escapeAttr(sendBackAction)}" ${attrs}>Send back…</button>`);
+        buttons.push(`<button type="button" class="${escapeAttr(sendBackClass)}" data-action="${escapeAttr(sendBackAction)}" ${attrs}${state}>Send back…</button>`);
     }
     return buttons;
 }
